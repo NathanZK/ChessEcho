@@ -2,6 +2,10 @@
 
 > Discover the patterns that repeat in your games.
 
+Traditional chess analysis tells you **what went wrong in one game**.
+
+**ChessEcho tells you what keeps going wrong across hundreds of games.**
+
 ChessEcho is a personalized chess improvement platform that analyzes a player's game history to discover recurring positions, repeated mistakes, and decision-making patterns.
 
 Traditional chess analysis tools answer:
@@ -15,7 +19,6 @@ ChessEcho answers:
 The goal is not to memorize engine moves. The goal is to understand and improve recurring decisions.
 
 ---
-
 # Core Idea
 
 A single mistake may be accidental.
@@ -23,6 +26,7 @@ A single mistake may be accidental.
 A mistake repeated across dozens of games is a pattern.
 
 ChessEcho analyzes a player's complete game history to find those patterns:
+
 
 ```text
 Import Games
@@ -34,7 +38,7 @@ Replay Games
 Find Frequently Reached Positions
       |
       v
-Analyze Positions With Stockfish
+Analyze Candidate Positions
       |
       v
 Identify Recurring Weaknesses
@@ -42,6 +46,25 @@ Identify Recurring Weaknesses
       v
 Generate Personalized Puzzles
 ```
+
+---
+
+## Why This Is Different
+
+Suppose you reach the following middlegame position 27 times over the course of a year.
+
+Perhaps you choose:
+
+- Bf5 18 times
+- Nd7 9 times
+
+Stockfish may determine that Bf5 consistently loses 1.2 pawns compared to Nd7.
+
+Most chess tools would show this mistake 18 separate times.
+
+ChessEcho recognizes that it is the **same recurring decision** and teaches the position once.
+
+The goal is to fix habits, not games.
 
 ---
 
@@ -73,9 +96,20 @@ The system avoids duplicate imports.
 
 Every imported game is replayed move by move.
 
-ChessEcho identifies unique board positions and groups transpositions together.
+ChessEcho identifies unique board positions using their complete chess state.
 
-A position becomes a candidate for analysis when it has been reached at least a configurable number of times.
+Two positions are considered identical only if all of the following are the same:
+
+* Piece placement
+* Side to move
+* Castling rights
+* En passant availability
+
+This means positions reached through different move orders (transpositions) are grouped together **only when they are legally identical**.
+
+For example, two positions with identical piece placement but different castling rights are treated as different positions and therefore produce different hashes.
+
+A position becomes a candidate for engine analysis once it has been reached at least a configurable number of times.
 
 Default:
 
@@ -93,20 +127,18 @@ Reached:
 
 Moves played:
 
-Bf5  -> 25 times
-Nd7  -> 15 times
+Bf5 -> 25 times
+Nd7 -> 15 times
 ```
 
----
 
 ## Engine Analysis
 
-Candidate positions are analyzed asynchronously using Stockfish.
+Candidate positions are analyzed asynchronously in the background using Stockfish.
 
-Each unique position is analyzed once per engine configuration.
+Each unique position is analyzed at most once per engine configuration.
 
-Engine analysis is shared globally between users.
-
+Subsequent requests reuse the cached engine analysis.
 Example:
 
 ```text
@@ -250,56 +282,47 @@ The user can see improvement over time.
 # Architecture
 
 ```text
-                         +----------------------+
-                         |  Kotlin Spring Boot  |
-                         |       API            |
-                         |                      |
-                         | REST API             |
-                         | User Features       |
-                         | Job Management      |
-                         +----------+-----------+
-                                    |
-                                    |
-                              PostgreSQL
-                                    |
-                 +------------------+------------------+
-                 |                                     |
-                 v                                     v
-        User Game Data                         Engine Analysis Cache
-
-
-                                    |
-                                    v
-
-
-                         +----------------------+
-                         | Python Analysis      |
-                         | Worker               |
-                         |                      |
-                         | python-chess         |
-                         | Stockfish            |
-                         +----------------------+
+                      +--------------------------------------+
+                      |      Kotlin + Spring Boot            |
+                      |--------------------------------------|
+                      | REST API                             |
+                      | Chess.com Integration                |
+                      | Game Import                          |
+                      | Background Analysis Jobs             |
+                      | Position Detection                   |
+                      | Weakness Calculation                 |
+                      | Puzzle Generation                    |
+                      | Stockfish Integration                |
+                      | kchesslib                            |
+                      +----------------+---------------------+
+                                       |
+                    +------------------+------------------+
+                    |                                     |
+                    v                                     v
+               PostgreSQL                           Stockfish
 ```
 
 ---
 
 # Technology Stack
 
-## Backend API
+## Backend
 
 ### Kotlin + Spring Boot
 
-Spring Boot is used as the backend framework.
+Spring Boot is the primary application framework.
 
 Responsibilities:
 
 * REST API
 * User management
-* Chess account integration
-* Game import orchestration
-* Background job scheduling
+* Chess.com integration
+* Game import
+* Position detection
+* Background analysis jobs
 * Weakness calculation
-* Puzzle delivery
+* Puzzle generation
+* Stockfish integration
 
 ---
 
@@ -314,27 +337,23 @@ Stores:
 * Games
 * Positions
 * Position occurrences
-* Engine analysis results
+* Engine analysis
 * Puzzle history
 
 ---
 
-## Chess Analysis Worker
+## Chess Library
 
-### Python + python-chess
+### kchesslib
 
-A separate Python service handles chess-specific processing.
-
-Responsibilities:
+Used for:
 
 * PGN parsing
 * Move replay
+* Board state reconstruction
 * FEN generation
+* Position hashing
 * Legal move validation
-* SAN/UCI conversion
-* Stockfish communication
-
-python-chess is used because it provides a mature toolkit for chess operations.
 
 ---
 
@@ -348,35 +367,51 @@ Used for:
 * Best move calculation
 * Alternative move discovery
 
+Engine analysis is cached globally so that a position is analyzed only once and reused across all users.
+
 ---
+
+## Infrastructure
+
+### Docker
+
+ChessEcho uses Docker to provide consistent local development and deployment environments.
+
+The MVP deployment consists of:
+
+* Spring Boot application
+* PostgreSQL database
+
+Stockfish is bundled with the application and invoked directly during analysis.
+
+No separate analysis worker or message broker is required for the MVP.
+
 
 # Domain Model
 
+
+
 ```text
-User
- |
- |
- v
-ChessAccount
- |
- |
- v
-Game
- |
- |
- v
-PositionOccurrence
- |
- |
- v
-Position
-
-
-Position
- |
- |
- v
-EngineAnalysis
+                 User
+                   │
+                   │
+                   ▼
+             ChessAccount
+                   │
+                   │
+                   ▼
+                 Game
+                   │
+          replay move-by-move
+                   │
+                   ▼
+         PositionOccurrence
+                   │
+                   ▼
+              Position
+                   │
+                   ▼
+           EngineAnalysis
 ```
 
 ---
@@ -429,7 +464,14 @@ Contains:
 * Position hash
 * FEN representation
 
-A position is global and shared across users.
+The position hash is derived from the complete chess state, including:
+
+- Piece placement
+- Side to move
+- Castling rights
+- En passant availability
+
+Engine analysis is cached globally and reused across users.
 
 ---
 
@@ -493,7 +535,7 @@ Returns:
 ## Get Weaknesses
 
 ```http
-GET /api/weaknesses
+GET /api/positions/weaknesses
 ```
 
 Returns ranked recurring weaknesses.
@@ -541,7 +583,7 @@ Player weaknesses are personal.
 
 Therefore:
 
-* Engine analysis is shared.
+* Engine analysis is cached and shared.
 * Player history remains user-specific.
 
 ---
