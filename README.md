@@ -193,6 +193,30 @@ Loss: 1.3
 
 This position becomes a potential weakness because the player repeatedly chooses a significantly weaker move.
 
+### Priority Weighting
+
+To ensure that recent, recurring habits surface before stale or one-off mistakes, ChessEcho computes priority using two factors:
+
+1. **Recency time-decay weight** — each mistake is weighted by how recently it occurred:
+   * `weight = max(0.1, 1.0 - (daysSinceGame / 365))`
+   * A mistake made today scores 1.0; one made a year ago scores 0.1.
+
+2. **Mistake rate** — the final priority is multiplied by how often the mistake happens relative to how often the position is reached:
+   * `mistakeRate = mistakeCount / timesReached`
+   * A position reached 75 times with only 1 mistake (1.3%) is far less urgent than one reached 10 times with 8 mistakes (80%).
+
+Full formula:
+
+```text
+priority = sum(evalLoss × weight) × (mistakeCount / timesReached)
+```
+
+This ensures that positions where you **consistently** make mistakes rank higher than positions where you had a single bad day.
+
+### Game URLs
+
+When returning weaknesses, ChessEcho limits the payload to the **10 most recent distinct game URLs** where the mistake occurred. The platform handles proper link generation (for Chess.com and Lichess) so users can immediately review their historical games in the browser.
+
 ---
 
 ## Configurable Evaluation Threshold

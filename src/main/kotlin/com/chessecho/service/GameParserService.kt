@@ -43,8 +43,7 @@ class GameParserService(
 
                     val board = Board()
                     for ((index, move) in moves.withIndex()) {
-                        board.doMove(move)
-
+                        // Capture the position BEFORE the move is made
                         val rawFen = board.fen
                         val hash = generateHash(rawFen)
 
@@ -66,6 +65,9 @@ class GameParserService(
                                 playerColor = playerColor,
                             ),
                         )
+
+                        // Now make the move for the next iteration
+                        board.doMove(move)
                     }
                 }
             } catch (e: Exception) {

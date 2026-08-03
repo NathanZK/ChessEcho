@@ -168,8 +168,8 @@ class GameParserServiceTest {
         // Plies 3-6 are different because in Game 1 the King moves, and in Game 2 the Knight moves.
         // Even though piece placement is identical after ply 5 (Ke1 vs Ng1) and ply 6 (d5),
         // castling rights are different!
-        // Total positions = 2 (shared) + 4 (unique to G1) + 4 (unique to G2) = 10.
-        // If castling rights were ignored, plies 5 and 6 would be shared too, resulting in 8.
-        assertEquals(10, savedPositions.size, "Different castling rights must generate different hashes")
+        // Total positions = 3 (shared: startpos, after e4, after e5) + 3 (unique to G1) + 3 (unique to G2) = 9.
+        // If castling rights were ignored, the position before the final d5 would be shared too, resulting in 8.
+        assertEquals(9, savedPositions.size, "Different castling rights must generate different hashes")
     }
 }
