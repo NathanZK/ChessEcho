@@ -213,6 +213,19 @@ priority = sum(evalLoss × weight) × (mistakeCount / timesReached)
 
 This ensures that positions where you **consistently** make mistakes rank higher than positions where you had a single bad day.
 
+### Filtering One-Off Mistakes (`minMistakeCount`)
+
+Not all mistakes are habits. A position reached 75 times with a single accidental blunder (1 mistake out of 75 games) is an outlier, not a weakness. 
+
+ChessEcho enforces a configurable `minMistakeCount` threshold (default `3`, floor `3`) to filter out one-off blunders so only genuine, repeated opening weaknesses surface for analysis and puzzle training.
+
+### Per-Move Breakdowns & Acceptable Moves
+
+For every recurring weakness, ChessEcho calculates:
+- **`bestMove`**: Stockfish's top recommended move.
+- **`acceptableMoves`**: Alternative candidate moves with evaluation loss below `acceptableThreshold` (default `0.3` pawns).
+- **`movesPlayed`**: Top 3 mistake moves played by the user (`averageLoss >= minEvalLoss`), sorted by `timesPlayed` descending, then `averageLoss` descending.
+
 ### Game URLs
 
 When returning weaknesses, ChessEcho limits the payload to the **10 most recent distinct game URLs** where the mistake occurred. The platform handles proper link generation (for Chess.com and Lichess) so users can immediately review their historical games in the browser.
@@ -255,53 +268,18 @@ Instead:
 
 > "Find a strong move that avoids your recurring mistake."
 
-Multiple moves can be accepted when they are within the acceptable evaluation range.
-
-Example:
-
-```text
-Strong moves:
-
-Nd7   +0.40
-e6    +0.35
-Bc4   +0.30
-```
-
-All may be considered correct.
+Multiple moves can be accepted when they are within the acceptable evaluation range (`acceptableMoves`). Furthermore, `movesPlayed` allows the frontend to give targeted hints if the player makes their historical mistake again (e.g., *"You played Qc7 in 3 past games—try trading queens with Qb6 instead!"*).
 
 ---
 
-## Progress Tracking
+## Real-World Progress Tracking
 
-As new games are imported, ChessEcho tracks whether recurring weaknesses improve.
+Progress in ChessEcho is measured by **real-world live game performance**, not artificial puzzle scores.
 
-Example:
-
-Before:
-
-```text
-Position:
-
-Reached: 25 times
-
-Mistake rate:
-72%
-```
-
-Later:
-
-```text
-New games:
-
-Reached: 15 additional times
-
-Mistake rate:
-20%
-```
-
-The user can see improvement over time.
-
----
+As new games are imported and analyzed:
+1. When a player encounters an opening weakness in a live game and plays the correct move (e.g. `Qb6` instead of `Qc7`), `timesReached` increases while `mistakeCount` stays constant.
+2. The mistake rate (`mistakeCount / timesReached`) drops, and time-decay lowers the weight of older blunders.
+3. The position's priority score automatically decreases until it is permanently resolved and cured in real games.
 
 # Architecture
 
@@ -559,33 +537,85 @@ Returns:
 ## Get Weaknesses
 
 ```http
-GET /api/positions/weaknesses
+GET /api/positions/weaknesses?platform=CHESS_COM&username=NathanZele&playerColor=black&minEvalLoss=0.8&acceptableThreshold=0.3&minMistakeCount=3
 ```
 
-Returns ranked recurring weaknesses.
+Returns ranked recurring weaknesses for the player.
 
-Example:
+Query Parameters:
+- `platform`: `CHESS_COM` or `LICHESS` (required)
+- `username`: Account username (required)
+- `playerColor`: `WHITE` or `BLACK` (required)
+- `minEvalLoss`: Minimum average pawn loss threshold (default `0.8`)
+- `acceptableThreshold`: Engine candidate move loss threshold (default `0.3`)
+- `minMistakeCount`: Minimum blunder occurrences filter (default `3`, floor `3`)
+
+Example Response:
 
 ```json
 [
   {
-    "position": "...",
-    "timesReached": 25,
-    "mistakeCount": 12,
-    "averageLoss": 1.1
+    "positionId": "8cf3ce9c-1081-4d66-8112-96ed82cc8b9b",
+    "fen": "rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq d3 0 1",
+    "timesReached": 175,
+    "mistakeCount": 19,
+    "mistakeRate": 10.86,
+    "averageLoss": 1.03,
+    "priority": 1.39,
+    "bestMove": "Nf6",
+    "acceptableMoves": [
+      { "move": "d5", "evalLoss": 0.0 },
+      { "move": "Nf6", "evalLoss": 0.0 }
+    ],
+    "movesPlayed": [
+      { "move": "e5", "timesPlayed": 18, "averageLoss": 1.04 }
+    ],
+    "gameUrls": [
+      "https://www.chess.com/game/live/3787250756"
+    ]
   }
 ]
 ```
 
 ---
 
-## Generate Puzzle
+## Get Puzzles (Paginated)
 
 ```http
-GET /api/puzzles/{positionId}
+GET /api/puzzles?platform=CHESS_COM&username=NathanZele&playerColor=black&limit=5&page=0
 ```
 
-Returns a personalized puzzle from a recurring weakness.
+Returns a paginated list of personalized puzzles generated from recurring weaknesses.
+
+Query Parameters:
+- `platform`, `username`, `playerColor`: Required account filters
+- `minEvalLoss`, `acceptableThreshold`, `minMistakeCount`: Optional threshold filters
+- `limit`: Number of puzzles per batch (default `5`)
+- `page`: Page index (0-indexed, default `0`)
+
+Example Response:
+
+```json
+[
+  {
+    "puzzleId": "8cf3ce9c-1081-4d66-8112-96ed82cc8b9b",
+    "fen": "rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq d3 0 1",
+    "playerColor": "BLACK",
+    "targetMove": "Nf6",
+    "acceptableMoves": [
+      { "move": "d5", "evalLoss": 0.0 },
+      { "move": "Nf6", "evalLoss": 0.0 }
+    ],
+    "movesPlayed": [
+      { "move": "e5", "timesPlayed": 18, "averageLoss": 1.04 }
+    ],
+    "priority": 1.39,
+    "timesReached": 175,
+    "mistakeCount": 19,
+    "mistakeRate": 10.86
+  }
+]
+```
 
 ---
 
