@@ -1,6 +1,8 @@
 package com.chessecho.repository
 
 import com.chessecho.domain.Game
+import org.springframework.data.domain.Page
+import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Query
 import java.util.UUID
@@ -16,4 +18,9 @@ interface GameRepository : JpaRepository<Game, UUID> {
         chessAccount: com.chessecho.domain.ChessAccount,
         platformGameIds: List<String>,
     ): List<String>
+
+    fun findAllByChessAccountOrderByPlayedAtDesc(
+        chessAccount: com.chessecho.domain.ChessAccount,
+        pageable: Pageable,
+    ): Page<Game>
 }
