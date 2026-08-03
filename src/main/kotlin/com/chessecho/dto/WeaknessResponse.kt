@@ -9,6 +9,7 @@ data class WeaknessResponse(
     val fen: String,
     val timesReached: Int,
     val mistakeCount: Int,
+    val mistakeRate: Double,
     val averageLoss: Double,
     val priority: Double,
     val bestMove: String?,

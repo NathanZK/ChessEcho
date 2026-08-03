@@ -32,6 +32,7 @@ class WeaknessCalculationService(
         playerColor: String,
         minEvalLoss: Double,
         acceptableThreshold: Double = 0.3,
+        minMistakeCount: Int = 3,
     ): List<WeaknessResponse> {
         val account =
             chessAccountRepository.findByPlatformAndUsernameIgnoreCase(platform, username)
@@ -114,7 +115,7 @@ class WeaknessCalculationService(
                 }
             }
 
-            if (mistakeCount > 0) {
+            if (mistakeCount >= minMistakeCount) {
                 // All engine-evaluated candidate moves for this position whose evaluation loss
                 // compared to the best move is within acceptableThreshold (default 0.5 pawns).
                 // Useful for puzzle generation to know which player responses are acceptable solutions.
@@ -149,15 +150,17 @@ class WeaknessCalculationService(
                         .sortedWith(compareByDescending<MoveBreakdown> { it.timesPlayed }.thenByDescending { it.averageLoss })
                         .take(3)
 
-                val mistakeRate = mistakeCount.toDouble() / posOccurrences.size
+                val rawRate = mistakeCount.toDouble() / posOccurrences.size
+                val mistakeRatePercentage = kotlin.math.round(rawRate * 10000.0) / 100.0
                 weaknesses.add(
                     WeaknessResponse(
                         positionId = positionId,
                         fen = position.fen,
                         timesReached = posOccurrences.size,
                         mistakeCount = mistakeCount,
+                        mistakeRate = mistakeRatePercentage,
                         averageLoss = unweightedTotalLoss / mistakeCount,
-                        priority = priorityScore * mistakeRate,
+                        priority = priorityScore * rawRate,
                         bestMove = analysis.bestMove,
                         acceptableMoves = acceptableMoves,
                         movesPlayed = movesPlayed,
