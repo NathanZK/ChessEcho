@@ -1,0 +1,22 @@
+spring:
+  application:
+    name: chess-echo
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/chessecho}
+    username: ${SPRING_DATASOURCE_USERNAME:chessecho}
+    password: ${SPRING_DATASOURCE_PASSWORD:chessecho_pass}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: true
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+chess:
+  stockfish:
+    path: ${STOCKFISH_PATH:stockfish}
