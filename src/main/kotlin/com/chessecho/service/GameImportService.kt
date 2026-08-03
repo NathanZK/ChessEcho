@@ -23,6 +23,7 @@ class GameImportService(
     private val chessAccountRepository: ChessAccountRepository,
     private val gameRepository: GameRepository,
     private val restClient: RestClient,
+    private val gameParserService: GameParserService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -180,7 +181,8 @@ class GameImportService(
         }
 
         if (gamesToSave.isNotEmpty()) {
-            gameRepository.saveAll(gamesToSave)
+            val savedGames = gameRepository.saveAll(gamesToSave)
+            gameParserService.parseAndSavePositions(savedGames)
         }
 
         return Pair(gamesToSave.size, skipped)

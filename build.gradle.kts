@@ -29,7 +29,7 @@ dependencies {
     implementation("org.flywaydb:flyway-database-postgresql")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
-    implementation("com.github.bhlangonijr:chesslib:1.3.3")
+    implementation("com.github.bhlangonijr:chesslib:1.3.7")
 
     runtimeOnly("org.postgresql:postgresql")
 
