@@ -20,6 +20,7 @@ class WeaknessController(
         @RequestParam playerColor: String,
         @RequestParam(defaultValue = "0.8") minEvalLoss: Double,
         @RequestParam(defaultValue = "0.3") acceptableThreshold: Double,
+        @RequestParam(defaultValue = "3") minMistakeCount: Int,
     ): ResponseEntity<List<WeaknessResponse>> {
         val weaknesses =
             weaknessCalculationService.getWeaknesses(
@@ -28,6 +29,7 @@ class WeaknessController(
                 playerColor = playerColor,
                 minEvalLoss = minEvalLoss,
                 acceptableThreshold = acceptableThreshold,
+                minMistakeCount = maxOf(3, minMistakeCount),
             )
         return ResponseEntity.ok(weaknesses)
     }

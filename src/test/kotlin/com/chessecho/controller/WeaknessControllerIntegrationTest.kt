@@ -158,6 +158,7 @@ class WeaknessControllerIntegrationTest {
         assertEquals("rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq e6 0 2", weakness.fen)
         assertEquals(5, weakness.timesReached)
         assertEquals(3, weakness.mistakeCount)
+        assertEquals(60.0, weakness.mistakeRate, 0.01)
         // baseline is 50, Qh5 is -150 -> diff = 200cp = 2.0
         assertEquals(2.0, weakness.averageLoss)
     }

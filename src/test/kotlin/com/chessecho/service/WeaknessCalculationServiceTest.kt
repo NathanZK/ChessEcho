@@ -115,7 +115,7 @@ class WeaknessCalculationServiceTest {
 
         `when`(engineAnalysisRepository.findByPositionId(position.id)).thenReturn(analysis)
 
-        val weaknesses = weaknessCalculationService.getWeaknesses("CHESS_COM", "nathan", "WHITE", 0.8)
+        val weaknesses = weaknessCalculationService.getWeaknesses("CHESS_COM", "nathan", "WHITE", 0.8, minMistakeCount = 2)
 
         assertEquals(1, weaknesses.size)
         val w = weaknesses[0]
@@ -172,7 +172,7 @@ class WeaknessCalculationServiceTest {
 
         `when`(engineAnalysisRepository.findByPositionId(position.id)).thenReturn(analysis)
 
-        val weaknesses = weaknessCalculationService.getWeaknesses("CHESS_COM", "nathan", "WHITE", 0.8)
+        val weaknesses = weaknessCalculationService.getWeaknesses("CHESS_COM", "nathan", "WHITE", 0.8, minMistakeCount = 1)
 
         assertEquals(1, weaknesses.size)
         val w = weaknesses[0]
@@ -218,7 +218,7 @@ class WeaknessCalculationServiceTest {
 
         `when`(engineAnalysisRepository.findByPositionId(position.id)).thenReturn(analysis)
 
-        val weaknesses = weaknessCalculationService.getWeaknesses("CHESS_COM", "nathan", "WHITE", 0.8)
+        val weaknesses = weaknessCalculationService.getWeaknesses("CHESS_COM", "nathan", "WHITE", 0.8, minMistakeCount = 1)
 
         assertEquals(1, weaknesses.size)
         val w = weaknesses[0]
@@ -266,14 +266,70 @@ class WeaknessCalculationServiceTest {
         `when`(engineAnalysisRepository.findByPositionId(position.id)).thenReturn(analysis)
 
         // Strict threshold 0.20 -> only e4 (0.0) and d4 (0.15) pass
-        val strictWeaknesses = weaknessCalculationService.getWeaknesses("CHESS_COM", "nathan", "WHITE", 0.8, acceptableThreshold = 0.20)
+        val strictWeaknesses =
+            weaknessCalculationService.getWeaknesses(
+                "CHESS_COM",
+                "nathan",
+                "WHITE",
+                0.8,
+                acceptableThreshold = 0.20,
+                minMistakeCount = 1,
+            )
         val strictAcceptable = strictWeaknesses[0].acceptableMoves.map { it.move }
         assertEquals(listOf("e4", "d4"), strictAcceptable)
 
         // Loose threshold 0.50 -> e4 (0.0), d4 (0.15), and Nf3 (0.40) pass
-        val looseWeaknesses = weaknessCalculationService.getWeaknesses("CHESS_COM", "nathan", "WHITE", 0.8, acceptableThreshold = 0.50)
+        val looseWeaknesses =
+            weaknessCalculationService.getWeaknesses(
+                "CHESS_COM",
+                "nathan",
+                "WHITE",
+                0.8,
+                acceptableThreshold = 0.50,
+                minMistakeCount = 1,
+            )
         val looseAcceptable = looseWeaknesses[0].acceptableMoves.map { it.move }
         assertEquals(listOf("e4", "d4", "Nf3"), looseAcceptable)
+    }
+
+    @Test
+    fun `test positions with mistakeCount less than minMistakeCount are filtered out`() {
+        val account = ChessAccount(user = AppUser(email = "test@test.com"), platform = "CHESS_COM", username = "nathan")
+        val position = Position(hash = "hash5", fen = "fen5")
+
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "nathan")).thenReturn(account)
+
+        // 2 blunders
+        val occ1 =
+            PositionOccurrence(
+                game = mockGame(),
+                position = position,
+                chessAccount = account,
+                plyNumber = 1,
+                movePlayed = "Qh5",
+                playerColor = "WHITE",
+            )
+        val occ2 =
+            PositionOccurrence(
+                game = mockGame(),
+                position = position,
+                chessAccount = account,
+                plyNumber = 1,
+                movePlayed = "Qh5",
+                playerColor = "WHITE",
+            )
+
+        `when`(positionOccurrenceRepository.findByChessAccountIdAndPlayerColor(account.id, "WHITE"))
+            .thenReturn(listOf(occ1, occ2))
+
+        val analysis = EngineAnalysis(position = position, depth = 16, baselineEvalCp = 100, baselineEvalMate = null, bestMove = "e4")
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "Qh5", evalCp = -200, evalMate = null))
+
+        `when`(engineAnalysisRepository.findByPositionId(position.id)).thenReturn(analysis)
+
+        // Default minMistakeCount is 3 -> 2 mistakes is not enough, should return empty list
+        val weaknesses = weaknessCalculationService.getWeaknesses("CHESS_COM", "nathan", "WHITE", 0.8, minMistakeCount = 3)
+        assertTrue(weaknesses.isEmpty(), "Positions with fewer mistakes than minMistakeCount should be excluded")
     }
 
     private fun mockGame(playedAt: Instant? = null): Game =
