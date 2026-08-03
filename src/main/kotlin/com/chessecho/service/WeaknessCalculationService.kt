@@ -1,0 +1,212 @@
+package com.chessecho.service
+
+import com.chessecho.dto.AcceptableMove
+import com.chessecho.dto.MoveBreakdown
+import com.chessecho.dto.WeaknessResponse
+import com.chessecho.repository.ChessAccountRepository
+import com.chessecho.repository.EngineAnalysisRepository
+import com.chessecho.repository.PositionOccurrenceRepository
+import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
+import java.time.Instant
+import java.time.temporal.ChronoUnit
+import kotlin.math.max
+
+@Service
+class WeaknessCalculationService(
+    private val chessAccountRepository: ChessAccountRepository,
+    private val positionOccurrenceRepository: PositionOccurrenceRepository,
+    private val engineAnalysisRepository: EngineAnalysisRepository,
+) {
+    /**
+     * Finds and ranks the recurring weaknesses for a specific user, platform, and color.
+     *
+     * @param acceptableThreshold moves the user played where average eval loss is below this
+     *   threshold are considered acceptable alternatives and returned in [WeaknessResponse.acceptableMoves].
+     *   Defaults to 0.5 pawns — roughly the boundary between an acceptable imprecision and a real inaccuracy.
+     */
+    @Transactional(readOnly = true)
+    fun getWeaknesses(
+        platform: String,
+        username: String,
+        playerColor: String,
+        minEvalLoss: Double,
+        acceptableThreshold: Double = 0.3,
+    ): List<WeaknessResponse> {
+        val account =
+            chessAccountRepository.findByPlatformAndUsernameIgnoreCase(platform, username)
+                ?: throw NoSuchElementException("Chess account not found")
+
+        // 1. Get all occurrences for this player and color.
+        val occurrences = positionOccurrenceRepository.findByChessAccountIdAndPlayerColor(account.id, playerColor.uppercase())
+
+        if (occurrences.isEmpty()) return emptyList()
+
+        // Group by position
+        val groupedByPosition = occurrences.groupBy { it.position.id }
+
+        val weaknesses = mutableListOf<WeaknessResponse>()
+
+        for ((positionId, posOccurrences) in groupedByPosition) {
+            val position = posOccurrences.first().position
+
+            // 2. Fetch the cached engine analysis for this position
+            val analysis = engineAnalysisRepository.findByPositionId(positionId) ?: continue
+
+            val baselineCp = analysis.baselineEvalCp
+            val baselineMate = analysis.baselineEvalMate
+
+            var unweightedTotalLoss = 0.0
+            var priorityScore = 0.0
+            var mistakeCount = 0
+            val mistakeUrls = mutableListOf<String>()
+
+            // Track total eval loss and play count per distinct move played
+            // Used to build the per-move breakdown and to identify acceptable alternatives
+            val moveStats = mutableMapOf<String, Pair<Double, Int>>()
+
+            for (occ in posOccurrences) {
+                // Find the engine evaluation for the move played
+                val moveEval = analysis.moveEvaluations.find { it.move == occ.movePlayed } ?: continue
+
+                // Calculate evaluation loss
+                val evalLoss =
+                    calculateEvalLoss(
+                        playerColor = playerColor,
+                        baselineCp = baselineCp,
+                        baselineMate = baselineMate,
+                        resultCp = moveEval.evalCp,
+                        resultMate = moveEval.evalMate,
+                    )
+
+                // Accumulate per-move stats for all moves (regardless of whether they qualify as mistakes)
+                val (prevLoss, prevCount) = moveStats.getOrDefault(occ.movePlayed, Pair(0.0, 0))
+                moveStats[occ.movePlayed] = Pair(prevLoss + evalLoss, prevCount + 1)
+
+                // Enforce Playable Safety Net [-1.0, 1.0]
+                // If a move drops evaluation but remains perfectly balanced, we don't punish theory.
+                val resultingPawnEval = convertToPawns(moveEval.evalCp, moveEval.evalMate)
+                val isPlayable = resultingPawnEval in -1.0..1.0
+
+                if (evalLoss >= minEvalLoss && !isPlayable) {
+                    unweightedTotalLoss += evalLoss
+
+                    val playedAt = occ.game.playedAt
+                    val weight =
+                        if (playedAt != null) {
+                            val daysOld = ChronoUnit.DAYS.between(playedAt, Instant.now())
+                            max(0.1, 1.0 - (daysOld / 365.0))
+                        } else {
+                            1.0
+                        }
+                    priorityScore += (evalLoss * weight)
+
+                    mistakeCount++
+
+                    val url =
+                        when {
+                            occ.game.platformGameId.startsWith("http") -> occ.game.platformGameId
+                            account.platform == "CHESS_COM" -> "https://www.chess.com/game/live/${occ.game.platformGameId}"
+                            account.platform == "LICHESS" -> "https://lichess.org/${occ.game.platformGameId}"
+                            else -> occ.game.platformGameId
+                        }
+                    mistakeUrls.add(url)
+                }
+            }
+
+            if (mistakeCount > 0) {
+                // All engine-evaluated candidate moves for this position whose evaluation loss
+                // compared to the best move is within acceptableThreshold (default 0.5 pawns).
+                // Useful for puzzle generation to know which player responses are acceptable solutions.
+                val acceptableMoves =
+                    analysis.moveEvaluations
+                        .map { moveEval ->
+                            val loss =
+                                calculateEvalLoss(
+                                    playerColor = playerColor,
+                                    baselineCp = baselineCp,
+                                    baselineMate = baselineMate,
+                                    resultCp = moveEval.evalCp,
+                                    resultMate = moveEval.evalMate,
+                                )
+                            AcceptableMove(move = moveEval.move, evalLoss = loss)
+                        }
+                        .filter { it.evalLoss < acceptableThreshold }
+                        .sortedBy { it.evalLoss }
+
+                // Per-move breakdown — only include moves that crossed the minEvalLoss bar (real mistakes).
+                // Sorted by timesPlayed descending, then averageLoss descending, capped at top 3.
+                val movesPlayed =
+                    moveStats.entries
+                        .map { (move, stats) ->
+                            MoveBreakdown(
+                                move = move,
+                                timesPlayed = stats.second,
+                                averageLoss = stats.first / stats.second,
+                            )
+                        }
+                        .filter { it.averageLoss >= minEvalLoss }
+                        .sortedWith(compareByDescending<MoveBreakdown> { it.timesPlayed }.thenByDescending { it.averageLoss })
+                        .take(3)
+
+                val mistakeRate = mistakeCount.toDouble() / posOccurrences.size
+                weaknesses.add(
+                    WeaknessResponse(
+                        positionId = positionId,
+                        fen = position.fen,
+                        timesReached = posOccurrences.size,
+                        mistakeCount = mistakeCount,
+                        averageLoss = unweightedTotalLoss / mistakeCount,
+                        priority = priorityScore * mistakeRate,
+                        bestMove = analysis.bestMove,
+                        acceptableMoves = acceptableMoves,
+                        movesPlayed = movesPlayed,
+                        gameUrls = mistakeUrls.distinct().take(10),
+                    ),
+                )
+            }
+        }
+
+        // Sort by Priority descending, excluding zero-priority positions
+        return weaknesses.filter { it.priority > 0 }.sortedByDescending { it.priority }
+    }
+
+    /**
+     * Calculates the evaluation loss between a baseline evaluation and a resulting evaluation.
+     * Always returns a positive value representing the loss from the perspective of the player who moved.
+     */
+    private fun calculateEvalLoss(
+        playerColor: String,
+        baselineCp: Int?,
+        baselineMate: Int?,
+        resultCp: Int?,
+        resultMate: Int?,
+    ): Double {
+        val baselinePawns = convertToPawns(baselineCp, baselineMate)
+        val resultPawns = convertToPawns(resultCp, resultMate)
+
+        return if (playerColor.equals("WHITE", ignoreCase = true)) {
+            max(0.0, baselinePawns - resultPawns)
+        } else {
+            max(0.0, resultPawns - baselinePawns)
+        }
+    }
+
+    /**
+     * Converts raw centipawn and mate scores into a standardized pawn decimal value.
+     */
+    private fun convertToPawns(
+        cp: Int?,
+        mate: Int?,
+    ): Double {
+        if (mate != null) {
+            // Mate scores are converted to a high pawn equivalent
+            val mateValue = 10.0
+            return if (mate > 0) mateValue else -mateValue
+        }
+        if (cp != null) {
+            return cp / 100.0
+        }
+        return 0.0
+    }
+}
