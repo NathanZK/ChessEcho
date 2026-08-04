@@ -16,4 +16,5 @@ data class WeaknessResponse(
     val acceptableMoves: List<AcceptableMove>,
     val movesPlayed: List<MoveBreakdown>,
     val gameUrls: List<String> = emptyList(),
+    val evalCp: Int? = null,
 )

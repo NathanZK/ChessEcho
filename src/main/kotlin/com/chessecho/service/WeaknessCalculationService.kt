@@ -165,6 +165,7 @@ class WeaknessCalculationService(
                         acceptableMoves = acceptableMoves,
                         movesPlayed = movesPlayed,
                         gameUrls = mistakeUrls.distinct().take(10),
+                        evalCp = analysis.baselineEvalCp,
                     ),
                 )
             }
