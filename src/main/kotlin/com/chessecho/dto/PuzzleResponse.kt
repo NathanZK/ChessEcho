@@ -15,4 +15,5 @@ data class PuzzleResponse(
     val timesReached: Int,
     val mistakeCount: Int,
     val mistakeRate: Double,
+    val evalCp: Int? = null,
 )

@@ -52,6 +52,7 @@ class PuzzleController(
                     timesReached = w.timesReached,
                     mistakeCount = w.mistakeCount,
                     mistakeRate = w.mistakeRate,
+                    evalCp = w.evalCp,
                 )
             }
 
