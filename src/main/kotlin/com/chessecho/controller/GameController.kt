@@ -2,6 +2,7 @@ package com.chessecho.controller
 
 import com.chessecho.dto.GameDto
 import com.chessecho.service.GameService
+import org.springdoc.core.annotations.ParameterObject
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import org.springframework.web.bind.annotation.GetMapping
@@ -18,7 +19,7 @@ class GameController(
     fun getGames(
         @RequestParam username: String,
         @RequestParam platform: String,
-        pageable: Pageable,
+        @ParameterObject pageable: Pageable,
     ): Page<GameDto> {
         return gameService.getGames(username, platform, pageable)
     }
