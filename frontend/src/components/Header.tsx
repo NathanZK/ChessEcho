@@ -10,13 +10,15 @@ interface HeaderProps {
   setActiveTab: (tab: TabType) => void;
   username?: string;
   weaknessCount?: number;
+  onDisconnect?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   activeTab,
   setActiveTab,
-  username = 'NathanZele',
-  weaknessCount = 4,
+  username,
+  weaknessCount = 0,
+  onDisconnect,
 }) => {
   return (
     <header className="bg-slate-900 border-b border-slate-800 sticky top-0 z-50 px-4 lg:px-8 py-3">
@@ -38,7 +40,7 @@ export const Header: React.FC<HeaderProps> = ({
         <nav className="flex items-center space-x-1 bg-slate-950 p-1.5 rounded-xl border border-slate-800">
           <button
             onClick={() => setActiveTab('puzzles')}
-            className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
+            className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 cursor-pointer ${
               activeTab === 'puzzles'
                 ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/40'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
@@ -50,7 +52,7 @@ export const Header: React.FC<HeaderProps> = ({
 
           <button
             onClick={() => setActiveTab('weaknesses')}
-            className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
+            className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 cursor-pointer ${
               activeTab === 'weaknesses'
                 ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/40'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
@@ -67,7 +69,7 @@ export const Header: React.FC<HeaderProps> = ({
 
           <button
             onClick={() => setActiveTab('import')}
-            className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 ${
+            className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 cursor-pointer ${
               activeTab === 'import'
                 ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/40'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
@@ -79,19 +81,36 @@ export const Header: React.FC<HeaderProps> = ({
         </nav>
 
         {/* User Profile Badge */}
-        <div className="flex items-center space-x-3 bg-slate-800/80 px-3.5 py-1.5 rounded-xl border border-slate-700/60">
-          <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-slate-300 border border-slate-600">
-            <User className="w-4 h-4" />
-          </div>
-          <div className="text-left hidden sm:block">
-            <div className="text-sm font-semibold text-slate-200">{username}</div>
-            <div className="text-[11px] text-emerald-400 font-medium flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-              Chess.com Connected
+        {username ? (
+          <div className="flex items-center space-x-3 bg-slate-800/80 px-3.5 py-1.5 rounded-xl border border-slate-700/60">
+            <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-slate-300 border border-slate-600">
+              <User className="w-4 h-4" />
             </div>
+            <div className="text-left hidden sm:block">
+              <div className="text-sm font-semibold text-slate-200">{username}</div>
+              <div className="text-[11px] text-emerald-400 font-medium flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                Chess.com Connected
+              </div>
+            </div>
+            {onDisconnect && (
+              <button
+                onClick={onDisconnect}
+                title="Disconnect Account"
+                className="ml-2 px-2.5 py-1 bg-slate-700 hover:bg-rose-600 text-slate-300 hover:text-white text-[11px] font-bold rounded-lg transition border border-slate-600 hover:border-rose-500 cursor-pointer"
+              >
+                Disconnect
+              </button>
+            )}
           </div>
-        </div>
+        ) : (
+          <div className="flex items-center space-x-2 bg-slate-950 px-3.5 py-1.5 rounded-xl border border-slate-800 text-xs font-semibold text-slate-400">
+            <User className="w-4 h-4 text-slate-500" />
+            <span>Not Connected</span>
+          </div>
+        )}
       </div>
     </header>
   );
 };
+
