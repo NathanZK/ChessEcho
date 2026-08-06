@@ -25,6 +25,7 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
 
   const [activeJob, setActiveJob] = useState<JobStatusResponse | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [pollingError, setPollingError] = useState<string | null>(null);
 
   // Restore saved activeJob from localStorage after client mount to prevent SSR hydration error
   React.useEffect(() => {
@@ -75,11 +76,14 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
       try {
         const statusUpdate = await pollJobStatus(activeJob.jobId);
         updateActiveJob(statusUpdate);
+        setPollingError(null);
         if (statusUpdate.status === 'COMPLETED' || statusUpdate.status === 'FAILED') {
           clearInterval(interval);
         }
       } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'Failed to poll job status';
         console.error('Error polling import job status:', err);
+        setPollingError(msg);
       }
     }, 2000);
 
@@ -409,8 +413,9 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                     <div className="flex items-center gap-2 pt-1">
                       <button
                         onClick={() => {
-                          if (onImportStarted && username) {
-                            onImportStarted(username);
+                          const effectiveUsername = connectedUsername || username;
+                          if (onImportStarted && effectiveUsername) {
+                            onImportStarted(effectiveUsername);
                           }
                           if (onNavigateTab) {
                             onNavigateTab('puzzles');
@@ -422,8 +427,9 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                       </button>
                       <button
                         onClick={() => {
-                          if (onImportStarted && username) {
-                            onImportStarted(username);
+                          const effectiveUsername = connectedUsername || username;
+                          if (onImportStarted && effectiveUsername) {
+                            onImportStarted(effectiveUsername);
                           }
                           if (onNavigateTab) {
                             onNavigateTab('weaknesses');
@@ -441,6 +447,12 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                 {activeJob.errorMessage && (
                   <div className="bg-rose-950/40 p-3 rounded-xl border border-rose-800/60 text-xs text-rose-300">
                     Error: {activeJob.errorMessage}
+                  </div>
+                )}
+
+                {pollingError && (
+                  <div className="bg-rose-950/40 p-3 rounded-xl border border-rose-800/60 text-xs text-rose-300">
+                    ⚠️ {pollingError}
                   </div>
                 )}
               </div>
