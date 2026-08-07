@@ -75,6 +75,46 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
             </div>
           </div>
 
+          {/* Historical Mistakes List Displayed Even on Correct Move */}
+          {puzzle.movesPlayed && puzzle.movesPlayed.length > 0 && (
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3.5 space-y-2.5 text-xs text-amber-300">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2 font-bold text-amber-200">
+                    <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span>Past Habit Breakdown</span>
+                  </div>
+                  <span className="text-[10px] font-semibold bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-full border border-amber-500/20">
+            {puzzle.mistakeCount} total errors
+          </span>
+                </div>
+
+                <p className="text-amber-300/80 leading-relaxed">
+                  You used to fall into this trap by playing these sub-optimal moves:
+                </p>
+
+                <div className="grid grid-cols-1 gap-1.5 pt-0.5">
+                  {puzzle.movesPlayed.map((mistake, idx) => (
+                      <div
+                          key={idx}
+                          className="flex items-center justify-between bg-slate-950/50 hover:bg-slate-950/80 px-2.5 py-1.5 rounded-lg border border-amber-500/20 transition"
+                      >
+                        <div className="flex items-center space-x-2 font-mono">
+                <span className="font-bold text-rose-400 bg-rose-500/10 px-1.5 py-0.5 rounded border border-rose-500/20">
+                  {mistake.move}
+                </span>
+                          <span className="text-slate-400 text-[11px]">
+                  ({mistake.timesPlayed} {mistake.timesPlayed === 1 ? 'game' : 'games'})
+                </span>
+                        </div>
+                        <div className="text-amber-400/90 font-mono text-[11px] font-semibold">
+                          -{mistake.averageLoss.toFixed(2)} pawns
+                        </div>
+                      </div>
+                  ))}
+                </div>
+              </div>
+          )}
+
           <button
             onClick={onNextPuzzle}
             className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition shadow-lg shadow-emerald-900/50 flex items-center justify-center space-x-2 group"
@@ -188,7 +228,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
           Your Historical Games in This Position
         </div>
         <div className="space-y-1.5 max-h-28 overflow-y-auto pr-1">
-          {puzzle.gameUrls.slice(0, 4).map((url, idx) => (
+          {(puzzle.gameUrls || []).slice(0, 4).map((url, idx) => (
             <a
               key={idx}
               href={url}

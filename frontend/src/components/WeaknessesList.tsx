@@ -143,7 +143,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({ onSelectPractice
             {/* Action Buttons */}
             <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between">
               <a
-                href={item.gameUrls[0]}
+                href={item.gameUrls?.[0]}
                 target="_blank"
                 rel="noreferrer"
                 className="text-xs font-semibold text-slate-400 hover:text-emerald-400 flex items-center gap-1 transition"

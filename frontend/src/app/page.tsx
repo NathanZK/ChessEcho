@@ -84,6 +84,12 @@ export default function Home() {
   const [currentPuzzleIndex, setCurrentPuzzleIndex] = useState<number>(0);
   const [activePuzzle, setActivePuzzle] = useState<Puzzle | null>(null);
 
+  // Puzzle filter settings
+  const [minEvalLoss, setMinEvalLoss] = useState<number>(0.8);
+  const [acceptableThreshold, setAcceptableThreshold] = useState<number>(0.3);
+  const [minMistakeCount, setMinMistakeCount] = useState<number>(3);
+  const [showPuzzleSettings, setShowPuzzleSettings] = useState<boolean>(false);
+
   // History stacks for EvalBar and feedback state matching board undo/redo index
   const [evalHistory, setEvalHistory] = useState<number[]>([35]);
   const [feedbackHistory, setFeedbackHistory] = useState<unknown[]>([{ status: 'IDLE' }]);
@@ -109,8 +115,26 @@ export default function Home() {
     }
     async function loadData() {
       try {
-        const whiteData = await fetchPuzzles(activeUsername!, 'chessdotcom', 'white', 10, 0);
-        const blackData = await fetchPuzzles(activeUsername!, 'chessdotcom', 'black', 10, 0);
+        const whiteData = await fetchPuzzles(
+          activeUsername!,
+          'chessdotcom',
+          'white',
+          minEvalLoss,
+          acceptableThreshold,
+          minMistakeCount,
+          10,
+          0,
+        );
+        const blackData = await fetchPuzzles(
+          activeUsername!,
+          'chessdotcom',
+          'black',
+          minEvalLoss,
+          acceptableThreshold,
+          minMistakeCount,
+          10,
+          0,
+        );
         const data = [...whiteData, ...blackData];
 
         if (data && data.length > 0) {
@@ -286,12 +310,101 @@ export default function Home() {
       />
 
       {/* Main Content Area */}
-      <main className={`flex-1 flex flex-col ${activeTab === 'import' ? 'justify-center overflow-hidden py-2' : 'justify-start overflow-y-auto py-6'}`}>
+      <main className={`flex-1 flex flex-col ${activeTab === 'import' ? 'justify-center overflow-hidden py-2' : 'justify-start overflow-y-auto py-4'}`}>
         {/* TAB 1: PRACTICE PUZZLES */}
 
         {activeTab === 'puzzles' && (
-          <div className="max-w-[1500px] w-full mx-auto px-4 lg:px-8 flex-1 flex flex-col justify-center">
-            {!activePuzzle ? (
+          <div className="max-w-[1500px] w-full mx-auto px-4 lg:px-8 flex-1 flex flex-col">
+            {/* Puzzle Settings Toggle */}
+            <div className="flex justify-end mb-2">
+              <button
+                onClick={() => setShowPuzzleSettings((v) => !v)}
+                className="text-[11px] font-bold text-slate-400 hover:text-emerald-400 transition"
+              >
+                {showPuzzleSettings ? 'Hide Puzzle Settings' : 'Puzzle Settings'}
+              </button>
+            </div>
+
+            {/* Puzzle Settings */}
+            {showPuzzleSettings && (
+              <div className="mb-2 flex flex-wrap items-center gap-2 bg-slate-900/60 p-2 rounded-xl border border-slate-800">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Puzzle Settings</span>
+                <label className="flex items-center gap-1 text-[11px] text-slate-300">
+                  <span>Min Eval Loss</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={minEvalLoss}
+                    onChange={(e) => setMinEvalLoss(Number(e.target.value))}
+                    className="w-16 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-emerald-400 font-mono text-[11px]"
+                  />
+                </label>
+                <label className="flex items-center gap-1 text-[11px] text-slate-300">
+                  <span>Acceptable Threshold</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={acceptableThreshold}
+                    onChange={(e) => setAcceptableThreshold(Number(e.target.value))}
+                    className="w-16 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-emerald-400 font-mono text-[11px]"
+                  />
+                </label>
+                <label className="flex items-center gap-1 text-[11px] text-slate-300">
+                  <span>Min Mistakes</span>
+                  <input
+                    type="number"
+                    step="1"
+                    value={minMistakeCount}
+                    onChange={(e) => setMinMistakeCount(Number(e.target.value))}
+                    className="w-16 bg-slate-950 border border-slate-800 rounded px-1.5 py-0.5 text-emerald-400 font-mono text-[11px]"
+                  />
+                </label>
+                <button
+                  onClick={() => {
+                    if (!activeUsername) return;
+                    setPuzzlesList([]);
+                    setActivePuzzle(null);
+                    setFeedback({ status: 'IDLE' });
+                    setMoveHistory([]);
+                    setEvalHistory([35]);
+                    setFeedbackHistory([{ status: 'IDLE' }]);
+                    setHistoryIndex(0);
+                    setCurrentEvalCp(35);
+                    setIsEvalUnknown(false);
+                    setHintSquare(undefined);
+                    async function reload() {
+                      try {
+                        const whiteData = await fetchPuzzles(activeUsername!, 'chessdotcom', 'white', minEvalLoss, acceptableThreshold, minMistakeCount, 10, 0);
+                        const blackData = await fetchPuzzles(activeUsername!, 'chessdotcom', 'black', minEvalLoss, acceptableThreshold, minMistakeCount, 10, 0);
+                        const data = [...whiteData, ...blackData];
+                        if (data && data.length > 0) {
+                          setPuzzlesList(data);
+                          setActivePuzzle(data[0]);
+                          setCurrentEvalCp(data[0].evalCp ?? 35);
+                          setEvalHistory([data[0].evalCp ?? 35]);
+                          setFeedbackHistory([{ status: 'IDLE' }]);
+                          setHistoryIndex(0);
+                        } else {
+                          setPuzzlesList([]);
+                          setActivePuzzle(null);
+                        }
+                      } catch (err) {
+                        console.error('Failed to reload puzzles:', err);
+                        setPuzzlesList([]);
+                        setActivePuzzle(null);
+                      }
+                    }
+                    reload();
+                  }}
+                  className="px-2 py-0.5 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold rounded-md transition"
+                >
+                  Apply
+                </button>
+              </div>
+            )}
+
+            <div className="flex-1 flex flex-col justify-center">
+              {!activePuzzle ? (
 
               <div className="py-20 text-center space-y-4 max-w-lg mx-auto bg-slate-900/60 p-8 rounded-2xl border border-slate-800 shadow-xl">
                 <div className="w-14 h-14 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-center mx-auto text-emerald-400">
@@ -349,6 +462,7 @@ export default function Home() {
                 </div>
               </div>
             )}
+          </div>
           </div>
         )}
 

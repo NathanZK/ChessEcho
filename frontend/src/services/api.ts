@@ -34,12 +34,15 @@ export async function fetchPuzzles(
   username: string = 'Hikaru',
   platform: string = 'chessdotcom',
   playerColor: string = 'black',
+  minEvalLoss: number = 0.8,
+  acceptableThreshold: number = 0.3,
+  minMistakeCount: number = 3,
   limit: number = 5,
   page: number = 0
 ): Promise<Puzzle[]> {
   if (!username) return [];
   try {
-    const url = `${API_BASE_URL}/puzzles?platform=${encodeURIComponent(platform)}&username=${encodeURIComponent(username)}&playerColor=${playerColor}&limit=${limit}&page=${page}`;
+    const url = `${API_BASE_URL}/puzzles?platform=${encodeURIComponent(platform)}&username=${encodeURIComponent(username)}&playerColor=${playerColor}&minEvalLoss=${minEvalLoss}&acceptableThreshold=${acceptableThreshold}&minMistakeCount=${minMistakeCount}&limit=${limit}&page=${page}`;
     const response = await fetch(url);
 
     if (!response.ok) {
