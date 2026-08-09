@@ -26,17 +26,24 @@ class GameImportController(
     private val gameImportService: GameImportService,
     private val asyncJobRepository: AsyncJobRepository,
 ) {
+    /**
+     * Initiates an asynchronous game import job for the requested player and platform.
+     * Returns 202 Accepted with the created job ID.
+     */
     @PostMapping("/games/import")
     fun importGames(
         @Valid @RequestBody request: ImportGamesRequest,
     ): ResponseEntity<ImportJobResponse> {
         val job = gameImportService.createImportJob(request)
-        gameImportService.executeImportJob(job, request)
+        gameImportService.executeImportJob(job.id, request)
         return ResponseEntity
             .status(HttpStatus.ACCEPTED)
             .body(ImportJobResponse(jobId = job.id, status = job.status))
     }
 
+    /**
+     * Retrieves current status and metrics for an import job by ID.
+     */
     @GetMapping("/jobs/{id}")
     fun getJobStatus(
         @PathVariable id: UUID,
