@@ -2,6 +2,7 @@ package com.chessecho.service
 
 import com.chessecho.repository.PositionRepository
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import java.util.UUID
 
@@ -9,11 +10,13 @@ import java.util.UUID
 class EngineAnalysisOrchestrator(
     private val positionRepository: PositionRepository,
     private val engineAnalysisService: EngineAnalysisService,
+    @Value("\${chess.analysis.min-occurrences:5}")
+    private val minOccurrences: Long = DEFAULT_MIN_OCCURRENCES,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
     companion object {
-        private const val MIN_OCCURRENCES = 5L
+        const val DEFAULT_MIN_OCCURRENCES = 5L
     }
 
     /**
@@ -25,19 +28,19 @@ class EngineAnalysisOrchestrator(
     fun analyzeAffectedPositions(affectedPositionIds: Set<UUID>) {
         if (affectedPositionIds.isEmpty()) return
 
-        val qualifyingPositionIds = positionRepository.findQualifyingPositionIds(affectedPositionIds, MIN_OCCURRENCES)
-        if (qualifyingPositionIds.isEmpty()) {
-            log.info("No affected positions met the minimum occurrence threshold of $MIN_OCCURRENCES")
+        val qualifyingPositions = positionRepository.findQualifyingPositions(affectedPositionIds, minOccurrences)
+        if (qualifyingPositions.isEmpty()) {
+            log.info("No affected positions met the minimum occurrence threshold of $minOccurrences")
             return
         }
 
-        log.info("Found ${qualifyingPositionIds.size} qualifying positions for engine analysis")
+        log.info("Found ${qualifyingPositions.size} qualifying positions for engine analysis")
 
-        for (positionId in qualifyingPositionIds) {
+        for (position in qualifyingPositions) {
             try {
-                engineAnalysisService.analyzePosition(positionId)
+                engineAnalysisService.analyzePosition(position)
             } catch (ex: Exception) {
-                log.error("Failed to perform engine analysis for position $positionId", ex)
+                log.error("Failed to perform engine analysis for position ${position.id}", ex)
             }
         }
     }

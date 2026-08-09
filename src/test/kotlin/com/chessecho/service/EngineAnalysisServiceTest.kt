@@ -5,7 +5,6 @@ import com.chessecho.domain.MoveEvaluation
 import com.chessecho.domain.Position
 import com.chessecho.repository.EngineAnalysisRepository
 import com.chessecho.repository.PositionOccurrenceRepository
-import com.chessecho.repository.PositionRepository
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
@@ -15,13 +14,11 @@ import org.mockito.kotlin.never
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
-import java.util.Optional
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 
 class EngineAnalysisServiceTest {
-    private lateinit var positionRepository: PositionRepository
     private lateinit var positionOccurrenceRepository: PositionOccurrenceRepository
     private lateinit var engineAnalysisRepository: EngineAnalysisRepository
     private lateinit var stockfishService: StockfishService
@@ -29,13 +26,11 @@ class EngineAnalysisServiceTest {
 
     @BeforeEach
     fun setup() {
-        positionRepository = mock()
         positionOccurrenceRepository = mock()
         engineAnalysisRepository = mock()
         stockfishService = mock()
         engineAnalysisService =
             EngineAnalysisService(
-                positionRepository,
                 positionOccurrenceRepository,
                 engineAnalysisRepository,
                 stockfishService,
@@ -43,14 +38,13 @@ class EngineAnalysisServiceTest {
     }
 
     @Test
-    fun `analyzePosition performs full analysis for new position`() {
+    fun `analyzePosition performs full analysis for new position using managed Position`() {
         val positionId = UUID.randomUUID()
         val fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
         val position = Position(id = positionId, hash = "hash1", fen = fen)
 
-        whenever(positionRepository.findById(positionId)).thenReturn(Optional.of(position))
         whenever(positionOccurrenceRepository.findDistinctMovesByPositionId(positionId)).thenReturn(listOf("e4", "Nf3"))
-        whenever(engineAnalysisRepository.findByPositionId(positionId)).thenReturn(null)
+        whenever(engineAnalysisRepository.findByPositionIdWithMoveEvaluations(positionId)).thenReturn(null)
 
         val analysisMap =
             mapOf(
@@ -60,7 +54,7 @@ class EngineAnalysisServiceTest {
             )
         whenever(stockfishService.analyze(fen, 16, listOf("e4", "Nf3"))).thenReturn(analysisMap)
 
-        engineAnalysisService.analyzePosition(positionId)
+        engineAnalysisService.analyzePosition(position)
 
         val captor = argumentCaptor<EngineAnalysis>()
         verify(engineAnalysisRepository, times(1)).save(captor.capture())
@@ -72,7 +66,39 @@ class EngineAnalysisServiceTest {
     }
 
     @Test
-    fun `analyzePosition performs incremental analysis for missing moves on existing position`() {
+    fun `analyzePosition persists historical move even if evalLossFromBest exceeds 1 5 pawns`() {
+        val positionId = UUID.randomUUID()
+        val fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
+        val position = Position(id = positionId, hash = "hash1", fen = fen)
+
+        whenever(positionOccurrenceRepository.findDistinctMovesByPositionId(positionId)).thenReturn(listOf("e4", "a3"))
+        whenever(engineAnalysisRepository.findByPositionIdWithMoveEvaluations(positionId)).thenReturn(null)
+
+        // e4: evalLoss = 0.0 (40 - 40 / 100), a3: severe blunder evalLoss = 2.0 (40 - (-160) / 100) > 1.5 pawns
+        val analysisMap =
+            mapOf(
+                "baseline" to PositionAnalysis(bestMove = "e4", score = EvalScore(cp = 40, mate = null)),
+                "e4" to PositionAnalysis(bestMove = "e5", score = EvalScore(cp = 40, mate = null)),
+                "a3" to PositionAnalysis(bestMove = "d5", score = EvalScore(cp = -160, mate = null)),
+            )
+        whenever(stockfishService.analyze(fen, 16, listOf("e4", "a3"))).thenReturn(analysisMap)
+
+        engineAnalysisService.analyzePosition(position)
+
+        val captor = argumentCaptor<EngineAnalysis>()
+        verify(engineAnalysisRepository, times(1)).save(captor.capture())
+
+        val saved = captor.firstValue
+        // Both e4 and severe blunder a3 must be persisted for historical weakness tracking
+        assertEquals(2, saved.moveEvaluations.size)
+        assertNotNull(saved.moveEvaluations.find { it.move == "e4" })
+        val blunderEval = saved.moveEvaluations.find { it.move == "a3" }
+        assertNotNull(blunderEval)
+        assertEquals(2.00, blunderEval.evalLossFromBest)
+    }
+
+    @Test
+    fun `analyzePosition performs incremental analysis for missing moves on existing position reusing baseline`() {
         val positionId = UUID.randomUUID()
         val fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
         val position = Position(id = positionId, hash = "hash1", fen = fen)
@@ -89,10 +115,8 @@ class EngineAnalysisServiceTest {
             MoveEvaluation(engineAnalysis = existingAnalysis, move = "e4", evalCp = 40, evalLossFromBest = 0.0),
         )
 
-        whenever(positionRepository.findById(positionId)).thenReturn(Optional.of(position))
         whenever(positionOccurrenceRepository.findDistinctMovesByPositionId(positionId)).thenReturn(listOf("e4", "c4"))
-        whenever(engineAnalysisRepository.findByPositionId(positionId)).thenReturn(existingAnalysis)
-        whenever(engineAnalysisRepository.findEvaluatedMovesByPositionId(positionId)).thenReturn(listOf("e4"))
+        whenever(engineAnalysisRepository.findByPositionIdWithMoveEvaluations(positionId)).thenReturn(existingAnalysis)
 
         val missingAnalysisMap =
             mapOf(
@@ -100,9 +124,9 @@ class EngineAnalysisServiceTest {
             )
         whenever(stockfishService.analyze(fen, 16, listOf("c4"))).thenReturn(missingAnalysisMap)
 
-        engineAnalysisService.analyzePosition(positionId)
+        engineAnalysisService.analyzePosition(position)
 
-        // Only missing move "c4" should be sent to Stockfish
+        // Only missing move "c4" should be sent to Stockfish, baseline is NOT recomputed
         verify(stockfishService, times(1)).analyze(fen, 16, listOf("c4"))
 
         val captor = argumentCaptor<EngineAnalysis>()
@@ -128,13 +152,14 @@ class EngineAnalysisServiceTest {
                 bestMove = "e4",
                 bestMoveEvalCp = 40,
             )
+        existingAnalysis.moveEvaluations.add(
+            MoveEvaluation(engineAnalysis = existingAnalysis, move = "e4", evalCp = 40, evalLossFromBest = 0.0),
+        )
 
-        whenever(positionRepository.findById(positionId)).thenReturn(Optional.of(position))
         whenever(positionOccurrenceRepository.findDistinctMovesByPositionId(positionId)).thenReturn(listOf("e4"))
-        whenever(engineAnalysisRepository.findByPositionId(positionId)).thenReturn(existingAnalysis)
-        whenever(engineAnalysisRepository.findEvaluatedMovesByPositionId(positionId)).thenReturn(listOf("e4"))
+        whenever(engineAnalysisRepository.findByPositionIdWithMoveEvaluations(positionId)).thenReturn(existingAnalysis)
 
-        engineAnalysisService.analyzePosition(positionId)
+        engineAnalysisService.analyzePosition(position)
 
         verify(stockfishService, never()).analyze(any(), any(), any())
         verify(engineAnalysisRepository, never()).save(any())
