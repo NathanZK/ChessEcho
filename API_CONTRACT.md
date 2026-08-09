@@ -159,13 +159,12 @@ Retrieves calculated chess weaknesses based on position evaluations and recurrin
 - `platform` (string, required): Platform name.
 - `username` (string, required): Player username.
 - `playerColor` (string, required): `white` or `black`.
-- `minEvalLoss` (double, optional, default: `0.8`): Minimum evaluation loss threshold.
-- `acceptableThreshold` (double, optional, default: `0.3`): Threshold for acceptable alternative moves.
+- `mistakeThreshold` (double, optional, default: `0.8`): Evaluation loss threshold for defining a mistake.
 - `minMistakeCount` (int, optional, default: `3`): Minimum number of mistakes required to qualify as a weakness.
 
 ### Curl Example
 ```bash
-curl "http://localhost:8080/api/positions/weaknesses?platform=chessdotcom&username=magnuscarlsen&playerColor=white"
+curl "http://localhost:8080/api/positions/weaknesses?platform=chessdotcom&username=magnuscarlsen&playerColor=white&mistakeThreshold=0.8"
 ```
 
 ### Responses
@@ -213,15 +212,14 @@ Retrieves position puzzles created from detected player weaknesses for interacti
 - `platform` (string, required): Platform name.
 - `username` (string, required): Player username.
 - `playerColor` (string, required): `WHITE` or `BLACK`.
-- `minEvalLoss` (double, optional, default: `0.8`): Minimum evaluation loss threshold.
-- `acceptableThreshold` (double, optional, default: `0.3`): Threshold for acceptable alternative moves.
+- `mistakeThreshold` (double, optional, default: `0.8`): Evaluation loss threshold for defining a mistake.
 - `minMistakeCount` (int, optional, default: `3`): Minimum mistake count threshold.
 - `limit` (int, optional, default: `5`): Max number of puzzles to return per page.
 - `page` (int, optional, default: `0`): Page index.
 
 ### Curl Example
 ```bash
-curl "http://localhost:8080/api/puzzles?platform=chessdotcom&username=magnuscarlsen&playerColor=white&limit=5&page=0"
+curl "http://localhost:8080/api/puzzles?platform=chessdotcom&username=magnuscarlsen&playerColor=white&mistakeThreshold=0.8&limit=5&page=0"
 ```
 
 ### Responses

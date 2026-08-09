@@ -35,7 +35,7 @@ class WeaknessCalculationService(
      *   evaluating mistakes (`evalLossFromBest >= mistakeThreshold`), and computing `mistakeCount` and `averageLoss`
      *   are performed via a database-level JPQL aggregation query. Zero Stockfish calls are executed.
      * - Batch Fetching (0 N+1 Queries): Resolves engine analyses and position occurrences in batch queries
-     *   rather than per-position loops. Total query count per endpoint call is capped at 3 queries total.
+     *   rather than per-position loops. Total query count per endpoint call is capped at 4 queries total.
      * - Weakness Metrics:
      *   - `mistakeCount`: Number of occurrences where user's move had `evalLossFromBest >= mistakeThreshold`.
      *   - `mistakeRate`: `(mistakeCount / timesReached) * 100.0` percentage.
@@ -73,7 +73,7 @@ class WeaknessCalculationService(
 
         val positionIds = aggregations.map { it.positionId }.toSet()
 
-        // 2. Batch fetch position occurrences for only the qualifying positions (Query 2)
+        // 2. Batch fetch position occurrences for only the qualifying positions
         val occurrences =
             positionOccurrenceRepository.findByChessAccountIdAndPlayerColorAndPositionIdIn(
                 chessAccountId = account.id,
@@ -82,7 +82,7 @@ class WeaknessCalculationService(
             )
         val groupedOccurrences = occurrences.groupBy { it.position.id }
 
-        // 3. Batch fetch engine analyses with move evaluations for only qualifying positions (Query 3)
+        // 3. Batch fetch engine analyses with move evaluations for only qualifying positions
         val engineAnalyses = engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(positionIds)
         val groupedAnalyses = engineAnalyses.associateBy { it.position.id }
 
