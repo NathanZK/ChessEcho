@@ -98,8 +98,8 @@ class PuzzleControllerIntegrationTest {
                     position = position,
                     depth = 16,
                     baselineEvalCp = 50,
-                    baselineEvalMate = null,
                     bestMove = "e4",
+                    bestMoveEvalCp = 50,
                     analyzedAt = Instant.now(),
                 ),
             )

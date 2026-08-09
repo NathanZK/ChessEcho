@@ -28,10 +28,18 @@ class EngineAnalysis(
     val depth: Int,
     @Column(name = "baseline_eval_cp")
     val baselineEvalCp: Int?,
-    @Column(name = "baseline_eval_mate")
-    val baselineEvalMate: Int?,
     @Column(name = "best_move")
     val bestMove: String?,
+    /**
+     * Stockfish evaluation of the position after the engine's best move,
+     * from the perspective of the player whose move is being evaluated.
+     * This serves as the reference evaluation for calculating eval_loss_from_best
+     * on each historical move.
+     * Example: If best_move_eval_cp = 20 (+0.20 pawns) and a historical move
+     * has eval_cp = -80 (-0.80 pawns), the loss is 1.00 pawn.
+     */
+    @Column(name = "best_move_eval_cp")
+    val bestMoveEvalCp: Int?,
     @OneToMany(mappedBy = "engineAnalysis", cascade = [CascadeType.ALL], orphanRemoval = true)
     val moveEvaluations: MutableList<MoveEvaluation> = mutableListOf(),
     @Column(name = "analyzed_at", nullable = false)

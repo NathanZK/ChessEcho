@@ -55,7 +55,7 @@ class WeaknessCalculationService(
             val analysis = engineAnalysisRepository.findByPositionId(positionId) ?: continue
 
             val baselineCp = analysis.baselineEvalCp
-            val baselineMate = analysis.baselineEvalMate
+            val bestMoveEvalCp = analysis.bestMoveEvalCp
 
             var unweightedTotalLoss = 0.0
             var priorityScore = 0.0
@@ -74,10 +74,8 @@ class WeaknessCalculationService(
                 val evalLoss =
                     calculateEvalLoss(
                         playerColor = playerColor,
-                        baselineCp = baselineCp,
-                        baselineMate = baselineMate,
+                        bestMoveEvalCp = bestMoveEvalCp,
                         resultCp = moveEval.evalCp,
-                        resultMate = null,
                     )
 
                 // Accumulate per-move stats for all moves (regardless of whether they qualify as mistakes)
@@ -86,7 +84,7 @@ class WeaknessCalculationService(
 
                 // Enforce Playable Safety Net [-1.0, 1.0]
                 // If a move drops evaluation but remains perfectly balanced, we don't punish theory.
-                val resultingPawnEval = convertToPawns(moveEval.evalCp, null)
+                val resultingPawnEval = moveEval.evalCp?.div(100.0) ?: 0.0
                 val isPlayable = resultingPawnEval in -1.0..1.0
 
                 if (evalLoss >= minEvalLoss && !isPlayable) {
@@ -125,10 +123,8 @@ class WeaknessCalculationService(
                             val loss =
                                 calculateEvalLoss(
                                     playerColor = playerColor,
-                                    baselineCp = baselineCp,
-                                    baselineMate = baselineMate,
+                                    bestMoveEvalCp = bestMoveEvalCp,
                                     resultCp = moveEval.evalCp,
-                                    resultMate = null,
                                 )
                             AcceptableMove(move = moveEval.move, evalLoss = loss)
                         }
@@ -176,41 +172,29 @@ class WeaknessCalculationService(
     }
 
     /**
-     * Calculates the evaluation loss between a baseline evaluation and a resulting evaluation.
+     * Calculates the evaluation loss between the best move evaluation and a resulting evaluation.
      * Always returns a positive value representing the loss from the perspective of the player who moved.
+     *
+     * eval_loss_from_best = how many pawns worse this historical move is compared with the engine's best move,
+     * from the perspective of the player making the move.
+     *
+     * Example: If best_move_eval_cp = 20 (+0.20 pawns) and a historical move has eval_cp = -80 (-0.80 pawns),
+     * the loss is 1.00 pawn.
      */
     private fun calculateEvalLoss(
         playerColor: String,
-        baselineCp: Int?,
-        baselineMate: Int?,
+        bestMoveEvalCp: Int?,
         resultCp: Int?,
-        resultMate: Int?,
     ): Double {
-        val baselinePawns = convertToPawns(baselineCp, baselineMate)
-        val resultPawns = convertToPawns(resultCp, resultMate)
+        if (bestMoveEvalCp == null || resultCp == null) return 0.0
+
+        val bestMovePawns = bestMoveEvalCp / 100.0
+        val resultPawns = resultCp / 100.0
 
         return if (playerColor.equals("WHITE", ignoreCase = true)) {
-            max(0.0, baselinePawns - resultPawns)
+            max(0.0, bestMovePawns - resultPawns)
         } else {
-            max(0.0, resultPawns - baselinePawns)
+            max(0.0, resultPawns - bestMovePawns)
         }
-    }
-
-    /**
-     * Converts raw centipawn and mate scores into a standardized pawn decimal value.
-     */
-    private fun convertToPawns(
-        cp: Int?,
-        mate: Int?,
-    ): Double {
-        if (mate != null) {
-            // Mate scores are converted to a high pawn equivalent
-            val mateValue = 10.0
-            return if (mate > 0) mateValue else -mateValue
-        }
-        if (cp != null) {
-            return cp / 100.0
-        }
-        return 0.0
     }
 }

@@ -75,13 +75,13 @@ CREATE INDEX idx_position_occurrence_account_color_position ON position_occurren
 
 CREATE TABLE engine_analysis
 (
-    id                 UUID PRIMARY KEY,
-    position_id        UUID        NOT NULL REFERENCES position (id) ON DELETE CASCADE,
-    depth              INT         NOT NULL,
-    baseline_eval_cp   INT,
-    baseline_eval_mate INT,
-    best_move          VARCHAR(10),
-    analyzed_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    id               UUID PRIMARY KEY,
+    position_id      UUID        NOT NULL REFERENCES position (id) ON DELETE CASCADE,
+    depth            INT         NOT NULL,
+    baseline_eval_cp INT,
+    best_move        VARCHAR(10),
+    best_move_eval_cp INT,
+    analyzed_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
     UNIQUE (position_id)
 );
 

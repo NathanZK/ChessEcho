@@ -97,8 +97,8 @@ class WeaknessCalculationServiceTest {
                 position = position,
                 depth = 16,
                 baselineEvalCp = 40,
-                baselineEvalMate = null,
                 bestMove = "e2e4",
+                bestMoveEvalCp = 40,
             )
         // +0.45
         analysis.moveEvaluations.add(
@@ -162,8 +162,8 @@ class WeaknessCalculationServiceTest {
                 position = position,
                 depth = 16,
                 baselineEvalCp = 40,
-                baselineEvalMate = null,
                 bestMove = "e2e4",
+                bestMoveEvalCp = 40,
             )
         // -1.50 -> 1.9 pawn loss
         analysis.moveEvaluations.add(
@@ -208,8 +208,8 @@ class WeaknessCalculationServiceTest {
                 position = position,
                 depth = 16,
                 baselineEvalCp = 40,
-                baselineEvalMate = null,
                 bestMove = "e2e4",
+                bestMoveEvalCp = 40,
             )
         // -1.50 -> 1.9 pawn loss
         analysis.moveEvaluations.add(
@@ -251,8 +251,8 @@ class WeaknessCalculationServiceTest {
                 position = position,
                 depth = 16,
                 baselineEvalCp = 100,
-                baselineEvalMate = null,
                 bestMove = "e4",
+                bestMoveEvalCp = 100,
             )
         // e4 (loss 0.0)
         analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "e4", evalCp = 100, evalLossFromBest = null))
@@ -322,7 +322,7 @@ class WeaknessCalculationServiceTest {
         `when`(positionOccurrenceRepository.findByChessAccountIdAndPlayerColor(account.id, "WHITE"))
             .thenReturn(listOf(occ1, occ2))
 
-        val analysis = EngineAnalysis(position = position, depth = 16, baselineEvalCp = 100, baselineEvalMate = null, bestMove = "e4")
+        val analysis = EngineAnalysis(position = position, depth = 16, baselineEvalCp = 100, bestMove = "e4", bestMoveEvalCp = 100)
         analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "Qh5", evalCp = -200, evalLossFromBest = null))
 
         `when`(engineAnalysisRepository.findByPositionId(position.id)).thenReturn(analysis)
