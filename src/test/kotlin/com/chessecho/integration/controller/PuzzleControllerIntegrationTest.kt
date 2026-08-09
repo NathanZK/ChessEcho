@@ -20,6 +20,7 @@ import com.chessecho.service.StockfishService
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.mockito.Mockito.verifyNoInteractions
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.mock.mockito.MockBean
@@ -31,6 +32,7 @@ import org.springframework.test.context.ActiveProfiles
 import java.time.Instant
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
@@ -62,10 +64,12 @@ class PuzzleControllerIntegrationTest {
     @MockBean
     private lateinit var stockfishService: StockfishService
 
+    private lateinit var account: ChessAccount
+
     @BeforeEach
     fun setup() {
         val user = appUserRepository.save(AppUser(email = "puzzle_integration@test.com"))
-        val account = chessAccountRepository.save(ChessAccount(user = user, platform = "CHESS_COM", username = "puzzleuser"))
+        account = chessAccountRepository.save(ChessAccount(user = user, platform = "CHESS_COM", username = "puzzleuser"))
 
         val game =
             gameRepository.save(
@@ -78,26 +82,24 @@ class PuzzleControllerIntegrationTest {
                 ),
             )
 
-        val position =
+        // Position 1: Big mistake (evalLoss = 2.0). 3 mistakes of Qh5, 2 good moves of e4
+        val position1 =
             positionRepository.save(
-                Position(hash = "puzzlehash", fen = "rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq e6 0 2"),
+                Position(hash = "puzzlehash1", fen = "rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq e6 0 2"),
             )
-
         userPositionStatsRepository.save(
             UserPositionStats(
                 chessAccount = account,
-                position = position,
+                position = position1,
                 playerColor = "WHITE",
                 timesReached = 5,
             ),
         )
-
-        // Create 5 occurrences: 3 mistakes (Qh5), 2 good (e4)
         for (i in 1..5) {
             positionOccurrenceRepository.save(
                 PositionOccurrence(
                     game = game,
-                    position = position,
+                    position = position1,
                     chessAccount = account,
                     plyNumber = 2,
                     movePlayed = if (i <= 3) "Qh5" else "e4",
@@ -105,11 +107,10 @@ class PuzzleControllerIntegrationTest {
                 ),
             )
         }
-
-        val analysis =
+        val analysis1 =
             engineAnalysisRepository.save(
                 EngineAnalysis(
-                    position = position,
+                    position = position1,
                     depth = 16,
                     baselineEvalCp = 50,
                     bestMove = "e4",
@@ -117,13 +118,49 @@ class PuzzleControllerIntegrationTest {
                     analyzedAt = Instant.now(),
                 ),
             )
+        analysis1.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis1, move = "e4", evalCp = 45, evalLossFromBest = 0.05))
+        analysis1.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis1, move = "Qh5", evalCp = -150, evalLossFromBest = 2.0))
+        engineAnalysisRepository.save(analysis1)
 
-        val evalGood = MoveEvaluation(engineAnalysis = analysis, move = "e4", evalCp = 45, evalLossFromBest = 0.05)
-        val evalBad = MoveEvaluation(engineAnalysis = analysis, move = "Qh5", evalCp = -150, evalLossFromBest = 2.0)
-
-        analysis.moveEvaluations.add(evalGood)
-        analysis.moveEvaluations.add(evalBad)
-        engineAnalysisRepository.save(analysis)
+        // Position 2: Medium mistake (evalLoss = 0.5). 3 mistakes of Bc4, 2 good moves of d4
+        val position2 =
+            positionRepository.save(
+                Position(hash = "puzzlehash2", fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"),
+            )
+        userPositionStatsRepository.save(
+            UserPositionStats(
+                chessAccount = account,
+                position = position2,
+                playerColor = "WHITE",
+                timesReached = 5,
+            ),
+        )
+        for (i in 1..5) {
+            positionOccurrenceRepository.save(
+                PositionOccurrence(
+                    game = game,
+                    position = position2,
+                    chessAccount = account,
+                    plyNumber = 2,
+                    movePlayed = if (i <= 3) "Bc4" else "d4",
+                    playerColor = "WHITE",
+                ),
+            )
+        }
+        val analysis2 =
+            engineAnalysisRepository.save(
+                EngineAnalysis(
+                    position = position2,
+                    depth = 16,
+                    baselineEvalCp = 20,
+                    bestMove = "d4",
+                    bestMoveEvalCp = 20,
+                    analyzedAt = Instant.now(),
+                ),
+            )
+        analysis2.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis2, move = "d4", evalCp = 20, evalLossFromBest = 0.0))
+        analysis2.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis2, move = "Bc4", evalCp = -30, evalLossFromBest = 0.5))
+        engineAnalysisRepository.save(analysis2)
     }
 
     @AfterEach
@@ -138,7 +175,97 @@ class PuzzleControllerIntegrationTest {
     }
 
     @Test
-    fun `test get puzzles end to end`() {
+    fun `dynamic mistakeThreshold alters qualifying puzzles end to end`() {
+        // Query with mistakeThreshold=0.3 -> Both Position 1 (loss 2.0) and Position 2 (loss 0.5) qualify
+        val response03 =
+            restTemplate.exchange(
+                "/api/puzzles?platform=CHESS_COM&username=puzzleuser&playerColor=white&mistakeThreshold=0.3",
+                HttpMethod.GET,
+                null,
+                object : ParameterizedTypeReference<List<PuzzleResponse>>() {},
+            )
+        assertEquals(HttpStatus.OK, response03.statusCode)
+        val puzzles03 = response03.body
+        assertNotNull(puzzles03)
+        assertEquals(2, puzzles03.size)
+
+        // Query with mistakeThreshold=0.8 -> Position 2 (loss 0.5 < 0.8) filtered out; only Position 1 qualifies
+        val response08 =
+            restTemplate.exchange(
+                "/api/puzzles?platform=CHESS_COM&username=puzzleuser&playerColor=white&mistakeThreshold=0.8",
+                HttpMethod.GET,
+                null,
+                object : ParameterizedTypeReference<List<PuzzleResponse>>() {},
+            )
+        assertEquals(HttpStatus.OK, response08.statusCode)
+        val puzzles08 = response08.body
+        assertNotNull(puzzles08)
+        assertEquals(1, puzzles08.size)
+        assertEquals("rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq e6 0 2", puzzles08[0].fen)
+    }
+
+    @Test
+    fun `minMistakeCount filters puzzles correctly`() {
+        // Both positions have 3 mistakes. Query with minMistakeCount=4 -> 0 puzzles returned
+        val response =
+            restTemplate.exchange(
+                "/api/puzzles?platform=CHESS_COM&username=puzzleuser&playerColor=white&mistakeThreshold=0.8&minMistakeCount=4",
+                HttpMethod.GET,
+                null,
+                object : ParameterizedTypeReference<List<PuzzleResponse>>() {},
+            )
+        assertEquals(HttpStatus.OK, response.statusCode)
+        val puzzles = response.body
+        assertNotNull(puzzles)
+        assertEquals(0, puzzles.size)
+    }
+
+    @Test
+    fun `pagination limit and page parameters offset puzzle results`() {
+        // Query with mistakeThreshold=0.3 (2 puzzles returned total)
+        // Page 0, limit 1 -> First puzzle
+        val page0 =
+            restTemplate.exchange(
+                "/api/puzzles?platform=CHESS_COM&username=puzzleuser&playerColor=white&mistakeThreshold=0.3&limit=1&page=0",
+                HttpMethod.GET,
+                null,
+                object : ParameterizedTypeReference<List<PuzzleResponse>>() {},
+            )
+        assertEquals(HttpStatus.OK, page0.statusCode)
+        val puzzlesPage0 = page0.body
+        assertNotNull(puzzlesPage0)
+        assertEquals(1, puzzlesPage0.size)
+
+        // Page 1, limit 1 -> Second puzzle
+        val page1 =
+            restTemplate.exchange(
+                "/api/puzzles?platform=CHESS_COM&username=puzzleuser&playerColor=white&mistakeThreshold=0.3&limit=1&page=1",
+                HttpMethod.GET,
+                null,
+                object : ParameterizedTypeReference<List<PuzzleResponse>>() {},
+            )
+        assertEquals(HttpStatus.OK, page1.statusCode)
+        val puzzlesPage1 = page1.body
+        assertNotNull(puzzlesPage1)
+        assertEquals(1, puzzlesPage1.size)
+        assertTrue(puzzlesPage0[0].puzzleId != puzzlesPage1[0].puzzleId)
+
+        // Page 2, limit 1 -> Empty
+        val page2 =
+            restTemplate.exchange(
+                "/api/puzzles?platform=CHESS_COM&username=puzzleuser&playerColor=white&mistakeThreshold=0.3&limit=1&page=2",
+                HttpMethod.GET,
+                null,
+                object : ParameterizedTypeReference<List<PuzzleResponse>>() {},
+            )
+        assertEquals(HttpStatus.OK, page2.statusCode)
+        val puzzlesPage2 = page2.body
+        assertNotNull(puzzlesPage2)
+        assertEquals(0, puzzlesPage2.size)
+    }
+
+    @Test
+    fun `verify puzzle response payload contains required mapped fields`() {
         val response =
             restTemplate.exchange(
                 "/api/puzzles?platform=CHESS_COM&username=puzzleuser&playerColor=white&mistakeThreshold=0.8",
@@ -146,35 +273,59 @@ class PuzzleControllerIntegrationTest {
                 null,
                 object : ParameterizedTypeReference<List<PuzzleResponse>>() {},
             )
-
         assertEquals(HttpStatus.OK, response.statusCode)
-        val puzzles = response.body
-        assertNotNull(puzzles)
-        assertEquals(1, puzzles.size)
+        val puzzle = response.body?.firstOrNull()
+        assertNotNull(puzzle)
 
-        val puzzle = puzzles[0]
         assertEquals("rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq e6 0 2", puzzle.fen)
         assertEquals("WHITE", puzzle.playerColor)
         assertEquals("e4", puzzle.targetMove)
         assertEquals(5, puzzle.timesReached)
         assertEquals(3, puzzle.mistakeCount)
         assertEquals(60.0, puzzle.mistakeRate, 0.01)
+        assertEquals(50, puzzle.evalCp)
+        assertTrue(puzzle.priority > 0.0)
+        assertEquals(1, puzzle.acceptableMoves.size)
+        assertEquals("e4", puzzle.acceptableMoves[0].move)
+        assertEquals(1, puzzle.movesPlayed.size)
+        assertEquals("Qh5", puzzle.movesPlayed[0].move)
     }
 
     @Test
-    fun `test get puzzles with pagination`() {
-        // Request page 1 with limit 1 when only 1 item exists -> should return empty list
+    fun `empty qualifying set returns HTTP 200 with empty list`() {
         val response =
             restTemplate.exchange(
-                "/api/puzzles?platform=CHESS_COM&username=puzzleuser&playerColor=white&mistakeThreshold=0.8&limit=1&page=1",
+                "/api/puzzles?platform=CHESS_COM&username=puzzleuser&playerColor=black&mistakeThreshold=0.8",
                 HttpMethod.GET,
                 null,
                 object : ParameterizedTypeReference<List<PuzzleResponse>>() {},
             )
-
         assertEquals(HttpStatus.OK, response.statusCode)
         val puzzles = response.body
         assertNotNull(puzzles)
         assertEquals(0, puzzles.size)
+    }
+
+    @Test
+    fun `negative mistakeThreshold rejects request with error response`() {
+        val response =
+            restTemplate.exchange(
+                "/api/puzzles?platform=CHESS_COM&username=puzzleuser&playerColor=white&mistakeThreshold=-0.5",
+                HttpMethod.GET,
+                null,
+                String::class.java,
+            )
+        assertTrue(response.statusCode.isError)
+    }
+
+    @Test
+    fun `verify 0 stockfish calls executed during puzzle read`() {
+        restTemplate.exchange(
+            "/api/puzzles?platform=CHESS_COM&username=puzzleuser&playerColor=white&mistakeThreshold=0.8",
+            HttpMethod.GET,
+            null,
+            object : ParameterizedTypeReference<List<PuzzleResponse>>() {},
+        )
+        verifyNoInteractions(stockfishService)
     }
 }
