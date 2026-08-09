@@ -14,6 +14,12 @@ interface PositionOccurrenceRepository : JpaRepository<PositionOccurrence, UUID>
         playerColor: String,
     ): List<PositionOccurrence>
 
+    fun findByChessAccountIdAndPlayerColorAndPositionIdIn(
+        chessAccountId: UUID,
+        playerColor: String,
+        positionIds: Collection<UUID>,
+    ): List<PositionOccurrence>
+
     /**
      * Counts occurrence statistics for a given account across a set of position IDs.
      */

@@ -34,6 +34,8 @@ class WeaknessCalculationService(
      * - Database Aggregation: Filtering candidate positions (by `UserPositionStats.timesReached >= minTimesReached`),
      *   evaluating mistakes (`evalLossFromBest >= mistakeThreshold`), and computing `mistakeCount` and `averageLoss`
      *   are performed via a database-level JPQL aggregation query. Zero Stockfish calls are executed.
+     * - Batch Fetching (0 N+1 Queries): Resolves engine analyses and position occurrences in batch queries
+     *   rather than per-position loops. Total query count per endpoint call is capped at 3 queries total.
      * - Weakness Metrics:
      *   - `mistakeCount`: Number of occurrences where user's move had `evalLossFromBest >= mistakeThreshold`.
      *   - `mistakeRate`: `(mistakeCount / timesReached) * 100.0` percentage.
@@ -69,16 +71,27 @@ class WeaknessCalculationService(
 
         if (aggregations.isEmpty()) return emptyList()
 
-        val occurrences = positionOccurrenceRepository.findByChessAccountIdAndPlayerColor(account.id, color)
+        val positionIds = aggregations.map { it.positionId }.toSet()
+
+        // 2. Batch fetch position occurrences for only the qualifying positions (Query 2)
+        val occurrences =
+            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorAndPositionIdIn(
+                chessAccountId = account.id,
+                playerColor = color,
+                positionIds = positionIds,
+            )
         val groupedOccurrences = occurrences.groupBy { it.position.id }
+
+        // 3. Batch fetch engine analyses with move evaluations for only qualifying positions (Query 3)
+        val engineAnalyses = engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(positionIds)
+        val groupedAnalyses = engineAnalyses.associateBy { it.position.id }
 
         val weaknesses = mutableListOf<WeaknessResponse>()
 
         for (agg in aggregations) {
             val positionId = agg.positionId
             val posOccurrences = groupedOccurrences[positionId] ?: continue
-
-            val analysis = engineAnalysisRepository.findByPositionIdWithMoveEvaluations(positionId) ?: continue
+            val analysis = groupedAnalyses[positionId] ?: continue
 
             val bestMoveEvalCp = analysis.bestMoveEvalCp
 

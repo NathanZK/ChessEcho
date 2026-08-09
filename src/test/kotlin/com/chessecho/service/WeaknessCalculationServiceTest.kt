@@ -21,6 +21,7 @@ import org.mockito.Mock
 import org.mockito.Mockito.`when`
 import org.mockito.junit.jupiter.MockitoExtension
 import org.mockito.kotlin.any
+import org.mockito.kotlin.eq
 import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
 import java.time.Instant
@@ -75,21 +76,21 @@ class WeaknessCalculationServiceTest {
                 playerColor = "WHITE",
             )
 
-        `when`(positionOccurrenceRepository.findByChessAccountIdAndPlayerColor(account.id, "WHITE"))
-            .thenReturn(listOf(occA, occB, occC))
+        `when`(
+            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorAndPositionIdIn(
+                eq(account.id),
+                eq("WHITE"),
+                any(),
+            ),
+        ).thenReturn(listOf(occA, occB, occC))
 
         val analysis = EngineAnalysis(position = position, depth = 16, baselineEvalCp = 100, bestMove = "best", bestMoveEvalCp = 100)
         analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "A", evalCp = 80, evalLossFromBest = 0.2))
         analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "B", evalCp = 70, evalLossFromBest = 0.3))
         analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "C", evalCp = 20, evalLossFromBest = 0.8))
 
-        `when`(engineAnalysisRepository.findByPositionIdWithMoveEvaluations(position.id)).thenReturn(analysis)
+        `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(any())).thenReturn(listOf(analysis))
 
-        // At threshold 0.3:
-        // move A (0.2) is NOT a mistake
-        // move B (0.3) IS a mistake
-        // move C (0.8) IS a mistake
-        // Total mistakes = 2 (B and C)
         val aggregation03 =
             WeaknessAggregation(
                 positionId = position.id,
@@ -125,10 +126,8 @@ class WeaknessCalculationServiceTest {
         val w = weaknesses[0]
         assertEquals(2, w.mistakeCount)
         assertEquals(3, w.timesReached)
-        // Acceptable moves at threshold 0.3: move A (0.2 < 0.3)
         assertEquals(1, w.acceptableMoves.size)
         assertEquals("A", w.acceptableMoves[0].move)
-        // Moves played at threshold 0.3: moves B (0.3) and C (0.8)
         assertEquals(2, w.movesPlayed.size)
         assertTrue(w.movesPlayed.any { it.move == "B" })
         assertTrue(w.movesPlayed.any { it.move == "C" })
@@ -155,11 +154,9 @@ class WeaknessCalculationServiceTest {
             ),
         ).thenReturn(emptyList())
 
-        // Run weakness requests with different thresholds
         weaknessCalculationService.getWeaknesses("CHESS_COM", "nathan", "WHITE", mistakeThreshold = 0.3)
         weaknessCalculationService.getWeaknesses("CHESS_COM", "nathan", "WHITE", mistakeThreshold = 0.8)
 
-        // Verify no engine analysis repository save or external execution occurred
         verify(engineAnalysisRepository, never()).save(any())
     }
 
