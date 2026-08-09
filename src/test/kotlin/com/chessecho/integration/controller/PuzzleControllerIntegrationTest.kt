@@ -7,6 +7,7 @@ import com.chessecho.domain.Game
 import com.chessecho.domain.MoveEvaluation
 import com.chessecho.domain.Position
 import com.chessecho.domain.PositionOccurrence
+import com.chessecho.domain.UserPositionStats
 import com.chessecho.dto.PuzzleResponse
 import com.chessecho.repository.AppUserRepository
 import com.chessecho.repository.ChessAccountRepository
@@ -14,6 +15,7 @@ import com.chessecho.repository.EngineAnalysisRepository
 import com.chessecho.repository.GameRepository
 import com.chessecho.repository.PositionOccurrenceRepository
 import com.chessecho.repository.PositionRepository
+import com.chessecho.repository.UserPositionStatsRepository
 import com.chessecho.service.StockfishService
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
@@ -49,6 +51,9 @@ class PuzzleControllerIntegrationTest {
     private lateinit var positionRepository: PositionRepository
 
     @Autowired
+    private lateinit var userPositionStatsRepository: UserPositionStatsRepository
+
+    @Autowired
     private lateinit var positionOccurrenceRepository: PositionOccurrenceRepository
 
     @Autowired
@@ -78,6 +83,15 @@ class PuzzleControllerIntegrationTest {
                 Position(hash = "puzzlehash", fen = "rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq e6 0 2"),
             )
 
+        userPositionStatsRepository.save(
+            UserPositionStats(
+                chessAccount = account,
+                position = position,
+                playerColor = "WHITE",
+                timesReached = 5,
+            ),
+        )
+
         // Create 5 occurrences: 3 mistakes (Qh5), 2 good (e4)
         for (i in 1..5) {
             positionOccurrenceRepository.save(
@@ -104,8 +118,8 @@ class PuzzleControllerIntegrationTest {
                 ),
             )
 
-        val evalGood = MoveEvaluation(engineAnalysis = analysis, move = "e4", evalCp = 45, evalLossFromBest = null)
-        val evalBad = MoveEvaluation(engineAnalysis = analysis, move = "Qh5", evalCp = -150, evalLossFromBest = null)
+        val evalGood = MoveEvaluation(engineAnalysis = analysis, move = "e4", evalCp = 45, evalLossFromBest = 0.05)
+        val evalBad = MoveEvaluation(engineAnalysis = analysis, move = "Qh5", evalCp = -150, evalLossFromBest = 2.0)
 
         analysis.moveEvaluations.add(evalGood)
         analysis.moveEvaluations.add(evalBad)
@@ -116,6 +130,7 @@ class PuzzleControllerIntegrationTest {
     fun tearDown() {
         engineAnalysisRepository.deleteAll()
         positionOccurrenceRepository.deleteAll()
+        userPositionStatsRepository.deleteAll()
         positionRepository.deleteAll()
         gameRepository.deleteAll()
         chessAccountRepository.deleteAll()
@@ -126,7 +141,7 @@ class PuzzleControllerIntegrationTest {
     fun `test get puzzles end to end`() {
         val response =
             restTemplate.exchange(
-                "/api/puzzles?platform=CHESS_COM&username=puzzleuser&playerColor=white&minEvalLoss=0.8",
+                "/api/puzzles?platform=CHESS_COM&username=puzzleuser&playerColor=white&mistakeThreshold=0.8",
                 HttpMethod.GET,
                 null,
                 object : ParameterizedTypeReference<List<PuzzleResponse>>() {},
@@ -151,7 +166,7 @@ class PuzzleControllerIntegrationTest {
         // Request page 1 with limit 1 when only 1 item exists -> should return empty list
         val response =
             restTemplate.exchange(
-                "/api/puzzles?platform=CHESS_COM&username=puzzleuser&playerColor=white&minEvalLoss=0.8&limit=1&page=1",
+                "/api/puzzles?platform=CHESS_COM&username=puzzleuser&playerColor=white&mistakeThreshold=0.8&limit=1&page=1",
                 HttpMethod.GET,
                 null,
                 object : ParameterizedTypeReference<List<PuzzleResponse>>() {},
