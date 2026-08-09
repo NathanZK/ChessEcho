@@ -4,11 +4,15 @@ import com.chessecho.domain.AppUser
 import com.chessecho.domain.AsyncJob
 import com.chessecho.domain.ChessAccount
 import com.chessecho.domain.Game
+import com.chessecho.domain.UserPositionStats
 import com.chessecho.dto.ImportGamesRequest
 import com.chessecho.repository.AppUserRepository
 import com.chessecho.repository.AsyncJobRepository
 import com.chessecho.repository.ChessAccountRepository
 import com.chessecho.repository.GameRepository
+import com.chessecho.repository.PositionOccurrenceRepository
+import com.chessecho.repository.PositionRepository
+import com.chessecho.repository.UserPositionStatsRepository
 import org.slf4j.LoggerFactory
 import org.springframework.scheduling.annotation.Async
 import org.springframework.stereotype.Service
@@ -24,6 +28,9 @@ class GameImportService(
     private val gameRepository: GameRepository,
     private val restClient: RestClient,
     private val gameParserService: GameParserService,
+    private val userPositionStatsRepository: UserPositionStatsRepository,
+    private val positionOccurrenceRepository: PositionOccurrenceRepository,
+    private val positionRepository: PositionRepository,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -65,12 +72,17 @@ class GameImportService(
             val archiveUrls = fetchArchiveUrls(request.username, request.fromDate, request.toDate)
             var imported = 0
             var skipped = 0
+            val allAffectedPositionIds = mutableSetOf<java.util.UUID>()
 
             for (archiveUrl in archiveUrls) {
-                val (monthImported, monthSkipped) = importMonth(account, archiveUrl, request)
+                val (monthImported, monthSkipped, affectedPositionIds) = importMonth(account, archiveUrl, request)
                 imported += monthImported
                 skipped += monthSkipped
+                allAffectedPositionIds.addAll(affectedPositionIds)
             }
+
+            // Update UserPositionStats after all games are imported
+            updateUserPositionStats(account, allAffectedPositionIds)
 
             job.gamesImported = imported
             job.gamesSkipped = skipped
@@ -116,7 +128,7 @@ class GameImportService(
         account: ChessAccount,
         archiveUrl: String,
         request: ImportGamesRequest,
-    ): Pair<Int, Int> {
+    ): Triple<Int, Int, Set<java.util.UUID>> {
         val username = request.username
         log.debug("Fetching games from $archiveUrl")
 
@@ -125,10 +137,10 @@ class GameImportService(
             restClient.get()
                 .uri(archiveUrl)
                 .retrieve()
-                .body(Map::class.java) as? Map<String, Any> ?: return Pair(0, 0)
+                .body(Map::class.java) as? Map<String, Any> ?: return Triple(0, 0, emptySet())
 
         @Suppress("UNCHECKED_CAST")
-        val games = response["games"] as? List<Map<String, Any>> ?: return Pair(0, 0)
+        val games = response["games"] as? List<Map<String, Any>> ?: return Triple(0, 0, emptySet())
 
         val allUrls = games.mapNotNull { it["url"] as? String }
         val existingUrls = gameRepository.findPlatformGameIdsByChessAccountAndPlatformGameIdIn(account, allUrls).toSet()
@@ -182,10 +194,64 @@ class GameImportService(
 
         if (gamesToSave.isNotEmpty()) {
             val savedGames = gameRepository.saveAll(gamesToSave)
-            gameParserService.parseAndSavePositions(savedGames)
+            val affectedPositionIds = gameParserService.parseAndSavePositions(savedGames)
+            return Triple(gamesToSave.size, skipped, affectedPositionIds)
         }
 
-        return Pair(gamesToSave.size, skipped)
+        return Triple(0, skipped, emptySet())
+    }
+
+    private fun updateUserPositionStats(
+        account: ChessAccount,
+        affectedPositionIds: Set<java.util.UUID>,
+    ) {
+        if (affectedPositionIds.isEmpty()) return
+
+        // Use bulk aggregation query to count occurrences for affected positions
+        val occurrenceCounts =
+            positionOccurrenceRepository.countOccurrencesByAccountAndPositions(
+                account.id,
+                affectedPositionIds,
+            )
+
+        // Fetch existing UserPositionStats for affected positions
+        val existingStats =
+            userPositionStatsRepository.findByChessAccountIdAndPositionIdIn(
+                account.id,
+                affectedPositionIds,
+            )
+        val existingStatsMap = existingStats.associateBy { "${it.chessAccount.id}-${it.position.id}-${it.playerColor}" }
+
+        // Fetch all needed Position entities in one query
+        val positions =
+            positionRepository.findAllById(affectedPositionIds).associateBy { it.id }
+
+        val statsUpdates = mutableListOf<UserPositionStats>()
+        for (count in occurrenceCounts) {
+            val key = "${account.id}-${count.positionId}-${count.playerColor}"
+            val existing = existingStatsMap[key]
+
+            if (existing != null) {
+                existing.timesReached = count.timesReached.toInt()
+                existing.updatedAt = Instant.now()
+                statsUpdates.add(existing)
+            } else {
+                val position =
+                    positions[count.positionId]
+                        ?: throw IllegalStateException("Position not found: ${count.positionId}")
+                val newStats =
+                    UserPositionStats(
+                        chessAccount = account,
+                        position = position,
+                        playerColor = count.playerColor,
+                        timesReached = count.timesReached.toInt(),
+                        updatedAt = Instant.now(),
+                    )
+                statsUpdates.add(newStats)
+            }
+        }
+
+        userPositionStatsRepository.saveAll(statsUpdates)
     }
 
     private fun fetchArchiveUrls(

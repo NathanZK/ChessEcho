@@ -6,7 +6,6 @@ import com.chessecho.domain.Game
 import com.chessecho.domain.Position
 import com.chessecho.repository.PositionOccurrenceRepository
 import com.chessecho.repository.PositionRepository
-import com.chessecho.repository.UserPositionStatsRepository
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
@@ -22,15 +21,13 @@ import kotlin.test.assertTrue
 class GameParserServiceTest {
     private lateinit var positionRepository: PositionRepository
     private lateinit var positionOccurrenceRepository: PositionOccurrenceRepository
-    private lateinit var userPositionStatsRepository: UserPositionStatsRepository
     private lateinit var gameParserService: GameParserService
 
     @BeforeEach
     fun setup() {
         positionRepository = mock()
         positionOccurrenceRepository = mock()
-        userPositionStatsRepository = mock()
-        gameParserService = GameParserService(positionRepository, positionOccurrenceRepository, userPositionStatsRepository)
+        gameParserService = GameParserService(positionRepository, positionOccurrenceRepository)
     }
 
     @Test
@@ -41,8 +38,6 @@ class GameParserServiceTest {
             val list = it.getArgument<List<Position>>(0)
             list
         }
-        whenever(userPositionStatsRepository.findByChessAccountIdAndPositionIdAndPlayerColor(any(), any(), any()))
-            .thenReturn(null)
 
         val appUser = AppUser(email = "test@example.com")
         val chessAccount = ChessAccount(user = appUser, platform = "CHESS_COM", username = "tester")
@@ -98,8 +93,6 @@ class GameParserServiceTest {
     fun `transpositions generate the same hash`() {
         whenever(positionRepository.findByHashIn(any())).thenReturn(emptyList())
         whenever(positionRepository.saveAll(any<List<Position>>())).thenAnswer { it.getArgument<List<Position>>(0) }
-        whenever(userPositionStatsRepository.findByChessAccountIdAndPositionIdAndPlayerColor(any(), any(), any()))
-            .thenReturn(null)
 
         val appUser = AppUser(email = "test@example.com")
         val chessAccount = ChessAccount(user = appUser, platform = "CHESS_COM", username = "tester")
@@ -141,8 +134,6 @@ class GameParserServiceTest {
     fun `different castling rights generate different hashes`() {
         whenever(positionRepository.findByHashIn(any())).thenReturn(emptyList())
         whenever(positionRepository.saveAll(any<List<Position>>())).thenAnswer { it.getArgument<List<Position>>(0) }
-        whenever(userPositionStatsRepository.findByChessAccountIdAndPositionIdAndPlayerColor(any(), any(), any()))
-            .thenReturn(null)
 
         val appUser = AppUser(email = "test@example.com")
         val chessAccount = ChessAccount(user = appUser, platform = "CHESS_COM", username = "tester")

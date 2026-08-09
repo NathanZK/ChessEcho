@@ -16,6 +16,11 @@ interface UserPositionStatsRepository : JpaRepository<UserPositionStats, UUID> {
         playerColor: String,
     ): List<UserPositionStats>
 
+    fun findByChessAccountIdAndPositionIdIn(
+        chessAccountId: UUID,
+        positionIds: Set<UUID>,
+    ): List<UserPositionStats>
+
     fun findByChessAccountIdAndPlayerColorAndTimesReachedGreaterThanEqual(
         chessAccountId: UUID,
         playerColor: String,
