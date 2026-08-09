@@ -20,4 +20,21 @@ interface PositionRepository : JpaRepository<Position, UUID> {
         minOccurrences: Long,
         pageable: org.springframework.data.domain.Pageable,
     ): List<Position>
+
+    /**
+     * Finds position IDs among the provided set that have reached the minimum global occurrence threshold.
+     */
+    @Query(
+        """
+        SELECT po.position.id
+        FROM PositionOccurrence po
+        WHERE po.position.id IN :positionIds
+        GROUP BY po.position.id
+        HAVING COUNT(po.id) >= :minOccurrences
+        """,
+    )
+    fun findQualifyingPositionIds(
+        positionIds: Set<UUID>,
+        minOccurrences: Long,
+    ): List<UUID>
 }

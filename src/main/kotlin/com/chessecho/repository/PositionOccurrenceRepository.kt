@@ -14,9 +14,12 @@ interface PositionOccurrenceRepository : JpaRepository<PositionOccurrence, UUID>
         playerColor: String,
     ): List<PositionOccurrence>
 
+    /**
+     * Counts occurrence statistics for a given account across a set of position IDs.
+     */
     @Query(
         """
-        SELECT po.position.id, po.playerColor, COUNT(*) as timesReached
+        SELECT new com.chessecho.repository.PositionOccurrenceCount(po.position.id, po.playerColor, COUNT(po.id))
         FROM PositionOccurrence po
         WHERE po.chessAccount.id = :chessAccountId
           AND po.position.id IN :positionIds
@@ -27,6 +30,14 @@ interface PositionOccurrenceRepository : JpaRepository<PositionOccurrence, UUID>
         @Param("chessAccountId") chessAccountId: UUID,
         @Param("positionIds") positionIds: Set<UUID>,
     ): List<PositionOccurrenceCount>
+
+    /**
+     * Finds distinct SAN moves played historically from a specific position ID.
+     */
+    @Query("SELECT DISTINCT po.movePlayed FROM PositionOccurrence po WHERE po.position.id = :positionId")
+    fun findDistinctMovesByPositionId(
+        @Param("positionId") positionId: UUID,
+    ): List<String>
 }
 
 data class PositionOccurrenceCount(

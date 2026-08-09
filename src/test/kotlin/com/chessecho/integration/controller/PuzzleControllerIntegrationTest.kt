@@ -1,4 +1,4 @@
-package com.chessecho.controller
+package com.chessecho.integration.controller
 
 import com.chessecho.domain.AppUser
 import com.chessecho.domain.ChessAccount
@@ -7,7 +7,7 @@ import com.chessecho.domain.Game
 import com.chessecho.domain.MoveEvaluation
 import com.chessecho.domain.Position
 import com.chessecho.domain.PositionOccurrence
-import com.chessecho.dto.WeaknessResponse
+import com.chessecho.dto.PuzzleResponse
 import com.chessecho.repository.AppUserRepository
 import com.chessecho.repository.ChessAccountRepository
 import com.chessecho.repository.EngineAnalysisRepository
@@ -32,7 +32,7 @@ import kotlin.test.assertNotNull
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
-class WeaknessControllerIntegrationTest {
+class PuzzleControllerIntegrationTest {
     @Autowired
     private lateinit var restTemplate: TestRestTemplate
 
@@ -59,8 +59,8 @@ class WeaknessControllerIntegrationTest {
 
     @BeforeEach
     fun setup() {
-        val user = appUserRepository.save(AppUser(email = "integration@test.com"))
-        val account = chessAccountRepository.save(ChessAccount(user = user, platform = "CHESS_COM", username = "integrationuser"))
+        val user = appUserRepository.save(AppUser(email = "puzzle_integration@test.com"))
+        val account = chessAccountRepository.save(ChessAccount(user = user, platform = "CHESS_COM", username = "puzzleuser"))
 
         val game =
             gameRepository.save(
@@ -75,10 +75,10 @@ class WeaknessControllerIntegrationTest {
 
         val position =
             positionRepository.save(
-                Position(hash = "testhash", fen = "rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq e6 0 2"),
+                Position(hash = "puzzlehash", fen = "rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq e6 0 2"),
             )
 
-        // Create occurrences
+        // Create 5 occurrences: 3 mistakes (Qh5), 2 good (e4)
         for (i in 1..5) {
             positionOccurrenceRepository.save(
                 PositionOccurrence(
@@ -86,7 +86,6 @@ class WeaknessControllerIntegrationTest {
                     position = position,
                     chessAccount = account,
                     plyNumber = 2,
-                    // 3 mistakes, 2 good moves
                     movePlayed = if (i <= 3) "Qh5" else "e4",
                     playerColor = "WHITE",
                 ),
@@ -105,24 +104,8 @@ class WeaknessControllerIntegrationTest {
                 ),
             )
 
-        // Good move
-        val evalGood =
-            MoveEvaluation(
-                engineAnalysis = analysis,
-                move = "e4",
-                // -0.05 loss
-                evalCp = 45,
-                evalLossFromBest = null,
-            )
-        // Blunder
-        val evalBad =
-            MoveEvaluation(
-                engineAnalysis = analysis,
-                move = "Qh5",
-                // -2.0 loss
-                evalCp = -150,
-                evalLossFromBest = null,
-            )
+        val evalGood = MoveEvaluation(engineAnalysis = analysis, move = "e4", evalCp = 45, evalLossFromBest = null)
+        val evalBad = MoveEvaluation(engineAnalysis = analysis, move = "Qh5", evalCp = -150, evalLossFromBest = null)
 
         analysis.moveEvaluations.add(evalGood)
         analysis.moveEvaluations.add(evalBad)
@@ -140,26 +123,43 @@ class WeaknessControllerIntegrationTest {
     }
 
     @Test
-    fun `test get weaknesses end to end`() {
+    fun `test get puzzles end to end`() {
         val response =
             restTemplate.exchange(
-                "/api/positions/weaknesses?platform=CHESS_COM&username=integrationuser&playerColor=white&minEvalLoss=0.8",
+                "/api/puzzles?platform=CHESS_COM&username=puzzleuser&playerColor=white&minEvalLoss=0.8",
                 HttpMethod.GET,
                 null,
-                object : ParameterizedTypeReference<List<WeaknessResponse>>() {},
+                object : ParameterizedTypeReference<List<PuzzleResponse>>() {},
             )
 
         assertEquals(HttpStatus.OK, response.statusCode)
-        val weaknesses = response.body
-        assertNotNull(weaknesses)
-        assertEquals(1, weaknesses.size)
+        val puzzles = response.body
+        assertNotNull(puzzles)
+        assertEquals(1, puzzles.size)
 
-        val weakness = weaknesses[0]
-        assertEquals("rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq e6 0 2", weakness.fen)
-        assertEquals(5, weakness.timesReached)
-        assertEquals(3, weakness.mistakeCount)
-        assertEquals(60.0, weakness.mistakeRate, 0.01)
-        // baseline is 50, Qh5 is -150 -> diff = 200cp = 2.0
-        assertEquals(2.0, weakness.averageLoss)
+        val puzzle = puzzles[0]
+        assertEquals("rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq e6 0 2", puzzle.fen)
+        assertEquals("WHITE", puzzle.playerColor)
+        assertEquals("e4", puzzle.targetMove)
+        assertEquals(5, puzzle.timesReached)
+        assertEquals(3, puzzle.mistakeCount)
+        assertEquals(60.0, puzzle.mistakeRate, 0.01)
+    }
+
+    @Test
+    fun `test get puzzles with pagination`() {
+        // Request page 1 with limit 1 when only 1 item exists -> should return empty list
+        val response =
+            restTemplate.exchange(
+                "/api/puzzles?platform=CHESS_COM&username=puzzleuser&playerColor=white&minEvalLoss=0.8&limit=1&page=1",
+                HttpMethod.GET,
+                null,
+                object : ParameterizedTypeReference<List<PuzzleResponse>>() {},
+            )
+
+        assertEquals(HttpStatus.OK, response.statusCode)
+        val puzzles = response.body
+        assertNotNull(puzzles)
+        assertEquals(0, puzzles.size)
     }
 }

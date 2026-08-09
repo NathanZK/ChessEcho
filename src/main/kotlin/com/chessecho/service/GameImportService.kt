@@ -19,6 +19,7 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.client.RestClient
 import java.time.Instant
+import java.util.UUID
 
 @Service
 class GameImportService(
@@ -31,6 +32,7 @@ class GameImportService(
     private val userPositionStatsRepository: UserPositionStatsRepository,
     private val positionOccurrenceRepository: PositionOccurrenceRepository,
     private val positionRepository: PositionRepository,
+    private val engineAnalysisOrchestrator: EngineAnalysisOrchestrator,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -38,6 +40,10 @@ class GameImportService(
         private val ACTIVE_STATUSES = listOf("QUEUED", "PROCESSING")
     }
 
+    /**
+     * Creates a new QUEUED import job for the specified user and platform.
+     * Throws ActiveImportJobException if an active job already exists.
+     */
     @Transactional
     fun createImportJob(request: ImportGamesRequest): AsyncJob {
         asyncJobRepository.findByUsernameAndStatusIn(request.username, ACTIVE_STATUSES)
@@ -56,12 +62,21 @@ class GameImportService(
         return asyncJobRepository.save(job)
     }
 
+    /**
+     * Asynchronously executes a game import job by ID. Loads the AsyncJob within the transaction,
+     * fetches games from the external platform, parses positions, updates UserPositionStats,
+     * and triggers engine analysis orchestration for affected positions.
+     */
     @Async
     @Transactional
     fun executeImportJob(
-        job: AsyncJob,
+        jobId: UUID,
         request: ImportGamesRequest,
     ) {
+        val job =
+            asyncJobRepository.findById(jobId)
+                .orElseThrow { IllegalStateException("AsyncJob not found: $jobId") }
+
         log.info("Starting import job ${job.id} for user ${request.username}")
         updateJobStatus(job, "PROCESSING")
 
@@ -72,7 +87,7 @@ class GameImportService(
             val archiveUrls = fetchArchiveUrls(request.username, request.fromDate, request.toDate)
             var imported = 0
             var skipped = 0
-            val allAffectedPositionIds = mutableSetOf<java.util.UUID>()
+            val allAffectedPositionIds = mutableSetOf<UUID>()
 
             for (archiveUrl in archiveUrls) {
                 val (monthImported, monthSkipped, affectedPositionIds) = importMonth(account, archiveUrl, request)
@@ -83,6 +98,9 @@ class GameImportService(
 
             // Update UserPositionStats after all games are imported
             updateUserPositionStats(account, allAffectedPositionIds)
+
+            // Trigger engine analysis orchestrator for affected positions
+            engineAnalysisOrchestrator.analyzeAffectedPositions(allAffectedPositionIds)
 
             job.gamesImported = imported
             job.gamesSkipped = skipped
