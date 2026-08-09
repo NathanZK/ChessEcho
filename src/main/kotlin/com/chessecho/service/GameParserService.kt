@@ -3,18 +3,22 @@ package com.chessecho.service
 import com.chessecho.domain.Game
 import com.chessecho.domain.Position
 import com.chessecho.domain.PositionOccurrence
+import com.chessecho.domain.UserPositionStats
 import com.chessecho.repository.PositionOccurrenceRepository
 import com.chessecho.repository.PositionRepository
+import com.chessecho.repository.UserPositionStatsRepository
 import com.github.bhlangonijr.chesslib.Board
 import com.github.bhlangonijr.chesslib.pgn.PgnHolder
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.io.File
+import java.time.Instant
 
 @Service
 class GameParserService(
     private val positionRepository: PositionRepository,
     private val positionOccurrenceRepository: PositionOccurrenceRepository,
+    private val userPositionStatsRepository: UserPositionStatsRepository,
 ) {
     /**
      * Parses the PGN of a list of games, generates standardized positions (ignoring move counters)
@@ -106,6 +110,42 @@ class GameParserService(
             }
 
         positionOccurrenceRepository.saveAll(mappedOccurrences)
+
+        // Update user_position_stats for each unique (chess_account_id, position_id, player_color) combination
+        val statsUpdates = mutableMapOf<String, UserPositionStats>()
+        for (occurrence in mappedOccurrences) {
+            val key = "${occurrence.chessAccount.id}-${occurrence.position.id}-${occurrence.playerColor}"
+            val existingStats = statsUpdates[key]
+            if (existingStats != null) {
+                existingStats.timesReached++
+                existingStats.updatedAt = Instant.now()
+            } else {
+                val dbStats =
+                    userPositionStatsRepository.findByChessAccountIdAndPositionIdAndPlayerColor(
+                        occurrence.chessAccount.id,
+                        occurrence.position.id,
+                        occurrence.playerColor,
+                    )
+                if (dbStats != null) {
+                    dbStats.timesReached++
+                    dbStats.updatedAt = Instant.now()
+                    statsUpdates[key] = dbStats
+                } else {
+                    val newStats =
+                        UserPositionStats(
+                            chessAccount = occurrence.chessAccount,
+                            position = occurrence.position,
+                            playerColor = occurrence.playerColor,
+                            timesReached = 1,
+                            // Explicitly set to 1 for first occurrence
+                            updatedAt = Instant.now(),
+                        )
+                    statsUpdates[key] = newStats
+                }
+            }
+        }
+
+        userPositionStatsRepository.saveAll(statsUpdates.values)
     }
 
     /**

@@ -112,7 +112,7 @@ class WeaknessControllerIntegrationTest {
                 move = "e4",
                 // -0.05 loss
                 evalCp = 45,
-                evalMate = null,
+                evalLossFromBest = null,
             )
         // Blunder
         val evalBad =
@@ -121,7 +121,7 @@ class WeaknessControllerIntegrationTest {
                 move = "Qh5",
                 // -2.0 loss
                 evalCp = -150,
-                evalMate = null,
+                evalLossFromBest = null,
             )
 
         analysis.moveEvaluations.add(evalGood)

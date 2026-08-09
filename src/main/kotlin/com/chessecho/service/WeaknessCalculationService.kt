@@ -77,7 +77,7 @@ class WeaknessCalculationService(
                         baselineCp = baselineCp,
                         baselineMate = baselineMate,
                         resultCp = moveEval.evalCp,
-                        resultMate = moveEval.evalMate,
+                        resultMate = null,
                     )
 
                 // Accumulate per-move stats for all moves (regardless of whether they qualify as mistakes)
@@ -86,7 +86,7 @@ class WeaknessCalculationService(
 
                 // Enforce Playable Safety Net [-1.0, 1.0]
                 // If a move drops evaluation but remains perfectly balanced, we don't punish theory.
-                val resultingPawnEval = convertToPawns(moveEval.evalCp, moveEval.evalMate)
+                val resultingPawnEval = convertToPawns(moveEval.evalCp, null)
                 val isPlayable = resultingPawnEval in -1.0..1.0
 
                 if (evalLoss >= minEvalLoss && !isPlayable) {
@@ -128,7 +128,7 @@ class WeaknessCalculationService(
                                     baselineCp = baselineCp,
                                     baselineMate = baselineMate,
                                     resultCp = moveEval.evalCp,
-                                    resultMate = moveEval.evalMate,
+                                    resultMate = null,
                                 )
                             AcceptableMove(move = moveEval.move, evalLoss = loss)
                         }

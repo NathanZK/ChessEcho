@@ -104,8 +104,8 @@ class PuzzleControllerIntegrationTest {
                 ),
             )
 
-        val evalGood = MoveEvaluation(engineAnalysis = analysis, move = "e4", evalCp = 45, evalMate = null)
-        val evalBad = MoveEvaluation(engineAnalysis = analysis, move = "Qh5", evalCp = -150, evalMate = null)
+        val evalGood = MoveEvaluation(engineAnalysis = analysis, move = "e4", evalCp = 45, evalLossFromBest = null)
+        val evalBad = MoveEvaluation(engineAnalysis = analysis, move = "Qh5", evalCp = -150, evalLossFromBest = null)
 
         analysis.moveEvaluations.add(evalGood)
         analysis.moveEvaluations.add(evalBad)
