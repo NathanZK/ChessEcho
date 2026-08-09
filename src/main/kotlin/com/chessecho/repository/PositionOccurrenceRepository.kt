@@ -38,10 +38,56 @@ interface PositionOccurrenceRepository : JpaRepository<PositionOccurrence, UUID>
     fun findDistinctMovesByPositionId(
         @Param("positionId") positionId: UUID,
     ): List<String>
+
+    /**
+     * Dynamically aggregates position weaknesses in the database for a specific player and color using a dynamic mistake threshold.
+     */
+    @Query(
+        """
+        SELECT new com.chessecho.repository.WeaknessAggregation(
+            p.id,
+            p.fen,
+            ups.timesReached,
+            ea.bestMove,
+            ea.baselineEvalCp,
+            SUM(CASE WHEN me.evalLossFromBest >= :mistakeThreshold THEN 1 ELSE 0 END),
+            AVG(CASE WHEN me.evalLossFromBest >= :mistakeThreshold THEN me.evalLossFromBest ELSE NULL END),
+            SUM(CASE WHEN me.evalLossFromBest >= :mistakeThreshold THEN me.evalLossFromBest ELSE 0.0 END)
+        )
+        FROM UserPositionStats ups
+        JOIN ups.position p
+        JOIN EngineAnalysis ea ON ea.position.id = p.id
+        JOIN PositionOccurrence po ON po.position.id = p.id AND po.chessAccount.id = ups.chessAccount.id AND po.playerColor = ups.playerColor
+        JOIN MoveEvaluation me ON me.engineAnalysis.id = ea.id AND me.move = po.movePlayed
+        WHERE ups.chessAccount.id = :chessAccountId
+          AND ups.playerColor = :playerColor
+          AND ups.timesReached >= :minTimesReached
+        GROUP BY p.id, p.fen, ups.timesReached, ea.bestMove, ea.baselineEvalCp
+        HAVING SUM(CASE WHEN me.evalLossFromBest >= :mistakeThreshold THEN 1 ELSE 0 END) >= :minMistakeCount
+        """,
+    )
+    fun findWeaknessAggregations(
+        @Param("chessAccountId") chessAccountId: UUID,
+        @Param("playerColor") playerColor: String,
+        @Param("mistakeThreshold") mistakeThreshold: Double,
+        @Param("minTimesReached") minTimesReached: Int,
+        @Param("minMistakeCount") minMistakeCount: Long,
+    ): List<WeaknessAggregation>
 }
 
 data class PositionOccurrenceCount(
     val positionId: UUID,
     val playerColor: String,
     val timesReached: Long,
+)
+
+data class WeaknessAggregation(
+    val positionId: UUID,
+    val fen: String,
+    val timesReached: Int,
+    val bestMove: String?,
+    val baselineEvalCp: Int?,
+    val mistakeCount: Long,
+    val averageLoss: Double?,
+    val rawTotalLoss: Double?,
 )

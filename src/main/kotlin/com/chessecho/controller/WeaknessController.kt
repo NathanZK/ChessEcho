@@ -18,18 +18,21 @@ class WeaknessController(
         @RequestParam platform: String,
         @RequestParam username: String,
         @RequestParam playerColor: String,
-        @RequestParam(defaultValue = "0.8") minEvalLoss: Double,
-        @RequestParam(defaultValue = "0.3") acceptableThreshold: Double,
+        @RequestParam(required = false) mistakeThreshold: Double?,
         @RequestParam(defaultValue = "3") minMistakeCount: Int,
     ): ResponseEntity<List<WeaknessResponse>> {
+        val threshold = mistakeThreshold ?: WeaknessCalculationService.DEFAULT_MISTAKE_THRESHOLD
+        if (threshold < 0.0) {
+            throw IllegalArgumentException("mistakeThreshold must be non-negative")
+        }
+
         val weaknesses =
             weaknessCalculationService.getWeaknesses(
                 platform = platform,
                 username = username,
                 playerColor = playerColor,
-                minEvalLoss = minEvalLoss,
-                acceptableThreshold = acceptableThreshold,
-                minMistakeCount = maxOf(3, minMistakeCount),
+                mistakeThreshold = threshold,
+                minMistakeCount = maxOf(1, minMistakeCount),
             )
         return ResponseEntity.ok(weaknesses)
     }

@@ -18,78 +18,85 @@ class WeaknessCalculationService(
     private val positionOccurrenceRepository: PositionOccurrenceRepository,
     private val engineAnalysisRepository: EngineAnalysisRepository,
 ) {
+    companion object {
+        const val DEFAULT_MISTAKE_THRESHOLD = 0.8
+        const val DEFAULT_MIN_TIMES_REACHED = 3
+        const val DEFAULT_MIN_MISTAKE_COUNT = 3
+    }
+
     /**
-     * Finds and ranks the recurring weaknesses for a specific user, platform, and color.
+     * Dynamically calculates recurring weaknesses for a specific user, platform, and color at request time.
      *
-     * @param acceptableThreshold moves the user played where average eval loss is below this
-     *   threshold are considered acceptable alternatives and returned in [WeaknessResponse.acceptableMoves].
-     *   Defaults to 0.5 pawns — roughly the boundary between an acceptable imprecision and a real inaccuracy.
+     * Architectural Design & Domain Semantics:
+     * - Dynamic Thresholding: Weakness calculation is an interpretation of objective engine-analysis data.
+     *   `MoveEvaluation.evalLossFromBest` is the sole source of truth. No threshold-specific `UserPositionWeakness`
+     *   records are persisted, allowing different thresholds (e.g. 0.3 vs 0.8) to operate on the exact same stored data.
+     * - Database Aggregation: Filtering candidate positions (by `UserPositionStats.timesReached >= minTimesReached`),
+     *   evaluating mistakes (`evalLossFromBest >= mistakeThreshold`), and computing `mistakeCount` and `averageLoss`
+     *   are performed via a database-level JPQL aggregation query. Zero Stockfish calls are executed.
+     * - Weakness Metrics:
+     *   - `mistakeCount`: Number of occurrences where user's move had `evalLossFromBest >= mistakeThreshold`.
+     *   - `mistakeRate`: `(mistakeCount / timesReached) * 100.0` percentage.
+     *   - `averageLoss`: Average `evalLossFromBest` (in pawns) across mistake occurrences.
+     *   - `priority`: Time-decay weighted loss total multiplied by raw mistake rate (`mistakeCount / timesReached`).
      */
     @Transactional(readOnly = true)
     fun getWeaknesses(
         platform: String,
         username: String,
         playerColor: String,
-        minEvalLoss: Double,
-        acceptableThreshold: Double = 0.3,
-        minMistakeCount: Int = 3,
+        mistakeThreshold: Double = DEFAULT_MISTAKE_THRESHOLD,
+        minMistakeCount: Int = DEFAULT_MIN_MISTAKE_COUNT,
+        minTimesReached: Int = DEFAULT_MIN_TIMES_REACHED,
     ): List<WeaknessResponse> {
+        require(mistakeThreshold >= 0.0) { "mistakeThreshold must be non-negative" }
+
         val account =
             chessAccountRepository.findByPlatformAndUsernameIgnoreCase(platform, username)
                 ?: throw NoSuchElementException("Chess account not found")
 
-        // 1. Get all occurrences for this player and color.
-        val occurrences = positionOccurrenceRepository.findByChessAccountIdAndPlayerColor(account.id, playerColor.uppercase())
+        val color = playerColor.uppercase()
 
-        if (occurrences.isEmpty()) return emptyList()
+        // 1. Perform database-level aggregation to filter qualifying positions and compute core mistake metrics
+        val aggregations =
+            positionOccurrenceRepository.findWeaknessAggregations(
+                chessAccountId = account.id,
+                playerColor = color,
+                mistakeThreshold = mistakeThreshold,
+                minTimesReached = minTimesReached,
+                minMistakeCount = minMistakeCount.toLong(),
+            )
 
-        // Group by position
-        val groupedByPosition = occurrences.groupBy { it.position.id }
+        if (aggregations.isEmpty()) return emptyList()
+
+        val occurrences = positionOccurrenceRepository.findByChessAccountIdAndPlayerColor(account.id, color)
+        val groupedOccurrences = occurrences.groupBy { it.position.id }
 
         val weaknesses = mutableListOf<WeaknessResponse>()
 
-        for ((positionId, posOccurrences) in groupedByPosition) {
-            val position = posOccurrences.first().position
+        for (agg in aggregations) {
+            val positionId = agg.positionId
+            val posOccurrences = groupedOccurrences[positionId] ?: continue
 
-            // 2. Fetch the cached engine analysis for this position
-            val analysis = engineAnalysisRepository.findByPositionId(positionId) ?: continue
+            val analysis = engineAnalysisRepository.findByPositionIdWithMoveEvaluations(positionId) ?: continue
 
-            val baselineCp = analysis.baselineEvalCp
             val bestMoveEvalCp = analysis.bestMoveEvalCp
 
             var unweightedTotalLoss = 0.0
             var priorityScore = 0.0
             var mistakeCount = 0
             val mistakeUrls = mutableListOf<String>()
-
-            // Track total eval loss and play count per distinct move played
-            // Used to build the per-move breakdown and to identify acceptable alternatives
             val moveStats = mutableMapOf<String, Pair<Double, Int>>()
 
             for (occ in posOccurrences) {
-                // Find the engine evaluation for the move played
                 val moveEval = analysis.moveEvaluations.find { it.move == occ.movePlayed } ?: continue
+                val evalLoss = moveEval.evalLossFromBest ?: calculateEvalLoss(bestMoveEvalCp, moveEval.evalCp)
 
-                // Calculate evaluation loss
-                val evalLoss =
-                    calculateEvalLoss(
-                        playerColor = playerColor,
-                        bestMoveEvalCp = bestMoveEvalCp,
-                        resultCp = moveEval.evalCp,
-                    )
-
-                // Accumulate per-move stats for all moves (regardless of whether they qualify as mistakes)
                 val (prevLoss, prevCount) = moveStats.getOrDefault(occ.movePlayed, Pair(0.0, 0))
                 moveStats[occ.movePlayed] = Pair(prevLoss + evalLoss, prevCount + 1)
 
-                // Enforce Playable Safety Net [-1.0, 1.0]
-                // If a move drops evaluation but remains perfectly balanced, we don't punish theory.
-                val resultingPawnEval = moveEval.evalCp?.div(100.0) ?: 0.0
-                val isPlayable = resultingPawnEval in -1.0..1.0
-
-                if (evalLoss >= minEvalLoss && !isPlayable) {
+                if (evalLoss >= mistakeThreshold) {
                     unweightedTotalLoss += evalLoss
-
                     val playedAt = occ.game.playedAt
                     val weight =
                         if (playedAt != null) {
@@ -99,7 +106,6 @@ class WeaknessCalculationService(
                             1.0
                         }
                     priorityScore += (evalLoss * weight)
-
                     mistakeCount++
 
                     val url =
@@ -114,25 +120,15 @@ class WeaknessCalculationService(
             }
 
             if (mistakeCount >= minMistakeCount) {
-                // All engine-evaluated candidate moves for this position whose evaluation loss
-                // compared to the best move is within acceptableThreshold (default 0.5 pawns).
-                // Useful for puzzle generation to know which player responses are acceptable solutions.
                 val acceptableMoves =
                     analysis.moveEvaluations
                         .map { moveEval ->
-                            val loss =
-                                calculateEvalLoss(
-                                    playerColor = playerColor,
-                                    bestMoveEvalCp = bestMoveEvalCp,
-                                    resultCp = moveEval.evalCp,
-                                )
+                            val loss = moveEval.evalLossFromBest ?: calculateEvalLoss(bestMoveEvalCp, moveEval.evalCp)
                             AcceptableMove(move = moveEval.move, evalLoss = loss)
                         }
-                        .filter { it.evalLoss < acceptableThreshold }
+                        .filter { it.evalLoss < mistakeThreshold }
                         .sortedBy { it.evalLoss }
 
-                // Per-move breakdown — only include moves that crossed the minEvalLoss bar (real mistakes).
-                // Sorted by timesPlayed descending, then averageLoss descending, capped at top 3.
                 val movesPlayed =
                     moveStats.entries
                         .map { (move, stats) ->
@@ -142,59 +138,43 @@ class WeaknessCalculationService(
                                 averageLoss = stats.first / stats.second,
                             )
                         }
-                        .filter { it.averageLoss >= minEvalLoss }
+                        .filter { it.averageLoss >= mistakeThreshold }
                         .sortedWith(compareByDescending<MoveBreakdown> { it.timesPlayed }.thenByDescending { it.averageLoss })
                         .take(3)
 
-                val rawRate = mistakeCount.toDouble() / posOccurrences.size
+                val rawRate = mistakeCount.toDouble() / agg.timesReached
                 val mistakeRatePercentage = kotlin.math.round(rawRate * 10000.0) / 100.0
+
                 weaknesses.add(
                     WeaknessResponse(
                         positionId = positionId,
-                        fen = position.fen,
-                        timesReached = posOccurrences.size,
+                        fen = agg.fen,
+                        timesReached = agg.timesReached,
                         mistakeCount = mistakeCount,
                         mistakeRate = mistakeRatePercentage,
-                        averageLoss = unweightedTotalLoss / mistakeCount,
+                        averageLoss = if (mistakeCount > 0) unweightedTotalLoss / mistakeCount else (agg.averageLoss ?: 0.0),
                         priority = priorityScore * rawRate,
-                        bestMove = analysis.bestMove,
+                        bestMove = agg.bestMove,
                         acceptableMoves = acceptableMoves,
                         movesPlayed = movesPlayed,
                         gameUrls = mistakeUrls.distinct().take(10),
-                        evalCp = analysis.baselineEvalCp,
+                        evalCp = agg.baselineEvalCp,
                     ),
                 )
             }
         }
 
-        // Sort by Priority descending, excluding zero-priority positions
         return weaknesses.filter { it.priority > 0 }.sortedByDescending { it.priority }
     }
 
     /**
-     * Calculates the evaluation loss between the best move evaluation and a resulting evaluation.
-     * Always returns a positive value representing the loss from the perspective of the player who moved.
-     *
-     * eval_loss_from_best = how many pawns worse this historical move is compared with the engine's best move,
-     * from the perspective of the player making the move.
-     *
-     * Example: If best_move_eval_cp = 20 (+0.20 pawns) and a historical move has eval_cp = -80 (-0.80 pawns),
-     * the loss is 1.00 pawn.
+     * Fallback calculation for evaluation loss if evalLossFromBest is null.
      */
     private fun calculateEvalLoss(
-        playerColor: String,
         bestMoveEvalCp: Int?,
         resultCp: Int?,
     ): Double {
         if (bestMoveEvalCp == null || resultCp == null) return 0.0
-
-        val bestMovePawns = bestMoveEvalCp / 100.0
-        val resultPawns = resultCp / 100.0
-
-        return if (playerColor.equals("WHITE", ignoreCase = true)) {
-            max(0.0, bestMovePawns - resultPawns)
-        } else {
-            max(0.0, resultPawns - bestMovePawns)
-        }
+        return maxOf(0.0, (bestMoveEvalCp - resultCp) / 100.0)
     }
 }
