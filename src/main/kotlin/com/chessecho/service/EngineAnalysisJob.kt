@@ -70,13 +70,16 @@ class EngineAnalysisJob(
             analysisResults["baseline"]
                 ?: throw IllegalStateException("Baseline analysis missing for position $positionId")
 
+        val bestMove = baselineResult.bestMove
+        val bestMoveEvalCp = analysisResults[bestMove]?.score?.cp
+
         val engineAnalysis =
             EngineAnalysis(
                 position = position,
                 depth = depth,
                 baselineEvalCp = baselineResult.score.cp,
-                baselineEvalMate = baselineResult.score.mate,
-                bestMove = baselineResult.bestMove,
+                bestMove = bestMove,
+                bestMoveEvalCp = bestMoveEvalCp,
                 analyzedAt = Instant.now(),
             )
 
