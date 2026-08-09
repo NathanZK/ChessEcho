@@ -22,19 +22,24 @@ interface PositionRepository : JpaRepository<Position, UUID> {
     ): List<Position>
 
     /**
-     * Finds position IDs among the provided set that have reached the minimum global occurrence threshold.
+     * Finds Position entities among the provided set that have reached the minimum occurrence threshold,
+     * calculated by aggregating UserPositionStats.timesReached across accounts and colors.
      */
     @Query(
         """
-        SELECT po.position.id
-        FROM PositionOccurrence po
-        WHERE po.position.id IN :positionIds
-        GROUP BY po.position.id
-        HAVING COUNT(po.id) >= :minOccurrences
+        SELECT p
+        FROM Position p
+        WHERE p.id IN (
+            SELECT ups.position.id
+            FROM UserPositionStats ups
+            WHERE ups.position.id IN :positionIds
+            GROUP BY ups.position.id
+            HAVING SUM(ups.timesReached) >= :minOccurrences
+        )
         """,
     )
-    fun findQualifyingPositionIds(
+    fun findQualifyingPositions(
         positionIds: Set<UUID>,
         minOccurrences: Long,
-    ): List<UUID>
+    ): List<Position>
 }

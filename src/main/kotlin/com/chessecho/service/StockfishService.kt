@@ -21,7 +21,15 @@ class StockfishService {
     private val logger = LoggerFactory.getLogger(StockfishService::class.java)
 
     /**
-     * Analyzes a base FEN position and also the resulting positions after a list of historical SAN moves.
+     * Analyzes an untouched base FEN position independently to determine its baseline evaluation and engine best move,
+     * and separately evaluates the resulting position after each historical SAN move.
+     *
+     * Evaluation Perspective Normalization:
+     * Stockfish UCI outputs scores relative to whichever side is to move in the evaluated position.
+     * - Baseline (`uciMove == null`): Evaluates the untouched position where the user is to move. Score is returned as-is.
+     * - Historical Move (`uciMove != null`): Evaluates the position 1 ply later where the opponent is to move. The score
+     *   is inverted (`invert = true`) so that all returned scores are normalized to the baseline player-to-move perspective.
+     *   This allows direct subtraction (`bestMoveEvalCp - moveEvalCp`) when computing evaluation loss.
      */
     fun analyze(
         fen: String,
@@ -46,16 +54,15 @@ class StockfishService {
 
         val results = mutableMapOf<String, PositionAnalysis>()
 
-        // Analyze baseline
+        // 1. Analyze baseline position independently (untouched FEN with no move applied)
         val baselineAnalysis = runGoDepth(fen, null, depth, reader, ::sendCommand)
         results["baseline"] = baselineAnalysis.copy(bestMove = convertUciToSan(fen, baselineAnalysis.bestMove))
 
-        // Convert SAN moves to UCI coordinate moves using kchesslib
+        // 2. Separately analyze each user-played historical SAN move from the same base FEN
         val board = Board()
         board.loadFromFen(fen)
         for (sanMove in historicalSanMoves) {
             try {
-                // board.doMove(String) parses SAN moves. We apply and undo to get the UCI string.
                 if (board.doMove(sanMove)) {
                     val move = board.undoMove()
                     val uciMove = move.toString()
@@ -109,9 +116,9 @@ class StockfishService {
             val line = reader.readLine() ?: break
 
             if (line.startsWith("info depth $depth ") || line.startsWith("info depth $depth\t")) {
-                val isWhiteToMove = fen.split(" ").getOrNull(1) == "w"
-                val evaluatingWhite = if (uciMove == null) isWhiteToMove else !isWhiteToMove
-                val parsedScore = parseEngineScore(line, evaluatingWhite)
+                // Invert score for historical moves (1 ply later) to normalize to baseline player-to-move perspective
+                val invertScore = uciMove != null
+                val parsedScore = parseEngineScore(line, invertScore)
                 if (parsedScore != null) {
                     if (parsedScore.cp != null) cp = parsedScore.cp
                     if (parsedScore.mate != null) mate = parsedScore.mate
@@ -143,7 +150,7 @@ class StockfishService {
     companion object {
         fun parseEngineScore(
             line: String,
-            evaluatingWhite: Boolean,
+            invert: Boolean = false,
         ): EvalScore? {
             if (!line.contains(" score ")) return null
             val tokens = line.split("\\s+".toRegex())
@@ -153,9 +160,9 @@ class StockfishService {
                 val value = tokens[scoreIdx + 2].toIntOrNull() ?: return null
 
                 return if (type == "cp") {
-                    EvalScore(cp = if (evaluatingWhite) value else -value, mate = null)
+                    EvalScore(cp = if (invert) -value else value, mate = null)
                 } else if (type == "mate") {
-                    EvalScore(cp = null, mate = if (evaluatingWhite) value else -value)
+                    EvalScore(cp = null, mate = if (invert) -value else value)
                 } else {
                     null
                 }

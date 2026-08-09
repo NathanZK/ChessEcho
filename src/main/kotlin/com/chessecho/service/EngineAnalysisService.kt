@@ -2,18 +2,16 @@ package com.chessecho.service
 
 import com.chessecho.domain.EngineAnalysis
 import com.chessecho.domain.MoveEvaluation
+import com.chessecho.domain.Position
 import com.chessecho.repository.EngineAnalysisRepository
 import com.chessecho.repository.PositionOccurrenceRepository
-import com.chessecho.repository.PositionRepository
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.Instant
-import java.util.UUID
 
 @Service
 class EngineAnalysisService(
-    private val positionRepository: PositionRepository,
     private val positionOccurrenceRepository: PositionOccurrenceRepository,
     private val engineAnalysisRepository: EngineAnalysisRepository,
     private val stockfishService: StockfishService,
@@ -21,22 +19,40 @@ class EngineAnalysisService(
     private val log = LoggerFactory.getLogger(javaClass)
 
     /**
-     * Executes engine analysis for a single candidate position.
-     * Evaluates baseline and historical moves played from this position.
-     * For existing positions, only missing historical moves are analyzed.
+     * Executes Stockfish engine analysis for a single position.
+     *
+     * Architectural Invariants & Key Design Rationale:
+     * 1. Query & Transaction Optimization:
+     *    Receives an already-managed [Position] entity from the orchestrator, avoiding a per-position `findById` DB lookup.
+     *    Calls `findByPositionIdWithMoveEvaluations()` to load the existing analysis and its associated [MoveEvaluation]
+     *    collection in a single `LEFT JOIN FETCH` query, allowing already-evaluated moves to be determined in memory.
+     *
+     * 2. Baseline vs Historical Moves:
+     *    The original position is analyzed independently to establish the engine's objective baseline evaluation,
+     *    best move, and best-move score. Historical moves obtained from [PositionOccurrence] represent moves actually
+     *    played by users in games and are evaluated relative to that objective baseline.
+     *
+     * 3. Historical Move Persistence & Weakness Tracking:
+     *    Every evaluated historical/user move MUST be persisted in [MoveEvaluation]. Severe blunders MUST NOT be
+     *    discarded based on evaluation loss because historical blunders are essential evidence for ChessEcho's
+     *    weakness detection algorithm. `evalLossFromBest` is an objective numeric measurement, not a binary
+     *    acceptable/unacceptable classification.
+     *
+     * 4. Incremental Analysis:
+     *    Engine analysis is global per position, while historical moves accumulate over time as more games are imported.
+     *    For existing [EngineAnalysis] entities, only unanalyzed historical moves (`historicalMoves - evaluatedMoves`)
+     *    are sent to Stockfish. The existing baseline evaluation is reused and is NOT recomputed.
      */
     @Transactional
-    fun analyzePosition(positionId: UUID) {
-        val position =
-            positionRepository.findById(positionId)
-                .orElseThrow { IllegalStateException("Position not found: $positionId") }
-
+    fun analyzePosition(position: Position) {
+        val positionId = position.id
         val historicalMoves = positionOccurrenceRepository.findDistinctMovesByPositionId(positionId)
         if (historicalMoves.isEmpty()) {
             return
         }
 
-        val existingAnalysis = engineAnalysisRepository.findByPositionId(positionId)
+        // Fetch existing analysis with moveEvaluations in a single query via LEFT JOIN FETCH
+        val existingAnalysis = engineAnalysisRepository.findByPositionIdWithMoveEvaluations(positionId)
         val depth = 16
 
         if (existingAnalysis == null) {
@@ -48,7 +64,7 @@ class EngineAnalysisService(
                     ?: throw IllegalStateException("Baseline analysis missing for position $positionId")
 
             val bestMove = baselineResult.bestMove
-            val bestMoveEvalCp = analysisResults[bestMove]?.score?.cp ?: baselineResult.score.cp
+            val bestMoveEvalCp = baselineResult.score.cp
 
             val engineAnalysis =
                 EngineAnalysis(
@@ -60,6 +76,7 @@ class EngineAnalysisService(
                     analyzedAt = Instant.now(),
                 )
 
+            // Persist all user-played historical moves regardless of eval loss (blunders are vital for weakness detection)
             historicalMoves.forEach { move ->
                 val result = analysisResults[move]
                 if (result != null) {
@@ -77,7 +94,8 @@ class EngineAnalysisService(
 
             engineAnalysisRepository.save(engineAnalysis)
         } else {
-            val evaluatedMoves = engineAnalysisRepository.findEvaluatedMovesByPositionId(positionId).toSet()
+            // Determine evaluated moves in memory from pre-fetched collection
+            val evaluatedMoves = existingAnalysis.moveEvaluations.map { it.move }.toSet()
             val missingMoves = historicalMoves.filter { it !in evaluatedMoves }
 
             if (missingMoves.isEmpty()) {
@@ -86,8 +104,8 @@ class EngineAnalysisService(
             }
 
             log.info("Analyzing ${missingMoves.size} missing historical moves for position $positionId")
+            // Analyze only newly discovered historical moves; reuse existing baseline evaluation
             val analysisResults = stockfishService.analyze(position.fen, depth, missingMoves)
-
             val bestMoveEvalCp = existingAnalysis.bestMoveEvalCp
 
             missingMoves.forEach { move ->
@@ -109,6 +127,13 @@ class EngineAnalysisService(
         }
     }
 
+    /**
+     * Calculates evaluation loss in pawns relative to Stockfish's best move.
+     *
+     * Scores are pre-normalized by [StockfishService] to the perspective of the player to move in the baseline position
+     * (positive scores indicate advantage for the player to move). Therefore, `bestMoveEvalCp - moveEvalCp` is valid
+     * for both White and Black positions.
+     */
     private fun calculateEvalLoss(
         bestMoveEvalCp: Int?,
         moveEvalCp: Int?,

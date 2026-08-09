@@ -9,10 +9,14 @@ import jakarta.persistence.Id
 import jakarta.persistence.JoinColumn
 import jakarta.persistence.ManyToOne
 import jakarta.persistence.Table
+import jakarta.persistence.UniqueConstraint
 import java.util.UUID
 
 @Entity
-@Table(name = "engine_move_evaluation")
+@Table(
+    name = "engine_move_evaluation",
+    uniqueConstraints = [UniqueConstraint(columnNames = ["engine_analysis_id", "move"])],
+)
 class MoveEvaluation(
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
