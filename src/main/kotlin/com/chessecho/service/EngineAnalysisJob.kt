@@ -88,7 +88,7 @@ class EngineAnalysisJob(
                         engineAnalysis = engineAnalysis,
                         move = move,
                         evalCp = result.score.cp,
-                        evalMate = result.score.mate,
+                        evalLossFromBest = null,
                     ),
                 )
             }

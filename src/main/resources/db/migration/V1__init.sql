@@ -71,7 +71,7 @@ CREATE TABLE position_occurrence
 
 CREATE INDEX idx_position_occurrence_game_id ON position_occurrence (game_id);
 CREATE INDEX idx_position_occurrence_position_id ON position_occurrence (position_id);
-CREATE INDEX idx_position_occurrence_chess_account_id ON position_occurrence (chess_account_id);
+CREATE INDEX idx_position_occurrence_account_color_position ON position_occurrence (chess_account_id, player_color, position_id);
 
 CREATE TABLE engine_analysis
 (
@@ -81,7 +81,8 @@ CREATE TABLE engine_analysis
     baseline_eval_cp   INT,
     baseline_eval_mate INT,
     best_move          VARCHAR(10),
-    analyzed_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL
+    analyzed_at        TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    UNIQUE (position_id)
 );
 
 CREATE INDEX idx_engine_analysis_position_id ON engine_analysis (position_id);
@@ -92,8 +93,40 @@ CREATE TABLE engine_move_evaluation
     engine_analysis_id UUID        NOT NULL REFERENCES engine_analysis (id) ON DELETE CASCADE,
     move               VARCHAR(10) NOT NULL,
     eval_cp            INT,
-    eval_mate          INT,
+    eval_loss_from_best DOUBLE PRECISION,
     UNIQUE (engine_analysis_id, move)
 );
 
 CREATE INDEX idx_engine_move_evaluation_analysis_id ON engine_move_evaluation (engine_analysis_id);
+
+CREATE TABLE user_position_weakness
+(
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    chess_account_id UUID        NOT NULL REFERENCES chess_account (id) ON DELETE CASCADE,
+    position_id      UUID        NOT NULL REFERENCES position (id) ON DELETE CASCADE,
+    player_color     VARCHAR(10) NOT NULL,
+    mistake_count    INT         NOT NULL DEFAULT 0,
+    mistake_rate     DOUBLE PRECISION,
+    average_loss     DOUBLE PRECISION,
+    priority         DOUBLE PRECISION,
+    moves_played     TEXT,
+    game_urls        TEXT,
+    updated_at       TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (chess_account_id, position_id, player_color)
+);
+
+CREATE INDEX idx_user_position_weakness_query ON user_position_weakness (chess_account_id, player_color, mistake_count, priority DESC);
+CREATE INDEX idx_user_position_weakness_position_id ON user_position_weakness (position_id);
+
+CREATE TABLE user_position_stats
+(
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    chess_account_id UUID        NOT NULL REFERENCES chess_account (id) ON DELETE CASCADE,
+    position_id      UUID        NOT NULL REFERENCES position (id) ON DELETE CASCADE,
+    player_color     VARCHAR(10) NOT NULL,
+    times_reached    INT         NOT NULL DEFAULT 0,
+    updated_at       TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (chess_account_id, position_id, player_color)
+);
+
+CREATE INDEX idx_user_position_stats_account_color_times_reached ON user_position_stats (chess_account_id, player_color, times_reached DESC);

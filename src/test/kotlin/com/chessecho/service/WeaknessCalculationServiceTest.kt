@@ -102,15 +102,15 @@ class WeaknessCalculationServiceTest {
             )
         // +0.45
         analysis.moveEvaluations.add(
-            MoveEvaluation(engineAnalysis = analysis, move = "e4", evalCp = 45, evalMate = null),
+            MoveEvaluation(engineAnalysis = analysis, move = "e4", evalCp = 45, evalLossFromBest = null),
         )
         // -0.50 -> dropped 0.9, but still > -1.0 so playable
         analysis.moveEvaluations.add(
-            MoveEvaluation(engineAnalysis = analysis, move = "Nf3", evalCp = -50, evalMate = null),
+            MoveEvaluation(engineAnalysis = analysis, move = "Nf3", evalCp = -50, evalLossFromBest = null),
         )
         // -1.50 -> dropped 1.9 pawns, massive blunder!
         analysis.moveEvaluations.add(
-            MoveEvaluation(engineAnalysis = analysis, move = "Qh5", evalCp = -150, evalMate = null),
+            MoveEvaluation(engineAnalysis = analysis, move = "Qh5", evalCp = -150, evalLossFromBest = null),
         )
 
         `when`(engineAnalysisRepository.findByPositionId(position.id)).thenReturn(analysis)
@@ -167,7 +167,7 @@ class WeaknessCalculationServiceTest {
             )
         // -1.50 -> 1.9 pawn loss
         analysis.moveEvaluations.add(
-            MoveEvaluation(engineAnalysis = analysis, move = "Qh5", evalCp = -150, evalMate = null),
+            MoveEvaluation(engineAnalysis = analysis, move = "Qh5", evalCp = -150, evalLossFromBest = null),
         )
 
         `when`(engineAnalysisRepository.findByPositionId(position.id)).thenReturn(analysis)
@@ -213,7 +213,7 @@ class WeaknessCalculationServiceTest {
             )
         // -1.50 -> 1.9 pawn loss
         analysis.moveEvaluations.add(
-            MoveEvaluation(engineAnalysis = analysis, move = "Qh5", evalCp = -150, evalMate = null),
+            MoveEvaluation(engineAnalysis = analysis, move = "Qh5", evalCp = -150, evalLossFromBest = null),
         )
 
         `when`(engineAnalysisRepository.findByPositionId(position.id)).thenReturn(analysis)
@@ -255,13 +255,13 @@ class WeaknessCalculationServiceTest {
                 bestMove = "e4",
             )
         // e4 (loss 0.0)
-        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "e4", evalCp = 100, evalMate = null))
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "e4", evalCp = 100, evalLossFromBest = null))
         // d4 (loss 0.15)
-        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "d4", evalCp = 85, evalMate = null))
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "d4", evalCp = 85, evalLossFromBest = null))
         // Nf3 (loss 0.40)
-        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "Nf3", evalCp = 60, evalMate = null))
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "Nf3", evalCp = 60, evalLossFromBest = null))
         // Qh5 (blunder, loss 3.0)
-        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "Qh5", evalCp = -200, evalMate = null))
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "Qh5", evalCp = -200, evalLossFromBest = null))
 
         `when`(engineAnalysisRepository.findByPositionId(position.id)).thenReturn(analysis)
 
@@ -323,7 +323,7 @@ class WeaknessCalculationServiceTest {
             .thenReturn(listOf(occ1, occ2))
 
         val analysis = EngineAnalysis(position = position, depth = 16, baselineEvalCp = 100, baselineEvalMate = null, bestMove = "e4")
-        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "Qh5", evalCp = -200, evalMate = null))
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "Qh5", evalCp = -200, evalLossFromBest = null))
 
         `when`(engineAnalysisRepository.findByPositionId(position.id)).thenReturn(analysis)
 

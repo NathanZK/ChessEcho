@@ -24,6 +24,19 @@ class MoveEvaluation(
     val move: String,
     @Column(name = "eval_cp")
     val evalCp: Int?,
-    @Column(name = "eval_mate")
-    val evalMate: Int?,
+    /**
+     * Represents the evaluation loss of this move relative to Stockfish's best move,
+     * from the perspective of the player making the move.
+     *
+     * Future invariant: Once the new analysis pipeline is implemented, every persisted
+     * MoveEvaluation will have this value calculated. The calculation must:
+     * - Correctly handle both White and Black perspectives
+     * - Correctly handle both centipawn and mate evaluations
+     * - Be calculated once during the engine-analysis pipeline (not during puzzle/weakness requests)
+     *
+     * When the analysis pipeline guarantees this value is always populated,
+     * the database column can be made NOT NULL.
+     */
+    @Column(name = "eval_loss_from_best")
+    val evalLossFromBest: Double?,
 )
