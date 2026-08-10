@@ -40,6 +40,11 @@ class GameParserService(
 
                 if (pgnHolder.game.isNotEmpty()) {
                     val chesslibGame = pgnHolder.game.first()
+                    val initialFen = chesslibGame.fen
+                    if (initialFen != null && initialFen.isNotBlank() && !isStandardStartFen(initialFen)) {
+                        continue
+                    }
+
                     chesslibGame.loadMoveText()
                     val moves = chesslibGame.halfMoves
 
@@ -137,5 +142,10 @@ class GameParserService(
         val digest = java.security.MessageDigest.getInstance("SHA-256")
         val hashBytes = digest.digest(cleanedFen.toByteArray(Charsets.UTF_8))
         return hashBytes.joinToString("") { "%02x".format(it) }
+    }
+
+    private fun isStandardStartFen(fen: String): Boolean {
+        val clean = fen.trim()
+        return clean.startsWith("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")
     }
 }
