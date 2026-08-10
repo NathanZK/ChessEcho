@@ -1,28 +1,22 @@
 package com.chessecho.dto
 
+import com.chessecho.domain.Platform
+import com.chessecho.domain.PlayerColor
+import com.chessecho.domain.TimeControl
 import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.NotEmpty
+import jakarta.validation.constraints.NotNull
 import jakarta.validation.constraints.Pattern
 
 data class ImportGamesRequest(
     @field:NotBlank(message = "username must not be blank")
     val username: String = "",
-    @field:NotBlank(message = "platform must not be blank")
-    val platform: String = "",
+    @field:NotNull(message = "platform must not be null")
+    val platform: Platform = Platform.CHESS_COM,
     @field:NotEmpty(message = "at least one timeControl is required")
-    val timeControls: List<
-        @Pattern(
-            regexp = "rapid|blitz|bullet|classical",
-            message = "timeControl must be one of: rapid, blitz, bullet, classical",
-        )
-        String,
-        > = emptyList(),
-    @field:Pattern(
-        regexp = "white|black|both",
-        message = "playerColor must be one of: white, black, both",
-    )
-    @field:NotBlank(message = "playerColor must not be blank")
-    val playerColor: String = "",
+    val timeControls: List<TimeControl> = emptyList(),
+    @field:NotNull(message = "playerColor must not be null")
+    val playerColor: PlayerColor = PlayerColor.BOTH,
     @field:Pattern(
         regexp = "\\d{4}-\\d{2}",
         message = "fromDate must be in YYYY-MM format",

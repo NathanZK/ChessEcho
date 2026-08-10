@@ -152,10 +152,10 @@ class WeaknessControllerIntegrationTest {
     }
 
     @Test
-    fun `test get weaknesses end to end with dynamic mistakeThreshold`() {
+    fun `test get weaknesses end to end with dynamic minEvalLoss`() {
         val response =
             restTemplate.exchange(
-                "/api/positions/weaknesses?platform=CHESS_COM&username=integrationuser&playerColor=white&mistakeThreshold=0.8",
+                "/api/positions/weaknesses?platform=CHESS_COM&username=integrationuser&playerColor=white&minEvalLoss=0.8",
                 HttpMethod.GET,
                 null,
                 object : ParameterizedTypeReference<List<WeaknessResponse>>() {},
@@ -253,7 +253,7 @@ class WeaknessControllerIntegrationTest {
 
         val response =
             restTemplate.exchange(
-                "/api/positions/weaknesses?platform=CHESS_COM&username=asymmetricuser&playerColor=white&mistakeThreshold=0.8",
+                "/api/positions/weaknesses?platform=CHESS_COM&username=asymmetricuser&playerColor=white&minEvalLoss=0.8",
                 HttpMethod.GET,
                 null,
                 object : ParameterizedTypeReference<List<WeaknessResponse>>() {},
@@ -269,5 +269,98 @@ class WeaknessControllerIntegrationTest {
         assertEquals(5, weakness.mistakeCount)
         assertEquals(25.0, weakness.mistakeRate, 0.01)
         assertEquals(0.9, weakness.averageLoss, 0.01)
+    }
+
+    @Test
+    fun `test playerColor BOTH considers both WHITE and BLACK occurrences`() {
+        val user = appUserRepository.save(AppUser(email = "both@test.com"))
+        val account = chessAccountRepository.save(ChessAccount(user = user, platform = "CHESS_COM", username = "bothuser"))
+
+        val game =
+            gameRepository.save(
+                Game(chessAccount = account, platformGameId = "gameboth", timeControl = "blitz", pgn = "pgn", result = "win"),
+            )
+        val position =
+            positionRepository.save(
+                Position(hash = "bothhash", fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"),
+            )
+
+        userPositionStatsRepository.save(
+            UserPositionStats(chessAccount = account, position = position, playerColor = "WHITE", timesReached = 3),
+        )
+        userPositionStatsRepository.save(
+            UserPositionStats(chessAccount = account, position = position, playerColor = "BLACK", timesReached = 3),
+        )
+
+        // Save 3 WHITE occurrences (move "a3") and 3 BLACK occurrences (move "a6")
+        for (i in 1..3) {
+            positionOccurrenceRepository.save(
+                PositionOccurrence(
+                    game = game,
+                    position = position,
+                    chessAccount = account,
+                    plyNumber = 1,
+                    movePlayed = "a3",
+                    playerColor = "WHITE",
+                ),
+            )
+            positionOccurrenceRepository.save(
+                PositionOccurrence(
+                    game = game,
+                    position = position,
+                    chessAccount = account,
+                    plyNumber = 2,
+                    movePlayed = "a6",
+                    playerColor = "BLACK",
+                ),
+            )
+        }
+
+        val analysis =
+            engineAnalysisRepository.save(
+                EngineAnalysis(
+                    position = position,
+                    depth = 16,
+                    baselineEvalCp = 0,
+                    bestMove = "e4",
+                    bestMoveEvalCp = 30,
+                    analyzedAt = Instant.now(),
+                ),
+            )
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "a3", evalCp = -100, evalLossFromBest = 1.3))
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "a6", evalCp = -120, evalLossFromBest = 1.5))
+        engineAnalysisRepository.save(analysis)
+
+        // Query with playerColor=BOTH
+        val response =
+            restTemplate.exchange(
+                "/api/positions/weaknesses?platform=CHESS_COM&username=bothuser&playerColor=BOTH&minEvalLoss=0.8",
+                HttpMethod.GET,
+                null,
+                object : ParameterizedTypeReference<List<WeaknessResponse>>() {},
+            )
+
+        assertEquals(HttpStatus.OK, response.statusCode)
+        val weaknesses = response.body
+        assertNotNull(weaknesses)
+        assertEquals(1, weaknesses.size)
+        val w = weaknesses[0]
+        assertEquals(6, w.mistakeCount)
+        assertEquals(6, w.timesReached)
+    }
+
+    @Test
+    fun `test nonexistent account produces controlled 404 Not Found response`() {
+        val response =
+            restTemplate.exchange(
+                "/api/positions/weaknesses?platform=CHESS_COM&username=nonexistent_user_xyz&playerColor=WHITE",
+                HttpMethod.GET,
+                null,
+                String::class.java,
+            )
+
+        assertEquals(HttpStatus.NOT_FOUND, response.statusCode)
+        assertNotNull(response.body)
+        kotlin.test.assertTrue(response.body!!.contains("NOT_FOUND"))
     }
 }

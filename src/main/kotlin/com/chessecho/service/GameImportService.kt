@@ -4,6 +4,9 @@ import com.chessecho.domain.AppUser
 import com.chessecho.domain.AsyncJob
 import com.chessecho.domain.ChessAccount
 import com.chessecho.domain.Game
+import com.chessecho.domain.Platform
+import com.chessecho.domain.PlayerColor
+import com.chessecho.domain.TimeControl
 import com.chessecho.domain.UserPositionStats
 import com.chessecho.dto.ImportGamesRequest
 import com.chessecho.repository.AppUserRepository
@@ -56,7 +59,7 @@ class GameImportService(
         val job =
             AsyncJob(
                 username = request.username,
-                platform = request.platform,
+                platform = request.platform.name,
                 status = "QUEUED",
             )
         return asyncJobRepository.save(job)
@@ -124,9 +127,9 @@ class GameImportService(
 
     private fun getOrCreateAccount(
         username: String,
-        platform: String,
+        platform: Platform,
     ): ChessAccount {
-        chessAccountRepository.findByPlatformAndUsernameIgnoreCase(platform, username)?.let { return it }
+        chessAccountRepository.findByPlatformAndUsernameIgnoreCase(platform.name, username)?.let { return it }
 
         // We don't have authentication yet, so we generate a dummy AppUser based on the username
         // to satisfy the foreign key constraint.
@@ -136,7 +139,7 @@ class GameImportService(
         return chessAccountRepository.save(
             ChessAccount(
                 user = user,
-                platform = platform,
+                platform = platform.name,
                 username = username,
             ),
         )
@@ -152,10 +155,22 @@ class GameImportService(
 
         @Suppress("UNCHECKED_CAST")
         val response =
-            restClient.get()
-                .uri(archiveUrl)
-                .retrieve()
-                .body(Map::class.java) as? Map<String, Any> ?: return Triple(0, 0, emptySet())
+            try {
+                restClient.get()
+                    .uri(archiveUrl)
+                    .retrieve()
+                    .body(Map::class.java) as? Map<String, Any>
+            } catch (ex: org.springframework.web.client.HttpClientErrorException.NotFound) {
+                log.warn("Archive URL returned 404 Not Found, skipping: $archiveUrl")
+                null
+            } catch (ex: org.springframework.web.client.RestClientResponseException) {
+                if (ex.statusCode.value() == 404) {
+                    log.warn("Archive URL returned 404 Not Found, skipping: $archiveUrl")
+                    null
+                } else {
+                    throw ex
+                }
+            } ?: return Triple(0, 0, emptySet())
 
         @Suppress("UNCHECKED_CAST")
         val games = response["games"] as? List<Map<String, Any>> ?: return Triple(0, 0, emptySet())
@@ -167,26 +182,41 @@ class GameImportService(
         var skipped = 0
 
         for (game in games) {
-            val timeClass = game["time_class"] as? String ?: continue
-            if (!request.timeControls.contains(timeClass)) continue
+            val timeClass = game["time_class"] as? String
+            val domainTimeControl = TimeControl.fromExternal(timeClass)
+            if (domainTimeControl == null || !request.timeControls.contains(domainTimeControl)) {
+                skipped++
+                continue
+            }
 
-            val white = (game["white"] as? Map<*, *>)?.get("username") as? String ?: continue
-            val black = (game["black"] as? Map<*, *>)?.get("username") as? String ?: continue
+            val white = (game["white"] as? Map<*, *>)?.get("username") as? String
+            val black = (game["black"] as? Map<*, *>)?.get("username") as? String
+            if (white == null || black == null) {
+                skipped++
+                continue
+            }
 
             val isPlayerWhite = white.equals(username, ignoreCase = true)
             val isPlayerBlack = black.equals(username, ignoreCase = true)
             val colorMatch =
-                when (request.playerColor.lowercase()) {
-                    "white" -> isPlayerWhite
-                    "black" -> isPlayerBlack
-                    "both" -> isPlayerWhite || isPlayerBlack
-                    else -> false
+                when (request.playerColor) {
+                    PlayerColor.WHITE -> isPlayerWhite
+                    PlayerColor.BLACK -> isPlayerBlack
+                    PlayerColor.BOTH -> isPlayerWhite || isPlayerBlack
                 }
-            if (!colorMatch) continue
+            if (!colorMatch) {
+                skipped++
+                continue
+            }
 
             // Parse game details
-            val pgn = game["pgn"] as? String ?: continue
-            val url = game["url"] as? String ?: continue // Use URL as unique game ID
+            val pgn = game["pgn"] as? String
+            val url = game["url"] as? String // Use URL as unique game ID
+            if (pgn == null || url == null) {
+                skipped++
+                continue
+            }
+
             val playedAtUnix = (game["end_time"] as? Number)?.toLong()
             val whiteResult = (game["white"] as? Map<*, *>)?.get("result") as? String
 
@@ -225,51 +255,60 @@ class GameImportService(
     ) {
         if (affectedPositionIds.isEmpty()) return
 
-        // Use bulk aggregation query to count occurrences for affected positions
-        val occurrenceCounts =
-            positionOccurrenceRepository.countOccurrencesByAccountAndPositions(
-                account.id,
-                affectedPositionIds,
-            )
+        val batchSize = 1000
+        val positionIdBatches = affectedPositionIds.chunked(batchSize)
 
-        // Fetch existing UserPositionStats for affected positions
-        val existingStats =
-            userPositionStatsRepository.findByChessAccountIdAndPositionIdIn(
-                account.id,
-                affectedPositionIds,
-            )
-        val existingStatsMap = existingStats.associateBy { "${it.chessAccount.id}-${it.position.id}-${it.playerColor}" }
+        for (batch in positionIdBatches) {
+            val batchSet = batch.toSet()
 
-        // Fetch all needed Position entities in one query
-        val positions =
-            positionRepository.findAllById(affectedPositionIds).associateBy { it.id }
+            // Use bulk aggregation query to count occurrences for affected positions in this batch
+            val occurrenceCounts =
+                positionOccurrenceRepository.countOccurrencesByAccountAndPositions(
+                    account.id,
+                    batchSet,
+                )
 
-        val statsUpdates = mutableListOf<UserPositionStats>()
-        for (count in occurrenceCounts) {
-            val key = "${account.id}-${count.positionId}-${count.playerColor}"
-            val existing = existingStatsMap[key]
+            // Fetch existing UserPositionStats for affected positions in this batch
+            val existingStats =
+                userPositionStatsRepository.findByChessAccountIdAndPositionIdIn(
+                    account.id,
+                    batchSet,
+                )
+            val existingStatsMap = existingStats.associateBy { "${it.chessAccount.id}-${it.position.id}-${it.playerColor}" }
 
-            if (existing != null) {
-                existing.timesReached = count.timesReached.toInt()
-                existing.updatedAt = Instant.now()
-                statsUpdates.add(existing)
-            } else {
-                val position =
-                    positions[count.positionId]
-                        ?: throw IllegalStateException("Position not found: ${count.positionId}")
-                val newStats =
-                    UserPositionStats(
-                        chessAccount = account,
-                        position = position,
-                        playerColor = count.playerColor,
-                        timesReached = count.timesReached.toInt(),
-                        updatedAt = Instant.now(),
-                    )
-                statsUpdates.add(newStats)
+            // Fetch all needed Position entities for this batch in one query
+            val positions =
+                positionRepository.findAllById(batchSet).associateBy { it.id }
+
+            val statsUpdates = mutableListOf<UserPositionStats>()
+            for (count in occurrenceCounts) {
+                val key = "${account.id}-${count.positionId}-${count.playerColor}"
+                val existing = existingStatsMap[key]
+
+                if (existing != null) {
+                    existing.timesReached = count.timesReached.toInt()
+                    existing.updatedAt = Instant.now()
+                    statsUpdates.add(existing)
+                } else {
+                    val position =
+                        positions[count.positionId]
+                            ?: throw IllegalStateException("Position not found: ${count.positionId}")
+                    val newStats =
+                        UserPositionStats(
+                            chessAccount = account,
+                            position = position,
+                            playerColor = count.playerColor,
+                            timesReached = count.timesReached.toInt(),
+                            updatedAt = Instant.now(),
+                        )
+                    statsUpdates.add(newStats)
+                }
+            }
+
+            if (statsUpdates.isNotEmpty()) {
+                userPositionStatsRepository.saveAll(statsUpdates)
             }
         }
-
-        userPositionStatsRepository.saveAll(statsUpdates)
     }
 
     private fun fetchArchiveUrls(

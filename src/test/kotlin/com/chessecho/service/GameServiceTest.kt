@@ -3,6 +3,7 @@ package com.chessecho.service
 import com.chessecho.domain.AppUser
 import com.chessecho.domain.ChessAccount
 import com.chessecho.domain.Game
+import com.chessecho.domain.Platform
 import com.chessecho.repository.ChessAccountRepository
 import com.chessecho.repository.GameRepository
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -33,7 +34,7 @@ class GameServiceTest {
     fun `should return empty page if account not found`() {
         whenever(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "user")).thenReturn(null)
 
-        val page = gameService.getGames("user", "CHESS_COM", PageRequest.of(0, 20))
+        val page = gameService.getGames("user", Platform.CHESS_COM, PageRequest.of(0, 20))
 
         assertEquals(0, page.totalElements)
     }
@@ -58,7 +59,7 @@ class GameServiceTest {
         whenever(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "user")).thenReturn(account)
         whenever(gameRepository.findAllByChessAccountOrderByPlayedAtDesc(eq(account), any())).thenReturn(pagedGames)
 
-        val page = gameService.getGames("user", "CHESS_COM", PageRequest.of(0, 20))
+        val page = gameService.getGames("user", Platform.CHESS_COM, PageRequest.of(0, 20))
 
         assertEquals(1, page.totalElements)
         assertEquals("url", page.content[0].platformGameId)

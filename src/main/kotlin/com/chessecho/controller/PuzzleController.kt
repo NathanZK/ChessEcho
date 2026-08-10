@@ -1,7 +1,10 @@
 package com.chessecho.controller
 
+import com.chessecho.domain.Platform
+import com.chessecho.domain.PlayerColor
 import com.chessecho.dto.PuzzleResponse
 import com.chessecho.service.WeaknessCalculationService
+import io.swagger.v3.oas.annotations.Parameter
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.RequestMapping
@@ -15,17 +18,23 @@ class PuzzleController(
 ) {
     @GetMapping("/puzzles")
     fun getPuzzles(
-        @RequestParam platform: String,
+        @RequestParam platform: Platform,
         @RequestParam username: String,
-        @RequestParam playerColor: String,
-        @RequestParam(required = false) mistakeThreshold: Double?,
+        @RequestParam playerColor: PlayerColor,
+        @Parameter(
+            description =
+                "Minimum engine evaluation loss, in pawns, required for a move to be classified as a mistake. " +
+                    "A lower value means a stricter definition of a mistake.",
+            example = "0.8",
+        )
+        @RequestParam(required = false) minEvalLoss: Double?,
         @RequestParam(defaultValue = "3") minMistakeCount: Int,
         @RequestParam(defaultValue = "5") limit: Int,
         @RequestParam(defaultValue = "0") page: Int,
     ): ResponseEntity<List<PuzzleResponse>> {
-        val threshold = mistakeThreshold ?: WeaknessCalculationService.DEFAULT_MISTAKE_THRESHOLD
+        val threshold = minEvalLoss ?: WeaknessCalculationService.DEFAULT_MIN_EVAL_LOSS
         if (threshold < 0.0) {
-            throw IllegalArgumentException("mistakeThreshold must be non-negative")
+            throw IllegalArgumentException("minEvalLoss must be non-negative")
         }
 
         val weaknesses =
@@ -33,7 +42,7 @@ class PuzzleController(
                 platform = platform,
                 username = username,
                 playerColor = playerColor,
-                mistakeThreshold = threshold,
+                minEvalLoss = threshold,
                 minMistakeCount = maxOf(1, minMistakeCount),
             )
 
@@ -47,7 +56,7 @@ class PuzzleController(
                 PuzzleResponse(
                     puzzleId = w.positionId,
                     fen = w.fen,
-                    playerColor = playerColor.uppercase(),
+                    playerColor = playerColor.name,
                     targetMove = w.bestMove,
                     acceptableMoves = w.acceptableMoves,
                     movesPlayed = w.movesPlayed,

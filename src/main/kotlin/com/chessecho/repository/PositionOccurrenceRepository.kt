@@ -20,6 +20,37 @@ interface PositionOccurrenceRepository : JpaRepository<PositionOccurrence, UUID>
         positionIds: Collection<UUID>,
     ): List<PositionOccurrence>
 
+    @Query(
+        """
+        SELECT po FROM PositionOccurrence po
+        WHERE po.chessAccount.id = :chessAccountId
+          AND (:playerColor = 'BOTH' OR po.playerColor = :playerColor)
+          AND po.position.id IN :positionIds
+        """,
+    )
+    fun findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(
+        @Param("chessAccountId") chessAccountId: UUID,
+        @Param("playerColor") playerColor: String,
+        @Param("positionIds") positionIds: Collection<UUID>,
+    ): List<PositionOccurrence>
+
+    @Query("SELECT COUNT(po) FROM PositionOccurrence po WHERE po.chessAccount.id = :chessAccountId")
+    fun countByChessAccountId(
+        @Param("chessAccountId") chessAccountId: UUID,
+    ): Long
+
+    @Query(
+        """
+        SELECT COUNT(po) FROM PositionOccurrence po
+        WHERE po.chessAccount.id = :chessAccountId
+          AND (:playerColor = 'BOTH' OR po.playerColor = :playerColor)
+        """,
+    )
+    fun countByChessAccountIdAndPlayerColorOrBoth(
+        @Param("chessAccountId") chessAccountId: UUID,
+        @Param("playerColor") playerColor: String,
+    ): Long
+
     /**
      * Counts occurrence statistics for a given account across a set of position IDs.
      */
@@ -46,36 +77,35 @@ interface PositionOccurrenceRepository : JpaRepository<PositionOccurrence, UUID>
     ): List<String>
 
     /**
-     * Dynamically aggregates position weaknesses in the database for a specific player and color using a dynamic mistake threshold.
+     * Dynamically aggregates position weaknesses in the database for a specific player and color using a dynamic evaluation loss threshold.
      */
     @Query(
         """
         SELECT new com.chessecho.repository.WeaknessAggregation(
             p.id,
             p.fen,
-            ups.timesReached,
+            CAST(COUNT(po.id) AS int),
             ea.bestMove,
             ea.baselineEvalCp,
-            SUM(CASE WHEN me.evalLossFromBest >= :mistakeThreshold THEN 1 ELSE 0 END),
-            AVG(CASE WHEN me.evalLossFromBest >= :mistakeThreshold THEN me.evalLossFromBest ELSE NULL END),
-            SUM(CASE WHEN me.evalLossFromBest >= :mistakeThreshold THEN me.evalLossFromBest ELSE 0.0 END)
+            SUM(CASE WHEN COALESCE(me.evalLossFromBest, CASE WHEN (ea.bestMoveEvalCp IS NOT NULL AND me.evalCp IS NOT NULL AND (ea.bestMoveEvalCp - me.evalCp) > 0) THEN (ea.bestMoveEvalCp - me.evalCp) / 100.0 ELSE 0.0 END) >= :minEvalLoss THEN 1 ELSE 0 END),
+            AVG(CASE WHEN COALESCE(me.evalLossFromBest, CASE WHEN (ea.bestMoveEvalCp IS NOT NULL AND me.evalCp IS NOT NULL AND (ea.bestMoveEvalCp - me.evalCp) > 0) THEN (ea.bestMoveEvalCp - me.evalCp) / 100.0 ELSE NULL END) >= :minEvalLoss THEN COALESCE(me.evalLossFromBest, CASE WHEN (ea.bestMoveEvalCp IS NOT NULL AND me.evalCp IS NOT NULL AND (ea.bestMoveEvalCp - me.evalCp) > 0) THEN (ea.bestMoveEvalCp - me.evalCp) / 100.0 ELSE 0.0 END) ELSE NULL END),
+            SUM(CASE WHEN COALESCE(me.evalLossFromBest, CASE WHEN (ea.bestMoveEvalCp IS NOT NULL AND me.evalCp IS NOT NULL AND (ea.bestMoveEvalCp - me.evalCp) > 0) THEN (ea.bestMoveEvalCp - me.evalCp) / 100.0 ELSE 0.0 END) >= :minEvalLoss THEN COALESCE(me.evalLossFromBest, CASE WHEN (ea.bestMoveEvalCp IS NOT NULL AND me.evalCp IS NOT NULL AND (ea.bestMoveEvalCp - me.evalCp) > 0) THEN (ea.bestMoveEvalCp - me.evalCp) / 100.0 ELSE 0.0 END) ELSE 0.0 END)
         )
-        FROM UserPositionStats ups
-        JOIN ups.position p
+        FROM PositionOccurrence po
+        JOIN po.position p
         JOIN EngineAnalysis ea ON ea.position.id = p.id
-        JOIN PositionOccurrence po ON po.position.id = p.id AND po.chessAccount.id = ups.chessAccount.id AND po.playerColor = ups.playerColor
         JOIN MoveEvaluation me ON me.engineAnalysis.id = ea.id AND me.move = po.movePlayed
-        WHERE ups.chessAccount.id = :chessAccountId
-          AND ups.playerColor = :playerColor
-          AND ups.timesReached >= :minTimesReached
-        GROUP BY p.id, p.fen, ups.timesReached, ea.bestMove, ea.baselineEvalCp
-        HAVING SUM(CASE WHEN me.evalLossFromBest >= :mistakeThreshold THEN 1 ELSE 0 END) >= :minMistakeCount
+        WHERE po.chessAccount.id = :chessAccountId
+          AND (:playerColor = 'BOTH' OR po.playerColor = :playerColor)
+        GROUP BY p.id, p.fen, ea.bestMove, ea.baselineEvalCp
+        HAVING COUNT(po.id) >= :minTimesReached
+           AND SUM(CASE WHEN COALESCE(me.evalLossFromBest, CASE WHEN (ea.bestMoveEvalCp IS NOT NULL AND me.evalCp IS NOT NULL AND (ea.bestMoveEvalCp - me.evalCp) > 0) THEN (ea.bestMoveEvalCp - me.evalCp) / 100.0 ELSE 0.0 END) >= :minEvalLoss THEN 1 ELSE 0 END) >= :minMistakeCount
         """,
     )
     fun findWeaknessAggregations(
         @Param("chessAccountId") chessAccountId: UUID,
         @Param("playerColor") playerColor: String,
-        @Param("mistakeThreshold") mistakeThreshold: Double,
+        @Param("minEvalLoss") minEvalLoss: Double,
         @Param("minTimesReached") minTimesReached: Int,
         @Param("minMistakeCount") minMistakeCount: Long,
     ): List<WeaknessAggregation>

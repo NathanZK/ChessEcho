@@ -14,13 +14,23 @@ class AppConfig {
     fun restClient(): RestClient = RestClient.create()
 
     @Bean
-    fun corsConfigurer(): WebMvcConfigurer {
+    fun corsConfigurer(
+        stringToPlayerColorConverter: StringToPlayerColorConverter,
+        stringToPlatformConverter: StringToPlatformConverter,
+        stringToTimeControlConverter: StringToTimeControlConverter,
+    ): WebMvcConfigurer {
         return object : WebMvcConfigurer {
             override fun addCorsMappings(registry: CorsRegistry) {
                 registry.addMapping("/**")
                     .allowedOrigins("http://localhost:3000", "http://127.0.0.1:3000")
                     .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                     .allowedHeaders("*")
+            }
+
+            override fun addFormatters(registry: org.springframework.format.FormatterRegistry) {
+                registry.addConverter(stringToPlayerColorConverter)
+                registry.addConverter(stringToPlatformConverter)
+                registry.addConverter(stringToTimeControlConverter)
             }
         }
     }

@@ -1,6 +1,7 @@
 package com.chessecho.service
 
 import com.chessecho.domain.Game
+import com.chessecho.domain.Platform
 import com.chessecho.dto.GameDto
 import com.chessecho.repository.ChessAccountRepository
 import com.chessecho.repository.GameRepository
@@ -17,11 +18,11 @@ class GameService(
     @Transactional(readOnly = true)
     fun getGames(
         username: String,
-        platform: String,
+        platform: Platform,
         pageable: Pageable,
     ): Page<GameDto> {
         val account =
-            chessAccountRepository.findByPlatformAndUsernameIgnoreCase(platform, username)
+            chessAccountRepository.findByPlatformAndUsernameIgnoreCase(platform.name, username)
                 ?: return Page.empty()
 
         return gameRepository.findAllByChessAccountOrderByPlayedAtDesc(account, pageable)
