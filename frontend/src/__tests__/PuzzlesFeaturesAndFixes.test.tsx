@@ -179,9 +179,8 @@ describe('Puzzles Tab Features and Fixes', () => {
     const settingsToggle = screen.getByRole('button', { name: /Puzzle Settings/i });
     fireEvent.click(settingsToggle);
 
-    // Update Min Eval Loss & Min Mistakes inputs
-    const minEvalInput = screen.getByLabelText(/Min Eval Loss/i);
-    fireEvent.change(minEvalInput, { target: { value: '1.2' } });
+    // Verify Puzzles tab does NOT display an independent Mistake Threshold selector
+    expect(screen.queryByLabelText(/Mistake Threshold/i)).not.toBeInTheDocument();
 
     const minMistakesInput = screen.getByLabelText(/Min Mistakes/i);
     fireEvent.change(minMistakesInput, { target: { value: '5' } });
@@ -198,8 +197,8 @@ describe('Puzzles Tab Features and Fixes', () => {
 
     // 2. Verifies API call parameters
     await waitFor(() => {
-      expect(api.fetchPuzzles).toHaveBeenCalledWith('hikaru', 'CHESS_COM', 'WHITE', 1.2, 5, 10, 0);
-      expect(api.fetchPuzzles).toHaveBeenCalledWith('hikaru', 'CHESS_COM', 'BLACK', 1.2, 5, 10, 0);
+      expect(api.fetchPuzzles).toHaveBeenCalledWith('hikaru', 'CHESS_COM', 'WHITE', 0.8, 5, 10, 0);
+      expect(api.fetchPuzzles).toHaveBeenCalledWith('hikaru', 'CHESS_COM', 'BLACK', 0.8, 5, 10, 0);
     });
 
     // 3. Verifies current puzzle is updated to the first returned puzzle since previous puzzle is no longer present

@@ -68,13 +68,15 @@ export async function fetchWeaknesses(
   platform: string = 'CHESS_COM',
   playerColor: string = 'BOTH',
   minEvalLoss: number = 0.8,
-  minMistakeCount: number = 3
+  minMistakeCount: number = 3,
+  page: number = 0,
+  size: number = 20
 ): Promise<WeaknessResponse[]> {
   if (!username) return [];
   try {
     const formattedPlatform = platform.toUpperCase();
     const formattedColor = playerColor.toUpperCase();
-    const url = `${API_BASE_URL}/positions/weaknesses?platform=${encodeURIComponent(formattedPlatform)}&username=${encodeURIComponent(username)}&playerColor=${encodeURIComponent(formattedColor)}&minEvalLoss=${minEvalLoss}&minMistakeCount=${minMistakeCount}`;
+    const url = `${API_BASE_URL}/positions/weaknesses?platform=${encodeURIComponent(formattedPlatform)}&username=${encodeURIComponent(username)}&playerColor=${encodeURIComponent(formattedColor)}&minEvalLoss=${minEvalLoss}&minMistakeCount=${minMistakeCount}&page=${page}&size=${size}`;
     const response = await fetch(url);
 
     if (!response.ok) {

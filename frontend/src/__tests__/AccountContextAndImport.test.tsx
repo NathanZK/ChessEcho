@@ -186,7 +186,7 @@ describe('Account Context and Import Games MVP Behavior', () => {
         />
       );
 
-      expect(screen.getByText(/Job ID: job-999/i)).toBeInTheDocument();
+      expect(screen.getByText(/Import Progress/i)).toBeInTheDocument();
 
       // Advance timers asynchronously
       await act(async () => {

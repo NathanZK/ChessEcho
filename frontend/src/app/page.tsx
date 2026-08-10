@@ -73,10 +73,13 @@ export default function Home() {
     }
   };
 
+  const [weaknessCount, setWeaknessCount] = useState<number>(0);
+
   const handleDisconnect = () => {
     handleSetUsername(undefined);
     setPuzzlesList([]);
     setActivePuzzle(null);
+    setWeaknessCount(0);
   };
 
 
@@ -137,6 +140,10 @@ export default function Home() {
     setIsEvalUnknown(false);
   };
 
+  const [puzzlePage, setPuzzlePage] = useState<number>(0);
+  const [hasMorePuzzles, setHasMorePuzzles] = useState<boolean>(true);
+  const [isFetchingMorePuzzles, setIsFetchingMorePuzzles] = useState<boolean>(false);
+
   // Fetch live puzzles whenever activeUsername or puzzleColorFilter changes
   React.useEffect(() => {
     if (!activeUsername) {
@@ -146,10 +153,14 @@ export default function Home() {
       setMoveHistory([]);
       setHintSquare(undefined);
       setIsLoadingPuzzles(false);
+      setPuzzlePage(0);
+      setHasMorePuzzles(false);
       return;
     }
     async function loadData() {
       setIsLoadingPuzzles(true);
+      setPuzzlePage(0);
+      setHasMorePuzzles(true);
       try {
         let data: Puzzle[] = [];
         if (puzzleColorFilter === 'WHITE') {
@@ -172,6 +183,7 @@ export default function Home() {
           setCurrentPuzzleIndex(targetIdx);
           setActivePuzzle(targetPuzzle);
           resetPuzzleInteractionState(targetPuzzle);
+          setHasMorePuzzles(data.length >= 10);
           if (typeof window !== 'undefined' && targetPuzzle) {
             localStorage.setItem('chessecho_puzzle_id', targetPuzzle.puzzleId);
           }
@@ -181,6 +193,7 @@ export default function Home() {
           setFeedback({ status: 'IDLE' });
           setMoveHistory([]);
           setHintSquare(undefined);
+          setHasMorePuzzles(false);
         }
       } catch (err) {
         console.error('Failed to load puzzles from backend API:', err);
@@ -189,6 +202,7 @@ export default function Home() {
         setFeedback({ status: 'IDLE' });
         setMoveHistory([]);
         setHintSquare(undefined);
+        setHasMorePuzzles(false);
       } finally {
         setIsLoadingPuzzles(false);
       }
@@ -199,6 +213,8 @@ export default function Home() {
   const handleApplyPuzzleSettings = async () => {
     if (!activeUsername) return;
     setIsLoadingPuzzles(true);
+    setPuzzlePage(0);
+    setHasMorePuzzles(true);
     try {
       let data: Puzzle[] = [];
       if (puzzleColorFilter === 'WHITE') {
@@ -221,6 +237,7 @@ export default function Home() {
         setCurrentPuzzleIndex(targetIdx);
         setActivePuzzle(targetPuzzle);
         resetPuzzleInteractionState(targetPuzzle);
+        setHasMorePuzzles(data.length >= 10);
         if (typeof window !== 'undefined' && targetPuzzle) {
           localStorage.setItem('chessecho_puzzle_id', targetPuzzle.puzzleId);
         }
@@ -230,6 +247,7 @@ export default function Home() {
         setFeedback({ status: 'IDLE' });
         setMoveHistory([]);
         setHintSquare(undefined);
+        setHasMorePuzzles(false);
         if (typeof window !== 'undefined') {
           localStorage.removeItem('chessecho_puzzle_id');
         }
@@ -241,12 +259,13 @@ export default function Home() {
       setFeedback({ status: 'IDLE' });
       setMoveHistory([]);
       setHintSquare(undefined);
+      setHasMorePuzzles(false);
     } finally {
       setIsLoadingPuzzles(false);
     }
   };
 
-  const handleNextPuzzle = () => {
+  const handleNextPuzzle = async () => {
     if (puzzlesList.length === 0) return;
     const nextIndex = (currentPuzzleIndex + 1) % puzzlesList.length;
     const nextPuzzle = puzzlesList[nextIndex];
@@ -256,6 +275,48 @@ export default function Home() {
     resetPuzzleInteractionState(nextPuzzle);
     if (typeof window !== 'undefined' && nextPuzzle) {
       localStorage.setItem('chessecho_puzzle_id', nextPuzzle.puzzleId);
+    }
+
+    // Prefetch next page if approaching the end of current puzzle list
+    if (
+      activeUsername &&
+      hasMorePuzzles &&
+      !isFetchingMorePuzzles &&
+      nextIndex >= puzzlesList.length - 2
+    ) {
+      setIsFetchingMorePuzzles(true);
+      const nextPage = puzzlePage + 1;
+      try {
+        let data: Puzzle[] = [];
+        if (puzzleColorFilter === 'WHITE') {
+          data = await fetchPuzzles(activeUsername, 'CHESS_COM', 'WHITE', minEvalLoss, minMistakeCount, 10, nextPage);
+        } else if (puzzleColorFilter === 'BLACK') {
+          data = await fetchPuzzles(activeUsername, 'CHESS_COM', 'BLACK', minEvalLoss, minMistakeCount, 10, nextPage);
+        } else {
+          const whiteData = await fetchPuzzles(activeUsername, 'CHESS_COM', 'WHITE', minEvalLoss, minMistakeCount, 10, nextPage);
+          const blackData = await fetchPuzzles(activeUsername, 'CHESS_COM', 'BLACK', minEvalLoss, minMistakeCount, 10, nextPage);
+          data = [...whiteData, ...blackData];
+        }
+
+        if (data && data.length > 0) {
+          setPuzzlesList((prev) => {
+            const existingIds = new Set(prev.map((p) => p.puzzleId));
+            const newItems = data.filter((p) => !existingIds.has(p.puzzleId));
+            return [...prev, ...newItems];
+          });
+          setPuzzlePage(nextPage);
+          if (data.length < 10) {
+            setHasMorePuzzles(false);
+          }
+        } else {
+          setHasMorePuzzles(false);
+        }
+      } catch (err) {
+        console.error('Failed to prefetch next puzzle page:', err);
+        setHasMorePuzzles(false);
+      } finally {
+        setIsFetchingMorePuzzles(false);
+      }
     }
   };
 
@@ -403,10 +464,10 @@ export default function Home() {
         activeTab={activeTab}
         setActiveTab={changeTab}
         username={activeUsername}
-        weaknessCount={puzzlesList.length}
+        weaknessCount={weaknessCount}
         onDisconnect={handleDisconnect}
       />
-
+      
       {/* Main Content Area */}
       <main className={`flex-1 flex flex-col ${activeTab === 'import' ? 'justify-center overflow-hidden py-2' : 'justify-start overflow-y-auto py-2'}`}>
         {/* TAB 1: PRACTICE PUZZLES */}
@@ -450,18 +511,7 @@ export default function Home() {
                 {showPuzzleSettings && (
                   <div className="flex items-center gap-2 bg-slate-950 px-3 py-1 rounded-xl border border-slate-800">
                     <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-300">
-                      <span>Min Eval Loss</span>
-                      <input
-                        type="number"
-                        step="0.1"
-                        min="0"
-                        value={minEvalLoss}
-                        onChange={(e) => setMinEvalLoss(Number(e.target.value))}
-                        className="w-14 bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-emerald-400 font-mono text-[11px] outline-none focus:border-emerald-500"
-                      />
-                    </label>
-                    <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-300">
-                      <span>Min Mistakes</span>
+                      <span>Min Mistakes:</span>
                       <input
                         type="number"
                         step="1"
@@ -556,7 +606,10 @@ export default function Home() {
         {activeTab === 'weaknesses' && (
           <WeaknessesList
             username={activeUsername}
+            minEvalLoss={minEvalLoss}
+            onMinEvalLossChange={setMinEvalLoss}
             onSelectPractice={handleSelectPracticeFromLibrary}
+            onWeaknessCountChange={setWeaknessCount}
           />
         )}
 
