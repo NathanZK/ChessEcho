@@ -14,9 +14,9 @@ Initiates an asynchronous game import job from Chess.com or Lichess.
 ```json
 {
   "username": "string (required)",
-  "platform": "string (required, e.g., 'chessdotcom' | 'lichess')",
-  "timeControls": ["rapid", "blitz", "bullet", "classical"],
-  "playerColor": "white | black | both (required)",
+  "platform": "CHESS_COM",
+  "timeControls": ["RAPID", "BLITZ", "BULLET", "CLASSICAL"],
+  "playerColor": "WHITE | BLACK | BOTH (required)",
   "fromDate": "YYYY-MM (optional)",
   "toDate": "YYYY-MM (optional)"
 }
@@ -28,9 +28,9 @@ curl -X POST http://localhost:8080/api/games/import \
   -H "Content-Type: application/json" \
   -d '{
     "username": "magnuscarlsen",
-    "platform": "chessdotcom",
-    "timeControls": ["rapid"],
-    "playerColor": "white"
+    "platform": "CHESS_COM",
+    "timeControls": ["RAPID"],
+    "playerColor": "WHITE"
   }'
 ```
 
@@ -113,14 +113,14 @@ Retrieves a paginated list of imported games for a specified player and platform
 
 ### Query Parameters
 - `username` (string, required): Player's username.
-- `platform` (string, required): Platform identifier (e.g., `chessdotcom`, `lichess`).
+- `platform` (Platform enum, required): Platform identifier (`CHESS_COM`).
 - `page` (int, optional, default: 0): Zero-indexed page number.
 - `size` (int, optional, default: 20): Page size limit.
 - `sort` (string, optional): Sorting specification.
 
 ### Curl Example
 ```bash
-curl "http://localhost:8080/api/games?username=magnuscarlsen&platform=chessdotcom&page=0&size=20"
+curl "http://localhost:8080/api/games?username=magnuscarlsen&platform=CHESS_COM&page=0&size=20"
 ```
 
 ### Responses
@@ -156,15 +156,15 @@ Retrieves calculated chess weaknesses based on position evaluations and recurrin
 - **Endpoint:** `GET /api/positions/weaknesses`
 
 ### Query Parameters
-- `platform` (string, required): Platform name.
+- `platform` (Platform enum, required): Platform identifier (`CHESS_COM`).
 - `username` (string, required): Player username.
-- `playerColor` (string, required): `white` or `black`.
-- `mistakeThreshold` (double, optional, default: `0.8`): Evaluation loss threshold for defining a mistake.
+- `playerColor` (PlayerColor enum, required): `WHITE` or `BLACK`.
+- `minEvalLoss` (double, optional, default: `0.8`): Minimum engine evaluation loss, in pawns, required for a move to be classified as a mistake. A lower value means a stricter definition of a mistake.
 - `minMistakeCount` (int, optional, default: `3`): Minimum number of mistakes required to qualify as a weakness.
 
 ### Curl Example
 ```bash
-curl "http://localhost:8080/api/positions/weaknesses?platform=chessdotcom&username=magnuscarlsen&playerColor=white&mistakeThreshold=0.8"
+curl "http://localhost:8080/api/positions/weaknesses?platform=CHESS_COM&username=magnuscarlsen&playerColor=WHITE&minEvalLoss=0.8"
 ```
 
 ### Responses
@@ -209,17 +209,17 @@ Retrieves position puzzles created from detected player weaknesses for interacti
 - **Endpoint:** `GET /api/puzzles`
 
 ### Query Parameters
-- `platform` (string, required): Platform name.
+- `platform` (Platform enum, required): Platform identifier (`CHESS_COM`).
 - `username` (string, required): Player username.
-- `playerColor` (string, required): `WHITE` or `BLACK`.
-- `mistakeThreshold` (double, optional, default: `0.8`): Evaluation loss threshold for defining a mistake.
+- `playerColor` (PlayerColor enum, required): `WHITE` or `BLACK`.
+- `minEvalLoss` (double, optional, default: `0.8`): Minimum engine evaluation loss, in pawns, required for a move to be classified as a mistake. A lower value means a stricter definition of a mistake.
 - `minMistakeCount` (int, optional, default: `3`): Minimum mistake count threshold.
 - `limit` (int, optional, default: `5`): Max number of puzzles to return per page.
 - `page` (int, optional, default: `0`): Page index.
 
 ### Curl Example
 ```bash
-curl "http://localhost:8080/api/puzzles?platform=chessdotcom&username=magnuscarlsen&playerColor=white&mistakeThreshold=0.8&limit=5&page=0"
+curl "http://localhost:8080/api/puzzles?platform=CHESS_COM&username=magnuscarlsen&playerColor=WHITE&minEvalLoss=0.8&limit=5&page=0"
 ```
 
 ### Responses

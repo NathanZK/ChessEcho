@@ -23,7 +23,7 @@ class Game(
     val chessAccount: ChessAccount,
     @Column(name = "platform_game_id", nullable = false)
     val platformGameId: String,
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "TEXT")
     val pgn: String,
     @Column(name = "time_control")
     val timeControl: String? = null,

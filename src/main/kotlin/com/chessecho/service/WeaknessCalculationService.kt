@@ -1,11 +1,14 @@
 package com.chessecho.service
 
+import com.chessecho.domain.Platform
+import com.chessecho.domain.PlayerColor
 import com.chessecho.dto.AcceptableMove
 import com.chessecho.dto.MoveBreakdown
 import com.chessecho.dto.WeaknessResponse
 import com.chessecho.repository.ChessAccountRepository
 import com.chessecho.repository.EngineAnalysisRepository
 import com.chessecho.repository.PositionOccurrenceRepository
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.Instant
@@ -18,64 +21,77 @@ class WeaknessCalculationService(
     private val positionOccurrenceRepository: PositionOccurrenceRepository,
     private val engineAnalysisRepository: EngineAnalysisRepository,
 ) {
+    private val log = LoggerFactory.getLogger(javaClass)
+
     companion object {
-        const val DEFAULT_MISTAKE_THRESHOLD = 0.8
+        const val DEFAULT_MIN_EVAL_LOSS = 0.8
         const val DEFAULT_MIN_TIMES_REACHED = 3
         const val DEFAULT_MIN_MISTAKE_COUNT = 3
     }
 
-    /**
-     * Dynamically calculates recurring weaknesses for a specific user, platform, and color at request time.
-     *
-     * Architectural Design & Domain Semantics:
-     * - Dynamic Thresholding: Weakness calculation is an interpretation of objective engine-analysis data.
-     *   `MoveEvaluation.evalLossFromBest` is the sole source of truth. No threshold-specific `UserPositionWeakness`
-     *   records are persisted, allowing different thresholds (e.g. 0.3 vs 0.8) to operate on the exact same stored data.
-     * - Database Aggregation: Filtering candidate positions (by `UserPositionStats.timesReached >= minTimesReached`),
-     *   evaluating mistakes (`evalLossFromBest >= mistakeThreshold`), and computing `mistakeCount` and `averageLoss`
-     *   are performed via a database-level JPQL aggregation query. Zero Stockfish calls are executed.
-     * - Batch Fetching (0 N+1 Queries): Resolves engine analyses and position occurrences in batch queries
-     *   rather than per-position loops. Total query count per endpoint call is capped at 4 queries total.
-     * - Weakness Metrics:
-     *   - `mistakeCount`: Number of occurrences where user's move had `evalLossFromBest >= mistakeThreshold`.
-     *   - `mistakeRate`: `(mistakeCount / timesReached) * 100.0` percentage.
-     *   - `averageLoss`: Average `evalLossFromBest` (in pawns) across mistake occurrences.
-     *   - `priority`: Time-decay weighted loss total multiplied by raw mistake rate (`mistakeCount / timesReached`).
-     */
     @Transactional(readOnly = true)
     fun getWeaknesses(
-        platform: String,
+        platform: Platform,
         username: String,
-        playerColor: String,
-        mistakeThreshold: Double = DEFAULT_MISTAKE_THRESHOLD,
+        playerColor: PlayerColor,
+        minEvalLoss: Double = DEFAULT_MIN_EVAL_LOSS,
         minMistakeCount: Int = DEFAULT_MIN_MISTAKE_COUNT,
         minTimesReached: Int = DEFAULT_MIN_TIMES_REACHED,
     ): List<WeaknessResponse> {
-        require(mistakeThreshold >= 0.0) { "mistakeThreshold must be non-negative" }
+        val startTime = System.currentTimeMillis()
+        require(minEvalLoss >= 0.0) { "minEvalLoss must be non-negative" }
 
         val account =
-            chessAccountRepository.findByPlatformAndUsernameIgnoreCase(platform, username)
-                ?: throw NoSuchElementException("Chess account not found")
+            chessAccountRepository.findByPlatformAndUsernameIgnoreCase(platform.name, username)
+                ?: run {
+                    log.info(
+                        "Weakness calculation failed: account not found for platform={} username={} playerColor={} minEvalLoss={}",
+                        platform, username, playerColor, minEvalLoss,
+                    )
+                    throw NoSuchElementException("Chess account not found")
+                }
 
-        val color = playerColor.uppercase()
+        val color = playerColor.name
+
+        // Diagnostic counts for structured observability
+        val totalOccurrences = positionOccurrenceRepository.countByChessAccountId(account.id)
+        val colorFilteredOccurrences = positionOccurrenceRepository.countByChessAccountIdAndPlayerColorOrBoth(account.id, color)
 
         // 1. Perform database-level aggregation to filter qualifying positions and compute core mistake metrics
         val aggregations =
             positionOccurrenceRepository.findWeaknessAggregations(
                 chessAccountId = account.id,
                 playerColor = color,
-                mistakeThreshold = mistakeThreshold,
+                minEvalLoss = minEvalLoss,
                 minTimesReached = minTimesReached,
                 minMistakeCount = minMistakeCount.toLong(),
             )
 
-        if (aggregations.isEmpty()) return emptyList()
+        if (aggregations.isEmpty()) {
+            val durationMs = System.currentTimeMillis() - startTime
+            log.info(
+                "Weakness calculation pipeline: accountId={} platform={} username={} playerColor={} minEvalLoss={} " +
+                    "minTimesReached={} minMistakeCount={} totalOccurrences={} colorFilteredOccurrences={} qualifyingPositions=0 " +
+                    "finalResultCount=0 durationMs={}",
+                account.id,
+                platform,
+                username,
+                playerColor,
+                minEvalLoss,
+                minTimesReached,
+                minMistakeCount,
+                totalOccurrences,
+                colorFilteredOccurrences,
+                durationMs,
+            )
+            return emptyList()
+        }
 
         val positionIds = aggregations.map { it.positionId }.toSet()
 
         // 2. Batch fetch position occurrences for only the qualifying positions
         val occurrences =
-            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorAndPositionIdIn(
+            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(
                 chessAccountId = account.id,
                 playerColor = color,
                 positionIds = positionIds,
@@ -108,7 +124,7 @@ class WeaknessCalculationService(
                 val (prevLoss, prevCount) = moveStats.getOrDefault(occ.movePlayed, Pair(0.0, 0))
                 moveStats[occ.movePlayed] = Pair(prevLoss + evalLoss, prevCount + 1)
 
-                if (evalLoss >= mistakeThreshold) {
+                if (evalLoss >= minEvalLoss) {
                     unweightedTotalLoss += evalLoss
                     val playedAt = occ.game.playedAt
                     val weight =
@@ -139,7 +155,7 @@ class WeaknessCalculationService(
                             val loss = moveEval.evalLossFromBest ?: calculateEvalLoss(bestMoveEvalCp, moveEval.evalCp)
                             AcceptableMove(move = moveEval.move, evalLoss = loss)
                         }
-                        .filter { it.evalLoss < mistakeThreshold }
+                        .filter { it.evalLoss < minEvalLoss }
                         .sortedBy { it.evalLoss }
 
                 val movesPlayed =
@@ -151,7 +167,7 @@ class WeaknessCalculationService(
                                 averageLoss = stats.first / stats.second,
                             )
                         }
-                        .filter { it.averageLoss >= mistakeThreshold }
+                        .filter { it.averageLoss >= minEvalLoss }
                         .sortedWith(compareByDescending<MoveBreakdown> { it.timesPlayed }.thenByDescending { it.averageLoss })
                         .take(3)
 
@@ -177,7 +193,28 @@ class WeaknessCalculationService(
             }
         }
 
-        return weaknesses.filter { it.priority > 0 }.sortedByDescending { it.priority }
+        val result = weaknesses.filter { it.priority > 0 }.sortedByDescending { it.priority }
+        val durationMs = System.currentTimeMillis() - startTime
+
+        log.info(
+            "Weakness calculation pipeline: accountId={} platform={} username={} playerColor={} minEvalLoss={} " +
+                "minTimesReached={} minMistakeCount={} totalOccurrences={} colorFilteredOccurrences={} qualifyingPositions={} " +
+                "finalResultCount={} durationMs={}",
+            account.id,
+            platform,
+            username,
+            playerColor,
+            minEvalLoss,
+            minTimesReached,
+            minMistakeCount,
+            totalOccurrences,
+            colorFilteredOccurrences,
+            aggregations.size,
+            result.size,
+            durationMs,
+        )
+
+        return result
     }
 
     /**

@@ -1,5 +1,6 @@
 package com.chessecho.controller
 
+import com.chessecho.domain.Platform
 import com.chessecho.dto.GameDto
 import com.chessecho.service.GameService
 import org.junit.jupiter.api.Test
@@ -40,7 +41,7 @@ class GameControllerTest {
             )
         val page = PageImpl(listOf(gameDto), PageRequest.of(0, 20), 1)
 
-        whenever(gameService.getGames(eq("user"), eq("CHESS_COM"), any())).thenReturn(page)
+        whenever(gameService.getGames(eq("user"), eq(Platform.CHESS_COM), any())).thenReturn(page)
 
         mockMvc.perform(
             get("/api/games")

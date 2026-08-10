@@ -5,6 +5,8 @@ import com.chessecho.domain.ChessAccount
 import com.chessecho.domain.EngineAnalysis
 import com.chessecho.domain.Game
 import com.chessecho.domain.MoveEvaluation
+import com.chessecho.domain.Platform
+import com.chessecho.domain.PlayerColor
 import com.chessecho.domain.Position
 import com.chessecho.domain.PositionOccurrence
 import com.chessecho.repository.ChessAccountRepository
@@ -41,7 +43,7 @@ class WeaknessCalculationServiceTest {
     private lateinit var weaknessCalculationService: WeaknessCalculationService
 
     @Test
-    fun `test dynamic threshold changes mistakeCount and classifies moves accurately`() {
+    fun `test dynamic minEvalLoss changes mistakeCount and classifies moves accurately`() {
         val account = ChessAccount(user = AppUser(email = "test@test.com"), platform = "CHESS_COM", username = "nathan")
         val position = Position(hash = "hash", fen = "fen")
 
@@ -77,7 +79,7 @@ class WeaknessCalculationServiceTest {
             )
 
         `when`(
-            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorAndPositionIdIn(
+            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(
                 eq(account.id),
                 eq("WHITE"),
                 any(),
@@ -107,7 +109,7 @@ class WeaknessCalculationServiceTest {
             positionOccurrenceRepository.findWeaknessAggregations(
                 chessAccountId = account.id,
                 playerColor = "WHITE",
-                mistakeThreshold = 0.3,
+                minEvalLoss = 0.3,
                 minTimesReached = 3,
                 minMistakeCount = 1,
             ),
@@ -115,10 +117,10 @@ class WeaknessCalculationServiceTest {
 
         val weaknesses =
             weaknessCalculationService.getWeaknesses(
-                "CHESS_COM",
+                Platform.CHESS_COM,
                 "nathan",
-                "WHITE",
-                mistakeThreshold = 0.3,
+                PlayerColor.WHITE,
+                minEvalLoss = 0.3,
                 minMistakeCount = 1,
             )
 
@@ -134,28 +136,46 @@ class WeaknessCalculationServiceTest {
     }
 
     @Test
-    fun `test negative threshold throws IllegalArgumentException`() {
+    fun `test negative minEvalLoss throws IllegalArgumentException`() {
         assertThrows<IllegalArgumentException> {
-            weaknessCalculationService.getWeaknesses("CHESS_COM", "nathan", "WHITE", mistakeThreshold = -0.5)
+            weaknessCalculationService.getWeaknesses(Platform.CHESS_COM, "nathan", PlayerColor.WHITE, minEvalLoss = -0.5)
         }
     }
 
     @Test
-    fun `test changing threshold does not trigger Stockfish analysis`() {
+    fun `test playerColor BOTH calls queries with BOTH color parameter`() {
+        val account = ChessAccount(user = AppUser(email = "test@test.com"), platform = "CHESS_COM", username = "nathan")
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "nathan")).thenReturn(account)
+        `when`(
+            positionOccurrenceRepository.findWeaknessAggregations(
+                chessAccountId = account.id,
+                playerColor = "BOTH",
+                minEvalLoss = 0.8,
+                minTimesReached = 3,
+                minMistakeCount = 3,
+            ),
+        ).thenReturn(emptyList())
+
+        val result = weaknessCalculationService.getWeaknesses(Platform.CHESS_COM, "nathan", PlayerColor.BOTH, minEvalLoss = 0.8)
+        assertTrue(result.isEmpty())
+    }
+
+    @Test
+    fun `test changing minEvalLoss does not trigger Stockfish analysis`() {
         val account = ChessAccount(user = AppUser(email = "test@test.com"), platform = "CHESS_COM", username = "nathan")
         `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "nathan")).thenReturn(account)
         `when`(
             positionOccurrenceRepository.findWeaknessAggregations(
                 chessAccountId = any(),
                 playerColor = any(),
-                mistakeThreshold = any(),
+                minEvalLoss = any(),
                 minTimesReached = any(),
                 minMistakeCount = any(),
             ),
         ).thenReturn(emptyList())
 
-        weaknessCalculationService.getWeaknesses("CHESS_COM", "nathan", "WHITE", mistakeThreshold = 0.3)
-        weaknessCalculationService.getWeaknesses("CHESS_COM", "nathan", "WHITE", mistakeThreshold = 0.8)
+        weaknessCalculationService.getWeaknesses(Platform.CHESS_COM, "nathan", PlayerColor.WHITE, minEvalLoss = 0.3)
+        weaknessCalculationService.getWeaknesses(Platform.CHESS_COM, "nathan", PlayerColor.WHITE, minEvalLoss = 0.8)
 
         verify(engineAnalysisRepository, never()).save(any())
     }

@@ -333,7 +333,7 @@ The optimized dynamic approach provides:
 - **0 Stockfish calls** during weakness/puzzle reads.
 - **0 database writes** during weakness/puzzle reads.
 - **4 bounded database queries total** (down from up to 1,003 queries).
-- **Interactive query-time threshold adjustments** (`mistakeThreshold = 0.3` vs `0.8`) with zero database recalculation writes or cache invalidation overhead.
+- **Interactive query-time threshold adjustments** (`minEvalLoss = 0.3` vs `0.8`) with zero database recalculation writes or cache invalidation overhead.
 
 Therefore, the dynamic query-time architecture is fully sufficient for the MVP.
 

@@ -38,8 +38,8 @@ class GameImportControllerTest {
         mapOf(
             "username" to "hikaru",
             "platform" to "CHESS_COM",
-            "timeControls" to listOf("rapid", "blitz"),
-            "playerColor" to "both",
+            "timeControls" to listOf("RAPID", "BLITZ"),
+            "playerColor" to "BOTH",
         )
 
     @Test

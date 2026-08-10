@@ -28,7 +28,12 @@ class EngineAnalysisOrchestrator(
     fun analyzeAffectedPositions(affectedPositionIds: Set<UUID>) {
         if (affectedPositionIds.isEmpty()) return
 
-        val qualifyingPositions = positionRepository.findQualifyingPositions(affectedPositionIds, minOccurrences)
+        val batchSize = 1000
+        val qualifyingPositions = mutableListOf<com.chessecho.domain.Position>()
+        for (batch in affectedPositionIds.chunked(batchSize)) {
+            qualifyingPositions.addAll(positionRepository.findQualifyingPositions(batch.toSet(), minOccurrences))
+        }
+
         if (qualifyingPositions.isEmpty()) {
             log.info("No affected positions met the minimum occurrence threshold of $minOccurrences")
             return
