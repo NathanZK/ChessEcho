@@ -17,15 +17,23 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
   onNavigateTab,
   onDisconnect,
 }) => {
-  const [username, setUsername] = useState<string>('');
-  const [timeControls, setTimeControls] = useState<string[]>(['blitz', 'rapid']);
-  const [playerColor, setPlayerColor] = useState<'white' | 'black' | 'both'>('both');
-  const [fromDate, setFromDate] = useState<string>('2025-01');
-  const [toDate, setToDate] = useState<string>('2026-08');
+  const [username, setUsername] = useState<string>(connectedUsername || '');
+  const [timeControls, setTimeControls] = useState<string[]>(['BLITZ', 'RAPID']);
+  const [playerColor, setPlayerColor] = useState<'WHITE' | 'BLACK' | 'BOTH'>('BOTH');
+  const [fromDate, setFromDate] = useState<string>('');
+  const [toDate, setToDate] = useState<string>('');
 
   const [activeJob, setActiveJob] = useState<JobStatusResponse | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [pollingError, setPollingError] = useState<string | null>(null);
+
+  // Sync username input if connectedUsername changes
+  React.useEffect(() => {
+    if (connectedUsername) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setUsername(connectedUsername);
+    }
+  }, [connectedUsername]);
 
   // Restore saved activeJob from localStorage after client mount to prevent SSR hydration error
   React.useEffect(() => {
@@ -101,19 +109,16 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
   };
 
   const handleStartImport = async () => {
-    if (connectedUsername) {
-      setErrorMessage(`Disconnect ${connectedUsername} first before importing another account.`);
-      return;
-    }
-    if (!username.trim()) {
+    const trimmedUser = username.trim();
+    if (!trimmedUser) {
       setErrorMessage('Please enter a Chess.com username');
       return;
     }
     setErrorMessage(null);
     try {
       const response = await startImportJob(
-        username.trim(),
-        'chessdotcom',
+        trimmedUser,
+        'CHESS_COM',
         timeControls,
         playerColor,
         fromDate || undefined,
@@ -121,7 +126,7 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
       );
 
       if (onImportStarted) {
-        onImportStarted(username.trim());
+        onImportStarted(trimmedUser);
       }
 
       const initialStatus: JobStatusResponse = {
@@ -159,165 +164,149 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
         {/* Form Settings Card */}
         <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 shadow-xl space-y-3.5">
           <h3 className="text-sm font-bold text-white border-b border-slate-800 pb-2.5 flex items-center justify-between">
-
             <span>Import Configuration</span>
             {connectedUsername && (
-              <span className="text-xs text-emerald-400 font-medium">● Connected: {connectedUsername}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-emerald-400 font-medium">● Connected: {connectedUsername}</span>
+                {onDisconnect && (
+                  <button
+                    type="button"
+                    onClick={onDisconnect}
+                    className="text-[11px] font-semibold text-slate-400 hover:text-rose-400 underline cursor-pointer"
+                  >
+                    Disconnect
+                  </button>
+                )}
+              </div>
             )}
           </h3>
 
-          {connectedUsername ? (
-            <div className="p-5 bg-slate-950 rounded-xl border border-emerald-500/30 space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="text-sm font-bold text-white">{connectedUsername}</h4>
-                  <p className="text-xs text-emerald-400 mt-0.5">Chess.com Account Connected</p>
-                </div>
-                <span className="px-2.5 py-1 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-md text-xs font-bold">
-                  ACTIVE
-                </span>
-              </div>
-              <p className="text-xs text-slate-400">
-                To import games for a different username, please disconnect this account first.
-              </p>
-              {onDisconnect && (
-                <button
-                  onClick={onDisconnect}
-                  className="w-full py-2.5 bg-slate-800 hover:bg-rose-600 text-slate-200 hover:text-white font-bold text-xs rounded-xl transition border border-slate-700 hover:border-rose-500 cursor-pointer"
-                >
-                  Disconnect Account
-                </button>
-              )}
+          {/* Username Input */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-slate-300">
+              Chess.com Username
+            </label>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="e.g. Hikaru"
+              className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-xl text-sm font-medium text-slate-200 outline-none transition"
+            />
+          </div>
+
+          {/* Multi-Select Time Controls (Order: Blitz, Rapid, Bullet, Classical) */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
+              <span>Time Controls (Select one or more)</span>
+              <span className="text-[11px] text-emerald-400 font-normal">
+                {timeControls.length} selected
+              </span>
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              {[
+                { id: 'BLITZ', label: '⚡ Blitz' },
+                { id: 'RAPID', label: '⏱️ Rapid' },
+                { id: 'BULLET', label: '🚀 Bullet' },
+                { id: 'CLASSICAL', label: '♟️ Classical' },
+              ].map((tc) => {
+                const isSelected = timeControls.includes(tc.id);
+                return (
+                  <button
+                    type="button"
+                    key={tc.id}
+                    onClick={() => handleTimeControlToggle(tc.id)}
+                    className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold border transition cursor-pointer ${
+                      isSelected
+                        ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300'
+                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    <span>{tc.label}</span>
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      readOnly
+                      className="accent-emerald-500 pointer-events-none"
+                    />
+                  </button>
+                );
+              })}
             </div>
-          ) : (
-            <>
-              {/* Username Input */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-300">
-                  Chess.com Username
-                </label>
+          </div>
+
+          {/* Player Color Selection */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-slate-300">
+              Player Color
+            </label>
+            <div className="grid grid-cols-3 gap-2 bg-slate-950 p-1 rounded-xl border border-slate-800">
+              {(['WHITE', 'BLACK', 'BOTH'] as const).map((color) => (
+                <button
+                  type="button"
+                  key={color}
+                  onClick={() => setPlayerColor(color)}
+                  className={`py-1.5 text-xs font-bold rounded-lg uppercase tracking-wider transition cursor-pointer ${
+                    playerColor === color
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  {color}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Advanced Date Range Controls (Optional) */}
+          <div className="pt-2 border-t border-slate-800 space-y-3">
+            <div className="flex items-center space-x-2 text-xs font-bold text-slate-300">
+              <Calendar className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Advanced Date Range (Optional, YYYY-MM)</span>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <span className="text-[11px] text-slate-400">From Month</span>
                 <input
-                  type="text"
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder="e.g. Hikaru"
-                  className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-xl text-sm font-medium text-slate-200 outline-none transition"
+                  type="month"
+                  value={fromDate}
+                  onChange={(e) => setFromDate(e.target.value)}
+                  className="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-lg text-xs font-mono text-slate-200 outline-none"
                 />
               </div>
 
-              {/* Multi-Select Time Controls */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
-                  <span>Time Controls (Select one or more)</span>
-                  <span className="text-[11px] text-emerald-400 font-normal">
-                    {timeControls.length} selected
-                  </span>
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  {[
-                    { id: 'blitz', label: '⚡ Blitz' },
-                    { id: 'rapid', label: '⏱️ Rapid' },
-                    { id: 'bullet', label: '🚀 Bullet' },
-                    { id: 'classical', label: '♟️ Classical' },
-                  ].map((tc) => {
-                    const isSelected = timeControls.includes(tc.id);
-                    return (
-                      <button
-                        type="button"
-                        key={tc.id}
-                        onClick={() => handleTimeControlToggle(tc.id)}
-                        className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold border transition cursor-pointer ${
-                          isSelected
-                            ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300'
-                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
-                        }`}
-                      >
-                        <span>{tc.label}</span>
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          readOnly
-                          className="accent-emerald-500 pointer-events-none"
-                        />
-                      </button>
-                    );
-                  })}
-                </div>
+              <div className="space-y-1">
+                <span className="text-[11px] text-slate-400">To Month</span>
+                <input
+                  type="month"
+                  value={toDate}
+                  onChange={(e) => setToDate(e.target.value)}
+                  className="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-lg text-xs font-mono text-slate-200 outline-none"
+                />
               </div>
+            </div>
+          </div>
 
-              {/* Player Color Selection */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold text-slate-300">
-                  Player Color
-                </label>
-                <div className="grid grid-cols-3 gap-2 bg-slate-950 p-1 rounded-xl border border-slate-800">
-                  {(['white', 'black', 'both'] as const).map((color) => (
-                    <button
-                      type="button"
-                      key={color}
-                      onClick={() => setPlayerColor(color)}
-                      className={`py-1.5 text-xs font-bold rounded-lg uppercase tracking-wider transition cursor-pointer ${
-                        playerColor === color
-                          ? 'bg-emerald-600 text-white shadow-sm'
-                          : 'text-slate-400 hover:text-slate-200'
-                      }`}
-                    >
-                      {color}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Advanced Date Range Controls */}
-              <div className="pt-2 border-t border-slate-800 space-y-3">
-                <div className="flex items-center space-x-2 text-xs font-bold text-slate-300">
-                  <Calendar className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Advanced Date Range (YYYY-MM)</span>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <span className="text-[11px] text-slate-400">From Month</span>
-                    <input
-                      type="month"
-                      value={fromDate}
-                      onChange={(e) => setFromDate(e.target.value)}
-                      className="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-lg text-xs font-mono text-slate-200 outline-none"
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <span className="text-[11px] text-slate-400">To Month</span>
-                    <input
-                      type="month"
-                      value={toDate}
-                      onChange={(e) => setToDate(e.target.value)}
-                      className="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-lg text-xs font-mono text-slate-200 outline-none"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {errorMessage && (
-                <div className="p-3.5 bg-rose-500/10 border border-rose-500/30 rounded-xl text-xs font-semibold text-rose-300">
-                  ⚠️ {errorMessage}
-                </div>
-              )}
-
-              {/* Submit Action Button */}
-              <button
-                onClick={handleStartImport}
-                disabled={activeJob?.status === 'QUEUED' || activeJob?.status === 'PROCESSING'}
-                className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-sm rounded-xl transition shadow-lg shadow-emerald-900/40 flex items-center justify-center space-x-2 cursor-pointer disabled:cursor-not-allowed"
-              >
-                <Play className="w-4 h-4 fill-white" />
-                <span>
-                  {activeJob?.status === 'QUEUED' || activeJob?.status === 'PROCESSING'
-                    ? 'Import Job Active...'
-                    : 'Start Import & Engine Analysis'}
-                </span>
-              </button>
-            </>
+          {errorMessage && (
+            <div className="p-3.5 bg-rose-500/10 border border-rose-500/30 rounded-xl text-xs font-semibold text-rose-300 whitespace-pre-line">
+              ⚠️ {errorMessage}
+            </div>
           )}
+
+          {/* Submit Action Button */}
+          <button
+            type="button"
+            onClick={handleStartImport}
+            disabled={activeJob?.status === 'QUEUED' || activeJob?.status === 'PROCESSING'}
+            className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-sm rounded-xl transition shadow-lg shadow-emerald-900/40 flex items-center justify-center space-x-2 cursor-pointer disabled:cursor-not-allowed"
+          >
+            <Play className="w-4 h-4 fill-white" />
+            <span>
+              {activeJob?.status === 'QUEUED' || activeJob?.status === 'PROCESSING'
+                ? 'Import Job Active...'
+                : 'Start Import & Engine Analysis'}
+            </span>
+          </button>
         </div>
 
         {/* Live Job Status Monitor Card */}
@@ -338,8 +327,6 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                   Fill in your Chess.com username and click &quot;Start Import &amp; Engine Analysis&quot; to monitor live progress.
                 </p>
               </div>
-
-
             ) : (
               <div className="space-y-5 pt-3">
                 <div className="flex items-center justify-between text-xs font-bold">
@@ -353,7 +340,7 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                     Job ID: {activeJob.jobId.slice(0, 8)}…
                   </span>
                   <span
-                    className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold ${
+                    className={`px-2.5 py-1 rounded-md text-[10px] uppercase font-bold tracking-wide ${
                       activeJob.status === 'COMPLETED'
                         ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
                         : activeJob.status === 'FAILED'
@@ -363,25 +350,6 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                   >
                     {activeJob.status}
                   </span>
-                </div>
-
-                {/* Progress Bar */}
-                <div className="space-y-1">
-                  <div className="flex justify-between text-xs font-semibold">
-                    <span className="text-slate-400">Import Status</span>
-                    <span className="text-emerald-400 font-mono">{activeJob.status}</span>
-                  </div>
-                  <div className="w-full h-3 bg-slate-950 rounded-full overflow-hidden border border-slate-800 p-0.5">
-                    <div
-                      className={`h-full rounded-full transition-all duration-500 ease-out ${
-                        activeJob.status === 'COMPLETED'
-                          ? 'w-full bg-gradient-to-r from-emerald-500 to-emerald-400'
-                          : activeJob.status === 'FAILED'
-                          ? 'w-full bg-rose-500'
-                          : 'w-2/3 bg-amber-500 animate-pulse'
-                      }`}
-                    />
-                  </div>
                 </div>
 
                 {/* Metrics Grid */}
@@ -412,6 +380,7 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                     </p>
                     <div className="flex items-center gap-2 pt-1">
                       <button
+                        type="button"
                         onClick={() => {
                           const effectiveUsername = connectedUsername || username;
                           if (onImportStarted && effectiveUsername) {
@@ -423,9 +392,10 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                         }}
                         className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-lg transition shadow-sm cursor-pointer"
                       >
-                        Go to Practice Puzzles
+                        Practice Puzzles
                       </button>
                       <button
+                        type="button"
                         onClick={() => {
                           const effectiveUsername = connectedUsername || username;
                           if (onImportStarted && effectiveUsername) {
@@ -437,29 +407,26 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                         }}
                         className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-lg transition shadow-sm border border-slate-700 cursor-pointer"
                       >
-                        View Weaknesses Library
+                        View Weaknesses
                       </button>
                     </div>
-
                   </div>
                 )}
 
                 {activeJob.errorMessage && (
-                  <div className="bg-rose-950/40 p-3 rounded-xl border border-rose-800/60 text-xs text-rose-300">
+                  <div className="bg-rose-950/40 p-3 rounded-xl border border-rose-800/60 text-xs text-rose-300 whitespace-pre-line">
                     Error: {activeJob.errorMessage}
                   </div>
                 )}
 
                 {pollingError && (
-                  <div className="bg-rose-950/40 p-3 rounded-xl border border-rose-800/60 text-xs text-rose-300">
+                  <div className="bg-rose-950/40 p-3 rounded-xl border border-rose-800/60 text-xs text-rose-300 whitespace-pre-line">
                     ⚠️ {pollingError}
                   </div>
                 )}
               </div>
             )}
           </div>
-
-
 
           <div className="text-[11px] text-slate-500 bg-slate-950/60 p-3 rounded-xl border border-slate-800/80">
             💡 Import jobs fetch PGN archives asynchronously and queue unique opening positions for background Stockfish analysis.

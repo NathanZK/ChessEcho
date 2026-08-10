@@ -25,15 +25,6 @@ export interface Puzzle {
   evalCp?: number; // Stockfish evaluation in centipawns (e.g. +50 = +0.5 pawns)
 }
 
-export interface JobProgress {
-  jobId: string;
-  status: 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
-  progressPercentage: number;
-  gamesImported: number;
-  positionsDetected: number;
-  analyzedPositions: number;
-  totalPositionsToAnalyze: number;
-}
 
 export const MOCK_PUZZLES: Puzzle[] = [
   {

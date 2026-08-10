@@ -89,7 +89,7 @@ export async function fetchWeaknesses(
 
 export async function startImportJob(
   username: string,
-  platform: string = 'chessdotcom',
+  platform: string = 'CHESS_COM',
   timeControls: string[],
   playerColor: string,
   fromDate?: string,
@@ -101,16 +101,21 @@ export async function startImportJob(
     body: JSON.stringify({
       username,
       platform,
-      timeControls,
-      playerColor: playerColor.toLowerCase(),
-      fromDate: fromDate || undefined,
-      toDate: toDate || undefined,
+      timeControls: timeControls.map((tc) => tc.toUpperCase()),
+      playerColor: playerColor.toUpperCase(),
+      fromDate: fromDate?.trim() || undefined,
+      toDate: toDate?.trim() || undefined,
     }),
   });
 
   if (!response.ok) {
     const errBody = await response.json().catch(() => ({}));
-    const message = errBody.details ? errBody.details.join(', ') : `Status ${response.status}`;
+    let message = `Status ${response.status}`;
+    if (Array.isArray(errBody.details) && errBody.details.length > 0) {
+      message = errBody.details.join('\n');
+    } else if (errBody.error) {
+      message = errBody.error;
+    }
     throw new Error(message);
   }
 
