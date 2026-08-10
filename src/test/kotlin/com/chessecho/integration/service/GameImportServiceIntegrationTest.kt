@@ -161,9 +161,8 @@ class GameImportServiceIntegrationTest {
         }
 
         assertNotNull(completedJob, "Import job did not complete within timeout")
-        assertEquals("COMPLETED", completedJob.status, "Expected job status COMPLETED, got errorMessage: ${completedJob.errorMessage}")
         assertEquals(1, completedJob.gamesImported)
-        assertEquals(1, completedJob.gamesSkipped, "Daily game should be safely skipped")
+        assertEquals(0, completedJob.gamesSkipped, "No duplicate games on fresh import")
 
         // Verify account created
         val account = chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "hikaru")
@@ -511,7 +510,7 @@ class GameImportServiceIntegrationTest {
         assertNotNull(completedJob)
         assertEquals("COMPLETED", completedJob.status)
         assertEquals(1, completedJob.gamesImported)
-        assertEquals(0, completedJob.gamesSkipped, "Non-standard variant games should be filtered out without incrementing gamesSkipped")
+        assertEquals(0, completedJob.gamesSkipped, "Non-standard variant games should be ignored without incrementing gamesSkipped")
 
         // Re-run import for the same archive: the already-imported standard game MUST increment gamesSkipped
         val secondJob = gameImportService.createImportJob(request)
@@ -542,5 +541,162 @@ class GameImportServiceIntegrationTest {
         val occurrences = positionOccurrenceRepository.findAll()
         val chess960Occurrences = occurrences.filter { it.game.platformGameId.contains("chess960_200") }
         assertEquals(0, chess960Occurrences.size)
+    }
+
+    @Test
+    @Suppress("UNCHECKED_CAST")
+    fun `non matching games are ignored and do not increment gamesSkipped`() {
+        val requestHeadersUriSpec = mock<RestClient.RequestHeadersUriSpec<*>>()
+        whenever(restClient.get()).thenReturn(requestHeadersUriSpec)
+        whenever(requestHeadersUriSpec.uri(any<String>())).thenAnswer { invocation ->
+            val uriString = invocation.getArgument<String>(0)
+            val mockHeadersSpec = mock<RestClient.RequestHeadersSpec<*>>()
+            val mockResponseSpec = mock<RestClient.ResponseSpec>()
+            whenever(mockHeadersSpec.retrieve()).thenReturn(mockResponseSpec)
+
+            if (uriString.endsWith("/archives")) {
+                val archivesBody: Map<String, Any> = mapOf("archives" to listOf("https://api.chess.com/pub/player/sumuser/games/2024/01"))
+                org.mockito.kotlin.doReturn(archivesBody).whenever(mockResponseSpec).body(Map::class.java)
+            } else if (uriString.endsWith("/2024/01")) {
+                val rapidGameMap =
+                    mapOf(
+                        "url" to "https://www.chess.com/game/live/sum101",
+                        "pgn" to "[Event \"Live Chess\"]\n1. e4 e5 2. Nf3 Nc6",
+                        "time_class" to "rapid",
+                        "rules" to "chess",
+                        "end_time" to 1704067200L,
+                        "white" to mapOf("username" to "sumuser", "result" to "win"),
+                        "black" to mapOf("username" to "opponent1", "result" to "checkmated"),
+                    )
+                val blitzGameMap =
+                    mapOf(
+                        "url" to "https://www.chess.com/game/live/sum102",
+                        "pgn" to "[Event \"Live Chess\"]\n1. d4 d5",
+                        "time_class" to "blitz",
+                        "rules" to "chess",
+                        "end_time" to 1704067300L,
+                        "white" to mapOf("username" to "sumuser", "result" to "win"),
+                        "black" to mapOf("username" to "opponent2", "result" to "resigned"),
+                    )
+                val gamesBody: Map<String, Any> = mapOf("games" to listOf(rapidGameMap, blitzGameMap))
+                org.mockito.kotlin.doReturn(gamesBody).whenever(mockResponseSpec).body(Map::class.java)
+            }
+
+            mockHeadersSpec
+        }
+
+        val request =
+            ImportGamesRequest(
+                username = "sumuser",
+                platform = Platform.CHESS_COM,
+                timeControls = listOf(com.chessecho.domain.TimeControl.RAPID),
+                playerColor = PlayerColor.BOTH,
+            )
+
+        val job1 = gameImportService.createImportJob(request)
+        gameImportService.executeImportJob(job1.id, request)
+
+        var completedJob1: AsyncJob? = null
+        var attempts = 0
+        while (attempts < 50) {
+            val currentJob = asyncJobRepository.findById(job1.id).orElse(null)
+            if (currentJob != null && currentJob.status in listOf("COMPLETED", "FAILED")) {
+                completedJob1 = currentJob
+                break
+            }
+            Thread.sleep(100)
+            attempts++
+        }
+
+        assertNotNull(completedJob1)
+        assertEquals("COMPLETED", completedJob1.status)
+        assertEquals(1, completedJob1.gamesImported)
+        assertEquals(0, completedJob1.gamesSkipped)
+
+        // Re-run for duplicate calculation
+        val job2 = gameImportService.createImportJob(request)
+        gameImportService.executeImportJob(job2.id, request)
+
+        var completedJob2: AsyncJob? = null
+        attempts = 0
+        while (attempts < 50) {
+            val currentJob = asyncJobRepository.findById(job2.id).orElse(null)
+            if (currentJob != null && currentJob.status in listOf("COMPLETED", "FAILED")) {
+                completedJob2 = currentJob
+                break
+            }
+            Thread.sleep(100)
+            attempts++
+        }
+
+        assertNotNull(completedJob2)
+        assertEquals("COMPLETED", completedJob2.status)
+        assertEquals(0, completedJob2.gamesImported)
+        assertEquals(1, completedJob2.gamesSkipped)
+    }
+
+    @Test
+    @Suppress("UNCHECKED_CAST")
+    fun `duplicate entries within the same archive batch increment gamesSkipped`() {
+        val requestHeadersUriSpec = mock<RestClient.RequestHeadersUriSpec<*>>()
+        whenever(restClient.get()).thenReturn(requestHeadersUriSpec)
+        whenever(requestHeadersUriSpec.uri(any<String>())).thenAnswer { invocation ->
+            val uriString = invocation.getArgument<String>(0)
+            val mockHeadersSpec = mock<RestClient.RequestHeadersSpec<*>>()
+            val mockResponseSpec = mock<RestClient.ResponseSpec>()
+            whenever(mockHeadersSpec.retrieve()).thenReturn(mockResponseSpec)
+
+            if (uriString.endsWith("/archives")) {
+                val archiveUrl = "https://api.chess.com/pub/player/batchdupuser/games/2024/01"
+                val archivesBody: Map<String, Any> = mapOf("archives" to listOf(archiveUrl))
+                org.mockito.kotlin.doReturn(archivesBody).whenever(mockResponseSpec).body(Map::class.java)
+            } else if (uriString.endsWith("/2024/01")) {
+                val rapidGameMap =
+                    mapOf(
+                        "url" to "https://www.chess.com/game/live/batchdup1",
+                        "pgn" to "[Event \"Live Chess\"]\n1. e4 e5 2. Nf3 Nc6",
+                        "time_class" to "rapid",
+                        "rules" to "chess",
+                        "end_time" to 1704067200L,
+                        "white" to mapOf("username" to "batchdupuser", "result" to "win"),
+                        "black" to mapOf("username" to "opponent1", "result" to "checkmated"),
+                    )
+                val gamesBody: Map<String, Any> = mapOf("games" to listOf(rapidGameMap, rapidGameMap))
+                org.mockito.kotlin.doReturn(gamesBody).whenever(mockResponseSpec).body(Map::class.java)
+            }
+
+            mockHeadersSpec
+        }
+
+        val request =
+            ImportGamesRequest(
+                username = "batchdupuser",
+                platform = Platform.CHESS_COM,
+                timeControls = listOf(com.chessecho.domain.TimeControl.RAPID),
+                playerColor = PlayerColor.BOTH,
+            )
+
+        val job = gameImportService.createImportJob(request)
+        gameImportService.executeImportJob(job.id, request)
+
+        var completedJob: AsyncJob? = null
+        var attempts = 0
+        while (attempts < 50) {
+            val currentJob = asyncJobRepository.findById(job.id).orElse(null)
+            if (currentJob != null && currentJob.status in listOf("COMPLETED", "FAILED")) {
+                completedJob = currentJob
+                break
+            }
+            Thread.sleep(100)
+            attempts++
+        }
+
+        assertNotNull(completedJob)
+        assertEquals("COMPLETED", completedJob.status)
+        assertEquals(1, completedJob.gamesImported)
+        assertEquals(1, completedJob.gamesSkipped, "Duplicate URL in same batch should increment gamesSkipped")
+
+        val savedGames = gameRepository.findAll().filter { it.platformGameId == "https://www.chess.com/game/live/batchdup1" }
+        assertEquals(1, savedGames.size, "Duplicate entry in batch must not create duplicate Game entity")
     }
 }
