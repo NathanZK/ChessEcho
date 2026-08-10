@@ -93,10 +93,10 @@ class GameImportService(
             val allAffectedPositionIds = mutableSetOf<UUID>()
 
             for (archiveUrl in archiveUrls) {
-                val (monthImported, monthSkipped, affectedPositionIds) = importMonth(account, archiveUrl, request)
-                imported += monthImported
-                skipped += monthSkipped
-                allAffectedPositionIds.addAll(affectedPositionIds)
+                val res = importMonth(account, archiveUrl, request)
+                imported += res.imported
+                skipped += res.skipped
+                allAffectedPositionIds.addAll(res.affectedPositionIds)
             }
 
             // Update UserPositionStats after all games are imported
@@ -108,7 +108,7 @@ class GameImportService(
             job.gamesImported = imported
             job.gamesSkipped = skipped
             updateJobStatus(job, "COMPLETED")
-            log.info("Import job ${job.id} completed: $imported imported, $skipped skipped")
+            log.info("Import job {} completed: {} imported, {} skipped (already in DB)", job.id, imported, skipped)
         } catch (ex: Exception) {
             log.error("Import job ${job.id} failed", ex)
             job.errorMessage = ex.message
@@ -145,11 +145,17 @@ class GameImportService(
         )
     }
 
+    private data class ImportMonthResult(
+        val imported: Int,
+        val skipped: Int,
+        val affectedPositionIds: Set<UUID>,
+    )
+
     private fun importMonth(
         account: ChessAccount,
         archiveUrl: String,
         request: ImportGamesRequest,
-    ): Triple<Int, Int, Set<java.util.UUID>> {
+    ): ImportMonthResult {
         val username = request.username
         log.debug("Fetching games from $archiveUrl")
 
@@ -170,13 +176,14 @@ class GameImportService(
                 } else {
                     throw ex
                 }
-            } ?: return Triple(0, 0, emptySet())
+            } ?: return ImportMonthResult(0, 0, emptySet())
 
         @Suppress("UNCHECKED_CAST")
-        val games = response["games"] as? List<Map<String, Any>> ?: return Triple(0, 0, emptySet())
+        val games = response["games"] as? List<Map<String, Any>> ?: return ImportMonthResult(0, 0, emptySet())
 
         val allUrls = games.mapNotNull { it["url"] as? String }
         val existingUrls = gameRepository.findPlatformGameIdsByChessAccountAndPlatformGameIdIn(account, allUrls).toSet()
+        val seenBatchUrls = mutableSetOf<String>()
         val gamesToSave = mutableListOf<Game>()
 
         var skipped = 0
@@ -190,14 +197,12 @@ class GameImportService(
             val timeClass = game["time_class"] as? String
             val domainTimeControl = TimeControl.fromExternal(timeClass)
             if (domainTimeControl == null || !request.timeControls.contains(domainTimeControl)) {
-                skipped++
                 continue
             }
 
             val white = (game["white"] as? Map<*, *>)?.get("username") as? String
             val black = (game["black"] as? Map<*, *>)?.get("username") as? String
             if (white == null || black == null) {
-                skipped++
                 continue
             }
 
@@ -210,7 +215,6 @@ class GameImportService(
                     PlayerColor.BOTH -> isPlayerWhite || isPlayerBlack
                 }
             if (!colorMatch) {
-                skipped++
                 continue
             }
 
@@ -218,14 +222,13 @@ class GameImportService(
             val pgn = game["pgn"] as? String
             val url = game["url"] as? String // Use URL as unique game ID
             if (pgn == null || url == null) {
-                skipped++
                 continue
             }
 
             val playedAtUnix = (game["end_time"] as? Number)?.toLong()
             val whiteResult = (game["white"] as? Map<*, *>)?.get("result") as? String
 
-            if (existingUrls.contains(url)) {
+            if (existingUrls.contains(url) || !seenBatchUrls.add(url)) {
                 skipped++
                 continue
             }
@@ -248,10 +251,18 @@ class GameImportService(
         if (gamesToSave.isNotEmpty()) {
             val savedGames = gameRepository.saveAll(gamesToSave)
             val affectedPositionIds = gameParserService.parseAndSavePositions(savedGames)
-            return Triple(gamesToSave.size, skipped, affectedPositionIds)
+            return ImportMonthResult(
+                gamesToSave.size,
+                skipped,
+                affectedPositionIds,
+            )
         }
 
-        return Triple(0, skipped, emptySet())
+        return ImportMonthResult(
+            0,
+            skipped,
+            emptySet(),
+        )
     }
 
     private fun updateUserPositionStats(

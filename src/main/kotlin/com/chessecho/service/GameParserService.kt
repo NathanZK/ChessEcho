@@ -7,6 +7,7 @@ import com.chessecho.repository.PositionOccurrenceRepository
 import com.chessecho.repository.PositionRepository
 import com.github.bhlangonijr.chesslib.Board
 import com.github.bhlangonijr.chesslib.pgn.PgnHolder
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.io.File
@@ -17,6 +18,8 @@ class GameParserService(
     private val positionRepository: PositionRepository,
     private val positionOccurrenceRepository: PositionOccurrenceRepository,
 ) {
+    private val log = LoggerFactory.getLogger(javaClass)
+
     /**
      * Parses the PGN of a list of games, generates standardized positions (ignoring move counters)
      * by traversing the move tree, and persists both unique [Position]s and their specific [PositionOccurrence]s.
@@ -48,30 +51,63 @@ class GameParserService(
                     chesslibGame.loadMoveText()
                     val moves = chesslibGame.halfMoves
 
+                    val accountUsername = dbGame.chessAccount.username
+                    val matchesWhite =
+                        dbGame.whiteUsername?.equals(accountUsername, ignoreCase = true) == true ||
+                            chesslibGame.whitePlayer?.name?.equals(accountUsername, ignoreCase = true) == true
+                    val matchesBlack =
+                        dbGame.blackUsername?.equals(accountUsername, ignoreCase = true) == true ||
+                            chesslibGame.blackPlayer?.name?.equals(accountUsername, ignoreCase = true) == true
+
+                    val userColor =
+                        when {
+                            matchesWhite && !matchesBlack -> "WHITE"
+                            matchesBlack && !matchesWhite -> "BLACK"
+                            else -> {
+                                log.warn(
+                                    "Game {} skipped for occurrence creation: account '{}' matched {} player identities " +
+                                        "(White: {}, Black: {})",
+                                    dbGame.id,
+                                    accountUsername,
+                                    if (matchesWhite && matchesBlack) "both" else "neither",
+                                    dbGame.whiteUsername ?: chesslibGame.whitePlayer?.name,
+                                    dbGame.blackUsername ?: chesslibGame.blackPlayer?.name,
+                                )
+                                null
+                            }
+                        }
+
+                    if (userColor == null) {
+                        continue
+                    }
+
                     val board = Board()
                     for ((index, move) in moves.withIndex()) {
-                        // Capture the position BEFORE the move is made
-                        val rawFen = board.fen
-                        val hash = generateHash(rawFen)
+                        val isWhiteTurn = index % 2 == 0
+                        val isUserTurn = (isWhiteTurn && userColor == "WHITE") || (!isWhiteTurn && userColor == "BLACK")
 
-                        // Add to our batch
-                        val position =
-                            allPositions.getOrPut(hash) {
-                                Position(hash = hash, fen = rawFen)
-                            }
+                        if (isUserTurn) {
+                            // Capture the position BEFORE the move is made
+                            val rawFen = board.fen
+                            val hash = generateHash(rawFen)
 
-                        val playerColor = if (index % 2 == 0) "WHITE" else "BLACK"
+                            // Add to our batch
+                            val position =
+                                allPositions.getOrPut(hash) {
+                                    Position(hash = hash, fen = rawFen)
+                                }
 
-                        occurrences.add(
-                            PositionOccurrence(
-                                game = dbGame,
-                                position = position,
-                                chessAccount = dbGame.chessAccount,
-                                plyNumber = index + 1,
-                                movePlayed = move.san,
-                                playerColor = playerColor,
-                            ),
-                        )
+                            occurrences.add(
+                                PositionOccurrence(
+                                    game = dbGame,
+                                    position = position,
+                                    chessAccount = dbGame.chessAccount,
+                                    plyNumber = index + 1,
+                                    movePlayed = move.san,
+                                    playerColor = userColor,
+                                ),
+                            )
+                        }
 
                         // Now make the move for the next iteration
                         board.doMove(move)
