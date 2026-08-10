@@ -31,18 +31,19 @@ export interface WeaknessResponse {
 }
 
 export async function fetchPuzzles(
-  username: string = 'Hikaru',
-  platform: string = 'chessdotcom',
-  playerColor: string = 'black',
+  username: string,
+  platform: string = 'CHESS_COM',
+  playerColor: string = 'WHITE',
   minEvalLoss: number = 0.8,
-  acceptableThreshold: number = 0.3,
   minMistakeCount: number = 3,
   limit: number = 5,
   page: number = 0
 ): Promise<Puzzle[]> {
   if (!username) return [];
   try {
-    const url = `${API_BASE_URL}/puzzles?platform=${encodeURIComponent(platform)}&username=${encodeURIComponent(username)}&playerColor=${playerColor}&minEvalLoss=${minEvalLoss}&acceptableThreshold=${acceptableThreshold}&minMistakeCount=${minMistakeCount}&limit=${limit}&page=${page}`;
+    const formattedPlatform = platform.toUpperCase();
+    const formattedColor = playerColor.toUpperCase();
+    const url = `${API_BASE_URL}/puzzles?platform=${encodeURIComponent(formattedPlatform)}&username=${encodeURIComponent(username)}&playerColor=${encodeURIComponent(formattedColor)}&minEvalLoss=${minEvalLoss}&minMistakeCount=${minMistakeCount}&limit=${limit}&page=${page}`;
     const response = await fetch(url);
 
     if (!response.ok) {
@@ -64,15 +65,16 @@ export async function fetchPuzzles(
 
 export async function fetchWeaknesses(
   username: string,
-  platform: string = 'chessdotcom',
-  playerColor: string = 'white',
+  platform: string = 'CHESS_COM',
+  playerColor: string = 'BOTH',
   minEvalLoss: number = 0.8,
-  acceptableThreshold: number = 0.3,
   minMistakeCount: number = 3
 ): Promise<WeaknessResponse[]> {
   if (!username) return [];
   try {
-    const url = `${API_BASE_URL}/positions/weaknesses?platform=${encodeURIComponent(platform)}&username=${encodeURIComponent(username)}&playerColor=${playerColor}&minEvalLoss=${minEvalLoss}&acceptableThreshold=${acceptableThreshold}&minMistakeCount=${minMistakeCount}`;
+    const formattedPlatform = platform.toUpperCase();
+    const formattedColor = playerColor.toUpperCase();
+    const url = `${API_BASE_URL}/positions/weaknesses?platform=${encodeURIComponent(formattedPlatform)}&username=${encodeURIComponent(username)}&playerColor=${encodeURIComponent(formattedColor)}&minEvalLoss=${minEvalLoss}&minMistakeCount=${minMistakeCount}`;
     const response = await fetch(url);
 
     if (!response.ok) {

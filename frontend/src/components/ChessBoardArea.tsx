@@ -15,7 +15,8 @@ interface ChessBoardAreaProps {
     moveSan: string,
     isCorrect: boolean,
     isHistoricalMistake: boolean,
-    historicalInfo?: { timesPlayed: number; averageLoss: number }
+    historicalInfo?: { timesPlayed: number; averageLoss: number },
+    isInitialDecision?: boolean
   ) => void;
   onNextPuzzle: () => void;
   onUndo?: () => void;
@@ -77,31 +78,39 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
       const moveSan = move.san;
       setGame(gameCopy);
 
+      const isInitialDecision = historyIndex === 0;
+
       // Truncate future history if making a move after undo
       const newHistory = fenHistory.slice(0, historyIndex + 1);
       newHistory.push(gameCopy.fen());
       setFenHistory(newHistory);
       setHistoryIndex(newHistory.length - 1);
 
-      // Check if move matches best move or acceptable moves
-      const isBest = moveSan === targetMove;
-      const isAcceptable = acceptableMoves.some((m) => m.move === moveSan);
-      const isCorrect = isBest || isAcceptable;
+      if (isInitialDecision) {
+        // Check if move matches best move or acceptable moves
+        const isBest = moveSan === targetMove;
+        const isAcceptable = acceptableMoves.some((m) => m.move === moveSan);
+        const isCorrect = isBest || isAcceptable;
 
-      // Check if move matches a historical mistake played by the user
-      const historicalMistake = movesPlayed.find((m) => m.move === moveSan);
+        // Check if move matches a historical mistake played by the user
+        const historicalMistake = movesPlayed.find((m) => m.move === moveSan);
 
-      onMoveAttempt(
-        moveSan,
-        isCorrect,
-        !!historicalMistake,
-        historicalMistake
-          ? {
-              timesPlayed: historicalMistake.timesPlayed,
-              averageLoss: historicalMistake.averageLoss,
-            }
-          : undefined
-      );
+        onMoveAttempt(
+          moveSan,
+          isCorrect,
+          !!historicalMistake,
+          historicalMistake
+            ? {
+                timesPlayed: historicalMistake.timesPlayed,
+                averageLoss: historicalMistake.averageLoss,
+              }
+            : undefined,
+          true
+        );
+      } else {
+        // Opponent move / line continuation: do not evaluate against initial targetMove
+        onMoveAttempt(moveSan, false, false, undefined, false);
+      }
 
       return true;
     } catch {

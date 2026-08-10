@@ -70,9 +70,8 @@ describe('Account Context and Import Games MVP Behavior', () => {
       await waitFor(() => {
         expect(api.fetchPuzzles).toHaveBeenCalledWith(
           'magnuscarlsen',
-          'chessdotcom',
-          'white',
-          expect.any(Number),
+          'CHESS_COM',
+          'WHITE',
           expect.any(Number),
           expect.any(Number),
           10,
@@ -80,9 +79,8 @@ describe('Account Context and Import Games MVP Behavior', () => {
         );
         expect(api.fetchPuzzles).toHaveBeenCalledWith(
           'magnuscarlsen',
-          'chessdotcom',
-          'black',
-          expect.any(Number),
+          'CHESS_COM',
+          'BLACK',
           expect.any(Number),
           expect.any(Number),
           10,
