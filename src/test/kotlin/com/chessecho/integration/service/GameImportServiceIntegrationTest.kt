@@ -413,4 +413,134 @@ class GameImportServiceIntegrationTest {
         assertEquals(1050, stats.size, "Expected exactly 1050 UserPositionStats across 2 batches")
         stats.forEach { assertEquals(1, it.timesReached) }
     }
+
+    @Test
+    fun `executeImportJob skips chess960 variant games and imports standard games`() {
+        val requestHeadersUriSpec = mock<RestClient.RequestHeadersUriSpec<*>>()
+        whenever(restClient.get()).thenReturn(requestHeadersUriSpec)
+
+        whenever(requestHeadersUriSpec.uri(any<String>())).thenAnswer { invocation ->
+            val uriString = invocation.getArgument<String>(0)
+            val mockHeadersSpec = mock<RestClient.RequestHeadersSpec<*>>()
+            val mockResponseSpec = mock<RestClient.ResponseSpec>()
+            whenever(mockHeadersSpec.retrieve()).thenReturn(mockResponseSpec)
+
+            if (uriString.endsWith("/archives")) {
+                val archivesBody: Map<String, Any> = mapOf("archives" to listOf("https://api.chess.com/pub/player/hikaru/games/2024/02"))
+                org.mockito.kotlin.doReturn(archivesBody).whenever(mockResponseSpec).body(Map::class.java)
+            } else if (uriString.endsWith("/2024/02")) {
+                val standardGamePgn =
+                    """
+                    [Event "Live Chess"]
+                    [Site "Chess.com"]
+                    [Date "2024.02.01"]
+                    [White "variantuser"]
+                    [Black "opponent1"]
+                    [Result "1-0"]
+
+                    1. e4 e5 2. Nf3 Nc6 3. Bb5 1-0
+                    """.trimIndent()
+
+                val chess960Pgn =
+                    """
+                    [Event "Live Chess - Chess960"]
+                    [Site "Chess.com"]
+                    [Date "2024.02.01"]
+                    [White "variantuser"]
+                    [Black "opponent2"]
+                    [Result "0-1"]
+                    [Variant "Chess960"]
+                    [SetUp "1"]
+                    [FEN "rkrbbnnq/pppppppp/8/8/8/8/PPPPPPPP/RKRBBNNQ w CAca - 0 1"]
+
+                    1. d4 d5 2. c4 dxc4 3. Rxc4 g5 0-1
+                    """.trimIndent()
+
+                val standardGameMap =
+                    mapOf(
+                        "url" to "https://www.chess.com/game/live/standard100",
+                        "pgn" to standardGamePgn,
+                        "time_class" to "blitz",
+                        "rules" to "chess",
+                        "end_time" to 1704067200L,
+                        "white" to mapOf("username" to "variantuser", "result" to "win"),
+                        "black" to mapOf("username" to "opponent1", "result" to "checkmated"),
+                    )
+
+                val chess960GameMap =
+                    mapOf(
+                        "url" to "https://www.chess.com/game/live/chess960_200",
+                        "pgn" to chess960Pgn,
+                        "time_class" to "blitz",
+                        "rules" to "chess960",
+                        "end_time" to 1704067200L,
+                        "white" to mapOf("username" to "variantuser", "result" to "resigned"),
+                        "black" to mapOf("username" to "opponent2", "result" to "win"),
+                    )
+
+                val gamesBody: Map<String, Any> = mapOf("games" to listOf(standardGameMap, chess960GameMap))
+                org.mockito.kotlin.doReturn(gamesBody).whenever(mockResponseSpec).body(Map::class.java)
+            }
+
+            mockHeadersSpec
+        }
+
+        val request =
+            ImportGamesRequest(
+                username = "variantuser",
+                platform = Platform.CHESS_COM,
+                timeControls = listOf(com.chessecho.domain.TimeControl.BLITZ),
+                playerColor = PlayerColor.BOTH,
+            )
+
+        val job = gameImportService.createImportJob(request)
+        gameImportService.executeImportJob(job.id, request)
+
+        var completedJob: AsyncJob? = null
+        var attempts = 0
+        while (attempts < 50) {
+            val currentJob = asyncJobRepository.findById(job.id).orElse(null)
+            if (currentJob != null && currentJob.status in listOf("COMPLETED", "FAILED")) {
+                completedJob = currentJob
+                break
+            }
+            Thread.sleep(100)
+            attempts++
+        }
+
+        assertNotNull(completedJob)
+        assertEquals("COMPLETED", completedJob.status)
+        assertEquals(1, completedJob.gamesImported)
+        assertEquals(0, completedJob.gamesSkipped, "Non-standard variant games should be filtered out without incrementing gamesSkipped")
+
+        // Re-run import for the same archive: the already-imported standard game MUST increment gamesSkipped
+        val secondJob = gameImportService.createImportJob(request)
+        gameImportService.executeImportJob(secondJob.id, request)
+
+        var completedSecondJob: AsyncJob? = null
+        attempts = 0
+        while (attempts < 50) {
+            val currentJob = asyncJobRepository.findById(secondJob.id).orElse(null)
+            if (currentJob != null && currentJob.status in listOf("COMPLETED", "FAILED")) {
+                completedSecondJob = currentJob
+                break
+            }
+            Thread.sleep(100)
+            attempts++
+        }
+
+        assertNotNull(completedSecondJob)
+        assertEquals("COMPLETED", completedSecondJob.status)
+        assertEquals(0, completedSecondJob.gamesImported)
+        assertEquals(1, completedSecondJob.gamesSkipped, "Already imported standard game should increment gamesSkipped")
+
+        val savedGames = gameRepository.findAll()
+        val userGames = savedGames.filter { it.whiteUsername == "variantuser" }
+        assertEquals(1, userGames.size)
+        assertEquals("https://www.chess.com/game/live/standard100", userGames[0].platformGameId)
+
+        val occurrences = positionOccurrenceRepository.findAll()
+        val chess960Occurrences = occurrences.filter { it.game.platformGameId.contains("chess960_200") }
+        assertEquals(0, chess960Occurrences.size)
+    }
 }

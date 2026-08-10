@@ -182,6 +182,11 @@ class GameImportService(
         var skipped = 0
 
         for (game in games) {
+            val rules = game["rules"] as? String
+            if (rules != null && !rules.equals("chess", ignoreCase = true)) {
+                continue
+            }
+
             val timeClass = game["time_class"] as? String
             val domainTimeControl = TimeControl.fromExternal(timeClass)
             if (domainTimeControl == null || !request.timeControls.contains(domainTimeControl)) {
