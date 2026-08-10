@@ -337,7 +337,7 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                     {activeJob.status === 'COMPLETED' && (
                       <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                     )}
-                    Job ID: {activeJob.jobId.slice(0, 8)}…
+                    <span>Import Progress</span>
                   </span>
                   <span
                     className={`px-2.5 py-1 rounded-md text-[10px] uppercase font-bold tracking-wide ${
@@ -353,17 +353,17 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                 </div>
 
                 {/* Metrics Grid */}
-                <div className="grid grid-cols-2 gap-3 pt-2">
-                  <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
-                    <span className="text-[11px] text-slate-400">Games Imported</span>
-                    <div className="text-base font-bold text-slate-100 mt-0.5 font-mono">
+                <div className="grid grid-cols-2 gap-3 pt-2 text-center">
+                  <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                    <span className="text-[10px] text-slate-400">Imported</span>
+                    <div className="text-sm font-bold text-emerald-400 mt-0.5 font-mono">
                       {activeJob.gamesImported}
                     </div>
                   </div>
 
-                  <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
-                    <span className="text-[11px] text-slate-400">Games Skipped</span>
-                    <div className="text-base font-bold text-slate-100 mt-0.5 font-mono">
+                  <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                    <span className="text-[10px] text-slate-400">Already imported</span>
+                    <div className="text-sm font-bold text-slate-300 mt-0.5 font-mono">
                       {activeJob.gamesSkipped}
                     </div>
                   </div>
