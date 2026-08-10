@@ -268,10 +268,13 @@ describe('Puzzles Tab Features and Fixes', () => {
       />
     );
 
-    // Verifies initial mistake feedback (d6) is displayed
+    // Verifies initial mistake feedback (d6) is displayed with clear non-misleading terminology
     expect(screen.getByText('Historical Mistake Detected!')).toBeInTheDocument();
     expect(screen.getByText('d6')).toBeInTheDocument();
-    expect(screen.queryByText(/Qxb4 is not the recommended move/i)).not.toBeInTheDocument();
+    expect(screen.getByText('2 past games')).toBeInTheDocument();
+    expect(screen.getByText('0.80 pawns worse')).toBeInTheDocument();
+    expect(screen.getByText(/than the best move/i)).toBeInTheDocument();
+    expect(screen.queryByText(/avg loss/i)).not.toBeInTheDocument();
 
     // 2. Opponent plays follow-up move ('Qxb4') on move 2. Feedback remains unchanged (still displaying d6 mistake)!
     rerender(
@@ -290,6 +293,28 @@ describe('Puzzles Tab Features and Fixes', () => {
     expect(screen.getByText('Historical Mistake Detected!')).toBeInTheDocument();
     expect(screen.getByText('d6')).toBeInTheDocument();
     expect(screen.queryByText(/Qxb4 is not the recommended move/i)).not.toBeInTheDocument();
+  });
+
+  it('formats single past game historical mistake feedback correctly without misleading avg loss wording', () => {
+    render(
+      <PuzzleFeedbackPanel
+        puzzle={mockPuzzles[0]}
+        feedback={{
+          status: 'HISTORICAL_MISTAKE',
+          lastMove: 'Nc3',
+          historicalInfo: { timesPlayed: 1, averageLoss: 0.58 },
+        }}
+        moveHistory={['Nc3']}
+        onNextPuzzle={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('Historical Mistake Detected!')).toBeInTheDocument();
+    expect(screen.getByText('Nc3')).toBeInTheDocument();
+    expect(screen.getByText('1 past game')).toBeInTheDocument();
+    expect(screen.getByText('0.58 pawns worse')).toBeInTheDocument();
+    expect(screen.getByText(/than the best move/i)).toBeInTheDocument();
+    expect(screen.queryByText(/avg loss/i)).not.toBeInTheDocument();
   });
 
   it('evaluates initial correct move properly and transitions to exploration mode on follow-up moves', () => {

@@ -162,8 +162,15 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
             <h4 className="font-bold text-sm text-amber-200">Historical Mistake Detected!</h4>
             <p className="text-xs mt-0.5 text-amber-300/90">
               You played <span className="font-bold text-white">{feedback.lastMove}</span> in{' '}
-              <span className="font-bold text-white">{feedback.historicalInfo?.timesPlayed} past games</span> (avg loss:{' '}
-              <span className="font-bold text-white">{formatDecimal(feedback.historicalInfo?.averageLoss ?? 0, 2)} pawns</span>). Try{' '}
+              <span className="font-bold text-white">
+                {feedback.historicalInfo?.timesPlayed}{' '}
+                {feedback.historicalInfo?.timesPlayed === 1 ? 'past game' : 'past games'}
+              </span>{' '}
+              —{' '}
+              <span className="font-bold text-white">
+                {formatDecimal(feedback.historicalInfo?.averageLoss ?? 0, 2)} pawns worse
+              </span>{' '}
+              than the best move. Try{' '}
               <span className="font-bold text-emerald-300">{puzzle.targetMove}</span> instead!
             </p>
           </div>
