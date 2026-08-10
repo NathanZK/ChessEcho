@@ -21,7 +21,7 @@ export interface Puzzle {
   timesReached: number;
   mistakeCount: number;
   mistakeRate: number;
-  gameUrls: string[];
+  gameUrls?: string[];
   evalCp?: number; // Stockfish evaluation in centipawns (e.g. +50 = +0.5 pawns)
 }
 
