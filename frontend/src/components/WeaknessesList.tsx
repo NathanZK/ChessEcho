@@ -5,6 +5,7 @@ import { Target, Flame, Swords, ExternalLink, Filter } from 'lucide-react';
 import { MOCK_PUZZLES, Puzzle } from '../mock/mockData';
 
 interface WeaknessesListProps {
+  username?: string;
   onSelectPractice: (puzzle: Puzzle) => void;
 }
 
