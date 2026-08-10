@@ -29,6 +29,8 @@ class WeaknessController(
         )
         @RequestParam(required = false) minEvalLoss: Double?,
         @RequestParam(defaultValue = "3") minMistakeCount: Int,
+        @RequestParam(defaultValue = "0") page: Int,
+        @RequestParam(defaultValue = "20") size: Int,
     ): ResponseEntity<List<WeaknessResponse>> {
         val threshold = minEvalLoss ?: WeaknessCalculationService.DEFAULT_MIN_EVAL_LOSS
         if (threshold < 0.0) {
@@ -43,6 +45,14 @@ class WeaknessController(
                 minEvalLoss = threshold,
                 minMistakeCount = maxOf(1, minMistakeCount),
             )
-        return ResponseEntity.ok(weaknesses)
+
+        val pageSize = maxOf(1, size)
+        val pageIndex = maxOf(0, page)
+        val pagedWeaknesses =
+            weaknesses
+                .drop(pageIndex * pageSize)
+                .take(pageSize)
+
+        return ResponseEntity.ok(pagedWeaknesses)
     }
 }

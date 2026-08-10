@@ -363,4 +363,112 @@ class WeaknessControllerIntegrationTest {
         assertNotNull(response.body)
         kotlin.test.assertTrue(response.body!!.contains("NOT_FOUND"))
     }
+
+    @Test
+    fun `test weaknesses endpoint pagination with page size and priority ordering`() {
+        val user = appUserRepository.save(AppUser(email = "pagination@test.com"))
+        val account = chessAccountRepository.save(ChessAccount(user = user, platform = "CHESS_COM", username = "pageuser"))
+        val game =
+            gameRepository.save(
+                Game(chessAccount = account, platformGameId = "pagegame", timeControl = "blitz", pgn = "pgn", result = "win"),
+            )
+
+        // Create 5 position weaknesses with distinct priority scores
+        for (i in 1..5) {
+            val position =
+                positionRepository.save(
+                    Position(hash = "pagehash_$i", fen = "rnbqkbnr/pppp1ppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 $i"),
+                )
+            userPositionStatsRepository.save(
+                UserPositionStats(chessAccount = account, position = position, playerColor = "WHITE", timesReached = 10),
+            )
+            for (occ in 1..5) {
+                positionOccurrenceRepository.save(
+                    PositionOccurrence(
+                        game = game,
+                        position = position,
+                        chessAccount = account,
+                        plyNumber = 1,
+                        movePlayed = "badMove",
+                        playerColor = "WHITE",
+                    ),
+                )
+            }
+            val analysis =
+                engineAnalysisRepository.save(
+                    EngineAnalysis(
+                        position = position,
+                        depth = 16,
+                        baselineEvalCp = 100,
+                        bestMove = "goodMove",
+                        bestMoveEvalCp = 100,
+                        analyzedAt = Instant.now(),
+                    ),
+                )
+            // Give higher loss to higher indices so priority increases
+            analysis.moveEvaluations.add(
+                MoveEvaluation(engineAnalysis = analysis, move = "badMove", evalCp = 100 - (i * 50), evalLossFromBest = 0.5 * i),
+            )
+            engineAnalysisRepository.save(analysis)
+        }
+
+        // 1. Default pagination (page=0, size=20) returns all 5 sorted by descending priority
+        val defaultResp =
+            restTemplate.exchange(
+                "/api/positions/weaknesses?platform=CHESS_COM&username=pageuser&playerColor=WHITE&minEvalLoss=0.3",
+                HttpMethod.GET,
+                null,
+                object : ParameterizedTypeReference<List<WeaknessResponse>>() {},
+            )
+        assertEquals(HttpStatus.OK, defaultResp.statusCode)
+        val defaultList = defaultResp.body!!
+        assertEquals(5, defaultList.size)
+        // Verify priority ordering descending
+        for (idx in 0 until defaultList.size - 1) {
+            kotlin.test.assertTrue(
+                defaultList[idx].priority >= defaultList[idx + 1].priority,
+                "Results must be sorted descending by priority",
+            )
+        }
+
+        // 2. Explicit pagination: page=0, size=2
+        val page0Resp =
+            restTemplate.exchange(
+                "/api/positions/weaknesses?platform=CHESS_COM&username=pageuser&playerColor=WHITE&minEvalLoss=0.3&page=0&size=2",
+                HttpMethod.GET,
+                null,
+                object : ParameterizedTypeReference<List<WeaknessResponse>>() {},
+            )
+        assertEquals(HttpStatus.OK, page0Resp.statusCode)
+        val page0List = page0Resp.body!!
+        assertEquals(2, page0List.size)
+        assertEquals(defaultList[0].positionId, page0List[0].positionId)
+        assertEquals(defaultList[1].positionId, page0List[1].positionId)
+
+        // 3. Explicit pagination: page=1, size=2
+        val page1Resp =
+            restTemplate.exchange(
+                "/api/positions/weaknesses?platform=CHESS_COM&username=pageuser&playerColor=WHITE&minEvalLoss=0.3&page=1&size=2",
+                HttpMethod.GET,
+                null,
+                object : ParameterizedTypeReference<List<WeaknessResponse>>() {},
+            )
+        assertEquals(HttpStatus.OK, page1Resp.statusCode)
+        val page1List = page1Resp.body!!
+        assertEquals(2, page1List.size)
+        assertEquals(defaultList[2].positionId, page1List[0].positionId)
+        assertEquals(defaultList[3].positionId, page1List[1].positionId)
+
+        // 4. Page beyond available results: page=10, size=2
+        val pageBeyondResp =
+            restTemplate.exchange(
+                "/api/positions/weaknesses?platform=CHESS_COM&username=pageuser&playerColor=WHITE&minEvalLoss=0.3&page=10&size=2",
+                HttpMethod.GET,
+                null,
+                object : ParameterizedTypeReference<List<WeaknessResponse>>() {},
+            )
+        assertEquals(HttpStatus.OK, pageBeyondResp.statusCode)
+        val pageBeyondList = pageBeyondResp.body!!
+        assertEquals(0, pageBeyondList.size)
+    }
 }

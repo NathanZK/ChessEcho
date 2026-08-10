@@ -158,13 +158,15 @@ Retrieves calculated chess weaknesses based on position evaluations and recurrin
 ### Query Parameters
 - `platform` (Platform enum, required): Platform identifier (`CHESS_COM`).
 - `username` (string, required): Player username.
-- `playerColor` (PlayerColor enum, required): `WHITE` or `BLACK`.
+- `playerColor` (PlayerColor enum, required): `WHITE`, `BLACK`, or `BOTH`.
 - `minEvalLoss` (double, optional, default: `0.8`): Minimum engine evaluation loss, in pawns, required for a move to be classified as a mistake. A lower value means a stricter definition of a mistake.
 - `minMistakeCount` (int, optional, default: `3`): Minimum number of mistakes required to qualify as a weakness.
+- `page` (int, optional, default: `0`): Zero-indexed page number.
+- `size` (int, optional, default: `20`): Page size limit.
 
 ### Curl Example
 ```bash
-curl "http://localhost:8080/api/positions/weaknesses?platform=CHESS_COM&username=magnuscarlsen&playerColor=WHITE&minEvalLoss=0.8"
+curl "http://localhost:8080/api/positions/weaknesses?platform=CHESS_COM&username=magnuscarlsen&playerColor=WHITE&minEvalLoss=0.8&page=0&size=20"
 ```
 
 ### Responses
