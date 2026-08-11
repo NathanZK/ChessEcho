@@ -22,6 +22,7 @@ interface ChessBoardAreaProps {
   onUndo?: () => void;
   onRedo?: () => void;
   hintSquare?: string;
+  canHint?: boolean;
 }
 
 export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
@@ -35,6 +36,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   onUndo,
   onRedo,
   hintSquare,
+  canHint = true,
 }) => {
   const [game, setGame] = useState<Chess>(new Chess(initialFen));
   const [fenHistory, setFenHistory] = useState<string[]>([initialFen]);
@@ -212,6 +214,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
         onNextPuzzle={onNextPuzzle}
         canUndo={historyIndex > 0}
         canRedo={historyIndex < fenHistory.length - 1}
+        canHint={canHint}
       />
     </div>
   );

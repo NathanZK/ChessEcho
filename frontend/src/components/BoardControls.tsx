@@ -11,6 +11,7 @@ interface BoardControlsProps {
   onNextPuzzle: () => void;
   canUndo: boolean;
   canRedo: boolean;
+  canHint?: boolean;
 }
 
 export const BoardControls: React.FC<BoardControlsProps> = ({
@@ -21,6 +22,7 @@ export const BoardControls: React.FC<BoardControlsProps> = ({
   onNextPuzzle,
   canUndo,
   canRedo,
+  canHint = true,
 }) => {
   return (
     <div className="flex items-center justify-between gap-2 p-2.5 bg-slate-900 rounded-xl border border-slate-800 shadow-md">
@@ -58,8 +60,9 @@ export const BoardControls: React.FC<BoardControlsProps> = ({
       <div className="flex items-center space-x-2">
         <button
           onClick={onHint}
-          title="Show Move Hint"
-          className="flex items-center space-x-1.5 px-3 h-9 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded-lg text-xs font-semibold transition border border-amber-500/30"
+          disabled={!canHint}
+          title={canHint ? "Show Move Hint" : "Hint unavailable after puzzle is solved"}
+          className="flex items-center space-x-1.5 px-3 h-9 bg-amber-500/20 hover:bg-amber-500/30 disabled:opacity-30 disabled:hover:bg-amber-500/20 text-amber-300 rounded-lg text-xs font-semibold transition border border-amber-500/30 cursor-pointer disabled:cursor-not-allowed"
         >
           <Lightbulb className="w-3.5 h-3.5 text-amber-400" />
           <span>Hint</span>
