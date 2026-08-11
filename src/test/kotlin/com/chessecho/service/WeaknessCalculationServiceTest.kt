@@ -110,7 +110,7 @@ class WeaknessCalculationServiceTest {
                 chessAccountId = account.id,
                 playerColor = "WHITE",
                 minEvalLoss = 0.3,
-                minTimesReached = 3,
+                minTimesReached = 5,
                 minMistakeCount = 1,
             ),
         ).thenReturn(listOf(aggregation03))
@@ -151,7 +151,7 @@ class WeaknessCalculationServiceTest {
                 chessAccountId = account.id,
                 playerColor = "BOTH",
                 minEvalLoss = 0.8,
-                minTimesReached = 3,
+                minTimesReached = 5,
                 minMistakeCount = 3,
             ),
         ).thenReturn(emptyList())
