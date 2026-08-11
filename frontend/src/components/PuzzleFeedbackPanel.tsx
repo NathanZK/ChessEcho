@@ -85,7 +85,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2 font-bold text-amber-200">
                   <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-                  <span>Past Habit Breakdown</span>
+                  <span>Your Past Decisions</span>
                 </div>
                 <span className="text-[10px] font-semibold bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-full border border-amber-500/20">
                   {puzzle.mistakeCount} total errors
@@ -93,7 +93,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
               </div>
 
               <p className="text-amber-300/80 leading-relaxed">
-                You used to fall into this trap by playing these sub-optimal moves:
+                In past games, you played these sub-optimal decisions in this position:
               </p>
 
               <div className="grid grid-cols-1 gap-1.5 pt-0.5">

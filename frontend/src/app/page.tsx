@@ -58,7 +58,7 @@ export default function Home() {
     setActiveTab(tab);
     if (typeof window !== 'undefined') {
       localStorage.setItem('chessecho_active_tab', tab);
-      window.history.replaceState(null, '', `#${tab}`);
+      window.history.pushState(null, '', `#${tab}`);
     }
   };
 
@@ -89,12 +89,20 @@ export default function Home() {
   const [isLoadingPuzzles, setIsLoadingPuzzles] = useState<boolean>(true);
 
   // Puzzle filter settings
-  const [minEvalLoss, setMinEvalLoss] = useState<number>(0.8);
+  const [minEvalLoss, setMinEvalLoss] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      const savedEvalLoss = localStorage.getItem('chessecho_min_eval_loss');
+      if (savedEvalLoss && !isNaN(Number(savedEvalLoss))) {
+        return Number(savedEvalLoss);
+      }
+    }
+    return 0.8;
+  });
   const [minMistakeCount, setMinMistakeCount] = useState<number>(3);
   const [puzzleColorFilter, setPuzzleColorFilter] = useState<'BOTH' | 'WHITE' | 'BLACK'>('BOTH');
   const [showPuzzleSettings, setShowPuzzleSettings] = useState<boolean>(false);
 
-  // Restore puzzle color filter from localStorage after mount
+  // Restore puzzle color filter and minEvalLoss from localStorage after mount
   React.useEffect(() => {
     if (typeof window !== 'undefined') {
       const savedColor = localStorage.getItem('chessecho_puzzle_color_filter');
@@ -102,13 +110,27 @@ export default function Home() {
         // eslint-disable-next-line react-hooks/set-state-in-effect
         setPuzzleColorFilter(savedColor as 'BOTH' | 'WHITE' | 'BLACK');
       }
+      const savedEvalLoss = localStorage.getItem('chessecho_min_eval_loss');
+      if (savedEvalLoss && !isNaN(Number(savedEvalLoss))) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setMinEvalLoss(Number(savedEvalLoss));
+      }
     }
   }, []);
+
+  const handleMinEvalLossChange = (val: number) => {
+    setMinEvalLoss(val);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('chessecho_min_eval_loss', String(val));
+    }
+  };
 
   const handleColorFilterChange = (color: 'BOTH' | 'WHITE' | 'BLACK') => {
     setPuzzleColorFilter(color);
     if (typeof window !== 'undefined') {
       localStorage.setItem('chessecho_puzzle_color_filter', color);
+      const weaknessColor = color === 'BOTH' ? 'ALL' : color;
+      localStorage.setItem('chessecho_weakness_color_filter', weaknessColor);
     }
   };
 
@@ -320,15 +342,30 @@ export default function Home() {
     }
   };
 
-  const handleSelectPracticeFromLibrary = (puzzle: Puzzle) => {
-    const foundIdx = puzzlesList.findIndex((p) => p.puzzleId === puzzle.puzzleId);
-    const selectedPuzzle = foundIdx !== -1 ? puzzlesList[foundIdx] : puzzle;
+  const handleSelectPracticeFromLibrary = (puzzle: Puzzle, fullList?: Puzzle[]) => {
+    let targetList = puzzlesList;
+    let targetIdx = -1;
 
-    if (foundIdx !== -1) {
-      setCurrentPuzzleIndex(foundIdx);
+    if (fullList && fullList.length > 0) {
+      targetList = fullList;
+      setPuzzlesList(fullList);
+      targetIdx = fullList.findIndex((p) => p.puzzleId === puzzle.puzzleId);
+    } else {
+      targetIdx = puzzlesList.findIndex((p) => p.puzzleId === puzzle.puzzleId);
+      if (targetIdx === -1) {
+        targetList = [...puzzlesList, puzzle];
+        setPuzzlesList(targetList);
+        targetIdx = targetList.length - 1;
+      }
     }
+
+    const selectedPuzzle = targetIdx !== -1 ? targetList[targetIdx] : puzzle;
+    const finalIndex = Math.max(0, targetIdx);
+
+    setCurrentPuzzleIndex(finalIndex);
     setActivePuzzle(selectedPuzzle);
     resetPuzzleInteractionState(selectedPuzzle);
+
     if (typeof window !== 'undefined' && selectedPuzzle) {
       localStorage.setItem('chessecho_puzzle_id', selectedPuzzle.puzzleId);
     }
@@ -584,6 +621,7 @@ export default function Home() {
                     onUndo={handleBoardUndo}
                     onRedo={handleBoardRedo}
                     hintSquare={hintSquare}
+                    canHint={!(feedback.status === 'CORRECT' || feedback.status === 'EXPLORING')}
                   />
                 </div>
 
@@ -607,9 +645,11 @@ export default function Home() {
           <WeaknessesList
             username={activeUsername}
             minEvalLoss={minEvalLoss}
-            onMinEvalLossChange={setMinEvalLoss}
+            onMinEvalLossChange={handleMinEvalLossChange}
             onSelectPractice={handleSelectPracticeFromLibrary}
             onWeaknessCountChange={setWeaknessCount}
+            activeColorFilter={puzzleColorFilter === 'BOTH' ? 'ALL' : puzzleColorFilter}
+            onColorFilterChange={(c) => handleColorFilterChange(c === 'ALL' ? 'BOTH' : c)}
           />
         )}
 

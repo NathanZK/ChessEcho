@@ -35,8 +35,10 @@ interface WeaknessesListProps {
   username?: string;
   minEvalLoss?: number;
   onMinEvalLossChange?: (val: number) => void;
-  onSelectPractice: (puzzle: Puzzle) => void;
+  onSelectPractice: (puzzle: Puzzle, fullList?: Puzzle[]) => void;
   onWeaknessCountChange?: (count: number) => void;
+  activeColorFilter?: 'ALL' | 'WHITE' | 'BLACK';
+  onColorFilterChange?: (color: 'ALL' | 'WHITE' | 'BLACK') => void;
 }
 
 const PAGE_SIZE = 20;
@@ -47,8 +49,27 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
   onMinEvalLossChange,
   onSelectPractice,
   onWeaknessCountChange,
+  activeColorFilter,
+  onColorFilterChange,
 }) => {
-  const [colorFilter, setColorFilter] = useState<'ALL' | 'WHITE' | 'BLACK'>('ALL');
+  const [colorFilter, setColorFilter] = useState<'ALL' | 'WHITE' | 'BLACK'>(
+    activeColorFilter || 'ALL'
+  );
+
+  const handleColorChange = (newColor: 'ALL' | 'WHITE' | 'BLACK') => {
+    setColorFilter(newColor);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('chessecho_weakness_color_filter', newColor);
+    }
+    onColorFilterChange?.(newColor);
+  };
+
+  useEffect(() => {
+    if (activeColorFilter && activeColorFilter !== colorFilter) {
+      setColorFilter(activeColorFilter);
+    }
+  }, [activeColorFilter, colorFilter]);
+
   const [minMistakeCountFilter, setMinMistakeCountFilter] = useState<number>(3);
 
   const [weaknesses, setWeaknesses] = useState<WeaknessResponse[]>([]);
@@ -198,7 +219,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
             {(['ALL', 'WHITE', 'BLACK'] as const).map((color) => (
               <button
                 key={color}
-                onClick={() => setColorFilter(color)}
+                onClick={() => handleColorChange(color)}
                 className={`px-3 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
                   colorFilter === color
                     ? 'bg-emerald-600 text-white shadow-sm'
@@ -402,7 +423,13 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
 
                     <button
                       type="button"
-                      onClick={() => onSelectPractice(adaptWeaknessToPuzzle(item, playerColor))}
+                      onClick={() => {
+                        const fullConvertedList = weaknesses.map((w) => {
+                          const col: 'WHITE' | 'BLACK' = w.fen && w.fen.split(' ')[1] === 'b' ? 'BLACK' : 'WHITE';
+                          return adaptWeaknessToPuzzle(w, col);
+                        });
+                        onSelectPractice(adaptWeaknessToPuzzle(item, playerColor), fullConvertedList);
+                      }}
                       className="flex items-center space-x-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition shadow-md shadow-emerald-900/30 cursor-pointer"
                     >
                       <Swords className="w-3.5 h-3.5" />
