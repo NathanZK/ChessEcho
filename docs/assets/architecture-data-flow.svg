@@ -1,0 +1,237 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1480" width="1200" height="1480" style="background-color: #090d16; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+  <defs>
+    <linearGradient id="headerGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+    <linearGradient id="cardGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1e293b" />
+      <stop offset="100%" stop-color="#111827" />
+    </linearGradient>
+    <linearGradient id="invariantGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#451a03" />
+      <stop offset="100%" stop-color="#78350f" />
+    </linearGradient>
+
+    <!-- Arrow markers -->
+    <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#38bdf8" />
+    </marker>
+    <marker id="arrow-emerald" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#34d399" />
+    </marker>
+    <marker id="arrow-amber" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#fbbf24" />
+    </marker>
+    <marker id="arrow-purple" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#c084fc" />
+    </marker>
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000000" flood-opacity="0.5" />
+    </filter>
+  </defs>
+
+  <!-- Title Header -->
+  <rect x="40" y="30" width="1120" height="90" rx="16" fill="url(#headerGrad)" stroke="#334155" stroke-width="1" filter="url(#shadow)" />
+  <text x="70" y="68" fill="#f8fafc" font-size="24" font-weight="800" letter-spacing="-0.5">ChessEcho Architecture &amp; Data-Flow Pipeline</text>
+  <text x="70" y="96" fill="#94a3b8" font-size="14" font-weight="500">How imported games transform into recurring weakness analysis and personalized practice puzzles</text>
+
+  <!-- LAYER 1: GAME INGESTION -->
+  <g id="layer-ingestion">
+    <!-- Group Box -->
+    <rect x="40" y="145" width="1120" height="190" rx="16" fill="#0f172a" stroke="#1e293b" stroke-width="1.5" />
+    <text x="65" y="172" fill="#64748b" font-size="12" font-weight="700" letter-spacing="1">1. GAME INGESTION &amp; POSITION REPLAY</text>
+
+    <!-- Chess.com External -->
+    <rect x="70" y="195" width="220" height="110" rx="12" fill="url(#cardGrad)" stroke="#4338ca" stroke-width="2" filter="url(#shadow)" />
+    <rect x="85" y="210" width="70" height="22" rx="6" fill="#312e81" />
+    <text x="94" y="225" fill="#a5b4fc" font-size="11" font-weight="700">EXTERNAL</text>
+    <text x="85" y="252" fill="#f8fafc" font-size="16" font-weight="700">Chess.com API</text>
+    <text x="85" y="274" fill="#94a3b8" font-size="12">Raw PGN Game Archives</text>
+
+    <!-- Arrow 1 -> 2 -->
+    <path d="M 290 250 L 370 250" fill="none" stroke="#38bdf8" stroke-width="2.5" marker-end="url(#arrow)" />
+    <text x="302" y="240" fill="#38bdf8" font-size="11" font-weight="600">Fetch Games</text>
+
+    <!-- GameImportService -->
+    <rect x="380" y="195" width="260" height="110" rx="12" fill="url(#cardGrad)" stroke="#059669" stroke-width="2" filter="url(#shadow)" />
+    <rect x="395" y="210" width="80" height="22" rx="6" fill="#064e3b" />
+    <text x="404" y="225" fill="#6ee7b7" font-size="11" font-weight="700">SERVICE</text>
+    <text x="395" y="252" fill="#f8fafc" font-size="16" font-weight="700">GameImportService</text>
+    <text x="395" y="274" fill="#94a3b8" font-size="12">Replays moves &amp; computes FENs</text>
+
+    <!-- Arrow 2 -> Entities -->
+    <path d="M 640 250 L 730 250" fill="none" stroke="#34d399" stroke-width="2.5" marker-end="url(#arrow-emerald)" />
+    <text x="645" y="240" fill="#34d399" font-size="11" font-weight="600">Extract &amp; Persist</text>
+
+    <!-- Summary box inside layer 1 -->
+    <rect x="740" y="195" width="390" height="110" rx="12" fill="#1e293b" stroke="#334155" stroke-width="1" />
+    <text x="760" y="222" fill="#e2e8f0" font-size="13" font-weight="700">Ingestion Actions:</text>
+    <text x="760" y="246" fill="#94a3b8" font-size="12">• Saves <tspan fill="#38bdf8" font-weight="700">Game</tspan> record (pgn, timeControl, result)</text>
+    <text x="760" y="266" fill="#94a3b8" font-size="12">• Computes deduplicated <tspan fill="#38bdf8" font-weight="700">Position</tspan> FEN hash</text>
+    <text x="760" y="286" fill="#94a3b8" font-size="12">• Records <tspan fill="#38bdf8" font-weight="700">PositionOccurrence</tspan> &amp; increments <tspan fill="#38bdf8" font-weight="700">UserPositionStats</tspan></text>
+  </g>
+
+  <!-- LAYER 2: PERSISTENCE & ENTITY DISTINCTION -->
+  <g id="layer-persistence">
+    <rect x="40" y="355" width="1120" height="240" rx="16" fill="#0f172a" stroke="#1e293b" stroke-width="1.5" />
+    <text x="65" y="382" fill="#64748b" font-size="12" font-weight="700" letter-spacing="1">2. POSTGRESQL PERSISTENCE &amp; ENTITY DISTINCTIONS</text>
+
+    <!-- Entity 1: Position -->
+    <rect x="70" y="405" width="330" height="165" rx="12" fill="url(#cardGrad)" stroke="#0284c7" stroke-width="2" filter="url(#shadow)" />
+    <rect x="85" y="420" width="85" height="22" rx="6" fill="#0c4a6e" />
+    <text x="94" y="435" fill="#7dd3fc" font-size="11" font-weight="700">PERSISTENT</text>
+    <text x="85" y="462" fill="#f8fafc" font-size="17" font-weight="800">Position</text>
+    <text x="85" y="485" fill="#38bdf8" font-size="12" font-weight="600">The Board Position Itself</text>
+    <text x="85" y="510" fill="#94a3b8" font-size="12">• Global FEN string &amp; FEN hash</text>
+    <text x="85" y="530" fill="#94a3b8" font-size="12">• Includes piece, turn, castling, en-passant</text>
+    <text x="85" y="550" fill="#94a3b8" font-size="12">• Shared globally across all users</text>
+
+    <!-- Entity 2: PositionOccurrence -->
+    <rect x="435" y="405" width="330" height="165" rx="12" fill="url(#cardGrad)" stroke="#0284c7" stroke-width="2" filter="url(#shadow)" />
+    <rect x="450" y="420" width="85" height="22" rx="6" fill="#0c4a6e" />
+    <text x="459" y="435" fill="#7dd3fc" font-size="11" font-weight="700">PERSISTENT</text>
+    <text x="450" y="462" fill="#f8fafc" font-size="17" font-weight="800">PositionOccurrence</text>
+    <text x="450" y="485" fill="#38bdf8" font-size="12" font-weight="600">Individual Game Encounter</text>
+    <text x="450" y="510" fill="#94a3b8" font-size="12">• Links specific <tspan fill="#f8fafc">Game</tspan> &amp; <tspan fill="#f8fafc">chessAccount</tspan></text>
+    <text x="450" y="530" fill="#94a3b8" font-size="12">• Captures <tspan fill="#f8fafc">playerColor</tspan> (WHITE / BLACK)</text>
+    <text x="450" y="550" fill="#94a3b8" font-size="12">• Records exact movePlayed &amp; moveNumber</text>
+
+    <!-- Entity 3: UserPositionStats -->
+    <rect x="800" y="405" width="330" height="165" rx="12" fill="url(#cardGrad)" stroke="#0284c7" stroke-width="2" filter="url(#shadow)" />
+    <rect x="815" y="420" width="85" height="22" rx="6" fill="#0c4a6e" />
+    <text x="824" y="435" fill="#7dd3fc" font-size="11" font-weight="700">PERSISTENT</text>
+    <text x="815" y="462" fill="#f8fafc" font-size="17" font-weight="800">UserPositionStats</text>
+    <text x="815" y="485" fill="#38bdf8" font-size="12" font-weight="600">Aggregated Frequency Counter</text>
+    <text x="815" y="510" fill="#94a3b8" font-size="12">• Tracks total <tspan fill="#f8fafc" font-weight="700">timesReached</tspan></text>
+    <text x="815" y="530" fill="#fbbf24" font-size="12" font-weight="600">Unique: (account, pos, playerColor)</text>
+    <text x="815" y="550" fill="#94a3b8" font-size="12">• Evaluated per user &amp; color independently</text>
+  </g>
+
+  <!-- Connect Layer 2 -> Layer 3 -->
+  <path d="M 965 570 L 965 625 L 530 625 L 530 655" fill="none" stroke="#fbbf24" stroke-width="2.5" marker-end="url(#arrow-amber)" />
+  <text x="680" y="618" fill="#fbbf24" font-size="12" font-weight="700">Inspect timesReached stats</text>
+
+  <!-- LAYER 3: CANDIDATE SELECTION & CANDIDATE INVARIANT -->
+  <g id="layer-candidate">
+    <rect x="40" y="650" width="1120" height="210" rx="16" fill="#0f172a" stroke="#1e293b" stroke-width="1.5" />
+    <text x="65" y="677" fill="#64748b" font-size="12" font-weight="700" letter-spacing="1">3. CANDIDATE SELECTION &amp; ENGINE ANALYSIS TRIGGER</text>
+
+    <!-- EngineAnalysisOrchestrator -->
+    <rect x="70" y="695" width="310" height="140" rx="12" fill="url(#cardGrad)" stroke="#059669" stroke-width="2" filter="url(#shadow)" />
+    <rect x="85" y="710" width="80" height="22" rx="6" fill="#064e3b" />
+    <text x="94" y="725" fill="#6ee7b7" font-size="11" font-weight="700">SERVICE</text>
+    <text x="85" y="752" fill="#f8fafc" font-size="16" font-weight="700">EngineAnalysisOrchestrator</text>
+    <text x="85" y="774" fill="#94a3b8" font-size="12">Queries qualifying candidate positions:</text>
+    <text x="85" y="794" fill="#38bdf8" font-size="12" font-family="monospace">PositionRepository.findQualifyingPositions</text>
+    <text x="85" y="814" fill="#a7f3d0" font-size="11">Only dispatches qualified candidate IDs</text>
+
+    <!-- INVARIANT CALLOUT BADGE -->
+    <rect x="415" y="695" width="715" height="140" rx="12" fill="url(#invariantGrad)" stroke="#b45309" stroke-width="2" filter="url(#shadow)" />
+    <rect x="430" y="710" width="220" height="22" rx="6" fill="#92400e" />
+    <text x="438" y="725" fill="#fef08a" font-size="11" font-weight="800">DOMAIN INVARIANT RULE</text>
+    <text x="430" y="754" fill="#ffffff" font-size="16" font-weight="800">Candidate Qualification Rule (timesReached ≥ 5):</text>
+    <text x="430" y="778" fill="#fde047" font-size="14" font-weight="700">same account + same position + same player color  ⇒  timesReached ≥ 5</text>
+
+    <text x="430" y="804" fill="#fef3c7" font-size="12">• <tspan font-weight="700">White &amp; Black occurrences are counted independently</tspan> (4 White + 1 Black does NOT qualify).</text>
+    <text x="430" y="822" fill="#fef3c7" font-size="12">• <tspan font-weight="700">Cross-user occurrences are ignored</tspan> (User A 4 + User B 1 does NOT qualify for User A).</text>
+  </g>
+
+  <!-- Arrow Layer 3 -> Layer 4 -->
+  <path d="M 225 835 L 225 905" fill="none" stroke="#34d399" stroke-width="2.5" marker-end="url(#arrow-emerald)" />
+  <text x="235" y="875" fill="#34d399" font-size="12" font-weight="700">Only Qualified Positions Dispatched</text>
+  <text x="235" y="892" fill="#94a3b8" font-size="11">(Prevents engine analysis on non-candidates)</text>
+
+  <!-- LAYER 4: STOCKFISH ENGINE ANALYSIS -->
+  <g id="layer-engine">
+    <rect x="40" y="910" width="1120" height="190" rx="16" fill="#0f172a" stroke="#1e293b" stroke-width="1.5" />
+    <text x="65" y="937" fill="#64748b" font-size="12" font-weight="700" letter-spacing="1">4. STOCKFISH ENGINE ANALYSIS &amp; FACT STORAGE</text>
+
+    <!-- Stockfish Binary -->
+    <rect x="70" y="960" width="220" height="115" rx="12" fill="url(#cardGrad)" stroke="#4338ca" stroke-width="2" filter="url(#shadow)" />
+    <rect x="85" y="975" width="70" height="22" rx="6" fill="#312e81" />
+    <text x="94" y="990" fill="#a5b4fc" font-size="11" font-weight="700">EXTERNAL</text>
+    <text x="85" y="1017" fill="#f8fafc" font-size="16" font-weight="700">Stockfish Engine</text>
+    <text x="85" y="1039" fill="#94a3b8" font-size="12">Local binary process evaluation</text>
+
+    <!-- Arrow Stockfish -> Service -->
+    <path d="M 290 1017 L 370 1017" fill="none" stroke="#818cf8" stroke-width="2.5" marker-end="url(#arrow)" />
+
+    <!-- StockfishService -->
+    <rect x="380" y="960" width="260" height="115" rx="12" fill="url(#cardGrad)" stroke="#059669" stroke-width="2" filter="url(#shadow)" />
+    <rect x="395" y="975" width="80" height="22" rx="6" fill="#064e3b" />
+    <text x="404" y="990" fill="#6ee7b7" font-size="11" font-weight="700">SERVICE</text>
+    <text x="395" y="1017" fill="#f8fafc" font-size="16" font-weight="700">StockfishService</text>
+    <text x="395" y="1039" fill="#94a3b8" font-size="12">Evaluates best move &amp; loss</text>
+
+    <!-- Arrow Service -> Analysis Entities -->
+    <path d="M 640 1017 L 730 1017" fill="none" stroke="#38bdf8" stroke-width="2.5" marker-end="url(#arrow)" />
+
+    <!-- Analysis Persistence Entities -->
+    <rect x="740" y="960" width="390" height="115" rx="12" fill="url(#cardGrad)" stroke="#0284c7" stroke-width="2" filter="url(#shadow)" />
+    <rect x="755" y="975" width="85" height="22" rx="6" fill="#0c4a6e" />
+    <text x="764" y="990" fill="#7dd3fc" font-size="11" font-weight="700">PERSISTENT</text>
+    <text x="755" y="1017" fill="#f8fafc" font-size="16" font-weight="700">EngineAnalysis &amp; MoveEvaluation</text>
+    <text x="755" y="1039" fill="#94a3b8" font-size="12">• <tspan fill="#38bdf8" font-weight="700">EngineAnalysis</tspan>: bestMove, baselineEvalCp</text>
+    <text x="755" y="1059" fill="#94a3b8" font-size="12">• <tspan fill="#38bdf8" font-weight="700">MoveEvaluation</tspan>: movePlayed, evalLossCp</text>
+  </g>
+
+  <!-- Arrow Layer 4 -> Layer 5 -->
+  <path d="M 935 1075 L 935 1125 L 310 1125 L 310 1155" fill="none" stroke="#c084fc" stroke-width="2.5" marker-end="url(#arrow-purple)" />
+  <text x="560" y="1118" fill="#c084fc" font-size="12" font-weight="700">Engine facts feed weakness calculation</text>
+
+  <!-- LAYER 5: WEAKNESS CALCULATION & REST API -->
+  <g id="layer-api">
+    <rect x="40" y="1140" width="1120" height="160" rx="16" fill="#0f172a" stroke="#1e293b" stroke-width="1.5" />
+    <text x="65" y="1167" fill="#64748b" font-size="12" font-weight="700" letter-spacing="1">5. WEAKNESS CALCULATION &amp; REST API BOUNDARY</text>
+
+    <!-- WeaknessCalculationService -->
+    <rect x="70" y="1185" width="280" height="95" rx="12" fill="url(#cardGrad)" stroke="#059669" stroke-width="2" filter="url(#shadow)" />
+    <text x="85" y="1212" fill="#f8fafc" font-size="15" font-weight="700">WeaknessCalculationService</text>
+    <text x="85" y="1232" fill="#94a3b8" font-size="11">Re-enforces: <tspan fill="#fbbf24">COUNT(po.id) ≥ 5</tspan></text>
+    <text x="85" y="1250" fill="#94a3b8" font-size="11">Calculates priority, recency decay &amp; avg loss</text>
+
+    <!-- Arrow Weakness -> API -->
+    <path d="M 350 1232 L 430 1232" fill="none" stroke="#c084fc" stroke-width="2.5" marker-end="url(#arrow-purple)" />
+
+    <!-- REST API Endpoints -->
+    <rect x="440" y="1185" width="340" height="95" rx="12" fill="url(#cardGrad)" stroke="#9333ea" stroke-width="2" filter="url(#shadow)" />
+    <rect x="455" y="1197" width="95" height="20" rx="6" fill="#581c87" />
+    <text x="463" y="1211" fill="#e9d5ff" font-size="10" font-weight="800">REST API DTO</text>
+    <text x="455" y="1237" fill="#38bdf8" font-size="13" font-family="monospace" font-weight="700">GET /api/positions/weaknesses</text>
+    <text x="455" y="1257" fill="#38bdf8" font-size="13" font-family="monospace" font-weight="700">GET /api/puzzles</text>
+
+    <!-- Arrow API -> PuzzleService -->
+    <path d="M 780 1232 L 840 1232" fill="none" stroke="#38bdf8" stroke-width="2.5" marker-end="url(#arrow)" />
+
+    <!-- PuzzleService -->
+    <rect x="850" y="1185" width="280" height="95" rx="12" fill="url(#cardGrad)" stroke="#059669" stroke-width="2" filter="url(#shadow)" />
+    <text x="865" y="1212" fill="#f8fafc" font-size="15" font-weight="700">PuzzleService</text>
+    <text x="865" y="1234" fill="#94a3b8" font-size="11">Converts weaknesses into interactive</text>
+    <text x="865" y="1252" fill="#94a3b8" font-size="11">puzzle DTOs with acceptableMoves</text>
+  </g>
+
+  <!-- Arrow Layer 5 -> Layer 6 -->
+  <path d="M 610 1280 L 610 1335" fill="none" stroke="#2dd4bf" stroke-width="2.5" marker-end="url(#arrow-emerald)" />
+
+  <!-- LAYER 6: FRONTEND USER JOURNEY -->
+  <g id="layer-frontend">
+    <rect x="40" y="1320" width="1120" height="130" rx="16" fill="#0f172a" stroke="#1e293b" stroke-width="1.5" />
+    <text x="65" y="1345" fill="#64748b" font-size="12" font-weight="700" letter-spacing="1">6. FRONTEND PRESENTATION &amp; USER PRACTICE JOURNEY</text>
+
+    <!-- Weakness Library View -->
+    <rect x="70" y="1360" width="460" height="75" rx="12" fill="url(#cardGrad)" stroke="#0d9488" stroke-width="2" filter="url(#shadow)" />
+    <text x="90" y="1388" fill="#f8fafc" font-size="16" font-weight="800">Weakness Library Tab</text>
+    <text x="90" y="1410" fill="#2dd4bf" font-size="13" font-weight="600">"What do I repeatedly struggle with?"</text>
+
+    <!-- Practice Action Arrow -->
+    <path d="M 530 1397 L 665 1397" fill="none" stroke="#2dd4bf" stroke-width="3" marker-end="url(#arrow-emerald)" />
+    <rect x="545" y="1377" width="105" height="20" rx="5" fill="#134e4a" />
+    <text x="552" y="1391" fill="#99f6e4" font-size="11" font-weight="800">PRACTICE ACTION</text>
+
+    <!-- Practice Puzzles View -->
+    <rect x="680" y="1360" width="450" height="75" rx="12" fill="url(#cardGrad)" stroke="#0d9488" stroke-width="2" filter="url(#shadow)" />
+    <text x="700" y="1388" fill="#f8fafc" font-size="16" font-weight="800">Practice Puzzles Tab</text>
+    <text x="700" y="1410" fill="#2dd4bf" font-size="13" font-weight="600">"How do I train it?"</text>
+  </g>
+</svg>

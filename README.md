@@ -304,11 +304,37 @@ As new games are imported and analyzed:
                PostgreSQL                           Stockfish
 ```
 
+## Data Flow & Architecture Pipeline
+
+The following architecture diagram illustrates how ChessEcho ingests raw games, extracts position occurrences, enforces candidate qualification thresholds, triggers Stockfish evaluations, aggregates weaknesses, and serves personalized practice puzzles to the frontend:
+
+![ChessEcho Architecture and Data Flow Pipeline](docs/assets/architecture-data-flow.svg)
+
+### Core Domain Model Entities
+
+To maintain performance and architectural clarity, ChessEcho cleanly separates positions, encounters, and reach statistics:
+
+1. **`Position`**: Represents a legally unique board state (piece placement, side to move, castling rights, en passant). Positions are shared globally and deduplicated via FEN hash.
+2. **`PositionOccurrence`**: Represents an individual player encounter with a position in a specific game, capturing `chessAccount`, `playerColor`, `movePlayed`, and `moveNumber`.
+3. **`UserPositionStats`**: Stores aggregated reach counts (`timesReached`) per user account, position, and player color. Uniqueness is enforced by a database constraint on `(chess_account_id, position_id, player_color)`.
+
+> [!IMPORTANT]
+> **Candidate Occurrence Invariant**
+> A position becomes an analysis candidate for Stockfish engine evaluation **if and only if** the same user account has reached that position at least 5 times while playing the same player color:
+> $$\text{same account} + \text{same position} + \text{same player color} \implies \text{timesReached} \ge 5$$
+> - Occurrences are **not** combined globally across different users.
+> - Occurrences are **not** combined across White and Black games for the same user.
+> 
+> Engine analysis candidate filtering happens **before** calling Stockfish, ensuring engine resources are spent strictly on recurring player positions.
+
+### Pipeline Workflow
+
+1. **Game Ingestion**: `GameImportService` fetches games from Chess.com, replays PGN move sequences, creates `Position` and `PositionOccurrence` records, and updates `UserPositionStats`.
+2. **Candidate Selection & Engine Analysis**: `EngineAnalysisOrchestrator` queries `PositionRepository.findQualifyingPositions` (`ups.timesReached >= 5`). Qualified positions are dispatched to `StockfishService`, which executes Stockfish and stores `EngineAnalysis` and `MoveEvaluation` records.
+3. **Weakness Aggregation**: `WeaknessCalculationService` queries `PositionOccurrenceRepository.findWeaknessAggregations` (`HAVING COUNT(po.id) >= 5`), filtering by requesting user and player color, and computes average loss, mistake frequency, time-decay priority, and acceptable alternative moves.
+4. **API & Frontend Presentation**: The REST API exposes `GET /api/positions/weaknesses` (consumed by the Weakness Library) and `GET /api/puzzles` (consumed by the Practice Puzzles view). The frontend renders interactive board components using standard DTOs returned by the backend.
+
 ---
-
-# Technology Stack
-
-## Backend
 
 ### Kotlin + Spring Boot
 
