@@ -25,7 +25,7 @@ class WeaknessCalculationService(
 
     companion object {
         const val DEFAULT_MIN_EVAL_LOSS = 0.8
-        const val DEFAULT_MIN_TIMES_REACHED = 3
+        const val DEFAULT_MIN_TIMES_REACHED = 5
         const val DEFAULT_MIN_MISTAKE_COUNT = 3
     }
 

@@ -33,8 +33,7 @@ interface PositionRepository : JpaRepository<Position, UUID> {
             SELECT ups.position.id
             FROM UserPositionStats ups
             WHERE ups.position.id IN :positionIds
-            GROUP BY ups.position.id
-            HAVING SUM(ups.timesReached) >= :minOccurrences
+              AND ups.timesReached >= :minOccurrences
         )
         """,
     )
