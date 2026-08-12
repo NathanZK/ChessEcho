@@ -8,6 +8,7 @@ interface BoardControlsProps {
   onRedo: () => void;
   onReset: () => void;
   onHint: () => void;
+  onPreviousPuzzle?: () => void;
   onNextPuzzle: () => void;
   canUndo: boolean;
   canRedo: boolean;
@@ -19,6 +20,7 @@ export const BoardControls: React.FC<BoardControlsProps> = ({
   onRedo,
   onReset,
   onHint,
+  onPreviousPuzzle,
   onNextPuzzle,
   canUndo,
   canRedo,
@@ -56,7 +58,7 @@ export const BoardControls: React.FC<BoardControlsProps> = ({
         </button>
       </div>
 
-      {/* Action Controls: Hint & Next Puzzle */}
+      {/* Action Controls: Hint, Prev Puzzle & Next Puzzle */}
       <div className="flex items-center space-x-2">
         <button
           onClick={onHint}
@@ -69,8 +71,18 @@ export const BoardControls: React.FC<BoardControlsProps> = ({
         </button>
 
         <button
+          onClick={onPreviousPuzzle}
+          title="Previous Puzzle"
+          className="flex items-center space-x-1 px-2.5 h-9 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-bold transition border border-slate-700/60 cursor-pointer"
+        >
+          <ChevronLeft className="w-3.5 h-3.5" />
+          <span>Prev</span>
+        </button>
+
+        <button
           onClick={onNextPuzzle}
-          className="flex items-center space-x-1.5 px-3.5 h-9 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition shadow-md shadow-emerald-900/40"
+          title="Next Puzzle"
+          className="flex items-center space-x-1.5 px-3.5 h-9 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition shadow-md shadow-emerald-900/40 cursor-pointer"
         >
           <span>Next Puzzle</span>
           <ChevronRight className="w-3.5 h-3.5" />

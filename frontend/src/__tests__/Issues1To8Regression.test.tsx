@@ -333,4 +333,234 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
     // Verify "trap" is NOT present anywhere in the DOM
     expect(screen.queryByText(/trap/i)).toBeNull();
   });
+
+  it('NEW ISSUE 1 — Best move (Qh4) is never presented as a historical mistake in feedback panel', () => {
+    const puzzleWithQh4Best: Puzzle = {
+      puzzleId: 'qh4-puzzle',
+      fen: 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3',
+      playerColor: 'WHITE',
+      targetMove: 'Qh4',
+      openingTitle: 'Test Qh4 Best Move',
+      acceptableMoves: [],
+      // movesPlayed contains sub-optimal moves (e.g. Bc4), but NOT Qh4
+      movesPlayed: [{ move: 'Bc4', timesPlayed: 5, averageLoss: 0.9 }],
+      priority: 10,
+      timesReached: 10,
+      mistakeCount: 5,
+      mistakeRate: 50,
+      gameUrls: [],
+      evalCp: 50,
+    };
+
+    const feedbackState = {
+      status: 'CORRECT' as const,
+      lastMove: 'Qh4',
+    };
+
+    render(
+      <PuzzleFeedbackPanel
+        puzzle={puzzleWithQh4Best}
+        feedback={feedbackState}
+        moveHistory={['Qh4']}
+        onNextPuzzle={vi.fn()}
+        onPreviousPuzzle={vi.fn()}
+      />
+    );
+
+    // Verify Qh4 is praised as best move
+    expect(screen.getByText('Qh4')).toBeInTheDocument();
+    expect(screen.getByText(/is the best move!/i)).toBeInTheDocument();
+
+    // Verify past decisions list only shows sub-optimal move Bc4, NOT Qh4
+    expect(screen.getByText('Bc4')).toBeInTheDocument();
+    expect(screen.queryByText(/Qh4 \(5 games\)/i)).toBeNull();
+  });
+
+  it('NEW ISSUE 2 — Threshold persists across both tab navigation (Flow A) and refresh (Flow B)', async () => {
+    vi.spyOn(api, 'fetchWeaknesses').mockResolvedValue([]);
+    vi.spyOn(api, 'fetchPuzzles').mockResolvedValue([]);
+
+    localStorage.setItem('chessecho_username', 'testuser');
+    window.location.hash = '#weaknesses';
+
+    const { unmount } = render(<Home />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Recurring Opening Weaknesses Library')).toBeInTheDocument();
+    });
+
+    // 1. Change threshold from 0.8 to 0.5 in Weaknesses tab
+    const selectEl = screen.getAllByRole('combobox')[0] as HTMLSelectElement;
+    await act(async () => {
+      fireEvent.change(selectEl, { target: { value: '0.5' } });
+    });
+
+    expect(localStorage.getItem('chessecho_min_eval_loss')).toBe('0.5');
+
+    // 2. Flow A: Navigate to Puzzles tab then return to Weaknesses tab
+    const puzzlesTabBtn = screen.getByRole('button', { name: /Practice Puzzles/i });
+    await act(async () => {
+      fireEvent.click(puzzlesTabBtn);
+    });
+
+    const weaknessesTabBtn = screen.getByRole('button', { name: /Weaknesses Library/i });
+    await act(async () => {
+      fireEvent.click(weaknessesTabBtn);
+    });
+
+    // Verify threshold is STILL 0.5 after tab navigation
+    const selectElAfterNav = screen.getAllByRole('combobox')[0] as HTMLSelectElement;
+    expect(Number(selectElAfterNav.value)).toBe(0.5);
+
+    unmount();
+
+    // 3. Flow B: Refresh simulation (remount) -> threshold is STILL 0.5
+    render(<Home />);
+    await waitFor(() => {
+      expect(screen.getByText('Recurring Opening Weaknesses Library')).toBeInTheDocument();
+    });
+
+    const selectElAfterRefresh = screen.getAllByRole('combobox')[0] as HTMLSelectElement;
+    expect(Number(selectElAfterRefresh.value)).toBe(0.5);
+  });
+
+  it('NEW ISSUE 3 — Previous Puzzle button traverses backwards and wraps around 1 <- 7', async () => {
+    const mockPuzzles: Puzzle[] = Array.from({ length: 7 }, (_, i) => ({
+      puzzleId: `p-${i + 1}`,
+      fen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1',
+      playerColor: 'BLACK',
+      targetMove: `move-${i + 1}`,
+      openingTitle: `Puzzle ${i + 1}`,
+      acceptableMoves: [],
+      movesPlayed: [],
+      priority: 10 - i,
+      timesReached: 10,
+      mistakeCount: 5,
+      mistakeRate: 50,
+      gameUrls: [],
+      evalCp: 35,
+    }));
+
+    vi.spyOn(api, 'fetchPuzzles').mockResolvedValue(mockPuzzles);
+
+    localStorage.setItem('chessecho_username', 'testuser');
+    window.location.hash = '#puzzles';
+
+    await act(async () => {
+      render(<Home />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Puzzle 1')).toBeInTheDocument();
+    });
+
+    // 1. Click Prev Puzzle on Puzzle 1 -> should wrap around to Puzzle 7
+    const prevBtn = screen.getByTitle('Previous Puzzle');
+    await act(async () => {
+      fireEvent.click(prevBtn);
+    });
+
+    expect(screen.getByText('Puzzle 7')).toBeInTheDocument();
+
+    // 2. Click Prev Puzzle on Puzzle 7 -> should move backwards to Puzzle 6
+    await act(async () => {
+      fireEvent.click(prevBtn);
+    });
+
+    expect(screen.getByText('Puzzle 6')).toBeInTheDocument();
+
+    // 3. Click Next Puzzle on Puzzle 6 -> should move forward to Puzzle 7
+    const nextBtn = screen.getByTitle('Next Puzzle');
+    await act(async () => {
+      fireEvent.click(nextBtn);
+    });
+
+    expect(screen.getByText('Puzzle 7')).toBeInTheDocument();
+  });
+
+  it('NEW ISSUE 4 — minMistakeCount & minEvalLoss FIRST API call after fresh mount receives persisted values and handles malformed localStorage', async () => {
+    const fetchWeaknessesSpy = vi.spyOn(api, 'fetchWeaknesses').mockResolvedValue([]);
+    const fetchPuzzlesSpy = vi.spyOn(api, 'fetchPuzzles').mockResolvedValue([]);
+
+    localStorage.setItem('chessecho_username', 'testuser');
+    window.location.hash = '#weaknesses';
+
+    const { unmount: unmount1 } = render(<Home />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Recurring Opening Weaknesses Library')).toBeInTheDocument();
+    });
+
+    // 1. Change Min Eval Loss to 0.5 and Min Mistakes to 5 in Weaknesses tab
+    const selects = screen.getAllByRole('combobox') as HTMLSelectElement[];
+    const evalLossSelect = selects[0];
+    const minMistakesSelect = selects[1];
+
+    await act(async () => {
+      fireEvent.change(evalLossSelect, { target: { value: '0.5' } });
+      fireEvent.change(minMistakesSelect, { target: { value: '5' } });
+    });
+
+    expect(localStorage.getItem('chessecho_min_eval_loss')).toBe('0.5');
+    expect(localStorage.getItem('chessecho_min_mistake_count')).toBe('5');
+
+    // 2. Tab Navigation: Navigate to Puzzles tab and back to Weaknesses
+    const puzzlesTabBtn = screen.getByRole('button', { name: /Practice Puzzles/i });
+    await act(async () => {
+      fireEvent.click(puzzlesTabBtn);
+    });
+
+    const weaknessesTabBtn = screen.getByRole('button', { name: /Weaknesses Library/i });
+    await act(async () => {
+      fireEvent.click(weaknessesTabBtn);
+    });
+
+    const selectsAfterNav = screen.getAllByRole('combobox') as HTMLSelectElement[];
+    expect(Number(selectsAfterNav[0].value)).toBe(0.5);
+    expect(Number(selectsAfterNav[1].value)).toBe(5);
+
+    unmount1();
+
+    // 3. Fresh Page Mount Simulation: Verify FIRST API call uses persisted 0.5 and 5
+    fetchWeaknessesSpy.mockClear();
+    fetchPuzzlesSpy.mockClear();
+
+    const { unmount: unmount2 } = render(<Home />);
+
+    await waitFor(() => {
+      expect(fetchWeaknessesSpy).toHaveBeenCalled();
+    });
+
+    // Verify VERY FIRST call receives minEvalLoss = 0.5 and minMistakeCount = 5
+    const firstCallArgs = fetchWeaknessesSpy.mock.calls[0];
+    expect(firstCallArgs[3]).toBe(0.5); // minEvalLoss
+    expect(firstCallArgs[4]).toBe(5);   // minMistakeCount
+
+    // Verify NO call ever used default 0.8 or 3
+    const hasDefaultCalls = fetchWeaknessesSpy.mock.calls.some(
+      (args) => args[3] === 0.8 || args[4] === 3
+    );
+    expect(hasDefaultCalls).toBe(false);
+
+    const selectsAfterRefresh = screen.getAllByRole('combobox') as HTMLSelectElement[];
+    expect(Number(selectsAfterRefresh[0].value)).toBe(0.5);
+    expect(Number(selectsAfterRefresh[1].value)).toBe(5);
+
+    unmount2();
+
+    // 4. Malformed localStorage handling -> safely falls back to defaults 0.8 and 3
+    localStorage.setItem('chessecho_min_eval_loss', 'invalid_eval');
+    localStorage.setItem('chessecho_min_mistake_count', 'invalid_mistakes');
+    fetchWeaknessesSpy.mockClear();
+
+    render(<Home />);
+
+    await waitFor(() => {
+      expect(fetchWeaknessesSpy).toHaveBeenCalled();
+    });
+
+    const malformedCallArgs = fetchWeaknessesSpy.mock.calls[0];
+    expect(malformedCallArgs[3]).toBe(0.8); // default minEvalLoss
+    expect(malformedCallArgs[4]).toBe(3);   // default minMistakeCount
+  });
 });

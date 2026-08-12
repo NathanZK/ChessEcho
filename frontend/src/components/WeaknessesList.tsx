@@ -35,6 +35,8 @@ interface WeaknessesListProps {
   username?: string;
   minEvalLoss?: number;
   onMinEvalLossChange?: (val: number) => void;
+  minMistakeCount?: number;
+  onMinMistakeCountChange?: (val: number) => void;
   onSelectPractice: (puzzle: Puzzle, fullList?: Puzzle[]) => void;
   onWeaknessCountChange?: (count: number) => void;
   activeColorFilter?: 'ALL' | 'WHITE' | 'BLACK';
@@ -47,6 +49,8 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
   username,
   minEvalLoss = 0.8,
   onMinEvalLossChange,
+  minMistakeCount = 3,
+  onMinMistakeCountChange,
   onSelectPractice,
   onWeaknessCountChange,
   activeColorFilter,
@@ -69,8 +73,6 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
       setColorFilter(activeColorFilter);
     }
   }, [activeColorFilter, colorFilter]);
-
-  const [minMistakeCountFilter, setMinMistakeCountFilter] = useState<number>(3);
 
   const [weaknesses, setWeaknesses] = useState<WeaknessResponse[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -113,7 +115,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
           'CHESS_COM',
           backendColor,
           minEvalLoss,
-          minMistakeCountFilter,
+          minMistakeCount,
           0,
           PAGE_SIZE
         );
@@ -131,7 +133,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
     }
 
     loadInitialWeaknesses();
-  }, [username, colorFilter, minMistakeCountFilter, minEvalLoss]);
+  }, [username, colorFilter, minMistakeCount, minEvalLoss]);
 
   // Load next page function
   const loadNextPage = useCallback(async () => {
@@ -147,7 +149,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
         'CHESS_COM',
         backendColor,
         minEvalLoss,
-        minMistakeCountFilter,
+        minMistakeCount,
         nextPage,
         PAGE_SIZE
       );
@@ -170,7 +172,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
       setIsLoadingMore(false);
       isFetchingRef.current = false;
     }
-  }, [username, isLoading, isLoadingMore, hasMore, page, colorFilter, minMistakeCountFilter, minEvalLoss]);
+  }, [username, isLoading, isLoadingMore, hasMore, page, colorFilter, minMistakeCount, minEvalLoss]);
 
   // IntersectionObserver for infinite scroll sentinel
   useEffect(() => {
@@ -251,8 +253,8 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
           <div className="flex items-center space-x-2 bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800 text-xs font-semibold">
             <span className="text-slate-400">Min Mistakes:</span>
             <select
-              value={minMistakeCountFilter}
-              onChange={(e) => setMinMistakeCountFilter(Number(e.target.value))}
+              value={minMistakeCount}
+              onChange={(e) => onMinMistakeCountChange?.(Number(e.target.value))}
               className="bg-slate-900 text-emerald-400 font-bold border border-slate-800 rounded px-2 py-0.5 outline-none cursor-pointer text-xs"
             >
               <option value={1}>1 (All)</option>
