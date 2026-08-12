@@ -87,9 +87,9 @@ interface PositionOccurrenceRepository : JpaRepository<PositionOccurrence, UUID>
             CAST(COUNT(po.id) AS int),
             ea.bestMove,
             ea.baselineEvalCp,
-            SUM(CASE WHEN COALESCE(me.evalLossFromBest, CASE WHEN (ea.bestMoveEvalCp IS NOT NULL AND me.evalCp IS NOT NULL AND (ea.bestMoveEvalCp - me.evalCp) > 0) THEN (ea.bestMoveEvalCp - me.evalCp) / 100.0 ELSE 0.0 END) >= :minEvalLoss THEN 1 ELSE 0 END),
-            AVG(CASE WHEN COALESCE(me.evalLossFromBest, CASE WHEN (ea.bestMoveEvalCp IS NOT NULL AND me.evalCp IS NOT NULL AND (ea.bestMoveEvalCp - me.evalCp) > 0) THEN (ea.bestMoveEvalCp - me.evalCp) / 100.0 ELSE NULL END) >= :minEvalLoss THEN COALESCE(me.evalLossFromBest, CASE WHEN (ea.bestMoveEvalCp IS NOT NULL AND me.evalCp IS NOT NULL AND (ea.bestMoveEvalCp - me.evalCp) > 0) THEN (ea.bestMoveEvalCp - me.evalCp) / 100.0 ELSE 0.0 END) ELSE NULL END),
-            SUM(CASE WHEN COALESCE(me.evalLossFromBest, CASE WHEN (ea.bestMoveEvalCp IS NOT NULL AND me.evalCp IS NOT NULL AND (ea.bestMoveEvalCp - me.evalCp) > 0) THEN (ea.bestMoveEvalCp - me.evalCp) / 100.0 ELSE 0.0 END) >= :minEvalLoss THEN COALESCE(me.evalLossFromBest, CASE WHEN (ea.bestMoveEvalCp IS NOT NULL AND me.evalCp IS NOT NULL AND (ea.bestMoveEvalCp - me.evalCp) > 0) THEN (ea.bestMoveEvalCp - me.evalCp) / 100.0 ELSE 0.0 END) ELSE 0.0 END)
+            SUM(CASE WHEN (COALESCE(me.evalLossFromBest, CASE WHEN (ea.bestMoveEvalCp IS NOT NULL AND me.evalCp IS NOT NULL AND (ea.bestMoveEvalCp - me.evalCp) > 0) THEN (ea.bestMoveEvalCp - me.evalCp) / 100.0 ELSE 0.0 END) >= :minEvalLoss) THEN 1 ELSE 0 END),
+            AVG(CASE WHEN (COALESCE(me.evalLossFromBest, CASE WHEN (ea.bestMoveEvalCp IS NOT NULL AND me.evalCp IS NOT NULL AND (ea.bestMoveEvalCp - me.evalCp) > 0) THEN (ea.bestMoveEvalCp - me.evalCp) / 100.0 ELSE NULL END) >= :minEvalLoss) THEN COALESCE(me.evalLossFromBest, CASE WHEN (ea.bestMoveEvalCp IS NOT NULL AND me.evalCp IS NOT NULL AND (ea.bestMoveEvalCp - me.evalCp) > 0) THEN (ea.bestMoveEvalCp - me.evalCp) / 100.0 ELSE 0.0 END) ELSE NULL END),
+            SUM(CASE WHEN (COALESCE(me.evalLossFromBest, CASE WHEN (ea.bestMoveEvalCp IS NOT NULL AND me.evalCp IS NOT NULL AND (ea.bestMoveEvalCp - me.evalCp) > 0) THEN (ea.bestMoveEvalCp - me.evalCp) / 100.0 ELSE 0.0 END) >= :minEvalLoss) THEN COALESCE(me.evalLossFromBest, CASE WHEN (ea.bestMoveEvalCp IS NOT NULL AND me.evalCp IS NOT NULL AND (ea.bestMoveEvalCp - me.evalCp) > 0) THEN (ea.bestMoveEvalCp - me.evalCp) / 100.0 ELSE 0.0 END) ELSE 0.0 END)
         )
         FROM PositionOccurrence po
         JOIN po.position p
@@ -99,7 +99,7 @@ interface PositionOccurrenceRepository : JpaRepository<PositionOccurrence, UUID>
           AND (:playerColor = 'BOTH' OR po.playerColor = :playerColor)
         GROUP BY p.id, p.fen, ea.bestMove, ea.baselineEvalCp
         HAVING COUNT(po.id) >= :minTimesReached
-           AND SUM(CASE WHEN COALESCE(me.evalLossFromBest, CASE WHEN (ea.bestMoveEvalCp IS NOT NULL AND me.evalCp IS NOT NULL AND (ea.bestMoveEvalCp - me.evalCp) > 0) THEN (ea.bestMoveEvalCp - me.evalCp) / 100.0 ELSE 0.0 END) >= :minEvalLoss THEN 1 ELSE 0 END) >= :minMistakeCount
+           AND SUM(CASE WHEN (COALESCE(me.evalLossFromBest, CASE WHEN (ea.bestMoveEvalCp IS NOT NULL AND me.evalCp IS NOT NULL AND (ea.bestMoveEvalCp - me.evalCp) > 0) THEN (ea.bestMoveEvalCp - me.evalCp) / 100.0 ELSE 0.0 END) >= :minEvalLoss) THEN 1 ELSE 0 END) >= :minMistakeCount
         """,
     )
     fun findWeaknessAggregations(

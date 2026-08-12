@@ -64,7 +64,7 @@ class EngineAnalysisService(
                     ?: throw IllegalStateException("Baseline analysis missing for position $positionId")
 
             val bestMove = baselineResult.bestMove
-            val bestMoveEvalCp = baselineResult.score.cp
+            val bestMoveEvalCp = analysisResults[bestMove]?.score?.cp ?: baselineResult.score.cp
 
             val engineAnalysis =
                 EngineAnalysis(
@@ -80,7 +80,7 @@ class EngineAnalysisService(
             historicalMoves.forEach { move ->
                 val result = analysisResults[move]
                 if (result != null) {
-                    val evalLoss = calculateEvalLoss(bestMoveEvalCp, result.score.cp)
+                    val evalLoss = calculateEvalLoss(bestMoveEvalCp, result.score.cp) ?: 0.0
                     engineAnalysis.moveEvaluations.add(
                         MoveEvaluation(
                             engineAnalysis = engineAnalysis,
@@ -106,12 +106,25 @@ class EngineAnalysisService(
             log.info("Analyzing ${missingMoves.size} missing historical moves for position $positionId")
             // Analyze only newly discovered historical moves; reuse existing baseline evaluation
             val analysisResults = stockfishService.analyze(position.fen, depth, missingMoves)
-            val bestMoveEvalCp = existingAnalysis.bestMoveEvalCp
+            val bestMove = existingAnalysis.bestMove
+
+            val newBestMoveEval =
+                if (bestMove != null && analysisResults.containsKey(bestMove)) {
+                    analysisResults[bestMove]?.score?.cp
+                } else {
+                    null
+                }
+
+            val refBestMoveEvalCp = newBestMoveEval ?: existingAnalysis.bestMoveEvalCp
+
+            if (newBestMoveEval != null) {
+                existingAnalysis.bestMoveEvalCp = newBestMoveEval
+            }
 
             missingMoves.forEach { move ->
                 val result = analysisResults[move]
                 if (result != null) {
-                    val evalLoss = calculateEvalLoss(bestMoveEvalCp, result.score.cp)
+                    val evalLoss = calculateEvalLoss(refBestMoveEvalCp, result.score.cp) ?: 0.0
                     existingAnalysis.moveEvaluations.add(
                         MoveEvaluation(
                             engineAnalysis = existingAnalysis,

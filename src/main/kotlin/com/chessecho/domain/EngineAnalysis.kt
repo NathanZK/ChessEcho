@@ -39,7 +39,7 @@ class EngineAnalysis(
      * has eval_cp = -80 (-0.80 pawns), the loss is 1.00 pawn.
      */
     @Column(name = "best_move_eval_cp")
-    val bestMoveEvalCp: Int?,
+    var bestMoveEvalCp: Int?,
     @OneToMany(mappedBy = "engineAnalysis", cascade = [CascadeType.ALL], orphanRemoval = true)
     val moveEvaluations: MutableList<MoveEvaluation> = mutableListOf(),
     @Column(name = "analyzed_at", nullable = false)
