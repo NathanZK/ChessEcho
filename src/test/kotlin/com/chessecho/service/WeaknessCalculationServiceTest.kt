@@ -180,6 +180,95 @@ class WeaknessCalculationServiceTest {
         verify(engineAnalysisRepository, never()).save(any())
     }
 
+    @Test
+    fun `test bestMove is never classified as a historical mistake`() {
+        val account = ChessAccount(user = AppUser(email = "test@test.com"), platform = "CHESS_COM", username = "nathan")
+        val position = Position(hash = "hash_qh4", fen = "fen_qh4")
+
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "nathan")).thenReturn(account)
+
+        // Historical occurrences: 5 games playing Qh4 (which IS bestMove), and 3 games playing Nf6 (eval loss 1.2)
+        val occQh4List =
+            (1..5).map {
+                PositionOccurrence(
+                    game = mockGame(),
+                    position = position,
+                    chessAccount = account,
+                    plyNumber = 1,
+                    movePlayed = "Qh4",
+                    playerColor = "WHITE",
+                )
+            }
+        val occNf6List =
+            (1..3).map {
+                PositionOccurrence(
+                    game = mockGame(),
+                    position = position,
+                    chessAccount = account,
+                    plyNumber = 1,
+                    movePlayed = "Nf6",
+                    playerColor = "WHITE",
+                )
+            }
+
+        `when`(
+            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(
+                eq(account.id),
+                eq("WHITE"),
+                any(),
+            ),
+        ).thenReturn(occQh4List + occNf6List)
+
+        val analysis = EngineAnalysis(position = position, depth = 16, baselineEvalCp = 100, bestMove = "Qh4", bestMoveEvalCp = 100)
+        // Qh4 has 0.0 loss (or even hypothetical artifact loss), Nf6 has 1.2 loss
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "Qh4", evalCp = 100, evalLossFromBest = 0.0))
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "Nf6", evalCp = -20, evalLossFromBest = 1.2))
+
+        `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(any())).thenReturn(listOf(analysis))
+
+        val aggregation =
+            WeaknessAggregation(
+                positionId = position.id,
+                fen = position.fen,
+                timesReached = 8,
+                bestMove = "Qh4",
+                baselineEvalCp = 100,
+                mistakeCount = 3,
+                averageLoss = 1.2,
+                rawTotalLoss = 3.6,
+            )
+
+        `when`(
+            positionOccurrenceRepository.findWeaknessAggregations(
+                chessAccountId = account.id,
+                playerColor = "WHITE",
+                minEvalLoss = 0.8,
+                minTimesReached = 5,
+                minMistakeCount = 3,
+            ),
+        ).thenReturn(listOf(aggregation))
+
+        val weaknesses =
+            weaknessCalculationService.getWeaknesses(
+                Platform.CHESS_COM,
+                "nathan",
+                PlayerColor.WHITE,
+                minEvalLoss = 0.8,
+                minMistakeCount = 3,
+            )
+
+        assertEquals(1, weaknesses.size)
+        val w = weaknesses[0]
+
+        // Qh4 must NOT be in movesPlayed, only Nf6 should be classified as a mistake
+        assertEquals(3, w.mistakeCount)
+        assertEquals(1, w.movesPlayed.size)
+        assertEquals("Nf6", w.movesPlayed[0].move)
+        assertEquals(3, w.movesPlayed[0].timesPlayed)
+        assertEquals(1.2, w.movesPlayed[0].averageLoss)
+        assertTrue(w.movesPlayed.none { it.move == "Qh4" })
+    }
+
     private fun mockGame(playedAt: Instant? = null): Game =
         Game(
             chessAccount = ChessAccount(user = AppUser(email = "t"), platform = "P", username = "U"),

@@ -164,4 +164,85 @@ class EngineAnalysisServiceTest {
         verify(stockfishService, never()).analyze(any(), any(), any())
         verify(engineAnalysisRepository, never()).save(any())
     }
+
+    @Test
+    fun `test evalLoss calculation is semantically pure for best move, suboptimal move, and close alternative`() {
+        val positionId = UUID.randomUUID()
+        val fen = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3"
+        val position = Position(id = positionId, hash = "hash_sem", fen = fen)
+
+        whenever(positionOccurrenceRepository.findDistinctMovesByPositionId(positionId)).thenReturn(listOf("Qh4", "Nf6", "d5"))
+        whenever(engineAnalysisRepository.findByPositionIdWithMoveEvaluations(positionId)).thenReturn(null)
+
+        // Qh4: bestMove (+0.70 / 70 cp)
+        // Nf6: suboptimal move (+0.20 / 20 cp) -> loss = (70 - 20) / 100 = 0.50
+        // d5: close alternative (+0.69 / 69 cp) -> loss = (70 - 69) / 100 = 0.01
+        val analysisMap =
+            mapOf(
+                "baseline" to PositionAnalysis(bestMove = "Qh4", score = EvalScore(cp = 70, mate = null)),
+                "Qh4" to PositionAnalysis(bestMove = "e5", score = EvalScore(cp = 70, mate = null)),
+                "Nf6" to PositionAnalysis(bestMove = "d6", score = EvalScore(cp = 20, mate = null)),
+                "d5" to PositionAnalysis(bestMove = "exd5", score = EvalScore(cp = 69, mate = null)),
+            )
+        whenever(stockfishService.analyze(fen, 16, listOf("Qh4", "Nf6", "d5"))).thenReturn(analysisMap)
+
+        engineAnalysisService.analyzePosition(position)
+
+        val captor = argumentCaptor<EngineAnalysis>()
+        verify(engineAnalysisRepository, times(1)).save(captor.capture())
+
+        val saved = captor.firstValue
+        val qh4Eval = saved.moveEvaluations.find { it.move == "Qh4" }
+        val nf6Eval = saved.moveEvaluations.find { it.move == "Nf6" }
+        val d5Eval = saved.moveEvaluations.find { it.move == "d5" }
+
+        assertNotNull(qh4Eval)
+        assertNotNull(nf6Eval)
+        assertNotNull(d5Eval)
+
+        // 1. Best move naturally evaluates to 0.0 loss
+        assertEquals(0.00, qh4Eval.evalLossFromBest)
+
+        // 2. Suboptimal move produces exact 0.50 pawns loss
+        assertEquals(0.50, nf6Eval.evalLossFromBest)
+
+        // 3. Close alternative produces 0.01 pawns loss
+        assertEquals(0.01, d5Eval.evalLossFromBest)
+    }
+
+    @Test
+    fun `test evalLoss calculation is perspective correct for Black player`() {
+        val positionId = UUID.randomUUID()
+        val fen = "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"
+        val position = Position(id = positionId, hash = "hash_black", fen = fen)
+
+        whenever(positionOccurrenceRepository.findDistinctMovesByPositionId(positionId)).thenReturn(listOf("Nf6", "e5"))
+        whenever(engineAnalysisRepository.findByPositionIdWithMoveEvaluations(positionId)).thenReturn(null)
+
+        // Black to move:
+        // Nf6: bestMove (+0.70 / 70 cp for Black)
+        // e5: suboptimal move (+0.20 / 20 cp for Black) -> loss = (70 - 20) / 100 = 0.50 pawns
+        val analysisMap =
+            mapOf(
+                "baseline" to PositionAnalysis(bestMove = "Nf6", score = EvalScore(cp = 70, mate = null)),
+                "Nf6" to PositionAnalysis(bestMove = "Nc3", score = EvalScore(cp = 70, mate = null)),
+                "e5" to PositionAnalysis(bestMove = "exd5", score = EvalScore(cp = 20, mate = null)),
+            )
+        whenever(stockfishService.analyze(fen, 16, listOf("Nf6", "e5"))).thenReturn(analysisMap)
+
+        engineAnalysisService.analyzePosition(position)
+
+        val captor = argumentCaptor<EngineAnalysis>()
+        verify(engineAnalysisRepository, times(1)).save(captor.capture())
+
+        val saved = captor.firstValue
+        val nf6Eval = saved.moveEvaluations.find { it.move == "Nf6" }
+        val e5Eval = saved.moveEvaluations.find { it.move == "e5" }
+
+        assertNotNull(nf6Eval)
+        assertNotNull(e5Eval)
+
+        assertEquals(0.00, nf6Eval.evalLossFromBest)
+        assertEquals(0.50, e5Eval.evalLossFromBest)
+    }
 }
