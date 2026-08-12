@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect } from 'react';
-import { AlertTriangle, CheckCircle2, XCircle, ExternalLink, HelpCircle, Flame, Trophy, ChevronRight } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, XCircle, ExternalLink, HelpCircle, Flame, Trophy, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Puzzle } from '../mock/mockData';
 
 export function formatDecimal(val: number, decimals: number = 2): string {
@@ -18,6 +18,7 @@ interface PuzzleFeedbackPanelProps {
   puzzle: Puzzle;
   feedback: FeedbackState;
   moveHistory: string[];
+  onPreviousPuzzle?: () => void;
   onNextPuzzle: () => void;
 }
 
@@ -25,6 +26,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
   puzzle,
   feedback,
   moveHistory,
+  onPreviousPuzzle,
   onNextPuzzle,
 }) => {
   // Listen for Enter key when puzzle is solved to advance to next puzzle
@@ -119,16 +121,27 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
             </div>
           )}
 
-          <button
-            onClick={onNextPuzzle}
-            className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition shadow-lg shadow-emerald-900/50 flex items-center justify-center space-x-2 group"
-          >
-            <span>Next Puzzle</span>
-            <span className="text-[10px] font-normal text-emerald-200 bg-emerald-700/60 px-1.5 py-0.5 rounded">
-              Enter ↵
-            </span>
-            <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition" />
-          </button>
+          <div className="flex items-center space-x-2 pt-1">
+            {onPreviousPuzzle && (
+              <button
+                onClick={onPreviousPuzzle}
+                className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl transition border border-slate-700/60 flex items-center justify-center space-x-1.5 cursor-pointer"
+              >
+                <ChevronLeft className="w-4 h-4" />
+                <span>Prev Puzzle</span>
+              </button>
+            )}
+            <button
+              onClick={onNextPuzzle}
+              className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition shadow-lg shadow-emerald-900/50 flex items-center justify-center space-x-1.5 group cursor-pointer"
+            >
+              <span>Next Puzzle</span>
+              <span className="text-[10px] font-normal text-emerald-200 bg-emerald-700/60 px-1.5 py-0.5 rounded">
+                Enter ↵
+              </span>
+              <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition" />
+            </button>
+          </div>
         </div>
       ) : feedback.status === 'EXPLORING' ? (
         <div className="p-3.5 bg-gradient-to-br from-emerald-950/80 to-slate-900 border-2 border-emerald-500/50 rounded-2xl space-y-2.5 shadow-lg shadow-emerald-950/40 animate-in fade-in duration-200">
@@ -144,16 +157,27 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
             </div>
           </div>
 
-          <button
-            onClick={onNextPuzzle}
-            className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition shadow-lg shadow-emerald-900/50 flex items-center justify-center space-x-2 group"
-          >
-            <span>Next Puzzle</span>
-            <span className="text-[10px] font-normal text-emerald-200 bg-emerald-700/60 px-1.5 py-0.5 rounded">
-              Enter ↵
-            </span>
-            <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition" />
-          </button>
+          <div className="flex items-center space-x-2 pt-1">
+            {onPreviousPuzzle && (
+              <button
+                onClick={onPreviousPuzzle}
+                className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl transition border border-slate-700/60 flex items-center justify-center space-x-1.5 cursor-pointer"
+              >
+                <ChevronLeft className="w-4 h-4" />
+                <span>Prev Puzzle</span>
+              </button>
+            )}
+            <button
+              onClick={onNextPuzzle}
+              className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition shadow-lg shadow-emerald-900/50 flex items-center justify-center space-x-1.5 group cursor-pointer"
+            >
+              <span>Next Puzzle</span>
+              <span className="text-[10px] font-normal text-emerald-200 bg-emerald-700/60 px-1.5 py-0.5 rounded">
+                Enter ↵
+              </span>
+              <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition" />
+            </button>
+          </div>
         </div>
       ) : feedback.status === 'HISTORICAL_MISTAKE' ? (
         <div className="flex items-start space-x-3 p-3.5 bg-amber-500/15 border border-amber-500/40 rounded-xl text-amber-300 animate-in fade-in duration-200">

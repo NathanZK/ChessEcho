@@ -98,11 +98,21 @@ export default function Home() {
     }
     return 0.8;
   });
-  const [minMistakeCount, setMinMistakeCount] = useState<number>(3);
+
+  const [minMistakeCount, setMinMistakeCount] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      const savedMistakes = localStorage.getItem('chessecho_min_mistake_count');
+      if (savedMistakes && !isNaN(Number(savedMistakes))) {
+        return Number(savedMistakes);
+      }
+    }
+    return 3;
+  });
+
   const [puzzleColorFilter, setPuzzleColorFilter] = useState<'BOTH' | 'WHITE' | 'BLACK'>('BOTH');
   const [showPuzzleSettings, setShowPuzzleSettings] = useState<boolean>(false);
 
-  // Restore puzzle color filter and minEvalLoss from localStorage after mount
+  // Restore puzzle color filter, minEvalLoss, and minMistakeCount from localStorage after mount
   React.useEffect(() => {
     if (typeof window !== 'undefined') {
       const savedColor = localStorage.getItem('chessecho_puzzle_color_filter');
@@ -115,6 +125,11 @@ export default function Home() {
         // eslint-disable-next-line react-hooks/set-state-in-effect
         setMinEvalLoss(Number(savedEvalLoss));
       }
+      const savedMistakes = localStorage.getItem('chessecho_min_mistake_count');
+      if (savedMistakes && !isNaN(Number(savedMistakes))) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setMinMistakeCount(Number(savedMistakes));
+      }
     }
   }, []);
 
@@ -122,6 +137,13 @@ export default function Home() {
     setMinEvalLoss(val);
     if (typeof window !== 'undefined') {
       localStorage.setItem('chessecho_min_eval_loss', String(val));
+    }
+  };
+
+  const handleMinMistakeCountChange = (val: number) => {
+    setMinMistakeCount(val);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('chessecho_min_mistake_count', String(val));
     }
   };
 
@@ -166,7 +188,7 @@ export default function Home() {
   const [hasMorePuzzles, setHasMorePuzzles] = useState<boolean>(true);
   const [isFetchingMorePuzzles, setIsFetchingMorePuzzles] = useState<boolean>(false);
 
-  // Fetch live puzzles whenever activeUsername or puzzleColorFilter changes
+  // Fetch live puzzles whenever activeUsername, puzzleColorFilter, minEvalLoss, or minMistakeCount changes
   React.useEffect(() => {
     if (!activeUsername) {
       setPuzzlesList([]);
@@ -179,6 +201,7 @@ export default function Home() {
       setHasMorePuzzles(false);
       return;
     }
+
     async function loadData() {
       setIsLoadingPuzzles(true);
       setPuzzlePage(0);
@@ -205,17 +228,12 @@ export default function Home() {
           setCurrentPuzzleIndex(targetIdx);
           setActivePuzzle(targetPuzzle);
           resetPuzzleInteractionState(targetPuzzle);
-          setHasMorePuzzles(data.length >= 10);
-          if (typeof window !== 'undefined' && targetPuzzle) {
-            localStorage.setItem('chessecho_puzzle_id', targetPuzzle.puzzleId);
-          }
+          setWeaknessCount(data.length);
         } else {
           setPuzzlesList([]);
           setActivePuzzle(null);
-          setFeedback({ status: 'IDLE' });
-          setMoveHistory([]);
-          setHintSquare(undefined);
-          setHasMorePuzzles(false);
+          setCurrentPuzzleIndex(0);
+          setWeaknessCount(0);
         }
       } catch (err) {
         console.error('Failed to load puzzles from backend API:', err);
@@ -230,7 +248,7 @@ export default function Home() {
       }
     }
     loadData();
-  }, [activeUsername, puzzleColorFilter]);
+  }, [activeUsername, puzzleColorFilter, minEvalLoss, minMistakeCount]);
 
   const handleApplyPuzzleSettings = async () => {
     if (!activeUsername) return;
@@ -259,10 +277,7 @@ export default function Home() {
         setCurrentPuzzleIndex(targetIdx);
         setActivePuzzle(targetPuzzle);
         resetPuzzleInteractionState(targetPuzzle);
-        setHasMorePuzzles(data.length >= 10);
-        if (typeof window !== 'undefined' && targetPuzzle) {
-          localStorage.setItem('chessecho_puzzle_id', targetPuzzle.puzzleId);
-        }
+        setWeaknessCount(data.length);
       } else {
         setPuzzlesList([]);
         setActivePuzzle(null);
@@ -284,6 +299,19 @@ export default function Home() {
       setHasMorePuzzles(false);
     } finally {
       setIsLoadingPuzzles(false);
+    }
+  };
+
+  const handlePreviousPuzzle = () => {
+    if (puzzlesList.length === 0) return;
+    const prevIndex = (currentPuzzleIndex - 1 + puzzlesList.length) % puzzlesList.length;
+    const prevPuzzle = puzzlesList[prevIndex];
+
+    setCurrentPuzzleIndex(prevIndex);
+    setActivePuzzle(prevPuzzle);
+    resetPuzzleInteractionState(prevPuzzle);
+    if (typeof window !== 'undefined' && prevPuzzle) {
+      localStorage.setItem('chessecho_puzzle_id', prevPuzzle.puzzleId);
     }
   };
 
@@ -554,7 +582,7 @@ export default function Home() {
                         step="1"
                         min="1"
                         value={minMistakeCount}
-                        onChange={(e) => setMinMistakeCount(Number(e.target.value))}
+                        onChange={(e) => handleMinMistakeCountChange(Number(e.target.value))}
                         className="w-14 bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-emerald-400 font-mono text-[11px] outline-none focus:border-emerald-500"
                       />
                     </label>
@@ -617,6 +645,7 @@ export default function Home() {
                     acceptableMoves={activePuzzle.acceptableMoves}
                     movesPlayed={activePuzzle.movesPlayed}
                     onMoveAttempt={handleMoveAttempt}
+                    onPreviousPuzzle={handlePreviousPuzzle}
                     onNextPuzzle={handleNextPuzzle}
                     onUndo={handleBoardUndo}
                     onRedo={handleBoardRedo}
@@ -631,6 +660,7 @@ export default function Home() {
                     puzzle={activePuzzle}
                     feedback={feedback}
                     moveHistory={moveHistory}
+                    onPreviousPuzzle={handlePreviousPuzzle}
                     onNextPuzzle={handleNextPuzzle}
                   />
                 </div>
@@ -646,6 +676,8 @@ export default function Home() {
             username={activeUsername}
             minEvalLoss={minEvalLoss}
             onMinEvalLossChange={handleMinEvalLossChange}
+            minMistakeCount={minMistakeCount}
+            onMinMistakeCountChange={handleMinMistakeCountChange}
             onSelectPractice={handleSelectPracticeFromLibrary}
             onWeaknessCountChange={setWeaknessCount}
             activeColorFilter={puzzleColorFilter === 'BOTH' ? 'ALL' : puzzleColorFilter}

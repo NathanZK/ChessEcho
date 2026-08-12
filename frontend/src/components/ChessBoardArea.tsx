@@ -18,6 +18,7 @@ interface ChessBoardAreaProps {
     historicalInfo?: { timesPlayed: number; averageLoss: number },
     isInitialDecision?: boolean
   ) => void;
+  onPreviousPuzzle?: () => void;
   onNextPuzzle: () => void;
   onUndo?: () => void;
   onRedo?: () => void;
@@ -32,6 +33,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   acceptableMoves,
   movesPlayed,
   onMoveAttempt,
+  onPreviousPuzzle,
   onNextPuzzle,
   onUndo,
   onRedo,
@@ -211,6 +213,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
         onRedo={handleRedo}
         onReset={handleReset}
         onHint={handleHint}
+        onPreviousPuzzle={onPreviousPuzzle || (() => {})}
         onNextPuzzle={onNextPuzzle}
         canUndo={historyIndex > 0}
         canRedo={historyIndex < fenHistory.length - 1}
