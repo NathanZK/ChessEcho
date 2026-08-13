@@ -320,11 +320,11 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
       />
     );
 
-    // Verify "Your Past Decisions" is present
-    expect(screen.getByText('Your Past Decisions')).toBeInTheDocument();
+    // Verify "Your Decisions in Source Games" is present
+    expect(screen.getByText('Your Decisions in Source Games')).toBeInTheDocument();
 
-    // Verify "In past games, you played these sub-optimal decisions in this position:" is present
-    expect(screen.getByText(/In past games, you played these sub-optimal decisions in this position:/i)).toBeInTheDocument();
+    // Verify "In your source games, you played these sub-optimal decisions in this position:" is present
+    expect(screen.getByText(/In your source games, you played these sub-optimal decisions in this position:/i)).toBeInTheDocument();
 
     // Verify move and game count is present
     expect(screen.getByText('Bg4')).toBeInTheDocument();

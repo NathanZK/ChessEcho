@@ -65,6 +65,7 @@ class PuzzleController(
                     mistakeCount = w.mistakeCount,
                     mistakeRate = w.mistakeRate,
                     evalCp = w.evalCp,
+                    gameUrls = w.gameUrls,
                 )
             }
 

@@ -54,11 +54,19 @@ export async function fetchPuzzles(
     const data: Puzzle[] = await response.json();
     if (!Array.isArray(data)) return [];
 
-    return data.map((item, idx) => ({
-      ...item,
-      openingTitle: item.openingTitle || `Weakness Position #${idx + 1}`,
-      evalCp: item.evalCp ?? 35,
-    }));
+    return data.map((item, idx) => {
+      const fenTurn = item.fen ? item.fen.split(' ')[1] : undefined;
+      const playerColor: 'WHITE' | 'BLACK' =
+        fenTurn === 'b' ? 'BLACK' : fenTurn === 'w' ? 'WHITE' : (item.playerColor === 'BLACK' ? 'BLACK' : 'WHITE');
+
+      return {
+        ...item,
+        playerColor,
+        openingTitle: item.openingTitle || `Weakness Position #${idx + 1}`,
+        evalCp: item.evalCp ?? 35,
+        gameUrls: item.gameUrls || [],
+      };
+    });
   } catch {
     return [];
   }

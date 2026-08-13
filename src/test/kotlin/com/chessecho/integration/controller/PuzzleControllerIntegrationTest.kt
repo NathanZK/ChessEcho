@@ -412,5 +412,7 @@ class PuzzleControllerIntegrationTest {
         assertEquals("d4", puzzles[0].targetMove)
         assertEquals(5, puzzles[0].timesReached)
         assertEquals(3, puzzles[0].mistakeCount)
+        assertNotNull(puzzles[0].gameUrls)
+        assertTrue(puzzles[0].gameUrls.isNotEmpty(), "PuzzleResponse should include non-empty gameUrls")
     }
 }

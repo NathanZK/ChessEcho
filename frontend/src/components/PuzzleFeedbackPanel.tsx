@@ -3,6 +3,7 @@
 import React, { useEffect } from 'react';
 import { AlertTriangle, CheckCircle2, XCircle, ExternalLink, HelpCircle, Flame, Trophy, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Puzzle } from '../mock/mockData';
+import { HistoricalGamesModal } from './HistoricalGamesModal';
 
 export function formatDecimal(val: number, decimals: number = 2): string {
   return (val ?? 0).toFixed(decimals).replace(',', '.');
@@ -29,6 +30,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
   onPreviousPuzzle,
   onNextPuzzle,
 }) => {
+  const [showGameModal, setShowGameModal] = React.useState<boolean>(false);
   // Listen for Enter key when puzzle is solved to advance to next puzzle
   useEffect(() => {
     if (feedback.status !== 'CORRECT') return;
@@ -47,13 +49,25 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
   return (
     <div className="flex flex-col space-y-3 bg-slate-900 p-4 rounded-2xl border border-slate-800 shadow-xl text-slate-200">
       {/* Opening Header */}
-      <div className="border-b border-slate-800 pb-2.5">
-        <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider">
-          Target Opening Weakness
-        </span>
-        <h2 className="text-base font-bold text-white mt-0.5">
-          {puzzle.openingTitle}
-        </h2>
+      <div className="border-b border-slate-800 pb-2.5 flex items-center justify-between gap-2">
+        <div>
+          <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider">
+            Target Opening Weakness
+          </span>
+          <h2 className="text-base font-bold text-white mt-0.5">
+            {puzzle.openingTitle}
+          </h2>
+        </div>
+        {puzzle.gameUrls && puzzle.gameUrls.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowGameModal(true)}
+            className="text-xs font-semibold text-slate-400 hover:text-emerald-400 flex items-center gap-1.5 transition cursor-pointer shrink-0"
+          >
+            <span>View Games ({puzzle.gameUrls.length})</span>
+            <ExternalLink className="w-3.5 h-3.5" />
+          </button>
+        )}
       </div>
 
       {/* Dynamic Feedback / Success Card */}
@@ -87,7 +101,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-2 font-bold text-amber-200">
                   <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
-                  <span>Your Past Decisions</span>
+                  <span>Your Decisions in Source Games</span>
                 </div>
                 <span className="text-[10px] font-semibold bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-full border border-amber-500/20">
                   {puzzle.mistakeCount} total errors
@@ -95,7 +109,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
               </div>
 
               <p className="text-amber-300/80 leading-relaxed">
-                In past games, you played these sub-optimal decisions in this position:
+                In your source games, you played these sub-optimal decisions in this position:
               </p>
 
               <div className="grid grid-cols-1 gap-1.5 pt-0.5">
@@ -183,12 +197,12 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
         <div className="flex items-start space-x-3 p-3.5 bg-amber-500/15 border border-amber-500/40 rounded-xl text-amber-300 animate-in fade-in duration-200">
           <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
           <div>
-            <h4 className="font-bold text-sm text-amber-200">Historical Mistake Detected!</h4>
+            <h4 className="font-bold text-sm text-amber-200">Recurring Weakness Detected!</h4>
             <p className="text-xs mt-0.5 text-amber-300/90">
               You played <span className="font-bold text-white">{feedback.lastMove}</span> in{' '}
               <span className="font-bold text-white">
                 {feedback.historicalInfo?.timesPlayed}{' '}
-                {feedback.historicalInfo?.timesPlayed === 1 ? 'past game' : 'past games'}
+                {feedback.historicalInfo?.timesPlayed === 1 ? 'game' : 'games'}
               </span>{' '}
               —{' '}
               <span className="font-bold text-white">
@@ -235,6 +249,13 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
           </div>
         </div>
       </div>
+
+      {showGameModal && puzzle.gameUrls && puzzle.gameUrls.length > 0 && (
+        <HistoricalGamesModal
+          urls={puzzle.gameUrls}
+          onClose={() => setShowGameModal(false)}
+        />
+      )}
     </div>
   );
 };

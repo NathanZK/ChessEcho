@@ -16,4 +16,5 @@ data class PuzzleResponse(
     val mistakeCount: Int,
     val mistakeRate: Double,
     val evalCp: Int? = null,
+    val gameUrls: List<String> = emptyList(),
 )

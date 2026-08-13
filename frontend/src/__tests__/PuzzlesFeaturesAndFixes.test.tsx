@@ -102,10 +102,10 @@ describe('Puzzles Tab Features and Fixes', () => {
 
     render(<Home />);
 
-    // 1. Initial Both selection fetches WHITE and BLACK
+    // 1. Initial Both selection fetches BOTH
     await waitFor(() => {
-      expect(api.fetchPuzzles).toHaveBeenCalledWith('hikaru', 'CHESS_COM', 'WHITE', 0.8, 3, 10, 0);
-      expect(api.fetchPuzzles).toHaveBeenCalledWith('hikaru', 'CHESS_COM', 'BLACK', 0.8, 3, 10, 0);
+      expect(api.fetchPuzzles).toHaveBeenCalledWith('hikaru', 'CHESS_COM', 'BOTH', 0.8, 3, 10, 0);
+      expect(api.fetchPuzzles).toHaveBeenCalledTimes(1);
     });
 
     vi.clearAllMocks();
@@ -139,8 +139,8 @@ describe('Puzzles Tab Features and Fixes', () => {
     fireEvent.click(bothFilterBtn);
 
     await waitFor(() => {
-      expect(api.fetchPuzzles).toHaveBeenCalledWith('hikaru', 'CHESS_COM', 'WHITE', 0.8, 3, 10, 0);
-      expect(api.fetchPuzzles).toHaveBeenCalledWith('hikaru', 'CHESS_COM', 'BLACK', 0.8, 3, 10, 0);
+      expect(api.fetchPuzzles).toHaveBeenCalledWith('hikaru', 'CHESS_COM', 'BOTH', 0.8, 3, 10, 0);
+      expect(api.fetchPuzzles).toHaveBeenCalledTimes(1);
     });
     expect(localStorage.getItem('chessecho_puzzle_color_filter')).toBe('BOTH');
   });
@@ -197,8 +197,7 @@ describe('Puzzles Tab Features and Fixes', () => {
 
     // 2. Verifies API call parameters
     await waitFor(() => {
-      expect(api.fetchPuzzles).toHaveBeenCalledWith('hikaru', 'CHESS_COM', 'WHITE', 0.8, 5, 10, 0);
-      expect(api.fetchPuzzles).toHaveBeenCalledWith('hikaru', 'CHESS_COM', 'BLACK', 0.8, 5, 10, 0);
+      expect(api.fetchPuzzles).toHaveBeenCalledWith('hikaru', 'CHESS_COM', 'BOTH', 0.8, 5, 10, 0);
     });
 
     // 3. Verifies current puzzle is updated to the first returned puzzle since previous puzzle is no longer present
@@ -269,9 +268,9 @@ describe('Puzzles Tab Features and Fixes', () => {
     );
 
     // Verifies initial mistake feedback (d6) is displayed with clear non-misleading terminology
-    expect(screen.getByText('Historical Mistake Detected!')).toBeInTheDocument();
+    expect(screen.getByText('Recurring Weakness Detected!')).toBeInTheDocument();
     expect(screen.getByText('d6')).toBeInTheDocument();
-    expect(screen.getByText('2 past games')).toBeInTheDocument();
+    expect(screen.getByText('2 games')).toBeInTheDocument();
     expect(screen.getByText('0.80 pawns worse')).toBeInTheDocument();
     expect(screen.getByText(/than the best move/i)).toBeInTheDocument();
     expect(screen.queryByText(/avg loss/i)).not.toBeInTheDocument();
@@ -290,7 +289,7 @@ describe('Puzzles Tab Features and Fixes', () => {
       />
     );
 
-    expect(screen.getByText('Historical Mistake Detected!')).toBeInTheDocument();
+    expect(screen.getByText('Recurring Weakness Detected!')).toBeInTheDocument();
     expect(screen.getByText('d6')).toBeInTheDocument();
     expect(screen.queryByText(/Qxb4 is not the recommended move/i)).not.toBeInTheDocument();
   });
@@ -309,9 +308,9 @@ describe('Puzzles Tab Features and Fixes', () => {
       />
     );
 
-    expect(screen.getByText('Historical Mistake Detected!')).toBeInTheDocument();
+    expect(screen.getByText('Recurring Weakness Detected!')).toBeInTheDocument();
     expect(screen.getByText('Nc3')).toBeInTheDocument();
-    expect(screen.getByText('1 past game')).toBeInTheDocument();
+    expect(screen.getByText('1 game')).toBeInTheDocument();
     expect(screen.getByText('0.58 pawns worse')).toBeInTheDocument();
     expect(screen.getByText(/than the best move/i)).toBeInTheDocument();
     expect(screen.queryByText(/avg loss/i)).not.toBeInTheDocument();
@@ -380,6 +379,7 @@ describe('Puzzles Tab Features and Fixes', () => {
 
     // 4. Verify previous puzzle feedback is no longer present and new puzzle is in untouched initial state
     expect(screen.queryByText(/Historical Mistake Detected!/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Recurring Weakness Detected!/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Not the Recommended Move/i)).not.toBeInTheDocument();
     expect(screen.getByText(/Find Black's best move or an acceptable alternative/i)).toBeInTheDocument();
   });
@@ -388,5 +388,256 @@ describe('Puzzles Tab Features and Fixes', () => {
     render(<Home />);
 
     expect(screen.queryByText(/Acceptable Threshold/i)).not.toBeInTheDocument();
+  });
+
+  describe('7. View Source Games directly from Puzzle Page', () => {
+    it('renders View Games button when puzzle has gameUrls and opens modal with games in exact newest-first order', () => {
+      const puzzleWithUrls: Puzzle = {
+        ...mockPuzzles[0],
+        gameUrls: [
+          'https://www.chess.com/game/live/gameNewest',
+          'https://www.chess.com/game/live/gameOlder',
+        ],
+      };
+
+      render(
+        <PuzzleFeedbackPanel
+          puzzle={puzzleWithUrls}
+          feedback={{ status: 'IDLE' }}
+          moveHistory={[]}
+          onNextPuzzle={vi.fn()}
+        />
+      );
+
+      // 1. Verify View Games (2) action is rendered
+      const viewGamesBtn = screen.getByRole('button', { name: /View Games \(2\)/i });
+      expect(viewGamesBtn).toBeInTheDocument();
+
+      // 2. Click button to open modal
+      fireEvent.click(viewGamesBtn);
+
+      // 3. Verify modal opens with Source Games title
+      expect(screen.getByText('Source Games')).toBeInTheDocument();
+      expect(screen.queryByText('Historical Games')).not.toBeInTheDocument();
+
+      // 4. Verify Game #1 corresponds to the newest game link
+      const game1Link = screen.getByText(/Game #1: https:\/\/www.chess.com\/game\/live\/gameNewest/i);
+      const game2Link = screen.getByText(/Game #2: https:\/\/www.chess.com\/game\/live\/gameOlder/i);
+
+      expect(game1Link).toBeInTheDocument();
+      expect(game2Link).toBeInTheDocument();
+
+      // 5. Verify external link attributes (target="_blank", rel="noreferrer")
+      const anchor1 = game1Link.closest('a');
+      expect(anchor1).toHaveAttribute('href', 'https://www.chess.com/game/live/gameNewest');
+      expect(anchor1).toHaveAttribute('target', '_blank');
+      expect(anchor1).toHaveAttribute('rel', 'noreferrer');
+
+      // 6. Close modal
+      const closeBtn = screen.getByRole('button', { name: /Close modal/i });
+      fireEvent.click(closeBtn);
+
+      expect(screen.queryByText('Source Games')).not.toBeInTheDocument();
+      expect(screen.queryByText('Historical Games')).not.toBeInTheDocument();
+    });
+
+    it('does not render View Games button when puzzle gameUrls is empty or missing', () => {
+      const puzzleWithoutUrls: Puzzle = {
+        ...mockPuzzles[0],
+        gameUrls: [],
+      };
+
+      render(
+        <PuzzleFeedbackPanel
+          puzzle={puzzleWithoutUrls}
+          feedback={{ status: 'IDLE' }}
+          moveHistory={[]}
+          onNextPuzzle={vi.fn()}
+        />
+      );
+
+      expect(screen.queryByText(/View Games/i)).not.toBeInTheDocument();
+    });
+
+    it('preserves gameUrls when selecting Practice Position from Weaknesses Library even if matching puzzlesList entry has empty gameUrls', async () => {
+      localStorage.setItem('chessecho_username', 'hikaru');
+
+      // 1. Initial puzzlesList fetched on page load has empty gameUrls
+      const initialStalePuzzle: Puzzle = {
+        ...mockPuzzles[0],
+        puzzleId: 'pos-weakness-100',
+        gameUrls: [],
+      };
+      vi.mocked(api.fetchPuzzles).mockResolvedValue([initialStalePuzzle]);
+
+      // 2. Weaknesses Library returned weakness with rich gameUrls
+      const weaknessWithUrls: api.WeaknessResponse = {
+        positionId: 'pos-weakness-100',
+        fen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1',
+        timesReached: 5,
+        mistakeCount: 3,
+        mistakeRate: 60.0,
+        averageLoss: 1.2,
+        priority: 2.5,
+        bestMove: 'e4',
+        acceptableMoves: [],
+        movesPlayed: [],
+        gameUrls: [
+          'https://www.chess.com/game/live/freshGameNewest',
+          'https://www.chess.com/game/live/freshGameOlder',
+        ],
+      };
+      vi.mocked(api.fetchWeaknesses).mockResolvedValue([weaknessWithUrls]);
+
+      render(<Home />);
+
+      await waitFor(() => {
+        expect(screen.getByText("King's Pawn Opening")).toBeInTheDocument();
+      });
+
+      // Navigate to Weaknesses Library tab
+      const weaknessesTabBtn = screen.getByRole('button', { name: /Weaknesses Library/i });
+      fireEvent.click(weaknessesTabBtn);
+
+      // Verify Practice Position button is rendered for the weakness
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /Practice Position/i })).toBeInTheDocument();
+      });
+
+      // Click "Practice Position" on the weakness card
+      const practiceBtn = screen.getByRole('button', { name: /Practice Position/i });
+      fireEvent.click(practiceBtn);
+
+      // Verify page switched to Puzzles tab and View Games (2) button appears despite stale puzzlesList cache
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /View Games \(2\)/i })).toBeInTheDocument();
+      });
+
+      // Click "View Games (2)" and verify modal opens with fresh game URLs in newest-first order
+      const viewGamesBtn = screen.getByRole('button', { name: /View Games \(2\)/i });
+      fireEvent.click(viewGamesBtn);
+
+      expect(screen.getByText(/Game #1: https:\/\/www.chess.com\/game\/live\/freshGameNewest/i)).toBeInTheDocument();
+      expect(screen.getByText(/Game #2: https:\/\/www.chess.com\/game\/live\/freshGameOlder/i)).toBeInTheDocument();
+    });
+  });
+
+  describe('8. Expanded Desktop Puzzle Workspace Layout', () => {
+    it('applies expanded viewport container and board/panel max-width classes', async () => {
+      localStorage.setItem('chessecho_username', 'hikaru');
+
+      render(<Home />);
+
+      await waitFor(() => {
+        expect(screen.getByText("King's Pawn Opening")).toBeInTheDocument();
+      });
+
+      // 1. Verify outer puzzle container uses expanded max-w-[1536px]
+      const puzzleWorkspaceContainer = screen.getByText("King's Pawn Opening").closest('.max-w-\\[1536px\\]');
+      expect(puzzleWorkspaceContainer).toBeInTheDocument();
+
+      // 2. Verify center board wrapper uses max-w-[640px]
+      const boardWrapper = screen.getByText("King's Pawn Opening").closest('.max-w-\\[1536px\\]')?.querySelector('.max-w-\\[640px\\]');
+      expect(boardWrapper).toBeInTheDocument();
+
+      // 3. Verify right feedback panel wrapper uses max-w-[480px]
+      const feedbackWrapper = screen.getByText("King's Pawn Opening").closest('.max-w-\\[1536px\\]')?.querySelector('.max-w-\\[480px\\]');
+      expect(feedbackWrapper).toBeInTheDocument();
+    });
+  });
+
+  describe('9. Direct-Load Puzzles Page Source Games Data Path', () => {
+    it('fresh load with no persisted color executes a single BOTH request and preserves View Games button', async () => {
+      localStorage.setItem('chessecho_username', 'hikaru');
+
+      const directLoadPuzzle: Puzzle = {
+        ...mockPuzzles[0],
+        puzzleId: 'direct-load-puzzle-1',
+        gameUrls: [
+          'https://www.chess.com/game/live/directGameNewest',
+          'https://www.chess.com/game/live/directGameOlder',
+        ],
+      };
+
+      vi.mocked(api.fetchPuzzles).mockResolvedValue([directLoadPuzzle]);
+
+      render(<Home />);
+
+      // Verifies initialization gate allows exactly ONE fetchPuzzles call with playerColor = 'BOTH'
+      await waitFor(() => {
+        expect(api.fetchPuzzles).toHaveBeenCalledWith('hikaru', 'CHESS_COM', 'BOTH', 0.8, 3, 10, 0);
+        expect(api.fetchPuzzles).toHaveBeenCalledTimes(1);
+      });
+
+      // Verifies puzzle returned from BOTH request retains gameUrls and renders View Games (2)
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /View Games \(2\)/i })).toBeInTheDocument();
+      });
+
+      const viewGamesBtn = screen.getByRole('button', { name: /View Games \(2\)/i });
+      fireEvent.click(viewGamesBtn);
+
+      expect(screen.getByText('Source Games')).toBeInTheDocument();
+      expect(screen.getByText(/Game #1: https:\/\/www\.chess\.com\/game\/live\/directGameNewest/i)).toBeInTheDocument();
+      expect(screen.getByText(/Game #2: https:\/\/www\.chess\.com\/game\/live\/directGameOlder/i)).toBeInTheDocument();
+    });
+
+    it('simulates browser refresh with persisted WHITE filter in localStorage, verifying single fetch and preserved View Games button after async effects settle', async () => {
+      localStorage.setItem('chessecho_username', 'hikaru');
+      localStorage.setItem('chessecho_puzzle_color_filter', 'WHITE');
+      localStorage.setItem('chessecho_min_eval_loss', '0.8');
+      localStorage.setItem('chessecho_min_mistake_count', '3');
+
+      const refreshPuzzle: Puzzle = {
+        ...mockPuzzles[0],
+        puzzleId: 'refresh-puzzle-white',
+        playerColor: 'WHITE',
+        gameUrls: [
+          'https://www.chess.com/game/live/refreshGame1',
+          'https://www.chess.com/game/live/refreshGame2',
+        ],
+      };
+
+      vi.mocked(api.fetchPuzzles).mockResolvedValue([refreshPuzzle]);
+
+      render(<Home />);
+
+      // Verifies persisted WHITE color is restored ONCE before fetching, executing exactly ONE fetchPuzzles call with WHITE
+      await waitFor(() => {
+        expect(api.fetchPuzzles).toHaveBeenCalledWith('hikaru', 'CHESS_COM', 'WHITE', 0.8, 3, 10, 0);
+        expect(api.fetchPuzzles).toHaveBeenCalledTimes(1);
+      });
+
+      // Verifies puzzle returned with non-empty gameUrls renders View Games (2) after async effects settle
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /View Games \(2\)/i })).toBeInTheDocument();
+      });
+    });
+
+    it('simulates browser refresh with persisted BOTH filter in localStorage, verifying single fetch and preserved View Games button after async effects settle', async () => {
+      localStorage.setItem('chessecho_username', 'hikaru');
+      localStorage.setItem('chessecho_puzzle_color_filter', 'BOTH');
+
+      const refreshPuzzle: Puzzle = {
+        ...mockPuzzles[0],
+        puzzleId: 'refresh-puzzle-both',
+        gameUrls: [
+          'https://www.chess.com/game/live/refreshGameBoth1',
+        ],
+      };
+
+      vi.mocked(api.fetchPuzzles).mockResolvedValue([refreshPuzzle]);
+
+      render(<Home />);
+
+      await waitFor(() => {
+        expect(api.fetchPuzzles).toHaveBeenCalledWith('hikaru', 'CHESS_COM', 'BOTH', 0.8, 3, 10, 0);
+        expect(api.fetchPuzzles).toHaveBeenCalledTimes(1);
+      });
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /View Games \(1\)/i })).toBeInTheDocument();
+      });
+    });
   });
 });
