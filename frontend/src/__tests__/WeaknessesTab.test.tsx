@@ -172,7 +172,7 @@ describe('Weaknesses Tab MVP', () => {
         expect(screen.getByText('15')).toBeInTheDocument();
         expect(screen.getByText('-1.25 pawns')).toBeInTheDocument();
         expect(screen.queryByText('4.20')).not.toBeInTheDocument();
-        expect(screen.getByText(/Your Historical Decisions:/i)).toBeInTheDocument();
+        expect(screen.getByText(/Your Decisions in Source Games:/i)).toBeInTheDocument();
         expect(screen.getByText(/Bc5 \(4x, -1\.30 pawns\)/i)).toBeInTheDocument();
       });
 
@@ -226,7 +226,7 @@ describe('Weaknesses Tab MVP', () => {
       const viewGamesBtn = screen.getByText(/View Games \(2\)/i);
       fireEvent.click(viewGamesBtn);
 
-      expect(screen.getByText('Historical Games')).toBeInTheDocument();
+      expect(screen.getByText('Source Games')).toBeInTheDocument();
       expect(screen.getByText(/Game #1: https:\/\/www\.chess\.com\/game\/live\/10001/i)).toBeInTheDocument();
       expect(screen.getByText(/Game #2: https:\/\/www\.chess\.com\/game\/live\/10002/i)).toBeInTheDocument();
 
@@ -234,6 +234,7 @@ describe('Weaknesses Tab MVP', () => {
       const closeBtn = screen.getByRole('button', { name: /^Close$/i });
       fireEvent.click(closeBtn);
 
+      expect(screen.queryByText('Source Games')).not.toBeInTheDocument();
       expect(screen.queryByText('Historical Games')).not.toBeInTheDocument();
     });
 

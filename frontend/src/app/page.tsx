@@ -88,48 +88,29 @@ export default function Home() {
   const [activePuzzle, setActivePuzzle] = useState<Puzzle | null>(null);
   const [isLoadingPuzzles, setIsLoadingPuzzles] = useState<boolean>(true);
 
-  // Puzzle filter settings
-  const [minEvalLoss, setMinEvalLoss] = useState<number>(() => {
-    if (typeof window !== 'undefined') {
-      const savedEvalLoss = localStorage.getItem('chessecho_min_eval_loss');
-      if (savedEvalLoss && !isNaN(Number(savedEvalLoss))) {
-        return Number(savedEvalLoss);
-      }
-    }
-    return 0.8;
-  });
-
-  const [minMistakeCount, setMinMistakeCount] = useState<number>(() => {
-    if (typeof window !== 'undefined') {
-      const savedMistakes = localStorage.getItem('chessecho_min_mistake_count');
-      if (savedMistakes && !isNaN(Number(savedMistakes))) {
-        return Number(savedMistakes);
-      }
-    }
-    return 3;
-  });
-
+  // Explicit client initialization gate to prevent hydration mismatch and double-fetch
+  const [isSettingsInitialized, setIsSettingsInitialized] = useState<boolean>(false);
+  const [minEvalLoss, setMinEvalLoss] = useState<number>(0.8);
+  const [minMistakeCount, setMinMistakeCount] = useState<number>(3);
   const [puzzleColorFilter, setPuzzleColorFilter] = useState<'BOTH' | 'WHITE' | 'BLACK'>('BOTH');
   const [showPuzzleSettings, setShowPuzzleSettings] = useState<boolean>(false);
 
-  // Restore puzzle color filter, minEvalLoss, and minMistakeCount from localStorage after mount
+  // Restore puzzle filter settings from localStorage ONCE after client mount
   React.useEffect(() => {
     if (typeof window !== 'undefined') {
       const savedColor = localStorage.getItem('chessecho_puzzle_color_filter');
       if (savedColor === 'BOTH' || savedColor === 'WHITE' || savedColor === 'BLACK') {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
         setPuzzleColorFilter(savedColor as 'BOTH' | 'WHITE' | 'BLACK');
       }
       const savedEvalLoss = localStorage.getItem('chessecho_min_eval_loss');
       if (savedEvalLoss && !isNaN(Number(savedEvalLoss))) {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
         setMinEvalLoss(Number(savedEvalLoss));
       }
       const savedMistakes = localStorage.getItem('chessecho_min_mistake_count');
       if (savedMistakes && !isNaN(Number(savedMistakes))) {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
         setMinMistakeCount(Number(savedMistakes));
       }
+      setIsSettingsInitialized(true);
     }
   }, []);
 
@@ -188,17 +169,19 @@ export default function Home() {
   const [hasMorePuzzles, setHasMorePuzzles] = useState<boolean>(true);
   const [isFetchingMorePuzzles, setIsFetchingMorePuzzles] = useState<boolean>(false);
 
-  // Fetch live puzzles whenever activeUsername, puzzleColorFilter, minEvalLoss, or minMistakeCount changes
+  // Fetch live puzzles whenever activeUsername, puzzleColorFilter, minEvalLoss, or minMistakeCount changes, guarded by isSettingsInitialized gate
   React.useEffect(() => {
-    if (!activeUsername) {
-      setPuzzlesList([]);
-      setActivePuzzle(null);
-      setFeedback({ status: 'IDLE' });
-      setMoveHistory([]);
-      setHintSquare(undefined);
-      setIsLoadingPuzzles(false);
-      setPuzzlePage(0);
-      setHasMorePuzzles(false);
+    if (!isSettingsInitialized || !activeUsername) {
+      if (!activeUsername) {
+        setPuzzlesList([]);
+        setActivePuzzle(null);
+        setFeedback({ status: 'IDLE' });
+        setMoveHistory([]);
+        setHintSquare(undefined);
+        setIsLoadingPuzzles(false);
+        setPuzzlePage(0);
+        setHasMorePuzzles(false);
+      }
       return;
     }
 
@@ -207,16 +190,15 @@ export default function Home() {
       setPuzzlePage(0);
       setHasMorePuzzles(true);
       try {
-        let data: Puzzle[] = [];
-        if (puzzleColorFilter === 'WHITE') {
-          data = await fetchPuzzles(activeUsername!, 'CHESS_COM', 'WHITE', minEvalLoss, minMistakeCount, 10, 0);
-        } else if (puzzleColorFilter === 'BLACK') {
-          data = await fetchPuzzles(activeUsername!, 'CHESS_COM', 'BLACK', minEvalLoss, minMistakeCount, 10, 0);
-        } else {
-          const whiteData = await fetchPuzzles(activeUsername!, 'CHESS_COM', 'WHITE', minEvalLoss, minMistakeCount, 10, 0);
-          const blackData = await fetchPuzzles(activeUsername!, 'CHESS_COM', 'BLACK', minEvalLoss, minMistakeCount, 10, 0);
-          data = [...whiteData, ...blackData];
-        }
+        const data = await fetchPuzzles(
+          activeUsername!,
+          'CHESS_COM',
+          puzzleColorFilter,
+          minEvalLoss,
+          minMistakeCount,
+          10,
+          0
+        );
 
         if (data && data.length > 0) {
           setPuzzlesList(data);
@@ -248,7 +230,7 @@ export default function Home() {
       }
     }
     loadData();
-  }, [activeUsername, puzzleColorFilter, minEvalLoss, minMistakeCount]);
+  }, [isSettingsInitialized, activeUsername, puzzleColorFilter, minEvalLoss, minMistakeCount]);
 
   const handleApplyPuzzleSettings = async () => {
     if (!activeUsername) return;
@@ -256,16 +238,15 @@ export default function Home() {
     setPuzzlePage(0);
     setHasMorePuzzles(true);
     try {
-      let data: Puzzle[] = [];
-      if (puzzleColorFilter === 'WHITE') {
-        data = await fetchPuzzles(activeUsername, 'CHESS_COM', 'WHITE', minEvalLoss, minMistakeCount, 10, 0);
-      } else if (puzzleColorFilter === 'BLACK') {
-        data = await fetchPuzzles(activeUsername, 'CHESS_COM', 'BLACK', minEvalLoss, minMistakeCount, 10, 0);
-      } else {
-        const whiteData = await fetchPuzzles(activeUsername, 'CHESS_COM', 'WHITE', minEvalLoss, minMistakeCount, 10, 0);
-        const blackData = await fetchPuzzles(activeUsername, 'CHESS_COM', 'BLACK', minEvalLoss, minMistakeCount, 10, 0);
-        data = [...whiteData, ...blackData];
-      }
+      const data = await fetchPuzzles(
+        activeUsername,
+        'CHESS_COM',
+        puzzleColorFilter,
+        minEvalLoss,
+        minMistakeCount,
+        10,
+        0
+      );
 
       if (data && data.length > 0) {
         setPuzzlesList(data);
@@ -337,16 +318,15 @@ export default function Home() {
       setIsFetchingMorePuzzles(true);
       const nextPage = puzzlePage + 1;
       try {
-        let data: Puzzle[] = [];
-        if (puzzleColorFilter === 'WHITE') {
-          data = await fetchPuzzles(activeUsername, 'CHESS_COM', 'WHITE', minEvalLoss, minMistakeCount, 10, nextPage);
-        } else if (puzzleColorFilter === 'BLACK') {
-          data = await fetchPuzzles(activeUsername, 'CHESS_COM', 'BLACK', minEvalLoss, minMistakeCount, 10, nextPage);
-        } else {
-          const whiteData = await fetchPuzzles(activeUsername, 'CHESS_COM', 'WHITE', minEvalLoss, minMistakeCount, 10, nextPage);
-          const blackData = await fetchPuzzles(activeUsername, 'CHESS_COM', 'BLACK', minEvalLoss, minMistakeCount, 10, nextPage);
-          data = [...whiteData, ...blackData];
-        }
+        const data = await fetchPuzzles(
+          activeUsername,
+          'CHESS_COM',
+          puzzleColorFilter,
+          minEvalLoss,
+          minMistakeCount,
+          10,
+          nextPage
+        );
 
         if (data && data.length > 0) {
           setPuzzlesList((prev) => {
@@ -387,7 +367,13 @@ export default function Home() {
       }
     }
 
-    const selectedPuzzle = targetIdx !== -1 ? targetList[targetIdx] : puzzle;
+    const selectedPuzzle =
+      targetIdx !== -1
+        ? {
+            ...targetList[targetIdx],
+            gameUrls: puzzle.gameUrls || targetList[targetIdx].gameUrls || [],
+          }
+        : puzzle;
     const finalIndex = Math.max(0, targetIdx);
 
     setCurrentPuzzleIndex(finalIndex);
@@ -537,7 +523,7 @@ export default function Home() {
       <main className={`flex-1 flex flex-col ${activeTab === 'import' ? 'justify-center overflow-hidden py-2' : 'justify-start overflow-y-auto py-2'}`}>
         {/* TAB 1: PRACTICE PUZZLES */}
         {activeTab === 'puzzles' && (
-          <div className="max-w-[1450px] w-full mx-auto px-3 lg:px-6 flex-1 flex flex-col min-h-0">
+          <div className="max-w-[1536px] w-full mx-auto px-4 lg:px-8 flex-1 flex flex-col justify-center min-h-0">
             {/* Compact Filter & Settings Toolbar */}
             <div className="mb-2 flex flex-wrap items-center justify-between gap-3 bg-slate-900/80 px-3.5 py-1.5 rounded-2xl border border-slate-800 shadow-md">
               {/* Player Color Selector */}
@@ -637,7 +623,7 @@ export default function Home() {
                 </div>
 
                 {/* Center Interactive Chessboard & Controls */}
-                <div className="w-full max-w-[560px] xl:max-w-[600px] shrink-0">
+                <div className="w-full max-w-[640px] 2xl:max-w-[680px] shrink-0">
                   <ChessBoardArea
                     initialFen={activePuzzle.fen}
                     playerColor={activePuzzle.playerColor}
@@ -655,7 +641,7 @@ export default function Home() {
                 </div>
 
                 {/* Right Feedback & Stats Panel */}
-                <div className="w-full max-w-[440px] shrink-0">
+                <div className="w-full max-w-[480px] shrink-0">
                   <PuzzleFeedbackPanel
                     puzzle={activePuzzle}
                     feedback={feedback}
