@@ -2,15 +2,18 @@
 
 import React from 'react';
 import { ExternalLink, X } from 'lucide-react';
+import { convertTo6chessUrl } from '../utils/urlUtils';
 
 interface HistoricalGamesModalProps {
   urls: string[];
   onClose: () => void;
+  username?: string;
 }
 
 export const HistoricalGamesModal: React.FC<HistoricalGamesModalProps> = ({
   urls,
   onClose,
+  username,
 }) => {
   if (!urls || urls.length === 0) return null;
 
@@ -37,20 +40,39 @@ export const HistoricalGamesModal: React.FC<HistoricalGamesModalProps> = ({
         </p>
 
         <div className="max-h-60 overflow-y-auto space-y-2 pr-1">
-          {urls.map((url, idx) => (
-            <a
-              key={idx}
-              href={url}
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center justify-between p-3 rounded-xl bg-slate-950 hover:bg-slate-800 border border-slate-800 text-xs font-semibold text-slate-300 hover:text-emerald-400 transition"
-            >
-              <span className="truncate max-w-[280px]">
-                Game #{idx + 1}: {url}
-              </span>
-              <ExternalLink className="w-3.5 h-3.5 shrink-0 ml-2 text-slate-400" />
-            </a>
-          ))}
+          {urls.map((url, idx) => {
+            const sixChessUrl = username ? convertTo6chessUrl(url, username) : null;
+
+            return (
+              <div
+                key={idx}
+                className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2"
+              >
+                <a
+                  href={url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex items-center justify-between text-xs font-semibold text-slate-300 hover:text-emerald-400 transition"
+                >
+                  <span className="truncate max-w-[280px]">
+                    Game #{idx + 1}: {url}
+                  </span>
+                  <ExternalLink className="w-3.5 h-3.5 shrink-0 ml-2 text-slate-400" />
+                </a>
+                {sixChessUrl && (
+                  <a
+                    href={sixChessUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-1.5 text-[11px] font-medium text-slate-400 hover:text-emerald-400 transition"
+                  >
+                    <ExternalLink className="w-3 h-3" />
+                    <span>Analyze on 6chess</span>
+                  </a>
+                )}
+              </div>
+            );
+          })}
         </div>
 
         <div className="pt-2 flex justify-end">

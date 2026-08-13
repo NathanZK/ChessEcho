@@ -3,12 +3,14 @@
 import React, { useState } from 'react';
 import { Download, CheckCircle2, Clock, Calendar, Play } from 'lucide-react';
 import { startImportJob, pollJobStatus, JobStatusResponse } from '../services/api';
+import { MonthPicker } from './MonthPicker';
 
 interface ImportGamesViewProps {
   connectedUsername?: string;
   onImportStarted?: (username: string) => void;
   onNavigateTab?: (tab: 'puzzles' | 'weaknesses') => void;
   onDisconnect?: () => void;
+  onJobStatusUpdate?: (job: JobStatusResponse | null) => void;
 }
 
 export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
@@ -16,6 +18,7 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
   onImportStarted,
   onNavigateTab,
   onDisconnect,
+  onJobStatusUpdate,
 }) => {
   const [username, setUsername] = useState<string>(connectedUsername || '');
   const [timeControls, setTimeControls] = useState<string[]>(['BLITZ', 'RAPID']);
@@ -57,6 +60,9 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
 
   const updateActiveJob = (job: JobStatusResponse | null) => {
     setActiveJob(job);
+    if (onJobStatusUpdate) {
+      onJobStatusUpdate(job);
+    }
     if (typeof window !== 'undefined') {
       if (job) {
         localStorage.setItem('chessecho_active_job', JSON.stringify(job));
@@ -86,6 +92,12 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
         updateActiveJob(statusUpdate);
         setPollingError(null);
         if (statusUpdate.status === 'COMPLETED' || statusUpdate.status === 'FAILED') {
+          if (statusUpdate.status === 'COMPLETED') {
+            const effectiveUser = username.trim() || connectedUsername;
+            if (onImportStarted && effectiveUser) {
+              onImportStarted(effectiveUser);
+            }
+          }
           clearInterval(interval);
         }
       } catch (err: unknown) {
@@ -96,7 +108,7 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
     }, 2000);
 
     return () => clearInterval(interval);
-  }, [activeJob]);
+  }, [activeJob, connectedUsername, onImportStarted, username]);
 
   const handleTimeControlToggle = (tc: string) => {
     if (timeControls.includes(tc)) {
@@ -108,10 +120,23 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
     }
   };
 
+  const isValidMonthFormat = (val: string): boolean => {
+    if (!val || !val.trim()) return true;
+    return /^20\d{2}-(0[1-9]|1[0-2])$/.test(val.trim());
+  };
+
   const handleStartImport = async () => {
     const trimmedUser = username.trim();
     if (!trimmedUser) {
       setErrorMessage('Please enter a Chess.com username');
+      return;
+    }
+    if (!isValidMonthFormat(fromDate)) {
+      setErrorMessage('Please select a valid "From month" (e.g. 2026-08)');
+      return;
+    }
+    if (!isValidMonthFormat(toDate)) {
+      setErrorMessage('Please select a valid "To month" (e.g. 2026-09)');
       return;
     }
     setErrorMessage(null);
@@ -143,7 +168,7 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
   };
 
   return (
-    <div className="max-w-5xl mx-auto space-y-3.5 px-4 py-2 text-slate-200">
+    <div className="max-w-6xl w-full mx-auto px-4 lg:px-8 space-y-4 py-2 text-slate-200">
       {/* Header */}
       <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-3">
         <div>
@@ -260,30 +285,24 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
 
           {/* Advanced Date Range Controls (Optional) */}
           <div className="pt-2 border-t border-slate-800 space-y-3">
-            <div className="flex items-center space-x-2 text-xs font-bold text-slate-300">
-              <Calendar className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Advanced Date Range (Optional, YYYY-MM)</span>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2 text-xs font-bold text-slate-300">
+                <Calendar className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Advanced Date Range</span>
+              </div>
+              <span className="text-[11px] text-slate-400">Optional date bounds</span>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <span className="text-[11px] text-slate-400">From Month</span>
-                <input
-                  type="month"
-                  value={fromDate}
-                  onChange={(e) => setFromDate(e.target.value)}
-                  className="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-lg text-xs font-mono text-slate-200 outline-none"
-                />
-              </div>
-
-              <div className="space-y-1">
-                <span className="text-[11px] text-slate-400">To Month</span>
-                <input
-                  type="month"
-                  value={toDate}
-                  onChange={(e) => setToDate(e.target.value)}
-                  className="w-full px-3 py-1.5 bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-lg text-xs font-mono text-slate-200 outline-none"
-                />
-              </div>
+              <MonthPicker
+                label="From month"
+                value={fromDate}
+                onChange={setFromDate}
+              />
+              <MonthPicker
+                label="To month"
+                value={toDate}
+                onChange={setToDate}
+              />
             </div>
           </div>
 
@@ -428,9 +447,6 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
             )}
           </div>
 
-          <div className="text-[11px] text-slate-500 bg-slate-950/60 p-3 rounded-xl border border-slate-800/80">
-            💡 Import jobs fetch PGN archives asynchronously and queue unique opening positions for background Stockfish analysis.
-          </div>
         </div>
       </div>
     </div>

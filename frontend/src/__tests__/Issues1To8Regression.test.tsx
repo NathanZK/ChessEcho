@@ -9,6 +9,17 @@ import { WeaknessesList } from '../components/WeaknessesList';
 import * as api from '../services/api';
 import { Puzzle } from '../mock/mockData';
 
+/** Minimal required settings props for direct PuzzleFeedbackPanel renders in tests. */
+const defaultSettingsProps = {
+  puzzleColorFilter: 'BOTH' as const,
+  onColorFilterChange: vi.fn(),
+  showPuzzleSettings: false,
+  onTogglePuzzleSettings: vi.fn(),
+  minMistakeCount: 3,
+  onMinMistakeCountChange: vi.fn(),
+  onApplySettings: vi.fn(),
+};
+
 // Mock react-chessboard
 vi.mock('react-chessboard', () => ({
   Chessboard: () => <div data-testid="mock-chessboard" />,
@@ -313,6 +324,7 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
 
     render(
       <PuzzleFeedbackPanel
+        {...defaultSettingsProps}
         puzzle={testPuzzle}
         feedback={feedbackState}
         moveHistory={['e5']}
@@ -359,6 +371,7 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
 
     render(
       <PuzzleFeedbackPanel
+        {...defaultSettingsProps}
         puzzle={puzzleWithQh4Best}
         feedback={feedbackState}
         moveHistory={['Qh4']}

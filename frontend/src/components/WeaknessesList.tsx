@@ -38,8 +38,11 @@ export function formatLastSeen(lastSeenAt?: string | null): string | null {
   if (isNaN(date.getTime())) return null;
 
   const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfGameDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+  const diffMs = startOfToday.getTime() - startOfGameDay.getTime();
+  const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
 
   if (diffDays <= 0) return 'Last seen today';
   if (diffDays === 1) return 'Last seen yesterday';
@@ -62,6 +65,8 @@ interface WeaknessesListProps {
   onWeaknessCountChange?: (count: number) => void;
   activeColorFilter?: 'ALL' | 'WHITE' | 'BLACK';
   onColorFilterChange?: (color: 'ALL' | 'WHITE' | 'BLACK') => void;
+  isAnalysisActive?: boolean;
+  refreshKey?: number;
 }
 
 const PAGE_SIZE = 20;
@@ -76,6 +81,8 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
   onWeaknessCountChange,
   activeColorFilter,
   onColorFilterChange,
+  isAnalysisActive,
+  refreshKey,
 }) => {
   const [colorFilter, setColorFilter] = useState<'ALL' | 'WHITE' | 'BLACK'>(
     activeColorFilter || 'ALL'
@@ -154,7 +161,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
     }
 
     loadInitialWeaknesses();
-  }, [username, colorFilter, minMistakeCount, minEvalLoss]);
+  }, [username, colorFilter, minMistakeCount, minEvalLoss, refreshKey]);
 
   // Load next page function
   const loadNextPage = useCallback(async () => {
@@ -217,7 +224,17 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
   }, [sentinelRef, hasMore, isLoading, isLoadingMore, loadNextPage]);
 
   return (
-    <div className="max-w-6xl mx-auto space-y-4 px-4 py-2 text-slate-200">
+    <div className="max-w-[1536px] w-full mx-auto px-4 lg:px-8 space-y-4 py-2 text-slate-200">
+      {/* Engine Analysis Status Banner */}
+      {isAnalysisActive && (
+        <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex items-center space-x-3 text-xs font-semibold text-amber-300 shadow-md animate-in fade-in duration-200">
+          <div className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping shrink-0" />
+          <span>
+            Stockfish Engine Analysis Active: Evaluating positions for <strong>{username}</strong>. Detected weaknesses will update automatically as analysis completes.
+          </span>
+        </div>
+      )}
+
       {/* Header & Filter Controls */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-900 p-4 rounded-2xl border border-slate-800 shadow-lg">
         <div>
@@ -338,7 +355,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
       ) : (
         /* Weakness Cards Grid */
         <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {weaknesses.map((item) => {
               const activeColorInFen = item.fen ? item.fen.split(' ')[1] : 'w';
               const playerColor: 'WHITE' | 'BLACK' =
@@ -501,6 +518,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
         <HistoricalGamesModal
           urls={activeGameModalUrls}
           onClose={() => setActiveGameModalUrls(null)}
+          username={username}
         />
       )}
     </div>

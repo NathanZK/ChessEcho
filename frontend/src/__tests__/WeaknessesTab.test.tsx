@@ -1,7 +1,7 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { WeaknessesList, adaptWeaknessToPuzzle } from '../components/WeaknessesList';
+import { WeaknessesList, adaptWeaknessToPuzzle, formatLastSeen } from '../components/WeaknessesList';
 import * as api from '../services/api';
 import { WeaknessResponse } from '../services/api';
 
@@ -238,6 +238,38 @@ describe('Weaknesses Tab MVP', () => {
       expect(screen.queryByText('Historical Games')).not.toBeInTheDocument();
     });
 
+    it('renders engine analysis active indicator when isAnalysisActive is true and hides it when false', async () => {
+      const { rerender } = render(
+        <WeaknessesList username="hikaru" onSelectPractice={vi.fn()} isAnalysisActive={true} />
+      );
+
+      expect(screen.getByText(/Stockfish Engine Analysis Active/i)).toBeInTheDocument();
+
+      rerender(
+        <WeaknessesList username="hikaru" onSelectPractice={vi.fn()} isAnalysisActive={false} />
+      );
+
+      expect(screen.queryByText(/Stockfish Engine Analysis Active/i)).not.toBeInTheDocument();
+    });
+
+    it('re-fetches weaknesses automatically when refreshKey is updated', async () => {
+      const { rerender } = render(
+        <WeaknessesList username="hikaru" onSelectPractice={vi.fn()} refreshKey={0} />
+      );
+
+      await waitFor(() => {
+        expect(api.fetchWeaknesses).toHaveBeenCalledTimes(1);
+      });
+
+      rerender(
+        <WeaknessesList username="hikaru" onSelectPractice={vi.fn()} refreshKey={1} />
+      );
+
+      await waitFor(() => {
+        expect(api.fetchWeaknesses).toHaveBeenCalledTimes(2);
+      });
+    });
+
     it('invokes onSelectPractice with adapted Puzzle when Practice Position is clicked', async () => {
       const onSelectPractice = vi.fn();
       render(<WeaknessesList username="hikaru" onSelectPractice={onSelectPractice} />);
@@ -337,6 +369,44 @@ describe('Weaknesses Tab MVP', () => {
       expect(screen.queryByText(/Last seen/i)).not.toBeInTheDocument();
       expect(screen.queryByText(/NaN/i)).not.toBeInTheDocument();
       expect(screen.queryByText(/Invalid Date/i)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('formatLastSeen Local Calendar Day Formatting', () => {
+    it('returns null for null, undefined, or invalid date strings', () => {
+      expect(formatLastSeen(null)).toBeNull();
+      expect(formatLastSeen(undefined)).toBeNull();
+      expect(formatLastSeen('not-a-valid-date')).toBeNull();
+    });
+
+    it('returns "Last seen today" for a game played earlier today', () => {
+      const now = new Date();
+      const earlierToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 1, 0, 0);
+      expect(formatLastSeen(earlierToday.toISOString())).toBe('Last seen today');
+    });
+
+    it('returns "Last seen yesterday" for a game played yesterday late at night (fewer than 24h elapsed)', () => {
+      const now = new Date();
+      const yesterdayNight = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 23, 30, 0);
+      expect(formatLastSeen(yesterdayNight.toISOString())).toBe('Last seen yesterday');
+    });
+
+    it('returns "Last seen yesterday" for a timestamp near midnight yesterday (e.g. 23:59:59 yesterday)', () => {
+      const now = new Date();
+      const yesterdayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 23, 59, 59);
+      expect(formatLastSeen(yesterdayMidnight.toISOString())).toBe('Last seen yesterday');
+    });
+
+    it('returns "Last seen 2 days ago" for a game played 2 local calendar days ago', () => {
+      const now = new Date();
+      const twoDaysAgo = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 2, 15, 0, 0);
+      expect(formatLastSeen(twoDaysAgo.toISOString())).toBe('Last seen 2 days ago');
+    });
+
+    it('renders with expanded responsive container max-width max-w-[1536px]', () => {
+      render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
+      const container = screen.getByText(/Recurring Opening Weaknesses Library/i).closest('.max-w-\\[1536px\\]');
+      expect(container).toBeInTheDocument();
     });
   });
 });

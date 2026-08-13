@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect } from 'react';
-import { AlertTriangle, CheckCircle2, XCircle, ExternalLink, HelpCircle, Flame, Trophy, ChevronLeft, ChevronRight } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, XCircle, ExternalLink, HelpCircle, Flame, Trophy, ChevronLeft, ChevronRight, Settings2 } from 'lucide-react';
 import { Puzzle } from '../mock/mockData';
 import { HistoricalGamesModal } from './HistoricalGamesModal';
 
@@ -21,6 +21,15 @@ interface PuzzleFeedbackPanelProps {
   moveHistory: string[];
   onPreviousPuzzle?: () => void;
   onNextPuzzle: () => void;
+  // Settings props (moved from top toolbar)
+  puzzleColorFilter: 'BOTH' | 'WHITE' | 'BLACK';
+  onColorFilterChange: (color: 'BOTH' | 'WHITE' | 'BLACK') => void;
+  showPuzzleSettings: boolean;
+  onTogglePuzzleSettings: () => void;
+  minMistakeCount: number;
+  onMinMistakeCountChange: (count: number) => void;
+  onApplySettings: () => void;
+  username?: string;
 }
 
 export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
@@ -29,6 +38,14 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
   moveHistory,
   onPreviousPuzzle,
   onNextPuzzle,
+  puzzleColorFilter,
+  onColorFilterChange,
+  showPuzzleSettings,
+  onTogglePuzzleSettings,
+  minMistakeCount,
+  onMinMistakeCountChange,
+  onApplySettings,
+  username,
 }) => {
   const [showGameModal, setShowGameModal] = React.useState<boolean>(false);
   // Listen for Enter key when puzzle is solved to advance to next puzzle
@@ -48,6 +65,70 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
 
   return (
     <div className="flex flex-col space-y-3 bg-slate-900 p-4 rounded-2xl border border-slate-800 shadow-xl text-slate-200">
+      {/* Collapsible Puzzle Settings Section */}
+      <div className="border-b border-slate-800 pb-3">
+        <button
+          type="button"
+          onClick={onTogglePuzzleSettings}
+          className="w-full flex items-center justify-between text-xs font-bold text-slate-400 hover:text-emerald-400 transition cursor-pointer"
+          aria-expanded={showPuzzleSettings}
+        >
+          <div className="flex items-center gap-1.5">
+            <Settings2 className="w-3.5 h-3.5" />
+            <span>Puzzle Settings</span>
+          </div>
+          <span className="text-[10px] font-normal text-slate-500">{showPuzzleSettings ? 'Hide ▲' : 'Show ▼'}</span>
+        </button>
+
+        {showPuzzleSettings && (
+          <div className="mt-3 space-y-3">
+            {/* Color Filter */}
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Color</span>
+              <div className="flex bg-slate-950 p-0.5 rounded-xl border border-slate-800">
+                {(['BOTH', 'WHITE', 'BLACK'] as const).map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    onClick={() => onColorFilterChange(color)}
+                    className={`px-2.5 py-0.5 text-[11px] font-bold rounded-lg transition cursor-pointer ${
+                      puzzleColorFilter === color
+                        ? 'bg-emerald-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    {color === 'BOTH' ? 'Both' : color === 'WHITE' ? 'White' : 'Black'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Min Mistakes + Apply */}
+            <div className="flex items-center gap-2 bg-slate-950 px-3 py-2 rounded-xl border border-slate-800">
+              <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-300 flex-1">
+                <span>Min Mistakes:</span>
+                <input
+                  type="number"
+                  step="1"
+                  min="1"
+                  value={minMistakeCount}
+                  onChange={(e) => onMinMistakeCountChange(Number(e.target.value))}
+                  aria-label="Min Mistakes"
+                  className="w-14 bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-emerald-400 font-mono text-[11px] outline-none focus:border-emerald-500"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={onApplySettings}
+                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold rounded-md transition cursor-pointer"
+              >
+                Apply
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Opening Header */}
       <div className="border-b border-slate-800 pb-2.5 flex items-center justify-between gap-2">
         <div>
@@ -254,6 +335,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
         <HistoricalGamesModal
           urls={puzzle.gameUrls}
           onClose={() => setShowGameModal(false)}
+          username={username}
         />
       )}
     </div>
