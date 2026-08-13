@@ -79,6 +79,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
 
       if (!move) return false; // Illegal chess move
 
+      setCustomSquareStyles({});
       const moveSan = move.san;
       setGame(gameCopy);
 
@@ -123,6 +124,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   };
 
   const handleUndo = () => {
+    setCustomSquareStyles({});
     if (historyIndex > 0) {
       const prevIndex = historyIndex - 1;
       const prevFen = fenHistory[prevIndex];
@@ -133,6 +135,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   };
 
   const handleRedo = () => {
+    setCustomSquareStyles({});
     if (historyIndex < fenHistory.length - 1) {
       const nextIndex = historyIndex + 1;
       const nextFen = fenHistory[nextIndex];

@@ -397,7 +397,7 @@ export default function Home() {
     if (typeof window !== 'undefined' && selectedPuzzle) {
       localStorage.setItem('chessecho_puzzle_id', selectedPuzzle.puzzleId);
     }
-    setActiveTab('puzzles');
+    changeTab('puzzles');
   };
 
   const handleBoardUndo = () => {

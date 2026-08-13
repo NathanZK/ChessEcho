@@ -31,6 +31,26 @@ export function adaptWeaknessToPuzzle(
   };
 }
 
+export function formatLastSeen(lastSeenAt?: string | null): string | null {
+  if (!lastSeenAt) return null;
+  const date = new Date(lastSeenAt);
+  if (isNaN(date.getTime())) return null;
+
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+  if (diffDays <= 0) return 'Last seen today';
+  if (diffDays === 1) return 'Last seen yesterday';
+  if (diffDays < 30) return `Last seen ${diffDays} days ago`;
+  const diffMonths = Math.floor(diffDays / 30);
+  if (diffMonths === 1) return 'Last seen 1 month ago';
+  if (diffMonths < 12) return `Last seen ${diffMonths} months ago`;
+  const diffYears = Math.floor(diffDays / 365);
+  if (diffYears === 1) return 'Last seen 1 year ago';
+  return `Last seen ${diffYears} years ago`;
+}
+
 interface WeaknessesListProps {
   username?: string;
   minEvalLoss?: number;
@@ -346,10 +366,17 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
 
                       {/* Stats & Metadata */}
                       <div className="flex-1 space-y-3 w-full">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                            Weakness Position
-                          </span>
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                              Weakness Position
+                            </span>
+                            {item.lastSeenAt && formatLastSeen(item.lastSeenAt) && (
+                              <span className="text-[11px] font-medium text-slate-400">
+                                • {formatLastSeen(item.lastSeenAt)}
+                              </span>
+                            )}
+                          </div>
                           <span
                             className={`text-xs font-bold px-2 py-0.5 rounded-md ${
                               playerColor === 'WHITE'
