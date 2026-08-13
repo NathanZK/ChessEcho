@@ -269,10 +269,213 @@ class WeaknessCalculationServiceTest {
         assertTrue(w.movesPlayed.none { it.move == "Qh4" })
     }
 
-    private fun mockGame(playedAt: Instant? = null): Game =
+    @Test
+    fun `test lastSeenAt derives from newest occurrence timestamp and prefers playedAt`() {
+        val account = ChessAccount(user = AppUser(email = "test@test.com"), platform = "CHESS_COM", username = "nathan")
+        val position = Position(hash = "hash1", fen = "fen1")
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "nathan")).thenReturn(account)
+
+        val olderInstant = Instant.parse("2026-01-01T10:00:00Z")
+        val newerInstant = Instant.parse("2026-08-01T10:00:00Z")
+
+        val oldGame = mockGame("gameOld", playedAt = olderInstant)
+        val newGame = mockGame("gameNew", playedAt = newerInstant)
+
+        val occ1 =
+            PositionOccurrence(
+                game = oldGame,
+                position = position,
+                chessAccount = account,
+                plyNumber = 1,
+                movePlayed = "m1",
+                playerColor = "WHITE",
+            )
+        val occ2 =
+            PositionOccurrence(
+                game = newGame,
+                position = position,
+                chessAccount = account,
+                plyNumber = 1,
+                movePlayed = "m1",
+                playerColor = "WHITE",
+            )
+
+        `when`(positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(eq(account.id), eq("WHITE"), any()))
+            .thenReturn(listOf(occ1, occ2))
+
+        val analysis = EngineAnalysis(position = position, depth = 16, baselineEvalCp = 100, bestMove = "best", bestMoveEvalCp = 100)
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "m1", evalCp = 0, evalLossFromBest = 1.0))
+        `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(any())).thenReturn(listOf(analysis))
+
+        val agg =
+            WeaknessAggregation(
+                positionId = position.id,
+                fen = position.fen,
+                timesReached = 5,
+                bestMove = "best",
+                baselineEvalCp = 100,
+                mistakeCount = 2,
+                averageLoss = 1.0,
+                rawTotalLoss = 2.0,
+            )
+        `when`(positionOccurrenceRepository.findWeaknessAggregations(account.id, "WHITE", 0.8, 5, 2)).thenReturn(listOf(agg))
+
+        val weaknesses =
+            weaknessCalculationService.getWeaknesses(
+                Platform.CHESS_COM,
+                "nathan",
+                PlayerColor.WHITE,
+                minEvalLoss = 0.8,
+                minMistakeCount = 2,
+            )
+
+        assertEquals(1, weaknesses.size)
+        assertEquals(newerInstant, weaknesses[0].lastSeenAt)
+        // Game URLs must be returned newest-first
+        assertEquals(listOf("https://www.chess.com/game/live/gameNew", "https://www.chess.com/game/live/gameOld"), weaknesses[0].gameUrls)
+    }
+
+    @Test
+    fun `test lastSeenAt falls back to createdAt when playedAt is null`() {
+        val account = ChessAccount(user = AppUser(email = "test@test.com"), platform = "CHESS_COM", username = "nathan")
+        val position = Position(hash = "hash2", fen = "fen2")
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "nathan")).thenReturn(account)
+
+        val gameNoPlayedAt = mockGame("gameNull", playedAt = null)
+        val occ =
+            PositionOccurrence(
+                game = gameNoPlayedAt,
+                position = position,
+                chessAccount = account,
+                plyNumber = 1,
+                movePlayed = "m1",
+                playerColor = "WHITE",
+            )
+
+        `when`(positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(eq(account.id), eq("WHITE"), any()))
+            .thenReturn(listOf(occ))
+
+        val analysis = EngineAnalysis(position = position, depth = 16, baselineEvalCp = 100, bestMove = "best", bestMoveEvalCp = 100)
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "m1", evalCp = 0, evalLossFromBest = 1.0))
+        `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(any())).thenReturn(listOf(analysis))
+
+        val agg =
+            WeaknessAggregation(
+                positionId = position.id,
+                fen = position.fen,
+                timesReached = 5,
+                bestMove = "best",
+                baselineEvalCp = 100,
+                mistakeCount = 1,
+                averageLoss = 1.0,
+                rawTotalLoss = 1.0,
+            )
+        `when`(positionOccurrenceRepository.findWeaknessAggregations(account.id, "WHITE", 0.8, 5, 1)).thenReturn(listOf(agg))
+
+        val weaknesses =
+            weaknessCalculationService.getWeaknesses(
+                Platform.CHESS_COM,
+                "nathan",
+                PlayerColor.WHITE,
+                minEvalLoss = 0.8,
+                minMistakeCount = 1,
+            )
+
+        assertEquals(1, weaknesses.size)
+        assertEquals(occ.createdAt, weaknesses[0].lastSeenAt)
+    }
+
+    @Test
+    fun `test recent weaknesses rank higher than otherwise equivalent older weaknesses`() {
+        val account = ChessAccount(user = AppUser(email = "test@test.com"), platform = "CHESS_COM", username = "nathan")
+        val posRecent = Position(hash = "recentHash", fen = "recentFen")
+        val posOld = Position(hash = "oldHash", fen = "oldFen")
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "nathan")).thenReturn(account)
+
+        val now = Instant.now()
+        val oldDate = now.minusSeconds(180 * 86400L) // 180 days ago
+
+        val gameRecent = mockGame("recentGame", playedAt = now)
+        val gameOld = mockGame("oldGame", playedAt = oldDate)
+
+        val occRecent =
+            PositionOccurrence(
+                game = gameRecent,
+                position = posRecent,
+                chessAccount = account,
+                plyNumber = 1,
+                movePlayed = "m1",
+                playerColor = "WHITE",
+            )
+        val occOld =
+            PositionOccurrence(
+                game = gameOld,
+                position = posOld,
+                chessAccount = account,
+                plyNumber = 1,
+                movePlayed = "m1",
+                playerColor = "WHITE",
+            )
+
+        `when`(positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(eq(account.id), eq("WHITE"), any()))
+            .thenReturn(listOf(occRecent, occOld))
+
+        val analysisRecent = EngineAnalysis(position = posRecent, depth = 16, baselineEvalCp = 100, bestMove = "best", bestMoveEvalCp = 100)
+        analysisRecent.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysisRecent, move = "m1", evalCp = 0, evalLossFromBest = 1.0))
+
+        val analysisOld = EngineAnalysis(position = posOld, depth = 16, baselineEvalCp = 100, bestMove = "best", bestMoveEvalCp = 100)
+        analysisOld.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysisOld, move = "m1", evalCp = 0, evalLossFromBest = 1.0))
+
+        `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(any())).thenReturn(listOf(analysisRecent, analysisOld))
+
+        val aggRecent =
+            WeaknessAggregation(
+                positionId = posRecent.id,
+                fen = posRecent.fen,
+                timesReached = 5,
+                bestMove = "best",
+                baselineEvalCp = 100,
+                mistakeCount = 1,
+                averageLoss = 1.0,
+                rawTotalLoss = 1.0,
+            )
+        val aggOld =
+            WeaknessAggregation(
+                positionId = posOld.id,
+                fen = posOld.fen,
+                timesReached = 5,
+                bestMove = "best",
+                baselineEvalCp = 100,
+                mistakeCount = 1,
+                averageLoss = 1.0,
+                rawTotalLoss = 1.0,
+            )
+
+        `when`(positionOccurrenceRepository.findWeaknessAggregations(account.id, "WHITE", 0.8, 5, 1)).thenReturn(listOf(aggRecent, aggOld))
+
+        val weaknesses =
+            weaknessCalculationService.getWeaknesses(
+                Platform.CHESS_COM,
+                "nathan",
+                PlayerColor.WHITE,
+                minEvalLoss = 0.8,
+                minMistakeCount = 1,
+            )
+
+        assertEquals(2, weaknesses.size)
+        // Recent weakness must rank ahead of the old weakness due to recency decay priority weighting
+        assertEquals(posRecent.id, weaknesses[0].positionId)
+        assertEquals(posOld.id, weaknesses[1].positionId)
+        assertTrue(weaknesses[0].priority > weaknesses[1].priority)
+    }
+
+    private fun mockGame(
+        platformGameId: String = "123",
+        playedAt: Instant? = null,
+    ): Game =
         Game(
             chessAccount = ChessAccount(user = AppUser(email = "t"), platform = "P", username = "U"),
-            platformGameId = "123",
+            platformGameId = platformGameId,
             timeControl = "bullet",
             pgn = "pgn",
             result = "win",
