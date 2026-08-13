@@ -109,6 +109,9 @@ class WeaknessCalculationService(
             val posOccurrences = groupedOccurrences[positionId] ?: continue
             val analysis = groupedAnalyses[positionId] ?: continue
 
+            val sortedOccurrences = posOccurrences.sortedByDescending { it.game.playedAt ?: it.createdAt }
+            val lastSeenAt = sortedOccurrences.firstOrNull()?.let { it.game.playedAt ?: it.createdAt }
+
             val bestMoveEvalCp = analysis.bestMoveEvalCp
 
             var unweightedTotalLoss = 0.0
@@ -117,7 +120,7 @@ class WeaknessCalculationService(
             val mistakeUrls = mutableListOf<String>()
             val moveStats = mutableMapOf<String, Pair<Double, Int>>()
 
-            for (occ in posOccurrences) {
+            for (occ in sortedOccurrences) {
                 val moveEval = analysis.moveEvaluations.find { it.move == occ.movePlayed } ?: continue
                 val evalLoss = moveEval.evalLossFromBest ?: calculateEvalLoss(bestMoveEvalCp, moveEval.evalCp)
 
@@ -126,14 +129,9 @@ class WeaknessCalculationService(
 
                 if (evalLoss >= minEvalLoss) {
                     unweightedTotalLoss += evalLoss
-                    val playedAt = occ.game.playedAt
-                    val weight =
-                        if (playedAt != null) {
-                            val daysOld = ChronoUnit.DAYS.between(playedAt, Instant.now())
-                            max(0.1, 1.0 - (daysOld / 365.0))
-                        } else {
-                            1.0
-                        }
+                    val occurrenceDate = occ.game.playedAt ?: occ.createdAt
+                    val daysOld = ChronoUnit.DAYS.between(occurrenceDate, Instant.now())
+                    val weight = max(0.1, 1.0 - (daysOld / 365.0))
                     priorityScore += (evalLoss * weight)
                     mistakeCount++
 
@@ -188,6 +186,7 @@ class WeaknessCalculationService(
                         movesPlayed = movesPlayed,
                         gameUrls = mistakeUrls.distinct().take(10),
                         evalCp = agg.baselineEvalCp,
+                        lastSeenAt = lastSeenAt,
                     ),
                 )
             }

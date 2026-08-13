@@ -1,6 +1,7 @@
 package com.chessecho.dto
 
 import com.fasterxml.jackson.annotation.JsonInclude
+import java.time.Instant
 import java.util.UUID
 
 @JsonInclude(JsonInclude.Include.ALWAYS)
@@ -17,4 +18,5 @@ data class WeaknessResponse(
     val movesPlayed: List<MoveBreakdown>,
     val gameUrls: List<String> = emptyList(),
     val evalCp: Int? = null,
+    val lastSeenAt: Instant? = null,
 )
