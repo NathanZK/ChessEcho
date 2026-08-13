@@ -28,6 +28,7 @@ export interface WeaknessResponse {
   movesPlayed: Array<{ move: string; timesPlayed: number; averageLoss: number }>;
   gameUrls: string[];
   evalCp?: number;
+  lastSeenAt?: string;
 }
 
 export async function fetchPuzzles(

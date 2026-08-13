@@ -291,4 +291,51 @@ describe('Weaknesses Tab MVP', () => {
       });
     });
   });
+
+  describe('4. lastSeenAt Display & Formatting', () => {
+    it('formats lastSeenAt correctly into relative time and returns null for invalid/null dates', async () => {
+      const { formatLastSeen } = await import('../components/WeaknessesList');
+      expect(formatLastSeen(null)).toBeNull();
+      expect(formatLastSeen(undefined)).toBeNull();
+      expect(formatLastSeen('invalid-date')).toBeNull();
+
+      const nowISO = new Date().toISOString();
+      expect(formatLastSeen(nowISO)).toBe('Last seen today');
+
+      const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+      expect(formatLastSeen(threeDaysAgo)).toBe('Last seen 3 days ago');
+    });
+
+    it('renders lastSeenAt relative date text when present', async () => {
+      const itemWithLastSeen: WeaknessResponse = {
+        ...mockWeaknessItem,
+        lastSeenAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+      };
+      vi.mocked(api.fetchWeaknesses).mockResolvedValue([itemWithLastSeen]);
+
+      render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Last seen 3 days ago/i)).toBeInTheDocument();
+      });
+    });
+
+    it('renders cleanly without crashing or displaying invalid date when lastSeenAt is missing or null', async () => {
+      const itemNullLastSeen: WeaknessResponse = {
+        ...mockWeaknessItem,
+        lastSeenAt: undefined,
+      };
+      vi.mocked(api.fetchWeaknesses).mockResolvedValue([itemNullLastSeen]);
+
+      render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Weakness Position')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByText(/Last seen/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/NaN/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Invalid Date/i)).not.toBeInTheDocument();
+    });
+  });
 });
