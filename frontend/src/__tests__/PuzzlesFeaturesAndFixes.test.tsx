@@ -6,6 +6,17 @@ import { PuzzleFeedbackPanel, formatDecimal } from '../components/PuzzleFeedback
 import * as api from '../services/api';
 import { Puzzle } from '../mock/mockData';
 
+/** Minimal required settings props for direct PuzzleFeedbackPanel renders in tests. */
+const defaultSettingsProps = {
+  puzzleColorFilter: 'BOTH' as const,
+  onColorFilterChange: vi.fn(),
+  showPuzzleSettings: false,
+  onTogglePuzzleSettings: vi.fn(),
+  minMistakeCount: 3,
+  onMinMistakeCountChange: vi.fn(),
+  onApplySettings: vi.fn(),
+};
+
 vi.mock('../services/api', async () => {
   const actual = await vi.importActual<typeof import('../services/api')>('../services/api');
   return {
@@ -108,6 +119,14 @@ describe('Puzzles Tab Features and Fixes', () => {
       expect(api.fetchPuzzles).toHaveBeenCalledTimes(1);
     });
 
+    // Verify old top toolbar is gone (no standalone "Color:" label outside panel)
+    expect(screen.queryByText('Color:')).not.toBeInTheDocument();
+
+    // Open settings panel in the right-side panel to access color controls
+    const settingsToggle = screen.getByRole('button', { name: /Puzzle Settings/i });
+    expect(settingsToggle).toBeInTheDocument();
+    fireEvent.click(settingsToggle);
+
     vi.clearAllMocks();
 
     // 2. Select 'White'
@@ -145,10 +164,41 @@ describe('Puzzles Tab Features and Fixes', () => {
     expect(localStorage.getItem('chessecho_puzzle_color_filter')).toBe('BOTH');
   });
 
+  it('regression: puzzle settings and color controls are in the right-side panel, not the old top toolbar', async () => {
+    localStorage.setItem('chessecho_username', 'hikaru');
+    render(<Home />);
+
+    await waitFor(() => {
+      expect(screen.getByText("King's Pawn Opening")).toBeInTheDocument();
+    });
+
+    // Old top-toolbar color label must not exist
+    expect(screen.queryByText('Color:')).not.toBeInTheDocument();
+
+    // Puzzle Settings toggle is in the right-side panel
+    const settingsToggle = screen.getByRole('button', { name: /Puzzle Settings/i });
+    expect(settingsToggle).toBeInTheDocument();
+
+    // Color buttons are NOT in the DOM until settings are opened
+    expect(screen.queryByRole('button', { name: /^White$/i })).not.toBeInTheDocument();
+
+    // Expand settings panel
+    fireEvent.click(settingsToggle);
+
+    // Now color buttons are visible inside the right panel
+    expect(screen.getByRole('button', { name: /^Both$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^White$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Black$/i })).toBeInTheDocument();
+
+    // Min Mistakes input and Apply are also accessible
+    expect(screen.getByLabelText(/Min Mistakes/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Apply$/i })).toBeInTheDocument();
+  });
+
   it('refetches puzzles with updated minEvalLoss and minMistakeCount when Apply is clicked, displaying loading spinner and updating active puzzle', async () => {
     localStorage.setItem('chessecho_username', 'hikaru');
 
-    render(<Home />);
+    const { container } = render(<Home />);
 
     await waitFor(() => {
       expect(screen.getByText("King's Pawn Opening")).toBeInTheDocument();
@@ -169,25 +219,33 @@ describe('Puzzles Tab Features and Fixes', () => {
       evalCp: 25,
     };
 
+    // Toggle settings panel in the right-side panel (puzzle is loaded, so panel is visible)
+    const settingsToggle = screen.getByRole('button', { name: /Puzzle Settings/i });
+    fireEvent.click(settingsToggle);
+
+    // Wait for settings panel to be visible (Min Mistakes input should be visible)
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Min Mistakes/i)).toBeInTheDocument();
+    });
+
+    // Verify Puzzles tab does NOT display an independent Mistake Threshold selector
+    expect(screen.queryByLabelText(/Mistake Threshold/i)).not.toBeInTheDocument();
+
+    // Grab references and set up mock BEFORE changing input value,
+    // because the useEffect depends on minMistakeCount and will trigger loading state
+    const minMistakesInput = screen.getByLabelText(/Min Mistakes/i);
+    const applyButton = screen.getByRole('button', { name: /Apply/i });
+
     let resolvePuzzles: (val: Puzzle[]) => void;
     const pendingPromise = new Promise<Puzzle[]>((resolve) => {
       resolvePuzzles = resolve;
     });
     vi.mocked(api.fetchPuzzles).mockReturnValue(pendingPromise);
 
-    // Toggle settings toolbar
-    const settingsToggle = screen.getByRole('button', { name: /Puzzle Settings/i });
-    fireEvent.click(settingsToggle);
-
-    // Verify Puzzles tab does NOT display an independent Mistake Threshold selector
-    expect(screen.queryByLabelText(/Mistake Threshold/i)).not.toBeInTheDocument();
-
-    const minMistakesInput = screen.getByLabelText(/Min Mistakes/i);
     fireEvent.change(minMistakesInput, { target: { value: '5' } });
 
-    // Click Apply
-    const applyBtn = screen.getByRole('button', { name: /^Apply$/i });
-    fireEvent.click(applyBtn);
+    // Click Apply (the useEffect auto-fetch also fires but uses the same pending mock)
+    fireEvent.click(applyButton);
 
     // 1. Verifies loading spinner appears while fetching
     expect(screen.getByText(/Loading Practice Puzzles/i)).toBeInTheDocument();
@@ -213,6 +271,7 @@ describe('Puzzles Tab Features and Fixes', () => {
 
     render(
       <PuzzleFeedbackPanel
+        {...defaultSettingsProps}
         puzzle={mockPuzzles[0]}
         feedback={{ status: 'CORRECT', lastMove: 'e4' }}
         moveHistory={['e4']}
@@ -227,6 +286,7 @@ describe('Puzzles Tab Features and Fixes', () => {
   it('completely removes Historical Games section from PuzzleFeedbackPanel', () => {
     render(
       <PuzzleFeedbackPanel
+        {...defaultSettingsProps}
         puzzle={mockPuzzles[0]}
         feedback={{ status: 'IDLE' }}
         moveHistory={[]}
@@ -240,6 +300,7 @@ describe('Puzzles Tab Features and Fixes', () => {
   it('renders neutral feedback for incorrect moves without fabricated explanations', () => {
     render(
       <PuzzleFeedbackPanel
+        {...defaultSettingsProps}
         puzzle={mockPuzzles[0]}
         feedback={{ status: 'INCORRECT', lastMove: 'h3' }}
         moveHistory={['h3']}
@@ -256,6 +317,7 @@ describe('Puzzles Tab Features and Fixes', () => {
     // 1. Initial user move attempt: user makes a mistake ('d6') on move 1
     const { rerender } = render(
       <PuzzleFeedbackPanel
+        {...defaultSettingsProps}
         puzzle={mockPuzzles[0]}
         feedback={{
           status: 'HISTORICAL_MISTAKE',
@@ -278,6 +340,7 @@ describe('Puzzles Tab Features and Fixes', () => {
     // 2. Opponent plays follow-up move ('Qxb4') on move 2. Feedback remains unchanged (still displaying d6 mistake)!
     rerender(
       <PuzzleFeedbackPanel
+        {...defaultSettingsProps}
         puzzle={mockPuzzles[0]}
         feedback={{
           status: 'HISTORICAL_MISTAKE',
@@ -297,6 +360,7 @@ describe('Puzzles Tab Features and Fixes', () => {
   it('formats single past game historical mistake feedback correctly without misleading avg loss wording', () => {
     render(
       <PuzzleFeedbackPanel
+        {...defaultSettingsProps}
         puzzle={mockPuzzles[0]}
         feedback={{
           status: 'HISTORICAL_MISTAKE',
@@ -320,6 +384,7 @@ describe('Puzzles Tab Features and Fixes', () => {
     // 1. User makes correct move ('e4')
     const { rerender } = render(
       <PuzzleFeedbackPanel
+        {...defaultSettingsProps}
         puzzle={mockPuzzles[0]}
         feedback={{ status: 'CORRECT', lastMove: 'e4' }}
         moveHistory={['e4']}
@@ -332,6 +397,7 @@ describe('Puzzles Tab Features and Fixes', () => {
 
     rerender(
       <PuzzleFeedbackPanel
+        {...defaultSettingsProps}
         puzzle={mockPuzzles[0]}
         feedback={{ status: 'EXPLORING', lastMove: 'Nf3' }}
         moveHistory={['e4', 'Nf3']}
@@ -368,6 +434,10 @@ describe('Puzzles Tab Features and Fixes', () => {
 
     vi.mocked(api.fetchPuzzles).mockResolvedValue([blackPuzzle]);
 
+    // Open settings panel first, then change player color filter to 'Black'
+    const settingsToggle = screen.getByRole('button', { name: /Puzzle Settings/i });
+    fireEvent.click(settingsToggle);
+
     // Change player color filter to 'Black'
     const blackFilterBtn = screen.getByRole('button', { name: /^Black$/i });
     fireEvent.click(blackFilterBtn);
@@ -402,6 +472,7 @@ describe('Puzzles Tab Features and Fixes', () => {
 
       render(
         <PuzzleFeedbackPanel
+          {...defaultSettingsProps}
           puzzle={puzzleWithUrls}
           feedback={{ status: 'IDLE' }}
           moveHistory={[]}
@@ -449,6 +520,7 @@ describe('Puzzles Tab Features and Fixes', () => {
 
       render(
         <PuzzleFeedbackPanel
+          {...defaultSettingsProps}
           puzzle={puzzleWithoutUrls}
           feedback={{ status: 'IDLE' }}
           moveHistory={[]}
@@ -536,13 +608,91 @@ describe('Puzzles Tab Features and Fixes', () => {
       const puzzleWorkspaceContainer = screen.getByText("King's Pawn Opening").closest('.max-w-\\[1536px\\]');
       expect(puzzleWorkspaceContainer).toBeInTheDocument();
 
-      // 2. Verify center board wrapper uses max-w-[640px]
-      const boardWrapper = screen.getByText("King's Pawn Opening").closest('.max-w-\\[1536px\\]')?.querySelector('.max-w-\\[640px\\]');
+      // 2. Verify center board wrapper grows into available space (flex-1 min-h-0)
+      const boardWrapper = screen.getByText("King's Pawn Opening").closest('.max-w-\\[1536px\\]')?.querySelector('.flex-1');
       expect(boardWrapper).toBeInTheDocument();
 
       // 3. Verify right feedback panel wrapper uses max-w-[480px]
       const feedbackWrapper = screen.getByText("King's Pawn Opening").closest('.max-w-\\[1536px\\]')?.querySelector('.max-w-\\[480px\\]');
       expect(feedbackWrapper).toBeInTheDocument();
+    });
+  });
+
+  describe('9. Flip Board Control', () => {
+    it('clicking Flip Board toggles board orientation', async () => {
+      localStorage.setItem('chessecho_username', 'hikaru');
+
+      render(<Home />);
+
+      await waitFor(() => {
+        expect(screen.getByText("King's Pawn Opening")).toBeInTheDocument();
+      });
+
+      // Initially board is in default orientation (white for WHITE player)
+      const flipBtn = screen.getByRole('button', { name: /Flip/i });
+      expect(flipBtn).toBeInTheDocument();
+
+      // Click flip
+      fireEvent.click(flipBtn);
+
+      // Click again to flip back
+      fireEvent.click(flipBtn);
+
+      // Verify puzzle state is unchanged (same puzzle still displayed)
+      expect(screen.getByText("King's Pawn Opening")).toBeInTheDocument();
+    });
+
+    it('pressing x toggles board orientation', async () => {
+      localStorage.setItem('chessecho_username', 'hikaru');
+
+      render(<Home />);
+
+      await waitFor(() => {
+        expect(screen.getByText("King's Pawn Opening")).toBeInTheDocument();
+      });
+
+      fireEvent.keyDown(window, { key: 'x' });
+      fireEvent.keyDown(window, { key: 'X' });
+
+      // Verify puzzle state is unchanged
+      expect(screen.getByText("King's Pawn Opening")).toBeInTheDocument();
+    });
+
+    it('typing in an input does not trigger flip board', async () => {
+      localStorage.setItem('chessecho_username', 'hikaru');
+
+      render(<Home />);
+
+      await waitFor(() => {
+        expect(screen.getByText("King's Pawn Opening")).toBeInTheDocument();
+      });
+
+      // Open settings to reveal an input
+      const settingsToggle = screen.getByRole('button', { name: /Puzzle Settings/i });
+      fireEvent.click(settingsToggle);
+
+      const minMistakesInput = screen.getByLabelText(/Min Mistakes/i);
+      fireEvent.keyDown(minMistakesInput, { key: 'x' });
+
+      // Puzzle should still be displayed (no flip triggered from input)
+      expect(screen.getByText("King's Pawn Opening")).toBeInTheDocument();
+    });
+
+    it('flipping board does not modify FEN, puzzle state, move history, or settings', async () => {
+      localStorage.setItem('chessecho_username', 'hikaru');
+
+      render(<Home />);
+
+      await waitFor(() => {
+        expect(screen.getByText("King's Pawn Opening")).toBeInTheDocument();
+      });
+
+      const flipBtn = screen.getByRole('button', { name: /Flip/i });
+      fireEvent.click(flipBtn);
+
+      // Verify puzzle title and feedback remain unchanged
+      expect(screen.getByText("King's Pawn Opening")).toBeInTheDocument();
+      expect(screen.getByText(/Find White's best move or an acceptable alternative/i)).toBeInTheDocument();
     });
   });
 

@@ -8,6 +8,7 @@ import { BoardControls } from './BoardControls';
 interface ChessBoardAreaProps {
   initialFen: string;
   playerColor: 'WHITE' | 'BLACK';
+  boardOrientation?: 'white' | 'black';
   targetMove: string;
   acceptableMoves: Array<{ move: string; evalLoss: number }>;
   movesPlayed: Array<{ move: string; timesPlayed: number; averageLoss: number }>;
@@ -24,11 +25,13 @@ interface ChessBoardAreaProps {
   onRedo?: () => void;
   hintSquare?: string;
   canHint?: boolean;
+  onFlipBoard?: () => void;
 }
 
 export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   initialFen,
   playerColor,
+  boardOrientation,
   targetMove,
   acceptableMoves,
   movesPlayed,
@@ -39,6 +42,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   onRedo,
   hintSquare,
   canHint = true,
+  onFlipBoard,
 }) => {
   const [game, setGame] = useState<Chess>(new Chess(initialFen));
   const [fenHistory, setFenHistory] = useState<string[]>([initialFen]);
@@ -189,6 +193,8 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
     }
   };
 
+  const orientation = boardOrientation ?? (playerColor === 'BLACK' ? 'black' : 'white');
+
   return (
     <div className="flex flex-col space-y-2.5 w-full max-w-[640px] 2xl:max-w-[680px] mx-auto">
       {/* Chessboard Container with Chess.com Green Theme */}
@@ -196,7 +202,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
         <Chessboard
           options={{
             position: game.fen(),
-            boardOrientation: playerColor === 'BLACK' ? 'black' : 'white',
+            boardOrientation: orientation,
             darkSquareStyle: { backgroundColor: '#769656' },
             lightSquareStyle: { backgroundColor: '#eeeed2' },
             squareStyles: customSquareStyles,
@@ -221,6 +227,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
         canUndo={historyIndex > 0}
         canRedo={historyIndex < fenHistory.length - 1}
         canHint={canHint}
+        onFlipBoard={onFlipBoard}
       />
     </div>
   );

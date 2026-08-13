@@ -8,11 +8,20 @@ import { PuzzleFeedbackPanel } from '@/components/PuzzleFeedbackPanel';
 import { WeaknessesList } from '@/components/WeaknessesList';
 import { ImportGamesView } from '@/components/ImportGamesView';
 import { Puzzle } from '@/mock/mockData';
-import { fetchPuzzles } from '@/services/api';
+import { fetchPuzzles, JobStatusResponse } from '@/services/api';
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<TabType>('puzzles');
   const [activeUsername, setActiveUsername] = useState<string | undefined>(undefined);
+  const [activeJobStatus, setActiveJobStatus] = useState<JobStatusResponse | null>(null);
+  const [weaknessRefreshKey, setWeaknessRefreshKey] = useState<number>(0);
+
+  const handleJobStatusUpdate = (job: JobStatusResponse | null) => {
+    setActiveJobStatus(job);
+    if (job?.status === 'COMPLETED') {
+      setWeaknessRefreshKey((k) => k + 1);
+    }
+  };
 
   // Sync state from localStorage & window hash after client mount to prevent SSR hydration mismatch
   React.useEffect(() => {
@@ -94,6 +103,20 @@ export default function Home() {
   const [minMistakeCount, setMinMistakeCount] = useState<number>(3);
   const [puzzleColorFilter, setPuzzleColorFilter] = useState<'BOTH' | 'WHITE' | 'BLACK'>('BOTH');
   const [showPuzzleSettings, setShowPuzzleSettings] = useState<boolean>(false);
+  const [isBoardFlipped, setIsBoardFlipped] = useState<boolean>(false);
+
+  // Flip board keyboard shortcut (x / X)
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target as HTMLElement)?.isContentEditable) return;
+      if (e.key === 'x' || e.key === 'X') {
+        setIsBoardFlipped((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Restore puzzle filter settings from localStorage ONCE after client mount
   React.useEffect(() => {
@@ -524,65 +547,6 @@ export default function Home() {
         {/* TAB 1: PRACTICE PUZZLES */}
         {activeTab === 'puzzles' && (
           <div className="max-w-[1536px] w-full mx-auto px-4 lg:px-8 flex-1 flex flex-col justify-center min-h-0">
-            {/* Compact Filter & Settings Toolbar */}
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-3 bg-slate-900/80 px-3.5 py-1.5 rounded-2xl border border-slate-800 shadow-md">
-              {/* Player Color Selector */}
-              <div className="flex items-center space-x-2">
-                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                  Color:
-                </span>
-                <div className="flex bg-slate-950 p-0.5 rounded-xl border border-slate-800">
-                  {(['BOTH', 'WHITE', 'BLACK'] as const).map((color) => (
-                    <button
-                      key={color}
-                      type="button"
-                      onClick={() => handleColorFilterChange(color)}
-                      className={`px-2.5 py-0.5 text-[11px] font-bold rounded-lg transition cursor-pointer ${
-                        puzzleColorFilter === color
-                          ? 'bg-emerald-600 text-white shadow-sm'
-                          : 'text-slate-400 hover:text-slate-200'
-                      }`}
-                    >
-                      {color === 'BOTH' ? 'Both' : color === 'WHITE' ? 'White' : 'Black'}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Collapsible Settings */}
-              <div className="flex items-center space-x-3">
-                <button
-                  type="button"
-                  onClick={() => setShowPuzzleSettings((v) => !v)}
-                  className="text-xs font-bold text-slate-400 hover:text-emerald-400 transition cursor-pointer"
-                >
-                  {showPuzzleSettings ? 'Hide Settings' : 'Puzzle Settings ⚙️'}
-                </button>
-
-                {showPuzzleSettings && (
-                  <div className="flex items-center gap-2 bg-slate-950 px-3 py-1 rounded-xl border border-slate-800">
-                    <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-300">
-                      <span>Min Mistakes:</span>
-                      <input
-                        type="number"
-                        step="1"
-                        min="1"
-                        value={minMistakeCount}
-                        onChange={(e) => handleMinMistakeCountChange(Number(e.target.value))}
-                        className="w-14 bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-emerald-400 font-mono text-[11px] outline-none focus:border-emerald-500"
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      onClick={handleApplyPuzzleSettings}
-                      className="px-2.5 py-0.5 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold rounded-md transition cursor-pointer"
-                    >
-                      Apply
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
 
             <div className="flex-1 flex flex-col justify-center min-h-0">
               {isLoadingPuzzles ? (
@@ -627,6 +591,7 @@ export default function Home() {
                   <ChessBoardArea
                     initialFen={activePuzzle.fen}
                     playerColor={activePuzzle.playerColor}
+                    boardOrientation={isBoardFlipped ? (activePuzzle.playerColor === 'WHITE' ? 'black' : 'white') : (activePuzzle.playerColor === 'WHITE' ? 'white' : 'black')}
                     targetMove={activePuzzle.targetMove}
                     acceptableMoves={activePuzzle.acceptableMoves}
                     movesPlayed={activePuzzle.movesPlayed}
@@ -637,10 +602,11 @@ export default function Home() {
                     onRedo={handleBoardRedo}
                     hintSquare={hintSquare}
                     canHint={!(feedback.status === 'CORRECT' || feedback.status === 'EXPLORING')}
+                    onFlipBoard={() => setIsBoardFlipped((prev) => !prev)}
                   />
                 </div>
 
-                {/* Right Feedback & Stats Panel */}
+                {/* Right Feedback & Settings Panel */}
                 <div className="w-full max-w-[480px] shrink-0">
                   <PuzzleFeedbackPanel
                     puzzle={activePuzzle}
@@ -648,6 +614,14 @@ export default function Home() {
                     moveHistory={moveHistory}
                     onPreviousPuzzle={handlePreviousPuzzle}
                     onNextPuzzle={handleNextPuzzle}
+                    puzzleColorFilter={puzzleColorFilter}
+                    onColorFilterChange={handleColorFilterChange}
+                    showPuzzleSettings={showPuzzleSettings}
+                    onTogglePuzzleSettings={() => setShowPuzzleSettings((v) => !v)}
+                    minMistakeCount={minMistakeCount}
+                    onMinMistakeCountChange={handleMinMistakeCountChange}
+                    onApplySettings={handleApplyPuzzleSettings}
+                    username={activeUsername}
                   />
                 </div>
               </div>
@@ -668,6 +642,8 @@ export default function Home() {
             onWeaknessCountChange={setWeaknessCount}
             activeColorFilter={puzzleColorFilter === 'BOTH' ? 'ALL' : puzzleColorFilter}
             onColorFilterChange={(c) => handleColorFilterChange(c === 'ALL' ? 'BOTH' : c)}
+            isAnalysisActive={!!activeUsername && (activeJobStatus?.status === 'QUEUED' || activeJobStatus?.status === 'PROCESSING')}
+            refreshKey={weaknessRefreshKey}
           />
         )}
 
@@ -678,6 +654,7 @@ export default function Home() {
             onDisconnect={handleDisconnect}
             onImportStarted={(user) => handleSetUsername(user)}
             onNavigateTab={(tab) => changeTab(tab)}
+            onJobStatusUpdate={handleJobStatusUpdate}
           />
         )}
 

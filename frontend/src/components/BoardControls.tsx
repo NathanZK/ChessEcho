@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { ChevronLeft, ChevronRight, RotateCcw, Lightbulb } from 'lucide-react';
+import { ChevronLeft, ChevronRight, RotateCcw, Lightbulb, ArrowLeftRight } from 'lucide-react';
 
 interface BoardControlsProps {
   onUndo: () => void;
@@ -13,6 +13,7 @@ interface BoardControlsProps {
   canUndo: boolean;
   canRedo: boolean;
   canHint?: boolean;
+  onFlipBoard?: () => void;
 }
 
 export const BoardControls: React.FC<BoardControlsProps> = ({
@@ -25,6 +26,7 @@ export const BoardControls: React.FC<BoardControlsProps> = ({
   canUndo,
   canRedo,
   canHint = true,
+  onFlipBoard,
 }) => {
   return (
     <div className="flex items-center justify-between gap-2 p-2.5 bg-slate-900 rounded-xl border border-slate-800 shadow-md">
@@ -58,8 +60,19 @@ export const BoardControls: React.FC<BoardControlsProps> = ({
         </button>
       </div>
 
-      {/* Action Controls: Hint, Prev Puzzle & Next Puzzle */}
+      {/* Action Controls: Flip, Hint, Prev Puzzle & Next Puzzle */}
       <div className="flex items-center space-x-2">
+        {onFlipBoard && (
+          <button
+            onClick={onFlipBoard}
+            title="Flip Board (X)"
+            className="flex items-center space-x-1 px-2.5 h-9 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-bold transition border border-slate-700/60 cursor-pointer"
+          >
+            <ArrowLeftRight className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Flip</span>
+          </button>
+        )}
+
         <button
           onClick={onHint}
           disabled={!canHint}
