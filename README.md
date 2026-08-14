@@ -1,693 +1,385 @@
 # ChessEcho ♟️
 
-> Discover the patterns that repeat in your games.
+> Find not just what went wrong in a game — but what keeps going wrong across hundreds of them.
 
-Traditional chess analysis tells you **what went wrong in one game**.
+<!-- DEMO_GIF_PLACEHOLDER -->
 
-**ChessEcho tells you what keeps going wrong across hundreds of games.**
+Traditional chess analysis tools show you every engine blunder across every game separately. ChessEcho takes a different approach: it finds **recurring board positions** where you repeatedly make sub-optimal decisions, analyzes them with Stockfish, and turns the highest-priority patterns into interactive personalized puzzles.
 
-ChessEcho is a personalized chess improvement platform that analyzes a player's game history to discover recurring positions, repeated mistakes, and decision-making patterns.
-
-Traditional chess analysis tools answer:
-
-> "Where did I make a mistake in this game?"
-
-ChessEcho answers:
-
-> "Which situations do I repeatedly reach, and where do I repeatedly make weaker decisions?"
-
-The goal is not to memorize engine moves. The goal is to understand and improve recurring decisions.
-
----
-# Core Idea
-
-A single mistake may be accidental.
-
-A mistake repeated across dozens of games is a pattern.
-
-ChessEcho analyzes a player's complete game history to find those patterns:
-
-
-```text
-Import Games
-      |
-      v
-Replay Games
-      |
-      v
-Find Frequently Reached Positions
-      |
-      v
-Analyze Candidate Positions
-      |
-      v
-Identify Recurring Weaknesses
-      |
-      v
-Generate Personalized Puzzles
-```
+A single mistake may be accidental. A mistake you repeat across fifty games is a habit worth fixing.
 
 ---
 
-## Why This Is Different
+## Why ChessEcho?
 
-Suppose you reach the following middlegame position 27 times over the course of a year.
+Most post-game analysis tools answer: *"What went wrong in this game?"*
 
-Perhaps you choose:
+ChessEcho answers: *"Which positions do I repeatedly reach, and where do I keep making weaker decisions?"*
 
-- Bf5 18 times
-- Nd7 9 times
+The difference matters in practice. Suppose you reach a particular opening position 40 times over a year. You play Bf5 in 30 of those games, losing an average of 1.1 pawns each time. A standard analysis engine would show you 30 separate blunders. ChessEcho recognizes the same recurring decision and presents it as one weakness to fix.
 
-Stockfish may determine that Bf5 consistently loses 1.2 pawns compared to Nd7.
-
-Most chess tools would show this mistake 18 separate times.
-
-ChessEcho recognizes that it is the **same recurring decision** and teaches the position once.
-
-The goal is to fix habits, not games.
+The goal is to change habits, not to memorize engine lines.
 
 ---
 
-# Features (MVP)
+## Features
 
-## Game Import
-
-ChessEcho imports games from Chess.com.
-
-Supported filters:
-
-* Time control
-
-  * Rapid
-  * Classical
-  * Blitz
-  * Bullet
-* Color
-
-  * White
-  * Black
-  * Both
-
-The system avoids duplicate imports.
+- **Chess.com game import** via the public API — no credentials required
+- **Time-control filtering**: Blitz, Rapid, Bullet, Classical (select one or more)
+- **Color filtering**: analyze as White, Black, or Both
+- **Recurring position detection**: each imported game is replayed move-by-move; positions are normalized using four FEN fields (piece placement, side to move, castling rights, en passant)
+- **Stockfish analysis**: qualifying positions (reached 5+ times) are evaluated at depth 16; each historically played move is individually assessed
+- **Recency-weighted weakness ranking**: recent mistakes carry more weight than old ones; positions you consistently struggle with rank higher than one-off blunders
+- **Historical game evidence**: each weakness links to the source games where the mistake occurred
+- **Interactive personalized puzzles**: practice your actual recurring weaknesses on an interactive board; the system recognizes your historical mistake moves and gives targeted feedback
+- **Evaluation bar, hints, undo/redo**: move-by-move evaluation tracking, source-square hint highlighting, and full board navigation
+- **Configurable thresholds**: adjust minimum eval loss, minimum mistake count, and color filter without triggering new Stockfish analysis
 
 ---
 
-## Position Detection
+## Tech Stack
 
-Every imported game is replayed move by move.
-
-ChessEcho identifies unique board positions using their complete chess state.
-
-Two positions are considered identical only if all of the following are the same:
-
-* Piece placement
-* Side to move
-* Castling rights
-* En passant availability
-
-This means positions reached through different move orders (transpositions) are grouped together **only when they are legally identical**.
-
-For example, two positions with identical piece placement but different castling rights are treated as different positions and therefore produce different hashes.
-
-A position becomes a candidate for engine analysis once it has been reached at least a configurable number of times.
-
-Default:
-
-```text
-minimum occurrence threshold = 5
-```
-
-Example:
-
-```text
-Position A
-
-Reached:
-40 times
-
-Moves played:
-
-Bf5 -> 25 times
-Nd7 -> 15 times
-```
-
-
-## Engine Analysis
-
-Candidate positions are analyzed asynchronously in the background using Stockfish.
-
-Each unique position is analyzed at most once per engine configuration.
-
-Subsequent requests reuse the cached engine analysis.
-Example:
-
-```text
-Position Hash: ABC123
-
-Already analyzed?
-
-Yes:
-    Reuse existing analysis
-
-No:
-    Analyze with Stockfish
-```
-
-The system stores raw engine facts:
-
-* Best move
-* Evaluation
-* Alternative acceptable moves
-* Evaluation of historical moves
-
-Derived statistics are calculated from these facts.
+| Layer | Technology |
+|---|---|
+| **Backend** | Kotlin 2.0, Spring Boot 3.3.2 |
+| **Database** | PostgreSQL 16, Flyway |
+| **Chess engine** | Stockfish (subprocess, depth 16) |
+| **Chess library** | kchesslib (PGN parsing, board replay, FEN generation) |
+| **Frontend** | Next.js 16, React 19, TypeScript |
+| **Board UI** | react-chessboard, chess.js |
+| **Styling** | Tailwind CSS 4 |
+| **Backend testing** | JUnit 5, Mockito, H2 |
+| **Frontend testing** | Vitest, Testing Library |
+| **CI** | GitHub Actions |
 
 ---
 
-## Recurring Weakness Detection
+## Getting Started
 
-ChessEcho compares the moves a player historically made against engine analysis.
+### Prerequisites
 
-Example:
+| Tool | Version |
+|---|---|
+| Java | 21 |
+| Node.js | 20 |
+| Docker + Docker Compose | any recent version |
+| Stockfish | system installation (see below) |
 
-```text
-Position:
-Reached 30 times
+### 1. Clone
 
-Stockfish:
-
-Nd7
-Evaluation: +0.4
-
-
-Player history:
-
-Nd7
-Played: 20 times
-Loss: 0.0
-
-Bf5
-Played: 10 times
-Loss: 1.3
+```bash
+git clone https://github.com/<your-username>/ChessEcho.git
+cd ChessEcho
 ```
 
-This position becomes a potential weakness because the player repeatedly chooses a significantly weaker move.
+### 2. Install Stockfish
 
-### Priority Weighting
+Stockfish must be installed separately and available on your system `PATH`.
 
-To ensure that recent, recurring habits surface before stale or one-off mistakes, ChessEcho computes priority using two factors:
-
-1. **Recency time-decay weight** — each mistake is weighted by how recently it occurred:
-   * `weight = max(0.1, 1.0 - (daysSinceGame / 365))`
-   * A mistake made today scores 1.0; one made a year ago scores 0.1.
-
-2. **Mistake rate** — the final priority is multiplied by how often the mistake happens relative to how often the position is reached:
-   * `mistakeRate = mistakeCount / timesReached`
-   * A position reached 75 times with only 1 mistake (1.3%) is far less urgent than one reached 10 times with 8 mistakes (80%).
-
-Full formula:
-
-```text
-priority = sum(evalLoss × weight) × (mistakeCount / timesReached)
+**macOS:**
+```bash
+brew install stockfish
 ```
 
-This ensures that positions where you **consistently** make mistakes rank higher than positions where you had a single bad day.
+**Ubuntu / Debian:**
+```bash
+sudo apt install stockfish
+```
 
-### Filtering One-Off Mistakes (`minMistakeCount`)
+Verify the installation:
+```bash
+stockfish
+# Should print "Stockfish ..." and wait for UCI commands. Press Ctrl+C to exit.
+```
 
-Not all mistakes are habits. A position reached 75 times with a single accidental blunder (1 mistake out of 75 games) is an outlier, not a weakness. 
+### 3. Start the Database
 
-ChessEcho enforces a configurable `minMistakeCount` threshold (default `3`, floor `3`) to filter out one-off blunders so only genuine, repeated opening weaknesses surface for analysis and puzzle training.
+```bash
+make db-up
+```
 
-### Per-Move Breakdowns & Acceptable Moves
+This starts a PostgreSQL 16 container (`chessecho-postgres`) on port `5432` with:
+- Database: `chessecho`
+- User: `chessecho`
+- Password: `chessecho_pass`
 
-For every recurring weakness, ChessEcho calculates:
-- **`bestMove`**: Stockfish's top recommended move.
-- **`acceptableMoves`**: Alternative candidate moves with evaluation loss below `acceptableThreshold` (default `0.3` pawns).
-- **`movesPlayed`**: Top 3 mistake moves played by the user (`averageLoss >= minEvalLoss`), sorted by `timesPlayed` descending, then `averageLoss` descending.
+Data is persisted in a named Docker volume (`postgres_data`).
 
-### Game URLs
+### 4. Start the Backend
 
-When returning weaknesses, ChessEcho limits the payload to the **10 most recent distinct game URLs** where the mistake occurred. The platform handles proper link generation (for Chess.com and Lichess) so users can immediately review their historical games in the browser.
+**Option A — Docker (recommended)**
+
+```bash
+make app-build   # builds the Docker image
+make app-up      # starts the application container on port 8080
+```
+
+Or start both database and application together:
+
+```bash
+make up
+```
+
+**Option B — Run locally with Gradle**
+
+```bash
+SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5432/chessecho \
+SPRING_DATASOURCE_USERNAME=chessecho \
+SPRING_DATASOURCE_PASSWORD=chessecho_pass \
+./gradlew bootRun
+```
+
+> **Note:** The default `SPRING_DATASOURCE_URL` in `application.yml` points to `postgres:5432` (the Docker Compose hostname). When running the backend outside Docker, you must override the URL to `localhost:5432` as shown above.
+
+The backend starts on **http://localhost:8080**.
+Swagger UI is available at **http://localhost:8080/swagger-ui.html**.
+
+### 5. Start the Frontend
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
+The frontend starts on **http://localhost:3000**.
+
+By default, the frontend calls `http://localhost:8080/api`. To point it at a different backend, set:
+```bash
+NEXT_PUBLIC_API_URL=http://your-backend-host/api npm run dev
+```
+
+### Stop Everything
+
+```bash
+make down
+```
 
 ---
 
-## Configurable Evaluation Threshold
+## How It Works
 
-Different players care about different levels of mistakes.
-
-ChessEcho allows the evaluation-loss threshold to be configured.
-
-Examples:
-
-Beginner:
-
-```text
-Ignore losses below 0.8 pawns
+```
+Import Chess.com games
+        ↓
+Replay each game move-by-move (kchesslib)
+        ↓
+Identify unique board positions (4-field FEN hash)
+        ↓
+Count per-user occurrences of each position
+        ↓
+Positions reached 5+ times → Stockfish analysis candidates
+        ↓
+Stockfish evaluates position baseline + each historically played move
+        ↓
+Compare historical moves against engine evaluation → compute eval loss
+        ↓
+Aggregate by user: mistakeCount, averageLoss, recency-weighted priority
+        ↓
+Rank recurring weaknesses and serve as personalized puzzles
 ```
 
-Advanced player:
+### Why Recurring Positions?
 
-```text
-Ignore losses below 0.2 pawns
-```
+Rather than collecting every individual engine blunder, ChessEcho focuses on positions you reach repeatedly. A single bad move in a game you will never see again is not worth drilling. A bad habit you repeat across 20 games is worth treating.
 
-Changing this setting does not require new Stockfish analysis.
+Filtering by recurrence means ChessEcho surfaces decisions you will likely encounter again — and gives you the opportunity to change the outcome.
+
+### How Position Identity Is Defined
+
+Two positions are considered identical only when all four of the following match:
+
+- **Piece placement** — where every piece is on the board
+- **Side to move** — whose turn it is
+- **Castling rights** — which castling options remain available
+- **En passant availability** — whether an en passant capture is currently legal
+
+Move-order transpositions that produce legally identical positions are grouped together. Positions with the same piece placement but different castling rights are treated as distinct.
 
 ---
 
-## Personalized Puzzles
-
-ChessEcho creates puzzles from positions where the player historically struggled.
-
-The goal is not:
-
-> "Find the one exact Stockfish move."
-
-Instead:
-
-> "Find a strong move that avoids your recurring mistake."
-
-Multiple moves can be accepted when they are within the acceptable evaluation range (`acceptableMoves`). Furthermore, `movesPlayed` allows the frontend to give targeted hints if the player makes their historical mistake again (e.g., *"You played Qc7 in 3 past games—try trading queens with Qb6 instead!"*).
-
----
-
-## Real-World Progress Tracking
-
-Progress in ChessEcho is measured by **real-world live game performance**, not artificial puzzle scores.
-
-As new games are imported and analyzed:
-1. When a player encounters an opening weakness in a live game and plays the correct move (e.g. `Qb6` instead of `Qc7`), `timesReached` increases while `mistakeCount` stays constant.
-2. The mistake rate (`mistakeCount / timesReached`) drops, and time-decay lowers the weight of older blunders.
-3. The position's priority score automatically decreases until it is permanently resolved and cured in real games.
-
-# Architecture
-
-```text
-                      +--------------------------------------+
-                      |      Kotlin + Spring Boot            |
-                      |--------------------------------------|
-                      | REST API                             |
-                      | Chess.com Integration                |
-                      | Game Import                          |
-                      | Background Analysis Jobs             |
-                      | Position Detection                   |
-                      | Weakness Calculation                 |
-                      | Puzzle Generation                    |
-                      | Stockfish Integration                |
-                      | kchesslib                            |
-                      +----------------+---------------------+
-                                       |
-                    +------------------+------------------+
-                    |                                     |
-                    v                                     v
-               PostgreSQL                           Stockfish
-```
-
-## Data Flow & Architecture Pipeline
-
-The following architecture diagram illustrates how ChessEcho ingests raw games, extracts position occurrences, enforces candidate qualification thresholds, triggers Stockfish evaluations, aggregates weaknesses, and serves personalized practice puzzles to the frontend:
+## Architecture
 
 ![ChessEcho Architecture and Data Flow Pipeline](docs/assets/architecture-data-flow.svg)
 
-### Core Domain Model Entities
+### Components
 
-To maintain performance and architectural clarity, ChessEcho cleanly separates positions, encounters, and reach statistics:
+**Next.js frontend** — a single-page application with three tabs: Import Games, Weaknesses Library, and Practice Puzzles. Tab state and username are persisted via `localStorage` and the URL hash.
 
-1. **`Position`**: Represents a legally unique board state (piece placement, side to move, castling rights, en passant). Positions are shared globally and deduplicated via FEN hash.
-2. **`PositionOccurrence`**: Represents an individual player encounter with a position in a specific game, capturing `chessAccount`, `playerColor`, `movePlayed`, and `moveNumber`.
-3. **`UserPositionStats`**: Stores aggregated reach counts (`timesReached`) per user account, position, and player color. Uniqueness is enforced by a database constraint on `(chess_account_id, position_id, player_color)`.
+**Kotlin/Spring Boot backend** — handles game import (via Chess.com's public API), PGN parsing, position detection, engine analysis orchestration, weakness calculation, and puzzle serving. Runs on port 8080.
 
-> [!IMPORTANT]
-> **Candidate Occurrence Invariant**
-> A position becomes an analysis candidate for Stockfish engine evaluation **if and only if** the same user account has reached that position at least 5 times while playing the same player color:
-> $$\text{same account} + \text{same position} + \text{same player color} \implies \text{timesReached} \ge 5$$
-> - Occurrences are **not** combined globally across different users.
-> - Occurrences are **not** combined across White and Black games for the same user.
-> 
-> Engine analysis candidate filtering happens **before** calling Stockfish, ensuring engine resources are spent strictly on recurring player positions.
+**PostgreSQL** — stores users, chess accounts, imported games, board positions, position occurrences, engine analysis results, and import job state. Schema is managed by Flyway with a single migration.
 
-### Pipeline Workflow
+**Asynchronous import job** — when a game import is started, the backend creates a job record and executes the full pipeline asynchronously. Stockfish analysis runs inside the same job. The frontend polls for job status every two seconds.
 
-1. **Game Ingestion**: `GameImportService` fetches games from Chess.com, replays PGN move sequences, creates `Position` and `PositionOccurrence` records, and updates `UserPositionStats`.
-2. **Candidate Selection & Engine Analysis**: `EngineAnalysisOrchestrator` queries `PositionRepository.findQualifyingPositions` (`ups.timesReached >= 5`). Qualified positions are dispatched to `StockfishService`, which executes Stockfish and stores `EngineAnalysis` and `MoveEvaluation` records.
-3. **Weakness Aggregation**: `WeaknessCalculationService` queries `PositionOccurrenceRepository.findWeaknessAggregations` (`HAVING COUNT(po.id) >= 5`), filtering by requesting user and player color, and computes average loss, mistake frequency, time-decay priority, and acceptable alternative moves.
-4. **API & Frontend Presentation**: The REST API exposes `GET /api/positions/weaknesses` (consumed by the Weakness Library) and `GET /api/puzzles` (consumed by the Practice Puzzles view). The frontend renders interactive board components using standard DTOs returned by the backend.
+**Stockfish analysis** — qualifying positions are analyzed by spawning Stockfish as a subprocess. The baseline position evaluation and the evaluation of each historically played move are stored. Analysis runs at depth 16.
 
----
+**Global engine-analysis reuse** — engine analysis is stored at the position level, not the user level. If two different users have both reached the same position, Stockfish only runs once and results are shared.
 
-### Kotlin + Spring Boot
+**On-demand weakness calculation** — weakness ranking is computed per request by joining position occurrences, engine analysis, and per-move evaluations. There is no precomputed materialized view.
 
-Spring Boot is the primary application framework.
+### Domain Model
 
-Responsibilities:
+```
+ChessAccount
+    │
+    │ (via Game)
+    ▼
+PositionOccurrence ──── Position ──── EngineAnalysis
+                                           │
+                                      MoveEvaluation
 
-* REST API
-* User management
-* Chess.com integration
-* Game import
-* Position detection
-* Background analysis jobs
-* Weakness calculation
-* Puzzle generation
-* Stockfish integration
-
----
-
-## Database
-
-### PostgreSQL
-
-Stores:
-
-* Users
-* Chess accounts
-* Games
-* Positions
-* Position occurrences
-* Engine analysis
-* Puzzle history
-
----
-
-## Chess Library
-
-### kchesslib
-
-Used for:
-
-* PGN parsing
-* Move replay
-* Board state reconstruction
-* FEN generation
-* Position hashing
-* Legal move validation
-
----
-
-## Chess Engine
-
-### Stockfish
-
-Used for:
-
-* Position evaluation
-* Best move calculation
-* Alternative move discovery
-
-Engine analysis is cached globally so that a position is analyzed only once and reused across all users.
-
----
-
-## Infrastructure
-
-### Docker
-
-ChessEcho uses Docker to provide consistent local development and deployment environments.
-
-The MVP deployment consists of:
-
-* Spring Boot application
-* PostgreSQL database
-
-Stockfish is bundled with the application and invoked directly during analysis.
-
-No separate analysis worker or message broker is required for the MVP.
-
-
-# Domain Model
-
-
-
-```text
-                 User
-                   │
-                   │
-                   ▼
-             ChessAccount
-                   │
-                   │
-                   ▼
-                 Game
-                   │
-          replay move-by-move
-                   │
-                   ▼
-         PositionOccurrence
-                   │
-                   ▼
-              Position
-                   │
-                   ▼
-           EngineAnalysis
+UserPositionStats   (aggregated reach counts per account/position/color)
 ```
 
 ---
 
-# Entities
+## How Weakness Detection Works
 
-## User
+1. **Every imported game is replayed move-by-move.** For each move the target player makes, a record is created linking the player's account, the board position, the move played, and the source game.
 
-Represents a ChessEcho user.
+2. **Positions are normalized to a 4-field FEN hash** (SHA-256 of piece placement + side to move + castling rights + en passant). Transpositions producing legally identical states are grouped.
 
-Contains:
+3. **Occurrence counts are tracked per account and per color separately.** A position reached 4 times as White and 4 times as Black produces 4 White occurrences and 4 Black occurrences — not 8 combined.
 
-* User account data
-* Connected chess accounts
+4. **Positions reaching the occurrence threshold become Stockfish analysis candidates.** The default threshold is 5. Stockfish evaluates the baseline position and every historical move played from it.
 
----
+5. **Eval loss is computed per move.** For each historical move, the difference between the engine's best-move evaluation and the evaluation of the move actually played is stored in pawns.
 
-## ChessAccount
+6. **Weaknesses are aggregated and ranked.** A weakness surfaces when, for a given account and position, the number of qualifying mistakes meets `minMistakeCount`. Priority is weighted by recency:
 
-Represents an external chess platform account.
+   ```
+   weight   = max(0.1, 1.0 − (daysSinceGame / 365))
+   priority = sum(evalLoss × weight) × (mistakeCount / timesReached)
+   ```
 
-Contains:
+   A mistake made this week weighs more than one made a year ago. Positions you consistently struggle with rank higher than positions where you had one bad day.
 
-* Platform
-* Username
-* Synchronization status
+### Important Limitation: Exact Position Matching
 
----
+ChessEcho currently works with **exact recurring positions**. It identifies games where the identical board state was reached, not games that share a broader strategic theme.
 
-## Game
+It does not currently recognize abstract patterns such as:
+- *"You frequently push pawns in front of your castled king"*
+- *"You tend to exchange your fianchettoed bishop too early"*
 
-Represents an imported chess game.
-
-Contains:
-
-* Players
-* Result
-* Time control
-* PGN
-* Date
+These are future research directions. The current system identifies concrete, frequently occurring board states where the player's historical move choices are demonstrably weaker than the engine's recommendation.
 
 ---
 
-## Position
+## Current Status
 
-Represents a unique board state.
+ChessEcho is a **functional MVP**. The core pipeline works end-to-end:
 
-Contains:
-
-* Position hash
-* FEN representation
-
-The position hash is derived from the complete chess state, including:
-
-- Piece placement
-- Side to move
-- Castling rights
-- En passant availability
-
-Engine analysis is cached globally and reused across users.
+**Import → Engine Analysis → Weakness Detection → Personalized Puzzle Practice**
 
 ---
 
-## PositionOccurrence
+An important finding from testing the system:
 
-Represents a specific time a user reached a position.
+> **Engine evaluation loss does not always correspond to a genuine player weakness.** Intentional opening experiments, unusual repertoire choices, or positions where the engine's preferred move is objectively correct but rarely played at the human level can all surface as apparent weaknesses. The weakness ranking reflects objective evaluation loss, not a judgment about whether a move was actually a mistake in context.
 
-Contains:
-
-* User
-* Game
-* Position
-* Ply number
-* Move played
-* Player color
+This is a known open problem in the design — not a bug — and is an active area of improvement. The configurable `minEvalLoss` and `minMistakeCount` thresholds provide partial control but cannot fully eliminate false positives.
 
 ---
 
-## EngineAnalysis
+## Known Limitations
 
-Represents Stockfish analysis of a position.
-
-Shared globally.
-
-Contains:
-
-* Best move
-* Evaluation
-* Acceptable moves
-* Evaluation loss of alternatives
+- **No authentication.** Any Chess.com username can be imported. This is appropriate for local and demo use, not for a public multi-user deployment.
+- **Chess.com only.** Lichess is not currently implemented.
+- **Engine analysis can take several minutes for large histories.** A player with thousands of games may have many qualifying positions, each requiring individual analysis.
+- **Stockfish runs sequentially as a subprocess.** A new process is spawned per position analysis. There is no persistent engine connection or analysis pool. This is the primary performance bottleneck for large imports.
+- **Exact position matching only.** Weaknesses are identified from identical recurring board states, not from generalized chess concepts or strategic patterns.
+- **Intentional or unusual opening choices can produce false positives.** Evaluation loss does not always mean a recurring mistake by human standards.
+- **No opening name classification.** Weakness positions are not currently labeled with ECO codes or opening names.
+- **No explicit progress-tracking UI.** As new games are imported, weakness scores update automatically. There is no dedicated dashboard showing how a weakness has evolved over time.
 
 ---
 
-# API Overview
+## Running Tests
 
-## Import Games
+### Backend
 
+```bash
+./gradlew test          # run all tests
+./gradlew ktlintCheck   # lint
+./gradlew ktlintFormat  # auto-format
+```
+
+Backend tests use H2 in-memory and require neither PostgreSQL nor Stockfish. The suite includes:
+- Unit tests for position parsing, weakness calculation, engine analysis orchestration, and priority ranking
+- Integration tests covering the full game import pipeline with a mocked Chess.com HTTP client
+
+### Frontend
+
+```bash
+cd frontend
+npm run test           # vitest run
+npx tsc --noEmit       # type-check
+npm run lint           # eslint
+npm run build          # production build
+```
+
+---
+
+## API Overview
+
+Full API details are documented in [`API_CONTRACT.md`](./API_CONTRACT.md). A Swagger UI is available at **http://localhost:8080/swagger-ui.html** when the backend is running.
+
+**Start a game import**
 ```http
 POST /api/games/import
 ```
-
-Starts an asynchronous import job.
-
----
-
-## Job Status
-
-```http
-GET /api/jobs/{id}
-```
-
-Returns:
-
-* QUEUED
-* PROCESSING
-* COMPLETED
-* FAILED
-
----
-
-## Get Weaknesses
-
-```http
-GET /api/positions/weaknesses?platform=CHESS_COM&username=NathanZele&playerColor=black&minEvalLoss=0.8&acceptableThreshold=0.3&minMistakeCount=3
-```
-
-Returns ranked recurring weaknesses for the player.
-
-Query Parameters:
-- `platform`: `CHESS_COM` or `LICHESS` (required)
-- `username`: Account username (required)
-- `playerColor`: `WHITE` or `BLACK` (required)
-- `minEvalLoss`: Minimum average pawn loss threshold (default `0.8`)
-- `acceptableThreshold`: Engine candidate move loss threshold (default `0.3`)
-- `minMistakeCount`: Minimum blunder occurrences filter (default `3`, floor `3`)
-
-Example Response:
-
 ```json
-[
-  {
-    "positionId": "8cf3ce9c-1081-4d66-8112-96ed82cc8b9b",
-    "fen": "rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq d3 0 1",
-    "timesReached": 175,
-    "mistakeCount": 19,
-    "mistakeRate": 10.86,
-    "averageLoss": 1.03,
-    "priority": 1.39,
-    "bestMove": "Nf6",
-    "acceptableMoves": [
-      { "move": "d5", "evalLoss": 0.0 },
-      { "move": "Nf6", "evalLoss": 0.0 }
-    ],
-    "movesPlayed": [
-      { "move": "e5", "timesPlayed": 18, "averageLoss": 1.04 }
-    ],
-    "gameUrls": [
-      "https://www.chess.com/game/live/3787250756"
-    ]
-  }
-]
+{
+  "username": "YourChessComUsername",
+  "platform": "CHESS_COM",
+  "timeControls": ["BLITZ", "RAPID"],
+  "playerColor": "BOTH",
+  "fromDate": "2024-01",
+  "toDate": "2025-12"
+}
 ```
+Returns `202 Accepted` with a `jobId`. Returns `409 Conflict` if an import is already in progress for this account.
 
----
-
-## Get Puzzles (Paginated)
-
+**Poll import job status**
 ```http
-GET /api/puzzles?platform=CHESS_COM&username=NathanZele&playerColor=black&limit=5&page=0
+GET /api/jobs/{jobId}
+```
+Returns `QUEUED`, `PROCESSING`, `COMPLETED`, or `FAILED` with counts of games imported and skipped.
+
+**Get recurring weaknesses**
+```http
+GET /api/positions/weaknesses?platform=CHESS_COM&username=YourUsername&playerColor=BOTH&minEvalLoss=0.8&minMistakeCount=3&page=0&size=20
 ```
 
-Returns a paginated list of personalized puzzles generated from recurring weaknesses.
+| Parameter | Default | Description |
+|---|---|---|
+| `platform` | required | `CHESS_COM` |
+| `username` | required | Chess.com username |
+| `playerColor` | required | `WHITE`, `BLACK`, or `BOTH` |
+| `minEvalLoss` | `0.8` | Minimum pawn loss to count a move as a mistake |
+| `minMistakeCount` | `3` | Minimum qualifying mistakes; can be set as low as 1 |
+| `page` / `size` | `0` / `20` | Pagination |
 
-Query Parameters:
-- `platform`, `username`, `playerColor`: Required account filters
-- `minEvalLoss`, `acceptableThreshold`, `minMistakeCount`: Optional threshold filters
-- `limit`: Number of puzzles per batch (default `5`)
-- `page`: Page index (0-indexed, default `0`)
+**Get personalized puzzles**
+```http
+GET /api/puzzles?platform=CHESS_COM&username=YourUsername&playerColor=BOTH&minEvalLoss=0.8&minMistakeCount=3&limit=10&page=0
+```
 
-Example Response:
-
-```json
-[
-  {
-    "puzzleId": "8cf3ce9c-1081-4d66-8112-96ed82cc8b9b",
-    "fen": "rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq d3 0 1",
-    "playerColor": "BLACK",
-    "targetMove": "Nf6",
-    "acceptableMoves": [
-      { "move": "d5", "evalLoss": 0.0 },
-      { "move": "Nf6", "evalLoss": 0.0 }
-    ],
-    "movesPlayed": [
-      { "move": "e5", "timesPlayed": 18, "averageLoss": 1.04 }
-    ],
-    "priority": 1.39,
-    "timesReached": 175,
-    "mistakeCount": 19,
-    "mistakeRate": 10.86
-  }
-]
+**Get imported games**
+```http
+GET /api/games?platform=CHESS_COM&username=YourUsername&page=0&size=20
 ```
 
 ---
 
-# Design Principles
+## Design Principles
 
-## Analyze Patterns, Not Individual Games
+**Analyze patterns, not individual games.** A single mistake is noise. A mistake repeated across dozens of games reveals a habit.
 
-A single mistake is noise.
+**Separate chess knowledge from player behavior.** Stockfish evaluation is objective and shared globally. Player weaknesses are personal and computed per account.
 
-Repeated mistakes reveal habits.
+**Store facts, compute insights.** The system stores raw positions, moves, and engine evaluations. Derived statistics — priority, weakness ranking, acceptable alternatives — are computed from those facts on request.
 
----
-
-## Separate Chess Knowledge From Player Behavior
-
-Engine analysis is universal.
-
-Player weaknesses are personal.
-
-Therefore:
-
-* Engine analysis is cached and shared.
-* Player history remains user-specific.
-
----
-
-## Store Facts, Compute Insights
-
-The system stores raw information:
-
-* Positions
-* Moves
-* Evaluations
-
-Higher-level concepts such as:
-
-* Priority
-* Weakness ranking
-* Difficulty
-
-are computed from stored facts.
-
----
-
-## Improve Understanding, Not Engine Imitation
-
-ChessEcho is not designed to make players memorize engine moves.
-
-It is designed to help players recognize recurring situations and make stronger decisions.
+**Improve decisions, not engine imitation.** The goal is not to memorize engine moves. The goal is to recognize recurring situations and make stronger decisions from them.
