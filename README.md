@@ -2,7 +2,7 @@
 
 > Find not just what went wrong in a game — but what keeps going wrong across hundreds of them.
 
-<!-- DEMO_GIF_PLACEHOLDER -->
+![ChessEcho demo](docs/assets/chessEcho_demo.gif)
 
 Traditional chess analysis tools show you every engine blunder across every game separately. ChessEcho takes a different approach: it finds **recurring board positions** where you repeatedly make sub-optimal decisions, analyzes them with Stockfish, and turns the highest-priority patterns into interactive personalized puzzles.
 
