@@ -1,5 +1,6 @@
 package com.chessecho.config
 
+import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.scheduling.annotation.EnableAsync
@@ -9,9 +10,13 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer
 
 @Configuration
 @EnableAsync
+@EnableConfigurationProperties(ChessPubApiProperties::class)
 class AppConfig {
     @Bean
-    fun restClient(): RestClient = RestClient.create()
+    fun restClientBuilder(): RestClient.Builder = RestClient.builder()
+
+    @Bean
+    fun restClient(builder: RestClient.Builder): RestClient = builder.build()
 
     @Bean
     fun corsConfigurer(

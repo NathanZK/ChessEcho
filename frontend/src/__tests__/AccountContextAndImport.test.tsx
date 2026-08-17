@@ -491,7 +491,51 @@ describe('Account Context and Import Games MVP Behavior', () => {
 
       vi.useRealTimers();
     });
+
+    it('clears stale activeJob from localStorage, stops polling, and displays a message when pollJobStatus returns 404', async () => {
+      vi.useFakeTimers();
+
+      vi.mocked(api.pollJobStatus).mockRejectedValue(new Error('Failed to poll job status: 404'));
+
+      const staleJob = {
+        jobId: 'stale-job-999',
+        status: 'PROCESSING' as const,
+        gamesImported: 0,
+        gamesSkipped: 0,
+      };
+      localStorage.setItem('chessecho_username', 'player1');
+      localStorage.setItem('chessecho_active_job', JSON.stringify(staleJob));
+
+      const onJobStatusUpdateMock = vi.fn();
+
+      render(
+        <ImportGamesView
+          connectedUsername="player1"
+          onJobStatusUpdate={onJobStatusUpdateMock}
+        />
+      );
+
+      // Advance timers to trigger polling
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+
+      // Assert active job was cleared from localStorage and state
+      expect(localStorage.getItem('chessecho_active_job')).toBeNull();
+      expect(onJobStatusUpdateMock).toHaveBeenCalledWith(null);
+      expect(screen.getByText(/Previous import job is no longer available/i)).toBeInTheDocument();
+
+      // Advance timers further to ensure polling stopped
+      const pollCount = vi.mocked(api.pollJobStatus).mock.calls.length;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4000);
+      });
+      expect(vi.mocked(api.pollJobStatus).mock.calls.length).toBe(pollCount);
+
+      vi.useRealTimers();
+    });
   });
+
 
   describe('5. Puzzles and Weaknesses Username Usage & Fallback Behavior', () => {
     it('shows empty state when no active username exists and does not fetch with hardcoded defaults', async () => {

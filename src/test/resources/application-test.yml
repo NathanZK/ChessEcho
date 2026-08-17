@@ -9,3 +9,13 @@ spring:
       ddl-auto: create-drop
   flyway:
     enabled: false
+
+chess:
+  pubapi:
+    user-agent-username: test-operator
+    contact: test-operator@example.com
+    delay-ms: 0
+    max-retries: 3
+    initial-backoff-ms: 10
+    max-backoff-ms: 50
+

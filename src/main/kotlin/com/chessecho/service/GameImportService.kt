@@ -4,6 +4,7 @@ import com.chessecho.domain.AppUser
 import com.chessecho.domain.AsyncJob
 import com.chessecho.domain.ChessAccount
 import com.chessecho.domain.Game
+import com.chessecho.domain.ImportedArchive
 import com.chessecho.domain.Platform
 import com.chessecho.domain.PlayerColor
 import com.chessecho.domain.TimeControl
@@ -13,15 +14,17 @@ import com.chessecho.repository.AppUserRepository
 import com.chessecho.repository.AsyncJobRepository
 import com.chessecho.repository.ChessAccountRepository
 import com.chessecho.repository.GameRepository
+import com.chessecho.repository.ImportedArchiveRepository
 import com.chessecho.repository.PositionOccurrenceRepository
 import com.chessecho.repository.PositionRepository
 import com.chessecho.repository.UserPositionStatsRepository
 import org.slf4j.LoggerFactory
 import org.springframework.scheduling.annotation.Async
 import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Transactional
-import org.springframework.web.client.RestClient
+import org.springframework.transaction.support.TransactionTemplate
 import java.time.Instant
+import java.time.YearMonth
+import java.time.ZoneOffset
 import java.util.UUID
 
 @Service
@@ -30,12 +33,14 @@ class GameImportService(
     private val appUserRepository: AppUserRepository,
     private val chessAccountRepository: ChessAccountRepository,
     private val gameRepository: GameRepository,
-    private val restClient: RestClient,
+    private val importedArchiveRepository: ImportedArchiveRepository,
+    private val chessComClient: ChessComClient,
     private val gameParserService: GameParserService,
     private val userPositionStatsRepository: UserPositionStatsRepository,
     private val positionOccurrenceRepository: PositionOccurrenceRepository,
     private val positionRepository: PositionRepository,
     private val engineAnalysisOrchestrator: EngineAnalysisOrchestrator,
+    private val transactionTemplate: TransactionTemplate,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -47,31 +52,35 @@ class GameImportService(
      * Creates a new QUEUED import job for the specified user and platform.
      * Throws ActiveImportJobException if an active job already exists.
      */
-    @Transactional
     fun createImportJob(request: ImportGamesRequest): AsyncJob {
-        asyncJobRepository.findByUsernameAndStatusIn(request.username, ACTIVE_STATUSES)
-            ?.let {
-                throw ActiveImportJobException(
-                    "An active import job already exists for username '${request.username}' (jobId=${it.id})",
-                )
-            }
+        return transactionTemplate.execute {
+            asyncJobRepository.findByUsernameAndStatusIn(request.username, ACTIVE_STATUSES)
+                ?.let {
+                    throw ActiveImportJobException(
+                        "An active import job already exists for username '${request.username}' (jobId=${it.id})",
+                    )
+                }
 
-        val job =
-            AsyncJob(
-                username = request.username,
-                platform = request.platform.name,
-                status = "QUEUED",
-            )
-        return asyncJobRepository.save(job)
+            val job =
+                AsyncJob(
+                    username = request.username,
+                    platform = request.platform.name,
+                    status = "QUEUED",
+                )
+            asyncJobRepository.save(job)
+        }!!
     }
 
     /**
-     * Asynchronously executes a game import job by ID. Loads the AsyncJob within the transaction,
-     * fetches games from the external platform, parses positions, updates UserPositionStats,
+     * Asynchronously executes a game import job by ID.
+     * Loads the AsyncJob, fetches archive index, filters out completed past archives,
+     * fetches unimported past months + current month, parses positions, updates UserPositionStats,
      * and triggers engine analysis orchestration for affected positions.
+     *
+     * Transaction boundaries are explicitly managed via TransactionTemplate around database operations,
+     * ensuring no database transaction remains open during external HTTP calls to Chess.com.
      */
     @Async
-    @Transactional
     fun executeImportJob(
         jobId: UUID,
         request: ImportGamesRequest,
@@ -84,35 +93,66 @@ class GameImportService(
         updateJobStatus(job, "PROCESSING")
 
         try {
-            // Ensure we have a user account to attach these games to
             val account = getOrCreateAccount(request.username, request.platform)
-
             val archiveUrls = fetchArchiveUrls(request.username, request.fromDate, request.toDate)
+
+            val alreadyImportedArchives =
+                transactionTemplate.execute {
+                    importedArchiveRepository.findByChessAccount(account)
+                        .associateBy { it.archiveUrl }
+                } ?: emptyMap()
+
+            val currentYearMonth = YearMonth.now(ZoneOffset.UTC).toString()
+
             var imported = 0
             var skipped = 0
             val allAffectedPositionIds = mutableSetOf<UUID>()
 
             for (archiveUrl in archiveUrls) {
-                val res = importMonth(account, archiveUrl, request)
+                val parts = archiveUrl.split("/")
+                val yearMonth =
+                    if (parts.size >= 2) "${parts[parts.size - 2]}-${parts[parts.size - 1]}" else ""
+                val isPastMonth = yearMonth.isNotEmpty() && yearMonth < currentYearMonth
+
+                val importedArchive = alreadyImportedArchives[archiveUrl]
+                if (isPastMonth && importedArchive != null) {
+                    log.info(
+                        "Archive {} ({}) already imported for user {} (contains {} games), skipping HTTP download.",
+                        archiveUrl,
+                        yearMonth,
+                        request.username,
+                        importedArchive.gameCount,
+                    )
+                    skipped += importedArchive.gameCount
+                    continue
+                }
+
+                val res = importMonth(account, archiveUrl, yearMonth, isPastMonth, request)
                 imported += res.imported
                 skipped += res.skipped
                 allAffectedPositionIds.addAll(res.affectedPositionIds)
             }
 
-            // Update UserPositionStats after all games are imported
             updateUserPositionStats(account, allAffectedPositionIds)
-
-            // Trigger engine analysis orchestrator for affected positions
             engineAnalysisOrchestrator.analyzeAffectedPositions(allAffectedPositionIds)
 
-            job.gamesImported = imported
-            job.gamesSkipped = skipped
-            updateJobStatus(job, "COMPLETED")
-            log.info("Import job {} completed: {} imported, {} skipped (already in DB)", job.id, imported, skipped)
+            transactionTemplate.executeWithoutResult {
+                job.gamesImported = imported
+                job.gamesSkipped = skipped
+                updateJobStatus(job, "COMPLETED")
+            }
+            log.info(
+                "Import job {} completed: {} imported, {} already imported / skipped",
+                job.id,
+                imported,
+                skipped,
+            )
         } catch (ex: Exception) {
             log.error("Import job ${job.id} failed", ex)
-            job.errorMessage = ex.message
-            updateJobStatus(job, "FAILED")
+            transactionTemplate.executeWithoutResult {
+                job.errorMessage = ex.message
+                updateJobStatus(job, "FAILED")
+            }
         }
     }
 
@@ -129,20 +169,20 @@ class GameImportService(
         username: String,
         platform: Platform,
     ): ChessAccount {
-        chessAccountRepository.findByPlatformAndUsernameIgnoreCase(platform.name, username)?.let { return it }
+        return transactionTemplate.execute {
+            chessAccountRepository.findByPlatformAndUsernameIgnoreCase(platform.name, username)?.let { return@execute it }
 
-        // We don't have authentication yet, so we generate a dummy AppUser based on the username
-        // to satisfy the foreign key constraint.
-        val dummyEmail = "$username@placeholder.chessecho.com"
-        val user = appUserRepository.findByEmail(dummyEmail) ?: appUserRepository.save(AppUser(email = dummyEmail))
+            val dummyEmail = "$username@placeholder.chessecho.com"
+            val user = appUserRepository.findByEmail(dummyEmail) ?: appUserRepository.save(AppUser(email = dummyEmail))
 
-        return chessAccountRepository.save(
-            ChessAccount(
-                user = user,
-                platform = platform.name,
-                username = username,
-            ),
-        )
+            chessAccountRepository.save(
+                ChessAccount(
+                    user = user,
+                    platform = platform.name,
+                    username = username,
+                ),
+            )
+        }!!
     }
 
     private data class ImportMonthResult(
@@ -154,35 +194,22 @@ class GameImportService(
     private fun importMonth(
         account: ChessAccount,
         archiveUrl: String,
+        yearMonth: String,
+        isPastMonth: Boolean,
         request: ImportGamesRequest,
     ): ImportMonthResult {
         val username = request.username
         log.debug("Fetching games from $archiveUrl")
 
-        @Suppress("UNCHECKED_CAST")
-        val response =
-            try {
-                restClient.get()
-                    .uri(archiveUrl)
-                    .retrieve()
-                    .body(Map::class.java) as? Map<String, Any>
-            } catch (ex: org.springframework.web.client.HttpClientErrorException.NotFound) {
-                log.warn("Archive URL returned 404 Not Found, skipping: $archiveUrl")
-                null
-            } catch (ex: org.springframework.web.client.RestClientResponseException) {
-                if (ex.statusCode.value() == 404) {
-                    log.warn("Archive URL returned 404 Not Found, skipping: $archiveUrl")
-                    null
-                } else {
-                    throw ex
-                }
-            } ?: return ImportMonthResult(0, 0, emptySet())
-
-        @Suppress("UNCHECKED_CAST")
-        val games = response["games"] as? List<Map<String, Any>> ?: return ImportMonthResult(0, 0, emptySet())
+        // External HTTP request executed outside any DB transaction
+        val games = chessComClient.fetchMonthlyGames(archiveUrl) ?: return ImportMonthResult(0, 0, emptySet())
 
         val allUrls = games.mapNotNull { it["url"] as? String }
-        val existingUrls = gameRepository.findPlatformGameIdsByChessAccountAndPlatformGameIdIn(account, allUrls).toSet()
+        val existingUrls =
+            transactionTemplate.execute {
+                gameRepository.findPlatformGameIdsByChessAccountAndPlatformGameIdIn(account, allUrls).toSet()
+            } ?: emptySet()
+
         val seenBatchUrls = mutableSetOf<String>()
         val gamesToSave = mutableListOf<Game>()
 
@@ -218,9 +245,8 @@ class GameImportService(
                 continue
             }
 
-            // Parse game details
             val pgn = game["pgn"] as? String
-            val url = game["url"] as? String // Use URL as unique game ID
+            val url = game["url"] as? String
             if (pgn == null || url == null) {
                 continue
             }
@@ -248,26 +274,47 @@ class GameImportService(
             gamesToSave.add(gameEntity)
         }
 
-        if (gamesToSave.isNotEmpty()) {
-            val savedGames = gameRepository.saveAll(gamesToSave)
-            val affectedPositionIds = gameParserService.parseAndSavePositions(savedGames)
-            return ImportMonthResult(
-                gamesToSave.size,
-                skipped,
-                affectedPositionIds,
-            )
+        val affectedPositionIds =
+            if (gamesToSave.isNotEmpty()) {
+                val ids =
+                    transactionTemplate.execute {
+                        val savedGames = gameRepository.saveAll(gamesToSave)
+                        gameParserService.parseAndSavePositions(savedGames)
+                    } ?: emptySet()
+                if (ids.isNotEmpty()) {
+                    updateUserPositionStats(account, ids)
+                }
+                ids
+            } else {
+                emptySet()
+            }
+
+        // Only mark past months as permanently imported after games, positions, and position stats are successfully saved
+        if (isPastMonth) {
+            transactionTemplate.executeWithoutResult {
+                if (!importedArchiveRepository.existsByChessAccountAndArchiveUrl(account, archiveUrl)) {
+                    importedArchiveRepository.save(
+                        ImportedArchive(
+                            chessAccount = account,
+                            archiveUrl = archiveUrl,
+                            yearMonth = yearMonth,
+                            gameCount = gamesToSave.size,
+                        ),
+                    )
+                }
+            }
         }
 
         return ImportMonthResult(
-            0,
+            gamesToSave.size,
             skipped,
-            emptySet(),
+            affectedPositionIds,
         )
     }
 
     private fun updateUserPositionStats(
         account: ChessAccount,
-        affectedPositionIds: Set<java.util.UUID>,
+        affectedPositionIds: Set<UUID>,
     ) {
         if (affectedPositionIds.isEmpty()) return
 
@@ -275,54 +322,53 @@ class GameImportService(
         val positionIdBatches = affectedPositionIds.chunked(batchSize)
 
         for (batch in positionIdBatches) {
-            val batchSet = batch.toSet()
+            transactionTemplate.executeWithoutResult {
+                val batchSet = batch.toSet()
 
-            // Use bulk aggregation query to count occurrences for affected positions in this batch
-            val occurrenceCounts =
-                positionOccurrenceRepository.countOccurrencesByAccountAndPositions(
-                    account.id,
-                    batchSet,
-                )
+                val occurrenceCounts =
+                    positionOccurrenceRepository.countOccurrencesByAccountAndPositions(
+                        account.id,
+                        batchSet,
+                    )
 
-            // Fetch existing UserPositionStats for affected positions in this batch
-            val existingStats =
-                userPositionStatsRepository.findByChessAccountIdAndPositionIdIn(
-                    account.id,
-                    batchSet,
-                )
-            val existingStatsMap = existingStats.associateBy { "${it.chessAccount.id}-${it.position.id}-${it.playerColor}" }
+                val existingStats =
+                    userPositionStatsRepository.findByChessAccountIdAndPositionIdIn(
+                        account.id,
+                        batchSet,
+                    )
+                val existingStatsMap = existingStats.associateBy { "${it.chessAccount.id}-${it.position.id}-${it.playerColor}" }
 
-            // Fetch all needed Position entities for this batch in one query
-            val positions =
-                positionRepository.findAllById(batchSet).associateBy { it.id }
+                val positions =
+                    positionRepository.findAllById(batchSet).associateBy { it.id }
 
-            val statsUpdates = mutableListOf<UserPositionStats>()
-            for (count in occurrenceCounts) {
-                val key = "${account.id}-${count.positionId}-${count.playerColor}"
-                val existing = existingStatsMap[key]
+                val statsUpdates = mutableListOf<UserPositionStats>()
+                for (count in occurrenceCounts) {
+                    val key = "${account.id}-${count.positionId}-${count.playerColor}"
+                    val existing = existingStatsMap[key]
 
-                if (existing != null) {
-                    existing.timesReached = count.timesReached.toInt()
-                    existing.updatedAt = Instant.now()
-                    statsUpdates.add(existing)
-                } else {
-                    val position =
-                        positions[count.positionId]
-                            ?: throw IllegalStateException("Position not found: ${count.positionId}")
-                    val newStats =
-                        UserPositionStats(
-                            chessAccount = account,
-                            position = position,
-                            playerColor = count.playerColor,
-                            timesReached = count.timesReached.toInt(),
-                            updatedAt = Instant.now(),
-                        )
-                    statsUpdates.add(newStats)
+                    if (existing != null) {
+                        existing.timesReached = count.timesReached.toInt()
+                        existing.updatedAt = Instant.now()
+                        statsUpdates.add(existing)
+                    } else {
+                        val position =
+                            positions[count.positionId]
+                                ?: throw IllegalStateException("Position not found: ${count.positionId}")
+                        val newStats =
+                            UserPositionStats(
+                                chessAccount = account,
+                                position = position,
+                                playerColor = count.playerColor,
+                                timesReached = count.timesReached.toInt(),
+                                updatedAt = Instant.now(),
+                            )
+                        statsUpdates.add(newStats)
+                    }
                 }
-            }
 
-            if (statsUpdates.isNotEmpty()) {
-                userPositionStatsRepository.saveAll(statsUpdates)
+                if (statsUpdates.isNotEmpty()) {
+                    userPositionStatsRepository.saveAll(statsUpdates)
+                }
             }
         }
     }
@@ -332,17 +378,7 @@ class GameImportService(
         fromDate: String?,
         toDate: String?,
     ): List<String> {
-        val url = "https://api.chess.com/pub/player/${username.lowercase()}/games/archives"
-
-        @Suppress("UNCHECKED_CAST")
-        val response =
-            restClient.get()
-                .uri(url)
-                .retrieve()
-                .body(Map::class.java) as? Map<String, Any> ?: return emptyList()
-
-        @Suppress("UNCHECKED_CAST")
-        val allArchives = response["archives"] as? List<String> ?: return emptyList()
+        val allArchives = chessComClient.fetchArchiveUrls(username)
 
         return allArchives.filter { archiveUrl ->
             val parts = archiveUrl.split("/")

@@ -15,6 +15,8 @@ export interface JobStatusResponse {
   errorMessage?: string | null;
 }
 
+
+
 export interface WeaknessResponse {
   positionId: string;
   fen: string;
