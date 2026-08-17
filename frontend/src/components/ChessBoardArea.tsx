@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { Chess } from 'chess.js';
 import { Chessboard } from 'react-chessboard';
 import { BoardControls } from './BoardControls';
+import { playSound } from '@/services/soundService';
 
 interface ChessBoardAreaProps {
   initialFen: string;
@@ -26,6 +27,8 @@ interface ChessBoardAreaProps {
   hintSquare?: string;
   canHint?: boolean;
   onFlipBoard?: () => void;
+  soundEnabled?: boolean;
+  onToggleSound?: () => void;
 }
 
 export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
@@ -43,6 +46,8 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   hintSquare,
   canHint = true,
   onFlipBoard,
+  soundEnabled,
+  onToggleSound,
 }) => {
   const [game, setGame] = useState<Chess>(new Chess(initialFen));
   const [fenHistory, setFenHistory] = useState<string[]>([initialFen]);
@@ -104,6 +109,15 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
         // Check if move matches a historical mistake played by the user
         const historicalMistake = movesPlayed.find((m) => m.move === moveSan);
 
+        // Sound feedback for initial puzzle decision
+        if (isBest) {
+          playSound('completion');
+        } else if (isAcceptable) {
+          playSound('correct');
+        } else {
+          playSound('incorrect');
+        }
+
         onMoveAttempt(
           moveSan,
           isCorrect,
@@ -118,6 +132,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
         );
       } else {
         // Opponent move / line continuation: do not evaluate against initial targetMove
+        playSound('move');
         onMoveAttempt(moveSan, false, false, undefined, false);
       }
 
@@ -228,6 +243,8 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
         canRedo={historyIndex < fenHistory.length - 1}
         canHint={canHint}
         onFlipBoard={onFlipBoard}
+        soundEnabled={soundEnabled}
+        onToggleSound={onToggleSound}
       />
     </div>
   );

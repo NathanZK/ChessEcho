@@ -9,6 +9,7 @@ import { WeaknessesList } from '@/components/WeaknessesList';
 import { ImportGamesView } from '@/components/ImportGamesView';
 import { Puzzle } from '@/mock/mockData';
 import { fetchPuzzles, JobStatusResponse } from '@/services/api';
+import { soundService } from '@/services/soundService';
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<TabType>('puzzles');
@@ -104,6 +105,7 @@ export default function Home() {
   const [puzzleColorFilter, setPuzzleColorFilter] = useState<'BOTH' | 'WHITE' | 'BLACK'>('BOTH');
   const [showPuzzleSettings, setShowPuzzleSettings] = useState<boolean>(false);
   const [isBoardFlipped, setIsBoardFlipped] = useState<boolean>(false);
+  const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
 
   // Flip board keyboard shortcut (x / X)
   React.useEffect(() => {
@@ -133,6 +135,7 @@ export default function Home() {
       if (savedMistakes && !isNaN(Number(savedMistakes))) {
         setMinMistakeCount(Number(savedMistakes));
       }
+      setSoundEnabled(soundService.isSoundEnabled());
       setIsSettingsInitialized(true);
     }
   }, []);
@@ -158,6 +161,11 @@ export default function Home() {
       const weaknessColor = color === 'BOTH' ? 'ALL' : color;
       localStorage.setItem('chessecho_weakness_color_filter', weaknessColor);
     }
+  };
+
+  const handleToggleSound = () => {
+    const next = soundService.toggleSound();
+    setSoundEnabled(next);
   };
 
   // History stacks for EvalBar and feedback state matching board undo/redo index
@@ -603,6 +611,8 @@ export default function Home() {
                     hintSquare={hintSquare}
                     canHint={!(feedback.status === 'CORRECT' || feedback.status === 'EXPLORING')}
                     onFlipBoard={() => setIsBoardFlipped((prev) => !prev)}
+                    soundEnabled={soundEnabled}
+                    onToggleSound={handleToggleSound}
                   />
                 </div>
 
