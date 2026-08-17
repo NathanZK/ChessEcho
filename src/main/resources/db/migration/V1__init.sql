@@ -28,6 +28,8 @@ CREATE TABLE async_job
     updated_at      TIMESTAMP             DEFAULT now()
 );
 
+
+
 CREATE INDEX idx_async_job_username_status ON async_job (username, status);
 
 CREATE TABLE game
@@ -130,3 +132,18 @@ CREATE TABLE user_position_stats
 );
 
 CREATE INDEX idx_user_position_stats_account_color_times_reached ON user_position_stats (chess_account_id, player_color, times_reached DESC);
+
+CREATE TABLE imported_archive
+(
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    chess_account_id UUID         NOT NULL REFERENCES chess_account (id) ON DELETE CASCADE,
+    archive_url      VARCHAR(512) NOT NULL,
+    year_month       VARCHAR(7)   NOT NULL,
+    game_count       INT          NOT NULL DEFAULT 0,
+    imported_at      TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    UNIQUE (chess_account_id, archive_url)
+);
+
+
+CREATE INDEX idx_imported_archive_account ON imported_archive (chess_account_id);
+

@@ -8,9 +8,11 @@ import com.chessecho.repository.AppUserRepository
 import com.chessecho.repository.AsyncJobRepository
 import com.chessecho.repository.ChessAccountRepository
 import com.chessecho.repository.GameRepository
+import com.chessecho.repository.ImportedArchiveRepository
 import com.chessecho.repository.PositionOccurrenceRepository
 import com.chessecho.repository.PositionRepository
 import com.chessecho.repository.UserPositionStatsRepository
+import com.chessecho.service.ChessComClient
 import com.chessecho.service.EngineAnalysisOrchestrator
 import com.chessecho.service.GameImportService
 import org.junit.jupiter.api.AfterEach
@@ -18,14 +20,12 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.argumentCaptor
-import org.mockito.kotlin.mock
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.mock.mockito.MockBean
 import org.springframework.test.context.ActiveProfiles
-import org.springframework.web.client.RestClient
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -50,6 +50,9 @@ class GameImportServiceIntegrationTest {
     private lateinit var chessAccountRepository: ChessAccountRepository
 
     @Autowired
+    private lateinit var importedArchiveRepository: ImportedArchiveRepository
+
+    @Autowired
     private lateinit var positionRepository: PositionRepository
 
     @Autowired
@@ -59,28 +62,21 @@ class GameImportServiceIntegrationTest {
     private lateinit var userPositionStatsRepository: UserPositionStatsRepository
 
     @MockBean
-    private lateinit var restClient: RestClient
+    private lateinit var chessComClient: ChessComClient
 
     @MockBean
     private lateinit var engineAnalysisOrchestrator: EngineAnalysisOrchestrator
 
     @BeforeEach
-    @Suppress("UNCHECKED_CAST")
     fun setup() {
-        val requestHeadersUriSpec = mock<RestClient.RequestHeadersUriSpec<*>>()
+        whenever(chessComClient.fetchArchiveUrls(any())).thenAnswer { invocation ->
+            val username = invocation.getArgument<String>(0)
+            listOf("https://api.chess.com/pub/player/$username/games/2024/01")
+        }
 
-        whenever(restClient.get()).thenReturn(requestHeadersUriSpec)
-        whenever(requestHeadersUriSpec.uri(any<String>())).thenAnswer { invocation ->
+        whenever(chessComClient.fetchMonthlyGames(any())).thenAnswer { invocation ->
             val uriString = invocation.getArgument<String>(0)
-            val mockHeadersSpec = mock<RestClient.RequestHeadersSpec<*>>()
-            val mockResponseSpec = mock<RestClient.ResponseSpec>()
-
-            whenever(mockHeadersSpec.retrieve()).thenReturn(mockResponseSpec)
-
-            if (uriString.endsWith("/archives")) {
-                val archivesBody: Map<String, Any> = mapOf("archives" to listOf("https://api.chess.com/pub/player/hikaru/games/2024/01"))
-                org.mockito.kotlin.doReturn(archivesBody).whenever(mockResponseSpec).body(Map::class.java)
-            } else if (uriString.endsWith("/2024/01")) {
+            if (uriString.endsWith("/2024/01")) {
                 val game1Pgn =
                     """
                     [Event "Live Chess"]
@@ -98,6 +94,7 @@ class GameImportServiceIntegrationTest {
                         "url" to "https://www.chess.com/game/live/10001",
                         "pgn" to game1Pgn,
                         "time_class" to "blitz",
+                        "rules" to "chess",
                         "end_time" to 1704067200L,
                         "white" to mapOf("username" to "hikaru", "result" to "win"),
                         "black" to mapOf("username" to "opponent1", "result" to "checkmated"),
@@ -108,21 +105,22 @@ class GameImportServiceIntegrationTest {
                         "url" to "https://www.chess.com/game/daily/20001",
                         "pgn" to game1Pgn,
                         "time_class" to "daily",
+                        "rules" to "chess",
                         "end_time" to 1704067200L,
                         "white" to mapOf("username" to "hikaru", "result" to "win"),
                         "black" to mapOf("username" to "opponent2", "result" to "resigned"),
                     )
 
-                val gamesBody: Map<String, Any> = mapOf("games" to listOf(game1Map, dailyGameMap))
-                org.mockito.kotlin.doReturn(gamesBody).whenever(mockResponseSpec).body(Map::class.java)
+                listOf(game1Map, dailyGameMap)
+            } else {
+                null
             }
-
-            mockHeadersSpec
         }
     }
 
     @AfterEach
     fun tearDown() {
+        importedArchiveRepository.deleteAll()
         userPositionStatsRepository.deleteAll()
         positionOccurrenceRepository.deleteAll()
         positionRepository.deleteAll()
@@ -147,7 +145,6 @@ class GameImportServiceIntegrationTest {
 
         gameImportService.executeImportJob(job.id, request)
 
-        // Wait for @Async job to reach terminal state
         var completedJob: AsyncJob? = null
         var attempts = 0
         while (attempts < 50) {
@@ -164,79 +161,47 @@ class GameImportServiceIntegrationTest {
         assertEquals(1, completedJob.gamesImported)
         assertEquals(0, completedJob.gamesSkipped, "No duplicate games on fresh import")
 
-        // Verify account created
         val account = chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "hikaru")
         assertNotNull(account)
 
-        // Verify position occurrences parsed and saved
         val occurrences = positionOccurrenceRepository.findByChessAccountIdAndPlayerColor(account.id, "WHITE")
         assertFalse(occurrences.isEmpty(), "Position occurrences should be populated")
 
-        // Verify UserPositionStats updated
         val stats = userPositionStatsRepository.findByChessAccountIdAndPlayerColor(account.id, "WHITE")
         assertFalse(stats.isEmpty(), "UserPositionStats should be updated for account")
 
-        // Verify orchestrator received persisted affected position IDs
         val affectedCaptor = argumentCaptor<Set<UUID>>()
         verify(engineAnalysisOrchestrator).analyzeAffectedPositions(affectedCaptor.capture())
 
         val affectedIds = affectedCaptor.firstValue
         assertFalse(affectedIds.isEmpty(), "Affected position IDs set should not be empty")
 
-        // Ensure all affected IDs correspond to positions present in DB
         val positionsInDb = positionRepository.findAllById(affectedIds)
         assertEquals(affectedIds.size, positionsInDb.size)
     }
 
     @Test
     fun `executeImportJob logs and skips 404 archive URL and processes remaining archives`() {
-        val requestHeadersUriSpec = mock<RestClient.RequestHeadersUriSpec<*>>()
-        whenever(restClient.get()).thenReturn(requestHeadersUriSpec)
+        whenever(chessComClient.fetchArchiveUrls("test404")).thenReturn(
+            listOf(
+                "https://api.chess.com/pub/player/test404/games/2024/01",
+                "https://api.chess.com/pub/player/test404/games/2024/02",
+            ),
+        )
+        whenever(chessComClient.fetchMonthlyGames("https://api.chess.com/pub/player/test404/games/2024/01")).thenReturn(null)
 
-        whenever(requestHeadersUriSpec.uri(any<String>())).thenAnswer { invocation ->
-            val uriString = invocation.getArgument<String>(0)
-            val mockHeadersSpec = mock<RestClient.RequestHeadersSpec<*>>()
-            val mockResponseSpec = mock<RestClient.ResponseSpec>()
-
-            whenever(mockHeadersSpec.retrieve()).thenReturn(mockResponseSpec)
-
-            if (uriString.endsWith("/archives")) {
-                val archivesBody: Map<String, Any> =
-                    mapOf(
-                        "archives" to
-                            listOf(
-                                "https://api.chess.com/pub/player/test404/games/2024/01",
-                                "https://api.chess.com/pub/player/test404/games/2024/02",
-                            ),
-                    )
-                org.mockito.kotlin.doReturn(archivesBody).whenever(mockResponseSpec).body(Map::class.java)
-            } else if (uriString.endsWith("/2024/01")) {
-                // Return 404 for first archive
-                whenever(mockResponseSpec.body(Map::class.java)).thenThrow(
-                    org.springframework.web.client.HttpClientErrorException.NotFound.create(
-                        org.springframework.http.HttpStatus.NOT_FOUND,
-                        "Not Found",
-                        org.springframework.http.HttpHeaders.EMPTY,
-                        ByteArray(0),
-                        null,
-                    ),
-                )
-            } else if (uriString.endsWith("/2024/02")) {
-                val game1Pgn = "1. e4 e5 2. Nf3 Nc6 3. Bb5 1-0"
-                val game1Map =
-                    mapOf(
-                        "url" to "https://www.chess.com/game/live/99001",
-                        "pgn" to game1Pgn,
-                        "time_class" to "blitz",
-                        "end_time" to 1704067200L,
-                        "white" to mapOf("username" to "test404", "result" to "win"),
-                        "black" to mapOf("username" to "opp1", "result" to "checkmated"),
-                    )
-                val gamesBody: Map<String, Any> = mapOf("games" to listOf(game1Map))
-                org.mockito.kotlin.doReturn(gamesBody).whenever(mockResponseSpec).body(Map::class.java)
-            }
-            mockHeadersSpec
-        }
+        val game1Pgn = "1. e4 e5 2. Nf3 Nc6 3. Bb5 1-0"
+        val game1Map =
+            mapOf(
+                "url" to "https://www.chess.com/game/live/99001",
+                "pgn" to game1Pgn,
+                "time_class" to "blitz",
+                "rules" to "chess",
+                "end_time" to 1704067200L,
+                "white" to mapOf("username" to "test404", "result" to "win"),
+                "black" to mapOf("username" to "opp1", "result" to "checkmated"),
+            )
+        whenever(chessComClient.fetchMonthlyGames("https://api.chess.com/pub/player/test404/games/2024/02")).thenReturn(listOf(game1Map))
 
         val request =
             ImportGamesRequest(
@@ -279,33 +244,19 @@ class GameImportServiceIntegrationTest {
     }
 
     @Test
-    fun `executeImportJob fails when restClient throws genuine 500 Internal Server Error`() {
-        val requestHeadersUriSpec = mock<RestClient.RequestHeadersUriSpec<*>>()
-        whenever(restClient.get()).thenReturn(requestHeadersUriSpec)
-
-        whenever(requestHeadersUriSpec.uri(any<String>())).thenAnswer { invocation ->
-            val uriString = invocation.getArgument<String>(0)
-            val mockHeadersSpec = mock<RestClient.RequestHeadersSpec<*>>()
-            val mockResponseSpec = mock<RestClient.ResponseSpec>()
-
-            whenever(mockHeadersSpec.retrieve()).thenReturn(mockResponseSpec)
-
-            if (uriString.endsWith("/archives")) {
-                val archivesBody: Map<String, Any> = mapOf("archives" to listOf("https://api.chess.com/pub/player/test500/games/2024/01"))
-                org.mockito.kotlin.doReturn(archivesBody).whenever(mockResponseSpec).body(Map::class.java)
-            } else if (uriString.endsWith("/2024/01")) {
-                whenever(mockResponseSpec.body(Map::class.java)).thenThrow(
-                    org.springframework.web.client.HttpServerErrorException.create(
-                        org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR,
-                        "Internal Server Error",
-                        org.springframework.http.HttpHeaders.EMPTY,
-                        ByteArray(0),
-                        null,
-                    ),
-                )
-            }
-            mockHeadersSpec
-        }
+    fun `executeImportJob fails when chessComClient throws exception`() {
+        whenever(chessComClient.fetchArchiveUrls("test500")).thenReturn(
+            listOf("https://api.chess.com/pub/player/test500/games/2024/01"),
+        )
+        whenever(chessComClient.fetchMonthlyGames("https://api.chess.com/pub/player/test500/games/2024/01")).thenThrow(
+            org.springframework.web.client.HttpServerErrorException.create(
+                org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR,
+                "Internal Server Error",
+                org.springframework.http.HttpHeaders.EMPTY,
+                ByteArray(0),
+                null,
+            ),
+        )
 
         val request =
             ImportGamesRequest(
@@ -415,74 +366,62 @@ class GameImportServiceIntegrationTest {
 
     @Test
     fun `executeImportJob skips chess960 variant games and imports standard games`() {
-        val requestHeadersUriSpec = mock<RestClient.RequestHeadersUriSpec<*>>()
-        whenever(restClient.get()).thenReturn(requestHeadersUriSpec)
+        whenever(chessComClient.fetchArchiveUrls("variantuser")).thenReturn(
+            listOf("https://api.chess.com/pub/player/variantuser/games/2024/02"),
+        )
 
-        whenever(requestHeadersUriSpec.uri(any<String>())).thenAnswer { invocation ->
-            val uriString = invocation.getArgument<String>(0)
-            val mockHeadersSpec = mock<RestClient.RequestHeadersSpec<*>>()
-            val mockResponseSpec = mock<RestClient.ResponseSpec>()
-            whenever(mockHeadersSpec.retrieve()).thenReturn(mockResponseSpec)
+        val standardGamePgn =
+            """
+            [Event "Live Chess"]
+            [Site "Chess.com"]
+            [Date "2024.02.01"]
+            [White "variantuser"]
+            [Black "opponent1"]
+            [Result "1-0"]
 
-            if (uriString.endsWith("/archives")) {
-                val archivesBody: Map<String, Any> = mapOf("archives" to listOf("https://api.chess.com/pub/player/hikaru/games/2024/02"))
-                org.mockito.kotlin.doReturn(archivesBody).whenever(mockResponseSpec).body(Map::class.java)
-            } else if (uriString.endsWith("/2024/02")) {
-                val standardGamePgn =
-                    """
-                    [Event "Live Chess"]
-                    [Site "Chess.com"]
-                    [Date "2024.02.01"]
-                    [White "variantuser"]
-                    [Black "opponent1"]
-                    [Result "1-0"]
+            1. e4 e5 2. Nf3 Nc6 3. Bb5 1-0
+            """.trimIndent()
 
-                    1. e4 e5 2. Nf3 Nc6 3. Bb5 1-0
-                    """.trimIndent()
+        val chess960Pgn =
+            """
+            [Event "Live Chess - Chess960"]
+            [Site "Chess.com"]
+            [Date "2024.02.01"]
+            [White "variantuser"]
+            [Black "opponent2"]
+            [Result "0-1"]
+            [Variant "Chess960"]
+            [SetUp "1"]
+            [FEN "rkrbbnnq/pppppppp/8/8/8/8/PPPPPPPP/RKRBBNNQ w CAca - 0 1"]
 
-                val chess960Pgn =
-                    """
-                    [Event "Live Chess - Chess960"]
-                    [Site "Chess.com"]
-                    [Date "2024.02.01"]
-                    [White "variantuser"]
-                    [Black "opponent2"]
-                    [Result "0-1"]
-                    [Variant "Chess960"]
-                    [SetUp "1"]
-                    [FEN "rkrbbnnq/pppppppp/8/8/8/8/PPPPPPPP/RKRBBNNQ w CAca - 0 1"]
+            1. d4 d5 2. c4 dxc4 3. Rxc4 g5 0-1
+            """.trimIndent()
 
-                    1. d4 d5 2. c4 dxc4 3. Rxc4 g5 0-1
-                    """.trimIndent()
+        val standardGameMap =
+            mapOf(
+                "url" to "https://www.chess.com/game/live/standard100",
+                "pgn" to standardGamePgn,
+                "time_class" to "blitz",
+                "rules" to "chess",
+                "end_time" to 1704067200L,
+                "white" to mapOf("username" to "variantuser", "result" to "win"),
+                "black" to mapOf("username" to "opponent1", "result" to "checkmated"),
+            )
 
-                val standardGameMap =
-                    mapOf(
-                        "url" to "https://www.chess.com/game/live/standard100",
-                        "pgn" to standardGamePgn,
-                        "time_class" to "blitz",
-                        "rules" to "chess",
-                        "end_time" to 1704067200L,
-                        "white" to mapOf("username" to "variantuser", "result" to "win"),
-                        "black" to mapOf("username" to "opponent1", "result" to "checkmated"),
-                    )
+        val chess960GameMap =
+            mapOf(
+                "url" to "https://www.chess.com/game/live/chess960_200",
+                "pgn" to chess960Pgn,
+                "time_class" to "blitz",
+                "rules" to "chess960",
+                "end_time" to 1704067200L,
+                "white" to mapOf("username" to "variantuser", "result" to "resigned"),
+                "black" to mapOf("username" to "opponent2", "result" to "win"),
+            )
 
-                val chess960GameMap =
-                    mapOf(
-                        "url" to "https://www.chess.com/game/live/chess960_200",
-                        "pgn" to chess960Pgn,
-                        "time_class" to "blitz",
-                        "rules" to "chess960",
-                        "end_time" to 1704067200L,
-                        "white" to mapOf("username" to "variantuser", "result" to "resigned"),
-                        "black" to mapOf("username" to "opponent2", "result" to "win"),
-                    )
-
-                val gamesBody: Map<String, Any> = mapOf("games" to listOf(standardGameMap, chess960GameMap))
-                org.mockito.kotlin.doReturn(gamesBody).whenever(mockResponseSpec).body(Map::class.java)
-            }
-
-            mockHeadersSpec
-        }
+        whenever(chessComClient.fetchMonthlyGames("https://api.chess.com/pub/player/variantuser/games/2024/02")).thenReturn(
+            listOf(standardGameMap, chess960GameMap),
+        )
 
         val request =
             ImportGamesRequest(
@@ -511,6 +450,9 @@ class GameImportServiceIntegrationTest {
         assertEquals("COMPLETED", completedJob.status)
         assertEquals(1, completedJob.gamesImported)
         assertEquals(0, completedJob.gamesSkipped, "Non-standard variant games should be ignored without incrementing gamesSkipped")
+
+        // Clear imported_archive record to simulate re-running the past month
+        importedArchiveRepository.deleteAll()
 
         // Re-run import for the same archive: the already-imported standard game MUST increment gamesSkipped
         val secondJob = gameImportService.createImportJob(request)
@@ -544,46 +486,35 @@ class GameImportServiceIntegrationTest {
     }
 
     @Test
-    @Suppress("UNCHECKED_CAST")
     fun `non matching games are ignored and do not increment gamesSkipped`() {
-        val requestHeadersUriSpec = mock<RestClient.RequestHeadersUriSpec<*>>()
-        whenever(restClient.get()).thenReturn(requestHeadersUriSpec)
-        whenever(requestHeadersUriSpec.uri(any<String>())).thenAnswer { invocation ->
-            val uriString = invocation.getArgument<String>(0)
-            val mockHeadersSpec = mock<RestClient.RequestHeadersSpec<*>>()
-            val mockResponseSpec = mock<RestClient.ResponseSpec>()
-            whenever(mockHeadersSpec.retrieve()).thenReturn(mockResponseSpec)
+        whenever(chessComClient.fetchArchiveUrls("sumuser")).thenReturn(
+            listOf("https://api.chess.com/pub/player/sumuser/games/2024/01"),
+        )
 
-            if (uriString.endsWith("/archives")) {
-                val archivesBody: Map<String, Any> = mapOf("archives" to listOf("https://api.chess.com/pub/player/sumuser/games/2024/01"))
-                org.mockito.kotlin.doReturn(archivesBody).whenever(mockResponseSpec).body(Map::class.java)
-            } else if (uriString.endsWith("/2024/01")) {
-                val rapidGameMap =
-                    mapOf(
-                        "url" to "https://www.chess.com/game/live/sum101",
-                        "pgn" to "[Event \"Live Chess\"]\n1. e4 e5 2. Nf3 Nc6",
-                        "time_class" to "rapid",
-                        "rules" to "chess",
-                        "end_time" to 1704067200L,
-                        "white" to mapOf("username" to "sumuser", "result" to "win"),
-                        "black" to mapOf("username" to "opponent1", "result" to "checkmated"),
-                    )
-                val blitzGameMap =
-                    mapOf(
-                        "url" to "https://www.chess.com/game/live/sum102",
-                        "pgn" to "[Event \"Live Chess\"]\n1. d4 d5",
-                        "time_class" to "blitz",
-                        "rules" to "chess",
-                        "end_time" to 1704067300L,
-                        "white" to mapOf("username" to "sumuser", "result" to "win"),
-                        "black" to mapOf("username" to "opponent2", "result" to "resigned"),
-                    )
-                val gamesBody: Map<String, Any> = mapOf("games" to listOf(rapidGameMap, blitzGameMap))
-                org.mockito.kotlin.doReturn(gamesBody).whenever(mockResponseSpec).body(Map::class.java)
-            }
+        val rapidGameMap =
+            mapOf(
+                "url" to "https://www.chess.com/game/live/sum101",
+                "pgn" to "[Event \"Live Chess\"]\n1. e4 e5 2. Nf3 Nc6",
+                "time_class" to "rapid",
+                "rules" to "chess",
+                "end_time" to 1704067200L,
+                "white" to mapOf("username" to "sumuser", "result" to "win"),
+                "black" to mapOf("username" to "opponent1", "result" to "checkmated"),
+            )
+        val blitzGameMap =
+            mapOf(
+                "url" to "https://www.chess.com/game/live/sum102",
+                "pgn" to "[Event \"Live Chess\"]\n1. d4 d5",
+                "time_class" to "blitz",
+                "rules" to "chess",
+                "end_time" to 1704067300L,
+                "white" to mapOf("username" to "sumuser", "result" to "win"),
+                "black" to mapOf("username" to "opponent2", "result" to "resigned"),
+            )
 
-            mockHeadersSpec
-        }
+        whenever(chessComClient.fetchMonthlyGames("https://api.chess.com/pub/player/sumuser/games/2024/01")).thenReturn(
+            listOf(rapidGameMap, blitzGameMap),
+        )
 
         val request =
             ImportGamesRequest(
@@ -613,7 +544,9 @@ class GameImportServiceIntegrationTest {
         assertEquals(1, completedJob1.gamesImported)
         assertEquals(0, completedJob1.gamesSkipped)
 
-        // Re-run for duplicate calculation
+        // Clear imported_archive record to force re-evaluation of month games
+        importedArchiveRepository.deleteAll()
+
         val job2 = gameImportService.createImportJob(request)
         gameImportService.executeImportJob(job2.id, request)
 
@@ -636,37 +569,22 @@ class GameImportServiceIntegrationTest {
     }
 
     @Test
-    @Suppress("UNCHECKED_CAST")
     fun `duplicate entries within the same archive batch increment gamesSkipped`() {
-        val requestHeadersUriSpec = mock<RestClient.RequestHeadersUriSpec<*>>()
-        whenever(restClient.get()).thenReturn(requestHeadersUriSpec)
-        whenever(requestHeadersUriSpec.uri(any<String>())).thenAnswer { invocation ->
-            val uriString = invocation.getArgument<String>(0)
-            val mockHeadersSpec = mock<RestClient.RequestHeadersSpec<*>>()
-            val mockResponseSpec = mock<RestClient.ResponseSpec>()
-            whenever(mockHeadersSpec.retrieve()).thenReturn(mockResponseSpec)
+        val archiveUrl = "https://api.chess.com/pub/player/batchdupuser/games/2024/01"
+        whenever(chessComClient.fetchArchiveUrls("batchdupuser")).thenReturn(listOf(archiveUrl))
 
-            if (uriString.endsWith("/archives")) {
-                val archiveUrl = "https://api.chess.com/pub/player/batchdupuser/games/2024/01"
-                val archivesBody: Map<String, Any> = mapOf("archives" to listOf(archiveUrl))
-                org.mockito.kotlin.doReturn(archivesBody).whenever(mockResponseSpec).body(Map::class.java)
-            } else if (uriString.endsWith("/2024/01")) {
-                val rapidGameMap =
-                    mapOf(
-                        "url" to "https://www.chess.com/game/live/batchdup1",
-                        "pgn" to "[Event \"Live Chess\"]\n1. e4 e5 2. Nf3 Nc6",
-                        "time_class" to "rapid",
-                        "rules" to "chess",
-                        "end_time" to 1704067200L,
-                        "white" to mapOf("username" to "batchdupuser", "result" to "win"),
-                        "black" to mapOf("username" to "opponent1", "result" to "checkmated"),
-                    )
-                val gamesBody: Map<String, Any> = mapOf("games" to listOf(rapidGameMap, rapidGameMap))
-                org.mockito.kotlin.doReturn(gamesBody).whenever(mockResponseSpec).body(Map::class.java)
-            }
+        val rapidGameMap =
+            mapOf(
+                "url" to "https://www.chess.com/game/live/batchdup1",
+                "pgn" to "[Event \"Live Chess\"]\n1. e4 e5 2. Nf3 Nc6",
+                "time_class" to "rapid",
+                "rules" to "chess",
+                "end_time" to 1704067200L,
+                "white" to mapOf("username" to "batchdupuser", "result" to "win"),
+                "black" to mapOf("username" to "opponent1", "result" to "checkmated"),
+            )
 
-            mockHeadersSpec
-        }
+        whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(listOf(rapidGameMap, rapidGameMap))
 
         val request =
             ImportGamesRequest(

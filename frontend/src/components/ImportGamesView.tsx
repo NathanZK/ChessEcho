@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { Download, CheckCircle2, Clock, Calendar, Play } from 'lucide-react';
+
 import { startImportJob, pollJobStatus, JobStatusResponse } from '../services/api';
 import { MonthPicker } from './MonthPicker';
 
@@ -103,7 +104,14 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : 'Failed to poll job status';
         console.error('Error polling import job status:', err);
-        setPollingError(msg);
+        if (msg.includes('404')) {
+          clearInterval(interval);
+          updateActiveJob(null);
+          setErrorMessage('Previous import job is no longer available. You can start a new import.');
+          setPollingError(null);
+        } else {
+          setPollingError(msg);
+        }
       }
     }, 2000);
 
@@ -160,6 +168,7 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
         gamesImported: 0,
         gamesSkipped: 0,
       };
+
       updateActiveJob(initialStatus);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to start import job';
@@ -186,6 +195,7 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
         {/* Form Settings Card */}
         <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 shadow-xl space-y-3.5">
           <h3 className="text-sm font-bold text-white border-b border-slate-800 pb-2.5 flex items-center justify-between">
@@ -387,6 +397,8 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                     </div>
                   </div>
                 </div>
+
+
 
                 {activeJob.status === 'COMPLETED' && (
                   <div className="p-4 bg-emerald-950/40 border border-emerald-500/40 rounded-xl space-y-3">

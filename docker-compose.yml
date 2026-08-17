@@ -21,6 +21,9 @@ services:
       SPRING_DATASOURCE_USERNAME: chessecho
       SPRING_DATASOURCE_PASSWORD: chessecho_pass
       STOCKFISH_PATH: stockfish
+      CHESS_PUBAPI_USERNAME: ${CHESS_PUBAPI_USERNAME:-}
+      CHESS_PUBAPI_CONTACT: ${CHESS_PUBAPI_CONTACT:-}
+
     depends_on:
       - postgres
 

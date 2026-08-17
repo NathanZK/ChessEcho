@@ -123,13 +123,19 @@ make up
 **Option B — Run locally with Gradle**
 
 ```bash
+CHESS_PUBAPI_USERNAME=your_chesscom_username \
+CHESS_PUBAPI_CONTACT=your_email@example.com \
 SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5432/chessecho \
 SPRING_DATASOURCE_USERNAME=chessecho \
 SPRING_DATASOURCE_PASSWORD=chessecho_pass \
 ./gradlew bootRun
 ```
 
+> **Note:** The [Chess.com PubAPI](https://support.chess.com/en/articles/9650547-what-is-the-pubapi-and-how-do-i-use-it) requires outbound API requests to declare a custom `User-Agent` header (`ChessEcho/1.0 (username: <username>; contact: <email>)`). Before running ChessEcho, set `CHESS_PUBAPI_USERNAME` to your operator Chess.com username (e.g., `your_chesscom_username`) and `CHESS_PUBAPI_CONTACT` to your contact email address.
+>
 > **Note:** The default `SPRING_DATASOURCE_URL` in `application.yml` points to `postgres:5432` (the Docker Compose hostname). When running the backend outside Docker, you must override the URL to `localhost:5432` as shown above.
+
+
 
 The backend starts on **http://localhost:8080**.
 Swagger UI is available at **http://localhost:8080/swagger-ui.html**.
@@ -346,7 +352,12 @@ Returns `202 Accepted` with a `jobId`. Returns `409 Conflict` if an import is al
 ```http
 GET /api/jobs/{jobId}
 ```
-Returns `QUEUED`, `PROCESSING`, `COMPLETED`, or `FAILED` with counts of games imported and skipped.
+Returns `QUEUED`, `PROCESSING`, `COMPLETED`, or `FAILED` with counts of games imported and games skipped (already imported).
+
+
+
+
+
 
 **Get recurring weaknesses**
 ```http
