@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { ChevronLeft, ChevronRight, RotateCcw, Lightbulb, ArrowLeftRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, RotateCcw, Lightbulb, ArrowLeftRight, Volume2, VolumeX } from 'lucide-react';
 
 interface BoardControlsProps {
   onUndo: () => void;
@@ -14,6 +14,8 @@ interface BoardControlsProps {
   canRedo: boolean;
   canHint?: boolean;
   onFlipBoard?: () => void;
+  soundEnabled?: boolean;
+  onToggleSound?: () => void;
 }
 
 export const BoardControls: React.FC<BoardControlsProps> = ({
@@ -27,6 +29,8 @@ export const BoardControls: React.FC<BoardControlsProps> = ({
   canRedo,
   canHint = true,
   onFlipBoard,
+  soundEnabled = true,
+  onToggleSound,
 }) => {
   return (
     <div className="flex items-center justify-between gap-2 p-2.5 bg-slate-900 rounded-xl border border-slate-800 shadow-md">
@@ -60,8 +64,23 @@ export const BoardControls: React.FC<BoardControlsProps> = ({
         </button>
       </div>
 
-      {/* Action Controls: Flip, Hint, Prev Puzzle & Next Puzzle */}
+      {/* Action Controls: Sound Toggle, Flip, Hint, Prev Puzzle & Next Puzzle */}
       <div className="flex items-center space-x-2">
+        {onToggleSound && (
+          <button
+            onClick={onToggleSound}
+            title={soundEnabled ? 'Mute Sound' : 'Enable Sound'}
+            aria-label={soundEnabled ? 'Mute Sound' : 'Enable Sound'}
+            className="flex items-center space-x-1 px-2.5 h-9 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-bold transition border border-slate-700/60 cursor-pointer"
+          >
+            {soundEnabled ? (
+              <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
+            ) : (
+              <VolumeX className="w-3.5 h-3.5 text-slate-400" />
+            )}
+          </button>
+        )}
+
         {onFlipBoard && (
           <button
             onClick={onFlipBoard}
@@ -104,3 +123,4 @@ export const BoardControls: React.FC<BoardControlsProps> = ({
     </div>
   );
 };
+
