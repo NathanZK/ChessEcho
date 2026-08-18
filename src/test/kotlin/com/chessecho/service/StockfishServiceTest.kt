@@ -43,4 +43,24 @@ class StockfishServiceTest {
         assertNull(score?.cp)
         assertEquals(-3, score?.mate)
     }
+
+    @Test
+    fun `test parseMultiPvLine correctly parses rank, uciMove, and centipawn score`() {
+        val line = "info depth 16 seldepth 22 multipv 2 score cp 35 nodes 12345 nps 123456 hashfull 12 tbhits 0 time 10 pv d2d4 d7d5"
+        val triple = StockfishService.parseMultiPvLine(line)
+        assertEquals(2, triple?.first)
+        assertEquals("d2d4", triple?.second)
+        assertEquals(35, triple?.third?.cp)
+        assertNull(triple?.third?.mate)
+    }
+
+    @Test
+    fun `test parseMultiPvLine correctly parses mate score`() {
+        val line = "info depth 16 seldepth 22 multipv 1 score mate 4 nodes 12345 nps 123456 hashfull 12 tbhits 0 time 10 pv e2e4 e7e5"
+        val triple = StockfishService.parseMultiPvLine(line)
+        assertEquals(1, triple?.first)
+        assertEquals("e2e4", triple?.second)
+        assertNull(triple?.third?.cp)
+        assertEquals(4, triple?.third?.mate)
+    }
 }

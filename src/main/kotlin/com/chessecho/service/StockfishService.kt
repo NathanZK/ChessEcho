@@ -16,9 +16,93 @@ data class PositionAnalysis(
     val score: EvalScore,
 )
 
+data class EngineCandidate(
+    val move: String,
+    val score: EvalScore,
+)
+
 @Service
 class StockfishService {
     private val logger = LoggerFactory.getLogger(StockfishService::class.java)
+
+    /**
+     * Executes engine MultiPV analysis for a given FEN position to determine the top-N engine candidate moves.
+     *
+     * @param fen The baseline FEN position
+     * @param depth The depth to run Stockfish to
+     * @param multiPv The number of top principal variation lines to search
+     * @return List of [EngineCandidate] containing SAN move and normalized evaluation score
+     */
+    fun analyzeMultiPv(
+        fen: String,
+        depth: Int,
+        multiPv: Int,
+    ): List<EngineCandidate> {
+        val process = ProcessBuilder("stockfish").start()
+        val reader = BufferedReader(InputStreamReader(process.inputStream))
+        val writer = OutputStreamWriter(process.outputStream)
+
+        fun sendCommand(cmd: String) {
+            writer.write("$cmd\n")
+            writer.flush()
+        }
+
+        sendCommand("uci")
+        var line: String?
+        while (true) {
+            line = reader.readLine()
+            if (line == "uciok" || line == null) break
+        }
+
+        sendCommand("setoption name MultiPV value $multiPv")
+        sendCommand("isready")
+        while (true) {
+            line = reader.readLine()
+            if (line == "readyok" || line == null) break
+        }
+
+        sendCommand("position fen $fen")
+        sendCommand("go depth $depth")
+
+        val rankMap = mutableMapOf<Int, Pair<String, EvalScore>>()
+
+        while (true) {
+            line = reader.readLine() ?: break
+
+            if (line.startsWith("info ") && line.contains(" multipv ")) {
+                val parsed = parseMultiPvLine(line)
+                if (parsed != null) {
+                    val (rank, uciMove, score) = parsed
+                    rankMap[rank] = Pair(uciMove, score)
+                }
+            }
+
+            if (line.startsWith("bestmove")) {
+                break
+            }
+        }
+
+        sendCommand("quit")
+        process.waitFor(5, TimeUnit.SECONDS)
+        if (process.isAlive) {
+            process.destroyForcibly()
+        }
+
+        return rankMap.entries
+            .sortedBy { it.key }
+            .mapNotNull { entry ->
+                val rank = entry.key
+                val (uciMove, score) = entry.value
+                val sanMove = convertUciToSan(fen, uciMove)
+                if (sanMove.isBlank() || sanMove == "(none)") {
+                    null
+                } else {
+                    val evalStr = score.cp?.let { "${it}cp" } ?: score.mate?.let { "mate $it" } ?: "N/A"
+                    logger.debug("MultiPV rank output: rank={} uciMove={} sanMove={} score={}", rank, uciMove, sanMove, evalStr)
+                    EngineCandidate(move = sanMove, score = score)
+                }
+            }
+    }
 
     /**
      * Analyzes an untouched base FEN position independently to determine its baseline evaluation and engine best move,
@@ -148,6 +232,23 @@ class StockfishService {
     }
 
     companion object {
+        fun parseMultiPvLine(line: String): Triple<Int, String, EvalScore>? {
+            if (!line.contains(" multipv ") || !line.contains(" pv ")) return null
+            val tokens = line.split("\\s+".toRegex())
+
+            val multipvIdx = tokens.indexOf("multipv")
+            if (multipvIdx == -1 || multipvIdx + 1 >= tokens.size) return null
+            val rank = tokens[multipvIdx + 1].toIntOrNull() ?: return null
+
+            val pvIdx = tokens.indexOf("pv")
+            if (pvIdx == -1 || pvIdx + 1 >= tokens.size) return null
+            val uciMove = tokens[pvIdx + 1]
+
+            val score = parseEngineScore(line, invert = false) ?: return null
+
+            return Triple(rank, uciMove, score)
+        }
+
         fun parseEngineScore(
             line: String,
             invert: Boolean = false,

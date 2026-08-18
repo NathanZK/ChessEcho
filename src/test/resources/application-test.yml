@@ -19,3 +19,8 @@ chess:
     initial-backoff-ms: 10
     max-backoff-ms: 50
 
+engine:
+  analysis:
+    multi-pv: 5
+
+

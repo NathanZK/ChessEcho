@@ -28,4 +28,9 @@ chess:
     initial-backoff-ms: ${CHESS_PUBAPI_INITIAL_BACKOFF_MS:1000}
     max-backoff-ms: ${CHESS_PUBAPI_MAX_BACKOFF_MS:10000}
 
+engine:
+  analysis:
+    multi-pv: ${ENGINE_ANALYSIS_MULTI_PV:5}
+
+
 
