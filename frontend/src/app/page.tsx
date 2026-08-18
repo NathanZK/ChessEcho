@@ -8,7 +8,7 @@ import { PuzzleFeedbackPanel } from '@/components/PuzzleFeedbackPanel';
 import { WeaknessesList } from '@/components/WeaknessesList';
 import { ImportGamesView } from '@/components/ImportGamesView';
 import { Puzzle } from '@/mock/mockData';
-import { fetchPuzzles, JobStatusResponse, ContinuationMode, ContinuationCandidate } from '@/services/api';
+import { fetchPuzzles, JobStatusResponse, ContinuationMode, ContinuationCandidate, toWhitePerspective } from '@/services/api';
 import { soundService } from '@/services/soundService';
 import { usePuzzleContinuation } from '@/utils/usePuzzleContinuation';
 
@@ -202,6 +202,7 @@ export default function Home() {
     selected: ContinuationCandidate;
   } | null>(null);
   const [alternativeContinuationToApply, setAlternativeContinuationToApply] = useState<{ parentFen: string, candidate: ContinuationCandidate } | null>(null);
+  const [explorationEvalMap, setExplorationEvalMap] = useState<Record<string, { evalCp: number; isUnknown: boolean }>>({});
 
   const explorationTurn = React.useMemo(() => {
     if (!activePuzzle || !currentBoardFen) return 'USER';
@@ -223,14 +224,31 @@ export default function Home() {
       currentBoardFen === requestedContinuationFen &&
       continuation.selectedCandidate
     ) {
-      setPendingContinuationCandidate(continuation.selectedCandidate);
+      const candidate = continuation.selectedCandidate;
+      setPendingContinuationCandidate(candidate);
       setLastContinuationCandidates({
         parentFen: requestedContinuationFen,
         candidates: continuation.candidates,
-        selected: continuation.selectedCandidate
+        selected: candidate
       });
+
+      if (candidate.evalCp != null) {
+        const whiteEval = toWhitePerspective(candidate.evalCp, requestedContinuationFen);
+        setCurrentEvalCp(whiteEval);
+        setIsEvalUnknown(false);
+        setExplorationEvalMap((prev) => ({
+          ...prev,
+          [candidate.resultingFen]: { evalCp: whiteEval, isUnknown: false },
+        }));
+      } else {
+        setIsEvalUnknown(true);
+        setExplorationEvalMap((prev) => ({
+          ...prev,
+          [candidate.resultingFen]: { evalCp: currentEvalCp, isUnknown: true },
+        }));
+      }
     }
-  }, [isExplorationActive, continuation.selectedCandidate, continuation.loading, continuation.response, requestedContinuationFen, currentBoardFen]);
+  }, [isExplorationActive, continuation.selectedCandidate, continuation.loading, continuation.response, requestedContinuationFen, currentBoardFen, currentEvalCp]);
 
   // Keep lastContinuationCandidates synchronized with board history
   React.useEffect(() => {
@@ -247,10 +265,38 @@ export default function Home() {
     }
   }, [currentBoardFen, lastContinuationCandidates]);
 
+  // Synchronize EvalBar with the board's active position during exploration
+  React.useEffect(() => {
+    if (!isExplorationActive || !currentBoardFen) return;
+    const entry = explorationEvalMap[currentBoardFen];
+    if (entry) {
+      setCurrentEvalCp(entry.evalCp);
+      setIsEvalUnknown(entry.isUnknown);
+    }
+  }, [currentBoardFen, isExplorationActive, explorationEvalMap]);
+
   const handleAlternativeSelected = (candidate: ContinuationCandidate) => {
     if (!lastContinuationCandidates) return;
+    const parentFen = lastContinuationCandidates.parentFen;
+
+    if (candidate.evalCp != null) {
+      const whiteEval = toWhitePerspective(candidate.evalCp, parentFen);
+      setCurrentEvalCp(whiteEval);
+      setIsEvalUnknown(false);
+      setExplorationEvalMap((prev) => ({
+        ...prev,
+        [candidate.resultingFen]: { evalCp: whiteEval, isUnknown: false },
+      }));
+    } else {
+      setIsEvalUnknown(true);
+      setExplorationEvalMap((prev) => ({
+        ...prev,
+        [candidate.resultingFen]: { evalCp: currentEvalCp, isUnknown: true },
+      }));
+    }
+
     setAlternativeContinuationToApply({
-      parentFen: lastContinuationCandidates.parentFen,
+      parentFen,
       candidate
     });
   };
@@ -259,7 +305,11 @@ export default function Home() {
     setPendingContinuationCandidate(null);
   };
 
-  const handleUserExplorationMove = (moveSan: string, nextFen: string, feedback?: { isBest: boolean; loss: number }) => {
+  const handleUserExplorationMove = (
+    moveSan: string,
+    nextFen: string,
+    feedback?: { isBest: boolean; loss: number; evalCp?: number | null; fromFen?: string }
+  ) => {
     // User made a successful, acceptable move. Request a continuation.
     setRequestedContinuationFen(nextFen);
     setLastContinuationCandidates(null);
@@ -268,6 +318,22 @@ export default function Home() {
         setExplorationFeedback({ message: 'Best move. No evaluation loss.', type: 'best' });
       } else {
         setExplorationFeedback({ message: `Good move. It loses ${feedback.loss.toFixed(2)} pawns compared with the best move.`, type: 'good' });
+      }
+
+      if (feedback.evalCp != null && feedback.fromFen) {
+        const whiteEval = toWhitePerspective(feedback.evalCp, feedback.fromFen);
+        setCurrentEvalCp(whiteEval);
+        setIsEvalUnknown(false);
+        setExplorationEvalMap((prev) => ({
+          ...prev,
+          [nextFen]: { evalCp: whiteEval, isUnknown: false },
+        }));
+      } else if (feedback.evalCp === null) {
+        setIsEvalUnknown(true);
+        setExplorationEvalMap((prev) => ({
+          ...prev,
+          [nextFen]: { evalCp: currentEvalCp, isUnknown: true },
+        }));
       }
     } else {
       setExplorationFeedback(null);
@@ -281,7 +347,20 @@ export default function Home() {
 
   const handleEnterExploration = () => {
     setIsExplorationActive(true);
-    setRequestedContinuationFen(currentBoardFen || activePuzzle?.fen);
+    const baselineFen = currentBoardFen || activePuzzle?.fen || '';
+    const baselineEval = currentEvalCp;
+    const baselineUnknown = isEvalUnknown;
+
+    const initialMap: Record<string, { evalCp: number; isUnknown: boolean }> = {};
+    if (activePuzzle?.fen) {
+      initialMap[activePuzzle.fen] = { evalCp: activePuzzle.evalCp ?? 35, isUnknown: false };
+    }
+    if (baselineFen) {
+      initialMap[baselineFen] = { evalCp: baselineEval, isUnknown: baselineUnknown };
+    }
+    setExplorationEvalMap(initialMap);
+
+    setRequestedContinuationFen(baselineFen);
     setFeedback({ status: 'EXPLORING' });
     setUnacceptableMoveMessage(null);
     setExplorationFeedback(null);
@@ -297,6 +376,7 @@ export default function Home() {
     setExplorationFeedback(null);
     setLastContinuationCandidates(null);
     setAlternativeContinuationToApply(null);
+    setExplorationEvalMap({});
     setFeedback({ status: 'CORRECT', lastMove: activePuzzle?.targetMove });
   };
 
@@ -329,6 +409,7 @@ export default function Home() {
     setExplorationFeedback(null);
     setLastContinuationCandidates(null);
     setAlternativeContinuationToApply(null);
+    setExplorationEvalMap({});
   };
 
   const [puzzlePage, setPuzzlePage] = useState<number>(0);
@@ -597,6 +678,7 @@ export default function Home() {
     setExplorationFeedback(null);
     setLastContinuationCandidates(null);
     setAlternativeContinuationToApply(null);
+    setExplorationEvalMap({});
     
     setHistoryIndex(0);
     setCurrentEvalCp(evalHistory[0] ?? (activePuzzle?.evalCp ?? 35));
@@ -740,7 +822,11 @@ export default function Home() {
                   <span className="text-[10px] font-bold text-slate-400 mb-1.5 uppercase tracking-wider">
                     Eval
                   </span>
-                  <EvalBar evalCp={currentEvalCp} isExploring={feedback.status === 'EXPLORING'} isUnknown={isEvalUnknown} />
+                  <EvalBar
+                    evalCp={currentEvalCp}
+                    isExploring={!isExplorationActive && historyIndex > 1}
+                    isUnknown={isEvalUnknown}
+                  />
                 </div>
 
                 {/* Center Interactive Chessboard & Controls */}

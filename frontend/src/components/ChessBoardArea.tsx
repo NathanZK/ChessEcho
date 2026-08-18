@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Chess } from 'chess.js';
 import { Chessboard } from 'react-chessboard';
 import { BoardControls } from './BoardControls';
@@ -36,7 +36,11 @@ interface ChessBoardAreaProps {
   onContinuationApplied?: () => void;
   isExplorationActive?: boolean;
   onUnacceptableMove?: (message?: string | null) => void;
-  onUserExplorationMove?: (moveSan: string, nextFen: string, feedback?: { isBest: boolean; loss: number }) => void;
+  onUserExplorationMove?: (
+    moveSan: string,
+    nextFen: string,
+    feedback?: { isBest: boolean; loss: number; evalCp?: number | null; fromFen?: string }
+  ) => void;
   onChessEchoExplorationMove?: (moveSan: string) => void;
   onReset?: () => void;
   alternativeContinuationToApply?: { parentFen: string; candidate: ContinuationCandidate } | null;
@@ -72,6 +76,8 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   onAlternativeContinuationApplied,
 }) => {
   const [game, setGame] = useState<Chess>(new Chess(initialFen));
+  const currentBoardFenRef = useRef<string>(initialFen);
+  currentBoardFenRef.current = game.fen();
   const [fenHistory, setFenHistory] = useState<string[]>([initialFen]);
   const [historyIndex, setHistoryIndex] = useState<number>(0);
   const [customSquareStyles, setCustomSquareStyles] = useState<Record<string, React.CSSProperties>>({});
@@ -190,6 +196,11 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
         setGame(gameCopy);
 
         moveEvaluationService.evaluateMove(currentFen, moveSan).then((res) => {
+          // Stale evaluation guard: verify board has not moved or reset while request was in flight
+          if (currentBoardFenRef.current !== nextFen) {
+            return;
+          }
+
           if (res && !res.acceptable) {
             playSound('incorrect');
             setGame(new Chess(currentFen)); // Revert board to position before move
@@ -198,12 +209,13 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
             onUnacceptableMove?.(msg);
           } else {
             const lossCp = res?.evalLoss ?? 0;
+            const evalCp = res?.evalCp ?? null;
             if (lossCp === 0) {
               playSound('completion');
-              onUserExplorationMove?.(moveSan, nextFen, { isBest: true, loss: 0 });
+              onUserExplorationMove?.(moveSan, nextFen, { isBest: true, loss: 0, evalCp, fromFen: currentFen });
             } else {
               playSound('correct');
-              onUserExplorationMove?.(moveSan, nextFen, { isBest: false, loss: lossCp });
+              onUserExplorationMove?.(moveSan, nextFen, { isBest: false, loss: lossCp, evalCp, fromFen: currentFen });
             }
             onUnacceptableMove?.(null);
             const newHistory = fenHistory.slice(0, historyIndex + 1);
@@ -213,6 +225,10 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
             onFenChange?.(nextFen);
           }
         }).catch(() => {
+          // Stale evaluation guard: verify board has not moved or reset
+          if (currentBoardFenRef.current !== nextFen) {
+            return;
+          }
           // Fallback if network/evaluation fails: accept move
           playSound('move');
           onUnacceptableMove?.(null);
@@ -221,7 +237,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
           setFenHistory(newHistory);
           setHistoryIndex(newHistory.length - 1);
           onFenChange?.(nextFen);
-          onUserExplorationMove?.(moveSan, nextFen);
+          onUserExplorationMove?.(moveSan, nextFen, { isBest: false, loss: 0, evalCp: null, fromFen: currentFen });
         });
 
         return true;
