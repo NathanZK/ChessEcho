@@ -63,6 +63,18 @@ export interface MoveEvaluationResponse {
   acceptable: boolean;
 }
 
+/**
+ * Converts a side-to-move centipawn evaluation into absolute White-perspective centipawns.
+ *
+ * @param evalCp Centipawn evaluation relative to the player to move in [fen].
+ * @param fen The chess position in FEN notation before the move was played.
+ * @returns Absolute centipawns from White's perspective (+ = White advantage, - = Black advantage).
+ */
+export function toWhitePerspective(evalCp: number, fen: string): number {
+  const isWhiteToMove = fen.split(' ')[1] === 'w';
+  return isWhiteToMove ? evalCp : -evalCp;
+}
+
 export async function fetchPuzzleContinuation(
   fen: string,
   mode: ContinuationMode = 'ENGINE'
