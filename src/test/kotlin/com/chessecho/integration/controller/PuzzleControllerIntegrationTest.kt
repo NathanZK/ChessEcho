@@ -16,11 +16,16 @@ import com.chessecho.repository.GameRepository
 import com.chessecho.repository.PositionOccurrenceRepository
 import com.chessecho.repository.PositionRepository
 import com.chessecho.repository.UserPositionStatsRepository
+import com.chessecho.service.EngineAnalysisService
+import com.chessecho.service.EngineCandidate
+import com.chessecho.service.EvalScore
+import com.chessecho.service.PositionAnalysis
 import com.chessecho.service.StockfishService
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito.verifyNoInteractions
+import org.mockito.kotlin.whenever
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.mock.mockito.MockBean
@@ -60,6 +65,9 @@ class PuzzleControllerIntegrationTest {
 
     @Autowired
     private lateinit var engineAnalysisRepository: EngineAnalysisRepository
+
+    @Autowired
+    private lateinit var engineAnalysisService: EngineAnalysisService
 
     @MockBean
     private lateinit var stockfishService: StockfishService
@@ -414,5 +422,110 @@ class PuzzleControllerIntegrationTest {
         assertEquals(3, puzzles[0].mistakeCount)
         assertNotNull(puzzles[0].gameUrls)
         assertTrue(puzzles[0].gameUrls.isNotEmpty(), "PuzzleResponse should include non-empty gameUrls")
+    }
+
+    @Test
+    fun `end to end acceptableMoves includes MultiPV engine candidates while movesPlayed contains only user history`() {
+        val user = appUserRepository.save(AppUser(email = "multipv_e2e@test.com"))
+        val account = chessAccountRepository.save(ChessAccount(user = user, platform = "CHESS_COM", username = "multipvuser"))
+
+        val game =
+            gameRepository.save(
+                Game(
+                    chessAccount = account,
+                    platformGameId = "multipv_game",
+                    timeControl = "blitz",
+                    pgn = "1. e4 e5 2. Nf3 Nc6",
+                    result = "win",
+                ),
+            )
+
+        val position =
+            positionRepository.save(
+                Position(hash = "multipv_hash", fen = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3"),
+            )
+
+        userPositionStatsRepository.save(
+            UserPositionStats(chessAccount = account, position = position, playerColor = "WHITE", timesReached = 5),
+        )
+
+        // User played: 1 time Bc4 (good), 1 time Nf6 (acceptable historical move outside MultiPV top 3), 3 times Qh5 (blunder)
+        // User played 0 times Bb5 (engine only candidate)
+        for (i in 1..5) {
+            val move =
+                when (i) {
+                    1 -> "Bc4"
+                    2 -> "Nf6"
+                    else -> "Qh5"
+                }
+            positionOccurrenceRepository.save(
+                PositionOccurrence(
+                    game = game,
+                    position = position,
+                    chessAccount = account,
+                    plyNumber = 5,
+                    movePlayed = move,
+                    playerColor = "WHITE",
+                ),
+            )
+        }
+
+        // Mock stockfishService.analyzeMultiPv to return top-3 engine candidates: Bc4 (rank 1 best), Bb5 (rank 2 engine-only), d4 (rank 3 engine-only)
+        val engineCandidates =
+            listOf(
+                EngineCandidate("Bc4", EvalScore(cp = 40, mate = null)),
+                EngineCandidate("Bb5", EvalScore(cp = 35, mate = null)),
+                EngineCandidate("d4", EvalScore(cp = 30, mate = null)),
+            )
+        whenever(stockfishService.analyzeMultiPv(position.fen, 16, 5)).thenReturn(engineCandidates)
+
+        // Secondary search mock for remaining historical moves "Nf6" and "Qh5"
+        val remainingMap =
+            mapOf(
+                "Qh5" to PositionAnalysis(bestMove = "g6", score = EvalScore(cp = -160, mate = null)),
+                "Nf6" to PositionAnalysis(bestMove = "d6", score = EvalScore(cp = 20, mate = null)),
+            )
+        whenever(
+            stockfishService.analyze(
+                org.mockito.kotlin.any(),
+                org.mockito.kotlin.any(),
+                org.mockito.kotlin.any(),
+            ),
+        ).thenReturn(remainingMap)
+
+        // 1. Execute normal engine analysis pipeline
+        engineAnalysisService.analyzePosition(position)
+
+        // 2. Fetch puzzle via GET /api/puzzles
+        val response =
+            restTemplate.exchange(
+                "/api/puzzles?platform=CHESS_COM&username=multipvuser&playerColor=WHITE&minEvalLoss=0.5",
+                HttpMethod.GET,
+                null,
+                object : ParameterizedTypeReference<List<PuzzleResponse>>() {},
+            )
+
+        assertEquals(HttpStatus.OK, response.statusCode)
+        val puzzles = response.body
+        assertNotNull(puzzles)
+        assertEquals(1, puzzles.size)
+
+        val puzzle = puzzles[0]
+        val acceptableMoveNames = puzzle.acceptableMoves.map { it.move }.toSet()
+        val movesPlayedNames = puzzle.movesPlayed.map { it.move }.toSet()
+
+        // 3. Assert engine-only MultiPV candidate (Bb5) appears in acceptableMoves
+        assertTrue(acceptableMoveNames.contains("Bb5"), "acceptableMoves must contain engine candidate Bb5")
+        assertTrue(acceptableMoveNames.contains("Bc4"), "acceptableMoves must contain engine best move Bc4")
+
+        // 4. Assert historical move outside MultiPV (Nf6 with evalLoss 0.20 < 0.50) also appears in acceptableMoves
+        assertTrue(acceptableMoveNames.contains("Nf6"), "acceptableMoves must contain acceptable historical move Nf6")
+
+        // 5. Assert movesPlayed contains ONLY user historical mistakes (Qh5)
+        assertEquals(setOf("Qh5"), movesPlayedNames, "movesPlayed must contain user historical mistake Qh5")
+
+        // 6. Assert engine-only moves (Bb5, d4) NEVER bleed into movesPlayed
+        assertTrue(!movesPlayedNames.contains("Bb5"), "movesPlayed must NOT contain engine candidate Bb5")
+        assertTrue(!movesPlayedNames.contains("d4"), "movesPlayed must NOT contain engine candidate d4")
     }
 }
