@@ -2,12 +2,14 @@ package com.chessecho.integration.controller
 
 import com.chessecho.domain.AppUser
 import com.chessecho.domain.ChessAccount
+import com.chessecho.domain.ContinuationMode
 import com.chessecho.domain.EngineAnalysis
 import com.chessecho.domain.Game
 import com.chessecho.domain.MoveEvaluation
 import com.chessecho.domain.Position
 import com.chessecho.domain.PositionOccurrence
 import com.chessecho.domain.UserPositionStats
+import com.chessecho.dto.ContinuationResponse
 import com.chessecho.dto.PuzzleResponse
 import com.chessecho.repository.AppUserRepository
 import com.chessecho.repository.ChessAccountRepository
@@ -527,5 +529,67 @@ class PuzzleControllerIntegrationTest {
         // 6. Assert engine-only moves (Bb5, d4) NEVER bleed into movesPlayed
         assertTrue(!movesPlayedNames.contains("Bb5"), "movesPlayed must NOT contain engine candidate Bb5")
         assertTrue(!movesPlayedNames.contains("d4"), "movesPlayed must NOT contain engine candidate d4")
+    }
+
+    @Test
+    fun `getContinuation endpoint with mode ENGINE returns requestedMode ENGINE and effectiveProvider ENGINE`() {
+        val fen = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3"
+        val engineCandidates =
+            listOf(
+                EngineCandidate("Bb5", EvalScore(cp = 40, mate = null)),
+                EngineCandidate("Bc4", EvalScore(cp = 35, mate = null)),
+            )
+        whenever(stockfishService.analyzeMultiPv(fen, 16, 5)).thenReturn(engineCandidates)
+
+        val response =
+            restTemplate.exchange(
+                "/api/puzzles/continuation?fen={fen}&mode=ENGINE",
+                HttpMethod.GET,
+                null,
+                ContinuationResponse::class.java,
+                fen,
+            )
+
+        assertEquals(HttpStatus.OK, response.statusCode)
+        val body = response.body
+        assertNotNull(body)
+        assertEquals(ContinuationMode.ENGINE, body.requestedMode)
+        assertEquals("ENGINE", body.effectiveProvider)
+        assertEquals(2, body.candidates.size)
+        assertEquals("Bb5", body.candidates[0].move)
+        assertEquals("ENGINE", body.candidates[0].providerType)
+        assertEquals(40, body.candidates[0].evalCp)
+        assertEquals(0.0, body.candidates[0].evalLoss)
+        assertEquals("r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3", body.candidates[0].resultingFen)
+
+        assertEquals("Bc4", body.candidates[1].move)
+        assertEquals("ENGINE", body.candidates[1].providerType)
+        assertEquals(35, body.candidates[1].evalCp)
+        assertEquals(0.05, body.candidates[1].evalLoss!!, 0.001)
+    }
+
+    @Test
+    fun `getContinuation endpoint with mode HUMAN falls back to ENGINE and sets requestedMode HUMAN and effectiveProvider ENGINE`() {
+        val fen = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3"
+        val engineCandidates = listOf(EngineCandidate("Bc4", EvalScore(cp = 35, mate = null)))
+        whenever(stockfishService.analyzeMultiPv(fen, 16, 5)).thenReturn(engineCandidates)
+
+        val response =
+            restTemplate.exchange(
+                "/api/puzzles/continuation?fen={fen}&mode=HUMAN",
+                HttpMethod.GET,
+                null,
+                ContinuationResponse::class.java,
+                fen,
+            )
+
+        assertEquals(HttpStatus.OK, response.statusCode)
+        val body = response.body
+        assertNotNull(body)
+        assertEquals(ContinuationMode.HUMAN, body.requestedMode)
+        assertEquals("ENGINE", body.effectiveProvider)
+        assertEquals(1, body.candidates.size)
+        assertEquals("Bc4", body.candidates[0].move)
+        assertEquals("ENGINE", body.candidates[0].providerType)
     }
 }

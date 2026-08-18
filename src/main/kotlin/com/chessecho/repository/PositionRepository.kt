@@ -6,6 +6,8 @@ import org.springframework.data.jpa.repository.Query
 import java.util.UUID
 
 interface PositionRepository : JpaRepository<Position, UUID> {
+    fun findByHash(hash: String): Position?
+
     @Query("SELECT p FROM Position p WHERE p.hash IN :hashes")
     fun findByHashIn(hashes: List<String>): List<Position>
 

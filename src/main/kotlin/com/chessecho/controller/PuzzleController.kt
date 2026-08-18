@@ -1,9 +1,12 @@
 package com.chessecho.controller
 
+import com.chessecho.domain.ContinuationMode
 import com.chessecho.domain.Platform
 import com.chessecho.domain.PlayerColor
+import com.chessecho.dto.ContinuationResponse
 import com.chessecho.dto.PuzzleResponse
 import com.chessecho.service.WeaknessCalculationService
+import com.chessecho.service.continuation.ContinuationService
 import io.swagger.v3.oas.annotations.Parameter
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
@@ -15,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController
 @RequestMapping("/api")
 class PuzzleController(
     private val weaknessCalculationService: WeaknessCalculationService,
+    private val continuationService: ContinuationService,
 ) {
     @GetMapping("/puzzles")
     fun getPuzzles(
@@ -70,5 +74,25 @@ class PuzzleController(
             }
 
         return ResponseEntity.ok(puzzles)
+    }
+
+    @GetMapping("/puzzles/continuation")
+    fun getContinuation(
+        @RequestParam fen: String,
+        @RequestParam(defaultValue = "ENGINE") mode: ContinuationMode,
+    ): ResponseEntity<ContinuationResponse> {
+        val result = continuationService.getContinuation(fen = fen, mode = mode)
+        if (result.candidates.isEmpty()) {
+            return ResponseEntity.notFound().build()
+        }
+
+        return ResponseEntity.ok(
+            ContinuationResponse(
+                fen = result.fen,
+                requestedMode = result.requestedMode,
+                effectiveProvider = result.effectiveProvider,
+                candidates = result.candidates,
+            ),
+        )
     }
 }

@@ -33,6 +33,39 @@ export interface WeaknessResponse {
   lastSeenAt?: string;
 }
 
+export type ContinuationMode = 'ENGINE' | 'HUMAN';
+
+export interface ContinuationCandidate {
+  move: string;
+  resultingFen: string;
+  providerType: string;
+  evalCp?: number | null;
+  evalLoss?: number | null;
+  timesPlayed?: number | null;
+}
+
+export interface ContinuationResponse {
+  fen: string;
+  requestedMode: ContinuationMode;
+  effectiveProvider: string;
+  candidates: ContinuationCandidate[];
+}
+
+export async function fetchPuzzleContinuation(
+  fen: string,
+  mode: ContinuationMode = 'ENGINE'
+): Promise<ContinuationResponse | null> {
+  if (!fen) return null;
+  try {
+    const url = `${API_BASE_URL}/puzzles/continuation?fen=${encodeURIComponent(fen)}&mode=${encodeURIComponent(mode)}`;
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
 export async function fetchPuzzles(
   username: string,
   platform: string = 'CHESS_COM',
