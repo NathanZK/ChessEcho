@@ -51,6 +51,18 @@ export interface ContinuationResponse {
   candidates: ContinuationCandidate[];
 }
 
+export interface MoveEvaluationResponse {
+  fen: string;
+  move: string;
+  bestMove: string;
+  bestEvalCp: number | null;
+  evalCp: number | null;
+  evalLoss: number;
+  maxEvalLoss: number;
+  threshold: number;
+  acceptable: boolean;
+}
+
 export async function fetchPuzzleContinuation(
   fen: string,
   mode: ContinuationMode = 'ENGINE'
@@ -65,6 +77,22 @@ export async function fetchPuzzleContinuation(
     return null;
   }
 }
+
+export async function evaluateMove(
+  fen: string,
+  move: string
+): Promise<MoveEvaluationResponse | null> {
+  if (!fen || !move) return null;
+  try {
+    const url = `${API_BASE_URL}/puzzles/evaluate-move?fen=${encodeURIComponent(fen)}&move=${encodeURIComponent(move)}`;
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
 
 export async function fetchPuzzles(
   username: string,

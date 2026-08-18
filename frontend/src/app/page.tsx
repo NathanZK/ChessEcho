@@ -8,8 +8,11 @@ import { PuzzleFeedbackPanel } from '@/components/PuzzleFeedbackPanel';
 import { WeaknessesList } from '@/components/WeaknessesList';
 import { ImportGamesView } from '@/components/ImportGamesView';
 import { Puzzle } from '@/mock/mockData';
-import { fetchPuzzles, JobStatusResponse } from '@/services/api';
+import { fetchPuzzles, JobStatusResponse, ContinuationMode, ContinuationCandidate } from '@/services/api';
 import { soundService } from '@/services/soundService';
+import { usePuzzleContinuation } from '@/utils/usePuzzleContinuation';
+
+export const EXPLORATION_STEP_DELAY_MS = 800;
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<TabType>('puzzles');
@@ -184,6 +187,78 @@ export default function Home() {
     historicalInfo?: { timesPlayed: number; averageLoss: number };
   }>({ status: 'IDLE' });
 
+  // Continuation & Line Exploration turn-based state machine
+  const [isExplorationActive, setIsExplorationActive] = useState<boolean>(false);
+  const [unacceptableMoveMessage, setUnacceptableMoveMessage] = useState<string | null>(null);
+  const [currentBoardFen, setCurrentBoardFen] = useState<string>('');
+  const [continuationMode, setContinuationMode] = useState<ContinuationMode>('ENGINE');
+  const [pendingContinuationCandidate, setPendingContinuationCandidate] = useState<ContinuationCandidate | null>(null);
+  const [requestedContinuationFen, setRequestedContinuationFen] = useState<string | undefined>(undefined);
+
+  const explorationTurn = React.useMemo(() => {
+    if (!activePuzzle || !currentBoardFen) return 'USER';
+    const fenColor = currentBoardFen.split(' ')[1]; // 'w' or 'b'
+    const isWhiteTurn = fenColor === 'w';
+    const isUserWhite = activePuzzle.playerColor === 'WHITE';
+    return isWhiteTurn === isUserWhite ? 'USER' : 'CHESSECHO';
+  }, [currentBoardFen, activePuzzle]);
+
+  const continuation = usePuzzleContinuation(requestedContinuationFen, continuationMode);
+
+  // When ChessEcho turn is active and a candidate is selected, stage it for the board
+  React.useEffect(() => {
+    if (!isExplorationActive) return;
+    if (continuation.loading) return;
+
+    if (
+      continuation.response?.fen === requestedContinuationFen &&
+      currentBoardFen === requestedContinuationFen &&
+      continuation.selectedCandidate
+    ) {
+      setPendingContinuationCandidate(continuation.selectedCandidate);
+    }
+  }, [isExplorationActive, continuation.selectedCandidate, continuation.loading, continuation.response, requestedContinuationFen, currentBoardFen]);
+
+  const handleContinuationApplied = () => {
+    setPendingContinuationCandidate(null);
+  };
+
+  const handleUserExplorationMove = (moveSan: string, nextFen: string) => {
+    // User made a successful, acceptable move. Request a continuation.
+    setRequestedContinuationFen(nextFen);
+  };
+
+  const handleChessEchoExplorationMove = (moveSan: string) => {
+    // ChessEcho made its move. Clear request.
+    setRequestedContinuationFen(undefined);
+  };
+
+  const handleEnterExploration = () => {
+    setIsExplorationActive(true);
+    setRequestedContinuationFen(currentBoardFen || activePuzzle?.fen);
+    setFeedback({ status: 'EXPLORING' });
+    setUnacceptableMoveMessage(null);
+  };
+
+  const handleExitExploration = () => {
+    setIsExplorationActive(false);
+    setRequestedContinuationFen(undefined);
+    setPendingContinuationCandidate(null);
+    setUnacceptableMoveMessage(null);
+    setFeedback({ status: 'CORRECT', lastMove: activePuzzle?.targetMove });
+  };
+
+  const handleUnacceptableMove = (message?: string | null) => {
+    if (message === null) {
+      setUnacceptableMoveMessage(null);
+      return;
+    }
+    setUnacceptableMoveMessage(message || "That move is outside the acceptable range.");
+    setTimeout(() => {
+      setUnacceptableMoveMessage(null);
+    }, 3500);
+  };
+
   const resetPuzzleInteractionState = (puzzle: Puzzle) => {
     const initialEval = puzzle.evalCp ?? 35;
     setCurrentEvalCp(initialEval);
@@ -194,6 +269,11 @@ export default function Home() {
     setMoveHistory([]);
     setHintSquare(undefined);
     setIsEvalUnknown(false);
+    setCurrentBoardFen(puzzle.fen);
+    setPendingContinuationCandidate(null);
+    setRequestedContinuationFen(undefined);
+    setIsExplorationActive(false);
+    setUnacceptableMoveMessage(null);
   };
 
   const [puzzlePage, setPuzzlePage] = useState<number>(0);
@@ -418,30 +498,45 @@ export default function Home() {
   };
 
   const handleBoardUndo = () => {
+    setRequestedContinuationFen(undefined);
+    setPendingContinuationCandidate(null);
+
+    if (isExplorationActive) return;
+
     const prevIndex = Math.max(0, historyIndex - 1);
     setHistoryIndex(prevIndex);
     setCurrentEvalCp(evalHistory[prevIndex] ?? (activePuzzle?.evalCp ?? 35));
-    const prevFeedback = feedbackHistory[prevIndex] as {
-      status: 'IDLE' | 'CORRECT' | 'HISTORICAL_MISTAKE' | 'INCORRECT' | 'EXPLORING';
-      lastMove?: string;
-      historicalInfo?: { timesPlayed: number; averageLoss: number };
-    };
+    const prevFeedback = feedbackHistory[prevIndex] as any;
     setFeedback(prevFeedback ?? { status: 'IDLE' });
     setIsEvalUnknown(false);
   };
 
   const handleBoardRedo = () => {
+    setRequestedContinuationFen(undefined);
+    setPendingContinuationCandidate(null);
+
+    if (isExplorationActive) return;
+
     if (historyIndex < evalHistory.length - 1) {
       const nextIndex = historyIndex + 1;
       setHistoryIndex(nextIndex);
       setCurrentEvalCp(evalHistory[nextIndex]);
-      const nextFeedback = feedbackHistory[nextIndex] as {
-        status: 'IDLE' | 'CORRECT' | 'HISTORICAL_MISTAKE' | 'INCORRECT' | 'EXPLORING';
-        lastMove?: string;
-        historicalInfo?: { timesPlayed: number; averageLoss: number };
-      };
+      const nextFeedback = feedbackHistory[nextIndex] as any;
       setFeedback(nextFeedback ?? { status: 'IDLE' });
     }
+  };
+
+  const handleBoardReset = () => {
+    setRequestedContinuationFen(undefined);
+    setPendingContinuationCandidate(null);
+    setIsExplorationActive(false);
+    setUnacceptableMoveMessage(null);
+    
+    setHistoryIndex(0);
+    setCurrentEvalCp(evalHistory[0] ?? (activePuzzle?.evalCp ?? 35));
+    const firstFeedback = feedbackHistory[0] as any;
+    setFeedback(firstFeedback ?? { status: 'IDLE' });
+    setIsEvalUnknown(false);
   };
 
   const handleMoveAttempt = (
@@ -514,28 +609,16 @@ export default function Home() {
       setIsEvalUnknown(!moveHasEngineData);
       setFeedback(newFeedbackState);
     } else {
-      // Continuation / Opponent move / Exploration
-      // Do NOT re-evaluate opponent moves against initial targetMove or overwrite the initial mistake feedback!
-      let newFeedbackState = feedback;
-
-      if (isAlreadySolved) {
-        newFeedbackState = { status: 'EXPLORING', lastMove: moveSan };
-      }
-      // If previous move was an INCORRECT or HISTORICAL_MISTAKE attempt, preserve that feedback!
-
+      // Continuation / Opponent move
       const trimmedEvalHist = evalHistory.slice(0, historyIndex + 1);
       const trimmedFeedHist = feedbackHistory.slice(0, historyIndex + 1);
 
       trimmedEvalHist.push(currentEvalCp);
-      trimmedFeedHist.push(newFeedbackState);
+      trimmedFeedHist.push(feedback);
 
       setEvalHistory(trimmedEvalHist);
       setFeedbackHistory(trimmedFeedHist);
       setHistoryIndex(trimmedEvalHist.length - 1);
-
-      if (isAlreadySolved) {
-        setFeedback(newFeedbackState);
-      }
     }
   };
 
@@ -608,11 +691,19 @@ export default function Home() {
                     onNextPuzzle={handleNextPuzzle}
                     onUndo={handleBoardUndo}
                     onRedo={handleBoardRedo}
+                    onReset={handleBoardReset}
                     hintSquare={hintSquare}
                     canHint={!(feedback.status === 'CORRECT' || feedback.status === 'EXPLORING')}
                     onFlipBoard={() => setIsBoardFlipped((prev) => !prev)}
                     soundEnabled={soundEnabled}
                     onToggleSound={handleToggleSound}
+                    onFenChange={setCurrentBoardFen}
+                    pendingContinuationCandidate={pendingContinuationCandidate}
+                    onContinuationApplied={handleContinuationApplied}
+                    isExplorationActive={isExplorationActive}
+                    onUnacceptableMove={handleUnacceptableMove}
+                    onUserExplorationMove={handleUserExplorationMove}
+                    onChessEchoExplorationMove={handleChessEchoExplorationMove}
                   />
                 </div>
 
@@ -632,6 +723,17 @@ export default function Home() {
                     onMinMistakeCountChange={handleMinMistakeCountChange}
                     onApplySettings={handleApplyPuzzleSettings}
                     username={activeUsername}
+                    isExplorationActive={isExplorationActive}
+                    explorationTurn={explorationTurn}
+                    onEnterExploration={handleEnterExploration}
+                    onExitExploration={handleExitExploration}
+                    continuationMode={continuationMode}
+                    onContinuationModeChange={setContinuationMode}
+                    continuationCandidate={continuation.selectedCandidate}
+                    effectiveProvider={continuation.effectiveProvider}
+                    isContinuationFallback={continuation.isFallback}
+                    isContinuationLoading={continuation.loading}
+                    unacceptableMoveMessage={unacceptableMoveMessage}
                   />
                 </div>
               </div>

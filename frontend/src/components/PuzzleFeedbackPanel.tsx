@@ -1,9 +1,22 @@
 'use client';
 
 import React, { useEffect } from 'react';
-import { AlertTriangle, CheckCircle2, XCircle, ExternalLink, HelpCircle, Flame, Trophy, ChevronLeft, ChevronRight, Settings2 } from 'lucide-react';
+import {
+  AlertTriangle,
+  XCircle,
+  ExternalLink,
+  HelpCircle,
+  Flame,
+  Trophy,
+  ChevronLeft,
+  ChevronRight,
+  Settings2,
+  Sparkles,
+  LogOut,
+} from 'lucide-react';
 import { Puzzle } from '../mock/mockData';
 import { HistoricalGamesModal } from './HistoricalGamesModal';
+import { ContinuationMode, ContinuationCandidate } from '../services/api';
 
 export function formatDecimal(val: number, decimals: number = 2): string {
   return (val ?? 0).toFixed(decimals).replace(',', '.');
@@ -21,7 +34,7 @@ interface PuzzleFeedbackPanelProps {
   moveHistory: string[];
   onPreviousPuzzle?: () => void;
   onNextPuzzle: () => void;
-  // Settings props (moved from top toolbar)
+  // Settings props
   puzzleColorFilter: 'BOTH' | 'WHITE' | 'BLACK';
   onColorFilterChange: (color: 'BOTH' | 'WHITE' | 'BLACK') => void;
   showPuzzleSettings: boolean;
@@ -30,6 +43,18 @@ interface PuzzleFeedbackPanelProps {
   onMinMistakeCountChange: (count: number) => void;
   onApplySettings: () => void;
   username?: string;
+  // Continuation & Exploration props
+  isExplorationActive?: boolean;
+  explorationTurn?: 'USER' | 'CHESSECHO';
+  onEnterExploration?: () => void;
+  onExitExploration?: () => void;
+  continuationMode?: ContinuationMode;
+  onContinuationModeChange?: (mode: ContinuationMode) => void;
+  continuationCandidate?: ContinuationCandidate | null;
+  effectiveProvider?: string | null;
+  isContinuationFallback?: boolean;
+  isContinuationLoading?: boolean;
+  unacceptableMoveMessage?: string | null;
 }
 
 export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
@@ -46,8 +71,20 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
   onMinMistakeCountChange,
   onApplySettings,
   username,
+  isExplorationActive = false,
+  explorationTurn = 'USER',
+  onEnterExploration,
+  onExitExploration,
+  continuationMode = 'ENGINE',
+  onContinuationModeChange,
+  continuationCandidate,
+  effectiveProvider,
+  isContinuationFallback = false,
+  isContinuationLoading = false,
+  unacceptableMoveMessage,
 }) => {
   const [showGameModal, setShowGameModal] = React.useState<boolean>(false);
+
   // Listen for Enter key when puzzle is solved to advance to next puzzle
   useEffect(() => {
     if (feedback.status !== 'CORRECT') return;
@@ -217,42 +254,16 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
           )}
 
           <div className="flex items-center space-x-2 pt-1">
-            {onPreviousPuzzle && (
+            {!isExplorationActive && onEnterExploration && (
               <button
-                onClick={onPreviousPuzzle}
-                className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl transition border border-slate-700/60 flex items-center justify-center space-x-1.5 cursor-pointer"
+                type="button"
+                onClick={onEnterExploration}
+                className="flex-1 py-2.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold text-xs rounded-xl transition border border-amber-500/30 flex items-center justify-center space-x-1.5 cursor-pointer shadow-sm"
               >
-                <ChevronLeft className="w-4 h-4" />
-                <span>Prev Puzzle</span>
+                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                <span>Continue Exploration →</span>
               </button>
             )}
-            <button
-              onClick={onNextPuzzle}
-              className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition shadow-lg shadow-emerald-900/50 flex items-center justify-center space-x-1.5 group cursor-pointer"
-            >
-              <span>Next Puzzle</span>
-              <span className="text-[10px] font-normal text-emerald-200 bg-emerald-700/60 px-1.5 py-0.5 rounded">
-                Enter ↵
-              </span>
-              <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition" />
-            </button>
-          </div>
-        </div>
-      ) : feedback.status === 'EXPLORING' ? (
-        <div className="p-3.5 bg-gradient-to-br from-emerald-950/80 to-slate-900 border-2 border-emerald-500/50 rounded-2xl space-y-2.5 shadow-lg shadow-emerald-950/40 animate-in fade-in duration-200">
-          <div className="flex items-center space-x-3">
-            <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0">
-              <Trophy className="w-4 h-4 text-emerald-400" />
-            </div>
-            <div>
-              <h4 className="font-bold text-sm text-emerald-200">Line Exploration 🔍</h4>
-              <p className="text-xs text-emerald-300/90">
-                Played <span className="font-bold text-white">{feedback.lastMove}</span>. Examining follow-up moves on the board.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center space-x-2 pt-1">
             {onPreviousPuzzle && (
               <button
                 onClick={onPreviousPuzzle}
@@ -310,6 +321,75 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
           <p className="text-xs">
             Find {puzzle.playerColor === 'BLACK' ? "Black's" : "White's"} best move or an acceptable alternative to fix your opening habit.
           </p>
+        </div>
+      )}
+
+      {/* Active Line Exploration Card (Renders ONLY when isExplorationActive is true) */}
+      {isExplorationActive && (
+        <div className="bg-slate-950 p-3.5 rounded-2xl border border-emerald-500/30 space-y-3 text-xs shadow-lg shadow-slate-950/80 animate-in fade-in duration-200">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5 font-bold text-emerald-300">
+              <Sparkles className="w-4 h-4 text-emerald-400" />
+              <span className="text-sm">Line Exploration</span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {/* Continuation Mode Selector (ENGINE / HUMAN) */}
+              {onContinuationModeChange && (
+                <div className="flex bg-slate-900 p-0.5 rounded-lg border border-slate-800">
+                  {(['ENGINE', 'HUMAN'] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => onContinuationModeChange(m)}
+                      className={`px-2 py-0.5 text-[10px] font-bold rounded transition cursor-pointer ${
+                        continuationMode === m ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Exit Exploration Button */}
+              {onExitExploration && (
+                <button
+                  type="button"
+                  onClick={onExitExploration}
+                  title="Exit Exploration"
+                  className="flex items-center gap-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-[11px] rounded-lg transition border border-slate-700/60 cursor-pointer"
+                >
+                  <LogOut className="w-3 h-3 text-slate-400" />
+                  <span>Exit</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {unacceptableMoveMessage ? (
+            <div className="flex items-center space-x-2 text-rose-300 py-2 px-3 bg-rose-500/10 rounded-xl border border-rose-500/30">
+              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+              <span className="font-semibold text-xs">{unacceptableMoveMessage}</span>
+            </div>
+          ) : isContinuationLoading || explorationTurn === 'CHESSECHO' ? (
+            <div className="flex items-center space-x-2 text-slate-400 py-2 justify-center bg-slate-900/60 rounded-xl border border-slate-800">
+              <div className="w-4 h-4 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
+              <span className="font-medium text-xs">ChessEcho is choosing a response...</span>
+            </div>
+          ) : (
+            <div className="flex items-center justify-between bg-slate-900/60 px-3 py-2 rounded-xl border border-emerald-500/20">
+              <div className="flex items-center space-x-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                <span className="font-semibold text-emerald-300 text-xs">Your turn — explore a move.</span>
+              </div>
+              {continuationCandidate?.move && (
+                <span className="text-[11px] text-slate-400 font-mono">
+                  (Last: {continuationCandidate.move})
+                </span>
+              )}
+            </div>
+          )}
         </div>
       )}
 
