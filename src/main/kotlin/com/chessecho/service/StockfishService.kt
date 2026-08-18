@@ -172,6 +172,54 @@ class StockfishService {
     }
 
     /**
+     * Evaluates a single SAN move played from position [fen] at depth [depth].
+     * Normalizes the score to the perspective of the player making the move in [fen].
+     */
+    fun evaluateSingleMove(
+        fen: String,
+        sanMove: String,
+        depth: Int = 16,
+    ): PositionAnalysis? {
+        val board = Board()
+        try {
+            board.loadFromFen(fen)
+            if (!board.doMove(sanMove)) {
+                return null
+            }
+            val move = board.undoMove()
+            val uciMove = move.toString()
+
+            val process = ProcessBuilder("stockfish").start()
+            val reader = BufferedReader(InputStreamReader(process.inputStream))
+            val writer = OutputStreamWriter(process.outputStream)
+
+            fun sendCommand(cmd: String) {
+                writer.write("$cmd\n")
+                writer.flush()
+            }
+
+            sendCommand("uci")
+            var line: String?
+            while (true) {
+                line = reader.readLine()
+                if (line == "uciok" || line == null) break
+            }
+
+            val moveAnalysis = runGoDepth(fen, uciMove, depth, reader, ::sendCommand)
+
+            sendCommand("quit")
+            process.waitFor(5, TimeUnit.SECONDS)
+            if (process.isAlive) {
+                process.destroyForcibly()
+            }
+            return moveAnalysis
+        } catch (e: Exception) {
+            logger.error("Failed to evaluate single move $sanMove in FEN $fen", e)
+            return null
+        }
+    }
+
+    /**
      * Executes the `go depth` UCI command for a specific FEN and optional move sequence.
      *
      * @param fen The baseline FEN position

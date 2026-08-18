@@ -32,8 +32,13 @@ engine:
   analysis:
     multi-pv: ${ENGINE_ANALYSIS_MULTI_PV:5}
   continuation:
+    # continuation.max-eval-loss controls which candidate moves ChessEcho may play.
     multi-pv: ${ENGINE_CONTINUATION_MULTI_PV:5}
     max-eval-loss: ${ENGINE_CONTINUATION_MAX_EVAL_LOSS:0.50}
+  exploration:
+    # exploration.max-eval-loss controls how much evaluation loss we allow from the user during interactive exploration.
+    max-eval-loss: ${ENGINE_EXPLORATION_MAX_EVAL_LOSS:0.80}
+
 
 
 

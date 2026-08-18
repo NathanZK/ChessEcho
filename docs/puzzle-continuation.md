@@ -68,39 +68,49 @@ The continuation response explicitly distinguishes between the mode requested by
 
 ---
 
-## Engine Continuation Quality Threshold (`max-eval-loss: 0.50`)
+## Engine Configuration & Threshold Separation
 
-To prevent weak or non-plausible MultiPV candidate moves from being included as continuations, `EngineMoveProvider` applies a continuation quality filter based on evaluation loss relative to rank 1:
-- **Configuration**:
-  ```yaml
-  engine:
-    continuation:
-      multi-pv: 5
-      max-eval-loss: 0.50
-  ```
+ChessEcho explicitly separates candidate discovery for engine responses from user move evaluation during interactive line exploration. Both mechanisms use independent, configurable thresholds:
 
-### Architectural Rationale
-- **Plausible Continuation vs User Mistake Threshold**: This is a continuation-specific threshold, distinct from the weakness or acceptable-move threshold used to judge user mistakes.
-- **Purpose**: The goal is to provide the frontend/puzzle logic with a useful set of reasonable continuations rather than restricting candidates strictly to near-equal engine moves.
-- **Default Value**: `0.50` pawns is the current default and is intentionally looser than thresholds used for judging user moves.
-- **Backend Configuration**: The threshold remains backend configuration rather than a REST request parameter, ensuring clients cannot manipulate engine-analysis policy per request.
-- **MultiPV Top-N & Eval-Loss Synergy**: MultiPV top-N (5) and evaluation-loss filtering (`0.50`) work in tandem. Stockfish first generates the top N candidates, and the `max-eval-loss` filter subsequently strips out candidates that fall too far behind rank 1.
+```yaml
+engine:
+  continuation:
+    multi-pv: ${ENGINE_CONTINUATION_MULTI_PV:5}
+    max-eval-loss: ${ENGINE_CONTINUATION_MAX_EVAL_LOSS:0.50}
+  exploration:
+    max-eval-loss: ${ENGINE_EXPLORATION_MAX_EVAL_LOSS:0.80}
+```
 
-### Filtering Rules
-- Rank 1 candidate sets the baseline score (`bestCp`).
-- Candidate evaluation loss is calculated: `evalLoss = max(0.0, (bestCp - candidateCp) / 100.0)`.
-- Candidates are included if `evalLoss <= max-eval-loss` (using `<=` comparison). Candidates with `evalLoss` exactly at `0.50` are included.
-- Rank 1 has `evalLoss = 0.00` and is always included.
-- Ranking order from Stockfish is preserved.
+### 1. Continuation Candidate Discovery (`continuation.max-eval-loss: 0.50`)
+> **Question Answered**: *"Which moves may ChessEcho play?"*
+- Uses Stockfish MultiPV search (default `multi-pv: 5`).
+- Filters engine response candidate moves relative to rank 1 using `max-eval-loss: 0.50`.
+- Returns a list of plausible moves for ChessEcho to respond with.
+
+### 2. User Move Evaluation (`exploration.max-eval-loss: 0.80`)
+> **Question Answered**: *"How much evaluation did the user's move lose, and is that loss acceptable?"*
+- Evaluates the **exact** move attempted by the user from an exploration position FEN via `GET /api/puzzles/evaluate-move`.
+- **Does NOT require the user's move to be present in MultiPV=5**. If the move is rank 6, 10, etc., Stockfish performs a targeted single-move evaluation for that exact move.
+- Calculates eval loss relative to the best engine move for that position:
+  $$\text{evalLoss} = \max\left(0.0, \frac{\text{bestEvalCp} - \text{userEvalCp}}{100.0}\right)$$
+- If `evalLoss <= 0.80` (using `<=` comparison), the move is accepted.
+- If `evalLoss > 0.80`, the move is rejected, the board remains at the pre-move position, and feedback is displayed. No continuation is requested.
+
+### Threshold Independence & Server Configuration
+- `continuation.max-eval-loss` (0.50) controls which candidate moves ChessEcho may play as an opponent.
+- `exploration.max-eval-loss` (0.80) controls how much evaluation loss we allow from the user during interactive exploration.
+- The user exploration threshold is server-configured (`engine.exploration.max-eval-loss`) and intentionally **not** accepted as a query parameter so clients cannot override evaluation policy.
+- The evaluation response explicitly returns `maxEvalLoss` (the configured threshold applied) alongside `evalLoss` and `acceptable` for full client transparency.
 
 ---
 
 ## Component Responsibilities & Separation of Concerns
 
 - **`ContinuationService`**: Orchestrates continuation request handling, tracks `requestedMode` vs `effectiveProvider`, executes `HUMAN` $\to$ `ENGINE` fallback policy, and preserves candidate collections.
-- **`MoveProvider`**: Interface contract defining `providerType` and `getContinuationCandidates(fen: String): List<ContinuationCandidate>`.
-- **`EngineMoveProvider`**: Implements `MoveProvider`. Performs MultiPV search and filters candidates using `max-eval-loss: 0.50`.
-- **`HumanMoveProvider`**: Implements `MoveProvider`. Performs SHA-256 hash lookup of FEN and returns historical moves from `PositionOccurrence` with play counts. Returns an empty list when no historical occurrences exist.
+- **`MoveEvaluationService`**: Evaluates arbitrary user moves against position FENs, computes evaluation loss relative to the engine baseline, and determines user move acceptability against `exploration.max-eval-loss`.
+- **`EngineMoveProvider`**: Encapsulates engine-based MultiPV candidate discovery and applies continuation-specific quality filtering (`continuation.max-eval-loss`).
+- **`HumanMoveProvider`**: Encapsulates historical human-move discovery from database occurrences.
+- **`StockfishService`**: The single, unified Stockfish engine integration for both MultiPV candidate discovery and single-move analysis.
 - **Frontend & API (`ContinuationMode`)**: Exposes domain enum `ContinuationMode` (`ENGINE`, `HUMAN`), `requestedMode`, `effectiveProvider`, and candidate collections via REST endpoints (`GET /api/puzzles/continuation`).
 
 ---

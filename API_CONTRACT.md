@@ -317,3 +317,53 @@ No continuation moves available for the given position.
 }
 ```
 
+---
+
+## 7. Evaluate User Exploration Move
+Evaluates an arbitrary legal move played from an arbitrary position (FEN) during interactive line exploration against the engine baseline and determines whether its evaluation loss is within the configured user exploration threshold (`0.80` pawns).
+
+- **Endpoint:** `GET /api/puzzles/evaluate-move`
+
+### Query Parameters
+- `fen` (string, required): Baseline position in FEN notation.
+- `move` (string, required): Exact move attempted by the user in SAN notation (e.g. `Nf3`, `Ba4`, `Bxc6`).
+
+### Behavior & Separation of Concerns
+- **Distinct from Continuation Discovery**: Continuation candidates (`/api/puzzles/continuation`) answer *"Which moves may ChessEcho play?"* (`max-eval-loss: 0.50`). Move evaluation (`/api/puzzles/evaluate-move`) answers *"How much evaluation did the user's move lose, and is that loss acceptable?"* (`max-eval-loss: 0.80`).
+- **Server Configured Threshold**: The threshold is configured server-side (`engine.exploration.max-eval-loss: 0.80`) and intentionally **not** accepted as a query parameter. The response explicitly returns `maxEvalLoss` for transparency.
+- **Does NOT Require MultiPV=5**: If the user's move is rank 6+, Stockfish evaluates that specific move independently.
+- **Threshold Rule**: Evaluation loss is computed relative to the position's best move: `evalLoss = max(0.0, (bestEvalCp - userEvalCp) / 100.0)`. The move is `acceptable = true` if `evalLoss <= maxEvalLoss`.
+
+### Curl Example
+```bash
+curl "http://localhost:8080/api/puzzles/evaluate-move?fen=r1bqkbnr%2F1ppp1ppp%2Fp1n5%2F1B2p3%2F4P3%2F5N2%2FPPPP1PPP%2FRNBQK2R%20w%20KQkq%20-%200%204&move=Ba4"
+```
+
+### Responses
+#### `200 OK`
+```json
+{
+  "fen": "r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4",
+  "move": "Ba4",
+  "bestMove": "Ba4",
+  "bestEvalCp": 80,
+  "evalCp": 80,
+  "evalLoss": 0.0,
+  "maxEvalLoss": 0.80,
+  "threshold": 0.80,
+  "acceptable": true
+}
+```
+
+#### `400 Bad Request`
+Returned when the specified position FEN is invalid or the attempted move is illegal.
+```json
+{
+  "error": "VALIDATION_ERROR",
+  "details": [
+    "Illegal or unparseable move 'e8' for FEN 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3'"
+  ]
+}
+```
+
+
