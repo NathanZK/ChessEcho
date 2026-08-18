@@ -254,3 +254,66 @@ curl "http://localhost:8080/api/puzzles?platform=CHESS_COM&username=magnuscarlse
   }
 ]
 ```
+
+---
+
+## 6. Get Puzzle Continuation
+Retrieves continuation candidate moves and resulting board states for a given position.
+
+- **Endpoint:** `GET /api/puzzles/continuation`
+
+### Query Parameters
+- `fen` (string, required): Baseline position in FEN notation.
+- `mode` (ContinuationMode enum, optional, default: `ENGINE`): Continuation mode (`ENGINE` or `HUMAN`).
+
+### Provider & Fallback Behavior
+- `requestedMode`: Refers to the continuation mode requested by the caller (`ENGINE` or `HUMAN`).
+- `effectiveProvider`: Identifies the provider implementation that produced the returned candidates (`"ENGINE"` or `"HUMAN"`).
+- `mode=ENGINE`: Uses `EngineMoveProvider` (Stockfish MultiPV filtered by `max-eval-loss: 0.50`) to return top engine continuation candidates. Response contains `requestedMode: "ENGINE"`, `effectiveProvider: "ENGINE"`.
+- `mode=HUMAN`: Invokes `HumanMoveProvider` first. If historical moves exist for the position, returns human candidate moves with play counts (`timesPlayed`). Response contains `requestedMode: "HUMAN"`, `effectiveProvider: "HUMAN"`. If no historical moves exist, `ContinuationService` automatically falls back to `EngineMoveProvider`. Response contains `requestedMode: "HUMAN"`, `effectiveProvider: "ENGINE"`.
+- **Candidates Collection**: The endpoint returns a collection of candidate moves (`candidates`) rather than forcing rank 1.
+
+### Curl Example
+```bash
+curl "http://localhost:8080/api/puzzles/continuation?fen=r1bqkbnr%2Fpppp1ppp%2F2n5%2F4p3%2F4P3%2F5N2%2FPPPP1PPP%2FRNBQKB1R%20w%20KQkq%20-%202%203&mode=HUMAN"
+```
+
+### Responses
+#### `200 OK` (HUMAN mode fallback to ENGINE example)
+```json
+{
+  "fen": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",
+  "requestedMode": "HUMAN",
+  "effectiveProvider": "ENGINE",
+  "candidates": [
+    {
+      "move": "Bb5",
+      "resultingFen": "r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3",
+      "providerType": "ENGINE",
+      "evalCp": 40,
+      "evalLoss": 0.0,
+      "timesPlayed": null
+    },
+    {
+      "move": "Bc4",
+      "resultingFen": "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3",
+      "providerType": "ENGINE",
+      "evalCp": 35,
+      "evalLoss": 0.05,
+      "timesPlayed": null
+    }
+  ]
+}
+```
+
+#### `404 Not Found`
+No continuation moves available for the given position.
+```json
+{
+  "error": "NOT_FOUND",
+  "details": [
+    "No continuation move available"
+  ]
+}
+```
+

@@ -31,6 +31,10 @@ chess:
 engine:
   analysis:
     multi-pv: ${ENGINE_ANALYSIS_MULTI_PV:5}
+  continuation:
+    multi-pv: ${ENGINE_CONTINUATION_MULTI_PV:5}
+    max-eval-loss: ${ENGINE_CONTINUATION_MAX_EVAL_LOSS:0.50}
+
 
 
 

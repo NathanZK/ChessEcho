@@ -77,6 +77,22 @@ interface PositionOccurrenceRepository : JpaRepository<PositionOccurrence, UUID>
     ): List<String>
 
     /**
+     * Finds historical moves played from a specific position ID ordered by total play frequency descending.
+     */
+    @Query(
+        """
+        SELECT new com.chessecho.repository.HistoricalMoveStats(po.movePlayed, COUNT(po.id))
+        FROM PositionOccurrence po
+        WHERE po.position.id = :positionId
+        GROUP BY po.movePlayed
+        ORDER BY COUNT(po.id) DESC
+        """,
+    )
+    fun findHistoricalMoveStatsByPositionId(
+        @Param("positionId") positionId: UUID,
+    ): List<HistoricalMoveStats>
+
+    /**
      * Dynamically aggregates position weaknesses in the database for a specific player and color using a dynamic evaluation loss threshold.
      */
     @Query(
@@ -115,6 +131,11 @@ data class PositionOccurrenceCount(
     val positionId: UUID,
     val playerColor: String,
     val timesReached: Long,
+)
+
+data class HistoricalMoveStats(
+    val movePlayed: String,
+    val timesPlayed: Long,
 )
 
 data class WeaknessAggregation(
