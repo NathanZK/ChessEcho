@@ -22,5 +22,11 @@ chess:
 engine:
   analysis:
     multi-pv: 5
+  continuation:
+    multi-pv: 5
+    max-eval-loss: 0.50
+  exploration:
+    max-eval-loss: 0.80
+
 
 

@@ -4,7 +4,9 @@ import com.chessecho.domain.ContinuationMode
 import com.chessecho.domain.Platform
 import com.chessecho.domain.PlayerColor
 import com.chessecho.dto.ContinuationResponse
+import com.chessecho.dto.MoveEvaluationResponse
 import com.chessecho.dto.PuzzleResponse
+import com.chessecho.service.MoveEvaluationService
 import com.chessecho.service.WeaknessCalculationService
 import com.chessecho.service.continuation.ContinuationService
 import io.swagger.v3.oas.annotations.Parameter
@@ -19,6 +21,7 @@ import org.springframework.web.bind.annotation.RestController
 class PuzzleController(
     private val weaknessCalculationService: WeaknessCalculationService,
     private val continuationService: ContinuationService,
+    private val moveEvaluationService: MoveEvaluationService,
 ) {
     @GetMapping("/puzzles")
     fun getPuzzles(
@@ -94,5 +97,14 @@ class PuzzleController(
                 candidates = result.candidates,
             ),
         )
+    }
+
+    @GetMapping("/puzzles/evaluate-move")
+    fun evaluateMove(
+        @RequestParam fen: String,
+        @RequestParam move: String,
+    ): ResponseEntity<MoveEvaluationResponse> {
+        val response = moveEvaluationService.evaluateMove(fen = fen, move = move)
+        return ResponseEntity.ok(response)
     }
 }

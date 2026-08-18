@@ -592,4 +592,55 @@ class PuzzleControllerIntegrationTest {
         assertEquals("Bc4", body.candidates[0].move)
         assertEquals("ENGINE", body.candidates[0].providerType)
     }
+
+    @Test
+    fun `evaluateMove endpoint evaluates legal move and returns MoveEvaluationResponse`() {
+        val fen = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3"
+        val engineCandidates =
+            listOf(
+                EngineCandidate("Bb5", EvalScore(cp = 80, mate = null)),
+                EngineCandidate("Bc4", EvalScore(cp = 65, mate = null)),
+            )
+        whenever(stockfishService.analyzeMultiPv(fen, 16, 5)).thenReturn(engineCandidates)
+
+        val response =
+            restTemplate.exchange(
+                "/api/puzzles/evaluate-move?fen={fen}&move={move}",
+                HttpMethod.GET,
+                null,
+                com.chessecho.dto.MoveEvaluationResponse::class.java,
+                fen,
+                "Bc4",
+            )
+
+        assertEquals(HttpStatus.OK, response.statusCode)
+        val body = response.body
+        assertNotNull(body)
+        assertEquals(fen, body.fen)
+        assertEquals("Bc4", body.move)
+        assertEquals("Bb5", body.bestMove)
+        assertEquals(80, body.bestEvalCp)
+        assertEquals(65, body.evalCp)
+        assertEquals(0.15, body.evalLoss)
+        assertEquals(0.80, body.maxEvalLoss)
+        assertEquals(0.80, body.threshold)
+        assertTrue(body.acceptable)
+    }
+
+    @Test
+    fun `evaluateMove endpoint returns 400 Bad Request for illegal move`() {
+        val fen = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3"
+
+        val response =
+            restTemplate.exchange(
+                "/api/puzzles/evaluate-move?fen={fen}&move={move}",
+                HttpMethod.GET,
+                null,
+                String::class.java,
+                fen,
+                "e8",
+            )
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.statusCode)
+    }
 }
