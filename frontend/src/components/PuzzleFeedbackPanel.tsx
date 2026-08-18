@@ -55,6 +55,13 @@ interface PuzzleFeedbackPanelProps {
   isContinuationFallback?: boolean;
   isContinuationLoading?: boolean;
   unacceptableMoveMessage?: string | null;
+  explorationFeedback?: { message: string, type: 'best' | 'good' } | null;
+  lastContinuationCandidates?: {
+    parentFen: string;
+    candidates: ContinuationCandidate[];
+    selected: ContinuationCandidate;
+  } | null;
+  onAlternativeSelected?: (candidate: ContinuationCandidate) => void;
 }
 
 export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
@@ -82,6 +89,9 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
   isContinuationFallback = false,
   isContinuationLoading = false,
   unacceptableMoveMessage,
+  explorationFeedback,
+  lastContinuationCandidates,
+  onAlternativeSelected,
 }) => {
   const [showGameModal, setShowGameModal] = React.useState<boolean>(false);
 
@@ -372,21 +382,82 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
               <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
               <span className="font-semibold text-xs">{unacceptableMoveMessage}</span>
             </div>
-          ) : isContinuationLoading || explorationTurn === 'CHESSECHO' ? (
-            <div className="flex items-center space-x-2 text-slate-400 py-2 justify-center bg-slate-900/60 rounded-xl border border-slate-800">
-              <div className="w-4 h-4 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
-              <span className="font-medium text-xs">ChessEcho is choosing a response...</span>
+          ) : isContinuationLoading ? (
+            <div className="flex flex-col space-y-2">
+              {explorationFeedback && (
+                <div className={`flex items-start gap-2 p-2.5 rounded-xl text-xs border ${explorationFeedback.type === 'best' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-blue-500/10 border-blue-500/30 text-blue-300'}`}>
+                  {explorationFeedback.type === 'best' ? <Trophy className="w-4 h-4 shrink-0 text-emerald-400 mt-0.5" /> : <Sparkles className="w-4 h-4 shrink-0 text-blue-400 mt-0.5" />}
+                  <span className="font-medium leading-relaxed">{explorationFeedback.message}</span>
+                </div>
+              )}
+              <div className="flex items-center space-x-2 text-slate-400 py-2 justify-center bg-slate-900/60 rounded-xl border border-slate-800">
+                <div className="w-4 h-4 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
+                <span className="font-medium text-xs">ChessEcho is choosing a response...</span>
+              </div>
             </div>
           ) : (
-            <div className="flex items-center justify-between bg-slate-900/60 px-3 py-2 rounded-xl border border-emerald-500/20">
-              <div className="flex items-center space-x-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                <span className="font-semibold text-emerald-300 text-xs">Your turn — explore a move.</span>
+            <div className="flex flex-col space-y-2">
+              {explorationFeedback && (
+                <div className={`flex items-start gap-2 p-2.5 rounded-xl text-xs border ${explorationFeedback.type === 'best' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-blue-500/10 border-blue-500/30 text-blue-300'}`}>
+                  {explorationFeedback.type === 'best' ? <Trophy className="w-4 h-4 shrink-0 text-emerald-400 mt-0.5" /> : <Sparkles className="w-4 h-4 shrink-0 text-blue-400 mt-0.5" />}
+                  <span className="font-medium leading-relaxed">{explorationFeedback.message}</span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between bg-slate-900/60 px-3 py-2 rounded-xl border border-emerald-500/20">
+                <div className="flex items-center space-x-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                  <span className="font-semibold text-emerald-300 text-xs">Your turn — explore a move.</span>
+                </div>
+                {continuationCandidate?.move && (
+                  <span className="text-[11px] text-slate-400 font-mono">
+                    (Last: {continuationCandidate.move})
+                  </span>
+                )}
               </div>
-              {continuationCandidate?.move && (
-                <span className="text-[11px] text-slate-400 font-mono">
-                  (Last: {continuationCandidate.move})
-                </span>
+
+              {lastContinuationCandidates && (
+                <div className="flex flex-col space-y-2 bg-slate-950/50 p-2.5 rounded-xl border border-slate-800">
+                  <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">ChessEcho played</div>
+                  <div className="flex items-center justify-between bg-emerald-900/20 px-3 py-2 rounded-lg border border-emerald-500/30">
+                    <span className="font-mono text-emerald-300 font-bold text-sm">
+                      {lastContinuationCandidates.selected.move}
+                      {lastContinuationCandidates.selected.evalLoss != null && (
+                        <span className="ml-1.5 text-[11px] text-emerald-400/80 font-sans font-normal">
+                          — {lastContinuationCandidates.selected.evalLoss.toFixed(2)} pawns
+                        </span>
+                      )}
+                    </span>
+                    <span className="text-[10px] text-emerald-400/70 font-semibold bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">Selected</span>
+                  </div>
+                  
+                  {lastContinuationCandidates.candidates.length > 1 && (
+                    <div className="pt-1 space-y-1.5">
+                      <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Alternative responses</div>
+                      <div className="flex flex-col space-y-1.5">
+                        {lastContinuationCandidates.candidates.filter(c => c.move !== lastContinuationCandidates.selected.move).map(alt => (
+                          <div key={alt.move} className="flex items-center justify-between bg-slate-900 px-3 py-1.5 rounded-lg border border-slate-800 hover:border-slate-600 transition group">
+                            <span className="font-mono text-slate-300 text-xs font-semibold">
+                              {alt.move}
+                              {alt.evalLoss != null && (
+                                <span className="ml-1.5 text-[10px] text-slate-400 font-sans font-normal">
+                                  — {alt.evalLoss.toFixed(2)} pawns
+                                </span>
+                              )}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => onAlternativeSelected?.(alt)}
+                              className="px-2.5 py-1 bg-slate-800 group-hover:bg-slate-700 text-slate-300 text-[10px] font-bold rounded transition cursor-pointer border border-slate-700 group-hover:border-slate-500"
+                            >
+                              Explore this line
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           )}
