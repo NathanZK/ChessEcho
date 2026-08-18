@@ -298,6 +298,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
             onApplySettings={() => {}}
             isExplorationActive={isExplorationActive}
             explorationTurn={isExplorationActive ? explorationTurn as 'USER' | 'CHESSECHO' : undefined}
+            isContinuationLoading={explorationTurn === 'CHESSECHO'}
             onEnterExploration={() => setExplorationTurn('CHESSECHO')}
             onExitExploration={() => setExplorationTurn('OFF')}
           />
@@ -409,7 +410,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
     // Board stays unchanged & user exploration move callback is NOT called
     expect(handleUserExplorationMove).not.toHaveBeenCalled();
     expect(handleUnacceptableMove).toHaveBeenCalledWith(
-      expect.stringContaining('Move Ba4: 1.10 loss — outside acceptable range (threshold: 0.80).')
+      expect.stringContaining('That move is too inaccurate. It loses 1.10 pawns compared with the best move.')
     );
   });
 });

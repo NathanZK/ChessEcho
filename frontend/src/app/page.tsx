@@ -195,6 +195,14 @@ export default function Home() {
   const [pendingContinuationCandidate, setPendingContinuationCandidate] = useState<ContinuationCandidate | null>(null);
   const [requestedContinuationFen, setRequestedContinuationFen] = useState<string | undefined>(undefined);
 
+  const [explorationFeedback, setExplorationFeedback] = useState<{ message: string, type: 'best' | 'good' } | null>(null);
+  const [lastContinuationCandidates, setLastContinuationCandidates] = useState<{
+    parentFen: string;
+    candidates: ContinuationCandidate[];
+    selected: ContinuationCandidate;
+  } | null>(null);
+  const [alternativeContinuationToApply, setAlternativeContinuationToApply] = useState<{ parentFen: string, candidate: ContinuationCandidate } | null>(null);
+
   const explorationTurn = React.useMemo(() => {
     if (!activePuzzle || !currentBoardFen) return 'USER';
     const fenColor = currentBoardFen.split(' ')[1]; // 'w' or 'b'
@@ -216,16 +224,54 @@ export default function Home() {
       continuation.selectedCandidate
     ) {
       setPendingContinuationCandidate(continuation.selectedCandidate);
+      setLastContinuationCandidates({
+        parentFen: requestedContinuationFen,
+        candidates: continuation.candidates,
+        selected: continuation.selectedCandidate
+      });
     }
   }, [isExplorationActive, continuation.selectedCandidate, continuation.loading, continuation.response, requestedContinuationFen, currentBoardFen]);
+
+  // Keep lastContinuationCandidates synchronized with board history
+  React.useEffect(() => {
+    if (lastContinuationCandidates) {
+      // If we are still at parentFen, it means the move is pending application by ChessBoardArea
+      if (currentBoardFen === lastContinuationCandidates.parentFen) return;
+      
+      const actualSelected = lastContinuationCandidates.candidates.find(c => c.resultingFen === currentBoardFen);
+      if (!actualSelected) {
+        setLastContinuationCandidates(null);
+      } else if (actualSelected.move !== lastContinuationCandidates.selected.move) {
+        setLastContinuationCandidates(prev => prev ? { ...prev, selected: actualSelected } : null);
+      }
+    }
+  }, [currentBoardFen, lastContinuationCandidates]);
+
+  const handleAlternativeSelected = (candidate: ContinuationCandidate) => {
+    if (!lastContinuationCandidates) return;
+    setAlternativeContinuationToApply({
+      parentFen: lastContinuationCandidates.parentFen,
+      candidate
+    });
+  };
 
   const handleContinuationApplied = () => {
     setPendingContinuationCandidate(null);
   };
 
-  const handleUserExplorationMove = (moveSan: string, nextFen: string) => {
+  const handleUserExplorationMove = (moveSan: string, nextFen: string, feedback?: { isBest: boolean; loss: number }) => {
     // User made a successful, acceptable move. Request a continuation.
     setRequestedContinuationFen(nextFen);
+    setLastContinuationCandidates(null);
+    if (feedback) {
+      if (feedback.isBest) {
+        setExplorationFeedback({ message: 'Best move. No evaluation loss.', type: 'best' });
+      } else {
+        setExplorationFeedback({ message: `Good move. It loses ${feedback.loss.toFixed(2)} pawns compared with the best move.`, type: 'good' });
+      }
+    } else {
+      setExplorationFeedback(null);
+    }
   };
 
   const handleChessEchoExplorationMove = (moveSan: string) => {
@@ -238,6 +284,9 @@ export default function Home() {
     setRequestedContinuationFen(currentBoardFen || activePuzzle?.fen);
     setFeedback({ status: 'EXPLORING' });
     setUnacceptableMoveMessage(null);
+    setExplorationFeedback(null);
+    setLastContinuationCandidates(null);
+    setAlternativeContinuationToApply(null);
   };
 
   const handleExitExploration = () => {
@@ -245,15 +294,18 @@ export default function Home() {
     setRequestedContinuationFen(undefined);
     setPendingContinuationCandidate(null);
     setUnacceptableMoveMessage(null);
+    setExplorationFeedback(null);
+    setLastContinuationCandidates(null);
+    setAlternativeContinuationToApply(null);
     setFeedback({ status: 'CORRECT', lastMove: activePuzzle?.targetMove });
   };
 
   const handleUnacceptableMove = (message?: string | null) => {
-    if (message === null) {
+    if (!message) {
       setUnacceptableMoveMessage(null);
       return;
     }
-    setUnacceptableMoveMessage(message || "That move is outside the acceptable range.");
+    setUnacceptableMoveMessage(message);
     setTimeout(() => {
       setUnacceptableMoveMessage(null);
     }, 3500);
@@ -274,6 +326,9 @@ export default function Home() {
     setRequestedContinuationFen(undefined);
     setIsExplorationActive(false);
     setUnacceptableMoveMessage(null);
+    setExplorationFeedback(null);
+    setLastContinuationCandidates(null);
+    setAlternativeContinuationToApply(null);
   };
 
   const [puzzlePage, setPuzzlePage] = useState<number>(0);
@@ -501,7 +556,11 @@ export default function Home() {
     setRequestedContinuationFen(undefined);
     setPendingContinuationCandidate(null);
 
-    if (isExplorationActive) return;
+    if (isExplorationActive) {
+      setExplorationFeedback(null);
+      setLastContinuationCandidates(null);
+      return;
+    }
 
     const prevIndex = Math.max(0, historyIndex - 1);
     setHistoryIndex(prevIndex);
@@ -515,7 +574,11 @@ export default function Home() {
     setRequestedContinuationFen(undefined);
     setPendingContinuationCandidate(null);
 
-    if (isExplorationActive) return;
+    if (isExplorationActive) {
+      setExplorationFeedback(null);
+      setLastContinuationCandidates(null);
+      return;
+    }
 
     if (historyIndex < evalHistory.length - 1) {
       const nextIndex = historyIndex + 1;
@@ -531,6 +594,9 @@ export default function Home() {
     setPendingContinuationCandidate(null);
     setIsExplorationActive(false);
     setUnacceptableMoveMessage(null);
+    setExplorationFeedback(null);
+    setLastContinuationCandidates(null);
+    setAlternativeContinuationToApply(null);
     
     setHistoryIndex(0);
     setCurrentEvalCp(evalHistory[0] ?? (activePuzzle?.evalCp ?? 35));
@@ -704,6 +770,8 @@ export default function Home() {
                     onUnacceptableMove={handleUnacceptableMove}
                     onUserExplorationMove={handleUserExplorationMove}
                     onChessEchoExplorationMove={handleChessEchoExplorationMove}
+                    alternativeContinuationToApply={alternativeContinuationToApply}
+                    onAlternativeContinuationApplied={() => setAlternativeContinuationToApply(null)}
                   />
                 </div>
 
@@ -732,8 +800,11 @@ export default function Home() {
                     continuationCandidate={continuation.selectedCandidate}
                     effectiveProvider={continuation.effectiveProvider}
                     isContinuationFallback={continuation.isFallback}
-                    isContinuationLoading={continuation.loading}
+                    isContinuationLoading={continuation.loading || !!requestedContinuationFen}
                     unacceptableMoveMessage={unacceptableMoveMessage}
+                    explorationFeedback={explorationFeedback}
+                    lastContinuationCandidates={lastContinuationCandidates}
+                    onAlternativeSelected={handleAlternativeSelected}
                   />
                 </div>
               </div>

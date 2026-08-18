@@ -36,9 +36,11 @@ interface ChessBoardAreaProps {
   onContinuationApplied?: () => void;
   isExplorationActive?: boolean;
   onUnacceptableMove?: (message?: string | null) => void;
-  onUserExplorationMove?: (moveSan: string, nextFen: string) => void;
+  onUserExplorationMove?: (moveSan: string, nextFen: string, feedback?: { isBest: boolean; loss: number }) => void;
   onChessEchoExplorationMove?: (moveSan: string) => void;
   onReset?: () => void;
+  alternativeContinuationToApply?: { parentFen: string; candidate: ContinuationCandidate } | null;
+  onAlternativeContinuationApplied?: () => void;
 }
 
 export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
@@ -66,6 +68,8 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   onUserExplorationMove,
   onChessEchoExplorationMove,
   onReset,
+  alternativeContinuationToApply,
+  onAlternativeContinuationApplied,
 }) => {
   const [game, setGame] = useState<Chess>(new Chess(initialFen));
   const [fenHistory, setFenHistory] = useState<string[]>([initialFen]);
@@ -128,6 +132,40 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingContinuationCandidate]);
 
+  // Apply alternative continuation candidate (replaces the current ChessEcho move)
+  useEffect(() => {
+    if (!isExplorationActive || !alternativeContinuationToApply) return;
+    const { parentFen, candidate } = alternativeContinuationToApply;
+    
+    // Find parentFen strictly in fenHistory using exact match
+    const parentIndex = fenHistory.findIndex(f => f === parentFen);
+    if (parentIndex !== -1) {
+      try {
+        const nextFen = candidate.resultingFen;
+        const newGame = new Chess(nextFen);
+        setGame(newGame);
+
+        setFenHistory((prev) => {
+          const newHistory = prev.slice(0, parentIndex + 1);
+          newHistory.push(nextFen);
+          return newHistory;
+        });
+        setHistoryIndex(parentIndex + 1);
+        
+        playSound('move');
+        onFenChange?.(nextFen);
+        
+        if (candidate.move && onChessEchoExplorationMove) {
+          onChessEchoExplorationMove(candidate.move);
+        }
+      } catch (e) {
+        console.error('Failed to apply alternative candidate:', e);
+      } finally {
+        onAlternativeContinuationApplied?.();
+      }
+    }
+  }, [alternativeContinuationToApply]);
+
   const handlePieceDrop = (sourceSquare: string, targetSquare: string): boolean => {
     try {
       const gameCopy = new Chess(game.fen());
@@ -155,18 +193,24 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
           if (res && !res.acceptable) {
             playSound('incorrect');
             setGame(new Chess(currentFen)); // Revert board to position before move
-            const limit = res.maxEvalLoss ?? res.threshold;
-            const msg = `Move ${moveSan}: ${res.evalLoss.toFixed(2)} loss — outside acceptable range (threshold: ${limit.toFixed(2)}).`;
+            const pawns = (res.evalLoss ?? 0).toFixed(2);
+            const msg = `That move is too inaccurate. It loses ${pawns} pawns compared with the best move.`;
             onUnacceptableMove?.(msg);
           } else {
-            playSound('move');
+            const lossCp = res?.evalLoss ?? 0;
+            if (lossCp === 0) {
+              playSound('completion');
+              onUserExplorationMove?.(moveSan, nextFen, { isBest: true, loss: 0 });
+            } else {
+              playSound('correct');
+              onUserExplorationMove?.(moveSan, nextFen, { isBest: false, loss: lossCp });
+            }
             onUnacceptableMove?.(null);
             const newHistory = fenHistory.slice(0, historyIndex + 1);
             newHistory.push(nextFen);
             setFenHistory(newHistory);
             setHistoryIndex(newHistory.length - 1);
             onFenChange?.(nextFen);
-            onUserExplorationMove?.(moveSan, nextFen);
           }
         }).catch(() => {
           // Fallback if network/evaluation fails: accept move
