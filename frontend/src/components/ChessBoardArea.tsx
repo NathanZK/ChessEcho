@@ -5,6 +5,8 @@ import { Chess } from 'chess.js';
 import { Chessboard } from 'react-chessboard';
 import { BoardControls } from './BoardControls';
 import { playSound } from '@/services/soundService';
+import { continuationService, moveEvaluationService } from '@/services/continuationService';
+import { ContinuationCandidate } from '@/services/api';
 
 interface ChessBoardAreaProps {
   initialFen: string;
@@ -29,6 +31,14 @@ interface ChessBoardAreaProps {
   onFlipBoard?: () => void;
   soundEnabled?: boolean;
   onToggleSound?: () => void;
+  onFenChange?: (fen: string) => void;
+  pendingContinuationCandidate?: ContinuationCandidate | null;
+  onContinuationApplied?: () => void;
+  isExplorationActive?: boolean;
+  onUnacceptableMove?: (message?: string | null) => void;
+  onUserExplorationMove?: (moveSan: string, nextFen: string) => void;
+  onChessEchoExplorationMove?: (moveSan: string) => void;
+  onReset?: () => void;
 }
 
 export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
@@ -48,6 +58,14 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   onFlipBoard,
   soundEnabled,
   onToggleSound,
+  onFenChange,
+  pendingContinuationCandidate,
+  onContinuationApplied,
+  isExplorationActive = false,
+  onUnacceptableMove,
+  onUserExplorationMove,
+  onChessEchoExplorationMove,
+  onReset,
 }) => {
   const [game, setGame] = useState<Chess>(new Chess(initialFen));
   const [fenHistory, setFenHistory] = useState<string[]>([initialFen]);
@@ -61,6 +79,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
     setFenHistory([initialFen]);
     setHistoryIndex(0);
     setCustomSquareStyles({});
+    onFenChange?.(initialFen);
   }, [initialFen]);
 
   // Apply hint square highlight if hint is triggered
@@ -77,6 +96,38 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
     }
   }, [hintSquare]);
 
+  // Apply continuation candidate move when pendingContinuationCandidate changes
+  useEffect(() => {
+    if (!isExplorationActive) return;
+
+    if (pendingContinuationCandidate?.resultingFen) {
+      try {
+        const nextFen = pendingContinuationCandidate.resultingFen;
+        const newGame = new Chess(nextFen);
+        setGame(newGame);
+
+        setFenHistory((prev) => {
+          const newHistory = prev.slice(0, historyIndex + 1);
+          newHistory.push(nextFen);
+          return newHistory;
+        });
+        setHistoryIndex((prev) => prev + 1);
+
+        playSound('move');
+        onFenChange?.(nextFen);
+
+        if (pendingContinuationCandidate.move && onChessEchoExplorationMove) {
+          onChessEchoExplorationMove(pendingContinuationCandidate.move);
+        }
+      } catch (e) {
+        console.error('Failed to apply continuation candidate resultingFen:', e);
+      } finally {
+        onContinuationApplied?.();
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingContinuationCandidate]);
+
   const handlePieceDrop = (sourceSquare: string, targetSquare: string): boolean => {
     try {
       const gameCopy = new Chess(game.fen());
@@ -88,17 +139,59 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
 
       if (!move) return false; // Illegal chess move
 
-      setCustomSquareStyles({});
       const moveSan = move.san;
-      setGame(gameCopy);
 
       const isInitialDecision = historyIndex === 0;
+
+      // Active Exploration User Move Evaluation
+      if (isExplorationActive) {
+        const currentFen = game.fen();
+        const nextFen = gameCopy.fen();
+
+        setCustomSquareStyles({});
+        setGame(gameCopy);
+
+        moveEvaluationService.evaluateMove(currentFen, moveSan).then((res) => {
+          if (res && !res.acceptable) {
+            playSound('incorrect');
+            setGame(new Chess(currentFen)); // Revert board to position before move
+            const limit = res.maxEvalLoss ?? res.threshold;
+            const msg = `Move ${moveSan}: ${res.evalLoss.toFixed(2)} loss — outside acceptable range (threshold: ${limit.toFixed(2)}).`;
+            onUnacceptableMove?.(msg);
+          } else {
+            playSound('move');
+            onUnacceptableMove?.(null);
+            const newHistory = fenHistory.slice(0, historyIndex + 1);
+            newHistory.push(nextFen);
+            setFenHistory(newHistory);
+            setHistoryIndex(newHistory.length - 1);
+            onFenChange?.(nextFen);
+            onUserExplorationMove?.(moveSan, nextFen);
+          }
+        }).catch(() => {
+          // Fallback if network/evaluation fails: accept move
+          playSound('move');
+          onUnacceptableMove?.(null);
+          const newHistory = fenHistory.slice(0, historyIndex + 1);
+          newHistory.push(nextFen);
+          setFenHistory(newHistory);
+          setHistoryIndex(newHistory.length - 1);
+          onFenChange?.(nextFen);
+          onUserExplorationMove?.(moveSan, nextFen);
+        });
+
+        return true;
+      }
+
+      setCustomSquareStyles({});
+      setGame(gameCopy);
 
       // Truncate future history if making a move after undo
       const newHistory = fenHistory.slice(0, historyIndex + 1);
       newHistory.push(gameCopy.fen());
       setFenHistory(newHistory);
       setHistoryIndex(newHistory.length - 1);
+      onFenChange?.(gameCopy.fen());
 
       if (isInitialDecision) {
         // Check if move matches best move or acceptable moves
@@ -149,6 +242,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
       const prevFen = fenHistory[prevIndex];
       setGame(new Chess(prevFen));
       setHistoryIndex(prevIndex);
+      onFenChange?.(prevFen);
       onUndo?.();
     }
   };
@@ -160,6 +254,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
       const nextFen = fenHistory[nextIndex];
       setGame(new Chess(nextFen));
       setHistoryIndex(nextIndex);
+      onFenChange?.(nextFen);
       onRedo?.();
     }
   };
@@ -186,7 +281,8 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
     setFenHistory([initialFen]);
     setHistoryIndex(0);
     setCustomSquareStyles({});
-    onUndo?.();
+    onFenChange?.(initialFen);
+    onReset?.();
   };
 
   const handleHint = () => {

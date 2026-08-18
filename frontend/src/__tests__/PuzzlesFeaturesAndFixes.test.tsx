@@ -399,13 +399,15 @@ describe('Puzzles Tab Features and Fixes', () => {
       <PuzzleFeedbackPanel
         {...defaultSettingsProps}
         puzzle={mockPuzzles[0]}
-        feedback={{ status: 'EXPLORING', lastMove: 'Nf3' }}
+        feedback={{ status: 'CORRECT', lastMove: 'e4' }}
         moveHistory={['e4', 'Nf3']}
         onNextPuzzle={vi.fn()}
+        isExplorationActive={true}
+        continuationCandidate={{ move: 'Nf3', resultingFen: 'fen_Nf3', providerType: 'ENGINE' }}
       />
     );
-    expect(screen.getByText('Line Exploration 🔍')).toBeInTheDocument();
-    expect(screen.getByText('Nf3')).toBeInTheDocument();
+    expect(screen.getByText('Line Exploration')).toBeInTheDocument();
+    expect(screen.getByText(/Nf3/)).toBeInTheDocument();
   });
 
   it('clears feedback and resets interaction state when changing player color filter', async () => {
