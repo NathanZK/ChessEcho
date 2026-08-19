@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { Puzzle } from '../mock/mockData';
 import { HistoricalGamesModal } from './HistoricalGamesModal';
-import { ContinuationMode, ContinuationCandidate } from '../services/api';
+import { ContinuationMode, ContinuationCandidate, ExplorationPlayMode } from '../services/api';
 
 export function formatDecimal(val: number, decimals: number = 2): string {
   return (val ?? 0).toFixed(decimals).replace(',', '.');
@@ -50,6 +50,9 @@ interface PuzzleFeedbackPanelProps {
   onExitExploration?: () => void;
   continuationMode?: ContinuationMode;
   onContinuationModeChange?: (mode: ContinuationMode) => void;
+  explorationPlayMode?: ExplorationPlayMode;
+  onExplorationPlayModeChange?: (mode: ExplorationPlayMode) => void;
+  sideToMove?: 'White' | 'Black';
   continuationCandidate?: ContinuationCandidate | null;
   effectiveProvider?: string | null;
   isContinuationFallback?: boolean;
@@ -84,6 +87,9 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
   onExitExploration,
   continuationMode = 'ENGINE',
   onContinuationModeChange,
+  explorationPlayMode = 'CHESSECHO',
+  onExplorationPlayModeChange,
+  sideToMove,
   continuationCandidate,
   effectiveProvider,
   isContinuationFallback = false,
@@ -94,6 +100,8 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
   onAlternativeSelected,
 }) => {
   const [showGameModal, setShowGameModal] = React.useState<boolean>(false);
+
+  const activeColorToMove = sideToMove || (puzzle.playerColor === 'BLACK' ? 'Black' : 'White');
 
   // Listen for Enter key when puzzle is solved to advance to next puzzle
   useEffect(() => {
@@ -267,7 +275,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
             {!isExplorationActive && onEnterExploration && (
               <button
                 type="button"
-                onClick={onEnterExploration}
+                onClick={() => onEnterExploration()}
                 className="flex-1 py-2.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold text-xs rounded-xl transition border border-amber-500/30 flex items-center justify-center space-x-1.5 cursor-pointer shadow-sm"
               >
                 <Sparkles className="w-3.5 h-3.5 text-amber-400" />
@@ -337,44 +345,86 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
       {/* Active Line Exploration Card (Renders ONLY when isExplorationActive is true) */}
       {isExplorationActive && (
         <div className="bg-slate-950 p-3.5 rounded-2xl border border-emerald-500/30 space-y-3 text-xs shadow-lg shadow-slate-950/80 animate-in fade-in duration-200">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 font-bold text-emerald-300">
-              <Sparkles className="w-4 h-4 text-emerald-400" />
-              <span className="text-sm">Line Exploration</span>
-            </div>
+          <div className="flex flex-col space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 font-bold text-emerald-300">
+                <Sparkles className="w-4 h-4 text-emerald-400" />
+                <span className="text-sm">Line Exploration</span>
+              </div>
 
-            <div className="flex items-center gap-2">
-              {/* Continuation Mode Selector (ENGINE / HUMAN) */}
-              {onContinuationModeChange && (
-                <div className="flex bg-slate-900 p-0.5 rounded-lg border border-slate-800">
-                  {(['ENGINE', 'HUMAN'] as const).map((m) => (
+              <div className="flex items-center gap-2">
+                {/* Play Mode Selector: vs ChessEcho / Play Both Sides */}
+                {onExplorationPlayModeChange && (
+                  <div className="flex bg-slate-900 p-0.5 rounded-lg border border-slate-800" role="group" aria-label="Exploration Mode">
                     <button
-                      key={m}
                       type="button"
-                      onClick={() => onContinuationModeChange(m)}
+                      onClick={() => onExplorationPlayModeChange('CHESSECHO')}
                       className={`px-2 py-0.5 text-[10px] font-bold rounded transition cursor-pointer ${
-                        continuationMode === m ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+                        explorationPlayMode === 'CHESSECHO' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
                       }`}
                     >
-                      {m}
+                      vs ChessEcho
                     </button>
-                  ))}
-                </div>
-              )}
+                    <button
+                      type="button"
+                      onClick={() => onExplorationPlayModeChange('BOTH_SIDES')}
+                      className={`px-2 py-0.5 text-[10px] font-bold rounded transition cursor-pointer ${
+                        explorationPlayMode === 'BOTH_SIDES' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      Play Both Sides
+                    </button>
+                  </div>
+                )}
 
-              {/* Exit Exploration Button */}
-              {onExitExploration && (
-                <button
-                  type="button"
-                  onClick={onExitExploration}
-                  title="Exit Exploration"
-                  className="flex items-center gap-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-[11px] rounded-lg transition border border-slate-700/60 cursor-pointer"
-                >
-                  <LogOut className="w-3 h-3 text-slate-400" />
-                  <span>Exit</span>
-                </button>
-              )}
+                {/* Continuation Mode Selector (ENGINE / HUMAN) only visible in CHESSECHO mode */}
+                {explorationPlayMode === 'CHESSECHO' && onContinuationModeChange && (
+                  <div className="flex bg-slate-900 p-0.5 rounded-lg border border-slate-800">
+                    {(['ENGINE', 'HUMAN'] as const).map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => onContinuationModeChange(m)}
+                        className={`px-2 py-0.5 text-[10px] font-bold rounded transition cursor-pointer ${
+                          continuationMode === m ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        {m}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Exit Exploration Button */}
+                {onExitExploration && (
+                  <button
+                    type="button"
+                    onClick={onExitExploration}
+                    title="Exit Exploration"
+                    className="flex items-center gap-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-[11px] rounded-lg transition border border-slate-700/60 cursor-pointer"
+                  >
+                    <LogOut className="w-3 h-3 text-slate-400" />
+                    <span>Exit</span>
+                  </button>
+                )}
+              </div>
             </div>
+
+            {/* When in Play Both Sides mode, show prominent indicator */}
+            {explorationPlayMode === 'BOTH_SIDES' && (
+              <div
+                data-testid="play-both-sides-badge"
+                className="flex items-center justify-between bg-slate-900/90 px-3 py-1.5 rounded-xl border border-amber-500/30"
+              >
+                <span className="text-[10px] font-bold tracking-wider text-amber-400 uppercase flex items-center gap-1">
+                  <span>♟⇄♙</span> Play Both Sides
+                </span>
+                <span className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                  <span className={`w-2 h-2 rounded-full inline-block ${activeColorToMove === 'White' ? 'bg-white border border-slate-300' : 'bg-slate-900 border border-slate-500'}`} />
+                  {activeColorToMove} to move
+                </span>
+              </div>
+            )}
           </div>
 
           {unacceptableMoveMessage ? (
@@ -382,7 +432,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
               <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
               <span className="font-semibold text-xs">{unacceptableMoveMessage}</span>
             </div>
-          ) : isContinuationLoading ? (
+          ) : isContinuationLoading && explorationPlayMode === 'CHESSECHO' ? (
             <div className="flex flex-col space-y-2">
               {explorationFeedback && (
                 <div className={`flex items-start gap-2 p-2.5 rounded-xl text-xs border ${explorationFeedback.type === 'best' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' : 'bg-blue-500/10 border-blue-500/30 text-blue-300'}`}>
@@ -407,16 +457,22 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
               <div className="flex items-center justify-between bg-slate-900/60 px-3 py-2 rounded-xl border border-emerald-500/20">
                 <div className="flex items-center space-x-2">
                   <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                  <span className="font-semibold text-emerald-300 text-xs">Your turn — explore a move.</span>
+                  <span className="font-semibold text-emerald-300 text-xs">
+                    {explorationPlayMode === 'BOTH_SIDES'
+                      ? (activeColorToMove.toUpperCase() !== puzzle.playerColor
+                        ? `Opponent's turn — think like ${activeColorToMove}. Find their strongest move.`
+                        : `Your turn — find the best move for ${activeColorToMove}.`)
+                      : 'Your turn — explore a move.'}
+                  </span>
                 </div>
-                {continuationCandidate?.move && (
+                {explorationPlayMode === 'CHESSECHO' && continuationCandidate?.move && (
                   <span className="text-[11px] text-slate-400 font-mono">
                     (Last: {continuationCandidate.move})
                   </span>
                 )}
               </div>
 
-              {lastContinuationCandidates && (
+              {explorationPlayMode === 'CHESSECHO' && lastContinuationCandidates && (
                 <div className="flex flex-col space-y-2 bg-slate-950/50 p-2.5 rounded-xl border border-slate-800">
                   <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">ChessEcho played</div>
                   <div className="flex items-center justify-between bg-emerald-900/20 px-3 py-2 rounded-lg border border-emerald-500/30">
