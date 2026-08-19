@@ -28,6 +28,17 @@ interface FeedbackState {
   historicalInfo?: { timesPlayed: number; averageLoss: number };
 }
 
+export interface ChallengeSubmissionResult {
+  foundCount: number;
+  targetCount: number;
+  isComplete: boolean;
+  moves: {
+    san: string;
+    status: 'strong' | 'weak' | 'invalid';
+    errorMsg?: string;
+  }[];
+}
+
 interface PuzzleFeedbackPanelProps {
   puzzle: Puzzle;
   feedback: FeedbackState;
@@ -50,13 +61,13 @@ interface PuzzleFeedbackPanelProps {
   onExitExploration?: () => void;
   continuationMode?: ContinuationMode;
   onContinuationModeChange?: (mode: ContinuationMode) => void;
-  explorationPlayMode?: ExplorationPlayMode;
-  onExplorationPlayModeChange?: (mode: ExplorationPlayMode) => void;
-  sideToMove?: 'White' | 'Black';
   continuationCandidate?: ContinuationCandidate | null;
+  isContinuationLoading?: boolean;
+  explorationPlayMode?: 'CHESSECHO' | 'BOTH_SIDES' | 'CHALLENGE';
+  onExplorationPlayModeChange?: (mode: 'CHESSECHO' | 'BOTH_SIDES' | 'CHALLENGE') => void;
+  sideToMove?: 'White' | 'Black';
   effectiveProvider?: string | null;
   isContinuationFallback?: boolean;
-  isContinuationLoading?: boolean;
   unacceptableMoveMessage?: string | null;
   explorationFeedback?: { message: string, type: 'best' | 'good' } | null;
   lastContinuationCandidates?: {
@@ -65,6 +76,14 @@ interface PuzzleFeedbackPanelProps {
     selected: ContinuationCandidate;
   } | null;
   onAlternativeSelected?: (candidate: ContinuationCandidate) => void;
+  challengeCandidates?: ContinuationCandidate[];
+  challengeSubmission?: ChallengeSubmissionResult;
+  challengeInput?: string;
+  onChallengeInputChange?: (val: string) => void;
+  onChallengeSubmit?: (e: React.FormEvent) => void;
+  onChallengeCandidateSelect?: (san: string) => void;
+  challengeFeedback?: { message: string, type: 'success' | 'error' | 'info' } | null;
+  isChallengeLoading?: boolean;
 }
 
 export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
@@ -98,6 +117,14 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
   explorationFeedback,
   lastContinuationCandidates,
   onAlternativeSelected,
+  challengeCandidates = [],
+  challengeSubmission,
+  challengeInput = '',
+  onChallengeInputChange,
+  onChallengeSubmit,
+  onChallengeCandidateSelect,
+  challengeFeedback,
+  isChallengeLoading = false,
 }) => {
   const [showGameModal, setShowGameModal] = React.useState<boolean>(false);
 
@@ -410,6 +437,24 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
                       You choose moves for both players.
                     </p>
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={() => onExplorationPlayModeChange?.('CHALLENGE')}
+                    className="flex flex-col items-start p-3 bg-slate-900 hover:bg-slate-850 hover:border-purple-500/50 rounded-xl border border-slate-800 transition text-left group cursor-pointer space-y-1"
+                  >
+                    <div className="flex items-center justify-between w-full">
+                      <span className="font-bold text-xs text-slate-100 group-hover:text-purple-400 transition flex items-center gap-1.5">
+                        <span>🎯</span> Challenge Mode
+                      </span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded-md group-hover:bg-purple-500/20 transition">
+                        Select →
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 leading-normal">
+                      Find a strong candidate move. ChessEcho won't respond.
+                    </p>
+                  </button>
                 </div>
               </div>
             ) : (
@@ -436,6 +481,15 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
                         }`}
                       >
                         Play Both Sides
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onExplorationPlayModeChange('CHALLENGE')}
+                        className={`px-2 py-0.5 text-[10px] font-bold rounded transition cursor-pointer ${
+                          explorationPlayMode === 'CHALLENGE' ? 'bg-purple-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        Challenge Mode
                       </button>
                     </div>
                   )}
@@ -504,15 +558,17 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
                 </div>
               )}
 
-              <div className="flex items-center justify-between bg-slate-900/60 px-3 py-2 rounded-xl border border-emerald-500/20">
+              <div className={`flex items-center justify-between bg-slate-900/60 px-3 py-2 rounded-xl border ${explorationPlayMode === 'CHALLENGE' ? 'border-purple-500/20' : 'border-emerald-500/20'}`}>
                 <div className="flex items-center space-x-2">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                  <span className="font-semibold text-emerald-300 text-xs">
-                    {explorationPlayMode === 'BOTH_SIDES'
-                      ? (activeColorToMove.toUpperCase() !== puzzle.playerColor
-                        ? `Opponent's turn — think like ${activeColorToMove}. Find their strongest move.`
-                        : `Your turn — find the best move for ${activeColorToMove}.`)
-                      : 'Your turn — explore a move.'}
+                  <span className={`w-2 h-2 rounded-full ${explorationPlayMode === 'CHALLENGE' ? 'bg-purple-400' : 'bg-emerald-400'}`} />
+                  <span className={`font-semibold text-xs ${explorationPlayMode === 'CHALLENGE' ? 'text-purple-300' : 'text-emerald-300'}`}>
+                    {explorationPlayMode === 'CHALLENGE'
+                      ? `Challenge Mode — find a strong candidate move for ${activeColorToMove}.`
+                      : explorationPlayMode === 'BOTH_SIDES'
+                        ? (activeColorToMove.toUpperCase() !== puzzle.playerColor
+                          ? `Opponent's turn — think like ${activeColorToMove}. Find their strongest move.`
+                          : `Your turn — find the best move for ${activeColorToMove}.`)
+                        : 'Your turn — explore a move.'}
                   </span>
                 </div>
                 {explorationPlayMode === 'CHESSECHO' && continuationCandidate?.move && (
@@ -521,6 +577,84 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
                   </span>
                 )}
               </div>
+
+              {explorationPlayMode === 'CHALLENGE' && (
+                <div className="pt-2 space-y-3">
+                  <div className="flex items-center justify-between text-xs font-semibold text-purple-300">
+                    <span>
+                       {challengeSubmission ? (
+                         challengeSubmission.isComplete
+                           ? `Excellent. You found all ${challengeSubmission.targetCount} strong candidates.`
+                           : `You found ${challengeSubmission.foundCount} / ${challengeSubmission.targetCount}. Keep looking.`
+                       ) : (
+                         `Find up to ${Math.min(challengeCandidates.length, 3)} strong candidate moves.`
+                       )}
+                    </span>
+                  </div>
+
+                  {challengeSubmission && challengeSubmission.moves.length > 0 && (
+                    <div className="flex flex-col space-y-1">
+                      {challengeSubmission.moves.map((m, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => {
+                            if (m.status === 'strong' && onChallengeCandidateSelect) {
+                              onChallengeCandidateSelect(m.san);
+                            }
+                          }}
+                          className={`flex items-center space-x-2 text-xs font-mono px-2 py-1 rounded border text-left ${
+                            m.status === 'strong'
+                              ? 'bg-emerald-900/20 border-emerald-500/20 text-emerald-200 cursor-pointer hover:bg-emerald-800/30 hover:border-emerald-500/40 transition-colors'
+                              : 'bg-red-900/20 border-red-500/20 text-red-200 cursor-default opacity-70'
+                          }`}
+                          disabled={m.status !== 'strong'}
+                        >
+                          <span>{m.status === 'strong' ? '✓' : '✗'}</span>
+                          <span>{m.san} — {m.status === 'strong' ? 'strong candidate' : 'not strong enough'}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {challengeFeedback && (
+                    <div className={`text-xs px-3 py-2 rounded-lg border ${
+                      challengeFeedback.type === 'success' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' :
+                      challengeFeedback.type === 'error' ? 'bg-rose-500/10 border-rose-500/30 text-rose-300' :
+                      'bg-blue-500/10 border-blue-500/30 text-blue-300'
+                    }`}>
+                      {challengeFeedback.message}
+                    </div>
+                  )}
+
+                  {!(challengeSubmission?.isComplete) && challengeCandidates.length > 0 && (
+                    <form onSubmit={onChallengeSubmit} className="flex flex-col space-y-2 mt-3 pt-3 border-t border-purple-500/20">
+                      <textarea
+                        value={challengeInput}
+                        onChange={(e) => onChallengeInputChange?.(e.target.value)}
+                        placeholder="Enter candidate moves (e.g. Bc4, Nf3, O-O)"
+                        rows={3}
+                        disabled={isChallengeLoading}
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-purple-500 placeholder:text-slate-600"
+                        autoComplete="off"
+                      />
+                      <button
+                        type="submit"
+                        disabled={!challengeInput.trim() || isChallengeLoading || challengeCandidates.length === 0}
+                        className="w-full bg-purple-600 hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold py-2 rounded-lg transition"
+                      >
+                        {isChallengeLoading ? 'Submitting...' : 'Submit Candidates'}
+                      </button>
+                    </form>
+                  )}
+
+                  {challengeCandidates.length === 0 && !isChallengeLoading && (
+                    <div className="text-xs text-slate-400 text-center italic">
+                      No strong candidates found for this position.
+                    </div>
+                  )}
+                </div>
+              )}
 
               {explorationPlayMode === 'CHESSECHO' && lastContinuationCandidates && (
                 <div className="flex flex-col space-y-2 bg-slate-950/50 p-2.5 rounded-xl border border-slate-800">
@@ -536,7 +670,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
                     </span>
                     <span className="text-[10px] text-emerald-400/70 font-semibold bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">Selected</span>
                   </div>
-                  
+
                   {lastContinuationCandidates.candidates.length > 1 && (
                     <div className="pt-1 space-y-1.5">
                       <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">Alternative responses</div>

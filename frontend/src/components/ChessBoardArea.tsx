@@ -8,6 +8,8 @@ import { playSound } from '@/services/soundService';
 import { continuationService, moveEvaluationService } from '@/services/continuationService';
 import { ContinuationCandidate, ExplorationPlayMode } from '@/services/api';
 
+export const CHALLENGE_MAX_EVAL_LOSS = 0.20;
+
 interface ChessBoardAreaProps {
   initialFen: string;
   playerColor: 'WHITE' | 'BLACK';
@@ -39,13 +41,16 @@ interface ChessBoardAreaProps {
   onUserExplorationMove?: (
     moveSan: string,
     nextFen: string,
-    feedback?: { isBest: boolean; loss: number; evalCp?: number | null; fromFen?: string }
+    feedback?: { isBest: boolean; loss: number; evalCp?: number | null; fromFen?: string; bestMove?: string }
   ) => void;
   onChessEchoExplorationMove?: (moveSan: string) => void;
   onReset?: () => void;
   alternativeContinuationToApply?: { parentFen: string; candidate: ContinuationCandidate } | null;
   onAlternativeContinuationApplied?: () => void;
+  challengeCandidateToApply?: { parentFen: string; moveSan: string } | null;
+  onChallengeCandidateApplied?: () => void;
   explorationPlayMode?: ExplorationPlayMode;
+  isChallengeComplete?: boolean;
 }
 
 export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
@@ -75,7 +80,10 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   onReset,
   alternativeContinuationToApply,
   onAlternativeContinuationApplied,
+  challengeCandidateToApply,
+  onChallengeCandidateApplied,
   explorationPlayMode = 'CHESSECHO',
+  isChallengeComplete = false,
 }) => {
   const [game, setGame] = useState<Chess>(new Chess(initialFen));
   const currentBoardFenRef = useRef<string>(initialFen);
@@ -144,7 +152,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   useEffect(() => {
     if (!isExplorationActive || !alternativeContinuationToApply) return;
     const { parentFen, candidate } = alternativeContinuationToApply;
-    
+
     // Find parentFen strictly in fenHistory using exact match
     const parentIndex = fenHistory.findIndex(f => f === parentFen);
     if (parentIndex !== -1) {
@@ -159,10 +167,10 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
           return newHistory;
         });
         setHistoryIndex(parentIndex + 1);
-        
+
         playSound('move');
         onFenChange?.(nextFen);
-        
+
         if (candidate.move && onChessEchoExplorationMove) {
           onChessEchoExplorationMove(candidate.move);
         }
@@ -173,6 +181,53 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
       }
     }
   }, [alternativeContinuationToApply]);
+
+  // Apply Challenge Mode candidate (simulates a user move)
+  useEffect(() => {
+    if (!isExplorationActive || !challengeCandidateToApply) return;
+    const { parentFen, moveSan } = challengeCandidateToApply;
+    const parentIndex = fenHistory.findIndex(f => f === parentFen);
+    if (parentIndex !== -1) {
+      try {
+        const gameCopy = new Chess(parentFen);
+        const move = gameCopy.move(moveSan);
+        if (move) {
+          const nextFen = gameCopy.fen();
+          setCustomSquareStyles({});
+          setGame(gameCopy);
+
+          setFenHistory((prev) => {
+            const newHistory = prev.slice(0, parentIndex + 1);
+            newHistory.push(nextFen);
+            return newHistory;
+          });
+          setHistoryIndex(parentIndex + 1);
+          playSound('move');
+          onFenChange?.(nextFen);
+
+          import('@/services/api').then(api => {
+            api.evaluateMove(parentFen, moveSan).then(res => {
+              if (res && res.acceptable) {
+                const lossCp = res.evalLoss !== undefined ? Math.round(res.evalLoss * 100) : 0;
+                const evalCp = res.evalCp;
+                if (res.evalLoss === 0) {
+                   playSound('correct');
+                   onUserExplorationMove?.(moveSan, nextFen, { isBest: true, loss: 0, evalCp, fromFen: parentFen, bestMove: res.bestMove });
+                } else {
+                   playSound('correct');
+                   onUserExplorationMove?.(moveSan, nextFen, { isBest: false, loss: lossCp, evalCp, fromFen: parentFen, bestMove: res.bestMove });
+                }
+              }
+            });
+          });
+        }
+      } catch (e) {
+        console.error('Failed to apply challenge candidate:', e);
+      } finally {
+        onChallengeCandidateApplied?.();
+      }
+    }
+  }, [challengeCandidateToApply]);
 
   const handlePieceDrop = (sourceSquare: string, targetSquare: string): boolean => {
     try {
@@ -191,6 +246,10 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
 
       // Active Exploration User Move Evaluation
       if (isExplorationActive) {
+        if (explorationPlayMode === 'CHALLENGE' && !isChallengeComplete) {
+          return false;
+        }
+
         const currentFen = game.fen();
         const nextFen = gameCopy.fen();
 
@@ -240,10 +299,10 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
             } else {
               if (lossCp === 0) {
                 playSound('completion');
-                onUserExplorationMove?.(moveSan, nextFen, { isBest: true, loss: 0, evalCp, fromFen: currentFen });
+                onUserExplorationMove?.(moveSan, nextFen, { isBest: true, loss: 0, evalCp, fromFen: currentFen, bestMove: res.bestMove });
               } else {
                 playSound('correct');
-                onUserExplorationMove?.(moveSan, nextFen, { isBest: false, loss: lossCp, evalCp, fromFen: currentFen });
+                onUserExplorationMove?.(moveSan, nextFen, { isBest: false, loss: lossCp, evalCp, fromFen: currentFen, bestMove: res.bestMove });
               }
               onUnacceptableMove?.(null);
               const newHistory = fenHistory.slice(0, historyIndex + 1);
