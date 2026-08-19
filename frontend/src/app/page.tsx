@@ -210,8 +210,26 @@ export default function Home() {
     selected: ContinuationCandidate;
   } | null>(null);
   const [alternativeContinuationToApply, setAlternativeContinuationToApply] = useState<{ parentFen: string, candidate: ContinuationCandidate } | null>(null);
-  const [challengeCandidateToApply, setChallengeCandidateToApply] = useState<{ parentFen: string, moveSan: string } | null>(null);
   const [explorationEvalMap, setExplorationEvalMap] = useState<Record<string, { evalCp: number; isUnknown: boolean }>>({});
+
+  // Challenge Calculation State
+  const [challengeBranchesByFen, setChallengeBranchesByFen] = useState<Record<string, Record<string, { san: string, fenAfter: string, isWhite: boolean }[]>>>({});
+  const [challengeActiveCandidateByFen, setChallengeActiveCandidateByFen] = useState<Record<string, string | null>>({});
+  const [calculationInput, setCalculationInput] = useState<string>('');
+  const [calculationFeedback, setCalculationFeedback] = useState<{ type: 'success' | 'error', message: string } | null>(null);
+  const [isCalculationLoading, setIsCalculationLoading] = useState<boolean>(false);
+
+  const challengeActiveFen = React.useMemo(() => {
+    if (explorationPlayMode !== 'CHALLENGE') return currentBoardFen;
+    const activeCandidate = challengeActiveCandidateByFen[currentBoardFen];
+    if (activeCandidate) {
+      const branchLine = challengeBranchesByFen[currentBoardFen]?.[activeCandidate];
+      if (branchLine && branchLine.length > 0) {
+        return branchLine[branchLine.length - 1].fenAfter;
+      }
+    }
+    return currentBoardFen;
+  }, [explorationPlayMode, challengeBranchesByFen, challengeActiveCandidateByFen, currentBoardFen]);
 
   const sideToMove: 'White' | 'Black' = React.useMemo(() => {
     if (!currentBoardFen) {
@@ -298,6 +316,8 @@ export default function Home() {
     setPendingContinuationCandidate(null);
     setLastContinuationCandidates(null);
     setAlternativeContinuationToApply(null);
+    setChallengeBranchesByFen({});
+    setChallengeActiveCandidateByFen({});
 
     if (mode === 'BOTH_SIDES') {
       setRequestedContinuationFen(undefined);
@@ -422,7 +442,9 @@ export default function Home() {
     setUnacceptableMoveMessage(null);
     setLastContinuationCandidates(null);
     setAlternativeContinuationToApply(null);
-  };
+    setChallengeBranchesByFen({});
+    setChallengeActiveCandidateByFen({});
+      };
 
   const handleExitExploration = () => {
     setIsExplorationActive(false);
@@ -433,7 +455,9 @@ export default function Home() {
     setLastContinuationCandidates(null);
     setAlternativeContinuationToApply(null);
     setExplorationEvalMap({});
-    setFeedback({ status: 'CORRECT', lastMove: activePuzzle?.targetMove });
+    setChallengeBranchesByFen({});
+    setChallengeActiveCandidateByFen({});
+        setFeedback({ status: 'CORRECT', lastMove: activePuzzle?.targetMove });
   };
 
   const handleUnacceptableMove = (message?: string | null) => {
@@ -465,7 +489,9 @@ export default function Home() {
     setLastContinuationCandidates(null);
     setAlternativeContinuationToApply(null);
     setExplorationEvalMap({});
-  };
+    setChallengeBranchesByFen({});
+    setChallengeActiveCandidateByFen({});
+      };
 
   const [puzzlePage, setPuzzlePage] = useState<number>(0);
   const [hasMorePuzzles, setHasMorePuzzles] = useState<boolean>(true);
@@ -731,6 +757,8 @@ export default function Home() {
     setLastContinuationCandidates(null);
     setAlternativeContinuationToApply(null);
     setExplorationEvalMap({});
+    setChallengeBranchesByFen({});
+    setChallengeActiveCandidateByFen({});
 
     setHistoryIndex(0);
     setCurrentEvalCp(evalHistory[0] ?? (activePuzzle?.evalCp ?? 35));
@@ -822,8 +850,39 @@ export default function Home() {
     }
   };
 
-  const handleChallengeCandidateSelect = (san: string) => {
-    setChallengeCandidateToApply({ parentFen: currentBoardFen, moveSan: san });
+  const handleChallengeCandidateSelect = async (san: string) => {
+    const chessjs = await import('chess.js');
+    try {
+      setChallengeActiveCandidateByFen(prev => ({ ...prev, [currentBoardFen]: san }));
+
+      setChallengeBranchesByFen(prev => {
+        const fenBranches = prev[currentBoardFen] || {};
+        if (!fenBranches[san]) {
+          const tempGame = new chessjs.Chess(currentBoardFen);
+          const moveObj = tempGame.move(san);
+          if (moveObj) {
+            return {
+              ...prev,
+              [currentBoardFen]: {
+                ...fenBranches,
+                [san]: [{ san, fenAfter: tempGame.fen(), isWhite: moveObj.color === 'w' }]
+              }
+            };
+          }
+        }
+        return prev;
+      });
+      setCalculationFeedback(null);
+      setCalculationInput('');
+    } catch {
+      // Ignore invalid candidates
+    }
+  };
+
+  const handleBackToCandidates = () => {
+    setChallengeActiveCandidateByFen(prev => ({ ...prev, [currentBoardFen]: null }));
+    setCalculationFeedback(null);
+    setCalculationInput('');
   };
 
   React.useEffect(() => {
@@ -874,7 +933,7 @@ export default function Home() {
 
     for (const token of tokens) {
       try {
-        const tempGame = new chessjs.Chess(currentBoardFen);
+        const tempGame = new chessjs.Chess(challengeActiveFen);
         const moveObj = tempGame.move(token);
         if (moveObj) {
           if (!uniqueMoves.has(moveObj.san)) {
@@ -933,6 +992,85 @@ export default function Home() {
     if (isComplete) {
       setChallengeInputByFen(prev => ({ ...prev, [currentBoardFen]: '' }));
     }
+  };
+
+  const handleCalculationSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!calculationInput.trim() || isCalculationLoading) return;
+    setIsCalculationLoading(true);
+    setCalculationFeedback(null);
+
+    const chessjs = await import('chess.js');
+    let moveObj;
+    let afterFen = '';
+    try {
+      const tempGame = new chessjs.Chess(challengeActiveFen);
+      moveObj = tempGame.move(calculationInput.trim());
+      if (moveObj) {
+        afterFen = tempGame.fen();
+      }
+    } catch {
+      // Caught below
+    }
+
+    if (!moveObj) {
+      setCalculationFeedback({ type: 'error', message: 'Illegal move. Check your visualization.' });
+      setIsCalculationLoading(false);
+      return;
+    }
+
+    const api = await import('@/services/api');
+    try {
+      const res = await api.evaluateMove(challengeActiveFen, moveObj.san);
+      if (res && res.evalLoss !== undefined && res.evalLoss !== null && res.evalLoss <= 0.20) {
+        setCalculationFeedback({ type: 'success', message: `Good calculation. ${moveObj.san} is a strong continuation.` });
+        setChallengeBranchesByFen(prev => {
+          const activeCandidate = challengeActiveCandidateByFen[currentBoardFen];
+          if (!activeCandidate) return prev;
+
+          const fenBranches = prev[currentBoardFen] || {};
+          const branchLine = fenBranches[activeCandidate] || [];
+          return {
+            ...prev,
+            [currentBoardFen]: {
+              ...fenBranches,
+              [activeCandidate]: [
+                ...branchLine,
+                { san: moveObj.san, fenAfter: afterFen, isWhite: moveObj.color === 'w' }
+              ]
+            }
+          };
+        });
+        setCalculationInput('');
+      } else {
+        setCalculationFeedback({ type: 'error', message: `Not strong enough (loses ${(res?.evalLoss || 0).toFixed(2)}). Try again.` });
+      }
+    } catch (err: any) {
+      setCalculationFeedback({ type: 'error', message: err.message || 'Evaluation failed.' });
+    } finally {
+      setIsCalculationLoading(false);
+    }
+  };
+
+  const handleCalculationBack = () => {
+    setChallengeBranchesByFen(prev => {
+      const activeCandidate = challengeActiveCandidateByFen[currentBoardFen];
+      if (!activeCandidate) return prev;
+
+      const fenBranches = prev[currentBoardFen] || {};
+      const branchLine = fenBranches[activeCandidate] || [];
+      if (branchLine.length <= 1) return prev;
+
+      return {
+        ...prev,
+        [currentBoardFen]: {
+          ...fenBranches,
+          [activeCandidate]: branchLine.slice(0, branchLine.length - 1)
+        }
+      };
+    });
+    setCalculationFeedback(null);
+    setCalculationInput('');
   };
 
   return (
@@ -1023,8 +1161,7 @@ export default function Home() {
                     onChessEchoExplorationMove={handleChessEchoExplorationMove}
                     alternativeContinuationToApply={alternativeContinuationToApply}
                     onAlternativeContinuationApplied={() => setAlternativeContinuationToApply(null)}
-                    challengeCandidateToApply={challengeCandidateToApply}
-                    onChallengeCandidateApplied={() => setChallengeCandidateToApply(null)}
+
                     explorationPlayMode={explorationPlayMode}
                     isChallengeComplete={challengeSubmissionByFen[currentBoardFen]?.isComplete ?? false}
                   />
@@ -1071,6 +1208,16 @@ export default function Home() {
                     challengeFeedback={challengeFeedbackByFen[currentBoardFen]}
                     isChallengeLoading={isChallengeLoading}
                     onChallengeCandidateSelect={handleChallengeCandidateSelect}
+                    activeChallengeCandidate={challengeActiveCandidateByFen[currentBoardFen] || null}
+                    challengeBranches={challengeBranchesByFen[currentBoardFen] || {}}
+                    onFinishChallenge={handleExitExploration}
+                    calculationInput={calculationInput}
+                    onCalculationInputChange={setCalculationInput}
+                    onCalculationSubmit={handleCalculationSubmit}
+                    calculationFeedback={calculationFeedback}
+                    isCalculationLoading={isCalculationLoading}
+                    onCalculationBack={handleCalculationBack}
+                    onBackToCandidates={handleBackToCandidates}
                   />
                 </div>
               </div>

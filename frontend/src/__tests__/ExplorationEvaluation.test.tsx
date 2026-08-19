@@ -553,7 +553,7 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
       // 11. Feedback shows accepted/rejected submitted candidates together
       expect(screen.getByText('You found 1 / 2. Keep looking.')).toBeInTheDocument();
       // Should show 'a6' as strong
-      expect(screen.getByText(/a6 — strong candidate/)).toBeInTheDocument();
+      expect(screen.getByText(/a6 — not explored/)).toBeInTheDocument();
       // Should show 'd6' as weak
       expect(screen.getByText(/d6 — not strong enough/)).toBeInTheDocument();
       // 12. Duplicate a6 only listed once (by relying on it not crashing or showing 2/2)
@@ -584,7 +584,7 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
     });
 
     // 16. Clicking a candidate applies exactly that move to the board and remains in CHALLENGE mode
-    const a6Button = screen.getByRole('button', { name: /a6 — strong candidate/i });
+    const a6Button = screen.getByRole('button', { name: /a6 — not explored/i });
 
     vi.mocked(api.fetchPuzzleContinuation).mockImplementation(async (fen) => {
       if (fen === 'r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4') {
@@ -603,22 +603,153 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
     fireEvent.click(a6Button);
 
     await waitFor(() => {
-      // 17. Mode remains CHALLENGE (we should see Find up to N for the new position)
-      require("fs").writeFileSync("dom.html", document.body.innerHTML); expect(screen.getByText(/Find up to .* strong candidate moves/i)).toBeInTheDocument();
-      // The old candidates should NOT be in the document (since we moved to a new position)
+      expect(screen.getByText(/What is White's best continuation/i)).toBeInTheDocument();
       expect(screen.queryByText('Excellent. You found all 2 strong candidates.')).not.toBeInTheDocument();
     });
 
-    // 18. Undo returns to the original challenge position
-    fireEvent.click(screen.getByTitle(/Previous Move/i));
+
+  });
+
+  it('13. Challenge Mode multi-branch calculation semantics', async () => {
+    vi.mocked(api.fetchPuzzleContinuation).mockResolvedValue({
+      fen: 'r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3',
+      requestedMode: 'ENGINE',
+      effectiveProvider: 'ENGINE',
+      candidates: [
+        { move: 'a6', resultingFen: 'fen_a6', providerType: 'ENGINE', evalLoss: 0.15 },
+        { move: 'Nf6', resultingFen: 'fen_Nf6', providerType: 'ENGINE', evalLoss: 0.18 },
+      ],
+    } as any);
+
+    render(<Home />);
+    await waitFor(() => screen.getByText('+0.30'));
+
+    fireEvent.click(screen.getByTestId('simulate-puzzle-move-white'));
+    await waitFor(() => screen.getByRole('button', { name: /Continue Exploration/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
+
+    // 1. Can select Challenge Mode
+    fireEvent.click(screen.getByRole('button', { name: /Challenge Mode/i }));
 
     await waitFor(() => {
-      // 19. Undo restores previous candidates
-      expect(screen.getByText('Excellent. You found all 2 strong candidates.')).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /a6 — strong candidate/i })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /Nge7 — strong candidate/i })).toBeInTheDocument();
-      // The new position's text is gone
-      expect(screen.queryByText('Find up to 1 strong candidate moves.')).not.toBeInTheDocument();
+      expect(screen.getByText(/Find up to/i)).toBeInTheDocument();
+    });
+
+    vi.mocked(api.evaluateMove).mockImplementation(async (fen, moveSan) => {
+      if (moveSan === 'a6') {
+        return { fen, move: 'a6', bestMove: 'a6', bestEvalCp: 80, evalCp: 80, evalLoss: 0.15, maxEvalLoss: 0.8, threshold: 0.8, acceptable: true, color: 'b' } as any;
+      }
+      if (moveSan === 'Nf6') {
+        return { fen, move: 'Nf6', bestMove: 'a6', bestEvalCp: 80, evalCp: 80, evalLoss: 0.18, maxEvalLoss: 0.8, threshold: 0.8, acceptable: true, color: 'b' } as any;
+      }
+      return null as any;
+    });
+
+    // 2. Candidate discovery
+    const input = screen.getByPlaceholderText(/Enter candidate moves/i);
+    fireEvent.change(input, { target: { value: 'a6, Nf6' } });
+    fireEvent.click(screen.getByRole('button', { name: /Submit Candidates/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Choose a candidate to calculate/i)).toBeInTheDocument();
+    });
+
+    // 3. Strong candidate buttons remain available
+    const a6Button = screen.getAllByRole('button').find(b => b.textContent?.includes('a6') && b.textContent?.includes('not explored'));
+    const nf6Button = screen.getAllByRole('button').find(b => b.textContent?.includes('Nf6') && b.textContent?.includes('not explored'));
+    expect(a6Button).toBeDefined();
+    console.log(screen.getAllByRole('button').map(b => b.textContent)); expect(nf6Button).toBeDefined();
+
+    // 4. Selecting candidate A creates branch A
+    fireEvent.click(a6Button!);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Candidate: a6/i)).toBeInTheDocument();
+      // Initially, the calculation line is just the candidate move
+      expect(screen.getByText(/1\.\.\. a6/)).toBeInTheDocument();
+      expect(screen.getByText(/What is White's best continuation/i)).toBeInTheDocument();
+    });
+
+    // 5. Calculating several plies in branch A
+    vi.mocked(api.evaluateMove).mockResolvedValueOnce({
+      fen: 'r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3', move: 'Ba4', bestMove: 'Ba4', bestEvalCp: 120, evalCp: 120, evalLoss: 0.0, maxEvalLoss: 0.8, threshold: 0.8, acceptable: true, color: 'w'
+    } as any);
+
+    const calcInput = screen.getByPlaceholderText(/SAN input/i);
+    fireEvent.change(calcInput, { target: { value: 'Ba4' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/1\.\.\. a6 2\. Ba4/)).toBeInTheDocument();
+    });
+
+    // 6. Returning to candidates preserves branch A
+    fireEvent.click(screen.getByRole('button', { name: 'Back to candidates' }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Choose a candidate to calculate/i)).toBeInTheDocument();
+    });
+
+    // The button for a6 should now say 'explored'
+    const a6Explored = screen.getAllByRole('button').find(b => b.textContent?.includes('a6') && b.textContent?.includes('explored'));
+    expect(a6Explored).toBeDefined();
+
+    // 7. Selecting candidate B creates independent branch B
+    const nf6Btn = screen.getAllByRole('button').find(b => b.textContent?.includes('Nf6'));
+    fireEvent.click(nf6Btn!);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Candidate: Nf6/i)).toBeInTheDocument();
+      expect(screen.getByText(/1\.\.\. Nf6/)).toBeInTheDocument();
+      // Make sure branch A's moves are NOT here
+      expect(screen.queryByText(/2\\. Ba4/)).not.toBeInTheDocument();
+    });
+
+    // 8. Calculating ply in branch B
+    vi.mocked(api.evaluateMove).mockResolvedValueOnce({
+      fen: 'r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3', move: 'd4', bestMove: 'd4', bestEvalCp: 120, evalCp: 120, evalLoss: 0.0, maxEvalLoss: 0.8, threshold: 0.8, acceptable: true, color: 'w'
+    } as any);
+    fireEvent.change(screen.getByPlaceholderText(/SAN input/i), { target: { value: 'd4' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/1\.\.\. Nf6 2\. d4/)).toBeInTheDocument();
+    });
+
+    // 9. Back removes only the latest ply from the active branch
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/1\.\.\. Nf6/)).toBeInTheDocument();
+      expect(screen.queryByText(/d4/)).not.toBeInTheDocument();
+    });
+
+    // 10. Returning to candidate A restores its calculation line
+    fireEvent.click(screen.getByRole('button', { name: 'Back to candidates' }));
+    await waitFor(() => {
+      expect(screen.getByText(/Choose a candidate/i)).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getAllByRole('button').find(b => b.textContent?.includes('a6') && b.textContent?.includes('explored'))!);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Candidate: a6/i)).toBeInTheDocument();
+      expect(screen.getByText(/1\.\.\. a6 2\. Ba4/)).toBeInTheDocument();
+    });
+
+    // 11. visible board remains unchanged throughout Challenge Mode
+    expect(api.fetchPuzzleContinuation).toHaveBeenCalledTimes(2);
+
+    // 12. Finish Challenge exits cleanly
+    fireEvent.click(screen.getByRole('button', { name: 'Back to candidates' }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Finish Challenge/i })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Finish Challenge/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByText(/Candidate:/i)).not.toBeInTheDocument();
     });
   });
 });

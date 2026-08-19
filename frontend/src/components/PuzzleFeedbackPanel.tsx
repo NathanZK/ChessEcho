@@ -28,6 +28,29 @@ interface FeedbackState {
   historicalInfo?: { timesPlayed: number; averageLoss: number };
 }
 
+export function formatCalculationLine(line: { san: string, isWhite: boolean }[]): string {
+  let result = '';
+  let moveNum = 1;
+  for (let i = 0; i < line.length; i++) {
+    const move = line[i];
+    if (i === 0) {
+      if (move.isWhite) {
+        result += `${moveNum}. ${move.san}`;
+      } else {
+        result += `${moveNum}... ${move.san}`;
+      }
+    } else {
+      if (move.isWhite) {
+        moveNum++;
+        result += ` ${moveNum}. ${move.san}`;
+      } else {
+        result += ` ${move.san}`;
+      }
+    }
+  }
+  return result;
+}
+
 export interface ChallengeSubmissionResult {
   foundCount: number;
   targetCount: number;
@@ -84,6 +107,21 @@ interface PuzzleFeedbackPanelProps {
   onChallengeCandidateSelect?: (san: string) => void;
   challengeFeedback?: { message: string, type: 'success' | 'error' | 'info' } | null;
   isChallengeLoading?: boolean;
+  activeChallengeCandidate?: string | null;
+  challengeBranches?: Record<string, { san: string, fenAfter: string, isWhite: boolean }[]>;
+  onBackToCandidates?: () => void;
+  calculationInput?: string;
+  calculationFeedback?: { type: 'success' | 'error', message: string } | null;
+  isCalculationLoading?: boolean;
+  puzzleComplete?: boolean;
+  hasMorePuzzles?: boolean;
+  onStartExploration?: () => void;
+  onChangePlayMode?: (mode: any) => void;
+  onCalculationInputChange?: (val: string) => void;
+  onCalculationSubmit?: (e: React.FormEvent) => void;
+  onCalculationBack?: () => void;
+  onContinueMilestone?: () => void;
+  onFinishChallenge?: () => void;
 }
 
 export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
@@ -125,6 +163,17 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
   onChallengeCandidateSelect,
   challengeFeedback,
   isChallengeLoading = false,
+  activeChallengeCandidate = null,
+  challengeBranches = {},
+  onBackToCandidates,
+  onContinueMilestone,
+  onFinishChallenge,
+  calculationInput = '',
+  onCalculationInputChange,
+  onCalculationSubmit,
+  calculationFeedback,
+  isCalculationLoading = false,
+  onCalculationBack,
 }) => {
   const [showGameModal, setShowGameModal] = React.useState<boolean>(false);
 
@@ -580,77 +629,173 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
 
               {explorationPlayMode === 'CHALLENGE' && (
                 <div className="pt-2 space-y-3">
-                  <div className="flex items-center justify-between text-xs font-semibold text-purple-300">
-                    <span>
-                       {challengeSubmission ? (
-                         challengeSubmission.isComplete
-                           ? `Excellent. You found all ${challengeSubmission.targetCount} strong candidates.`
-                           : `You found ${challengeSubmission.foundCount} / ${challengeSubmission.targetCount}. Keep looking.`
-                       ) : (
-                         `Find up to ${Math.min(challengeCandidates.length, 3)} strong candidate moves.`
-                       )}
-                    </span>
-                  </div>
+                  {!activeChallengeCandidate ? (
+                    // Candidate Discovery Phase
+                    <>
+                      <div className="flex items-center justify-between text-xs font-semibold text-purple-300">
+                        <span>
+                           {challengeSubmission ? (
+                             challengeSubmission.isComplete
+                               ? `Excellent. You found all ${challengeSubmission.targetCount} strong candidates.`
+                               : `You found ${challengeSubmission.foundCount} / ${challengeSubmission.targetCount}. Keep looking.`
+                           ) : (
+                             `Find up to ${Math.min(challengeCandidates.length, 3)} strong candidate moves.`
+                           )}
+                        </span>
+                      </div>
 
-                  {challengeSubmission && challengeSubmission.moves.length > 0 && (
-                    <div className="flex flex-col space-y-1">
-                      {challengeSubmission.moves.map((m, i) => (
-                        <button
-                          key={i}
-                          type="button"
-                          onClick={() => {
-                            if (m.status === 'strong' && onChallengeCandidateSelect) {
-                              onChallengeCandidateSelect(m.san);
-                            }
-                          }}
-                          className={`flex items-center space-x-2 text-xs font-mono px-2 py-1 rounded border text-left ${
-                            m.status === 'strong'
-                              ? 'bg-emerald-900/20 border-emerald-500/20 text-emerald-200 cursor-pointer hover:bg-emerald-800/30 hover:border-emerald-500/40 transition-colors'
-                              : 'bg-red-900/20 border-red-500/20 text-red-200 cursor-default opacity-70'
-                          }`}
-                          disabled={m.status !== 'strong'}
-                        >
-                          <span>{m.status === 'strong' ? '✓' : '✗'}</span>
-                          <span>{m.san} — {m.status === 'strong' ? 'strong candidate' : 'not strong enough'}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                      {challengeSubmission && challengeSubmission.moves.some(m => m.status === 'strong') && (
+                        <div className="text-xs text-purple-200 font-bold mb-1">
+                          Choose a candidate to calculate.
+                        </div>
+                      )}
 
-                  {challengeFeedback && (
-                    <div className={`text-xs px-3 py-2 rounded-lg border ${
-                      challengeFeedback.type === 'success' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' :
-                      challengeFeedback.type === 'error' ? 'bg-rose-500/10 border-rose-500/30 text-rose-300' :
-                      'bg-blue-500/10 border-blue-500/30 text-blue-300'
-                    }`}>
-                      {challengeFeedback.message}
-                    </div>
-                  )}
+                      {challengeSubmission && challengeSubmission.moves.length > 0 && (
+                        <div className="flex flex-col space-y-1">
+                          {challengeSubmission.moves.map((m, i) => {
+                            const isExplored = m.status === 'strong' && challengeBranches && challengeBranches[m.san] && challengeBranches[m.san].length > 0;
+                            return (
+                              <button
+                                key={i}
+                                type="button"
+                                onClick={() => {
+                                  if (m.status === 'strong' && onChallengeCandidateSelect) {
+                                    onChallengeCandidateSelect(m.san);
+                                  }
+                                }}
+                                className={`flex items-center space-x-2 text-xs font-mono px-2 py-1 rounded border text-left ${
+                                  m.status === 'strong'
+                                    ? 'bg-emerald-900/20 border-emerald-500/20 text-emerald-200 cursor-pointer hover:bg-emerald-800/30 hover:border-emerald-500/40 transition-colors'
+                                    : 'bg-red-900/20 border-red-500/20 text-red-200 cursor-default opacity-70'
+                                }`}
+                                disabled={m.status !== 'strong'}
+                              >
+                                <span>{m.status === 'strong' ? (isExplored ? '✓' : '○') : '✗'}</span>
+                                <span>{m.san} — {m.status === 'strong' ? (isExplored ? 'explored' : 'not explored') : 'not strong enough'}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
 
-                  {!(challengeSubmission?.isComplete) && challengeCandidates.length > 0 && (
-                    <form onSubmit={onChallengeSubmit} className="flex flex-col space-y-2 mt-3 pt-3 border-t border-purple-500/20">
-                      <textarea
-                        value={challengeInput}
-                        onChange={(e) => onChallengeInputChange?.(e.target.value)}
-                        placeholder="Enter candidate moves (e.g. Bc4, Nf3, O-O)"
-                        rows={3}
-                        disabled={isChallengeLoading}
-                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-purple-500 placeholder:text-slate-600"
-                        autoComplete="off"
-                      />
-                      <button
-                        type="submit"
-                        disabled={!challengeInput.trim() || isChallengeLoading || challengeCandidates.length === 0}
-                        className="w-full bg-purple-600 hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold py-2 rounded-lg transition"
-                      >
-                        {isChallengeLoading ? 'Submitting...' : 'Submit Candidates'}
-                      </button>
-                    </form>
-                  )}
+                      {challengeSubmission && (
+                        <div className="pt-2">
+                          <button
+                            onClick={onFinishChallenge}
+                            className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-lg transition"
+                          >
+                            Finish Challenge
+                          </button>
+                        </div>
+                      )}
 
-                  {challengeCandidates.length === 0 && !isChallengeLoading && (
-                    <div className="text-xs text-slate-400 text-center italic">
-                      No strong candidates found for this position.
+                      {challengeFeedback && (
+                        <div className={`text-xs px-3 py-2 rounded-lg border ${
+                          challengeFeedback.type === 'success' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' :
+                          challengeFeedback.type === 'error' ? 'bg-rose-500/10 border-rose-500/30 text-rose-300' :
+                          'bg-sky-500/10 border-sky-500/30 text-sky-300'
+                        }`}>
+                          {challengeFeedback.type === 'success' ? '✓ ' : ''}{challengeFeedback.message}
+                        </div>
+                      )}
+
+                      {!(challengeSubmission?.isComplete) && challengeCandidates.length > 0 && (
+                        <form onSubmit={onChallengeSubmit} className="flex flex-col space-y-2 mt-3 pt-3 border-t border-purple-500/20">
+                          <textarea
+                            value={challengeInput}
+                            onChange={(e) => onChallengeInputChange?.(e.target.value)}
+                            placeholder="Enter candidate moves (e.g. Bc4, Nf3, O-O)"
+                            rows={3}
+                            disabled={isChallengeLoading}
+                            className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-purple-500 placeholder:text-slate-600"
+                            autoComplete="off"
+                          />
+                          <button
+                            type="submit"
+                            disabled={!challengeInput.trim() || isChallengeLoading || challengeCandidates.length === 0}
+                            className="w-full bg-purple-600 hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-bold py-2 rounded-lg transition"
+                          >
+                            {isChallengeLoading ? 'Submitting...' : 'Submit Candidates'}
+                          </button>
+                        </form>
+                      )}
+
+                      {challengeSubmission && challengeSubmission.foundCount === 0 && (
+                        <div className="text-xs text-rose-300 bg-rose-900/20 border border-rose-500/20 p-2 rounded">
+                          No strong candidates found for this position.
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    // Calculation Phase
+                    <div className="flex flex-col space-y-3">
+                      {(() => {
+                        const currentBranchLine = (challengeBranches && activeChallengeCandidate) ? challengeBranches[activeChallengeCandidate] || [] : [];
+                        return (
+                          <>
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-purple-300">Candidate: {activeChallengeCandidate}</span>
+                            </div>
+
+                            <div className="text-xs text-purple-200">
+                              <div className="mb-3">
+                                <span className="font-semibold text-purple-300">Your calculation</span>
+                                <div className="mt-1.5 p-2 bg-slate-950/50 border border-purple-500/20 rounded font-mono text-slate-300 text-xs leading-relaxed">
+                                  {currentBranchLine.length > 0 ? formatCalculationLine(currentBranchLine) : activeChallengeCandidate}
+                                </div>
+                              </div>
+
+                              Don't move the pieces. Visualize the {currentBranchLine.length === 1 ? 'resulting position' : 'position'}.
+                              <br /><br />
+                              <span className="font-bold text-white">What is {currentBranchLine.length > 0 ? (currentBranchLine[currentBranchLine.length - 1].isWhite ? "Black's" : "White's") : "Unknown"} best continuation?</span>
+                            </div>
+
+                            {calculationFeedback && (
+                              <div className={`text-xs px-3 py-2 rounded-lg border ${
+                                calculationFeedback.type === 'success' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' :
+                                'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                              }`}>
+                                {calculationFeedback.type === 'success' ? '✓ ' : ''}{calculationFeedback.message}
+                              </div>
+                            )}
+
+                            <form onSubmit={onCalculationSubmit} className="flex gap-2">
+                              <input
+                                type="text"
+                                value={calculationInput}
+                                onChange={(e) => onCalculationInputChange?.(e.target.value)}
+                                placeholder="SAN input (e.g. a6)"
+                                disabled={isCalculationLoading}
+                                className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-purple-500"
+                                autoComplete="off"
+                              />
+                              <button
+                                type="submit"
+                                disabled={isCalculationLoading || !calculationInput.trim()}
+                                className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg text-xs font-bold"
+                              >
+                                Submit
+                              </button>
+                            </form>
+
+                            <div className="flex flex-col gap-2 pt-2">
+                              <button
+                                onClick={onBackToCandidates}
+                                className="w-full py-2 bg-purple-600/20 hover:bg-purple-600/40 border border-purple-500/30 text-purple-200 font-bold text-xs rounded-lg transition"
+                              >
+                                Back to candidates
+                              </button>
+                              <button
+                                onClick={onCalculationBack}
+                                disabled={currentBranchLine.length <= 1}
+                                className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                Back
+                              </button>
+                            </div>
+                          </>
+                        );
+                      })()}
                     </div>
                   )}
                 </div>

@@ -47,8 +47,6 @@ interface ChessBoardAreaProps {
   onReset?: () => void;
   alternativeContinuationToApply?: { parentFen: string; candidate: ContinuationCandidate } | null;
   onAlternativeContinuationApplied?: () => void;
-  challengeCandidateToApply?: { parentFen: string; moveSan: string } | null;
-  onChallengeCandidateApplied?: () => void;
   explorationPlayMode?: ExplorationPlayMode;
   isChallengeComplete?: boolean;
 }
@@ -80,8 +78,6 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   onReset,
   alternativeContinuationToApply,
   onAlternativeContinuationApplied,
-  challengeCandidateToApply,
-  onChallengeCandidateApplied,
   explorationPlayMode = 'CHESSECHO',
   isChallengeComplete = false,
 }) => {
@@ -182,52 +178,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
     }
   }, [alternativeContinuationToApply]);
 
-  // Apply Challenge Mode candidate (simulates a user move)
-  useEffect(() => {
-    if (!isExplorationActive || !challengeCandidateToApply) return;
-    const { parentFen, moveSan } = challengeCandidateToApply;
-    const parentIndex = fenHistory.findIndex(f => f === parentFen);
-    if (parentIndex !== -1) {
-      try {
-        const gameCopy = new Chess(parentFen);
-        const move = gameCopy.move(moveSan);
-        if (move) {
-          const nextFen = gameCopy.fen();
-          setCustomSquareStyles({});
-          setGame(gameCopy);
 
-          setFenHistory((prev) => {
-            const newHistory = prev.slice(0, parentIndex + 1);
-            newHistory.push(nextFen);
-            return newHistory;
-          });
-          setHistoryIndex(parentIndex + 1);
-          playSound('move');
-          onFenChange?.(nextFen);
-
-          import('@/services/api').then(api => {
-            api.evaluateMove(parentFen, moveSan).then(res => {
-              if (res && res.acceptable) {
-                const lossCp = res.evalLoss !== undefined ? Math.round(res.evalLoss * 100) : 0;
-                const evalCp = res.evalCp;
-                if (res.evalLoss === 0) {
-                   playSound('correct');
-                   onUserExplorationMove?.(moveSan, nextFen, { isBest: true, loss: 0, evalCp, fromFen: parentFen, bestMove: res.bestMove });
-                } else {
-                   playSound('correct');
-                   onUserExplorationMove?.(moveSan, nextFen, { isBest: false, loss: lossCp, evalCp, fromFen: parentFen, bestMove: res.bestMove });
-                }
-              }
-            });
-          });
-        }
-      } catch (e) {
-        console.error('Failed to apply challenge candidate:', e);
-      } finally {
-        onChallengeCandidateApplied?.();
-      }
-    }
-  }, [challengeCandidateToApply]);
 
   const handlePieceDrop = (sourceSquare: string, targetSquare: string): boolean => {
     try {
