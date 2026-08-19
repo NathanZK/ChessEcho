@@ -91,6 +91,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
         onMinMistakeCountChange={() => {}}
         onApplySettings={() => {}}
         isExplorationActive={true}
+        explorationPlayMode="CHESSECHO"
         explorationTurn="USER"
         onEnterExploration={handleEnterExploration}
         onExitExploration={handleExitExploration}
@@ -124,6 +125,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
         onMinMistakeCountChange={() => {}}
         onApplySettings={() => {}}
         isExplorationActive={true}
+        explorationPlayMode="CHESSECHO"
         explorationTurn="USER"
         unacceptableMoveMessage="That move is outside the acceptable range."
       />
@@ -157,6 +159,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
           pendingContinuationCandidate={null}
           onContinuationApplied={handleContinuationApplied}
           isExplorationActive={true}
+        explorationPlayMode="CHESSECHO"
         />
       );
     });
@@ -172,6 +175,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
         onNextPuzzle={() => {}}
         onFenChange={handleFenChange}
         isExplorationActive={true}
+        explorationPlayMode="CHESSECHO"
       />
     );
     rerenderFn = rerender;
@@ -192,6 +196,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
         pendingContinuationCandidate={candidate}
         onContinuationApplied={handleContinuationApplied}
         isExplorationActive={true}
+        explorationPlayMode="CHESSECHO"
       />
     );
 
@@ -219,6 +224,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
         onMinMistakeCountChange={() => {}}
         onApplySettings={() => {}}
         isExplorationActive={true}
+        explorationPlayMode="CHESSECHO"
         explorationTurn="USER"
         onExitExploration={handleExitExploration}
       />
@@ -299,6 +305,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
             isExplorationActive={isExplorationActive}
             explorationTurn={isExplorationActive ? explorationTurn as 'USER' | 'CHESSECHO' : undefined}
             isContinuationLoading={explorationTurn === 'CHESSECHO'}
+            explorationPlayMode="CHESSECHO"
             onEnterExploration={() => setExplorationTurn('CHESSECHO')}
             onExitExploration={() => setExplorationTurn('OFF')}
           />
@@ -392,6 +399,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
         onNextPuzzle={() => {}}
         onFenChange={handleFenChange}
         isExplorationActive={true}
+        explorationPlayMode="CHESSECHO"
         onUserExplorationMove={handleUserExplorationMove}
         onUnacceptableMove={handleUnacceptableMove}
       />

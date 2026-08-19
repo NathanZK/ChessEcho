@@ -189,7 +189,7 @@ export default function Home() {
 
   // Continuation & Line Exploration turn-based state machine
   const [isExplorationActive, setIsExplorationActive] = useState<boolean>(false);
-  const [explorationPlayMode, setExplorationPlayMode] = useState<ExplorationPlayMode>('CHESSECHO');
+  const [explorationPlayMode, setExplorationPlayMode] = useState<ExplorationPlayMode | undefined>(undefined);
   const [unacceptableMoveMessage, setUnacceptableMoveMessage] = useState<string | null>(null);
   const [currentBoardFen, setCurrentBoardFen] = useState<string>('');
   const [continuationMode, setContinuationMode] = useState<ContinuationMode>('ENGINE');
@@ -287,10 +287,12 @@ export default function Home() {
 
   const handleExplorationPlayModeChange = (mode: ExplorationPlayMode) => {
     setExplorationPlayMode(mode);
+    setPendingContinuationCandidate(null);
+    setLastContinuationCandidates(null);
+    setAlternativeContinuationToApply(null);
+
     if (mode === 'BOTH_SIDES') {
       setRequestedContinuationFen(undefined);
-      setPendingContinuationCandidate(null);
-      setLastContinuationCandidates(null);
     } else {
       if (activePuzzle && currentBoardFen) {
         const fenColor = currentBoardFen.split(' ')[1];
@@ -299,6 +301,8 @@ export default function Home() {
         const isOpponentTurn = isWhiteTurn !== isUserWhite;
         if (isOpponentTurn) {
           setRequestedContinuationFen(currentBoardFen);
+        } else {
+          setRequestedContinuationFen(undefined);
         }
       }
     }
@@ -381,7 +385,7 @@ export default function Home() {
     setRequestedContinuationFen(undefined);
   };
 
-  const handleEnterExploration = (initialMode: ExplorationPlayMode = explorationPlayMode) => {
+  const handleEnterExploration = (initialMode?: ExplorationPlayMode) => {
     setIsExplorationActive(true);
     setExplorationPlayMode(initialMode);
     const baselineFen = currentBoardFen || activePuzzle?.fen || '';
@@ -413,6 +417,7 @@ export default function Home() {
 
   const handleExitExploration = () => {
     setIsExplorationActive(false);
+    setExplorationPlayMode(undefined);
     setRequestedContinuationFen(undefined);
     setPendingContinuationCandidate(null);
     setUnacceptableMoveMessage(null);
