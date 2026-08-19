@@ -6,7 +6,7 @@ import { Chessboard } from 'react-chessboard';
 import { BoardControls } from './BoardControls';
 import { playSound } from '@/services/soundService';
 import { continuationService, moveEvaluationService } from '@/services/continuationService';
-import { ContinuationCandidate } from '@/services/api';
+import { ContinuationCandidate, ExplorationPlayMode } from '@/services/api';
 
 interface ChessBoardAreaProps {
   initialFen: string;
@@ -45,6 +45,7 @@ interface ChessBoardAreaProps {
   onReset?: () => void;
   alternativeContinuationToApply?: { parentFen: string; candidate: ContinuationCandidate } | null;
   onAlternativeContinuationApplied?: () => void;
+  explorationPlayMode?: ExplorationPlayMode;
 }
 
 export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
@@ -74,6 +75,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   onReset,
   alternativeContinuationToApply,
   onAlternativeContinuationApplied,
+  explorationPlayMode = 'CHESSECHO',
 }) => {
   const [game, setGame] = useState<Chess>(new Chess(initialFen));
   const currentBoardFenRef = useRef<string>(initialFen);
@@ -193,6 +195,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
         const nextFen = gameCopy.fen();
 
         setCustomSquareStyles({});
+        currentBoardFenRef.current = nextFen;
         setGame(gameCopy);
 
         moveEvaluationService.evaluateMove(currentFen, moveSan).then((res) => {
@@ -201,28 +204,59 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
             return;
           }
 
-          if (res && !res.acceptable) {
+          const isWhiteTurn = currentFen.split(' ')[1] === 'w';
+          const isUserWhite = playerColor === 'WHITE';
+          const isOpponentTurn = isWhiteTurn !== isUserWhite;
+          const shouldUseStrictThreshold = isOpponentTurn && explorationPlayMode === 'BOTH_SIDES';
+
+          if (res) {
+            let acceptable = res.acceptable;
+            const lossCp = res.evalLoss ?? 0;
+            const evalCp = res.evalCp ?? null;
+            let errorMessage: string | null = null;
+
+            if (shouldUseStrictThreshold) {
+              const OPPONENT_MOVE_MAX_EVAL_LOSS = 0.20;
+              if (lossCp <= OPPONENT_MOVE_MAX_EVAL_LOSS) {
+                acceptable = true;
+              } else {
+                acceptable = false;
+                if (res.acceptable) {
+                  errorMessage = `Good response, but there's a stronger move. This move loses ${lossCp.toFixed(2)} pawns. Keep looking.`;
+                } else {
+                  errorMessage = `That move is too inaccurate. It loses ${lossCp.toFixed(2)} pawns compared with the best move.`;
+                }
+              }
+            } else {
+              if (!acceptable) {
+                errorMessage = `That move is too inaccurate. It loses ${lossCp.toFixed(2)} pawns compared with the best move.`;
+              }
+            }
+
+            if (!acceptable) {
+              playSound('incorrect');
+              setGame(new Chess(currentFen)); // Revert board to position before move
+              onUnacceptableMove?.(errorMessage);
+            } else {
+              if (lossCp === 0) {
+                playSound('completion');
+                onUserExplorationMove?.(moveSan, nextFen, { isBest: true, loss: 0, evalCp, fromFen: currentFen });
+              } else {
+                playSound('correct');
+                onUserExplorationMove?.(moveSan, nextFen, { isBest: false, loss: lossCp, evalCp, fromFen: currentFen });
+              }
+              onUnacceptableMove?.(null);
+              const newHistory = fenHistory.slice(0, historyIndex + 1);
+              newHistory.push(nextFen);
+              setFenHistory(newHistory);
+              setHistoryIndex(newHistory.length - 1);
+              onFenChange?.(nextFen);
+            }
+          } else {
+            // Fallback if res is null
             playSound('incorrect');
             setGame(new Chess(currentFen)); // Revert board to position before move
-            const pawns = (res.evalLoss ?? 0).toFixed(2);
-            const msg = `That move is too inaccurate. It loses ${pawns} pawns compared with the best move.`;
-            onUnacceptableMove?.(msg);
-          } else {
-            const lossCp = res?.evalLoss ?? 0;
-            const evalCp = res?.evalCp ?? null;
-            if (lossCp === 0) {
-              playSound('completion');
-              onUserExplorationMove?.(moveSan, nextFen, { isBest: true, loss: 0, evalCp, fromFen: currentFen });
-            } else {
-              playSound('correct');
-              onUserExplorationMove?.(moveSan, nextFen, { isBest: false, loss: lossCp, evalCp, fromFen: currentFen });
-            }
-            onUnacceptableMove?.(null);
-            const newHistory = fenHistory.slice(0, historyIndex + 1);
-            newHistory.push(nextFen);
-            setFenHistory(newHistory);
-            setHistoryIndex(newHistory.length - 1);
-            onFenChange?.(nextFen);
+            onUnacceptableMove?.("Evaluation failed. Please try again.");
           }
         }).catch(() => {
           // Stale evaluation guard: verify board has not moved or reset
@@ -300,6 +334,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
     if (historyIndex > 0) {
       const prevIndex = historyIndex - 1;
       const prevFen = fenHistory[prevIndex];
+      currentBoardFenRef.current = prevFen;
       setGame(new Chess(prevFen));
       setHistoryIndex(prevIndex);
       onFenChange?.(prevFen);
@@ -312,6 +347,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
     if (historyIndex < fenHistory.length - 1) {
       const nextIndex = historyIndex + 1;
       const nextFen = fenHistory[nextIndex];
+      currentBoardFenRef.current = nextFen;
       setGame(new Chess(nextFen));
       setHistoryIndex(nextIndex);
       onFenChange?.(nextFen);
@@ -337,6 +373,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
 
   const handleReset = () => {
     const resetGame = new Chess(initialFen);
+    currentBoardFenRef.current = initialFen;
     setGame(resetGame);
     setFenHistory([initialFen]);
     setHistoryIndex(0);

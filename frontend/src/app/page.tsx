@@ -8,7 +8,7 @@ import { PuzzleFeedbackPanel } from '@/components/PuzzleFeedbackPanel';
 import { WeaknessesList } from '@/components/WeaknessesList';
 import { ImportGamesView } from '@/components/ImportGamesView';
 import { Puzzle } from '@/mock/mockData';
-import { fetchPuzzles, JobStatusResponse, ContinuationMode, ContinuationCandidate, toWhitePerspective } from '@/services/api';
+import { fetchPuzzles, JobStatusResponse, ContinuationMode, ContinuationCandidate, ExplorationPlayMode, toWhitePerspective } from '@/services/api';
 import { soundService } from '@/services/soundService';
 import { usePuzzleContinuation } from '@/utils/usePuzzleContinuation';
 
@@ -189,6 +189,7 @@ export default function Home() {
 
   // Continuation & Line Exploration turn-based state machine
   const [isExplorationActive, setIsExplorationActive] = useState<boolean>(false);
+  const [explorationPlayMode, setExplorationPlayMode] = useState<ExplorationPlayMode>('CHESSECHO');
   const [unacceptableMoveMessage, setUnacceptableMoveMessage] = useState<string | null>(null);
   const [currentBoardFen, setCurrentBoardFen] = useState<string>('');
   const [continuationMode, setContinuationMode] = useState<ContinuationMode>('ENGINE');
@@ -204,19 +205,28 @@ export default function Home() {
   const [alternativeContinuationToApply, setAlternativeContinuationToApply] = useState<{ parentFen: string, candidate: ContinuationCandidate } | null>(null);
   const [explorationEvalMap, setExplorationEvalMap] = useState<Record<string, { evalCp: number; isUnknown: boolean }>>({});
 
+  const sideToMove: 'White' | 'Black' = React.useMemo(() => {
+    if (!currentBoardFen) {
+      return activePuzzle?.playerColor === 'BLACK' ? 'Black' : 'White';
+    }
+    return currentBoardFen.split(' ')[1] === 'w' ? 'White' : 'Black';
+  }, [currentBoardFen, activePuzzle]);
+
   const explorationTurn = React.useMemo(() => {
     if (!activePuzzle || !currentBoardFen) return 'USER';
+    if (explorationPlayMode === 'BOTH_SIDES') return 'USER';
     const fenColor = currentBoardFen.split(' ')[1]; // 'w' or 'b'
     const isWhiteTurn = fenColor === 'w';
     const isUserWhite = activePuzzle.playerColor === 'WHITE';
     return isWhiteTurn === isUserWhite ? 'USER' : 'CHESSECHO';
-  }, [currentBoardFen, activePuzzle]);
+  }, [currentBoardFen, activePuzzle, explorationPlayMode]);
 
   const continuation = usePuzzleContinuation(requestedContinuationFen, continuationMode);
 
-  // When ChessEcho turn is active and a candidate is selected, stage it for the board
+  // When ChessEcho turn is active and a candidate is selected, stage it for the board (only in CHESSECHO mode)
   React.useEffect(() => {
     if (!isExplorationActive) return;
+    if (explorationPlayMode !== 'CHESSECHO') return;
     if (continuation.loading) return;
 
     if (
@@ -248,7 +258,7 @@ export default function Home() {
         }));
       }
     }
-  }, [isExplorationActive, continuation.selectedCandidate, continuation.loading, continuation.response, requestedContinuationFen, currentBoardFen, currentEvalCp]);
+  }, [isExplorationActive, explorationPlayMode, continuation.selectedCandidate, continuation.loading, continuation.response, requestedContinuationFen, currentBoardFen, currentEvalCp]);
 
   // Keep lastContinuationCandidates synchronized with board history
   React.useEffect(() => {
@@ -274,6 +284,25 @@ export default function Home() {
       setIsEvalUnknown(entry.isUnknown);
     }
   }, [currentBoardFen, isExplorationActive, explorationEvalMap]);
+
+  const handleExplorationPlayModeChange = (mode: ExplorationPlayMode) => {
+    setExplorationPlayMode(mode);
+    if (mode === 'BOTH_SIDES') {
+      setRequestedContinuationFen(undefined);
+      setPendingContinuationCandidate(null);
+      setLastContinuationCandidates(null);
+    } else {
+      if (activePuzzle && currentBoardFen) {
+        const fenColor = currentBoardFen.split(' ')[1];
+        const isWhiteTurn = fenColor === 'w';
+        const isUserWhite = activePuzzle.playerColor === 'WHITE';
+        const isOpponentTurn = isWhiteTurn !== isUserWhite;
+        if (isOpponentTurn) {
+          setRequestedContinuationFen(currentBoardFen);
+        }
+      }
+    }
+  };
 
   const handleAlternativeSelected = (candidate: ContinuationCandidate) => {
     if (!lastContinuationCandidates) return;
@@ -310,9 +339,16 @@ export default function Home() {
     nextFen: string,
     feedback?: { isBest: boolean; loss: number; evalCp?: number | null; fromFen?: string }
   ) => {
-    // User made a successful, acceptable move. Request a continuation.
-    setRequestedContinuationFen(nextFen);
-    setLastContinuationCandidates(null);
+    // User made a successful, acceptable move.
+    if (explorationPlayMode === 'CHESSECHO') {
+      setRequestedContinuationFen(nextFen);
+      setLastContinuationCandidates(null);
+    } else {
+      setRequestedContinuationFen(undefined);
+      setPendingContinuationCandidate(null);
+      setLastContinuationCandidates(null);
+    }
+
     if (feedback) {
       if (feedback.isBest) {
         setExplorationFeedback({ message: 'Best move. No evaluation loss.', type: 'best' });
@@ -345,8 +381,9 @@ export default function Home() {
     setRequestedContinuationFen(undefined);
   };
 
-  const handleEnterExploration = () => {
+  const handleEnterExploration = (initialMode: ExplorationPlayMode = explorationPlayMode) => {
     setIsExplorationActive(true);
+    setExplorationPlayMode(initialMode);
     const baselineFen = currentBoardFen || activePuzzle?.fen || '';
     const baselineEval = currentEvalCp;
     const baselineUnknown = isEvalUnknown;
@@ -360,7 +397,13 @@ export default function Home() {
     }
     setExplorationEvalMap(initialMap);
 
-    setRequestedContinuationFen(baselineFen);
+    if (initialMode === 'CHESSECHO') {
+      setRequestedContinuationFen(baselineFen);
+    } else {
+      setRequestedContinuationFen(undefined);
+      setPendingContinuationCandidate(null);
+    }
+
     setFeedback({ status: 'EXPLORING' });
     setUnacceptableMoveMessage(null);
     setExplorationFeedback(null);
@@ -858,6 +901,7 @@ export default function Home() {
                     onChessEchoExplorationMove={handleChessEchoExplorationMove}
                     alternativeContinuationToApply={alternativeContinuationToApply}
                     onAlternativeContinuationApplied={() => setAlternativeContinuationToApply(null)}
+                    explorationPlayMode={explorationPlayMode}
                   />
                 </div>
 
@@ -883,6 +927,9 @@ export default function Home() {
                     onExitExploration={handleExitExploration}
                     continuationMode={continuationMode}
                     onContinuationModeChange={setContinuationMode}
+                    explorationPlayMode={explorationPlayMode}
+                    onExplorationPlayModeChange={handleExplorationPlayModeChange}
+                    sideToMove={sideToMove}
                     continuationCandidate={continuation.selectedCandidate}
                     effectiveProvider={continuation.effectiveProvider}
                     isContinuationFallback={continuation.isFallback}
