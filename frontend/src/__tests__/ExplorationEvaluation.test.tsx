@@ -4,7 +4,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import Home from '../app/page';
 import { toWhitePerspective } from '../services/api';
 import * as api from '../services/api';
-import { continuationService } from '../services/continuationService';
+import { continuationService, moveEvaluationService } from '../services/continuationService';
 import { Puzzle } from '../mock/mockData';
 
 vi.mock('react-chessboard', () => ({
@@ -75,6 +75,7 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     continuationService.clear();
+    moveEvaluationService.clear();
     localStorage.clear();
     localStorage.setItem('chessecho_username', 'testuser');
     vi.mocked(api.fetchPuzzles).mockResolvedValue([mockPuzzleWhite]);
@@ -119,7 +120,7 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
   it('3. White exploration move updates EvalBar using backend evalCp', async () => {
     // After Bb5 (White), Black plays a6 (simulated via continuation or user), then White plays Ba4
     // 1st: ChessEcho responds with a6
-    vi.mocked(api.fetchPuzzleContinuation).mockResolvedValueOnce({
+    console.log("MOCKING SECOND FETCH"); vi.mocked(api.fetchPuzzleContinuation).mockResolvedValue({
       fen: 'r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3',
       requestedMode: 'ENGINE',
       effectiveProvider: 'ENGINE',
@@ -135,7 +136,7 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
     });
 
     // 2nd: User plays Ba4 (White to move)
-    vi.mocked(api.evaluateMove).mockResolvedValueOnce({
+    vi.mocked(api.evaluateMove).mockResolvedValue({
       fen: 'r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4',
       move: 'Ba4',
       bestMove: 'Ba4',
@@ -173,7 +174,7 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
   it('4. Black exploration move correctly inverts perspective for EvalBar', async () => {
     // After Bb5 (White), board is Black to move. User plays a6 for Black.
     // In FEN with 'b' to move, evalCp of 80 means Black is +0.80 -> White EvalBar must show -0.80
-    vi.mocked(api.evaluateMove).mockResolvedValueOnce({
+    vi.mocked(api.evaluateMove).mockResolvedValue({
       fen: 'r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3',
       move: 'a6',
       bestMove: 'a6',
@@ -203,7 +204,7 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
 
   it('5. ChessEcho ENGINE continuation move updates EvalBar using candidate evalCp', async () => {
     // ChessEcho responding as Black: candidate evalCp = -50 (Black is down 0.50 -> White is +0.50)
-    vi.mocked(api.fetchPuzzleContinuation).mockResolvedValueOnce({
+    console.log("MOCKING SECOND FETCH"); vi.mocked(api.fetchPuzzleContinuation).mockResolvedValue({
       fen: 'r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3',
       requestedMode: 'ENGINE',
       effectiveProvider: 'ENGINE',
@@ -232,7 +233,7 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
   });
 
   it('6. Alternative ENGINE candidate updates EvalBar when clicked', async () => {
-    vi.mocked(api.fetchPuzzleContinuation).mockResolvedValueOnce({
+    console.log("MOCKING SECOND FETCH"); vi.mocked(api.fetchPuzzleContinuation).mockResolvedValue({
       fen: 'r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3',
       requestedMode: 'ENGINE',
       effectiveProvider: 'ENGINE',
@@ -278,7 +279,7 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
   });
 
   it('7. HUMAN candidate with null evalCp displays unknown badge without crashing or locking', async () => {
-    vi.mocked(api.fetchPuzzleContinuation).mockResolvedValueOnce({
+    console.log("MOCKING SECOND FETCH"); vi.mocked(api.fetchPuzzleContinuation).mockResolvedValue({
       fen: 'r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3',
       requestedMode: 'HUMAN',
       effectiveProvider: 'HUMAN',
@@ -311,7 +312,7 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
 
   it('8. Exploration Undo and Redo restore prior and subsequent evaluations accurately', async () => {
     // 1st: ChessEcho plays a6 (+0.50)
-    vi.mocked(api.fetchPuzzleContinuation).mockResolvedValueOnce({
+    console.log("MOCKING SECOND FETCH"); vi.mocked(api.fetchPuzzleContinuation).mockResolvedValue({
       fen: 'r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3',
       requestedMode: 'ENGINE',
       effectiveProvider: 'ENGINE',
@@ -327,7 +328,7 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
     });
 
     // 2nd: User plays Ba4 -> +1.20
-    vi.mocked(api.evaluateMove).mockResolvedValueOnce({
+    vi.mocked(api.evaluateMove).mockResolvedValue({
       fen: 'r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4',
       move: 'Ba4',
       bestMove: 'Ba4',
@@ -371,7 +372,7 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
   });
 
   it('9. Selecting an alternative branch correctly updates EvalBar and overwrites future branch history', async () => {
-    vi.mocked(api.fetchPuzzleContinuation).mockResolvedValueOnce({
+    console.log("MOCKING SECOND FETCH"); vi.mocked(api.fetchPuzzleContinuation).mockResolvedValue({
       fen: 'r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3',
       requestedMode: 'ENGINE',
       effectiveProvider: 'ENGINE',
@@ -482,6 +483,142 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
     fireEvent.click(screen.getByTitle(/Previous Move/i));
     await waitFor(() => {
       expect(screen.queryByText(/🔒 EXPL/)).not.toBeInTheDocument();
+    });
+  });
+
+  it('12. Challenge Mode uses multi-candidate discovery via batched SAN input', async () => {
+    vi.mocked(api.fetchPuzzleContinuation).mockResolvedValue({
+      fen: 'r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3',
+      requestedMode: 'ENGINE',
+      effectiveProvider: 'ENGINE',
+      candidates: [
+        { move: 'a6', resultingFen: 'r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4', providerType: 'ENGINE', evalLoss: 0.15 },
+        { move: 'Nf6', resultingFen: 'r1bqkb1r/pppp1ppp/2n2n2/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 2 4', providerType: 'ENGINE', evalLoss: 0.18 },
+        { move: 'd6', resultingFen: 'some-fen', providerType: 'ENGINE', evalLoss: 0.25 } // > 0.20, should be filtered out
+      ],
+    });
+
+    render(<Home />);
+    await waitFor(() => screen.getByText('+0.30'));
+
+    fireEvent.click(screen.getByTestId('simulate-puzzle-move-white'));
+    await waitFor(() => screen.getByRole('button', { name: /Continue Exploration/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
+
+    // 1. Can select Challenge Mode
+    fireEvent.click(screen.getByRole('button', { name: /Challenge Mode/i }));
+
+    // 2. Does not trigger ChessEcho response (user is to move)
+    await waitFor(() => {
+      expect(screen.getByText(/Challenge Mode — find a strong candidate move/i)).toBeInTheDocument();
+    });
+
+    // 3. Candidates target is displayed
+    await waitFor(() => {
+      expect(screen.getByText(/Find up to/i)).toBeInTheDocument();
+    });
+
+    // 4. SAN input is displayed
+    const input = screen.getByPlaceholderText(/Enter candidate moves/i);
+    expect(input).toBeInTheDocument();
+
+    // 5. Drag-and-drop is disabled in Challenge Mode
+    fireEvent.click(screen.getByTestId('simulate-expl-move-black'));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByText(/Good candidate/i)).not.toBeInTheDocument();
+
+    // 6. Invalid SAN rejects the whole batch and keeps input
+    fireEvent.change(input, { target: { value: 'a6, invalid_move' } });
+    fireEvent.click(screen.getByRole('button', { name: /Submit Candidates/i }));
+    await waitFor(() => expect(screen.getByText(/"invalid_move" isn't valid SAN. Check the move and try again./i)).toBeInTheDocument());
+
+    // 7. Duplicate SANs in batch are counted once
+    // 8. evalLoss > 0.20 rejects the candidate (d6)
+    // 9. Valid SAN is canonicalized and accepted (evalLoss <= 0.20)
+    // 10. Multiple submitted candidates are evaluated in one submission
+    vi.mocked(api.evaluateMove).mockImplementation(async (fen, moveSan) => {
+      if (moveSan === 'a6') {
+        return { fen, move: 'a6', bestMove: 'a6', bestEvalCp: 80, evalCp: 80, evalLoss: 0.15, maxEvalLoss: 0.8, threshold: 0.8, acceptable: true };
+      }
+      if (moveSan === 'd6') {
+        return { fen, move: 'd6', bestMove: 'a6', bestEvalCp: 80, evalCp: 80, evalLoss: 0.25, maxEvalLoss: 0.8, threshold: 0.8, acceptable: true };
+      }
+      return null as any;
+    });
+
+    fireEvent.change(input, { target: { value: 'a6, a6, d6' } });
+    fireEvent.click(screen.getByRole('button', { name: /Submit Candidates/i }));
+
+    await waitFor(() => {
+      // 11. Feedback shows accepted/rejected submitted candidates together
+      expect(screen.getByText('You found 1 / 2. Keep looking.')).toBeInTheDocument();
+      // Should show 'a6' as strong
+      expect(screen.getByText(/a6 — strong candidate/)).toBeInTheDocument();
+      // Should show 'd6' as weak
+      expect(screen.getByText(/d6 — not strong enough/)).toBeInTheDocument();
+      // 12. Duplicate a6 only listed once (by relying on it not crashing or showing 2/2)
+    });
+
+    // 13. Engine candidate moves are not exposed (Nf6 should not be visible)
+    expect(screen.queryByText(/Nf6/)).not.toBeInTheDocument();
+
+    // 14. Finding the top qualifying candidates completes the challenge
+    vi.mocked(api.evaluateMove).mockImplementation(async (fen, moveSan) => {
+      if (moveSan === 'a6') {
+        return { fen, move: 'a6', bestMove: 'a6', bestEvalCp: 80, evalCp: 80, evalLoss: 0.15, maxEvalLoss: 0.8, threshold: 0.8, acceptable: true };
+      }
+      if (moveSan === 'Nge7') {
+        return { fen, move: 'Nge7', bestMove: 'a6', bestEvalCp: 80, evalCp: 80, evalLoss: 0.20, maxEvalLoss: 0.8, threshold: 0.8, acceptable: true };
+      }
+      return null as any;
+    });
+
+    // Submitting a new batch
+    fireEvent.change(input, { target: { value: 'a6, Nge7' } });
+    fireEvent.click(screen.getByRole('button', { name: /Submit Candidates/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Excellent. You found all 2 strong candidates.')).toBeInTheDocument();
+      // Input should be hidden when complete
+      expect(screen.queryByPlaceholderText(/Enter candidate moves/i)).not.toBeInTheDocument();
+    });
+
+    // 16. Clicking a candidate applies exactly that move to the board and remains in CHALLENGE mode
+    const a6Button = screen.getByRole('button', { name: /a6 — strong candidate/i });
+
+    vi.mocked(api.fetchPuzzleContinuation).mockImplementation(async (fen) => {
+      if (fen === 'r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4') {
+        return {
+          fen,
+          requestedMode: 'ENGINE',
+          effectiveProvider: 'ENGINE',
+          candidates: [
+            { move: 'Ba4', resultingFen: 'r1bqkbnr/1ppp1ppp/p1n5/4p3/B3P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 1 4', providerType: 'ENGINE', evalLoss: 0.0 }
+          ],
+        } as any;
+      }
+      return { fen, candidates: [] } as any;
+    });
+
+    fireEvent.click(a6Button);
+
+    await waitFor(() => {
+      // 17. Mode remains CHALLENGE (we should see Find up to N for the new position)
+      require("fs").writeFileSync("dom.html", document.body.innerHTML); expect(screen.getByText(/Find up to .* strong candidate moves/i)).toBeInTheDocument();
+      // The old candidates should NOT be in the document (since we moved to a new position)
+      expect(screen.queryByText('Excellent. You found all 2 strong candidates.')).not.toBeInTheDocument();
+    });
+
+    // 18. Undo returns to the original challenge position
+    fireEvent.click(screen.getByTitle(/Previous Move/i));
+
+    await waitFor(() => {
+      // 19. Undo restores previous candidates
+      expect(screen.getByText('Excellent. You found all 2 strong candidates.')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /a6 — strong candidate/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Nge7 — strong candidate/i })).toBeInTheDocument();
+      // The new position's text is gone
+      expect(screen.queryByText('Find up to 1 strong candidate moves.')).not.toBeInTheDocument();
     });
   });
 });

@@ -4,11 +4,11 @@ import React, { useState } from 'react';
 import { Header, TabType } from '@/components/Header';
 import { EvalBar } from '@/components/EvalBar';
 import { ChessBoardArea } from '@/components/ChessBoardArea';
-import { PuzzleFeedbackPanel } from '@/components/PuzzleFeedbackPanel';
+import { PuzzleFeedbackPanel, type ChallengeSubmissionResult } from '@/components/PuzzleFeedbackPanel';
 import { WeaknessesList } from '@/components/WeaknessesList';
 import { ImportGamesView } from '@/components/ImportGamesView';
 import { Puzzle } from '@/mock/mockData';
-import { fetchPuzzles, JobStatusResponse, ContinuationMode, ContinuationCandidate, ExplorationPlayMode, toWhitePerspective } from '@/services/api';
+import { fetchPuzzles, JobStatusResponse, ContinuationMode, ContinuationCandidate, ExplorationPlayMode, toWhitePerspective, fetchPuzzleContinuation } from '@/services/api';
 import { soundService } from '@/services/soundService';
 import { usePuzzleContinuation } from '@/utils/usePuzzleContinuation';
 
@@ -192,17 +192,25 @@ export default function Home() {
   const [explorationPlayMode, setExplorationPlayMode] = useState<ExplorationPlayMode | undefined>(undefined);
   const [unacceptableMoveMessage, setUnacceptableMoveMessage] = useState<string | null>(null);
   const [currentBoardFen, setCurrentBoardFen] = useState<string>('');
+
+  // Challenge Mode State
+  const [challengeCandidatesByFen, setChallengeCandidatesByFen] = useState<Record<string, ContinuationCandidate[]>>({});
+  const [challengeSubmissionByFen, setChallengeSubmissionByFen] = useState<Record<string, ChallengeSubmissionResult>>({});
+  const [challengeInputByFen, setChallengeInputByFen] = useState<Record<string, string>>({});
+  const [challengeFeedbackByFen, setChallengeFeedbackByFen] = useState<Record<string, { message: string, type: 'success' | 'error' | 'info' }>>({});
+  const [isChallengeLoading, setIsChallengeLoading] = useState<boolean>(false);
   const [continuationMode, setContinuationMode] = useState<ContinuationMode>('ENGINE');
   const [pendingContinuationCandidate, setPendingContinuationCandidate] = useState<ContinuationCandidate | null>(null);
   const [requestedContinuationFen, setRequestedContinuationFen] = useState<string | undefined>(undefined);
 
-  const [explorationFeedback, setExplorationFeedback] = useState<{ message: string, type: 'best' | 'good' } | null>(null);
+  const [explorationFeedbackByFen, setExplorationFeedbackByFen] = useState<Record<string, { message: string, type: 'best' | 'good' }>>({});
   const [lastContinuationCandidates, setLastContinuationCandidates] = useState<{
     parentFen: string;
     candidates: ContinuationCandidate[];
     selected: ContinuationCandidate;
   } | null>(null);
   const [alternativeContinuationToApply, setAlternativeContinuationToApply] = useState<{ parentFen: string, candidate: ContinuationCandidate } | null>(null);
+  const [challengeCandidateToApply, setChallengeCandidateToApply] = useState<{ parentFen: string, moveSan: string } | null>(null);
   const [explorationEvalMap, setExplorationEvalMap] = useState<Record<string, { evalCp: number; isUnknown: boolean }>>({});
 
   const sideToMove: 'White' | 'Black' = React.useMemo(() => {
@@ -265,7 +273,7 @@ export default function Home() {
     if (lastContinuationCandidates) {
       // If we are still at parentFen, it means the move is pending application by ChessBoardArea
       if (currentBoardFen === lastContinuationCandidates.parentFen) return;
-      
+
       const actualSelected = lastContinuationCandidates.candidates.find(c => c.resultingFen === currentBoardFen);
       if (!actualSelected) {
         setLastContinuationCandidates(null);
@@ -354,10 +362,12 @@ export default function Home() {
     }
 
     if (feedback) {
-      if (feedback.isBest) {
-        setExplorationFeedback({ message: 'Best move. No evaluation loss.', type: 'best' });
-      } else {
-        setExplorationFeedback({ message: `Good move. It loses ${feedback.loss.toFixed(2)} pawns compared with the best move.`, type: 'good' });
+      if (explorationPlayMode !== 'CHALLENGE') {
+        if (feedback.isBest) {
+          setExplorationFeedbackByFen(prev => ({ ...prev, [nextFen]: { message: 'Best move. No evaluation loss.', type: 'best' } }));
+        } else {
+          setExplorationFeedbackByFen(prev => ({ ...prev, [nextFen]: { message: `Good move. It loses ${feedback.loss.toFixed(2)} pawns compared with the best move.`, type: 'good' } }));
+        }
       }
 
       if (feedback.evalCp != null && feedback.fromFen) {
@@ -376,7 +386,7 @@ export default function Home() {
         }));
       }
     } else {
-      setExplorationFeedback(null);
+      setExplorationFeedbackByFen(prev => ({ ...prev, [nextFen]: null as any }));
     }
   };
 
@@ -410,7 +420,6 @@ export default function Home() {
 
     setFeedback({ status: 'EXPLORING' });
     setUnacceptableMoveMessage(null);
-    setExplorationFeedback(null);
     setLastContinuationCandidates(null);
     setAlternativeContinuationToApply(null);
   };
@@ -421,7 +430,6 @@ export default function Home() {
     setRequestedContinuationFen(undefined);
     setPendingContinuationCandidate(null);
     setUnacceptableMoveMessage(null);
-    setExplorationFeedback(null);
     setLastContinuationCandidates(null);
     setAlternativeContinuationToApply(null);
     setExplorationEvalMap({});
@@ -454,7 +462,6 @@ export default function Home() {
     setRequestedContinuationFen(undefined);
     setIsExplorationActive(false);
     setUnacceptableMoveMessage(null);
-    setExplorationFeedback(null);
     setLastContinuationCandidates(null);
     setAlternativeContinuationToApply(null);
     setExplorationEvalMap({});
@@ -686,7 +693,6 @@ export default function Home() {
     setPendingContinuationCandidate(null);
 
     if (isExplorationActive) {
-      setExplorationFeedback(null);
       setLastContinuationCandidates(null);
       return;
     }
@@ -704,7 +710,6 @@ export default function Home() {
     setPendingContinuationCandidate(null);
 
     if (isExplorationActive) {
-      setExplorationFeedback(null);
       setLastContinuationCandidates(null);
       return;
     }
@@ -723,11 +728,10 @@ export default function Home() {
     setPendingContinuationCandidate(null);
     setIsExplorationActive(false);
     setUnacceptableMoveMessage(null);
-    setExplorationFeedback(null);
     setLastContinuationCandidates(null);
     setAlternativeContinuationToApply(null);
     setExplorationEvalMap({});
-    
+
     setHistoryIndex(0);
     setCurrentEvalCp(evalHistory[0] ?? (activePuzzle?.evalCp ?? 35));
     const firstFeedback = feedbackHistory[0] as any;
@@ -818,6 +822,119 @@ export default function Home() {
     }
   };
 
+  const handleChallengeCandidateSelect = (san: string) => {
+    setChallengeCandidateToApply({ parentFen: currentBoardFen, moveSan: san });
+  };
+
+  React.useEffect(() => {
+    if (explorationPlayMode !== 'CHALLENGE' || !currentBoardFen) return;
+    if (challengeSubmissionByFen[currentBoardFen]) return;
+
+    let isMounted = true;
+    setChallengeFeedbackByFen(prev => ({ ...prev, [currentBoardFen]: null as any }));
+    setChallengeInputByFen(prev => ({ ...prev, [currentBoardFen]: '' }));
+
+    const fetchCandidates = async () => {
+      setIsChallengeLoading(true);
+      try {
+        const result = await fetchPuzzleContinuation(currentBoardFen, 'ENGINE');
+        if (isMounted && result && result.fen === currentBoardFen) {
+          const strongCandidates = result.candidates.filter(c => (c.evalLoss ?? 0) <= 0.20);
+          setChallengeCandidatesByFen(prev => ({ ...prev, [currentBoardFen]: strongCandidates }));
+        }
+      } catch (err) {
+        if (isMounted) setChallengeFeedbackByFen(prev => ({ ...prev, [currentBoardFen]: { type: 'error', message: 'Failed to load candidates.' } }));
+      } finally {
+        if (isMounted) setIsChallengeLoading(false);
+      }
+    };
+
+    fetchCandidates();
+    return () => { isMounted = false; };
+  }, [currentBoardFen, explorationPlayMode, challengeSubmissionByFen]);
+
+  const handleChallengeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentBoardFen) return;
+
+    const currentChallengeInput = challengeInputByFen[currentBoardFen] || '';
+    if (!currentChallengeInput.trim() || isChallengeLoading) return;
+
+    const tokens = currentChallengeInput.split(/[\s,]+/).filter(t => t.trim().length > 0);
+    if (tokens.length === 0) return;
+
+    setIsChallengeLoading(true);
+    setChallengeFeedbackByFen(prev => ({ ...prev, [currentBoardFen]: null as any }));
+
+    const currentCandidates = challengeCandidatesByFen[currentBoardFen] || [];
+
+    const chessjs = await import('chess.js');
+    const uniqueMoves = new Map<string, string>(); // canonical -> raw
+    const invalidTokens: string[] = [];
+
+    for (const token of tokens) {
+      try {
+        const tempGame = new chessjs.Chess(currentBoardFen);
+        const moveObj = tempGame.move(token);
+        if (moveObj) {
+          if (!uniqueMoves.has(moveObj.san)) {
+            uniqueMoves.set(moveObj.san, token);
+          }
+        } else {
+          invalidTokens.push(token);
+        }
+      } catch {
+        invalidTokens.push(token);
+      }
+    }
+
+    if (invalidTokens.length > 0) {
+      setChallengeFeedbackByFen(prev => ({ ...prev, [currentBoardFen]: { type: 'error', message: `"${invalidTokens[0]}" isn't valid SAN. Check the move and try again.` } }));
+      setIsChallengeLoading(false);
+      return;
+    }
+
+    const api = await import('@/services/api');
+    const moveResults: ChallengeSubmissionResult['moves'] = [];
+    let strongCount = 0;
+
+    for (const canonicalSan of uniqueMoves.keys()) {
+      try {
+        const res = await api.evaluateMove(currentBoardFen, canonicalSan);
+        if (res && res.evalLoss !== undefined && res.evalLoss !== null) {
+          if (res.evalLoss <= 0.20) {
+            strongCount++;
+            moveResults.push({ san: canonicalSan, status: 'strong' });
+          } else {
+            moveResults.push({ san: canonicalSan, status: 'weak' });
+          }
+        } else {
+          moveResults.push({ san: canonicalSan, status: 'weak', errorMsg: 'Failed to evaluate.' });
+        }
+      } catch (e: any) {
+         moveResults.push({ san: canonicalSan, status: 'weak', errorMsg: e.message });
+      }
+    }
+
+    const targetCount = Math.min(currentCandidates.length, 3);
+    const isComplete = strongCount >= targetCount;
+
+    setChallengeSubmissionByFen(prev => ({
+      ...prev,
+      [currentBoardFen]: {
+        foundCount: strongCount,
+        targetCount,
+        isComplete,
+        moves: moveResults
+      }
+    }));
+
+    setIsChallengeLoading(false);
+    if (isComplete) {
+      setChallengeInputByFen(prev => ({ ...prev, [currentBoardFen]: '' }));
+    }
+  };
+
   return (
     <div className="h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-emerald-500 selection:text-white overflow-hidden">
       {/* Top Header */}
@@ -828,7 +945,7 @@ export default function Home() {
         weaknessCount={weaknessCount}
         onDisconnect={handleDisconnect}
       />
-      
+
       {/* Main Content Area */}
       <main className={`flex-1 flex flex-col ${activeTab === 'import' ? 'justify-center overflow-hidden py-2' : 'justify-start overflow-y-auto py-2'}`}>
         {/* TAB 1: PRACTICE PUZZLES */}
@@ -906,7 +1023,10 @@ export default function Home() {
                     onChessEchoExplorationMove={handleChessEchoExplorationMove}
                     alternativeContinuationToApply={alternativeContinuationToApply}
                     onAlternativeContinuationApplied={() => setAlternativeContinuationToApply(null)}
+                    challengeCandidateToApply={challengeCandidateToApply}
+                    onChallengeCandidateApplied={() => setChallengeCandidateToApply(null)}
                     explorationPlayMode={explorationPlayMode}
+                    isChallengeComplete={challengeSubmissionByFen[currentBoardFen]?.isComplete ?? false}
                   />
                 </div>
 
@@ -940,9 +1060,17 @@ export default function Home() {
                     isContinuationFallback={continuation.isFallback}
                     isContinuationLoading={continuation.loading || !!requestedContinuationFen}
                     unacceptableMoveMessage={unacceptableMoveMessage}
-                    explorationFeedback={explorationFeedback}
+                    explorationFeedback={explorationFeedbackByFen[currentBoardFen] || null}
                     lastContinuationCandidates={lastContinuationCandidates}
                     onAlternativeSelected={handleAlternativeSelected}
+                    challengeCandidates={challengeCandidatesByFen[currentBoardFen] || []}
+                    challengeSubmission={challengeSubmissionByFen[currentBoardFen]}
+                    challengeInput={challengeInputByFen[currentBoardFen] || ''}
+                    onChallengeInputChange={(v) => setChallengeInputByFen(prev => ({ ...prev, [currentBoardFen]: v }))}
+                    onChallengeSubmit={handleChallengeSubmit}
+                    challengeFeedback={challengeFeedbackByFen[currentBoardFen]}
+                    isChallengeLoading={isChallengeLoading}
+                    onChallengeCandidateSelect={handleChallengeCandidateSelect}
                   />
                 </div>
               </div>

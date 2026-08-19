@@ -34,7 +34,7 @@ export interface WeaknessResponse {
 }
 
 export type ContinuationMode = 'ENGINE' | 'HUMAN';
-export type ExplorationPlayMode = 'CHESSECHO' | 'BOTH_SIDES';
+export type ExplorationPlayMode = 'CHESSECHO' | 'BOTH_SIDES' | 'CHALLENGE';
 
 export interface ContinuationCandidate {
   move: string;
