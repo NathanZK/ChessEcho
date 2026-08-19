@@ -403,6 +403,7 @@ describe('Puzzles Tab Features and Fixes', () => {
         moveHistory={['e4', 'Nf3']}
         onNextPuzzle={vi.fn()}
         isExplorationActive={true}
+        explorationPlayMode="CHESSECHO"
         continuationCandidate={{ move: 'Nf3', resultingFen: 'fen_Nf3', providerType: 'ENGINE' }}
       />
     );

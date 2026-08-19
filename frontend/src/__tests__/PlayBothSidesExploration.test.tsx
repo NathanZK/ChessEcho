@@ -470,6 +470,10 @@ describe('Play Both Sides Mode in Line Exploration', () => {
     await waitFor(() => screen.getByRole('button', { name: /Continue Exploration/i }));
     fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
 
+    // Mode-selection screen appears, choose vs ChessEcho
+    expect(screen.getByText(/Choose how you want to explore/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /vs ChessEcho/i }));
+
     // In vs ChessEcho mode, ChessEcho will play a6
     await waitFor(() => expect(screen.getByText('Your turn — explore a move.')).toBeInTheDocument());
 
@@ -646,7 +650,7 @@ describe('Play Both Sides Mode in Line Exploration', () => {
 
     // Now Continue Exploration appears
     await waitFor(() => screen.getByRole('button', { name: /Continue Exploration/i }));
-    
+
     // Switch to Play Both Sides
     fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
     fireEvent.click(screen.getByRole('button', { name: /Play Both Sides/i }));
@@ -674,6 +678,55 @@ describe('Play Both Sides Mode in Line Exploration', () => {
     await waitFor(() => {
       // User is Black, position is Black to move -> Own turn
       expect(screen.getByText(/Your turn — find the best move for Black\./i)).toBeInTheDocument();
+    });
+  });
+
+  it('13. Initial mode selection state shows correctly, both options available, no auto-move', async () => {
+    vi.mocked(api.fetchPuzzleContinuation).mockResolvedValue({
+      fen: 'r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3',
+      requestedMode: 'ENGINE',
+      effectiveProvider: 'ENGINE',
+      candidates: [
+        {
+          move: 'a6',
+          resultingFen: 'r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4',
+          providerType: 'ENGINE',
+          evalCp: -30,
+          evalLoss: 0,
+        },
+      ],
+    });
+
+    render(<Home />);
+    await waitFor(() => screen.getByText('+0.30'));
+
+    fireEvent.click(screen.getByTestId('play-puzzle-move-white'));
+    await waitFor(() => screen.getByRole('button', { name: /Continue Exploration/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
+
+    // Verify initial mode selection screen is unmistakably different
+    expect(screen.getByText(/Choose how you want to explore/i)).toBeInTheDocument();
+
+    // Neither mode appears pre-selected (ENGINE/HUMAN controls should be absent)
+    expect(screen.queryByRole('button', { name: 'ENGINE' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'HUMAN' })).not.toBeInTheDocument();
+
+    // Both options are equally available
+    const vsEngineBtn = screen.getByRole('button', { name: /vs ChessEcho/i });
+    const bothSidesBtn = screen.getByRole('button', { name: /Play Both Sides/i });
+    expect(vsEngineBtn).toBeInTheDocument();
+    expect(bothSidesBtn).toBeInTheDocument();
+
+    // No continuation move has been played yet
+    expect(screen.queryByText(/ChessEcho played/i)).not.toBeInTheDocument();
+    expect(screen.queryByText('Your turn — explore a move.')).not.toBeInTheDocument();
+
+    // Now select vs ChessEcho and verify it transitions
+    fireEvent.click(vsEngineBtn);
+
+    // After selection, ENGINE/HUMAN controls should appear and it should wait for ChessEcho or user
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'ENGINE' })).toBeInTheDocument();
     });
   });
 });
