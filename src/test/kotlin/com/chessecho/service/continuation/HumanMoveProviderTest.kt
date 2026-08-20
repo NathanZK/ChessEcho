@@ -1,78 +1,134 @@
 package com.chessecho.service.continuation
 
+import com.chessecho.domain.HumanMoveDistribution
 import com.chessecho.domain.Position
-import com.chessecho.repository.HistoricalMoveStats
-import com.chessecho.repository.PositionOccurrenceRepository
+import com.chessecho.repository.HumanMoveDistributionRepository
 import com.chessecho.repository.PositionRepository
+import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.extension.ExtendWith
+import org.mockito.Mock
+import org.mockito.Mockito.`when`
+import org.mockito.junit.jupiter.MockitoExtension
 import org.mockito.kotlin.any
-import org.mockito.kotlin.mock
-import org.mockito.kotlin.whenever
 import java.util.UUID
-import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 
+@ExtendWith(MockitoExtension::class)
 class HumanMoveProviderTest {
-    private val positionRepository: PositionRepository = mock()
-    private val positionOccurrenceRepository: PositionOccurrenceRepository = mock()
-    private val humanMoveProvider = HumanMoveProvider(positionRepository, positionOccurrenceRepository)
+    @Mock
+    private lateinit var positionRepository: PositionRepository
 
-    @Test
-    fun `providerType is HUMAN`() {
-        assertEquals("HUMAN", humanMoveProvider.providerType)
+    @Mock
+    private lateinit var humanMoveDistributionRepository: HumanMoveDistributionRepository
+
+    private lateinit var humanMoveProvider: HumanMoveProvider
+
+    private val fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
+    private val expectedHash = "a3f5a5e3a7c36a9412e0388eb1a64627d353a277709ff3ed9eb7c53d10dbbbd6"
+    private val positionId = UUID.randomUUID()
+
+    @BeforeEach
+    fun setUp() {
+        humanMoveProvider =
+            HumanMoveProvider(
+                positionRepository = positionRepository,
+                humanMoveDistributionRepository = humanMoveDistributionRepository,
+                minObservations = 10,
+            )
+    }
+
+    private fun mockPosition() {
+        val position = Position(id = positionId, hash = expectedHash, fen = fen)
+        `when`(positionRepository.findByHash(any())).thenReturn(position)
     }
 
     @Test
-    fun `getContinuationCandidates returns multiple historical move candidates when position and occurrences exist`() {
-        val fen = "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"
-        val positionId = UUID.randomUUID()
-        val mockPosition = Position(id = positionId, hash = "somehash", fen = fen)
+    fun `exact band with sufficient observations returns candidates ordered by frequency`() {
+        mockPosition()
 
-        val stats =
+        val dist =
             listOf(
-                HistoricalMoveStats(movePlayed = "Nc6", timesPlayed = 15),
-                HistoricalMoveStats(movePlayed = "Nf6", timesPlayed = 8),
-                HistoricalMoveStats(movePlayed = "d6", timesPlayed = 3),
+                HumanMoveDistribution(positionId = positionId, ratingBand = "1000-1200", movePlayed = "e5", observationCount = 50),
+                HumanMoveDistribution(positionId = positionId, ratingBand = "1000-1200", movePlayed = "c5", observationCount = 100),
+                HumanMoveDistribution(positionId = positionId, ratingBand = "1000-1200", movePlayed = "e6", observationCount = 10),
             )
 
-        whenever(positionRepository.findByHash(any())).thenReturn(mockPosition)
-        whenever(positionOccurrenceRepository.findHistoricalMoveStatsByPositionId(positionId)).thenReturn(stats)
+        `when`(humanMoveDistributionRepository.findByPositionIdAndRatingBand(positionId, "1000-1200")).thenReturn(dist)
 
-        val result = humanMoveProvider.getContinuationCandidates(fen)
+        val candidates = humanMoveProvider.getContinuationCandidates(fen, "1000-1200")
 
-        assertEquals(3, result.size)
-        assertEquals("Nc6", result[0].move)
-        assertEquals(15, result[0].timesPlayed)
-        assertEquals("HUMAN", result[0].providerType)
+        assertThat(candidates).hasSize(3)
+        assertThat(candidates[0].move).isEqualTo("c5")
+        assertThat(candidates[0].timesPlayed).isEqualTo(100)
 
-        assertEquals("Nf6", result[1].move)
-        assertEquals(8, result[1].timesPlayed)
+        assertThat(candidates[1].move).isEqualTo("e5")
+        assertThat(candidates[1].timesPlayed).isEqualTo(50)
 
-        assertEquals("d6", result[2].move)
-        assertEquals(3, result[2].timesPlayed)
+        assertThat(candidates[2].move).isEqualTo("e6")
+        assertThat(candidates[2].timesPlayed).isEqualTo(10)
     }
 
     @Test
-    fun `getContinuationCandidates returns empty list when position hash is not in repository`() {
-        val fen = "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"
-        whenever(positionRepository.findByHash(any())).thenReturn(null)
+    fun `exact band with insufficient observations returns empty list`() {
+        mockPosition()
 
-        val result = humanMoveProvider.getContinuationCandidates(fen)
+        val dist =
+            listOf(
+                HumanMoveDistribution(positionId = positionId, ratingBand = "1000-1200", movePlayed = "e5", observationCount = 5),
+                HumanMoveDistribution(positionId = positionId, ratingBand = "1000-1200", movePlayed = "c5", observationCount = 4),
+            )
 
-        assertTrue(result.isEmpty())
+        `when`(humanMoveDistributionRepository.findByPositionIdAndRatingBand(positionId, "1000-1200")).thenReturn(dist)
+        `when`(humanMoveDistributionRepository.findByPositionIdAndRatingBand(positionId, "800-1000")).thenReturn(emptyList())
+        `when`(humanMoveDistributionRepository.findByPositionIdAndRatingBand(positionId, "1200-1400")).thenReturn(emptyList())
+
+        val candidates = humanMoveProvider.getContinuationCandidates(fen, "1000-1200")
+
+        assertThat(candidates).isEmpty()
     }
 
     @Test
-    fun `getContinuationCandidates returns empty list when position exists but has no occurrences`() {
-        val fen = "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"
-        val positionId = UUID.randomUUID()
-        val mockPosition = Position(id = positionId, hash = "somehash", fen = fen)
+    fun `exact insufficient but adjacent sufficient returns adjacent candidates`() {
+        mockPosition()
 
-        whenever(positionRepository.findByHash(any())).thenReturn(mockPosition)
-        whenever(positionOccurrenceRepository.findHistoricalMoveStatsByPositionId(positionId)).thenReturn(emptyList())
+        val exactDist =
+            listOf(
+                HumanMoveDistribution(positionId = positionId, ratingBand = "1000-1200", movePlayed = "e5", observationCount = 2),
+            )
+        val adjacentDist1 = emptyList<HumanMoveDistribution>()
+        val adjacentDist2 =
+            listOf(
+                HumanMoveDistribution(positionId = positionId, ratingBand = "1200-1400", movePlayed = "c5", observationCount = 20),
+            )
 
-        val result = humanMoveProvider.getContinuationCandidates(fen)
+        `when`(humanMoveDistributionRepository.findByPositionIdAndRatingBand(positionId, "1000-1200")).thenReturn(exactDist)
+        `when`(humanMoveDistributionRepository.findByPositionIdAndRatingBand(positionId, "800-1000")).thenReturn(adjacentDist1)
+        `when`(humanMoveDistributionRepository.findByPositionIdAndRatingBand(positionId, "1200-1400")).thenReturn(adjacentDist2)
 
-        assertTrue(result.isEmpty())
+        val candidates = humanMoveProvider.getContinuationCandidates(fen, "1000-1200")
+
+        assertThat(candidates).hasSize(1)
+        assertThat(candidates[0].move).isEqualTo("c5")
+        assertThat(candidates[0].timesPlayed).isEqualTo(20)
+    }
+
+    @Test
+    fun `insufficient exact and adjacent returns empty list`() {
+        mockPosition()
+
+        `when`(humanMoveDistributionRepository.findByPositionIdAndRatingBand(positionId, "1000-1200")).thenReturn(emptyList())
+        `when`(humanMoveDistributionRepository.findByPositionIdAndRatingBand(positionId, "800-1000")).thenReturn(emptyList())
+        `when`(humanMoveDistributionRepository.findByPositionIdAndRatingBand(positionId, "1200-1400")).thenReturn(emptyList())
+
+        val candidates = humanMoveProvider.getContinuationCandidates(fen, "1000-1200")
+
+        assertThat(candidates).isEmpty()
+    }
+
+    @Test
+    fun `invalid rating band returns empty list`() {
+        val candidates = humanMoveProvider.getContinuationCandidates(fen, "invalid-band")
+        assertThat(candidates).isEmpty()
     }
 }

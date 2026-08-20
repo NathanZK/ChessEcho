@@ -147,3 +147,14 @@ CREATE TABLE imported_archive
 
 CREATE INDEX idx_imported_archive_account ON imported_archive (chess_account_id);
 
+CREATE TABLE human_move_distribution
+(
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    position_id       UUID        NOT NULL REFERENCES position (id) ON DELETE CASCADE,
+    rating_band       VARCHAR(20) NOT NULL,
+    move_played       VARCHAR(20) NOT NULL,
+    observation_count INT         NOT NULL DEFAULT 0,
+    UNIQUE (position_id, rating_band, move_played)
+);
+
+CREATE INDEX idx_human_move_dist_pos_band ON human_move_distribution (position_id, rating_band);

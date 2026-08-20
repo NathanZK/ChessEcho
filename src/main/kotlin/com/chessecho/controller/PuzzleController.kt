@@ -83,8 +83,9 @@ class PuzzleController(
     fun getContinuation(
         @RequestParam fen: String,
         @RequestParam(defaultValue = "ENGINE") mode: ContinuationMode,
+        @RequestParam(required = false) ratingBand: String? = null,
     ): ResponseEntity<ContinuationResponse> {
-        val result = continuationService.getContinuation(fen = fen, mode = mode)
+        val result = continuationService.getContinuation(fen = fen, mode = mode, ratingBand = ratingBand)
         if (result.candidates.isEmpty()) {
             return ResponseEntity.notFound().build()
         }
