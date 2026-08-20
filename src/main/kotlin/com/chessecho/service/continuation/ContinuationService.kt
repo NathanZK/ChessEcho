@@ -32,22 +32,23 @@ class ContinuationService(
     fun getContinuation(
         fen: String,
         mode: ContinuationMode = ContinuationMode.ENGINE,
+        ratingBand: String? = null,
     ): ContinuationResult {
-        log.debug("Continuation request received for FEN: {} with mode: {}", fen, mode)
+        log.debug("Continuation request received for FEN: {} with mode: {} and ratingBand: {}", fen, mode, ratingBand)
 
         val (effectiveProvider, candidates) =
             when (mode) {
                 ContinuationMode.ENGINE -> {
-                    engineMoveProvider.providerType to engineMoveProvider.getContinuationCandidates(fen)
+                    engineMoveProvider.providerType to engineMoveProvider.getContinuationCandidates(fen, ratingBand)
                 }
 
                 ContinuationMode.HUMAN -> {
-                    val humanCandidates = humanMoveProvider.getContinuationCandidates(fen)
+                    val humanCandidates = humanMoveProvider.getContinuationCandidates(fen, ratingBand)
                     if (humanCandidates.isNotEmpty()) {
                         humanMoveProvider.providerType to humanCandidates
                     } else {
                         log.info("HUMAN mode requested for FEN '{}', but no historical moves exist. Falling back to ENGINE mode.", fen)
-                        engineMoveProvider.providerType to engineMoveProvider.getContinuationCandidates(fen)
+                        engineMoveProvider.providerType to engineMoveProvider.getContinuationCandidates(fen, ratingBand)
                     }
                 }
             }

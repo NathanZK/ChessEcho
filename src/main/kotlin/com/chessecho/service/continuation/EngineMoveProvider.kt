@@ -23,7 +23,10 @@ class EngineMoveProvider(
 
     override val providerType: String = "ENGINE"
 
-    override fun getContinuationCandidates(fen: String): List<ContinuationCandidate> {
+    override fun getContinuationCandidates(
+        fen: String,
+        ratingBand: String?,
+    ): List<ContinuationCandidate> {
         val configuredMultiPv = maxOf(2, multiPv)
         log.debug(
             "Requesting engine continuation candidates for FEN: {} with MultiPV={} and maxEvalLoss={}",

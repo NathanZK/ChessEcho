@@ -32,7 +32,9 @@ class ContinuationServiceTest {
                 ContinuationCandidate(move = "Bb5", resultingFen = "fen_bb5", providerType = "ENGINE", evalCp = 40, evalLoss = 0.0),
                 ContinuationCandidate(move = "Bc4", resultingFen = "fen_bc4", providerType = "ENGINE", evalCp = 35, evalLoss = 0.05),
             )
-        whenever(engineMoveProvider.getContinuationCandidates(fen)).thenReturn(engineCandidates)
+        whenever(
+            engineMoveProvider.getContinuationCandidates(org.mockito.kotlin.eq(fen), org.mockito.kotlin.anyOrNull()),
+        ).thenReturn(engineCandidates)
 
         val result = continuationService.getContinuation(fen, ContinuationMode.ENGINE)
 
@@ -43,7 +45,7 @@ class ContinuationServiceTest {
         assertEquals("Bb5", result.candidates[0].move)
         assertEquals("Bc4", result.candidates[1].move)
 
-        verify(engineMoveProvider).getContinuationCandidates(fen)
+        verify(engineMoveProvider).getContinuationCandidates(fen, null)
         verifyNoInteractions(humanMoveProvider)
     }
 
@@ -55,9 +57,11 @@ class ContinuationServiceTest {
                 ContinuationCandidate(move = "Nc6", resultingFen = "fen_nc6", providerType = "HUMAN", timesPlayed = 12),
                 ContinuationCandidate(move = "Nf6", resultingFen = "fen_nf6", providerType = "HUMAN", timesPlayed = 5),
             )
-        whenever(humanMoveProvider.getContinuationCandidates(fen)).thenReturn(humanCandidates)
+        whenever(
+            humanMoveProvider.getContinuationCandidates(org.mockito.kotlin.eq(fen), org.mockito.kotlin.eq("1000-1200")),
+        ).thenReturn(humanCandidates)
 
-        val result = continuationService.getContinuation(fen, ContinuationMode.HUMAN)
+        val result = continuationService.getContinuation(fen, ContinuationMode.HUMAN, "1000-1200")
 
         assertNotNull(result)
         assertEquals(2, result.candidates.size)
@@ -66,23 +70,27 @@ class ContinuationServiceTest {
         assertEquals("Nc6", result.candidates[0].move)
         assertEquals("Nf6", result.candidates[1].move)
 
-        verify(humanMoveProvider).getContinuationCandidates(fen)
+        verify(humanMoveProvider).getContinuationCandidates(fen, "1000-1200")
         verifyNoInteractions(engineMoveProvider)
     }
 
     @Test
     fun `HUMAN request with no historical candidates sets requestedMode HUMAN and effectiveProvider ENGINE`() {
         val fen = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3"
-        whenever(humanMoveProvider.getContinuationCandidates(fen)).thenReturn(emptyList())
+        whenever(
+            humanMoveProvider.getContinuationCandidates(org.mockito.kotlin.eq(fen), org.mockito.kotlin.eq("1000-1200")),
+        ).thenReturn(emptyList())
 
         val fallbackEngineCandidates =
             listOf(
                 ContinuationCandidate(move = "d4", resultingFen = "fen_d4", providerType = "ENGINE", evalCp = 30, evalLoss = 0.0),
                 ContinuationCandidate(move = "Bc4", resultingFen = "fen_bc4", providerType = "ENGINE", evalCp = 25, evalLoss = 0.05),
             )
-        whenever(engineMoveProvider.getContinuationCandidates(fen)).thenReturn(fallbackEngineCandidates)
+        whenever(
+            engineMoveProvider.getContinuationCandidates(org.mockito.kotlin.eq(fen), org.mockito.kotlin.eq("1000-1200")),
+        ).thenReturn(fallbackEngineCandidates)
 
-        val result = continuationService.getContinuation(fen, ContinuationMode.HUMAN)
+        val result = continuationService.getContinuation(fen, ContinuationMode.HUMAN, "1000-1200")
 
         assertNotNull(result)
         assertEquals(2, result.candidates.size)
@@ -91,8 +99,8 @@ class ContinuationServiceTest {
         assertEquals("d4", result.candidates[0].move)
         assertEquals("ENGINE", result.candidates[0].providerType)
 
-        verify(humanMoveProvider).getContinuationCandidates(fen)
-        verify(engineMoveProvider).getContinuationCandidates(fen)
+        verify(humanMoveProvider).getContinuationCandidates(fen, "1000-1200")
+        verify(engineMoveProvider).getContinuationCandidates(fen, "1000-1200")
     }
 
     @Test
@@ -102,7 +110,9 @@ class ContinuationServiceTest {
             listOf(
                 ContinuationCandidate(move = "Bb5", resultingFen = "fen_bb5", providerType = "ENGINE", evalCp = 40, evalLoss = 0.0),
             )
-        whenever(engineMoveProvider.getContinuationCandidates(fen)).thenReturn(engineCandidates)
+        whenever(
+            engineMoveProvider.getContinuationCandidates(org.mockito.kotlin.eq(fen), org.mockito.kotlin.anyOrNull()),
+        ).thenReturn(engineCandidates)
 
         val result = continuationService.getContinuation(fen)
 
@@ -111,7 +121,7 @@ class ContinuationServiceTest {
         assertEquals(ContinuationMode.ENGINE, result.requestedMode)
         assertEquals("ENGINE", result.effectiveProvider)
 
-        verify(engineMoveProvider).getContinuationCandidates(fen)
+        verify(engineMoveProvider).getContinuationCandidates(fen, null)
         verifyNoInteractions(humanMoveProvider)
     }
 }

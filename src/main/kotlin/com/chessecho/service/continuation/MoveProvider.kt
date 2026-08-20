@@ -16,7 +16,11 @@ interface MoveProvider {
      * Obtains continuation candidate moves for a given position in FEN format.
      *
      * @param fen The chess position in FEN notation.
+     * @param ratingBand The desired rating band of the opponent, if applicable.
      * @return List of [ContinuationCandidate] containing candidate moves, resulting FENs, and provider metadata.
      */
-    fun getContinuationCandidates(fen: String): List<ContinuationCandidate>
+    fun getContinuationCandidates(
+        fen: String,
+        ratingBand: String? = null,
+    ): List<ContinuationCandidate>
 }
