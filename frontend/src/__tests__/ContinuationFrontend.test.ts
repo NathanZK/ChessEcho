@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { continuationService, defaultSelectionPolicy, ContinuationCacheService, moveEvaluationService } from '../services/continuationService';
+import { continuationService, defaultSelectionPolicy, createStochasticSelectionPolicy, ContinuationCacheService, moveEvaluationService } from '../services/continuationService';
 import { usePuzzleContinuation } from '../utils/usePuzzleContinuation';
 import * as api from '../services/api';
 
@@ -158,6 +158,111 @@ describe('Frontend Puzzle Continuation Architecture & Candidate Selection', () =
       // State should reflect fen2, not stale fen1
       expect(result.current.selectedCandidate?.move).toBe('e5');
       expect(result.current.response?.fen).toBe(fen2);
+    });
+  });
+
+  describe('createStochasticSelectionPolicy', () => {
+    it('returns null for an empty candidate list', () => {
+      const policy = createStochasticSelectionPolicy();
+      expect(policy([])).toBeNull();
+    });
+
+    it('ENGINE still selects the first candidate deterministically', () => {
+      const policy = createStochasticSelectionPolicy();
+      const candidates: api.ContinuationCandidate[] = [
+        { move: 'e4', resultingFen: 'f1', providerType: 'ENGINE', evalCp: 50 },
+        { move: 'd4', resultingFen: 'f2', providerType: 'ENGINE', evalCp: 40 },
+      ];
+      expect(policy(candidates)?.move).toBe('e4');
+    });
+
+    it('HUMAN with one candidate selects that candidate', () => {
+      const policy = createStochasticSelectionPolicy();
+      const candidates: api.ContinuationCandidate[] = [
+        { move: 'Nf3', resultingFen: 'f3', providerType: 'HUMAN', timesPlayed: 10 },
+      ];
+      expect(policy(candidates)?.move).toBe('Nf3');
+    });
+
+    it('HUMAN with multiple candidates uses timesPlayed as weights (tests boundaries)', () => {
+      const candidates: api.ContinuationCandidate[] = [
+        { move: 'A', resultingFen: 'fa', providerType: 'HUMAN', timesPlayed: 10 }, // 0 to <10
+        { move: 'B', resultingFen: 'fb', providerType: 'HUMAN', timesPlayed: 20 }, // 10 to <30
+        { move: 'C', resultingFen: 'fc', providerType: 'HUMAN', timesPlayed: 70 }, // 30 to <100
+      ];
+
+      // Math.random() returns [0, 1), so random() * 100 will be [0, 100)
+      
+      // If random is 0.0, selects A
+      let policy = createStochasticSelectionPolicy(() => 0.0);
+      expect(policy(candidates)?.move).toBe('A');
+
+      // If random is 0.099, selects A
+      policy = createStochasticSelectionPolicy(() => 0.099);
+      expect(policy(candidates)?.move).toBe('A');
+
+      // If random is 0.1, random*100=10. 10 - 10(A) = 0. Returns A.
+      policy = createStochasticSelectionPolicy(() => 0.1);
+      expect(policy(candidates)?.move).toBe('A');
+
+      // If random is 0.101, random*100=10.1. 10.1 - 10(A) = 0.1.
+      // 0.1 - 20(B) = -19.9 <= 0. Returns B.
+      policy = createStochasticSelectionPolicy(() => 0.101);
+      expect(policy(candidates)?.move).toBe('B');
+
+      // If random is 0.299, selects B
+      policy = createStochasticSelectionPolicy(() => 0.299);
+      expect(policy(candidates)?.move).toBe('B');
+
+      // If random is 0.3, random*100=30. 30 - 10(A) = 20. 20 - 20(B) = 0. Returns B.
+      policy = createStochasticSelectionPolicy(() => 0.3);
+      expect(policy(candidates)?.move).toBe('B');
+
+      // If random is 0.301, returns C
+      policy = createStochasticSelectionPolicy(() => 0.301);
+      expect(policy(candidates)?.move).toBe('C');
+
+      // If random is 0.999, selects C
+      policy = createStochasticSelectionPolicy(() => 0.999);
+      expect(policy(candidates)?.move).toBe('C');
+    });
+
+    it('zero-weight candidates are never selected', () => {
+      const candidates: api.ContinuationCandidate[] = [
+        { move: 'A', resultingFen: 'fa', providerType: 'HUMAN', timesPlayed: 0 },
+        { move: 'B', resultingFen: 'fb', providerType: 'HUMAN', timesPlayed: -5 },
+        { move: 'C', resultingFen: 'fc', providerType: 'HUMAN', timesPlayed: 10 },
+      ];
+
+      // Even at boundary 0.0, the total positive weight is 10 (only C).
+      // So random * 10 = 0.
+      // Loop over A (timesPlayed 0 -> ignored).
+      // Loop over B (timesPlayed -5 -> ignored).
+      // Loop over C (timesPlayed 10). random (0) -= 10 -> -10 <= 0 -> returns C.
+      const policy = createStochasticSelectionPolicy(() => 0.0);
+      expect(policy(candidates)?.move).toBe('C');
+    });
+
+    it('HUMAN candidates with no positive weight have safe fallback behavior', () => {
+      const candidates: api.ContinuationCandidate[] = [
+        { move: 'A', resultingFen: 'fa', providerType: 'HUMAN', timesPlayed: 0 },
+        { move: 'B', resultingFen: 'fb', providerType: 'HUMAN', timesPlayed: 0 },
+      ];
+
+      const policy = createStochasticSelectionPolicy(() => 0.5);
+      // Fallback is to return the first element
+      expect(policy(candidates)?.move).toBe('A');
+    });
+
+    it('mixed provider types fallback to deterministic', () => {
+      const candidates: api.ContinuationCandidate[] = [
+        { move: 'A', resultingFen: 'fa', providerType: 'ENGINE', timesPlayed: 10 },
+        { move: 'B', resultingFen: 'fb', providerType: 'HUMAN', timesPlayed: 100 },
+      ];
+
+      // Even if random is 0.99 (which would pick B if human), it falls back to first element
+      const policy = createStochasticSelectionPolicy(() => 0.99);
+      expect(policy(candidates)?.move).toBe('A');
     });
   });
 });

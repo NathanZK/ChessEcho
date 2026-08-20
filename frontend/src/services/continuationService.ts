@@ -18,33 +18,74 @@ export type CandidateSelectionPolicy = (
 ) => ContinuationCandidate | null;
 
 /**
- * Default candidate selection policy: picks the first candidate in the list (highest rank).
- * This policy can easily be replaced without modifying the continuation fetching or caching layer.
+ * Creates a selection policy that uses a provided random function.
+ * - ENGINE mode: deterministic, picks candidates[0]
+ * - HUMAN mode: stochastic, weighted by timesPlayed
  */
-export const defaultSelectionPolicy: CandidateSelectionPolicy = (candidates) => {
-  return candidates.length > 0 ? candidates[0] : null;
+export const createStochasticSelectionPolicy = (
+  randomFn: () => number = Math.random
+): CandidateSelectionPolicy => {
+  return (candidates) => {
+    if (candidates.length === 0) return null;
+
+    // Verify all candidates have the same provider type before relying on candidates[0].
+    // If mixed (which shouldn't happen), or if not HUMAN, fallback to deterministic first.
+    const isHuman = candidates.every(c => c.providerType === 'HUMAN');
+    if (!isHuman) {
+      return candidates[0];
+    }
+
+    // Weighted random selection for HUMAN
+    let totalWeight = 0;
+    for (const c of candidates) {
+      if (c.timesPlayed && c.timesPlayed > 0) {
+        totalWeight += c.timesPlayed;
+      }
+    }
+
+    if (totalWeight <= 0) {
+      return candidates[0]; // Safe fallback if no positive weights
+    }
+
+    let random = randomFn() * totalWeight;
+    for (const c of candidates) {
+      if (c.timesPlayed && c.timesPlayed > 0) {
+        random -= c.timesPlayed;
+        if (random <= 0) return c;
+      }
+    }
+
+    return candidates[0]; // Fallback
+  };
 };
+
+/**
+ * Default candidate selection policy:
+ * ENGINE -> picks the first candidate.
+ * HUMAN -> picks stochastically weighted by timesPlayed.
+ */
+export const defaultSelectionPolicy: CandidateSelectionPolicy = createStochasticSelectionPolicy();
 
 export class ContinuationCacheService {
   private cache: Map<string, ContinuationResponse> = new Map();
 
-  private getCacheKey(fen: string, mode: ContinuationMode): string {
-    return `${fen.trim()}:${mode}`;
+  private getCacheKey(fen: string, mode: ContinuationMode, ratingBand?: string): string {
+    return `${fen.trim()}:${mode}${ratingBand ? `:${ratingBand}` : ''}`;
   }
 
   /**
    * Retrieves continuation response from cache if available.
    */
-  get(fen: string, mode: ContinuationMode): ContinuationResponse | null {
-    const key = this.getCacheKey(fen, mode);
+  get(fen: string, mode: ContinuationMode, ratingBand?: string): ContinuationResponse | null {
+    const key = this.getCacheKey(fen, mode, ratingBand);
     return this.cache.get(key) || null;
   }
 
   /**
    * Stores continuation response in cache.
    */
-  set(fen: string, mode: ContinuationMode, response: ContinuationResponse): void {
-    const key = this.getCacheKey(fen, mode);
+  set(fen: string, mode: ContinuationMode, response: ContinuationResponse, ratingBand?: string): void {
+    const key = this.getCacheKey(fen, mode, ratingBand);
     this.cache.set(key, response);
   }
 
@@ -62,13 +103,14 @@ export class ContinuationCacheService {
   async getContinuation(
     fen: string,
     mode: ContinuationMode = 'ENGINE',
-    selectionPolicy: CandidateSelectionPolicy = defaultSelectionPolicy
+    selectionPolicy: CandidateSelectionPolicy = defaultSelectionPolicy,
+    ratingBand?: string
   ): Promise<SelectionResult> {
     if (!fen) {
       return { candidate: null, response: null, fromCache: false };
     }
 
-    const cachedResponse = this.get(fen, mode);
+    const cachedResponse = this.get(fen, mode, ratingBand);
     if (cachedResponse) {
       const selected = selectionPolicy(cachedResponse.candidates);
       return {
@@ -78,9 +120,9 @@ export class ContinuationCacheService {
       };
     }
 
-    const response = await fetchPuzzleContinuation(fen, mode);
+    const response = await fetchPuzzleContinuation(fen, mode, ratingBand);
     if (response) {
-      this.set(fen, mode, response);
+      this.set(fen, mode, response, ratingBand);
       const selected = selectionPolicy(response.candidates);
       return {
         candidate: selected,

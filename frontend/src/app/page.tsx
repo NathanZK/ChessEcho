@@ -200,6 +200,7 @@ export default function Home() {
   const [challengeFeedbackByFen, setChallengeFeedbackByFen] = useState<Record<string, { message: string, type: 'success' | 'error' | 'info' }>>({});
   const [isChallengeLoading, setIsChallengeLoading] = useState<boolean>(false);
   const [continuationMode, setContinuationMode] = useState<ContinuationMode>('ENGINE');
+  const [opponentRatingBand, setOpponentRatingBand] = useState<string>('1200-1400');
   const [pendingContinuationCandidate, setPendingContinuationCandidate] = useState<ContinuationCandidate | null>(null);
   const [requestedContinuationFen, setRequestedContinuationFen] = useState<string | undefined>(undefined);
 
@@ -247,7 +248,7 @@ export default function Home() {
     return isWhiteTurn === isUserWhite ? 'USER' : 'CHESSECHO';
   }, [currentBoardFen, activePuzzle, explorationPlayMode]);
 
-  const continuation = usePuzzleContinuation(requestedContinuationFen, continuationMode);
+  const continuation = usePuzzleContinuation(requestedContinuationFen, continuationMode, undefined, opponentRatingBand);
 
   // When ChessEcho turn is active and a candidate is selected, stage it for the board (only in CHESSECHO mode)
   React.useEffect(() => {
@@ -1189,6 +1190,8 @@ export default function Home() {
                     onExitExploration={handleExitExploration}
                     continuationMode={continuationMode}
                     onContinuationModeChange={setContinuationMode}
+                    opponentRatingBand={opponentRatingBand}
+                    onOpponentRatingBandChange={setOpponentRatingBand}
                     explorationPlayMode={explorationPlayMode}
                     onExplorationPlayModeChange={handleExplorationPlayModeChange}
                     sideToMove={sideToMove}

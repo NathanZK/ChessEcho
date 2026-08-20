@@ -84,10 +84,12 @@ interface PuzzleFeedbackPanelProps {
   onExitExploration?: () => void;
   continuationMode?: ContinuationMode;
   onContinuationModeChange?: (mode: ContinuationMode) => void;
+  opponentRatingBand?: string;
+  onOpponentRatingBandChange?: (band: string) => void;
+  explorationPlayMode?: ExplorationPlayMode;
+  onExplorationPlayModeChange?: (mode: ExplorationPlayMode) => void;
   continuationCandidate?: ContinuationCandidate | null;
   isContinuationLoading?: boolean;
-  explorationPlayMode?: 'CHESSECHO' | 'BOTH_SIDES' | 'CHALLENGE';
-  onExplorationPlayModeChange?: (mode: 'CHESSECHO' | 'BOTH_SIDES' | 'CHALLENGE') => void;
   sideToMove?: 'White' | 'Black';
   effectiveProvider?: string | null;
   isContinuationFallback?: boolean;
@@ -144,6 +146,8 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
   onExitExploration,
   continuationMode = 'ENGINE',
   onContinuationModeChange,
+  opponentRatingBand,
+  onOpponentRatingBandChange,
   explorationPlayMode,
   onExplorationPlayModeChange,
   sideToMove,
@@ -545,19 +549,40 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
 
                   {/* Continuation Mode Selector (ENGINE / HUMAN) only visible in CHESSECHO mode */}
                   {explorationPlayMode === 'CHESSECHO' && onContinuationModeChange && (
-                    <div className="flex bg-slate-900 p-0.5 rounded-lg border border-slate-800">
-                      {(['ENGINE', 'HUMAN'] as const).map((m) => (
-                        <button
-                          key={m}
-                          type="button"
-                          onClick={() => onContinuationModeChange(m)}
-                          className={`px-2 py-0.5 text-[10px] font-bold rounded transition cursor-pointer ${
-                            continuationMode === m ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
-                          }`}
+                    <div className="flex gap-2">
+                      <div className="flex bg-slate-900 p-0.5 rounded-lg border border-slate-800">
+                        {(['ENGINE', 'HUMAN'] as const).map((m) => (
+                          <button
+                            key={m}
+                            type="button"
+                            onClick={() => onContinuationModeChange(m)}
+                            className={`px-2 py-0.5 text-[10px] font-bold rounded transition cursor-pointer ${
+                              continuationMode === m ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
+                            }`}
+                          >
+                            {m}
+                          </button>
+                        ))}
+                      </div>
+                      
+                      {continuationMode === 'HUMAN' && onOpponentRatingBandChange && (
+                        <select 
+                          className="bg-slate-900 text-slate-200 text-[10px] font-bold px-2 py-0.5 rounded-lg border border-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                          value={opponentRatingBand}
+                          onChange={(e) => onOpponentRatingBandChange(e.target.value)}
                         >
-                          {m}
-                        </button>
-                      ))}
+                          <option value="400-600">400-600</option>
+                          <option value="600-800">600-800</option>
+                          <option value="800-1000">800-1000</option>
+                          <option value="1000-1200">1000-1200</option>
+                          <option value="1200-1400">1200-1400</option>
+                          <option value="1400-1600">1400-1600</option>
+                          <option value="1600-1800">1600-1800</option>
+                          <option value="1800-2000">1800-2000</option>
+                          <option value="2000-2200">2000-2200</option>
+                          <option value="2200+">2200+</option>
+                        </select>
+                      )}
                     </div>
                   )}
                 </div>

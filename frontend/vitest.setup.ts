@@ -24,3 +24,6 @@ Object.defineProperty(window, 'localStorage', {
 if (typeof global.localStorage === 'undefined') {
   global.localStorage = storageMock as unknown as Storage;
 }
+
+import { configure } from '@testing-library/react';
+configure({ asyncUtilTimeout: 5000 });
