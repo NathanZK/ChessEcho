@@ -10,14 +10,15 @@ export interface UseContinuationResult {
   selectedCandidate: ContinuationCandidate | null;
   effectiveProvider: string | null;
   isFallback: boolean;
-  fetchContinuation: (fen: string, mode?: ContinuationMode) => Promise<void>;
+  fetchContinuation: (fen: string, mode?: ContinuationMode, ratingBand?: string) => Promise<void>;
   selectCandidate: (policy?: CandidateSelectionPolicy) => ContinuationCandidate | null;
 }
 
 export function usePuzzleContinuation(
   initialFen?: string,
   initialMode: ContinuationMode = 'ENGINE',
-  policy: CandidateSelectionPolicy = defaultSelectionPolicy
+  policy: CandidateSelectionPolicy = defaultSelectionPolicy,
+  initialRatingBand?: string
 ): UseContinuationResult {
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<boolean>(false);
@@ -26,14 +27,14 @@ export function usePuzzleContinuation(
   const lastRequestedFenRef = useRef<string | null>(null);
 
   const fetchContinuation = useCallback(
-    async (fen: string, mode: ContinuationMode = initialMode) => {
+    async (fen: string, mode: ContinuationMode = initialMode, ratingBand: string | undefined = initialRatingBand) => {
       if (!fen) return;
       lastRequestedFenRef.current = fen;
       setLoading(true);
       setError(false);
 
       try {
-        const result = await continuationService.getContinuation(fen, mode, policy);
+        const result = await continuationService.getContinuation(fen, mode, policy, ratingBand);
 
         // Stale request guard: ensure position hasn't changed while async fetch was in flight
         if (lastRequestedFenRef.current !== fen) {
@@ -57,7 +58,7 @@ export function usePuzzleContinuation(
         }
       }
     },
-    [initialMode, policy]
+    [initialMode, policy, initialRatingBand]
   );
 
   const selectCandidate = useCallback(
@@ -76,14 +77,14 @@ export function usePuzzleContinuation(
   useEffect(() => {
     if (initialFen) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
-      void fetchContinuation(initialFen, initialMode);
+      void fetchContinuation(initialFen, initialMode, initialRatingBand);
     } else {
       setResponse(null);
       setSelectedCandidate(null);
       setLoading(false);
       setError(false);
     }
-  }, [initialFen, initialMode, fetchContinuation]);
+  }, [initialFen, initialMode, initialRatingBand, fetchContinuation]);
 
   const isFallback = response
     ? response.requestedMode === 'HUMAN' && response.effectiveProvider === 'ENGINE'

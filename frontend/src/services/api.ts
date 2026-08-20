@@ -78,11 +78,15 @@ export function toWhitePerspective(evalCp: number, fen: string): number {
 
 export async function fetchPuzzleContinuation(
   fen: string,
-  mode: ContinuationMode = 'ENGINE'
+  mode: ContinuationMode = 'ENGINE',
+  ratingBand?: string
 ): Promise<ContinuationResponse | null> {
   if (!fen) return null;
   try {
-    const url = `${API_BASE_URL}/puzzles/continuation?fen=${encodeURIComponent(fen)}&mode=${encodeURIComponent(mode)}`;
+    let url = `${API_BASE_URL}/puzzles/continuation?fen=${encodeURIComponent(fen)}&mode=${encodeURIComponent(mode)}`;
+    if (ratingBand) {
+      url += `&ratingBand=${encodeURIComponent(ratingBand)}`;
+    }
     const response = await fetch(url);
     if (!response.ok) return null;
     return await response.json();
