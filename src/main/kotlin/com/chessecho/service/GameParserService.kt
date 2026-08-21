@@ -154,34 +154,36 @@ class GameParserService(
         return mappedOccurrences.map { it.position.id }.toSet()
     }
 
-    /**
-     * Extracts the core structural components of a FEN string (piece placement, active color, castling, and en passant)
-     * and computes a SHA-256 hash. This cleanly deduplicates transpositions while retaining strict chess rules.
-     * Note: Time controls and half-move/full-move clocks are explicitly ignored.
-     *
-     * @param fen The raw standard FEN string to hash.
-     * @return A 64-character hex string representing the SHA-256 hash.
-     */
-    private fun generateHash(fen: String): String {
-        // A FEN string is space-separated:
-        // [piece placement] [active color] [castling] [en passant] [halfmove] [fullmove]
-        // The first 4 parts uniquely identify the legal board state.
-        val parts = fen.split(" ")
-        val cleanedFen =
-            if (parts.size >= 4) {
-                "${parts[0]} ${parts[1]} ${parts[2]} ${parts[3]}"
-            } else {
-                fen
-            }
+    companion object {
+        /**
+         * Extracts the core structural components of a FEN string (piece placement, active color, castling, and en passant)
+         * and computes a SHA-256 hash. This cleanly deduplicates transpositions while retaining strict chess rules.
+         * Note: Time controls and half-move/full-move clocks are explicitly ignored.
+         *
+         * @param fen The raw standard FEN string to hash.
+         * @return A 64-character hex string representing the SHA-256 hash.
+         */
+        fun generateHash(fen: String): String {
+            // A FEN string is space-separated:
+            // [piece placement] [active color] [castling] [en passant] [halfmove] [fullmove]
+            // The first 4 parts uniquely identify the legal board state.
+            val parts = fen.split(" ")
+            val cleanedFen =
+                if (parts.size >= 4) {
+                    "${parts[0]} ${parts[1]} ${parts[2]} ${parts[3]}"
+                } else {
+                    fen
+                }
 
-        // Apply SHA-256 hashing to ensure a fixed-length, indexed identifier
-        val digest = java.security.MessageDigest.getInstance("SHA-256")
-        val hashBytes = digest.digest(cleanedFen.toByteArray(Charsets.UTF_8))
-        return hashBytes.joinToString("") { "%02x".format(it) }
-    }
+            // Apply SHA-256 hashing to ensure a fixed-length, indexed identifier
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            val hashBytes = digest.digest(cleanedFen.toByteArray(Charsets.UTF_8))
+            return hashBytes.joinToString("") { "%02x".format(it) }
+        }
 
-    private fun isStandardStartFen(fen: String): Boolean {
-        val clean = fen.trim()
-        return clean.startsWith("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")
+        fun isStandardStartFen(fen: String): Boolean {
+            val clean = fen.trim()
+            return clean.startsWith("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")
+        }
     }
 }

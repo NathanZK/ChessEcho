@@ -18,5 +18,5 @@ class HumanMoveDistribution(
     @Column(name = "move_played", nullable = false)
     val movePlayed: String,
     @Column(name = "observation_count", nullable = false)
-    val observationCount: Int = 0,
+    var observationCount: Int = 0,
 )
