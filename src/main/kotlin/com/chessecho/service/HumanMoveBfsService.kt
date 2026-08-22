@@ -31,6 +31,12 @@ class HumanMoveBfsService(
 
         log.info("Starting human move distribution BFS for band ${targetBand.value}")
         log.info("Seeds: ${request.seedPlayers}")
+        log.info(
+            "Config: maxQualifyingGames=${request.maxQualifyingGames}, " +
+                "batchSize=${request.batchSize}, " +
+                "minObservations=${request.minObservations}, " +
+                "maxDepth=${request.maxDepth}",
+        )
 
         val visitedPlayers = mutableSetOf<String>()
         val queuedPlayers = mutableSetOf<String>()
@@ -46,11 +52,74 @@ class HumanMoveBfsService(
         var totalQualifyingGames = 0
         val seenGameUrls = mutableSetOf<String>()
 
-        // Map of (positionHash, move) -> count
-        val observations = mutableMapOf<Pair<String, String>, Int>()
-        val fenByHash = mutableMapOf<String, String>()
+        // Cumulative totals across all flushed batches
+        var cumulativeUniquePositions = 0
+        var cumulativeTotalObservations = 0
+        var cumulativePositionsPersisted = 0
+        var cumulativeDistributionRowsPersisted = 0
+        var batchNumber = 0
+
+        // Current batch aggregation — replaced with a fresh instance on each flush
+        var batchObservations = mutableMapOf<Pair<String, String>, Int>()
+        var batchFenByHash = mutableMapOf<String, String>()
+        var batchQualifyingGames = 0
 
         var stopReason = ""
+
+        /**
+         * Flush the current batch: apply minObservations filter, persist, log, then discard
+         * the aggregation maps so the old objects become eligible for GC.
+         */
+        fun flushBatch() {
+            if (batchObservations.isEmpty()) return
+
+            batchNumber++
+
+            val batchUniquePositions = batchObservations.keys.map { it.first }.toSet().size
+            val batchTotalObservations = batchObservations.values.sum()
+
+            // Observation-count distribution within the batch
+            val obsByPosition = mutableMapOf<String, Int>()
+            for ((key, count) in batchObservations) {
+                val hash = key.first
+                obsByPosition[hash] = (obsByPosition[hash] ?: 0) + count
+            }
+            val posCount1 = obsByPosition.values.count { it == 1 }
+            val posCount2to4 = obsByPosition.values.count { it in 2..4 }
+            val posCount5plus = obsByPosition.values.count { it >= 5 }
+            val posCountMeetingThreshold = obsByPosition.values.count { it >= request.minObservations }
+
+            log.info("--- Batch $batchNumber complete ---")
+            log.info("  Qualifying games in batch  : $batchQualifyingGames")
+            log.info("  Unique positions in batch  : $batchUniquePositions")
+            log.info("  Total observations in batch: $batchTotalObservations")
+            log.info("  Positions with 1 obs       : $posCount1")
+            log.info("  Positions with 2–4 obs     : $posCount2to4")
+            log.info("  Positions with 5+ obs      : $posCount5plus")
+            log.info(
+                "  Positions meeting minObs=${ request.minObservations}: $posCountMeetingThreshold",
+            )
+
+            val rowsPersisted = persistObservations(targetBand, batchObservations, batchFenByHash, request.minObservations)
+
+            cumulativeUniquePositions += batchUniquePositions
+            cumulativeTotalObservations += batchTotalObservations
+            cumulativePositionsPersisted += posCountMeetingThreshold
+            cumulativeDistributionRowsPersisted += rowsPersisted
+
+            log.info("  Distribution rows persisted: $rowsPersisted")
+            log.info("--- Cumulative after batch $batchNumber ---")
+            log.info("  Qualifying games total     : $totalQualifyingGames")
+            log.info("  Unique positions (sum)     : $cumulativeUniquePositions")
+            log.info("  Observations (sum)         : $cumulativeTotalObservations")
+            log.info("  Positions persisted (sum)  : $cumulativePositionsPersisted")
+            log.info("  Rows persisted (sum)       : $cumulativeDistributionRowsPersisted")
+
+            // Replace with fresh maps — old maps and their contents fall out of scope
+            batchObservations = mutableMapOf()
+            batchFenByHash = mutableMapOf()
+            batchQualifyingGames = 0
+        }
 
         while (currentFrontier.isNotEmpty() && depth <= request.maxDepth) {
             log.info("--- BFS Depth: $depth, Frontier Size: ${currentFrontier.size} ---")
@@ -154,14 +223,21 @@ class HumanMoveBfsService(
 
                         playerQualifyingGames++
                         totalQualifyingGames++
+                        batchQualifyingGames++
 
                         processGamePgn(
                             pgn = pgn,
                             isWhiteInBand = isWhiteInBand,
                             isBlackInBand = isBlackInBand,
-                            observations = observations,
-                            fenByHash = fenByHash,
+                            observations = batchObservations,
+                            fenByHash = batchFenByHash,
                         )
+
+                        // Flush completed batch
+                        if (batchQualifyingGames >= request.batchSize) {
+                            log.info("Starting batch ${batchNumber + 1}")
+                            flushBatch()
+                        }
                     }
                 }
 
@@ -189,9 +265,11 @@ class HumanMoveBfsService(
             stopReason = "EMPTY_FRONTIER"
         }
 
-        // Calculate stats
-        val uniquePositions = observations.keys.map { it.first }.toSet().size
-        val totalObservations = observations.values.sum()
+        // Flush any remaining partial batch
+        if (batchObservations.isNotEmpty()) {
+            log.info("Flushing final partial batch (batch ${batchNumber + 1})")
+            flushBatch()
+        }
 
         log.info("--- BFS SUMMARY ---")
         log.info("Target band: ${targetBand.value}")
@@ -202,14 +280,12 @@ class HumanMoveBfsService(
         log.info("Rapid games: $totalRapidGames")
         log.info("Qualifying games: $totalQualifyingGames")
         log.info("Unique games processed: ${seenGameUrls.size}")
-        log.info("Unique positions: $uniquePositions")
-        log.info("Total observations: $totalObservations")
+        log.info("Batches flushed: $batchNumber")
+        log.info("Cumulative unique positions (sum across batches): $cumulativeUniquePositions")
+        log.info("Cumulative total observations: $cumulativeTotalObservations")
+        log.info("Cumulative distribution rows persisted: $cumulativeDistributionRowsPersisted")
         log.info("Stop reason: $stopReason")
         log.info("--------------------------")
-
-        if (observations.isNotEmpty()) {
-            persistObservations(targetBand, observations, fenByHash, request.minObservations)
-        }
 
         return HumanMoveBfsResponse(
             ratingBand = targetBand.value,
@@ -221,8 +297,8 @@ class HumanMoveBfsService(
             rapidGames = totalRapidGames,
             qualifyingGames = totalQualifyingGames,
             uniqueGamesProcessed = seenGameUrls.size,
-            uniquePositions = uniquePositions,
-            totalObservations = totalObservations,
+            uniquePositions = cumulativeUniquePositions,
+            totalObservations = cumulativeTotalObservations,
             stopReason = stopReason,
         )
     }
@@ -292,15 +368,17 @@ class HumanMoveBfsService(
         }
     }
 
+    /**
+     * Persists a single batch of observations. Returns the number of distribution rows persisted.
+     * Called once per batch from flushBatch().
+     */
     @Transactional
     fun persistObservations(
         targetBand: RatingBand,
         observations: Map<Pair<String, String>, Int>,
         fenByHash: Map<String, String>,
         minObservations: Int = 1,
-    ) {
-        log.info("Persisting ${observations.size} distribution rows...")
-
+    ): Int {
         val allHashes = fenByHash.keys.toList()
 
         // Find existing positions
@@ -326,13 +404,9 @@ class HumanMoveBfsService(
         val allPositionIds = existingPositionsMap.values.map { it.id }.toSet()
         val existingDistributions = mutableMapOf<Pair<UUID, String>, HumanMoveDistribution>()
 
-        // Load existing distributions for these positions and this rating band to avoid duplicates
+        // Load existing distributions to avoid duplicates / accumulate across runs
         val posIdBatches = allPositionIds.chunked(1000)
         for (batch in posIdBatches) {
-            // Wait, we need a custom query to fetch by positionId IN and ratingBand = X,
-            // or we just fetch by position id manually.
-            // Since we don't have a batch method, we might just try to insert and catch exceptions, or fetch one by one.
-            // Let's add a repository method or loop.
             batch.forEach { posId ->
                 val dists = humanMoveDistributionRepository.findByPositionIdAndRatingBand(posId, targetBand.value)
                 dists.forEach { dist ->
@@ -341,8 +415,8 @@ class HumanMoveBfsService(
             }
         }
 
-        // Calculate total observation count per position (existing + new)
-        val totalObsPerPosition = mutableMapOf<java.util.UUID, Int>()
+        // Calculate total observation count per position (existing in DB + new in this batch)
+        val totalObsPerPosition = mutableMapOf<UUID, Int>()
         for ((distKey, existing) in existingDistributions) {
             val (posId, _) = distKey
             totalObsPerPosition[posId] = (totalObsPerPosition[posId] ?: 0) + existing.observationCount
@@ -353,7 +427,7 @@ class HumanMoveBfsService(
             totalObsPerPosition[position.id] = (totalObsPerPosition[position.id] ?: 0) + count
         }
 
-        // Update existing or create new HumanMoveDistribution rows
+        // Build list of rows to save, filtering by minObservations
         val distributionsToSave = mutableListOf<HumanMoveDistribution>()
 
         for ((key, count) in observations) {
@@ -388,6 +462,6 @@ class HumanMoveBfsService(
             humanMoveDistributionRepository.saveAll(batch)
         }
 
-        log.info("Persistence complete.")
+        return distributionsToSave.size
     }
 }

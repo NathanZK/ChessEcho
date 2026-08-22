@@ -8,6 +8,7 @@ data class HumanMoveBfsRequest(
     val maxPlayers: Int = 100,
     val maxDepth: Int = 3,
     val minObservations: Int = 5,
+    val batchSize: Int = 5000,
 )
 
 data class HumanMoveBfsResponse(
