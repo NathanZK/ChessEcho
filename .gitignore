@@ -34,3 +34,6 @@ out/
 
 ### Log files ###
 *.log
+
+### Local experiment artifacts ###
+instrumentation/
