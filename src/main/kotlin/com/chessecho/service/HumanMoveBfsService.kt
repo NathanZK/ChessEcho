@@ -161,13 +161,14 @@ class HumanMoveBfsService(
                     }
 
                 var playerGamesInspected = 0
+                var playerRapidGamesInspected = 0
                 var playerQualifyingGames = 0
                 var newOpponentsDiscovered = 0
 
                 // Process archives from newest to oldest
                 for (archiveUrl in archiveUrls.reversed()) {
                     if (totalQualifyingGames >= request.maxQualifyingGames) break
-                    if (playerGamesInspected >= request.maxGamesPerPlayer) break
+                    if (playerRapidGamesInspected >= request.maxGamesPerPlayer) break
 
                     val games =
                         try {
@@ -194,7 +195,7 @@ class HumanMoveBfsService(
                     // Process games from newest to oldest in the archive
                     for (game in games.reversed()) {
                         if (totalQualifyingGames >= request.maxQualifyingGames) break
-                        if (playerGamesInspected >= request.maxGamesPerPlayer) break
+                        if (playerRapidGamesInspected >= request.maxGamesPerPlayer) break
 
                         totalGamesInspected++
                         playerGamesInspected++
@@ -211,6 +212,7 @@ class HumanMoveBfsService(
                         }
 
                         totalRapidGames++
+                        playerRapidGamesInspected++
 
                         val url = game["url"] as? String ?: continue
                         if (!seenGameUrls.add(url)) {
@@ -229,11 +231,12 @@ class HumanMoveBfsService(
                         val whiteRating = (whiteData["rating"] as? Number)?.toInt() ?: 0
                         val blackRating = (blackData["rating"] as? Number)?.toInt() ?: 0
 
-                        val isWhiteInBand = isRatingInBand(whiteRating, targetBand)
-                        val isBlackInBand = isRatingInBand(blackRating, targetBand)
+                        // Identify which side the traversed player occupies and derive the opponent.
+                        val isPlayerWhite = (whiteUsername == player)
+                        val opponent = if (isPlayerWhite) blackUsername else whiteUsername
+                        val opponentRating = if (isPlayerWhite) blackRating else whiteRating
 
-                        // Determine opponent and add to next frontier regardless of rating
-                        val opponent = if (whiteUsername == player) blackUsername else whiteUsername
+                        // Add opponent to frontier regardless of rating
                         if (!visitedPlayers.contains(opponent) && !queuedPlayers.contains(opponent)) {
                             if (nextFrontier.add(opponent)) {
                                 queuedPlayers.add(opponent)
@@ -241,10 +244,10 @@ class HumanMoveBfsService(
                             }
                         }
 
-                        // If neither player is in the target band, this is not a qualifying game
-                        if (!isWhiteInBand && !isBlackInBand) {
-                            continue
-                        }
+                        // A game only qualifies when the opponent's game-time rating is within the
+                        // target band.  Only the opponent's moves are attributed to the distribution;
+                        // the traversed player's own moves are never recorded.
+                        if (!isRatingInBand(opponentRating, targetBand)) continue
 
                         val pgn = game["pgn"] as? String ?: continue
 
@@ -255,8 +258,10 @@ class HumanMoveBfsService(
 
                         processGamePgn(
                             pgn = pgn,
-                            isWhiteInBand = isWhiteInBand,
-                            isBlackInBand = isBlackInBand,
+                            // opponent is White when the traversed player is Black
+                            isWhiteInBand = !isPlayerWhite,
+                            // opponent is Black when the traversed player is White
+                            isBlackInBand = isPlayerWhite,
                             observations = batchObservations,
                             fenByHash = batchFenByHash,
                         )

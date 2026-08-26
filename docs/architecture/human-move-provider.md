@@ -9,8 +9,8 @@ Within ChessEcho's Line Exploration, users can play against the engine or a simu
 The Human Move Provider does not scan a pre-existing complete historical corpus. Instead, data acquisition is a rating-band-specific graph traversal:
 1. Select an initial set of random Chess.com players in a target band (e.g., 800–1000).
 2. Fetch their games and discover their opponents.
-3. Filter for opponents who also belong to the target band.
-4. Traverse those players and discover more games.
+3. Add **all** discovered opponents to the next BFS frontier, regardless of their rating.
+4. For each game, record the **opponent's** moves into the distribution — but only when the opponent's game-time rating falls within the target band. The traversed player's own moves are never attributed.
 5. Continue until coverage criteria are met.
 
 "Seeding a rating band" means actively constructing this corpus.
