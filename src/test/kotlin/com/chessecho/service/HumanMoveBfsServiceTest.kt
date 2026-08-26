@@ -4,11 +4,15 @@ import com.chessecho.domain.HumanMoveDistribution
 import com.chessecho.domain.Position
 import com.chessecho.domain.RatingBand
 import com.chessecho.dto.HumanMoveBfsRequest
+import com.chessecho.repository.HumanMoveBfsClaimConflictException
+import com.chessecho.repository.HumanMoveBfsSeenGameClaimer
+import com.chessecho.repository.HumanMoveBfsSeenGameRepository
 import com.chessecho.repository.HumanMoveDistributionRepository
 import com.chessecho.repository.PositionRepository
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -37,6 +41,12 @@ class HumanMoveBfsServiceTest {
     @Mock
     private lateinit var humanMoveDistributionRepository: HumanMoveDistributionRepository
 
+    @Mock
+    private lateinit var humanMoveBfsSeenGameRepository: HumanMoveBfsSeenGameRepository
+
+    @Mock
+    private lateinit var humanMoveBfsSeenGameClaimer: HumanMoveBfsSeenGameClaimer
+
     private lateinit var service: HumanMoveBfsService
 
     @BeforeEach
@@ -46,10 +56,17 @@ class HumanMoveBfsServiceTest {
                 chessComClient,
                 positionRepository,
                 humanMoveDistributionRepository,
+                humanMoveBfsSeenGameRepository,
+                humanMoveBfsSeenGameClaimer,
             )
         lenient().whenever(positionRepository.saveAll(any<Iterable<Position>>())).thenAnswer {
             (it.arguments[0] as Iterable<Position>).toList()
         }
+        // Default: no URLs are pre-claimed, and the atomic claim step succeeds
+        // silently. Individual tests override this via makeRepositoryStateful()
+        // when they need cross-batch or cross-invocation memory, or via a
+        // per-test doThrow when they need to simulate a claim conflict.
+        lenient().whenever(humanMoveBfsSeenGameRepository.findExistingGameUrls(any())).thenReturn(emptyList())
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -90,7 +107,6 @@ class HumanMoveBfsServiceTest {
                 seedPlayers = seedPlayers,
                 maxDepth = 1,
                 maxPlayers = 10,
-                minObservations = 1,
             ),
         )
 
@@ -134,7 +150,6 @@ class HumanMoveBfsServiceTest {
                 ratingBand = RatingBand.BAND_1000_1200.value,
                 seedPlayers = seedPlayers,
                 maxDepth = 1,
-                minObservations = 1,
             ),
         )
 
@@ -168,7 +183,6 @@ class HumanMoveBfsServiceTest {
                 ratingBand = RatingBand.BAND_1000_1200.value,
                 seedPlayers = seedPlayers,
                 maxDepth = 0,
-                minObservations = 1,
             ),
         )
 
@@ -198,7 +212,6 @@ class HumanMoveBfsServiceTest {
                 ratingBand = RatingBand.BAND_1000_1200.value,
                 seedPlayers = seedPlayers,
                 maxDepth = 0,
-                minObservations = 1,
             ),
         )
 
@@ -236,7 +249,6 @@ class HumanMoveBfsServiceTest {
                 ratingBand = RatingBand.BAND_1000_1200.value,
                 seedPlayers = seedPlayers,
                 maxDepth = 0,
-                minObservations = 1,
             ),
         )
 
@@ -276,7 +288,6 @@ class HumanMoveBfsServiceTest {
                     ratingBand = RatingBand.BAND_1000_1200.value,
                     seedPlayers = seedPlayers,
                     maxDepth = 0,
-                    minObservations = 1,
                     maxGamesPerPlayer = 3,
                 ),
             )
@@ -308,8 +319,14 @@ class HumanMoveBfsServiceTest {
         assertEquals(2, response.playersVisited)
     }
 
+    // ── Global accumulator semantics (no per-batch threshold) ──────────────
+
     @Test
-    fun `test minObservations threshold filters out rare positions`() {
+    fun `all observations are persisted with no batch-local threshold`() {
+        // Previously this test asserted that positions below a batch-local
+        // minObservations threshold were filtered out. Under the accumulator
+        // model every observed (position, move) pair must be persisted
+        // regardless of count — thresholding is deferred to finalization.
         val seedPlayers = listOf("p1")
         val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
 
@@ -341,7 +358,6 @@ class HumanMoveBfsServiceTest {
                 ratingBand = RatingBand.BAND_1000_1200.value,
                 seedPlayers = seedPlayers,
                 maxDepth = 0,
-                minObservations = 2,
             ),
         )
 
@@ -349,17 +365,14 @@ class HumanMoveBfsServiceTest {
         verify(humanMoveDistributionRepository).saveAll(captor.capture())
 
         val saved = captor.firstValue
-
-        // Starting position has 3 obs total (e4:2, d4:1) >= 2, so it IS kept.
         assertTrue(saved.any { it.movePlayed == "e4" })
         assertTrue(saved.any { it.movePlayed == "d4" })
-
-        // Position after e4 has 2 obs total (e5:1, c5:1) >= 2, so it IS kept.
         assertTrue(saved.any { it.movePlayed == "e5" })
         assertTrue(saved.any { it.movePlayed == "c5" })
-
-        // Position after d4 has 1 obs total (d5:1) < 2, so it is FILTERED OUT.
-        assertFalse(saved.any { it.movePlayed == "d5" })
+        assertTrue(
+            saved.any { it.movePlayed == "d5" },
+            "single-observation moves must survive the gathering phase",
+        )
     }
 
     // ── Batching tests ─────────────────────────────────────────────────────
@@ -369,7 +382,6 @@ class HumanMoveBfsServiceTest {
         val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
         whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
 
-        // 3 qualifying games, batchSize = 10  => should produce exactly 1 saveAll call
         val games = (1..3).map { rapidGame("http://game$it", "p1", 1100, "p2", 1150) }
         whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(games)
 
@@ -378,7 +390,6 @@ class HumanMoveBfsServiceTest {
                 ratingBand = RatingBand.BAND_1000_1200.value,
                 seedPlayers = listOf("p1"),
                 maxDepth = 0,
-                minObservations = 1,
                 batchSize = 10,
             ),
         )
@@ -391,7 +402,6 @@ class HumanMoveBfsServiceTest {
         val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
         whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
 
-        // 3 qualifying games, batchSize = 3 => flush exactly at the boundary, no trailing partial flush
         val games = (1..3).map { rapidGame("http://game$it", "p1", 1100, "p2", 1150) }
         whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(games)
 
@@ -400,7 +410,6 @@ class HumanMoveBfsServiceTest {
                 ratingBand = RatingBand.BAND_1000_1200.value,
                 seedPlayers = listOf("p1"),
                 maxDepth = 0,
-                minObservations = 1,
                 batchSize = 3,
             ),
         )
@@ -413,7 +422,6 @@ class HumanMoveBfsServiceTest {
         val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
         whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
 
-        // 5 qualifying games, batchSize = 2 => 2 mid-run flushes + 1 trailing = 3 total saveAll calls
         val games = (1..5).map { rapidGame("http://game$it", "p1", 1100, "p2", 1150) }
         whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(games)
 
@@ -422,7 +430,6 @@ class HumanMoveBfsServiceTest {
                 ratingBand = RatingBand.BAND_1000_1200.value,
                 seedPlayers = listOf("p1"),
                 maxDepth = 0,
-                minObservations = 1,
                 batchSize = 2,
             ),
         )
@@ -436,7 +443,6 @@ class HumanMoveBfsServiceTest {
         val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
         whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
 
-        // 4 games with batchSize 3 => 1 full flush + 1 partial flush
         val games = (1..4).map { rapidGame("http://game$it", "p1", 1100, "p2", 1150) }
         whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(games)
 
@@ -445,7 +451,6 @@ class HumanMoveBfsServiceTest {
                 ratingBand = RatingBand.BAND_1000_1200.value,
                 seedPlayers = listOf("p1"),
                 maxDepth = 0,
-                minObservations = 1,
                 batchSize = 3,
             ),
         )
@@ -454,25 +459,15 @@ class HumanMoveBfsServiceTest {
     }
 
     @Test
-    fun `batching - minObservations applied independently per batch`() {
+    fun `sub-threshold observations survive every batch and reach the DB`() {
+        // Previously (with a batch-local threshold) a small trailing batch that could
+        // not meet minObservations wrote nothing. Under the accumulator model every
+        // batch must persist its observations so later batches or later runs can
+        // add to them.
+        val store = makeRepositoryStateful().distributions
+
         val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
         whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
-
-        // Games are processed in reversed() order: game3, game2, game1.
-        // batchSize=2, minObservations=2.
-        //
-        // Batch 1 (first 2 qualifying games = game3 + game2):
-        //   game3: 1. e4 e5  (white p3 1100, black p4 1150 — both in band)
-        //   game2: 1. e4 e5  (white p1 1100, black p2 1150 — both in band)
-        //   Starting pos: e4 appears twice -> total 2 >= 2 -> persisted (e4 row)
-        //   After-e4 pos: e5 appears twice -> total 2 >= 2 -> persisted (e5 row)
-        //   => saveAll called with both e4 and e5
-        //
-        // Batch 2 (trailing partial = game1):
-        //   game1: 1. d4 d5  (white p5 1100, black p6 1150 — both in band)
-        //   d4: 1 obs < 2 -> NOT persisted
-        //   d5: 1 obs < 2 -> NOT persisted
-        //   => saveAll is NOT called for batch 2
 
         val game1 =
             rapidGame(
@@ -492,35 +487,29 @@ class HumanMoveBfsServiceTest {
                 ratingBand = RatingBand.BAND_1000_1200.value,
                 seedPlayers = listOf("p1"),
                 maxDepth = 0,
-                minObservations = 2,
                 batchSize = 2,
             ),
         )
 
-        val captor = argumentCaptor<List<HumanMoveDistribution>>()
-        // Only batch 1 produces rows; batch 2's partial (1 game, d4/d5 each 1 obs < 2) has nothing to save
-        verify(humanMoveDistributionRepository, times(1)).saveAll(captor.capture())
-
-        val batch1Saved = captor.firstValue
-
-        // Batch 1: e4 (2 obs at start) and e5 (2 obs at after-e4) both meet threshold
-        assertTrue(batch1Saved.any { it.movePlayed == "e4" })
-        assertTrue(batch1Saved.any { it.movePlayed == "e5" })
-
-        // d4 and d5 were in the partial batch 2 (only 1 obs each) — never persisted
-        assertFalse(batch1Saved.any { it.movePlayed == "d4" })
-        assertFalse(batch1Saved.any { it.movePlayed == "d5" })
+        // Both batches must flush — no observation is dropped for being "small".
+        verify(humanMoveDistributionRepository, times(2)).saveAll(anyList())
+        assertTrue(store.any { it.movePlayed == "e4" })
+        assertTrue(store.any { it.movePlayed == "e5" })
+        assertTrue(store.any { it.movePlayed == "d4" }, "d4 was in a singleton trailing batch and must persist")
+        assertTrue(store.any { it.movePlayed == "d5" }, "d5 was in a singleton trailing batch and must persist")
     }
 
     @Test
-    fun `batching - position occurring in two batches is NOT combined across batches`() {
+    fun `position occurring in multiple batches accumulates globally`() {
+        // Under the old batch-local threshold, a position with 2+2 observations across
+        // two batches was discarded because no single batch reached the threshold. Now
+        // observations must accumulate across batches: 2 + 1 + 2 = 5.
+        val store = makeRepositoryStateful().distributions
+
         val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
         whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
 
-        // 4 games all playing 1. d4 d5, batchSize=2, minObservations=3
-        // Each batch sees d4 with 2 obs and d5 with 2 obs — both below threshold of 3
-        // Cross-batch total would be 4, but batches are intentionally independent
-        // => saveAll is never called because no batch meets the threshold
+        // 5 identical 1. d4 d5 games, batchSize=2 => batches of 2, 2, 1 across a single run.
         val d4Game: (String) -> Map<String, Any> = { url ->
             rapidGame(
                 url = url,
@@ -531,7 +520,7 @@ class HumanMoveBfsServiceTest {
                 pgn = "[Event \"Live Chess\"]\n[Result \"1-0\"]\n\n1. d4 d5 1-0",
             )
         }
-        val games = (1..4).map { d4Game("http://game$it") }
+        val games = (1..5).map { d4Game("http://game$it") }
         whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(games)
 
         service.runBfs(
@@ -539,42 +528,41 @@ class HumanMoveBfsServiceTest {
                 ratingBand = RatingBand.BAND_1000_1200.value,
                 seedPlayers = listOf("p1"),
                 maxDepth = 0,
-                minObservations = 3,
                 batchSize = 2,
             ),
         )
 
-        // Neither batch meets minObservations=3, so saveAll is never called at all
-        verify(humanMoveDistributionRepository, never()).saveAll(anyList())
+        val d4Rows = store.filter { it.movePlayed == "d4" }
+        assertEquals(1, d4Rows.size, "d4 must be represented by a single accumulated row")
+        assertEquals(5, d4Rows.first().observationCount, "5 observations across 3 batches must accumulate to 5")
     }
 
     // ── DB-accumulation semantic tests ─────────────────────────────────────
-    //
-    // These tests make humanMoveDistributionRepository stateful so that
-    // persistObservations' findByPositionIdAndRatingBand call returns what was
-    // previously written by an earlier batch within the same run.
-    // This exercises the existing != null (UPDATE) and existing == null (INSERT)
-    // branches of persistObservations directly.
 
     /**
-     * Configures both repositories as stateful in-memory tables so that
-     * persistObservations behaves like a real DB across multiple batch calls
-     * within a single test:
-     *
-     * - positionRepository.saveAll stores positions by hash; findByHashIn
-     *   returns the previously stored entities so the same positionId is
-     *   reused in every batch.
-     * - humanMoveDistributionRepository.saveAll stores rows; findByPositionIdAndRatingBand
-     *   returns matching rows so that the existing != null (UPDATE) branch in
-     *   persistObservations is exercised correctly on subsequent batches.
-     *
-     * Returns the HumanMoveDistribution backing store for test assertions.
+     * Backing stores exposed by [makeRepositoryStateful] for assertion access.
      */
-    private fun makeRepositoryStateful(): MutableList<HumanMoveDistribution> {
+    private data class StatefulStores(
+        val distributions: MutableList<HumanMoveDistribution>,
+        val seenGameUrls: MutableSet<String>,
+    )
+
+    /**
+     * Configures every repository as a stateful in-memory table so
+     * persistObservations, the per-archive pre-check, and the atomic URL claim
+     * behave like a real DB across multiple batch calls or multiple runBfs
+     * invocations within a single test.
+     *
+     * The seen-game store uses primary-key semantics: [claimGameUrls] inserts
+     * each URL exactly once and throws [HumanMoveBfsClaimConflictException] on
+     * any collision, mirroring a plain `INSERT` protected by the `game_url`
+     * unique constraint on `human_move_bfs_seen_game`.
+     */
+    private fun makeRepositoryStateful(): StatefulStores {
         val positionStore = mutableListOf<Position>()
         val distStore = mutableListOf<HumanMoveDistribution>()
+        val seenGameStore = mutableSetOf<String>()
 
-        // Position repository — stateful
         lenient().whenever(positionRepository.saveAll(any<Iterable<Position>>())).thenAnswer { inv ->
             val incoming = (inv.arguments[0] as Iterable<Position>).toList()
             for (pos in incoming) {
@@ -590,7 +578,6 @@ class HumanMoveBfsServiceTest {
             positionStore.filter { it.hash in hashes }
         }
 
-        // Distribution repository — stateful
         lenient().whenever(humanMoveDistributionRepository.saveAll(any<Iterable<HumanMoveDistribution>>())).thenAnswer { inv ->
             val incoming = (inv.arguments[0] as Iterable<HumanMoveDistribution>).toList()
             for (row in incoming) {
@@ -610,23 +597,40 @@ class HumanMoveBfsServiceTest {
             distStore.filter { it.positionId == posId && it.ratingBand == band }
         }
 
-        return distStore
+        // Stateful seen-game repository + claimer: PK-on-game_url semantics.
+        lenient().whenever(humanMoveBfsSeenGameRepository.findExistingGameUrls(any())).thenAnswer { inv ->
+            @Suppress("UNCHECKED_CAST")
+            val urls = inv.arguments[0] as Collection<String>
+            urls.filter { it in seenGameStore }
+        }
+        lenient().whenever(humanMoveBfsSeenGameClaimer.claimGameUrls(any<Collection<String>>())).thenAnswer { inv ->
+            @Suppress("UNCHECKED_CAST")
+            val urls = inv.arguments[0] as Collection<String>
+            for (url in urls) {
+                if (!seenGameStore.add(url)) {
+                    // Mirror the DB unique-constraint violation: any collision
+                    // aborts the batch with HumanMoveBfsClaimConflictException,
+                    // which propagates out of persistObservations and would
+                    // roll back the enclosing @Transactional in production.
+                    throw HumanMoveBfsClaimConflictException(
+                        attempted = urls.size,
+                        cause = IllegalStateException("URL already claimed: $url"),
+                    )
+                }
+            }
+            null // Unit
+        }
+
+        return StatefulStores(distStore, seenGameStore)
     }
 
     @Test
     fun `db accumulation - same position same move accumulates observationCount across batches`() {
-        // Batch 1: position X played e4 twice  (2 games, batchSize=2)
-        // Batch 2: position X played e4 twice  (2 more games, batchSize=2)
-        // Expected: DB ends up with a single e4 row for position X with observationCount=4
-        val store = makeRepositoryStateful()
+        val store = makeRepositoryStateful().distributions
 
         val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
         whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
 
-        // All 4 games play 1. e4 e5; both players in band.
-        // Reversed order: game4, game3, game2, game1.
-        // Batch 1 (games 4+3): e4 x2 at start-pos -> saved.
-        // Batch 2 (games 2+1): e4 x2 again -> findByPositionIdAndRatingBand returns batch-1 rows -> UPDATE to x4.
         val games = (1..4).map { rapidGame("http://game$it", "p1", 1100, "p2", 1150) }
         whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(games)
 
@@ -635,12 +639,10 @@ class HumanMoveBfsServiceTest {
                 ratingBand = RatingBand.BAND_1000_1200.value,
                 seedPlayers = listOf("p1"),
                 maxDepth = 0,
-                minObservations = 1,
                 batchSize = 2,
             ),
         )
 
-        // Starting position should have a single e4 row with observationCount = 4 (2 per batch × 2 batches)
         val e4Rows = store.filter { it.movePlayed == "e4" }
         assertEquals(1, e4Rows.size, "Should be exactly one e4 row, not duplicates")
         assertEquals(4, e4Rows.first().observationCount, "e4 should accumulate to 4 across both batches")
@@ -648,17 +650,11 @@ class HumanMoveBfsServiceTest {
 
     @Test
     fun `db accumulation - same position different moves stored as separate rows`() {
-        // Batch 1: position X -> e4 × 2 (persisted as a new row)
-        // Batch 2: position X -> d4 × 2 (persisted as a NEW row, not an update to e4)
-        // Expected DB: two rows — e4=2, d4=2
-        val store = makeRepositoryStateful()
+        val store = makeRepositoryStateful().distributions
 
         val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
         whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
 
-        // Reversed order: game4 (d4), game3 (d4), game2 (e4), game1 (e4)
-        // Batch 1 (game4+game3, both d4 games): d4 x2 -> INSERTed
-        // Batch 2 (game2+game1, both e4 games): e4 x2 -> INSERTed (different key)
         val e4Game: (String) -> Map<String, Any> = { url -> rapidGame(url, "p1", 1100, "p2", 1150) }
         val d4Game: (String) -> Map<String, Any> = { url ->
             rapidGame(
@@ -685,7 +681,6 @@ class HumanMoveBfsServiceTest {
                 ratingBand = RatingBand.BAND_1000_1200.value,
                 seedPlayers = listOf("p1"),
                 maxDepth = 0,
-                minObservations = 1,
                 batchSize = 2,
             ),
         )
@@ -697,21 +692,60 @@ class HumanMoveBfsServiceTest {
     }
 
     @Test
-    fun `db accumulation - position crossing minObservations in batch 1 continues accumulating in batch 2`() {
-        // Batch 1: e4 × 3 at start-pos (>= minObservations=3) -> row inserted with observationCount=3
-        // Batch 2: e4 × 2 at start-pos (only 2 obs in this batch alone, below threshold) ->
-        //   BUT: totalObsPerPosition = DB existing (3) + batch new (2) = 5 >= 3 -> UPDATE to 5
-        // This validates that once a position crosses the threshold it keeps accumulating.
-        val store = makeRepositoryStateful()
+    fun `db accumulation - observations accumulate across separate BFS invocations`() {
+        // The canonical "day 1 batch 1 + batch 2, day 2 batch 3 -> total 5" example:
+        // three independent runBfs invocations against three different archives, with
+        // 2 + 1 + 2 identical games contributing to the same (position, band, move) row.
+        val store = makeRepositoryStateful().distributions
+
+        val archive1 = "https://api.chess.com/pub/player/p1/games/2021/01"
+        val archive2 = "https://api.chess.com/pub/player/p1/games/2021/02"
+        val archive3 = "https://api.chess.com/pub/player/p1/games/2021/03"
+
+        whenever(chessComClient.fetchMonthlyGames(archive1)).thenReturn(
+            (1..2).map { rapidGame("http://run1-game$it", "p1", 1100, "p2", 1150) },
+        )
+        whenever(chessComClient.fetchMonthlyGames(archive2)).thenReturn(
+            listOf(rapidGame("http://run2-game1", "p1", 1100, "p2", 1150)),
+        )
+        whenever(chessComClient.fetchMonthlyGames(archive3)).thenReturn(
+            (1..2).map { rapidGame("http://run3-game$it", "p1", 1100, "p2", 1150) },
+        )
+
+        fun runAgainst(archiveUrl: String) {
+            whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
+            service.runBfs(
+                HumanMoveBfsRequest(
+                    ratingBand = RatingBand.BAND_1000_1200.value,
+                    seedPlayers = listOf("p1"),
+                    maxDepth = 0,
+                    batchSize = 5000,
+                ),
+            )
+        }
+
+        runAgainst(archive1) // 2 obs of e4
+        runAgainst(archive2) // + 1 obs of e4
+        runAgainst(archive3) // + 2 obs of e4  => 5 total
+
+        val e4Rows = store.filter { it.movePlayed == "e4" }
+        assertEquals(1, e4Rows.size, "e4 must be represented by exactly one accumulated row")
+        assertEquals(
+            5,
+            e4Rows.first().observationCount,
+            "2 + 1 + 2 must accumulate to 5 across three separate BFS invocations",
+        )
+    }
+
+    // ── Persistent game-URL deduplication ─────────────────────────────────
+
+    @Test
+    fun `dedup - every processed game URL is recorded in the seen-game store`() {
+        val stores = makeRepositoryStateful()
 
         val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
         whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
-
-        // 5 identical games, batchSize=3, minObservations=3.
-        // Reversed: game5, game4, game3, game2, game1.
-        // Batch 1 (games 5+4+3): e4 x3 -> total 3 >= 3 -> INSERT observationCount=3
-        // Batch 2 (games 2+1):   e4 x2 -> DB existing=3 -> total 5 >= 3 -> UPDATE to 5
-        val games = (1..5).map { rapidGame("http://game$it", "p1", 1100, "p2", 1150) }
+        val games = (1..3).map { rapidGame("http://game$it", "p1", 1100, "p2", 1150) }
         whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(games)
 
         service.runBfs(
@@ -719,29 +753,175 @@ class HumanMoveBfsServiceTest {
                 ratingBand = RatingBand.BAND_1000_1200.value,
                 seedPlayers = listOf("p1"),
                 maxDepth = 0,
-                minObservations = 3,
-                batchSize = 3,
+                batchSize = 10,
             ),
         )
 
-        val e4Rows = store.filter { it.movePlayed == "e4" }
-        assertEquals(1, e4Rows.size, "Should be one e4 row")
-        assertEquals(5, e4Rows.first().observationCount, "e4 should accumulate to 5 (3 from batch 1 + 2 from batch 2)")
+        assertEquals(
+            setOf("http://game1", "http://game2", "http://game3"),
+            stores.seenGameUrls,
+            "every processed URL must be persistently claimed",
+        )
     }
 
     @Test
-    fun `db accumulation - sub-threshold position is never written regardless of cross-batch totals`() {
-        // 4 games, batchSize=2, minObservations=3.
-        // Batch 1: e4 x2 — totalObs = 0 (DB) + 2 = 2 < 3 -> NOT written
-        // Batch 2: e4 x2 — totalObs = 0 (DB, still empty) + 2 = 2 < 3 -> NOT written
-        // Cross-batch total would be 4, but since each batch only sees its own 2 obs + 0 from DB,
-        // the position never enters the database.
-        val store = makeRepositoryStateful()
+    fun `dedup - two BFS invocations over the same archive do not double-count`() {
+        // Under the new persistent dedup, the second runBfs must skip every game
+        // the first runBfs already claimed, so observation counts equal the
+        // single-run baseline (not 2x).
+        val stores = makeRepositoryStateful()
+
+        val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
+        val games = (1..3).map { rapidGame("http://game$it", "p1", 1100, "p2", 1150) }
+        whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(games)
+
+        val request =
+            HumanMoveBfsRequest(
+                ratingBand = RatingBand.BAND_1000_1200.value,
+                seedPlayers = listOf("p1"),
+                maxDepth = 0,
+                batchSize = 10,
+            )
+
+        service.runBfs(request)
+        service.runBfs(request)
+
+        val e4Rows = stores.distributions.filter { it.movePlayed == "e4" }
+        assertEquals(1, e4Rows.size)
+        assertEquals(
+            3,
+            e4Rows.first().observationCount,
+            "3 games contribute once each; second run must not double-count",
+        )
+        assertEquals(3, stores.seenGameUrls.size, "seen-game store must contain each URL exactly once")
+    }
+
+    @Test
+    fun `dedup - overlapping archives across runs only count new games`() {
+        // Run 1 processes game1 + game2. Run 2 sees game2 (already claimed) and game3 (new).
+        // Result: game1 contributes once, game2 contributes once, game3 contributes once.
+        val stores = makeRepositoryStateful()
 
         val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
         whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
 
-        val games = (1..4).map { rapidGame("http://game$it", "p1", 1100, "p2", 1150) }
+        val g1 = rapidGame("http://game1", "p1", 1100, "p2", 1150)
+        val g2 = rapidGame("http://game2", "p1", 1100, "p2", 1150)
+        val g3 = rapidGame("http://game3", "p1", 1100, "p2", 1150)
+
+        whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(listOf(g1, g2))
+        service.runBfs(
+            HumanMoveBfsRequest(
+                ratingBand = RatingBand.BAND_1000_1200.value,
+                seedPlayers = listOf("p1"),
+                maxDepth = 0,
+                batchSize = 10,
+            ),
+        )
+
+        whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(listOf(g2, g3))
+        service.runBfs(
+            HumanMoveBfsRequest(
+                ratingBand = RatingBand.BAND_1000_1200.value,
+                seedPlayers = listOf("p1"),
+                maxDepth = 0,
+                batchSize = 10,
+            ),
+        )
+
+        val e4Rows = stores.distributions.filter { it.movePlayed == "e4" }
+        assertEquals(1, e4Rows.size)
+        assertEquals(
+            3,
+            e4Rows.first().observationCount,
+            "game2 was already claimed by run 1; only game1, game2, game3 should each contribute once",
+        )
+        assertEquals(
+            setOf("http://game1", "http://game2", "http://game3"),
+            stores.seenGameUrls,
+        )
+    }
+
+    @Test
+    fun `dedup - within-run duplicate discovery via a second player is not double-counted`() {
+        // Same archive URL returned for both p1 and p2 — the classic within-run duplicate
+        // discovery path already covered by the in-memory seenGameUrls set. Verify that
+        // adding persistent dedup does not regress this: the game contributes exactly once.
+        val stores = makeRepositoryStateful()
+
+        val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
+        whenever(chessComClient.fetchArchiveUrls("p2")).thenReturn(listOf(archiveUrl))
+        val gameData = rapidGame("http://game1", "p1", 1100, "p2", 1150)
+        whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(listOf(gameData))
+
+        service.runBfs(
+            HumanMoveBfsRequest(
+                ratingBand = RatingBand.BAND_1000_1200.value,
+                seedPlayers = listOf("p1"),
+                maxDepth = 1,
+                batchSize = 10,
+            ),
+        )
+
+        val e4Rows = stores.distributions.filter { it.movePlayed == "e4" }
+        assertEquals(1, e4Rows.size)
+        assertEquals(1, e4Rows.first().observationCount)
+        assertEquals(setOf("http://game1"), stores.seenGameUrls)
+    }
+
+    @Test
+    fun `dedup - claim conflict aborts the batch and no observations are written`() {
+        // Simulate a race: the stateful store is normal, but the claim mock reports fewer
+        // rows inserted than requested. persistObservations must throw and rollback —
+        // no distribution rows may have been persisted for this batch.
+        val stores = makeRepositoryStateful()
+
+        val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
+        val games = (1..2).map { rapidGame("http://game$it", "p1", 1100, "p2", 1150) }
+        whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(games)
+
+        // Override: claim throws HumanMoveBfsClaimConflictException to simulate
+        // a DB PK collision (e.g., a race under a hypothetical multi-writer scenario).
+        org.mockito.Mockito.doThrow(
+            HumanMoveBfsClaimConflictException(
+                attempted = 2,
+                cause = IllegalStateException("simulated collision"),
+            ),
+        ).whenever(humanMoveBfsSeenGameClaimer).claimGameUrls(any<Collection<String>>())
+
+        assertThrows(HumanMoveBfsClaimConflictException::class.java) {
+            service.runBfs(
+                HumanMoveBfsRequest(
+                    ratingBand = RatingBand.BAND_1000_1200.value,
+                    seedPlayers = listOf("p1"),
+                    maxDepth = 0,
+                    batchSize = 10,
+                ),
+            )
+        }
+
+        // Note: this unit test cannot verify SQL-level rollback (no real TX manager),
+        // but it can and does verify that persistObservations aborts BEFORE any
+        // distribution rows are handed to saveAll. The transactional rollback of
+        // the claim itself is covered by the @DataJpaTest integration test.
+        assertTrue(
+            stores.distributions.isEmpty(),
+            "distribution store must remain empty when the batch aborts on claim conflict",
+        )
+    }
+
+    @Test
+    fun `dedup - claim step happens strictly before distribution writes`() {
+        // Verify order: claimGameUrls must be invoked at least once before any saveAll of
+        // HumanMoveDistribution rows, so a claim failure cannot leave observations behind.
+        val stores = makeRepositoryStateful()
+
+        val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
+        val games = (1..2).map { rapidGame("http://game$it", "p1", 1100, "p2", 1150) }
         whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(games)
 
         service.runBfs(
@@ -749,12 +929,14 @@ class HumanMoveBfsServiceTest {
                 ratingBand = RatingBand.BAND_1000_1200.value,
                 seedPlayers = listOf("p1"),
                 maxDepth = 0,
-                minObservations = 3,
-                batchSize = 2,
+                batchSize = 10,
             ),
         )
 
-        assertTrue(store.isEmpty(), "No rows should be written: each batch has only 2 obs, below minObservations=3")
-        verify(humanMoveDistributionRepository, never()).saveAll(anyList())
+        val order = org.mockito.Mockito.inOrder(humanMoveBfsSeenGameClaimer, humanMoveDistributionRepository)
+        order.verify(humanMoveBfsSeenGameClaimer).claimGameUrls(any<Collection<String>>())
+        order.verify(humanMoveDistributionRepository).saveAll(anyList())
+        assertTrue(stores.distributions.isNotEmpty(), "successful batch must persist distribution rows")
+        assertEquals(2, stores.seenGameUrls.size)
     }
 }

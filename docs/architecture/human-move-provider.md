@@ -79,3 +79,34 @@ The architecture preserves the existing continuation contract where `Continuatio
 * Optimize traversal or introduce staging storage only if empirical scale necessitates it.
 
 > Phase 1 proves the model and end-to-end behavior with manufactured data. Phase 2 builds the real historical-data seeding algorithm.
+
+## 4. Collection & Finalization (Global Accumulator Model)
+
+Historical seeding has two explicitly separated phases:
+
+### Collection (BFS runs)
+`POST /api/admin/human-move-distribution/bfs` walks the player/game graph and streams observations into `human_move_distribution` **without applying any observation-count threshold**. Every observed `(position_id, rating_band, move_played)` is either INSERTed or UPDATE-incremented against the natural unique key, so observations from later batches — and from later BFS invocations run days apart — accumulate onto the same row.
+
+Batching is retained purely to bound application memory: the service aggregates a bounded batch in-memory, flushes it, and discards the maps. Batches are **not** independent statistical units; a position seen 2 times in one batch and 3 times in a later batch (or a later run) ends up with `observation_count = 5`.
+
+The BFS request DTO deliberately does not carry `minObservations`. Thresholding is not a gathering-time concern in this model.
+
+### Finalization
+`POST /api/admin/human-move-distribution/finalize` applies the observation-count threshold globally, once the corpus is considered sufficiently populated:
+
+```json
+{ "ratingBand": "1000-1200", "minObservations": 5 }
+```
+
+Finalization runs a single set-based, transactional JPQL DELETE that removes every distribution row belonging to a position whose `SUM(observation_count)` for the requested band is strictly below `minObservations`. Positions meeting the threshold keep all of their move rows and their counts. The operation is band-scoped and idempotent: rerunning it with the same arguments after success removes zero further rows.
+
+The response reports `positionsEvaluated`, `positionsRemoved`, `rowsRemoved`, and `positionsRetained`.
+
+### Provider behavior
+`HumanMoveProvider` is unchanged. Its own read-time `human.continuation.min-observations` filter is orthogonal to finalization and remains the last line of defense for what the provider is willing to serve.
+
+### Rebuild
+There is intentionally no reset endpoint. Rebuilding a band is a manual admin/database action (`DELETE FROM human_move_distribution WHERE rating_band = ?`) while this remains an internal workflow.
+
+### Known limitation
+BFS deduplicates games in-memory per invocation only. Overlapping player sets across separate invocations may double-count observations from the same game. This is a pre-existing property of the BFS traversal and is not addressed by finalization; if it becomes material, add a persistent `seen_game_url` table separately.

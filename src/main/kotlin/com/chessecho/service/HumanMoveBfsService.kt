@@ -6,6 +6,8 @@ import com.chessecho.domain.RatingBand
 import com.chessecho.domain.TimeControl
 import com.chessecho.dto.HumanMoveBfsRequest
 import com.chessecho.dto.HumanMoveBfsResponse
+import com.chessecho.repository.HumanMoveBfsSeenGameClaimer
+import com.chessecho.repository.HumanMoveBfsSeenGameRepository
 import com.chessecho.repository.HumanMoveDistributionRepository
 import com.chessecho.repository.PositionRepository
 import com.github.bhlangonijr.chesslib.Board
@@ -21,6 +23,8 @@ class HumanMoveBfsService(
     private val chessComClient: ChessComClient,
     private val positionRepository: PositionRepository,
     private val humanMoveDistributionRepository: HumanMoveDistributionRepository,
+    private val humanMoveBfsSeenGameRepository: HumanMoveBfsSeenGameRepository,
+    private val humanMoveBfsSeenGameClaimer: HumanMoveBfsSeenGameClaimer,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -34,7 +38,6 @@ class HumanMoveBfsService(
         log.info(
             "Config: maxQualifyingGames=${request.maxQualifyingGames}, " +
                 "batchSize=${request.batchSize}, " +
-                "minObservations=${request.minObservations}, " +
                 "maxDepth=${request.maxDepth}",
         )
 
@@ -55,20 +58,32 @@ class HumanMoveBfsService(
         // Cumulative totals across all flushed batches
         var cumulativeUniquePositions = 0
         var cumulativeTotalObservations = 0
-        var cumulativePositionsPersisted = 0
         var cumulativeDistributionRowsPersisted = 0
         var batchNumber = 0
 
         // Current batch aggregation — replaced with a fresh instance on each flush
         var batchObservations = mutableMapOf<Pair<String, String>, Int>()
         var batchFenByHash = mutableMapOf<String, String>()
+        // URLs of games whose observations are aggregated into the current batch.
+        // Persisted atomically inside persistObservations()'s transaction via a
+        // plain INSERT — the game_url PRIMARY KEY uniqueness constraint on
+        // human_move_bfs_seen_game provides the atomic-claim semantics. Because
+        // the claim and the human_move_distribution writes share one
+        // @Transactional boundary, they commit or roll back together.
+        var batchGameUrls = mutableSetOf<String>()
         var batchQualifyingGames = 0
 
         var stopReason = ""
 
         /**
-         * Flush the current batch: apply minObservations filter, persist, log, then discard
+         * Flush the current batch: persist every observed (position, move) pair
+         * with accumulate-on-conflict semantics against the DB, log, then discard
          * the aggregation maps so the old objects become eligible for GC.
+         *
+         * No minObservations filter is applied here — thresholding is deferred to
+         * an explicit finalization operation so that observations arriving in
+         * later batches (or in later BFS invocations) can contribute to the same
+         * position's global total.
          */
         fun flushBatch() {
             if (batchObservations.isEmpty()) return
@@ -78,7 +93,7 @@ class HumanMoveBfsService(
             val batchUniquePositions = batchObservations.keys.map { it.first }.toSet().size
             val batchTotalObservations = batchObservations.values.sum()
 
-            // Observation-count distribution within the batch
+            // Observation-count distribution within the batch (log-only diagnostics)
             val obsByPosition = mutableMapOf<String, Int>()
             for ((key, count) in batchObservations) {
                 val hash = key.first
@@ -87,7 +102,6 @@ class HumanMoveBfsService(
             val posCount1 = obsByPosition.values.count { it == 1 }
             val posCount2to4 = obsByPosition.values.count { it in 2..4 }
             val posCount5plus = obsByPosition.values.count { it >= 5 }
-            val posCountMeetingThreshold = obsByPosition.values.count { it >= request.minObservations }
 
             log.info("--- Batch $batchNumber complete ---")
             log.info("  Qualifying games in batch  : $batchQualifyingGames")
@@ -96,15 +110,11 @@ class HumanMoveBfsService(
             log.info("  Positions with 1 obs       : $posCount1")
             log.info("  Positions with 2–4 obs     : $posCount2to4")
             log.info("  Positions with 5+ obs      : $posCount5plus")
-            log.info(
-                "  Positions meeting minObs=${ request.minObservations}: $posCountMeetingThreshold",
-            )
 
-            val rowsPersisted = persistObservations(targetBand, batchObservations, batchFenByHash, request.minObservations)
+            val rowsPersisted = persistObservations(targetBand, batchObservations, batchFenByHash, batchGameUrls)
 
             cumulativeUniquePositions += batchUniquePositions
             cumulativeTotalObservations += batchTotalObservations
-            cumulativePositionsPersisted += posCountMeetingThreshold
             cumulativeDistributionRowsPersisted += rowsPersisted
 
             log.info("  Distribution rows persisted: $rowsPersisted")
@@ -112,12 +122,12 @@ class HumanMoveBfsService(
             log.info("  Qualifying games total     : $totalQualifyingGames")
             log.info("  Unique positions (sum)     : $cumulativeUniquePositions")
             log.info("  Observations (sum)         : $cumulativeTotalObservations")
-            log.info("  Positions persisted (sum)  : $cumulativePositionsPersisted")
             log.info("  Rows persisted (sum)       : $cumulativeDistributionRowsPersisted")
 
             // Replace with fresh maps — old maps and their contents fall out of scope
             batchObservations = mutableMapOf()
             batchFenByHash = mutableMapOf()
+            batchGameUrls = mutableSetOf()
             batchQualifyingGames = 0
         }
 
@@ -167,6 +177,20 @@ class HumanMoveBfsService(
                             continue
                         }
 
+                    // One indexed round-trip per archive: skip any game whose URL has
+                    // already been claimed by a previous batch / invocation / day, so
+                    // we do not waste PGN parsing on games that will be filtered at
+                    // the persistent-claim step anyway.
+                    val archiveUrlsInBatch = games.mapNotNull { it["url"] as? String }
+                    val alreadyClaimedUrls: Set<String> =
+                        if (archiveUrlsInBatch.isEmpty()) {
+                            emptySet()
+                        } else {
+                            humanMoveBfsSeenGameRepository
+                                .findExistingGameUrls(archiveUrlsInBatch)
+                                .toSet()
+                        }
+
                     // Process games from newest to oldest in the archive
                     for (game in games.reversed()) {
                         if (totalQualifyingGames >= request.maxQualifyingGames) break
@@ -190,7 +214,10 @@ class HumanMoveBfsService(
 
                         val url = game["url"] as? String ?: continue
                         if (!seenGameUrls.add(url)) {
-                            continue // Deduplicate games globally
+                            continue // Deduplicate games within this run
+                        }
+                        if (url in alreadyClaimedUrls) {
+                            continue // Already contributed by a prior batch / run / day
                         }
 
                         val whiteData = game["white"] as? Map<*, *> ?: continue
@@ -224,6 +251,7 @@ class HumanMoveBfsService(
                         playerQualifyingGames++
                         totalQualifyingGames++
                         batchQualifyingGames++
+                        batchGameUrls.add(url)
 
                         processGamePgn(
                             pgn = pgn,
@@ -369,16 +397,43 @@ class HumanMoveBfsService(
     }
 
     /**
-     * Persists a single batch of observations. Returns the number of distribution rows persisted.
-     * Called once per batch from flushBatch().
+     * Persists a single batch of observations. Returns the number of distribution
+     * rows written or updated. Called once per batch from [flushBatch].
+     *
+     * Every observed (position, move) pair is persisted — no minObservations
+     * filtering is applied at this layer. Thresholding is the responsibility of
+     * the explicit finalization operation, so that observations from later
+     * batches (and later BFS invocations) can accumulate against the same
+     * position before the global threshold is evaluated.
+     *
+     * Game-level exactly-once dedup: the batch's game URLs are atomically
+     * claimed with a plain INSERT as the first DB operation inside this
+     * transaction. Atomicity is provided by the `game_url` PRIMARY KEY
+     * uniqueness constraint on `human_move_bfs_seen_game` — any pre-existing
+     * URL surfaces as [org.springframework.dao.DataIntegrityViolationException],
+     * which the claimer rewraps as [com.chessecho.repository.HumanMoveBfsClaimConflictException].
+     * Because the claim and the distribution writes share one @Transactional
+     * boundary, they commit or roll back together: a URL can never be marked as
+     * consumed unless its observations are durably persisted, and observations
+     * for an already-claimed URL will fail the claim step and abort the whole
+     * batch.
      */
     @Transactional
     fun persistObservations(
         targetBand: RatingBand,
         observations: Map<Pair<String, String>, Int>,
         fenByHash: Map<String, String>,
-        minObservations: Int = 1,
+        batchGameUrls: Set<String>,
     ): Int {
+        // Step 1: atomically claim this batch's game URLs. The primary-key
+        // constraint on human_move_bfs_seen_game.game_url is the atomic primitive.
+        // Any pre-existing URL surfaces as HumanMoveBfsClaimConflictException,
+        // which propagates out of this @Transactional method and rolls back both
+        // the (partial) URL claims and any observations otherwise written below.
+        // Under the single-writer assumption combined with the per-archive
+        // pre-check, this never triggers in practice.
+        humanMoveBfsSeenGameClaimer.claimGameUrls(batchGameUrls)
+
         val allHashes = fenByHash.keys.toList()
 
         // Find existing positions
@@ -404,7 +459,8 @@ class HumanMoveBfsService(
         val allPositionIds = existingPositionsMap.values.map { it.id }.toSet()
         val existingDistributions = mutableMapOf<Pair<UUID, String>, HumanMoveDistribution>()
 
-        // Load existing distributions to avoid duplicates / accumulate across runs
+        // Load existing distributions so we can accumulate onto them
+        // (idempotent per unique key (position_id, rating_band, move_played))
         val posIdBatches = allPositionIds.chunked(1000)
         for (batch in posIdBatches) {
             batch.forEach { posId ->
@@ -415,29 +471,13 @@ class HumanMoveBfsService(
             }
         }
 
-        // Calculate total observation count per position (existing in DB + new in this batch)
-        val totalObsPerPosition = mutableMapOf<UUID, Int>()
-        for ((distKey, existing) in existingDistributions) {
-            val (posId, _) = distKey
-            totalObsPerPosition[posId] = (totalObsPerPosition[posId] ?: 0) + existing.observationCount
-        }
-        for ((key, count) in observations) {
-            val (hash, _) = key
-            val position = existingPositionsMap[hash] ?: continue
-            totalObsPerPosition[position.id] = (totalObsPerPosition[position.id] ?: 0) + count
-        }
-
-        // Build list of rows to save, filtering by minObservations
+        // Build the row set: UPDATE if the row already exists for
+        // (position_id, rating_band, move_played), else INSERT.
         val distributionsToSave = mutableListOf<HumanMoveDistribution>()
 
         for ((key, count) in observations) {
             val (hash, move) = key
             val position = existingPositionsMap[hash] ?: continue
-
-            val totalObs = totalObsPerPosition[position.id] ?: 0
-            if (totalObs < minObservations) {
-                continue
-            }
 
             val distKey = Pair(position.id, move)
             val existing = existingDistributions[distKey]

@@ -158,3 +158,16 @@ CREATE TABLE human_move_distribution
 );
 
 CREATE INDEX idx_human_move_dist_pos_band ON human_move_distribution (position_id, rating_band);
+
+-- BFS-owned game-URL claim table. Guarantees exactly-once contribution of any
+-- Chess.com game to human_move_distribution across batches, BFS invocations,
+-- and days. Primary-key uniqueness on game_url is the atomic-claim primitive:
+-- the service issues a plain INSERT inside the same @Transactional boundary as
+-- the distribution writes; any pre-existing URL raises a unique-constraint
+-- violation that rolls the batch back, so URL claim and observation
+-- persistence commit or roll back together.
+CREATE TABLE human_move_bfs_seen_game
+(
+    game_url VARCHAR(2048)            PRIMARY KEY,
+    seen_at  TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+);
