@@ -8,10 +8,10 @@ By collecting this data per rating band, we can model typical human behavior, id
 ## 2. ALGORITHM
 The data collection is driven by a bounded Breadth-First Search over the Chess.com player graph:
 - **Seed Players:** The search starts from an initial set of 10 seed usernames.
-- **Rating-Band Qualification:** A game only qualifies if at least one of its players falls into the target rating band (e.g., 1000–1200).
+- **Rating-Band Qualification:** A game only qualifies if the **opponent** of the currently-traversed BFS player has a game-time rating within the target band (e.g., 1000–1200).
 - **Rapid-Only Filtering:** Only games with `time_class` equal to `rapid` are processed.
-- **Opponent Discovery/Traversal:** When processing a player's games, any encountered opponents are added to the next BFS frontier. 
-- **BFS Traversal Rules:** Crucially, a player/game can be used for *traversal* (and their opponents discovered) even if that opponent is outside the target rating band. However, **move attribution** strictly mandates that moves are only contributed to the dataset when the specific player making that move is currently rated in the target band.
+- **Opponent Discovery/Traversal:** When processing a player's games, all encountered opponents are added to the next BFS frontier **regardless of their rating**.
+- **BFS Traversal Rules:** Crucially, a player's opponent can be discovered and later traversed even if their game-time rating fell outside the target band. However, **move attribution** strictly mandates that only the **opponent's** moves are contributed to the dataset, and only when the opponent's game-time rating is within the target band. The traversed player's own moves are never recorded.
 - **Limits:** The traversal respects limits on BFS depth, maximum games inspected per player, and maximum total qualifying games.
 - **Deduplication:** Players and game URLs are tracked in memory to prevent processing the same player or game twice.
 - **Aggregation:** Move observations are aggregated in memory by `position` (FEN hash) and `move`, keeping track of total frequency before batch-saving.
@@ -20,7 +20,7 @@ The data collection is driven by a bounded Breadth-First Search over the Chess.c
 During traversal, the number of *games inspected* (7,527) was significantly higher than the number of *qualifying games* (2,000). This is expected behavior, not a bug, because of the following subset logic:
 - **Games inspected:** Every game encountered while traversing a player's monthly archive.
 - **Rapid games:** The subset of inspected games where the time control is rapid.
-- **Qualifying games:** The subset of rapid games where at least one player's rating falls strictly within the target 1000–1200 band.
+- **Qualifying games:** The subset of rapid games where the **opponent's** game-time rating falls strictly within the target 1000–1200 band.
 
 Because we traverse opponents even if they are out-of-band, many of their subsequent games will involve players who are also out-of-band. These games are inspected but rejected, preventing them from contributing to the `qualifying games` count.
 

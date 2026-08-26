@@ -88,6 +88,21 @@ class HumanMoveBfsServiceTest {
             "pgn" to pgn,
         )
 
+    private fun blitzGame(
+        url: String,
+        whiteUser: String,
+        whiteRating: Int,
+        blackUser: String,
+        blackRating: Int,
+    ): Map<String, Any> =
+        mapOf(
+            "url" to url,
+            "rules" to "chess",
+            "time_class" to "blitz",
+            "white" to mapOf("username" to whiteUser, "rating" to whiteRating),
+            "black" to mapOf("username" to blackUser, "rating" to blackRating),
+        )
+
     // ── Existing behavioural tests ─────────────────────────────────────────
 
     @Test
@@ -136,13 +151,25 @@ class HumanMoveBfsServiceTest {
 
     @Test
     fun `test duplicate game discovery is skipped`() {
+        // p1 traversed as White; opponent p2 (Black, 1150) is in-band.
+        // Longer PGN so opponent contributes 2 moves (e5, Nc6), giving us 2 saved rows to assert on.
+        // p2 is also visited at depth 1 but the game URL is already in seenGameUrls, so it is
+        // skipped — the observation count must not double.
         val seedPlayers = listOf("p1")
         val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
 
         whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
         whenever(chessComClient.fetchArchiveUrls("p2")).thenReturn(listOf(archiveUrl))
 
-        val gameData = rapidGame("http://game1", "p1", 1100, "p2", 1150)
+        val gameData =
+            rapidGame(
+                url = "http://game1",
+                whiteUser = "p1",
+                whiteRating = 1100,
+                blackUser = "p2",
+                blackRating = 1150,
+                pgn = "[Event \"Live Chess\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Nf3 Nc6 1-0",
+            )
         whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(listOf(gameData))
 
         service.runBfs(
@@ -156,8 +183,12 @@ class HumanMoveBfsServiceTest {
         val captor = argumentCaptor<List<HumanMoveDistribution>>()
         verify(humanMoveDistributionRepository).saveAll(captor.capture())
 
+        // Only the opponent's (Black p2) moves are recorded: e5 and Nc6.
         val saved = captor.firstValue
         assertEquals(2, saved.size)
+        assertTrue(saved.any { it.movePlayed == "e5" })
+        assertTrue(saved.any { it.movePlayed == "Nc6" })
+        assertFalse(saved.any { it.movePlayed == "e4" }, "traversed player's e4 must not be recorded")
     }
 
     @Test
@@ -190,7 +221,10 @@ class HumanMoveBfsServiceTest {
     }
 
     @Test
-    fun `test rating band filtering`() {
+    fun `test rating band filtering - opponent out of band records no moves`() {
+        // p1 traversed as White (1100, in band); opponent p2 is Black (1300, OUT of band).
+        // Under the new semantics only the opponent's moves qualify the game, so p2 being
+        // out-of-band means ZERO moves are saved.
         val seedPlayers = listOf("p1")
         val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
 
@@ -215,33 +249,59 @@ class HumanMoveBfsServiceTest {
             ),
         )
 
+        verify(humanMoveDistributionRepository, never()).saveAll(anyList())
+    }
+
+    @Test
+    fun `test rating band filtering - opponent in band records only opponent moves`() {
+        // p1 traversed as White (1300, OUT of band); opponent p2 is Black (1150, in band).
+        // The game qualifies because the opponent is in-band, and only Black's moves are saved.
+        val seedPlayers = listOf("p1")
+        val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
+
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
+
+        val gameData =
+            rapidGame(
+                url = "http://game1",
+                whiteUser = "p1",
+                whiteRating = 1300,
+                blackUser = "p2",
+                blackRating = 1150,
+                pgn = "[Event \"Live Chess\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Nf3 Nc6 1-0",
+            )
+        whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(listOf(gameData))
+
+        service.runBfs(
+            HumanMoveBfsRequest(
+                ratingBand = RatingBand.BAND_1000_1200.value,
+                seedPlayers = seedPlayers,
+                maxDepth = 0,
+            ),
+        )
+
         val captor = argumentCaptor<List<HumanMoveDistribution>>()
         verify(humanMoveDistributionRepository).saveAll(captor.capture())
 
         val saved = captor.firstValue
-        assertEquals(2, saved.size)
-        assertTrue(saved.any { it.movePlayed == "e4" })
-        assertTrue(saved.any { it.movePlayed == "Nf3" })
-        assertFalse(saved.any { it.movePlayed == "e5" })
+        // Only opponent Black's moves (e5, Nc6); traversed White's moves (e4, Nf3) must not appear.
+        assertTrue(saved.any { it.movePlayed == "e5" })
+        assertTrue(saved.any { it.movePlayed == "Nc6" })
+        assertFalse(saved.any { it.movePlayed == "e4" }, "traversed player's e4 must not be recorded")
+        assertFalse(saved.any { it.movePlayed == "Nf3" }, "traversed player's Nf3 must not be recorded")
     }
 
     @Test
     fun `test aggregation produces expected counts`() {
+        // Two games where p1 plays White against different Black opponents, both in-band.
+        // Both opponents play 1...e5, so e5 accumulates to 2. Traversed-player's e4 is never saved.
         val seedPlayers = listOf("p1")
         val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
 
         whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
 
         val gameData1 = rapidGame("http://game1", "p1", 1100, "p2", 1150)
-        val gameData2 =
-            rapidGame(
-                url = "http://game2",
-                whiteUser = "p3",
-                whiteRating = 1100,
-                blackUser = "p4",
-                blackRating = 1150,
-                pgn = "[Event \"Live Chess\"]\n[Result \"1-0\"]\n\n1. e4 c5 1-0",
-            )
+        val gameData2 = rapidGame("http://game2", "p1", 1100, "p3", 1150)
         whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(listOf(gameData1, gameData2))
 
         service.runBfs(
@@ -256,17 +316,11 @@ class HumanMoveBfsServiceTest {
         verify(humanMoveDistributionRepository).saveAll(captor.capture())
 
         val saved = captor.firstValue
-        val e4Dist = saved.find { it.movePlayed == "e4" }
-        assertNotNull(e4Dist)
-        assertEquals(2, e4Dist!!.observationCount)
-
         val e5Dist = saved.find { it.movePlayed == "e5" }
         assertNotNull(e5Dist)
-        assertEquals(1, e5Dist!!.observationCount)
+        assertEquals(2, e5Dist!!.observationCount, "e5 (opponent Black's response) must accumulate across 2 games")
 
-        val c5Dist = saved.find { it.movePlayed == "c5" }
-        assertNotNull(c5Dist)
-        assertEquals(1, c5Dist!!.observationCount)
+        assertFalse(saved.any { it.movePlayed == "e4" }, "traversed player's (White) e4 must not be recorded")
     }
 
     @Test
@@ -294,6 +348,82 @@ class HumanMoveBfsServiceTest {
 
         assertEquals(3, response.gamesInspected)
         assertEquals(3, response.qualifyingGames)
+    }
+
+    @Test
+    fun `maxGamesPerPlayer budget is not consumed by non-rapid games`() {
+        // Archive (oldest-first): [rapid1, rapid2, rapid3, blitz1..blitz10]
+        // After games.reversed(): [blitz10..blitz1, rapid3, rapid2, rapid1]
+        // With maxGamesPerPlayer=3, the OLD code broke after the first 3 blitz games
+        // and found 0 rapid. The NEW code skips blitz games without consuming the
+        // rapid budget, so all 3 rapid games are eventually found.
+        val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
+
+        val games =
+            (1..3).map { rapidGame("http://rapid$it", "p1", 1100, "p2", 1150) } +
+                (1..10).map { blitzGame("http://blitz$it", "p1", 1100, "p2", 1150) }
+        whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(games)
+
+        val response =
+            service.runBfs(
+                HumanMoveBfsRequest(
+                    ratingBand = RatingBand.BAND_1000_1200.value,
+                    seedPlayers = listOf("p1"),
+                    maxDepth = 0,
+                    maxGamesPerPlayer = 3,
+                ),
+            )
+
+        assertEquals(3, response.rapidGames, "all 3 rapid games must be found despite the 10 intervening blitz games")
+        assertEquals(3, response.qualifyingGames)
+    }
+
+    @Test
+    fun `BFS fetches older archives when newer archive has fewer rapid games than the budget`() {
+        // Two archives: newer has 3 rapid + 5 blitz; older has 2 rapid.
+        // maxGamesPerPlayer=4 should exhaust the newer archive (3 rapid) and
+        // then fetch the older archive to reach game 4.
+        val newerArchive = "https://api.chess.com/pub/player/p1/games/2021/02"
+        val olderArchive = "https://api.chess.com/pub/player/p1/games/2021/01"
+        // fetchArchiveUrls returns archives oldest-first; BFS reverses them
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(olderArchive, newerArchive))
+
+        // Newer archive (oldest-first): [blitz1, rapid1, blitz2, rapid2, blitz3, rapid3, blitz4, blitz5]
+        // After reversed(): [blitz5, blitz4, rapid3, blitz3, rapid2, blitz2, rapid1, blitz1]
+        val newerGames =
+            listOf(
+                blitzGame("http://n-blitz1", "p1", 1100, "p2", 1150),
+                rapidGame("http://n-rapid1", "p1", 1100, "p2", 1150),
+                blitzGame("http://n-blitz2", "p1", 1100, "p2", 1150),
+                rapidGame("http://n-rapid2", "p1", 1100, "p2", 1150),
+                blitzGame("http://n-blitz3", "p1", 1100, "p2", 1150),
+                rapidGame("http://n-rapid3", "p1", 1100, "p2", 1150),
+                blitzGame("http://n-blitz4", "p1", 1100, "p2", 1150),
+                blitzGame("http://n-blitz5", "p1", 1100, "p2", 1150),
+            )
+        val olderGames =
+            listOf(
+                rapidGame("http://o-rapid1", "p1", 1100, "p2", 1150),
+                rapidGame("http://o-rapid2", "p1", 1100, "p2", 1150),
+            )
+        whenever(chessComClient.fetchMonthlyGames(newerArchive)).thenReturn(newerGames)
+        whenever(chessComClient.fetchMonthlyGames(olderArchive)).thenReturn(olderGames)
+
+        val response =
+            service.runBfs(
+                HumanMoveBfsRequest(
+                    ratingBand = RatingBand.BAND_1000_1200.value,
+                    seedPlayers = listOf("p1"),
+                    maxDepth = 0,
+                    maxGamesPerPlayer = 4,
+                ),
+            )
+
+        assertEquals(4, response.rapidGames, "budget of 4 rapid games must span both archives")
+        assertEquals(4, response.qualifyingGames)
+        verify(chessComClient).fetchMonthlyGames(newerArchive)
+        verify(chessComClient).fetchMonthlyGames(olderArchive)
     }
 
     @Test
@@ -365,14 +495,17 @@ class HumanMoveBfsServiceTest {
         verify(humanMoveDistributionRepository).saveAll(captor.capture())
 
         val saved = captor.firstValue
-        assertTrue(saved.any { it.movePlayed == "e4" })
-        assertTrue(saved.any { it.movePlayed == "d4" })
+        // game1: p1=White, opponent p2 (Black, 1150) in band → e5
+        // game2: p1 not White (p3 is), opponent p3 (White, 1100) in band → e4
+        // game3: p1 not White (p5 is), opponent p5 (White, 1100) in band → d4
         assertTrue(saved.any { it.movePlayed == "e5" })
-        assertTrue(saved.any { it.movePlayed == "c5" })
+        assertTrue(saved.any { it.movePlayed == "e4" })
         assertTrue(
-            saved.any { it.movePlayed == "d5" },
+            saved.any { it.movePlayed == "d4" },
             "single-observation moves must survive the gathering phase",
         )
+        assertFalse(saved.any { it.movePlayed == "c5" }, "Black p4's c5 is not the opponent of the traversed p1")
+        assertFalse(saved.any { it.movePlayed == "d5" }, "Black p6's d5 is not the opponent of the traversed p1")
     }
 
     // ── Batching tests ─────────────────────────────────────────────────────
@@ -493,10 +626,13 @@ class HumanMoveBfsServiceTest {
 
         // Both batches must flush — no observation is dropped for being "small".
         verify(humanMoveDistributionRepository, times(2)).saveAll(anyList())
+        // game1 (p5 vs p6): p1 not White → opponent=p5(White,1100) in band → d4
+        // game2 (p1 vs p2): p1=White → opponent=p2(Black,1150) in band → e5
+        // game3 (p3 vs p4): p1 not White → opponent=p3(White,1100) in band → e4
         assertTrue(store.any { it.movePlayed == "e4" })
         assertTrue(store.any { it.movePlayed == "e5" })
         assertTrue(store.any { it.movePlayed == "d4" }, "d4 was in a singleton trailing batch and must persist")
-        assertTrue(store.any { it.movePlayed == "d5" }, "d5 was in a singleton trailing batch and must persist")
+        assertFalse(store.any { it.movePlayed == "d5" }, "d5 (Black p6's move) is not the opponent of p1 and must not appear")
     }
 
     @Test
@@ -532,9 +668,9 @@ class HumanMoveBfsServiceTest {
             ),
         )
 
-        val d4Rows = store.filter { it.movePlayed == "d4" }
-        assertEquals(1, d4Rows.size, "d4 must be represented by a single accumulated row")
-        assertEquals(5, d4Rows.first().observationCount, "5 observations across 3 batches must accumulate to 5")
+        val d5Rows = store.filter { it.movePlayed == "d5" }
+        assertEquals(1, d5Rows.size, "d5 (opponent Black's response) must be represented by a single accumulated row")
+        assertEquals(5, d5Rows.first().observationCount, "5 observations across 3 batches must accumulate to 5")
     }
 
     // ── DB-accumulation semantic tests ─────────────────────────────────────
@@ -643,9 +779,9 @@ class HumanMoveBfsServiceTest {
             ),
         )
 
-        val e4Rows = store.filter { it.movePlayed == "e4" }
-        assertEquals(1, e4Rows.size, "Should be exactly one e4 row, not duplicates")
-        assertEquals(4, e4Rows.first().observationCount, "e4 should accumulate to 4 across both batches")
+        val e5Rows = store.filter { it.movePlayed == "e5" }
+        assertEquals(1, e5Rows.size, "Should be exactly one e5 row, not duplicates")
+        assertEquals(4, e5Rows.first().observationCount, "e5 (opponent Black) should accumulate to 4 across both batches")
     }
 
     @Test
@@ -685,10 +821,10 @@ class HumanMoveBfsServiceTest {
             ),
         )
 
-        val startingPosRows = store.filter { it.movePlayed == "e4" || it.movePlayed == "d4" }
-        assertEquals(2, startingPosRows.size, "Should be exactly two rows: one for e4 and one for d4")
-        assertEquals(2, startingPosRows.first { it.movePlayed == "e4" }.observationCount)
-        assertEquals(2, startingPosRows.first { it.movePlayed == "d4" }.observationCount)
+        val startingPosRows = store.filter { it.movePlayed == "e5" || it.movePlayed == "d5" }
+        assertEquals(2, startingPosRows.size, "Should be exactly two rows: one for e5 and one for d5")
+        assertEquals(2, startingPosRows.first { it.movePlayed == "e5" }.observationCount)
+        assertEquals(2, startingPosRows.first { it.movePlayed == "d5" }.observationCount)
     }
 
     @Test
@@ -724,15 +860,15 @@ class HumanMoveBfsServiceTest {
             )
         }
 
-        runAgainst(archive1) // 2 obs of e4
-        runAgainst(archive2) // + 1 obs of e4
-        runAgainst(archive3) // + 2 obs of e4  => 5 total
+        runAgainst(archive1) // 2 obs of e5 (opponent Black)
+        runAgainst(archive2) // + 1 obs of e5
+        runAgainst(archive3) // + 2 obs of e5  => 5 total
 
-        val e4Rows = store.filter { it.movePlayed == "e4" }
-        assertEquals(1, e4Rows.size, "e4 must be represented by exactly one accumulated row")
+        val e5Rows = store.filter { it.movePlayed == "e5" }
+        assertEquals(1, e5Rows.size, "e5 must be represented by exactly one accumulated row")
         assertEquals(
             5,
-            e4Rows.first().observationCount,
+            e5Rows.first().observationCount,
             "2 + 1 + 2 must accumulate to 5 across three separate BFS invocations",
         )
     }
@@ -787,11 +923,11 @@ class HumanMoveBfsServiceTest {
         service.runBfs(request)
         service.runBfs(request)
 
-        val e4Rows = stores.distributions.filter { it.movePlayed == "e4" }
-        assertEquals(1, e4Rows.size)
+        val e5Rows = stores.distributions.filter { it.movePlayed == "e5" }
+        assertEquals(1, e5Rows.size)
         assertEquals(
             3,
-            e4Rows.first().observationCount,
+            e5Rows.first().observationCount,
             "3 games contribute once each; second run must not double-count",
         )
         assertEquals(3, stores.seenGameUrls.size, "seen-game store must contain each URL exactly once")
@@ -830,11 +966,11 @@ class HumanMoveBfsServiceTest {
             ),
         )
 
-        val e4Rows = stores.distributions.filter { it.movePlayed == "e4" }
-        assertEquals(1, e4Rows.size)
+        val e5Rows = stores.distributions.filter { it.movePlayed == "e5" }
+        assertEquals(1, e5Rows.size)
         assertEquals(
             3,
-            e4Rows.first().observationCount,
+            e5Rows.first().observationCount,
             "game2 was already claimed by run 1; only game1, game2, game3 should each contribute once",
         )
         assertEquals(
@@ -865,9 +1001,9 @@ class HumanMoveBfsServiceTest {
             ),
         )
 
-        val e4Rows = stores.distributions.filter { it.movePlayed == "e4" }
-        assertEquals(1, e4Rows.size)
-        assertEquals(1, e4Rows.first().observationCount)
+        val e5Rows = stores.distributions.filter { it.movePlayed == "e5" }
+        assertEquals(1, e5Rows.size)
+        assertEquals(1, e5Rows.first().observationCount)
         assertEquals(setOf("http://game1"), stores.seenGameUrls)
     }
 
@@ -911,6 +1047,171 @@ class HumanMoveBfsServiceTest {
             stores.distributions.isEmpty(),
             "distribution store must remain empty when the batch aborts on claim conflict",
         )
+    }
+
+    // ── Attribution semantics tests ────────────────────────────────────────
+
+    @Test
+    fun `attribution - traversed player out of band opponent in band records opponent moves`() {
+        // p1 (White, 1300 — out of band) vs p2 (Black, 1150 — in band).
+        // Game qualifies because the OPPONENT (p2) is in-band; only p2's (Black's) moves are recorded.
+        val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
+
+        val game =
+            rapidGame(
+                url = "http://game1",
+                whiteUser = "p1",
+                whiteRating = 1300,
+                blackUser = "p2",
+                blackRating = 1150,
+                pgn = "[Event \"Live Chess\"]\n[Result \"1-0\"]\n\n1. e4 e5 1-0",
+            )
+        whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(listOf(game))
+
+        service.runBfs(
+            HumanMoveBfsRequest(
+                ratingBand = RatingBand.BAND_1000_1200.value,
+                seedPlayers = listOf("p1"),
+                maxDepth = 0,
+            ),
+        )
+
+        val captor = argumentCaptor<List<HumanMoveDistribution>>()
+        verify(humanMoveDistributionRepository).saveAll(captor.capture())
+        val saved = captor.firstValue
+
+        assertTrue(saved.any { it.movePlayed == "e5" }, "opponent Black's e5 must be recorded")
+        assertFalse(saved.any { it.movePlayed == "e4" }, "traversed White's e4 must not be recorded")
+    }
+
+    @Test
+    fun `attribution - traversed player in band opponent out of band records no moves`() {
+        // p1 (White, 1100 — in band) vs p2 (Black, 1300 — out of band).
+        // Opponent is out of band → game does not qualify → nothing saved.
+        val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
+
+        val game =
+            rapidGame(
+                url = "http://game1",
+                whiteUser = "p1",
+                whiteRating = 1100,
+                blackUser = "p2",
+                blackRating = 1300,
+                pgn = "[Event \"Live Chess\"]\n[Result \"1-0\"]\n\n1. e4 e5 1-0",
+            )
+        whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(listOf(game))
+
+        service.runBfs(
+            HumanMoveBfsRequest(
+                ratingBand = RatingBand.BAND_1000_1200.value,
+                seedPlayers = listOf("p1"),
+                maxDepth = 0,
+            ),
+        )
+
+        verify(humanMoveDistributionRepository, never()).saveAll(anyList())
+    }
+
+    @Test
+    fun `attribution - both players in band records only opponent moves`() {
+        // p1 (White, 1100 — in band) vs p2 (Black, 1150 — in band).
+        // Both are in-band, but only the OPPONENT's (Black's) moves are saved.
+        val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
+
+        val game =
+            rapidGame(
+                url = "http://game1",
+                whiteUser = "p1",
+                whiteRating = 1100,
+                blackUser = "p2",
+                blackRating = 1150,
+                pgn = "[Event \"Live Chess\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Nf3 Nc6 1-0",
+            )
+        whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(listOf(game))
+
+        service.runBfs(
+            HumanMoveBfsRequest(
+                ratingBand = RatingBand.BAND_1000_1200.value,
+                seedPlayers = listOf("p1"),
+                maxDepth = 0,
+            ),
+        )
+
+        val captor = argumentCaptor<List<HumanMoveDistribution>>()
+        verify(humanMoveDistributionRepository).saveAll(captor.capture())
+        val saved = captor.firstValue
+
+        assertTrue(saved.any { it.movePlayed == "e5" }, "opponent Black's e5 must be recorded")
+        assertTrue(saved.any { it.movePlayed == "Nc6" }, "opponent Black's Nc6 must be recorded")
+        assertFalse(saved.any { it.movePlayed == "e4" }, "traversed White's e4 must not be recorded")
+        assertFalse(saved.any { it.movePlayed == "Nf3" }, "traversed White's Nf3 must not be recorded")
+    }
+
+    @Test
+    fun `attribution - both players out of band records no moves`() {
+        // p1 (White, 800) vs p2 (Black, 850) — both below the 1000-1200 band.
+        val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
+
+        val game =
+            rapidGame(
+                url = "http://game1",
+                whiteUser = "p1",
+                whiteRating = 800,
+                blackUser = "p2",
+                blackRating = 850,
+                pgn = "[Event \"Live Chess\"]\n[Result \"1-0\"]\n\n1. e4 e5 1-0",
+            )
+        whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(listOf(game))
+
+        service.runBfs(
+            HumanMoveBfsRequest(
+                ratingBand = RatingBand.BAND_1000_1200.value,
+                seedPlayers = listOf("p1"),
+                maxDepth = 0,
+            ),
+        )
+
+        verify(humanMoveDistributionRepository, never()).saveAll(anyList())
+    }
+
+    @Test
+    fun `attribution - traversed player as Black opponent White in band records White moves`() {
+        // p1 plays Black (1150 — in band) vs p2 White (1100 — in band).
+        // Traversed player is Black; opponent is White → only White's (p2's) moves are saved.
+        val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
+
+        val game =
+            rapidGame(
+                url = "http://game1",
+                whiteUser = "p2",
+                whiteRating = 1100,
+                blackUser = "p1",
+                blackRating = 1150,
+                pgn = "[Event \"Live Chess\"]\n[Result \"1-0\"]\n\n1. d4 d5 2. c4 c6 1-0",
+            )
+        whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(listOf(game))
+
+        service.runBfs(
+            HumanMoveBfsRequest(
+                ratingBand = RatingBand.BAND_1000_1200.value,
+                seedPlayers = listOf("p1"),
+                maxDepth = 0,
+            ),
+        )
+
+        val captor = argumentCaptor<List<HumanMoveDistribution>>()
+        verify(humanMoveDistributionRepository).saveAll(captor.capture())
+        val saved = captor.firstValue
+
+        assertTrue(saved.any { it.movePlayed == "d4" }, "opponent White's d4 must be recorded")
+        assertTrue(saved.any { it.movePlayed == "c4" }, "opponent White's c4 must be recorded")
+        assertFalse(saved.any { it.movePlayed == "d5" }, "traversed Black's d5 must not be recorded")
+        assertFalse(saved.any { it.movePlayed == "c6" }, "traversed Black's c6 must not be recorded")
     }
 
     @Test
