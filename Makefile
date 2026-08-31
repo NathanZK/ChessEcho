@@ -1,4 +1,4 @@
-.PHONY: db-up db-down app-build app-up app-down app-restart app-lint app-format app-test app-logs db-logs app-logs-static db-logs-static up down
+.PHONY: db-up db-down app-build app-up app-down app-restart app-lint app-format app-test agent-workflow-test app-logs db-logs app-logs-static db-logs-static up down
 
 # Database commands
 db-up:
@@ -29,6 +29,9 @@ app-format:
 
 app-test:
 	./gradlew test
+
+agent-workflow-test:
+	python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 
 # Log commands
 app-logs:

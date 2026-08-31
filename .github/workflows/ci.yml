@@ -11,6 +11,7 @@ jobs:
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
+      agents: ${{ steps.filter.outputs.agents }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -34,6 +35,15 @@ jobs:
               - 'frontend/**'
               - '.github/workflows/ci.yml'
               - 'API_CONTRACT.md'
+            agents:
+              - 'AGENTS.md'
+              - '.agent-workflow/**'
+              - '.github/agents/**'
+              - 'docs/engineering/agent-workflow.md'
+              - 'scripts/agent_workflow.py'
+              - 'scripts/tests/**'
+              - 'Makefile'
+              - '.github/workflows/ci.yml'
 
   build:
     needs: changes
@@ -66,3 +76,14 @@ jobs:
       - run: npx tsc --noEmit
       - run: npx vitest run
       - run: npm run build
+
+  agent-workflow:
+    needs: changes
+    if: ${{ needs.changes.outputs.agents == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+      - run: make agent-workflow-test
