@@ -1,0 +1,95 @@
+{
+  "target_base": "main",
+  "validation_profiles": {
+    "backend": {
+      "test_paths": ["src/test/**/*"],
+      "checks": [
+        {
+          "name": "backend-lint",
+          "command": ["./gradlew", "ktlintCheck"]
+        },
+        {
+          "name": "backend-tests",
+          "command": ["./gradlew", "test"]
+        }
+      ]
+    },
+    "frontend": {
+      "test_paths": [
+        "frontend/src/**/__tests__/**/*",
+        "frontend/src/**/__mocks__/**/*",
+        "frontend/src/**/*.test.*",
+        "frontend/src/**/*.spec.*",
+        "frontend/test/**/*",
+        "frontend/tests/**/*",
+        "frontend/vitest.config.mts",
+        "frontend/vitest.setup.ts"
+      ],
+      "checks": [
+        {
+          "name": "frontend-lint",
+          "command": ["npm", "run", "lint"],
+          "cwd": "frontend"
+        },
+        {
+          "name": "frontend-typecheck",
+          "command": ["npx", "tsc", "--noEmit"],
+          "cwd": "frontend"
+        },
+        {
+          "name": "frontend-tests",
+          "command": ["npm", "run", "test"],
+          "cwd": "frontend"
+        },
+        {
+          "name": "frontend-build",
+          "command": ["npm", "run", "build"],
+          "cwd": "frontend"
+        }
+      ]
+    },
+    "full-stack": {
+      "test_paths": [
+        "src/test/**/*",
+        "frontend/src/**/__tests__/**/*",
+        "frontend/src/**/__mocks__/**/*",
+        "frontend/src/**/*.test.*",
+        "frontend/src/**/*.spec.*",
+        "frontend/test/**/*",
+        "frontend/tests/**/*",
+        "frontend/vitest.config.mts",
+        "frontend/vitest.setup.ts"
+      ],
+      "checks": [
+        {
+          "name": "backend-lint",
+          "command": ["./gradlew", "ktlintCheck"]
+        },
+        {
+          "name": "backend-tests",
+          "command": ["./gradlew", "test"]
+        },
+        {
+          "name": "frontend-lint",
+          "command": ["npm", "run", "lint"],
+          "cwd": "frontend"
+        },
+        {
+          "name": "frontend-typecheck",
+          "command": ["npx", "tsc", "--noEmit"],
+          "cwd": "frontend"
+        },
+        {
+          "name": "frontend-tests",
+          "command": ["npm", "run", "test"],
+          "cwd": "frontend"
+        },
+        {
+          "name": "frontend-build",
+          "command": ["npm", "run", "build"],
+          "cwd": "frontend"
+        }
+      ]
+    }
+  }
+}
