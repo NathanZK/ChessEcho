@@ -1,7 +1,7 @@
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { soundService, playSound, isSoundEnabled, setSoundEnabled, toggleSound, SoundService } from '../services/soundService';
+import { soundService, playSound, isSoundEnabled, setSoundEnabled, toggleSound } from '../services/soundService';
 import { BoardControls } from '../components/BoardControls';
 import { ChessBoardArea } from '../components/ChessBoardArea';
 

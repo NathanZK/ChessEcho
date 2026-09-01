@@ -5,7 +5,7 @@ import { ExternalLink, X } from 'lucide-react';
 import { convertTo6chessUrl } from '../utils/urlUtils';
 
 interface HistoricalGamesModalProps {
-  urls: string[];
+  urls: string[] | null;
   onClose: () => void;
   username?: string;
 }

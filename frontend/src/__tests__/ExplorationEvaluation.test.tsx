@@ -422,12 +422,12 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
   });
 
   it('10. Stale / delayed evaluation does not overwrite if board moved or was reset', async () => {
-    let resolveDelayedEval: (value: any) => void = () => {};
-    const delayedEvalPromise = new Promise((resolve) => {
+    let resolveDelayedEval: (value: api.MoveEvaluationResponse | null) => void = () => {};
+    const delayedEvalPromise = new Promise<api.MoveEvaluationResponse | null>((resolve) => {
       resolveDelayedEval = resolve;
     });
 
-    vi.mocked(api.evaluateMove).mockImplementationOnce(() => delayedEvalPromise as any);
+    vi.mocked(api.evaluateMove).mockImplementationOnce(() => delayedEvalPromise);
 
     render(<Home />);
     await waitFor(() => screen.getByText('+0.30'));
@@ -543,7 +543,7 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
       if (moveSan === 'd6') {
         return { fen, move: 'd6', bestMove: 'a6', bestEvalCp: 80, evalCp: 80, evalLoss: 0.25, maxEvalLoss: 0.8, threshold: 0.8, acceptable: true };
       }
-      return null as any;
+      return null;
     });
 
     fireEvent.change(input, { target: { value: 'a6, a6, d6' } });
@@ -570,7 +570,7 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
       if (moveSan === 'Nge7') {
         return { fen, move: 'Nge7', bestMove: 'a6', bestEvalCp: 80, evalCp: 80, evalLoss: 0.20, maxEvalLoss: 0.8, threshold: 0.8, acceptable: true };
       }
-      return null as any;
+      return null;
     });
 
     // Submitting a new batch
@@ -595,9 +595,9 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
           candidates: [
             { move: 'Ba4', resultingFen: 'r1bqkbnr/1ppp1ppp/p1n5/4p3/B3P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 1 4', providerType: 'ENGINE', evalLoss: 0.0 }
           ],
-        } as any;
+        } as api.ContinuationResponse;
       }
-      return { fen, candidates: [] } as any;
+      return { fen, requestedMode: 'ENGINE', effectiveProvider: 'ENGINE', candidates: [] };
     });
 
     fireEvent.click(a6Button);
@@ -619,7 +619,7 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
         { move: 'a6', resultingFen: 'fen_a6', providerType: 'ENGINE', evalLoss: 0.15 },
         { move: 'Nf6', resultingFen: 'fen_Nf6', providerType: 'ENGINE', evalLoss: 0.18 },
       ],
-    } as any);
+    });
 
     render(<Home />);
     await waitFor(() => screen.getByText('+0.30'));
@@ -637,12 +637,12 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
 
     vi.mocked(api.evaluateMove).mockImplementation(async (fen, moveSan) => {
       if (moveSan === 'a6') {
-        return { fen, move: 'a6', bestMove: 'a6', bestEvalCp: 80, evalCp: 80, evalLoss: 0.15, maxEvalLoss: 0.8, threshold: 0.8, acceptable: true, color: 'b' } as any;
+        return { fen, move: 'a6', bestMove: 'a6', bestEvalCp: 80, evalCp: 80, evalLoss: 0.15, maxEvalLoss: 0.8, threshold: 0.8, acceptable: true, color: 'b' } as api.MoveEvaluationResponse;
       }
       if (moveSan === 'Nf6') {
-        return { fen, move: 'Nf6', bestMove: 'a6', bestEvalCp: 80, evalCp: 80, evalLoss: 0.18, maxEvalLoss: 0.8, threshold: 0.8, acceptable: true, color: 'b' } as any;
+        return { fen, move: 'Nf6', bestMove: 'a6', bestEvalCp: 80, evalCp: 80, evalLoss: 0.18, maxEvalLoss: 0.8, threshold: 0.8, acceptable: true, color: 'b' } as api.MoveEvaluationResponse;
       }
-      return null as any;
+      return null;
     });
 
     // 2. Candidate discovery
@@ -673,7 +673,7 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
     // 5. Calculating several plies in branch A
     vi.mocked(api.evaluateMove).mockResolvedValueOnce({
       fen: 'r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3', move: 'Ba4', bestMove: 'Ba4', bestEvalCp: 120, evalCp: 120, evalLoss: 0.0, maxEvalLoss: 0.8, threshold: 0.8, acceptable: true, color: 'w'
-    } as any);
+    } as api.MoveEvaluationResponse);
 
     const calcInput = screen.getByPlaceholderText(/SAN input/i);
     fireEvent.change(calcInput, { target: { value: 'Ba4' } });
@@ -708,7 +708,7 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
     // 8. Calculating ply in branch B
     vi.mocked(api.evaluateMove).mockResolvedValueOnce({
       fen: 'r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3', move: 'd4', bestMove: 'd4', bestEvalCp: 120, evalCp: 120, evalLoss: 0.0, maxEvalLoss: 0.8, threshold: 0.8, acceptable: true, color: 'w'
-    } as any);
+    } as api.MoveEvaluationResponse);
     fireEvent.change(screen.getByPlaceholderText(/SAN input/i), { target: { value: 'd4' } });
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
 

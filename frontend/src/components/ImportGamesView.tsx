@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useSyncExternalStore } from 'react';
 import { Download, CheckCircle2, Clock, Calendar, Play } from 'lucide-react';
 
 import { startImportJob, pollJobStatus, JobStatusResponse } from '../services/api';
+import { activeJobStore } from '../utils/browserStores';
 import { MonthPicker } from './MonthPicker';
 
 interface ImportGamesViewProps {
@@ -27,57 +28,40 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
 
-  const [activeJob, setActiveJob] = useState<JobStatusResponse | null>(null);
+  const activeJob = useSyncExternalStore(
+    activeJobStore.subscribe,
+    activeJobStore.getSnapshot,
+    activeJobStore.getServerSnapshot
+  );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [pollingError, setPollingError] = useState<string | null>(null);
 
   // Sync username input if connectedUsername changes
-  React.useEffect(() => {
+  const [trackedConnectedUsername, setTrackedConnectedUsername] = useState(connectedUsername);
+  if (trackedConnectedUsername !== connectedUsername) {
+    setTrackedConnectedUsername(connectedUsername);
     if (connectedUsername) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setUsername(connectedUsername);
     }
-  }, [connectedUsername]);
-
-  // Restore saved activeJob from localStorage after client mount to prevent SSR hydration error
-  React.useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const savedUser = localStorage.getItem('chessecho_username');
-      if (savedUser) {
-        const saved = localStorage.getItem('chessecho_active_job');
-        if (saved) {
-          try {
-            // eslint-disable-next-line react-hooks/set-state-in-effect
-            setActiveJob(JSON.parse(saved));
-          } catch {
-            // invalid JSON
-          }
-        }
-      } else {
-        localStorage.removeItem('chessecho_active_job');
-      }
-    }
-  }, []);
+  }
 
   const updateActiveJob = (job: JobStatusResponse | null) => {
-    setActiveJob(job);
+    activeJobStore.set(job);
     if (onJobStatusUpdate) {
       onJobStatusUpdate(job);
     }
-    if (typeof window !== 'undefined') {
-      if (job) {
-        localStorage.setItem('chessecho_active_job', JSON.stringify(job));
-      } else {
-        localStorage.removeItem('chessecho_active_job');
-      }
-    }
   };
+
+  const updateActiveJobRef = React.useRef(updateActiveJob);
+  React.useEffect(() => {
+    updateActiveJobRef.current = updateActiveJob;
+  });
 
   // Clear activeJob if user explicitly disconnects
   const prevUserRef = React.useRef(connectedUsername);
   React.useEffect(() => {
     if (prevUserRef.current && !connectedUsername) {
-      updateActiveJob(null);
+      updateActiveJobRef.current(null);
     }
     prevUserRef.current = connectedUsername;
   }, [connectedUsername]);
@@ -90,7 +74,7 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
     const interval = setInterval(async () => {
       try {
         const statusUpdate = await pollJobStatus(activeJob.jobId);
-        updateActiveJob(statusUpdate);
+        updateActiveJobRef.current(statusUpdate);
         setPollingError(null);
         if (statusUpdate.status === 'COMPLETED' || statusUpdate.status === 'FAILED') {
           if (statusUpdate.status === 'COMPLETED') {
@@ -106,7 +90,7 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
         console.error('Error polling import job status:', err);
         if (msg.includes('404')) {
           clearInterval(interval);
-          updateActiveJob(null);
+          updateActiveJobRef.current(null);
           setErrorMessage('Previous import job is no longer available. You can start a new import.');
           setPollingError(null);
         } else {

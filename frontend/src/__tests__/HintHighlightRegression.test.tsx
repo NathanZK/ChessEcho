@@ -4,18 +4,34 @@ import '@testing-library/jest-dom';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import { ChessBoardArea } from '../components/ChessBoardArea';
 
-let capturedOptions: any = {};
+type MockChessboardOptions = {
+  position: string;
+  squareStyles: Record<string, React.CSSProperties>;
+  onPieceDrop: (args: { sourceSquare: string; targetSquare: string }) => boolean;
+  allowDragging: boolean;
+};
+
+type MockChessboardProps = { options?: MockChessboardOptions };
+
+const emptyMockOptions: MockChessboardOptions = {
+  position: '',
+  squareStyles: {},
+  onPieceDrop: () => false,
+  allowDragging: false,
+};
+
+let capturedOptions: MockChessboardOptions = emptyMockOptions;
 
 vi.mock('react-chessboard', () => ({
-  Chessboard: (props: any) => {
-    capturedOptions = props.options || {};
+  Chessboard: (props: MockChessboardProps) => {
+    capturedOptions = props.options || emptyMockOptions;
     return <div data-testid="mock-chessboard" />;
   },
 }));
 
 describe('Task 2 — Hint Highlight State Regression Test', () => {
   beforeEach(() => {
-    capturedOptions = {};
+    capturedOptions = emptyMockOptions;
     vi.restoreAllMocks();
   });
 
