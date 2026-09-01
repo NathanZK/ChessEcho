@@ -118,6 +118,7 @@ class ArchiveSynchronizationTest {
         val job1Completed = waitForJob(job1.id)
         assertEquals(1, job1Completed.gamesImported)
         assertEquals(0, job1Completed.gamesSkipped)
+        assertEquals(1, job1Completed.gamesProcessed)
 
         val account = chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "syncuser")!!
         val archivesInDb = importedArchiveRepository.findByChessAccount(account)
@@ -133,6 +134,7 @@ class ArchiveSynchronizationTest {
         val job2Completed = waitForJob(job2.id)
         assertEquals(0, job2Completed.gamesImported)
         assertEquals(1, job2Completed.gamesSkipped, "Historical archive gameCount must be added to gamesSkipped on second import")
+        assertEquals(1, job2Completed.gamesProcessed, "Historical archive gameCount must be processed exactly once")
 
         // Verify that pastMonthUrl was ONLY requested on the first run, and SKIPPED on the second run!
         verify(chessComClient, times(1)).fetchMonthlyGames(pastMonthUrl)

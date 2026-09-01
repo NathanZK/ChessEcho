@@ -66,6 +66,7 @@ describe('Issue 98 — import job restore and polling', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -174,5 +175,267 @@ describe('Issue 98 — import job restore and polling', () => {
     expect(vi.mocked(api.pollJobStatus).mock.calls.length).toBe(pollCount);
 
     vi.useRealTimers();
+  });
+
+  it('keeps polling through analysis and stops when analysis becomes terminal', async () => {
+    vi.useFakeTimers();
+    const processingJob: api.JobStatusResponse = {
+      jobId: 'job-analysis-1',
+      status: 'PROCESSING',
+      gamesImported: 10,
+      gamesSkipped: 0,
+    };
+    localStorage.setItem('chessecho_username', 'player1');
+    localStorage.setItem('chessecho_active_job', JSON.stringify(processingJob));
+
+    vi.mocked(api.pollJobStatus)
+      .mockResolvedValueOnce({
+        ...processingJob,
+        status: 'COMPLETED',
+        gamesImported: 20,
+        analysisStatus: 'ANALYZING',
+      })
+      .mockResolvedValueOnce({
+        ...processingJob,
+        status: 'COMPLETED',
+        gamesImported: 20,
+        analysisStatus: 'ANALYZING',
+      })
+      .mockResolvedValueOnce({
+        ...processingJob,
+        status: 'COMPLETED',
+        gamesImported: 20,
+        analysisStatus: 'COMPLETED',
+      });
+
+    render(<ImportGamesView connectedUsername="player1" />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(api.pollJobStatus).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(api.pollJobStatus).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(api.pollJobStatus).toHaveBeenCalledTimes(3);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4000);
+    });
+    expect(api.pollJobStatus).toHaveBeenCalledTimes(3);
+  });
+
+  it('resumes polling a persisted completed import while analysis is running', async () => {
+    vi.useFakeTimers();
+    const analyzingJob = {
+      jobId: 'job-analysis-resume',
+      status: 'COMPLETED' as const,
+      gamesImported: 120,
+      gamesSkipped: 5,
+      analysisStatus: 'ANALYZING' as const,
+    };
+    localStorage.setItem('chessecho_username', 'hikaru');
+    localStorage.setItem('chessecho_active_job', JSON.stringify(analyzingJob));
+    vi.mocked(api.pollJobStatus).mockResolvedValue({
+      ...analyzingJob,
+      analysisStatus: 'COMPLETED',
+    });
+
+    render(<ImportGamesView connectedUsername="hikaru" />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+
+    expect(api.pollJobStatus).toHaveBeenCalledTimes(1);
+    expect(api.pollJobStatus).toHaveBeenCalledWith('job-analysis-resume');
+  });
+
+  it('notifies import completion exactly once while analysis polling continues', async () => {
+    vi.useFakeTimers();
+    const processingJob: api.JobStatusResponse = {
+      jobId: 'job-exactly-once',
+      status: 'PROCESSING',
+      gamesImported: 0,
+      gamesSkipped: 0,
+    };
+    localStorage.setItem('chessecho_username', 'newplayer');
+    localStorage.setItem('chessecho_active_job', JSON.stringify(processingJob));
+    const onImportStarted = vi.fn();
+
+    vi.mocked(api.pollJobStatus)
+      .mockResolvedValueOnce({
+        ...processingJob,
+        status: 'COMPLETED',
+        gamesImported: 42,
+        analysisStatus: 'ANALYZING',
+      })
+      .mockResolvedValueOnce({
+        ...processingJob,
+        status: 'COMPLETED',
+        gamesImported: 42,
+        analysisStatus: 'ANALYZING',
+      })
+      .mockResolvedValueOnce({
+        ...processingJob,
+        status: 'COMPLETED',
+        gamesImported: 42,
+        analysisStatus: 'COMPLETED',
+      });
+
+    render(
+      <ImportGamesView
+        connectedUsername="newplayer"
+        onImportStarted={onImportStarted}
+      />
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(onImportStarted).toHaveBeenCalledTimes(1);
+    expect(onImportStarted).toHaveBeenCalledWith('newplayer');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(onImportStarted).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(onImportStarted).toHaveBeenCalledTimes(1);
+  });
+
+  it('notifies import completion once for a legacy response without analysisStatus', async () => {
+    vi.useFakeTimers();
+    const processingJob: api.JobStatusResponse = {
+      jobId: 'job-legacy-completion',
+      status: 'PROCESSING',
+      gamesImported: 10,
+      gamesSkipped: 0,
+    };
+    localStorage.setItem('chessecho_username', 'legacyplayer');
+    localStorage.setItem('chessecho_active_job', JSON.stringify(processingJob));
+    const onImportStarted = vi.fn();
+    vi.mocked(api.pollJobStatus).mockResolvedValueOnce({
+      ...processingJob,
+      status: 'COMPLETED',
+      gamesImported: 42,
+    });
+
+    render(
+      <ImportGamesView
+        connectedUsername="legacyplayer"
+        onImportStarted={onImportStarted}
+      />
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(onImportStarted).toHaveBeenCalledTimes(1);
+    expect(onImportStarted).toHaveBeenCalledWith('legacyplayer');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4000);
+    });
+    expect(onImportStarted).toHaveBeenCalledTimes(1);
+    expect(api.pollJobStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not repeat completion notification after reload during analysis', async () => {
+    vi.useFakeTimers();
+    const analyzingJob = {
+      jobId: 'job-reloaded-analysis',
+      status: 'COMPLETED' as const,
+      gamesImported: 42,
+      gamesSkipped: 0,
+      analysisStatus: 'ANALYZING' as const,
+    };
+    localStorage.setItem('chessecho_username', 'reloadedplayer');
+    localStorage.setItem('chessecho_active_job', JSON.stringify(analyzingJob));
+    const onImportStarted = vi.fn();
+    vi.mocked(api.pollJobStatus).mockResolvedValueOnce({
+      ...analyzingJob,
+      analysisStatus: 'COMPLETED',
+    });
+
+    render(
+      <ImportGamesView
+        connectedUsername="reloadedplayer"
+        onImportStarted={onImportStarted}
+      />
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+
+    expect(api.pollJobStatus).toHaveBeenCalledTimes(1);
+    expect(onImportStarted).not.toHaveBeenCalled();
+  });
+
+  it('renders meaningful totals-free progress with processed outcome distinctions', () => {
+    const job = {
+      jobId: 'job-unknown-total',
+      status: 'PROCESSING' as const,
+      gamesImported: 1200,
+      gamesSkipped: 200,
+      gamesProcessed: 1470,
+      analysisStatus: 'NOT_STARTED' as const,
+    };
+    localStorage.setItem('chessecho_username', 'hikaru');
+    localStorage.setItem('chessecho_active_job', JSON.stringify(job));
+
+    render(<ImportGamesView connectedUsername="hikaru" />);
+
+    const importedLabel = screen.getByText(/^Imported$/i);
+    const skippedLabel = screen.getByText(/^Already imported$/i);
+    const processedLabel = screen.getByText(/^Processed$/i);
+    expect(importedLabel.nextElementSibling).toHaveTextContent('1,200');
+    expect(skippedLabel.nextElementSibling).toHaveTextContent('200');
+    expect(processedLabel.nextElementSibling).toHaveTextContent('1,470');
+    expect(screen.getByText(/^Imported 1,?200 games$/i)).toBeInTheDocument();
+    expect(screen.queryByText(/^Filtered$/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/1,?470\s*\/\s*\d+/)).not.toBeInTheDocument();
+  });
+
+  it('distinguishes analyzing, completed, and failed analysis from completed import', async () => {
+    const analyzingJob = {
+      jobId: 'job-analysis-ui',
+      status: 'COMPLETED' as const,
+      gamesImported: 120,
+      gamesSkipped: 5,
+      analysisStatus: 'ANALYZING' as const,
+    };
+    localStorage.setItem('chessecho_username', 'hikaru');
+    localStorage.setItem('chessecho_active_job', JSON.stringify(analyzingJob));
+    const { activeJobStore } = await loadBrowserStores();
+
+    render(<ImportGamesView connectedUsername="hikaru" />);
+
+    expect(screen.getByText(/Import Completed Successfully!/i)).toBeInTheDocument();
+    expect(screen.getByText(/Stockfish is analyzing/i)).toBeInTheDocument();
+
+    act(() => {
+      activeJobStore.set({ ...analyzingJob, analysisStatus: 'COMPLETED' });
+    });
+    expect(screen.getByText(/Analysis complete/i)).toBeInTheDocument();
+
+    act(() => {
+      activeJobStore.set({
+        ...analyzingJob,
+        analysisStatus: 'FAILED',
+      });
+    });
+    expect(screen.getByText(/Analysis failed/i)).toBeInTheDocument();
+    expect(screen.getByText(/Import Completed Successfully!/i)).toBeInTheDocument();
   });
 });

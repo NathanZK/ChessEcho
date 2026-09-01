@@ -57,6 +57,10 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
     updateActiveJobRef.current = updateActiveJob;
   });
 
+  const prevPolledJobRef = React.useRef<{ jobId: string; status: string } | null>(
+    activeJob ? { jobId: activeJob.jobId, status: activeJob.status } : null
+  );
+
   // Clear activeJob if user explicitly disconnects
   const prevUserRef = React.useRef(connectedUsername);
   React.useEffect(() => {
@@ -68,21 +72,37 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
 
   // Resume polling on mount or tab change if activeJob is still processing
   React.useEffect(() => {
-    if (!activeJob || (activeJob.status !== 'QUEUED' && activeJob.status !== 'PROCESSING')) {
+    const isImportActive = activeJob?.status === 'QUEUED' || activeJob?.status === 'PROCESSING';
+    const isAnalysisInFlight =
+      activeJob?.status === 'COMPLETED' && activeJob?.analysisStatus === 'ANALYZING';
+    if (!activeJob || !(isImportActive || isAnalysisInFlight)) {
       return;
     }
     const interval = setInterval(async () => {
       try {
         const statusUpdate = await pollJobStatus(activeJob.jobId);
         updateActiveJobRef.current(statusUpdate);
-        setPollingError(null);
-        if (statusUpdate.status === 'COMPLETED' || statusUpdate.status === 'FAILED') {
-          if (statusUpdate.status === 'COMPLETED') {
-            const effectiveUser = username.trim() || connectedUsername;
-            if (onImportStarted && effectiveUser) {
-              onImportStarted(effectiveUser);
-            }
+        const previousJob = prevPolledJobRef.current;
+        const justCompletedImport =
+          statusUpdate.status === 'COMPLETED' &&
+          (!previousJob ||
+            previousJob.jobId !== statusUpdate.jobId ||
+            previousJob.status !== 'COMPLETED');
+        prevPolledJobRef.current = {
+          jobId: statusUpdate.jobId,
+          status: statusUpdate.status,
+        };
+        if (justCompletedImport) {
+          const effectiveUser = username.trim() || connectedUsername;
+          if (onImportStarted && effectiveUser) {
+            onImportStarted(effectiveUser);
           }
+        }
+        setPollingError(null);
+        if (
+          statusUpdate.status === 'FAILED' ||
+          (statusUpdate.status === 'COMPLETED' && statusUpdate.analysisStatus !== 'ANALYZING')
+        ) {
           clearInterval(interval);
         }
       } catch (err: unknown) {
@@ -370,19 +390,32 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                   <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
                     <span className="text-[10px] text-slate-400">Imported</span>
                     <div className="text-sm font-bold text-emerald-400 mt-0.5 font-mono">
-                      {activeJob.gamesImported}
+                      {activeJob.gamesImported.toLocaleString()}
                     </div>
                   </div>
 
                   <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
                     <span className="text-[10px] text-slate-400">Already imported</span>
                     <div className="text-sm font-bold text-slate-300 mt-0.5 font-mono">
-                      {activeJob.gamesSkipped}
+                      {activeJob.gamesSkipped.toLocaleString()}
+                    </div>
+                  </div>
+
+                  <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
+                    <span className="text-[10px] text-slate-400">Processed</span>
+                    <div className="text-sm font-bold text-sky-300 mt-0.5 font-mono">
+                      {(activeJob.gamesProcessed ?? 0).toLocaleString()}
                     </div>
                   </div>
                 </div>
 
-
+                {activeJob.gamesProcessed != null && (
+                  <div className="space-y-1 text-[11px] text-slate-300">
+                    <p className="font-mono font-semibold text-white">
+                      {`Imported ${activeJob.gamesImported.toLocaleString()} games`}
+                    </p>
+                  </div>
+                )}
 
                 {activeJob.status === 'COMPLETED' && (
                   <div className="p-4 bg-emerald-950/40 border border-emerald-500/40 rounded-xl space-y-3">
@@ -390,9 +423,21 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                       <CheckCircle2 className="w-4 h-4 text-emerald-400" />
                       <span>Import Completed Successfully!</span>
                     </div>
-                    <p className="text-[11px] text-slate-300">
-                      Your games have been imported into the database and board positions extracted. Stockfish is continuously analyzing candidate positions in the background.
-                    </p>
+                    <div className="text-[11px] text-slate-300">
+                      {activeJob.analysisStatus === 'ANALYZING' ? (
+                        <p>Stockfish is analyzing candidate positions in the background.</p>
+                      ) : activeJob.analysisStatus === 'COMPLETED' ? (
+                        <p>Analysis complete.</p>
+                      ) : activeJob.analysisStatus === 'FAILED' ? (
+                        <p className="font-semibold text-rose-300">Analysis failed.</p>
+                      ) : (
+                        <p>
+                          Your games have been imported into the database and board positions
+                          extracted. Stockfish is continuously analyzing candidate positions in the
+                          background.
+                        </p>
+                      )}
+                    </div>
                     <div className="flex items-center gap-2 pt-1">
                       <button
                         type="button"
