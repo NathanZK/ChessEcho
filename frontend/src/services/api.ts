@@ -111,6 +111,30 @@ export async function evaluateMove(
 }
 
 
+/**
+ * Fetches [url] and returns its body as a JSON array, throwing on any load
+ * failure so callers can distinguish a genuine failure from an empty success.
+ *
+ * A load failure is a non-2xx response, a network error (the underlying fetch
+ * rejects, which propagates unchanged), an unparseable body, or a 2xx body that
+ * is not the expected JSON array. This mirrors the throwing convention of
+ * `startImportJob`/`pollJobStatus`; a successful empty result still resolves `[]`.
+ */
+async function fetchJsonArray<T>(url: string, resource: string): Promise<T[]> {
+  const response = await fetch(url);
+
+  if (!response.ok) {
+    throw new Error(`Failed to load ${resource}: ${response.status}`);
+  }
+
+  const data = await response.json();
+  if (!Array.isArray(data)) {
+    throw new Error(`Failed to load ${resource}: unexpected response body`);
+  }
+
+  return data as T[];
+}
+
 export async function fetchPuzzles(
   username: string,
   platform: string = 'CHESS_COM',
@@ -121,35 +145,26 @@ export async function fetchPuzzles(
   page: number = 0
 ): Promise<Puzzle[]> {
   if (!username) return [];
-  try {
-    const formattedPlatform = platform.toUpperCase();
-    const formattedColor = playerColor.toUpperCase();
-    const url = `${API_BASE_URL}/puzzles?platform=${encodeURIComponent(formattedPlatform)}&username=${encodeURIComponent(username)}&playerColor=${encodeURIComponent(formattedColor)}&minEvalLoss=${minEvalLoss}&minMistakeCount=${minMistakeCount}&limit=${limit}&page=${page}`;
-    const response = await fetch(url);
 
-    if (!response.ok) {
-      return [];
-    }
+  const formattedPlatform = platform.toUpperCase();
+  const formattedColor = playerColor.toUpperCase();
+  const url = `${API_BASE_URL}/puzzles?platform=${encodeURIComponent(formattedPlatform)}&username=${encodeURIComponent(username)}&playerColor=${encodeURIComponent(formattedColor)}&minEvalLoss=${minEvalLoss}&minMistakeCount=${minMistakeCount}&limit=${limit}&page=${page}`;
 
-    const data: Puzzle[] = await response.json();
-    if (!Array.isArray(data)) return [];
+  const data = await fetchJsonArray<Puzzle>(url, 'puzzles');
 
-    return data.map((item, idx) => {
-      const fenTurn = item.fen ? item.fen.split(' ')[1] : undefined;
-      const playerColor: 'WHITE' | 'BLACK' =
-        fenTurn === 'b' ? 'BLACK' : fenTurn === 'w' ? 'WHITE' : (item.playerColor === 'BLACK' ? 'BLACK' : 'WHITE');
+  return data.map((item, idx) => {
+    const fenTurn = item.fen ? item.fen.split(' ')[1] : undefined;
+    const playerColor: 'WHITE' | 'BLACK' =
+      fenTurn === 'b' ? 'BLACK' : fenTurn === 'w' ? 'WHITE' : (item.playerColor === 'BLACK' ? 'BLACK' : 'WHITE');
 
-      return {
-        ...item,
-        playerColor,
-        openingTitle: item.openingTitle || `Weakness Position #${idx + 1}`,
-        evalCp: item.evalCp ?? 35,
-        gameUrls: item.gameUrls || [],
-      };
-    });
-  } catch {
-    return [];
-  }
+    return {
+      ...item,
+      playerColor,
+      openingTitle: item.openingTitle || `Weakness Position #${idx + 1}`,
+      evalCp: item.evalCp ?? 35,
+      gameUrls: item.gameUrls || [],
+    };
+  });
 }
 
 export async function fetchWeaknesses(
@@ -162,21 +177,12 @@ export async function fetchWeaknesses(
   size: number = 20
 ): Promise<WeaknessResponse[]> {
   if (!username) return [];
-  try {
-    const formattedPlatform = platform.toUpperCase();
-    const formattedColor = playerColor.toUpperCase();
-    const url = `${API_BASE_URL}/positions/weaknesses?platform=${encodeURIComponent(formattedPlatform)}&username=${encodeURIComponent(username)}&playerColor=${encodeURIComponent(formattedColor)}&minEvalLoss=${minEvalLoss}&minMistakeCount=${minMistakeCount}&page=${page}&size=${size}`;
-    const response = await fetch(url);
 
-    if (!response.ok) {
-      return [];
-    }
+  const formattedPlatform = platform.toUpperCase();
+  const formattedColor = playerColor.toUpperCase();
+  const url = `${API_BASE_URL}/positions/weaknesses?platform=${encodeURIComponent(formattedPlatform)}&username=${encodeURIComponent(username)}&playerColor=${encodeURIComponent(formattedColor)}&minEvalLoss=${minEvalLoss}&minMistakeCount=${minMistakeCount}&page=${page}&size=${size}`;
 
-    const data = await response.json();
-    return Array.isArray(data) ? data : [];
-  } catch {
-    return [];
-  }
+  return await fetchJsonArray<WeaknessResponse>(url, 'weaknesses');
 }
 
 

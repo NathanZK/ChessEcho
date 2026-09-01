@@ -58,24 +58,43 @@ export default function Home() {
     }
   };
 
-  const handleSetUsername = (user: string | undefined) => {
-    activeUsernameStore.set(user);
-  };
-
   const [weaknessCount, setWeaknessCount] = useState<number>(0);
-
-  const handleDisconnect = () => {
-    handleSetUsername(undefined);
-    setPuzzlesList([]);
-    setActivePuzzle(null);
-    setWeaknessCount(0);
-  };
-
 
   const [puzzlesList, setPuzzlesList] = useState<Puzzle[]>([]);
   const [currentPuzzleIndex, setCurrentPuzzleIndex] = useState<number>(0);
   const [activePuzzle, setActivePuzzle] = useState<Puzzle | null>(null);
   const [isLoadingPuzzles, setIsLoadingPuzzles] = useState<boolean>(true);
+  const [puzzleLoadError, setPuzzleLoadError] = useState<boolean>(false);
+  const [puzzleReloadToken, setPuzzleReloadToken] = useState<number>(0);
+  // Monotonic puzzle-load generation. A completion applies its effects (data/error
+  // setters, the loading flag, and the prefetch lock) only while it still owns the
+  // current generation, so a stale/superseded load can never mutate the live UI.
+  const puzzleLoadSeqRef = React.useRef<number>(0);
+
+  const invalidatePuzzleRequests = () => {
+    puzzleLoadSeqRef.current++;
+    setIsFetchingMorePuzzles(false);
+  };
+
+  const handleSetUsername = (user: string | undefined) => {
+    if (user !== activeUsername) {
+      invalidatePuzzleRequests();
+    }
+    activeUsernameStore.set(user);
+  };
+
+  const handleDisconnect = () => {
+    handleSetUsername(undefined);
+    setPuzzlesList([]);
+    setCurrentPuzzleIndex(0);
+    setActivePuzzle(null);
+    setPuzzleLoadError(false);
+    setIsLoadingPuzzles(false);
+    setPuzzlePage(0);
+    setHasMorePuzzles(false);
+    setIsFetchingMorePuzzles(false);
+    setWeaknessCount(0);
+  };
 
   // Explicit client initialization gate to prevent hydration mismatch and double-fetch
   const [isSettingsInitialized, setIsSettingsInitialized] = useState<boolean>(false);
@@ -117,6 +136,7 @@ export default function Home() {
   }
 
   const handleMinEvalLossChange = (val: number) => {
+    invalidatePuzzleRequests();
     setMinEvalLoss(val);
     if (typeof window !== 'undefined') {
       localStorage.setItem('chessecho_min_eval_loss', String(val));
@@ -124,6 +144,7 @@ export default function Home() {
   };
 
   const handleMinMistakeCountChange = (val: number) => {
+    invalidatePuzzleRequests();
     setMinMistakeCount(val);
     if (typeof window !== 'undefined') {
       localStorage.setItem('chessecho_min_mistake_count', String(val));
@@ -131,6 +152,7 @@ export default function Home() {
   };
 
   const handleColorFilterChange = (color: 'BOTH' | 'WHITE' | 'BLACK') => {
+    invalidatePuzzleRequests();
     setPuzzleColorFilter(color);
     if (typeof window !== 'undefined') {
       localStorage.setItem('chessecho_puzzle_color_filter', color);
@@ -541,12 +563,14 @@ export default function Home() {
       if (!activeUsername) {
         setPuzzlesList([]);
         setActivePuzzle(null);
+        setPuzzleLoadError(false);
         setFeedback({ status: 'IDLE' });
         setMoveHistory([]);
         setHintSquare(undefined);
         setIsLoadingPuzzles(false);
         setPuzzlePage(0);
         setHasMorePuzzles(false);
+        setIsFetchingMorePuzzles(false);
       }
     }
   }
@@ -555,11 +579,15 @@ export default function Home() {
     if (!isSettingsInitialized || !activeUsername) {
       return;
     }
+    const requestSequence = puzzleLoadSeqRef;
 
     async function loadData() {
+      const seq = ++puzzleLoadSeqRef.current;
       setIsLoadingPuzzles(true);
+      setPuzzleLoadError(false);
       setPuzzlePage(0);
       setHasMorePuzzles(true);
+      setIsFetchingMorePuzzles(false);
       try {
         const data = await fetchPuzzles(
           activeUsername!,
@@ -570,6 +598,8 @@ export default function Home() {
           10,
           0
         );
+
+        if (seq !== puzzleLoadSeqRef.current) return;
 
         if (data && data.length > 0) {
           setPuzzlesList(data);
@@ -589,7 +619,9 @@ export default function Home() {
           setWeaknessCount(0);
         }
       } catch (err) {
+        if (seq !== puzzleLoadSeqRef.current) return;
         console.error('Failed to load puzzles from backend API:', err);
+        setPuzzleLoadError(true);
         setPuzzlesList([]);
         setActivePuzzle(null);
         setFeedback({ status: 'IDLE' });
@@ -597,17 +629,30 @@ export default function Home() {
         setHintSquare(undefined);
         setHasMorePuzzles(false);
       } finally {
-        setIsLoadingPuzzles(false);
+        if (seq === puzzleLoadSeqRef.current) {
+          setIsLoadingPuzzles(false);
+        }
       }
     }
     loadData();
-  }, [isSettingsInitialized, activeUsername, puzzleColorFilter, minEvalLoss, minMistakeCount]);
+    return () => {
+      requestSequence.current++;
+    };
+  }, [isSettingsInitialized, activeUsername, puzzleColorFilter, minEvalLoss, minMistakeCount, puzzleReloadToken]);
+
+  const handleRetryPuzzleLoad = () => {
+    invalidatePuzzleRequests();
+    setPuzzleReloadToken((token) => token + 1);
+  };
 
   const handleApplyPuzzleSettings = async () => {
     if (!activeUsername) return;
+    const seq = ++puzzleLoadSeqRef.current;
     setIsLoadingPuzzles(true);
+    setPuzzleLoadError(false);
     setPuzzlePage(0);
     setHasMorePuzzles(true);
+    setIsFetchingMorePuzzles(false);
     try {
       const data = await fetchPuzzles(
         activeUsername,
@@ -618,6 +663,8 @@ export default function Home() {
         10,
         0
       );
+
+      if (seq !== puzzleLoadSeqRef.current) return;
 
       if (data && data.length > 0) {
         setPuzzlesList(data);
@@ -642,7 +689,9 @@ export default function Home() {
         }
       }
     } catch (err) {
+      if (seq !== puzzleLoadSeqRef.current) return;
       console.error('Failed to apply puzzle settings:', err);
+      setPuzzleLoadError(true);
       setPuzzlesList([]);
       setActivePuzzle(null);
       setFeedback({ status: 'IDLE' });
@@ -650,7 +699,9 @@ export default function Home() {
       setHintSquare(undefined);
       setHasMorePuzzles(false);
     } finally {
-      setIsLoadingPuzzles(false);
+      if (seq === puzzleLoadSeqRef.current) {
+        setIsLoadingPuzzles(false);
+      }
     }
   };
 
@@ -686,6 +737,10 @@ export default function Home() {
       !isFetchingMorePuzzles &&
       nextIndex >= puzzlesList.length - 2
     ) {
+      // Capture (do not bump) the current generation: a prefetch belongs to the
+      // active load, so a superseding load (which bumps the generation) makes this
+      // prefetch stale and a total no-op on completion, including the lock release.
+      const seq = puzzleLoadSeqRef.current;
       setIsFetchingMorePuzzles(true);
       const nextPage = puzzlePage + 1;
       try {
@@ -698,6 +753,8 @@ export default function Home() {
           10,
           nextPage
         );
+
+        if (seq !== puzzleLoadSeqRef.current) return;
 
         if (data && data.length > 0) {
           setPuzzlesList((prev) => {
@@ -713,10 +770,15 @@ export default function Home() {
           setHasMorePuzzles(false);
         }
       } catch (err) {
+        if (seq !== puzzleLoadSeqRef.current) return;
+        // Background prefetch failure must stay retryable: do NOT mark the list as
+        // terminally exhausted and do not discard already-rendered puzzles, so the
+        // next navigation can re-attempt the same page.
         console.error('Failed to prefetch next puzzle page:', err);
-        setHasMorePuzzles(false);
       } finally {
-        setIsFetchingMorePuzzles(false);
+        if (seq === puzzleLoadSeqRef.current) {
+          setIsFetchingMorePuzzles(false);
+        }
       }
     }
   };
@@ -1157,6 +1219,24 @@ export default function Home() {
                     <div className="w-5 h-5 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
                     <span className="text-xs font-bold text-slate-300">Loading Practice Puzzles...</span>
                   </div>
+                </div>
+              ) : puzzleLoadError ? (
+                <div className="py-16 text-center space-y-4 max-w-lg mx-auto bg-slate-900/60 p-8 rounded-2xl border border-rose-900/50 shadow-xl">
+                  <div className="w-14 h-14 rounded-2xl bg-rose-950/60 border border-rose-800 flex items-center justify-center mx-auto text-rose-400">
+                    <span className="text-3xl font-bold">!</span>
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-white">Couldn&apos;t Load Puzzles</h3>
+                    <p className="text-xs text-rose-300 mt-1">
+                      We couldn&apos;t load your puzzles. Please try again.
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleRetryPuzzleLoad}
+                    className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-xl transition inline-flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <span>Retry</span>
+                  </button>
                 </div>
               ) : !activePuzzle ? (
                 <div className="py-16 text-center space-y-4 max-w-lg mx-auto bg-slate-900/60 p-8 rounded-2xl border border-slate-800 shadow-xl">

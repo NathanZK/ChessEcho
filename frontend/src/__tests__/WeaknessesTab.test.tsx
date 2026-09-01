@@ -146,14 +146,18 @@ describe('Weaknesses Tab MVP', () => {
       });
     });
 
-    it('renders error state when API call fails', async () => {
+    it('renders error state (not the empty state) when API call fails', async () => {
       vi.mocked(api.fetchWeaknesses).mockRejectedValue(new Error('Network error'));
 
       render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
 
       await waitFor(() => {
-        expect(screen.getByText('Failed to Load Weaknesses')).toBeInTheDocument();
+        expect(screen.getByText(/We couldn't load your weaknesses/i)).toBeInTheDocument();
       });
+
+      // A failed load must be distinguished from an empty successful result.
+      expect(screen.queryByText('No Recurring Weaknesses Found')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Retry/i })).toBeInTheDocument();
     });
 
     it('renders real weakness card with evidence metrics without displaying raw priority value', async () => {
