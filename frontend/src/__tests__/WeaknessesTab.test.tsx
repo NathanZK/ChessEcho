@@ -37,8 +37,13 @@ const mockWeaknessItem: WeaknessResponse = {
   bestMove: 'Nc6',
   acceptableMoves: [{ move: 'Nf6', evalLoss: 0.1 }],
   movesPlayed: [
-    { move: 'Bc5', timesPlayed: 4, averageLoss: 1.3 },
-    { move: 'f5', timesPlayed: 1, averageLoss: 1.05 },
+    {
+      move: 'Bc5',
+      timesPlayed: 4,
+      averageLoss: 1.3,
+      resultingFen: 'r1bqk1nr/pppp1ppp/2n5/2b1p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3',
+    },
+    { move: 'f5', timesPlayed: 1, averageLoss: 1.05, resultingFen: null },
   ],
   gameUrls: [
     'https://www.chess.com/game/live/10001',
@@ -291,6 +296,42 @@ describe('Weaknesses Tab MVP', () => {
       expect(adaptedPuzzle.puzzleId).toBe('w-pos-123');
       expect(adaptedPuzzle.targetMove).toBe('Nc6');
       expect(adaptedPuzzle.playerColor).toBe('BLACK');
+    });
+
+    it('exposes decision exploration only for moves with a resulting FEN and preserves Practice Position', async () => {
+      const onExploreDecision = vi.fn();
+      const onSelectPractice = vi.fn();
+      render(
+        <WeaknessesList
+          username="hikaru"
+          onSelectPractice={onSelectPractice}
+          onExploreDecision={onExploreDecision}
+        />
+      );
+
+      const exploreButtons = await screen.findAllByRole('button', { name: /Explore this decision/i });
+      expect(exploreButtons).toHaveLength(1);
+      expect(screen.getByText(/Bc5 \(4x, -1\.30 pawns\)/i)).toBeInTheDocument();
+      expect(screen.getByText(/f5 \(1x, -1\.05 pawns\)/i)).toBeInTheDocument();
+
+      fireEvent.click(exploreButtons[0]);
+
+      expect(onExploreDecision).toHaveBeenCalledTimes(1);
+      expect(onExploreDecision).toHaveBeenCalledWith(
+        expect.objectContaining({
+          puzzleId: mockWeaknessItem.positionId,
+          fen: mockWeaknessItem.fen,
+          playerColor: 'BLACK',
+          movesPlayed: mockWeaknessItem.movesPlayed,
+        }),
+        mockWeaknessItem.movesPlayed[0]
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /Practice Position/i }));
+      expect(onSelectPractice).toHaveBeenCalledWith(
+        expect.objectContaining({ puzzleId: mockWeaknessItem.positionId, fen: mockWeaknessItem.fen }),
+        expect.any(Array)
+      );
     });
 
     it('maintains persistent sentinel element in DOM and appends page 1', async () => {

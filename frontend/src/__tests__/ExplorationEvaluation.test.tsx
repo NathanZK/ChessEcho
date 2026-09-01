@@ -1,15 +1,16 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import Home from '../app/page';
 import { toWhitePerspective } from '../services/api';
 import * as api from '../services/api';
 import { continuationService, moveEvaluationService } from '../services/continuationService';
 import { Puzzle } from '../mock/mockData';
+import * as sound from '../services/soundService';
 
 vi.mock('react-chessboard', () => ({
-  Chessboard: ({ options }: { options: { onPieceDrop: (args: { sourceSquare: string; targetSquare: string }) => boolean } }) => (
-    <div data-testid="mock-chessboard">
+  Chessboard: ({ options }: { options: { position: string; onPieceDrop: (args: { sourceSquare: string; targetSquare: string }) => boolean } }) => (
+    <div data-testid="mock-chessboard" data-position={options.position}>
       <button
         data-testid="simulate-puzzle-move-white"
         onClick={() => {
@@ -57,6 +58,16 @@ vi.mock('../services/api', async () => {
 });
 
 describe('Line Exploration Evaluation & EvalBar Updates', () => {
+  const deferred = <T,>() => {
+    let resolve!: (value: T) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  };
+
   const mockPuzzleWhite: Puzzle = {
     puzzleId: 'puzzle-white-1',
     fen: 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3',
@@ -460,6 +471,92 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
     // EvalBar must remain at +0.30 and not be overwritten by stale -0.80
     await new Promise((r) => setTimeout(r, 50));
     expect(screen.getByText('+0.30')).toBeInTheDocument();
+  });
+
+  it('10b. unmount invalidates delayed evaluation resolve and reject effects', async () => {
+    const resolvingEvaluation = deferred<api.MoveEvaluationResponse | null>();
+    vi.mocked(api.evaluateMove).mockReturnValueOnce(resolvingEvaluation.promise);
+
+    const first = render(<Home />);
+    await waitFor(() => screen.getByText('+0.30'));
+    fireEvent.click(screen.getByTestId('simulate-puzzle-move-white'));
+    await waitFor(() => screen.getByRole('button', { name: /Continue Exploration/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
+    fireEvent.click(screen.getByRole('button', { name: /vs ChessEcho/i }));
+    fireEvent.click(screen.getByTestId('simulate-expl-move-black'));
+    expect(api.evaluateMove).toHaveBeenCalledTimes(1);
+    first.unmount();
+    vi.mocked(sound.playSound).mockClear();
+
+    await act(async () => {
+      resolvingEvaluation.resolve({
+        fen: mockPuzzleWhite.fen,
+        move: 'a6',
+        bestMove: 'a6',
+        bestEvalCp: 80,
+        evalCp: 80,
+        evalLoss: 0,
+        maxEvalLoss: 0.8,
+        threshold: 0.8,
+        acceptable: true,
+      });
+    });
+    expect(sound.playSound).not.toHaveBeenCalled();
+
+    moveEvaluationService.clear();
+    vi.mocked(api.fetchPuzzles).mockResolvedValue([mockPuzzleWhite]);
+    const rejectingEvaluation = deferred<api.MoveEvaluationResponse | null>();
+    vi.mocked(api.evaluateMove).mockReturnValueOnce(rejectingEvaluation.promise);
+    const second = render(<Home />);
+    await waitFor(() => screen.getByText('+0.30'));
+    fireEvent.click(screen.getByTestId('simulate-puzzle-move-white'));
+    await waitFor(() => screen.getByRole('button', { name: /Continue Exploration/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
+    fireEvent.click(screen.getByRole('button', { name: /vs ChessEcho/i }));
+    fireEvent.click(screen.getByTestId('simulate-expl-move-black'));
+    second.unmount();
+    vi.mocked(sound.playSound).mockClear();
+
+    await act(async () => {
+      rejectingEvaluation.reject(new Error('late evaluation failure'));
+    });
+    expect(sound.playSound).not.toHaveBeenCalled();
+  });
+
+  it('10c. replacing the Home puzzle baseline invalidates delayed evaluation rejection', async () => {
+    const replacementPuzzle: Puzzle = {
+      ...mockPuzzleWhite,
+      puzzleId: 'replacement-puzzle',
+      fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+      evalCp: -25,
+    };
+    vi.mocked(api.fetchPuzzles).mockResolvedValue([mockPuzzleWhite, replacementPuzzle]);
+    const delayedEvaluation = deferred<api.MoveEvaluationResponse | null>();
+    vi.mocked(api.evaluateMove).mockReturnValueOnce(delayedEvaluation.promise);
+
+    render(<Home />);
+    await waitFor(() => screen.getByText('+0.30'));
+    fireEvent.click(screen.getByTestId('simulate-puzzle-move-white'));
+    await waitFor(() => screen.getByRole('button', { name: /Continue Exploration/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
+    fireEvent.click(screen.getByRole('button', { name: /vs ChessEcho/i }));
+    fireEvent.click(screen.getByTestId('simulate-expl-move-black'));
+
+    fireEvent.click(screen.getByTitle('Next Puzzle'));
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-chessboard')).toHaveAttribute('data-position', replacementPuzzle.fen);
+      expect(screen.getByText('-0.25')).toBeInTheDocument();
+    });
+    vi.mocked(sound.playSound).mockClear();
+
+    await act(async () => {
+      delayedEvaluation.reject(new Error('stale replacement failure'));
+    });
+
+    expect(screen.getByTestId('mock-chessboard')).toHaveAttribute('data-position', replacementPuzzle.fen);
+    expect(screen.getByText('-0.25')).toBeInTheDocument();
+    expect(screen.queryByText(/Evaluation failed|too inaccurate/i)).not.toBeInTheDocument();
+    expect(sound.playSound).not.toHaveBeenCalled();
   });
 
   it('11. Manual exploration on the board without Continue Exploration remains locked', async () => {

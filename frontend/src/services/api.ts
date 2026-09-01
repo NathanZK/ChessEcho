@@ -27,7 +27,7 @@ export interface WeaknessResponse {
   priority: number;
   bestMove?: string;
   acceptableMoves: Array<{ move: string; evalLoss: number }>;
-  movesPlayed: Array<{ move: string; timesPlayed: number; averageLoss: number }>;
+  movesPlayed: Array<{ move: string; timesPlayed: number; averageLoss: number; resultingFen?: string | null }>;
   gameUrls: string[];
   evalCp?: number;
   lastSeenAt?: string;
@@ -230,4 +230,3 @@ export async function pollJobStatus(jobId: string): Promise<JobStatusResponse> {
 
   return await response.json();
 }
-

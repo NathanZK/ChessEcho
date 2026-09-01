@@ -192,7 +192,8 @@ curl "http://localhost:8080/api/positions/weaknesses?platform=CHESS_COM&username
       {
         "move": "d3",
         "timesPlayed": 4,
-        "averageLoss": 1.2
+        "averageLoss": 1.2,
+        "resultingFen": "rnbqkbnr/pppp1ppp/8/4P3/8/8/PPP1PPPP/RNBQKBNR b KQkq - 0 2"
       }
     ],
     "gameUrls": [
@@ -202,6 +203,9 @@ curl "http://localhost:8080/api/positions/weaknesses?platform=CHESS_COM&username
   }
 ]
 ```
+
+`movesPlayed.resultingFen` is nullable. It contains the position after the historical
+SAN move when that move can be safely applied to the source FEN; otherwise it is `null`.
 
 ---
 
@@ -243,7 +247,8 @@ curl "http://localhost:8080/api/puzzles?platform=CHESS_COM&username=magnuscarlse
       {
         "move": "d3",
         "timesPlayed": 4,
-        "averageLoss": 1.2
+        "averageLoss": 1.2,
+        "resultingFen": null
       }
     ],
     "priority": 4.8,
@@ -365,5 +370,3 @@ Returned when the specified position FEN is invalid or the attempted move is ill
   ]
 }
 ```
-
-

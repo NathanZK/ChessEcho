@@ -83,6 +83,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
 }) => {
   const [game, setGame] = useState<Chess>(new Chess(initialFen));
   const currentBoardFenRef = useRef<string>(initialFen);
+  const evaluationGenerationRef = useRef(0);
   const [fenHistory, setFenHistory] = useState<string[]>([initialFen]);
   const [historyIndex, setHistoryIndex] = useState<number>(0);
   const [customSquareStyles, setCustomSquareStyles] = useState<Record<string, React.CSSProperties>>({});
@@ -91,6 +92,14 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   useEffect(() => {
     currentBoardFenRef.current = game.fen();
   }, [game]);
+
+  useLayoutEffect(() => {
+    const evaluationGeneration = evaluationGenerationRef;
+    evaluationGeneration.current++;
+    return () => {
+      evaluationGeneration.current++;
+    };
+  }, [initialFen]);
 
   // Latest-callback refs, declared before every consumer
   const onFenChangeRef = useRef(onFenChange);
@@ -265,10 +274,13 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
         setCustomSquareStyles({});
         currentBoardFenRef.current = nextFen;
         setGame(gameCopy);
+        const evaluationGeneration = ++evaluationGenerationRef.current;
 
         moveEvaluationService.evaluateMove(currentFen, moveSan).then((res) => {
-          // Stale evaluation guard: verify board has not moved or reset while request was in flight
-          if (currentBoardFenRef.current !== nextFen) {
+          if (
+            evaluationGenerationRef.current !== evaluationGeneration ||
+            currentBoardFenRef.current !== nextFen
+          ) {
             return;
           }
 
@@ -327,8 +339,10 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
             onUnacceptableMove?.("Evaluation failed. Please try again.");
           }
         }).catch(() => {
-          // Stale evaluation guard: verify board has not moved or reset
-          if (currentBoardFenRef.current !== nextFen) {
+          if (
+            evaluationGenerationRef.current !== evaluationGeneration ||
+            currentBoardFenRef.current !== nextFen
+          ) {
             return;
           }
           // Fallback if network/evaluation fails: accept move
@@ -447,6 +461,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   }, []);
 
   const handleReset = () => {
+    evaluationGenerationRef.current++;
     const resetGame = new Chess(initialFen);
     currentBoardFenRef.current = initialFen;
     setGame(resetGame);
@@ -484,7 +499,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
       <div className="rounded-2xl overflow-hidden shadow-2xl border border-slate-800 bg-slate-900 p-2">
         <Chessboard
           options={{
-            position: game.fen(),
+            position: game.fen() === new Chess(initialFen).fen() ? initialFen : game.fen(),
             boardOrientation: orientation,
             darkSquareStyle: { backgroundColor: '#769656' },
             lightSquareStyle: { backgroundColor: '#eeeed2' },

@@ -7,7 +7,7 @@ import { ChessBoardArea } from '@/components/ChessBoardArea';
 import { PuzzleFeedbackPanel, type ChallengeSubmissionResult } from '@/components/PuzzleFeedbackPanel';
 import { WeaknessesList } from '@/components/WeaknessesList';
 import { ImportGamesView } from '@/components/ImportGamesView';
-import { Puzzle } from '@/mock/mockData';
+import { MoveBreakdown, Puzzle } from '@/mock/mockData';
 import { fetchPuzzles, JobStatusResponse, ContinuationMode, ContinuationCandidate, ExplorationPlayMode, toWhitePerspective, fetchPuzzleContinuation } from '@/services/api';
 import { soundService } from '@/services/soundService';
 import { usePuzzleContinuation } from '@/utils/usePuzzleContinuation';
@@ -61,8 +61,14 @@ export default function Home() {
   const [weaknessCount, setWeaknessCount] = useState<number>(0);
 
   const [puzzlesList, setPuzzlesList] = useState<Puzzle[]>([]);
+  const puzzlesBeforeLibraryPracticeRef = React.useRef<Puzzle[]>([]);
   const [currentPuzzleIndex, setCurrentPuzzleIndex] = useState<number>(0);
   const [activePuzzle, setActivePuzzle] = useState<Puzzle | null>(null);
+  const [investigatedDecision, setInvestigatedDecision] = useState<{
+    sourcePuzzle: Puzzle;
+    resultingFen: string;
+    decision: MoveBreakdown;
+  } | null>(null);
   const [isLoadingPuzzles, setIsLoadingPuzzles] = useState<boolean>(true);
   const [puzzleLoadError, setPuzzleLoadError] = useState<boolean>(false);
   const [puzzleReloadToken, setPuzzleReloadToken] = useState<number>(0);
@@ -94,6 +100,10 @@ export default function Home() {
     setHasMorePuzzles(false);
     setIsFetchingMorePuzzles(false);
     setWeaknessCount(0);
+    setInvestigatedDecision(null);
+    setIsExplorationActive(false);
+    setExplorationPlayMode(undefined);
+    setRequestedContinuationFen(undefined);
   };
 
   // Explicit client initialization gate to prevent hydration mismatch and double-fetch
@@ -380,6 +390,22 @@ export default function Home() {
     }
   };
 
+  const clearContinuationSelection = () => {
+    setPendingContinuationCandidate(null);
+    setLastContinuationCandidates(null);
+    setAlternativeContinuationToApply(null);
+  };
+
+  const handleContinuationModeChange = (mode: ContinuationMode) => {
+    clearContinuationSelection();
+    setContinuationMode(mode);
+  };
+
+  const handleOpponentRatingBandChange = (band: string) => {
+    clearContinuationSelection();
+    setOpponentRatingBand(band);
+  };
+
   const handleAlternativeSelected = (candidate: ContinuationCandidate) => {
     if (!lastContinuationCandidates) return;
     const parentFen = lastContinuationCandidates.parentFen;
@@ -459,16 +485,19 @@ export default function Home() {
     setRequestedContinuationFen(undefined);
   };
 
-  const handleEnterExploration = (initialMode?: ExplorationPlayMode) => {
+  const initializeExploration = (
+    puzzle: Puzzle,
+    baselineFen: string,
+    baselineEval: number,
+    baselineUnknown: boolean,
+    initialMode?: ExplorationPlayMode
+  ) => {
     setIsExplorationActive(true);
     setExplorationPlayMode(initialMode);
-    const baselineFen = currentBoardFen || activePuzzle?.fen || '';
-    const baselineEval = currentEvalCp;
-    const baselineUnknown = isEvalUnknown;
 
     const initialMap: Record<string, { evalCp: number; isUnknown: boolean }> = {};
-    if (activePuzzle?.fen) {
-      initialMap[activePuzzle.fen] = { evalCp: activePuzzle.evalCp ?? 35, isUnknown: false };
+    if (puzzle.fen) {
+      initialMap[puzzle.fen] = { evalCp: puzzle.evalCp ?? 35, isUnknown: false };
     }
     if (baselineFen) {
       initialMap[baselineFen] = { evalCp: baselineEval, isUnknown: baselineUnknown };
@@ -488,9 +517,21 @@ export default function Home() {
     setAlternativeContinuationToApply(null);
     setChallengeBranchesByFen({});
     setChallengeActiveCandidateByFen({});
-      };
+  };
+
+  const handleEnterExploration = (initialMode?: ExplorationPlayMode) => {
+    if (!activePuzzle) return;
+    initializeExploration(
+      activePuzzle,
+      currentBoardFen || activePuzzle.fen,
+      currentEvalCp,
+      isEvalUnknown,
+      initialMode
+    );
+  };
 
   const handleExitExploration = () => {
+    const decisionContext = investigatedDecision;
     setIsExplorationActive(false);
     setExplorationPlayMode(undefined);
     setRequestedContinuationFen(undefined);
@@ -501,7 +542,12 @@ export default function Home() {
     setExplorationEvalMap({});
     setChallengeBranchesByFen({});
     setChallengeActiveCandidateByFen({});
-        setFeedback({ status: 'CORRECT', lastMove: activePuzzle?.targetMove });
+    if (decisionContext) {
+      setInvestigatedDecision(null);
+      resetPuzzleInteractionState(decisionContext.sourcePuzzle);
+    } else {
+      setFeedback({ status: 'CORRECT', lastMove: activePuzzle?.targetMove });
+    }
   };
 
   const handleUnacceptableMove = (message?: string | null) => {
@@ -516,6 +562,7 @@ export default function Home() {
   };
 
   const resetPuzzleInteractionState = (puzzle: Puzzle) => {
+    setInvestigatedDecision(null);
     const initialEval = puzzle.evalCp ?? 35;
     setCurrentEvalCp(initialEval);
     setEvalHistory([initialEval]);
@@ -535,7 +582,8 @@ export default function Home() {
     setExplorationEvalMap({});
     setChallengeBranchesByFen({});
     setChallengeActiveCandidateByFen({});
-      };
+    setExplorationPlayMode(undefined);
+  };
 
   const [puzzlePage, setPuzzlePage] = useState<number>(0);
   const [hasMorePuzzles, setHasMorePuzzles] = useState<boolean>(true);
@@ -788,6 +836,7 @@ export default function Home() {
     let targetIdx = -1;
 
     if (fullList && fullList.length > 0) {
+      puzzlesBeforeLibraryPracticeRef.current = puzzlesList;
       targetList = fullList;
       setPuzzlesList(fullList);
       targetIdx = fullList.findIndex((p) => p.puzzleId === puzzle.puzzleId);
@@ -816,6 +865,38 @@ export default function Home() {
     if (typeof window !== 'undefined' && selectedPuzzle) {
       localStorage.setItem('chessecho_puzzle_id', selectedPuzzle.puzzleId);
     }
+    changeTab('puzzles');
+  };
+
+  const handleExploreDecision = (puzzle: Puzzle, decision: MoveBreakdown) => {
+    if (!decision.resultingFen) return;
+
+    invalidatePuzzleRequests();
+    setIsLoadingPuzzles(false);
+    setPuzzleLoadError(false);
+    setActivePuzzle(puzzle);
+    if (puzzlesBeforeLibraryPracticeRef.current.length > 0) {
+      setPuzzlesList(puzzlesBeforeLibraryPracticeRef.current);
+      setCurrentPuzzleIndex(0);
+      puzzlesBeforeLibraryPracticeRef.current = [];
+    }
+    resetPuzzleInteractionState(puzzle);
+
+    const sourceEval = puzzle.evalCp ?? 35;
+    const lossCp = Math.round(decision.averageLoss * 100);
+    const resultingEval = puzzle.playerColor === 'BLACK'
+      ? sourceEval + lossCp
+      : sourceEval - lossCp;
+    const context = {
+      sourcePuzzle: puzzle,
+      resultingFen: decision.resultingFen,
+      decision,
+    };
+
+    setInvestigatedDecision(context);
+    setCurrentBoardFen(decision.resultingFen);
+    setCurrentEvalCp(resultingEval);
+    initializeExploration(puzzle, decision.resultingFen, resultingEval, false);
     changeTab('puzzles');
   };
 
@@ -855,6 +936,7 @@ export default function Home() {
   };
 
   const handleBoardReset = () => {
+    const decisionContext = investigatedDecision;
     setRequestedContinuationFen(undefined);
     setPendingContinuationCandidate(null);
     setIsExplorationActive(false);
@@ -870,6 +952,11 @@ export default function Home() {
     const firstFeedback = feedbackHistory[0];
     setFeedback(firstFeedback ?? { status: 'IDLE' });
     setIsEvalUnknown(false);
+    setExplorationPlayMode(undefined);
+    if (decisionContext) {
+      setInvestigatedDecision(null);
+      resetPuzzleInteractionState(decisionContext.sourcePuzzle);
+    }
   };
 
   const handleMoveAttempt = (
@@ -1275,7 +1362,7 @@ export default function Home() {
                 {/* Center Interactive Chessboard & Controls */}
                 <div className="w-full max-w-[640px] 2xl:max-w-[680px] shrink-0">
                   <ChessBoardArea
-                    initialFen={activePuzzle.fen}
+                    initialFen={investigatedDecision?.resultingFen ?? activePuzzle.fen}
                     playerColor={activePuzzle.playerColor}
                     boardOrientation={isBoardFlipped ? (activePuzzle.playerColor === 'WHITE' ? 'black' : 'white') : (activePuzzle.playerColor === 'WHITE' ? 'white' : 'black')}
                     targetMove={activePuzzle.targetMove}
@@ -1323,12 +1410,13 @@ export default function Home() {
                     onApplySettings={handleApplyPuzzleSettings}
                     username={activeUsername}
                     isExplorationActive={isExplorationActive}
+                    investigatedDecision={investigatedDecision?.decision}
                     onEnterExploration={handleEnterExploration}
                     onExitExploration={handleExitExploration}
                     continuationMode={continuationMode}
-                    onContinuationModeChange={setContinuationMode}
+                    onContinuationModeChange={handleContinuationModeChange}
                     opponentRatingBand={opponentRatingBand}
-                    onOpponentRatingBandChange={setOpponentRatingBand}
+                    onOpponentRatingBandChange={handleOpponentRatingBandChange}
                     explorationPlayMode={explorationPlayMode}
                     onExplorationPlayModeChange={handleExplorationPlayModeChange}
                     sideToMove={sideToMove}
@@ -1373,6 +1461,7 @@ export default function Home() {
             minMistakeCount={minMistakeCount}
             onMinMistakeCountChange={handleMinMistakeCountChange}
             onSelectPractice={handleSelectPracticeFromLibrary}
+            onExploreDecision={handleExploreDecision}
             onWeaknessCountChange={setWeaknessCount}
             activeColorFilter={puzzleColorFilter === 'BOTH' ? 'ALL' : puzzleColorFilter}
             onColorFilterChange={(c) => handleColorFilterChange(c === 'ALL' ? 'BOTH' : c)}

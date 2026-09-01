@@ -1,9 +1,28 @@
 import React from 'react';
 import { renderHook, act } from '@testing-library/react';
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { usePuzzleContinuation } from '../utils/usePuzzleContinuation';
 import { continuationService } from '../services/continuationService';
 import * as api from '../services/api';
+
+const reducerDispatchObserver = vi.hoisted(() => ({
+  current: null as null | ((action: unknown) => void),
+}));
+
+vi.mock('react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react')>();
+  return {
+    ...actual,
+    useReducer: (reducer: React.Reducer<unknown, unknown>, initialState: unknown) => {
+      const [state, dispatch] = actual.useReducer(reducer, initialState);
+      const observedDispatch = actual.useCallback((action: unknown) => {
+        reducerDispatchObserver.current?.(action);
+        dispatch(action);
+      }, [dispatch]);
+      return [state, observedDispatch];
+    },
+  };
+});
 
 vi.mock('../services/api', async () => {
   const actual = await vi.importActual<typeof import('../services/api')>('../services/api');
@@ -39,9 +58,25 @@ describe('Issue 98 — continuation loading state and request ownership', () => 
   const pendingForever = (): Promise<api.ContinuationResponse | null> =>
     new Promise<api.ContinuationResponse | null>(() => {});
 
+  const deferred = <T,>() => {
+    let resolve!: (value: T) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  };
+
   beforeEach(() => {
     continuationService.clear();
     vi.clearAllMocks();
+    reducerDispatchObserver.current = null;
+  });
+
+  afterEach(() => {
+    reducerDispatchObserver.current = null;
+    vi.restoreAllMocks();
   });
 
   it('T10 — loading is true in the first committed render when an initialFen is supplied', () => {
@@ -330,5 +365,206 @@ describe('Issue 98 — continuation loading state and request ownership', () => 
     expect(vi.mocked(api.fetchPuzzleContinuation)).toHaveBeenCalledTimes(2);
     expect(vi.mocked(api.fetchPuzzleContinuation).mock.calls.map((call) => call[0])).toEqual([fen1, fen2]);
     expect(result.current.response?.fen).toBe(fen2);
+  });
+
+  it('orders same-FEN declarative ENGINE, HUMAN, and rating requests by generation', async () => {
+    const engine = deferred<api.ContinuationResponse | null>();
+    const humanDefault = deferred<api.ContinuationResponse | null>();
+    const humanNewBand = deferred<api.ContinuationResponse | null>();
+    const newestResponse = responseFor(fen1, 'HUMAN', 'HUMAN');
+    newestResponse.candidates = [
+      { move: 'Nf6', resultingFen: `${fen1}_newest`, providerType: 'HUMAN', timesPlayed: 8 },
+    ];
+
+    vi.mocked(api.fetchPuzzleContinuation)
+      .mockReturnValueOnce(engine.promise)
+      .mockReturnValueOnce(humanDefault.promise)
+      .mockReturnValueOnce(humanNewBand.promise);
+
+    const commits: string[] = [];
+    const { result, rerender } = renderHook(
+      ({ mode, ratingBand }: { mode: api.ContinuationMode; ratingBand?: string }) => {
+        const continuation = usePuzzleContinuation(fen1, mode, undefined, ratingBand);
+        React.useEffect(() => {
+          commits.push(JSON.stringify({
+            loading: continuation.loading,
+            error: continuation.error,
+            provider: continuation.effectiveProvider,
+            move: continuation.selectedCandidate?.move,
+          }));
+        });
+        return continuation;
+      },
+      { initialProps: { mode: 'ENGINE' as api.ContinuationMode, ratingBand: undefined as string | undefined } }
+    );
+
+    rerender({ mode: 'HUMAN', ratingBand: undefined });
+    rerender({ mode: 'HUMAN', ratingBand: '1600-1800' });
+
+    expect(vi.mocked(api.fetchPuzzleContinuation).mock.calls).toEqual([
+      [fen1, 'ENGINE', undefined],
+      [fen1, 'HUMAN', undefined],
+      [fen1, 'HUMAN', '1600-1800'],
+    ]);
+    expect(result.current.loading).toBe(true);
+
+    await act(async () => {
+      humanNewBand.resolve(newestResponse);
+    });
+
+    expect(result.current.response).toBe(newestResponse);
+    expect(result.current.selectedCandidate?.move).toBe('Nf6');
+    expect(result.current.effectiveProvider).toBe('HUMAN');
+    expect(result.current.loading).toBe(false);
+    expect(result.current.error).toBe(false);
+    const commitsAfterNewest = commits.length;
+
+    await act(async () => {
+      engine.resolve(responseFor(fen1, 'ENGINE', 'ENGINE'));
+    });
+    await act(async () => {
+      humanDefault.reject(new Error('stale HUMAN request failed'));
+    });
+
+    expect(result.current.response).toBe(newestResponse);
+    expect(result.current.selectedCandidate?.resultingFen).toBe(`${fen1}_newest`);
+    expect(result.current.effectiveProvider).toBe('HUMAN');
+    expect(result.current.loading).toBe(false);
+    expect(result.current.error).toBe(false);
+    expect(commits).toHaveLength(commitsAfterNewest);
+  });
+
+  it('orders policy-only same-FEN requests by their complete request generation', async () => {
+    const staleSuccess = deferred<api.ContinuationResponse | null>();
+    const staleFailure = deferred<api.ContinuationResponse | null>();
+    const newest = deferred<api.ContinuationResponse | null>();
+    const firstPolicy = vi.fn((candidates: api.ContinuationCandidate[]) => candidates[0] ?? null);
+    const secondPolicy = vi.fn((candidates: api.ContinuationCandidate[]) => candidates[0] ?? null);
+    const newestPolicy = vi.fn((candidates: api.ContinuationCandidate[]) => candidates[1] ?? null);
+    const serviceSpy = vi.spyOn(continuationService, 'getContinuation');
+    const sharedResponse: api.ContinuationResponse = {
+      fen: fen1,
+      requestedMode: 'HUMAN',
+      effectiveProvider: 'HUMAN',
+      candidates: [
+        { move: 'Nf6', resultingFen: `${fen1}_stale`, providerType: 'HUMAN', timesPlayed: 10 },
+        { move: 'd6', resultingFen: `${fen1}_newest`, providerType: 'HUMAN', timesPlayed: 5 },
+      ],
+    };
+
+    vi.mocked(api.fetchPuzzleContinuation)
+      .mockReturnValueOnce(staleSuccess.promise)
+      .mockReturnValueOnce(staleFailure.promise)
+      .mockReturnValueOnce(newest.promise);
+
+    const commits: string[] = [];
+    const { result, rerender } = renderHook(
+      ({ policy }: { policy: typeof firstPolicy }) => {
+        const continuation = usePuzzleContinuation(fen1, 'HUMAN', policy, '1600-1800');
+        React.useEffect(() => {
+          commits.push(JSON.stringify({
+            loading: continuation.loading,
+            error: continuation.error,
+            move: continuation.selectedCandidate?.move,
+          }));
+        });
+        return continuation;
+      },
+      { initialProps: { policy: firstPolicy } }
+    );
+
+    rerender({ policy: secondPolicy });
+    rerender({ policy: newestPolicy });
+
+    expect(serviceSpy.mock.calls).toEqual([
+      [fen1, 'HUMAN', firstPolicy, '1600-1800'],
+      [fen1, 'HUMAN', secondPolicy, '1600-1800'],
+      [fen1, 'HUMAN', newestPolicy, '1600-1800'],
+    ]);
+    expect(vi.mocked(api.fetchPuzzleContinuation).mock.calls).toEqual([
+      [fen1, 'HUMAN', '1600-1800'],
+      [fen1, 'HUMAN', '1600-1800'],
+      [fen1, 'HUMAN', '1600-1800'],
+    ]);
+
+    await act(async () => {
+      newest.resolve(sharedResponse);
+    });
+
+    expect(result.current.response).toBe(sharedResponse);
+    expect(result.current.selectedCandidate?.move).toBe('d6');
+    expect(result.current.selectedCandidate?.resultingFen).toBe(`${fen1}_newest`);
+    expect(result.current.loading).toBe(false);
+    expect(result.current.error).toBe(false);
+    const commitsAfterNewest = commits.length;
+
+    await act(async () => {
+      staleSuccess.resolve(sharedResponse);
+    });
+    await act(async () => {
+      staleFailure.reject(new Error('stale policy request failed'));
+    });
+
+    expect(result.current.response).toBe(sharedResponse);
+    expect(result.current.selectedCandidate?.move).toBe('d6');
+    expect(result.current.loading).toBe(false);
+    expect(result.current.error).toBe(false);
+    expect(commits).toHaveLength(commitsAfterNewest);
+    serviceSpy.mockRestore();
+  });
+
+  it('invalidates same-FEN settlements when cleared', async () => {
+    const clearingRequest = deferred<api.ContinuationResponse | null>();
+    vi.mocked(api.fetchPuzzleContinuation).mockReturnValueOnce(clearingRequest.promise);
+    const clearCommits: number[] = [];
+    const cleared = renderHook(
+      ({ fen }: { fen?: string }) => {
+        const continuation = usePuzzleContinuation(fen, 'ENGINE');
+        React.useEffect(() => {
+          clearCommits.push(1);
+        });
+        return continuation;
+      },
+      { initialProps: { fen: fen1 as string | undefined } }
+    );
+
+    cleared.rerender({ fen: undefined });
+    expect(cleared.result.current.response).toBeNull();
+    expect(cleared.result.current.loading).toBe(false);
+    const commitsAfterClear = clearCommits.length;
+
+    await act(async () => {
+      clearingRequest.resolve(responseFor(fen1));
+    });
+
+    expect(cleared.result.current.response).toBeNull();
+    expect(cleared.result.current.selectedCandidate).toBeNull();
+    expect(cleared.result.current.loading).toBe(false);
+    expect(cleared.result.current.error).toBe(false);
+    expect(clearCommits).toHaveLength(commitsAfterClear);
+    cleared.unmount();
+  });
+
+  it.each([
+    ['resolve', (request: ReturnType<typeof deferred<api.ContinuationResponse | null>>) =>
+      request.resolve(responseFor(fen1))],
+    ['reject', (request: ReturnType<typeof deferred<api.ContinuationResponse | null>>) =>
+      request.reject(new Error('late unmounted continuation failure'))],
+  ])('invalidates an in-flight continuation before unmount %s settlement can dispatch', async (_, settle) => {
+    continuationService.clear();
+    const unmountRequest = deferred<api.ContinuationResponse | null>();
+    vi.mocked(api.fetchPuzzleContinuation).mockReset();
+    vi.mocked(api.fetchPuzzleContinuation).mockReturnValueOnce(unmountRequest.promise);
+    const mounted = renderHook(() => usePuzzleContinuation(fen1, 'ENGINE'));
+    const postUnmountActions: unknown[] = [];
+    reducerDispatchObserver.current = (action) => postUnmountActions.push(action);
+    mounted.unmount();
+
+    await act(async () => {
+      settle(unmountRequest);
+    });
+
+    expect(postUnmountActions).toEqual([]);
+    reducerDispatchObserver.current = null;
   });
 });

@@ -8,6 +8,7 @@ import com.chessecho.dto.WeaknessResponse
 import com.chessecho.repository.ChessAccountRepository
 import com.chessecho.repository.EngineAnalysisRepository
 import com.chessecho.repository.PositionOccurrenceRepository
+import com.github.bhlangonijr.chesslib.Board
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -168,6 +169,9 @@ class WeaknessCalculationService(
                         .filter { it.averageLoss >= minEvalLoss }
                         .sortedWith(compareByDescending<MoveBreakdown> { it.timesPlayed }.thenByDescending { it.averageLoss })
                         .take(3)
+                        .map { breakdown ->
+                            breakdown.copy(resultingFen = applyHistoricalMove(agg.fen, breakdown.move))
+                        }
 
                 val rawRate = mistakeCount.toDouble() / agg.timesReached
                 val mistakeRatePercentage = kotlin.math.round(rawRate * 10000.0) / 100.0
@@ -215,6 +219,24 @@ class WeaknessCalculationService(
 
         return result
     }
+
+    private fun applyHistoricalMove(
+        fen: String,
+        san: String,
+    ): String? =
+        try {
+            if (san.isBlank()) {
+                null
+            } else {
+                Board().apply {
+                    loadFromFen(fen)
+                }.let { board ->
+                    if (board.doMove(san)) board.fen else null
+                }
+            }
+        } catch (_: Exception) {
+            null
+        }
 
     /**
      * Fallback calculation for evaluation loss if evalLossFromBest is null.

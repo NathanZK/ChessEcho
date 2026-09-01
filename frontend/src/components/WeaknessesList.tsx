@@ -1,10 +1,10 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Target, Flame, Swords, ExternalLink, Filter, AlertCircle, RefreshCw } from 'lucide-react';
+import { Target, Flame, Swords, ExternalLink, Filter, AlertCircle, RefreshCw, Search } from 'lucide-react';
 import { Chessboard } from 'react-chessboard';
 import { fetchWeaknesses, WeaknessResponse } from '../services/api';
-import { Puzzle } from '../mock/mockData';
+import { MoveBreakdown, Puzzle } from '../mock/mockData';
 import { HistoricalGamesModal } from './HistoricalGamesModal';
 
 export function adaptWeaknessToPuzzle(
@@ -62,6 +62,7 @@ interface WeaknessesListProps {
   minMistakeCount?: number;
   onMinMistakeCountChange?: (val: number) => void;
   onSelectPractice: (puzzle: Puzzle, fullList?: Puzzle[]) => void;
+  onExploreDecision?: (puzzle: Puzzle, decision: MoveBreakdown) => void;
   onWeaknessCountChange?: (count: number) => void;
   activeColorFilter?: 'ALL' | 'WHITE' | 'BLACK';
   onColorFilterChange?: (color: 'ALL' | 'WHITE' | 'BLACK') => void;
@@ -78,6 +79,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
   minMistakeCount = 3,
   onMinMistakeCountChange,
   onSelectPractice,
+  onExploreDecision,
   onWeaknessCountChange,
   activeColorFilter,
   onColorFilterChange,
@@ -512,12 +514,24 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                         </div>
                         <div className="flex flex-wrap gap-1.5">
                           {item.movesPlayed.map((m, idx) => (
-                            <span
+                            <div
                               key={idx}
-                              className="px-2 py-1 bg-rose-500/10 border border-rose-500/20 text-rose-300 rounded-lg text-xs font-mono font-semibold"
+                              className="flex items-center gap-1.5"
                             >
-                              {m.move} ({m.timesPlayed}x, -{m.averageLoss.toFixed(2)} pawns)
-                            </span>
+                              <span className="px-2 py-1 bg-rose-500/10 border border-rose-500/20 text-rose-300 rounded-lg text-xs font-mono font-semibold">
+                                {m.move} ({m.timesPlayed}x, -{m.averageLoss.toFixed(2)} pawns)
+                              </span>
+                              {m.resultingFen && onExploreDecision && (
+                                <button
+                                  type="button"
+                                  onClick={() => onExploreDecision(adaptWeaknessToPuzzle(item, playerColor), m)}
+                                  className="px-2 py-1 bg-sky-500/10 border border-sky-500/30 text-sky-300 hover:bg-sky-500/20 rounded-lg text-xs font-semibold transition cursor-pointer flex items-center gap-1"
+                                >
+                                  <Search className="w-3 h-3" />
+                                  <span>Explore this decision</span>
+                                </button>
+                              )}
+                            </div>
                           ))}
                         </div>
                       </div>

@@ -14,6 +14,7 @@ import com.chessecho.repository.EngineAnalysisRepository
 import com.chessecho.repository.PositionOccurrenceRepository
 import com.chessecho.repository.WeaknessAggregation
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -178,6 +179,280 @@ class WeaknessCalculationServiceTest {
         weaknessCalculationService.getWeaknesses(Platform.CHESS_COM, "nathan", PlayerColor.WHITE, minEvalLoss = 0.8)
 
         verify(engineAnalysisRepository, never()).save(any())
+    }
+
+    @Test
+    fun `test retained historical move receives exact resulting fen`() {
+        val account = ChessAccount(user = AppUser(email = "test@test.com"), platform = "CHESS_COM", username = "nathan")
+        val sourceFen = "rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq e6 0 2"
+        val expectedResultingFen = "rnbqkbnr/pppp1ppp/8/4P3/8/8/PPP1PPPP/RNBQKBNR b KQkq - 0 2"
+        val position = Position(hash = "legal-resulting-fen", fen = sourceFen)
+        val occurrences =
+            (1..3).map {
+                PositionOccurrence(
+                    game = mockGame("legal-$it"),
+                    position = position,
+                    chessAccount = account,
+                    plyNumber = 2,
+                    movePlayed = "dxe5",
+                    playerColor = "WHITE",
+                )
+            }
+        val analysis = EngineAnalysis(position = position, depth = 16, baselineEvalCp = 50, bestMove = "e4", bestMoveEvalCp = 50)
+        analysis.moveEvaluations.add(
+            MoveEvaluation(engineAnalysis = analysis, move = "dxe5", evalCp = -150, evalLossFromBest = 2.0),
+        )
+        val aggregation =
+            WeaknessAggregation(
+                positionId = position.id,
+                fen = sourceFen,
+                timesReached = 5,
+                bestMove = "e4",
+                baselineEvalCp = 50,
+                mistakeCount = 3,
+                averageLoss = 2.0,
+                rawTotalLoss = 6.0,
+            )
+
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "nathan")).thenReturn(account)
+        `when`(positionOccurrenceRepository.findWeaknessAggregations(account.id, "WHITE", 0.8, 5, 3))
+            .thenReturn(listOf(aggregation))
+        `when`(
+            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(
+                eq(account.id),
+                eq("WHITE"),
+                any(),
+            ),
+        ).thenReturn(occurrences)
+        `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(any())).thenReturn(listOf(analysis))
+
+        val weakness =
+            weaknessCalculationService.getWeaknesses(
+                Platform.CHESS_COM,
+                "nathan",
+                PlayerColor.WHITE,
+                minEvalLoss = 0.8,
+                minMistakeCount = 3,
+            ).single()
+
+        val breakdown = weakness.movesPlayed.single()
+        assertEquals("dxe5", breakdown.move)
+        assertEquals(3, breakdown.timesPlayed)
+        assertEquals(2.0, breakdown.averageLoss)
+        assertEquals(expectedResultingFen, breakdown.resultingFen)
+    }
+
+    @Test
+    fun `test malformed historical positions and moves retain unchanged breakdowns without resulting fen`() {
+        val account = ChessAccount(user = AppUser(email = "test@test.com"), platform = "CHESS_COM", username = "nathan")
+        val sourceFen = "rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq e6 0 2"
+        val cases =
+            listOf(
+                Triple(Position(hash = "blank-san", fen = sourceFen), "", 3),
+                Triple(Position(hash = "rejected-san", fen = sourceFen), "Qh5", 2),
+                Triple(Position(hash = "invalid-fen", fen = "not a fen"), "dxe5", 1),
+            )
+
+        val occurrences =
+            cases.flatMap { (position, move, count) ->
+                (1..count).map {
+                    PositionOccurrence(
+                        game = mockGame("${position.hash}-$it"),
+                        position = position,
+                        chessAccount = account,
+                        plyNumber = 2,
+                        movePlayed = move,
+                        playerColor = "WHITE",
+                    )
+                }
+            }
+        val analyses =
+            cases.mapIndexed { index, (position, move, _) ->
+                EngineAnalysis(position = position, depth = 16, baselineEvalCp = 100, bestMove = "e4", bestMoveEvalCp = 100)
+                    .also {
+                        it.moveEvaluations.add(
+                            MoveEvaluation(
+                                engineAnalysis = it,
+                                move = move,
+                                evalCp = 0,
+                                evalLossFromBest = 1.0 + index,
+                            ),
+                        )
+                    }
+            }
+        val aggregations =
+            cases.mapIndexed { index, (position, _, count) ->
+                WeaknessAggregation(
+                    positionId = position.id,
+                    fen = position.fen,
+                    timesReached = count + 2,
+                    bestMove = "e4",
+                    baselineEvalCp = 100,
+                    mistakeCount = count.toLong(),
+                    averageLoss = 1.0 + index,
+                    rawTotalLoss = count * (1.0 + index),
+                )
+            }
+
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "nathan")).thenReturn(account)
+        `when`(positionOccurrenceRepository.findWeaknessAggregations(account.id, "WHITE", 0.8, 1, 1))
+            .thenReturn(aggregations)
+        `when`(
+            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(
+                eq(account.id),
+                eq("WHITE"),
+                any(),
+            ),
+        ).thenReturn(occurrences)
+        `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(any())).thenReturn(analyses)
+
+        val weaknesses =
+            weaknessCalculationService.getWeaknesses(
+                Platform.CHESS_COM,
+                "nathan",
+                PlayerColor.WHITE,
+                minEvalLoss = 0.8,
+                minMistakeCount = 1,
+                minTimesReached = 1,
+            )
+        val byPosition = weaknesses.associateBy { it.positionId }
+
+        cases.forEachIndexed { index, (position, move, count) ->
+            val weakness = requireNotNull(byPosition[position.id])
+            val breakdown = weakness.movesPlayed.single()
+            assertEquals(move, breakdown.move)
+            assertEquals(count, breakdown.timesPlayed)
+            assertEquals(1.0 + index, breakdown.averageLoss)
+            assertNull(breakdown.resultingFen)
+        }
+    }
+
+    @Test
+    fun `test resulting fen enrichment preserves weakness order and existing top three breakdown order`() {
+        val account = ChessAccount(user = AppUser(email = "test@test.com"), platform = "CHESS_COM", username = "nathan")
+        val sourceFen = "rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq e6 0 2"
+        val expectedResultingFen = "rnbqkbnr/pppp1ppp/8/4P3/8/8/PPP1PPPP/RNBQKBNR b KQkq - 0 2"
+        val higherPriorityPosition = Position(hash = "ordered-top-three", fen = sourceFen)
+        val lowerPriorityPosition = Position(hash = "lower-priority", fen = sourceFen)
+        val moveCountsAndLosses =
+            listOf(
+                Triple("dxe5", 5, 1.0),
+                Triple("Qh5", 4, 3.0),
+                Triple("Nc3", 4, 2.0),
+                Triple("e3", 3, 4.0),
+            )
+        val higherPriorityOccurrences =
+            moveCountsAndLosses.flatMap { (move, count, _) ->
+                (1..count).map {
+                    PositionOccurrence(
+                        game = mockGame("ordered-$move-$it"),
+                        position = higherPriorityPosition,
+                        chessAccount = account,
+                        plyNumber = 2,
+                        movePlayed = move,
+                        playerColor = "WHITE",
+                    )
+                }
+            }
+        val lowerPriorityOccurrences =
+            listOf(
+                PositionOccurrence(
+                    game = mockGame("lower-priority"),
+                    position = lowerPriorityPosition,
+                    chessAccount = account,
+                    plyNumber = 2,
+                    movePlayed = "dxe5",
+                    playerColor = "WHITE",
+                ),
+            )
+        val higherPriorityAnalysis =
+            EngineAnalysis(
+                position = higherPriorityPosition,
+                depth = 16,
+                baselineEvalCp = 100,
+                bestMove = "e4",
+                bestMoveEvalCp = 100,
+            )
+        moveCountsAndLosses.forEach { (move, _, loss) ->
+            higherPriorityAnalysis.moveEvaluations.add(
+                MoveEvaluation(
+                    engineAnalysis = higherPriorityAnalysis,
+                    move = move,
+                    evalCp = 0,
+                    evalLossFromBest = loss,
+                ),
+            )
+        }
+        val lowerPriorityAnalysis =
+            EngineAnalysis(
+                position = lowerPriorityPosition,
+                depth = 16,
+                baselineEvalCp = 100,
+                bestMove = "e4",
+                bestMoveEvalCp = 100,
+            ).also {
+                it.moveEvaluations.add(
+                    MoveEvaluation(engineAnalysis = it, move = "dxe5", evalCp = 0, evalLossFromBest = 1.0),
+                )
+            }
+        val higherPriorityAggregation =
+            WeaknessAggregation(
+                positionId = higherPriorityPosition.id,
+                fen = sourceFen,
+                timesReached = 20,
+                bestMove = "e4",
+                baselineEvalCp = 100,
+                mistakeCount = 16,
+                averageLoss = 2.31,
+                rawTotalLoss = 37.0,
+            )
+        val lowerPriorityAggregation =
+            WeaknessAggregation(
+                positionId = lowerPriorityPosition.id,
+                fen = sourceFen,
+                timesReached = 10,
+                bestMove = "e4",
+                baselineEvalCp = 100,
+                mistakeCount = 1,
+                averageLoss = 1.0,
+                rawTotalLoss = 1.0,
+            )
+
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "nathan")).thenReturn(account)
+        `when`(positionOccurrenceRepository.findWeaknessAggregations(account.id, "WHITE", 0.8, 1, 1))
+            .thenReturn(listOf(lowerPriorityAggregation, higherPriorityAggregation))
+        `when`(
+            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(
+                eq(account.id),
+                eq("WHITE"),
+                any(),
+            ),
+        ).thenReturn(lowerPriorityOccurrences + higherPriorityOccurrences)
+        `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(any()))
+            .thenReturn(listOf(lowerPriorityAnalysis, higherPriorityAnalysis))
+
+        val weaknesses =
+            weaknessCalculationService.getWeaknesses(
+                Platform.CHESS_COM,
+                "nathan",
+                PlayerColor.WHITE,
+                minEvalLoss = 0.8,
+                minMistakeCount = 1,
+                minTimesReached = 1,
+            )
+
+        assertEquals(
+            listOf(higherPriorityPosition.id, lowerPriorityPosition.id),
+            weaknesses.map { it.positionId },
+        )
+        val retained = weaknesses.first().movesPlayed
+        assertEquals(listOf("dxe5", "Qh5", "Nc3"), retained.map { it.move })
+        assertEquals(listOf(5, 4, 4), retained.map { it.timesPlayed })
+        assertEquals(listOf(1.0, 3.0, 2.0), retained.map { it.averageLoss })
+        assertEquals(expectedResultingFen, retained[0].resultingFen)
+        assertNull(retained[1].resultingFen)
+        assertTrue(retained[2].resultingFen != null)
+        assertTrue(retained.none { it.move == "e3" })
     }
 
     @Test

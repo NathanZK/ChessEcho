@@ -92,7 +92,7 @@ class WeaknessControllerIntegrationTest {
             ),
         )
 
-        // Create occurrences: 3 mistakes (Qh5), 2 good moves (e4)
+        // Create occurrences: 3 legal historical mistakes (dxe5), 2 good moves (e4)
         for (i in 1..5) {
             positionOccurrenceRepository.save(
                 PositionOccurrence(
@@ -100,7 +100,7 @@ class WeaknessControllerIntegrationTest {
                     position = position,
                     chessAccount = account,
                     plyNumber = 2,
-                    movePlayed = if (i <= 3) "Qh5" else "e4",
+                    movePlayed = if (i <= 3) "dxe5" else "e4",
                     playerColor = "WHITE",
                 ),
             )
@@ -130,7 +130,7 @@ class WeaknessControllerIntegrationTest {
         val evalBad =
             MoveEvaluation(
                 engineAnalysis = analysis,
-                move = "Qh5",
+                move = "dxe5",
                 evalCp = -150,
                 evalLossFromBest = 2.0,
             )
@@ -172,6 +172,14 @@ class WeaknessControllerIntegrationTest {
         assertEquals(3, weakness.mistakeCount)
         assertEquals(60.0, weakness.mistakeRate, 0.01)
         assertEquals(2.0, weakness.averageLoss)
+        val breakdown = weakness.movesPlayed.single()
+        assertEquals("dxe5", breakdown.move)
+        assertEquals(3, breakdown.timesPlayed)
+        assertEquals(2.0, breakdown.averageLoss)
+        assertEquals(
+            "rnbqkbnr/pppp1ppp/8/4P3/8/8/PPP1PPPP/RNBQKBNR b KQkq - 0 2",
+            breakdown.resultingFen,
+        )
     }
 
     @Test

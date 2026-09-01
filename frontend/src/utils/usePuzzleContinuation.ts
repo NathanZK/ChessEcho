@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef, useCallback, useState } from 'react';
+import { useEffect, useLayoutEffect, useReducer, useRef, useCallback, useState } from 'react';
 import { ContinuationMode, ContinuationResponse, ContinuationCandidate } from '../services/api';
 import { continuationService, CandidateSelectionPolicy, defaultSelectionPolicy } from '../services/continuationService';
 
@@ -42,7 +42,6 @@ type Action =
   | { type: 'REQUEST_ENQUEUED'; request: ContinuationRequest }
   | { type: 'REQUEST_SUCCEEDED'; response: ContinuationResponse | null; candidate: ContinuationCandidate | null }
   | { type: 'REQUEST_FAILED' }
-  | { type: 'REQUEST_SETTLED' }
   | { type: 'CANDIDATE_SELECTED'; candidate: ContinuationCandidate | null }
   | { type: 'CLEARED' };
 
@@ -70,8 +69,6 @@ function reducer(state: ContinuationState, action: Action): ContinuationState {
         loading: false,
         pendingRequest: null,
       };
-    case 'REQUEST_SETTLED':
-      return state.pendingRequest ? { ...state, pendingRequest: null } : state;
     case 'CANDIDATE_SELECTED':
       return { ...state, selectedCandidate: action.candidate };
     case 'CLEARED':
@@ -89,11 +86,11 @@ export function usePuzzleContinuation(
   initialRatingBand?: string
 ): UseContinuationResult {
   const [state, dispatch] = useReducer(reducer, INITIAL_STATE);
-  const lastRequestedFenRef = useRef<string | null>(null);
+  const requestGenerationRef = useRef(0);
 
   // The single request owner: the only caller of continuationService.getContinuation
   const runRequest = useCallback(async (request: ContinuationRequest) => {
-    lastRequestedFenRef.current = request.fen;
+    const generation = ++requestGenerationRef.current;
 
     try {
       const result = await continuationService.getContinuation(
@@ -103,21 +100,22 @@ export function usePuzzleContinuation(
         request.ratingBand
       );
 
-      // Stale request guard: ensure position hasn't changed while async fetch was in flight
-      if (lastRequestedFenRef.current !== request.fen) {
-        dispatch({ type: 'REQUEST_SETTLED' });
-        return;
-      }
+      if (requestGenerationRef.current !== generation) return;
 
       dispatch({ type: 'REQUEST_SUCCEEDED', response: result.response, candidate: result.candidate });
     } catch {
-      if (lastRequestedFenRef.current === request.fen) {
-        dispatch({ type: 'REQUEST_FAILED' });
-      } else {
-        dispatch({ type: 'REQUEST_SETTLED' });
-      }
+      if (requestGenerationRef.current !== generation) return;
+      dispatch({ type: 'REQUEST_FAILED' });
     }
   }, []);
+
+  useLayoutEffect(() => {
+    const requestGeneration = requestGenerationRef;
+    requestGeneration.current++;
+    return () => {
+      requestGeneration.current++;
+    };
+  }, [initialFen, initialMode, policy, initialRatingBand]);
 
   const fetchContinuation = useCallback(
     async (fen: string, mode: ContinuationMode = initialMode, ratingBand: string | undefined = initialRatingBand) => {

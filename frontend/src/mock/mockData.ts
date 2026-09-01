@@ -7,6 +7,7 @@ export interface MoveBreakdown {
   move: string;
   timesPlayed: number;
   averageLoss: number;
+  resultingFen?: string | null;
 }
 
 export interface Puzzle {

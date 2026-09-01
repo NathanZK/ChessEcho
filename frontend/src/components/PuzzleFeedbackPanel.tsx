@@ -14,7 +14,7 @@ import {
   Sparkles,
   LogOut,
 } from 'lucide-react';
-import { Puzzle } from '../mock/mockData';
+import { MoveBreakdown, Puzzle } from '../mock/mockData';
 import { HistoricalGamesModal } from './HistoricalGamesModal';
 import { ContinuationMode, ContinuationCandidate, ExplorationPlayMode } from '../services/api';
 
@@ -118,6 +118,7 @@ interface PuzzleFeedbackPanelProps {
   onCalculationSubmit?: (e: React.FormEvent) => void;
   onCalculationBack?: () => void;
   onFinishChallenge?: () => void;
+  investigatedDecision?: MoveBreakdown | null;
 }
 
 export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
@@ -161,6 +162,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
   challengeBranches = {},
   onBackToCandidates,
   onFinishChallenge,
+  investigatedDecision,
   calculationInput = '',
   onCalculationInputChange,
   onCalculationSubmit,
@@ -434,6 +436,14 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
                 </button>
               )}
             </div>
+
+            {investigatedDecision && (
+              <div className="rounded-xl border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-sky-100">
+                Investigating <span className="font-mono font-bold">{investigatedDecision.move}</span>
+                {' '}from {investigatedDecision.timesPlayed} {investigatedDecision.timesPlayed === 1 ? 'game' : 'games'}
+                {' '}— <span className="font-bold">{formatDecimal(investigatedDecision.averageLoss, 2)} pawns</span> average loss
+              </div>
+            )}
 
             {!explorationPlayMode ? (
               /* Mode Selection Screen */
