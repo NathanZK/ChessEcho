@@ -200,6 +200,64 @@ class GameImportServiceIntegrationTest {
     }
 
     @Test
+    fun `Black import preserves raw White result contract and persists Black occurrences`() {
+        val archiveUrl = "https://api.chess.com/pub/player/blackaccount/games/2024/03"
+        val pgn =
+            """
+            [Event "Live Chess"]
+            [Site "Chess.com"]
+            [Date "2024.03.01"]
+            [White "white-opponent"]
+            [Black "blackaccount"]
+            [Result "1-0"]
+
+            1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 1-0
+            """.trimIndent()
+        whenever(chessComClient.fetchArchiveUrls("blackaccount")).thenReturn(listOf(archiveUrl))
+        whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(
+            listOf(
+                mapOf(
+                    "url" to "https://www.chess.com/game/live/black-contract",
+                    "pgn" to pgn,
+                    "time_class" to "blitz",
+                    "rules" to "chess",
+                    "end_time" to 1709251200L,
+                    "white" to mapOf("username" to "white-opponent", "result" to "win"),
+                    "black" to mapOf("username" to "blackaccount", "result" to "checkmated"),
+                ),
+            ),
+        )
+        val request =
+            ImportGamesRequest(
+                username = "blackaccount",
+                platform = Platform.CHESS_COM,
+                timeControls = listOf(com.chessecho.domain.TimeControl.BLITZ),
+                playerColor = PlayerColor.BLACK,
+            )
+
+        val job = gameImportService.createImportJob(request)
+        gameImportService.executeImportJob(job.id, request)
+        val completed = awaitTerminalJob(job.id)
+
+        assertEquals("COMPLETED", completed.status, completed.errorMessage)
+        assertEquals(1, completed.gamesImported)
+        val persisted =
+            gameRepository.findAll().single {
+                it.platformGameId == "https://www.chess.com/game/live/black-contract"
+            }
+        assertEquals("win", persisted.result, "Game.result must remain the raw White-side Chess.com token")
+        assertEquals("white-opponent", persisted.whiteUsername)
+        assertEquals("blackaccount", persisted.blackUsername)
+
+        val account = chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "blackaccount")
+        assertNotNull(account)
+        val blackOccurrences = positionOccurrenceRepository.findByChessAccountIdAndPlayerColor(account.id, "BLACK")
+        assertFalse(blackOccurrences.isEmpty())
+        assertEquals(0, positionOccurrenceRepository.findByChessAccountIdAndPlayerColor(account.id, "WHITE").size)
+        assertEquals(true, blackOccurrences.all { it.game.id == persisted.id && it.playerColor == "BLACK" })
+    }
+
+    @Test
     fun `executeImportJob logs and skips 404 archive URL and processes remaining archives`() {
         whenever(chessComClient.fetchArchiveUrls("test404")).thenReturn(
             listOf(
@@ -861,4 +919,15 @@ class GameImportServiceIntegrationTest {
             "white" to mapOf("username" to username, "result" to "win"),
             "black" to mapOf("username" to "opponent", "result" to "checkmated"),
         )
+
+    private fun awaitTerminalJob(jobId: UUID): AsyncJob {
+        repeat(50) {
+            val current = asyncJobRepository.findById(jobId).orElse(null)
+            if (current != null && current.status in listOf("COMPLETED", "FAILED")) {
+                return current
+            }
+            Thread.sleep(100)
+        }
+        error("Import job $jobId did not complete within timeout")
+    }
 }

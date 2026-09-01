@@ -1,5 +1,7 @@
 package com.chessecho.dto
 
+import com.chessecho.service.EvidenceCombination
+import com.chessecho.service.ObjectiveEvidenceState
 import com.fasterxml.jackson.annotation.JsonInclude
 import java.time.Instant
 import java.util.UUID
@@ -19,4 +21,9 @@ data class WeaknessResponse(
     val gameUrls: List<String> = emptyList(),
     val evalCp: Int? = null,
     val lastSeenAt: Instant? = null,
+    val playerColor: String,
+    val recommendationPriority: Double,
+    val objectiveEvidenceState: ObjectiveEvidenceState,
+    val evidenceCombination: EvidenceCombination?,
+    val practicalEvidence: PracticalEvidenceResponse,
 )

@@ -63,7 +63,7 @@ class PuzzleController(
                 PuzzleResponse(
                     puzzleId = w.positionId,
                     fen = w.fen,
-                    playerColor = playerColor.name,
+                    playerColor = w.playerColor,
                     targetMove = w.bestMove,
                     acceptableMoves = w.acceptableMoves,
                     movesPlayed = w.movesPlayed,
@@ -73,6 +73,10 @@ class PuzzleController(
                     mistakeRate = w.mistakeRate,
                     evalCp = w.evalCp,
                     gameUrls = w.gameUrls,
+                    recommendationPriority = w.recommendationPriority,
+                    objectiveEvidenceState = w.objectiveEvidenceState,
+                    evidenceCombination = w.evidenceCombination,
+                    practicalEvidence = w.practicalEvidence,
                 )
             }
 

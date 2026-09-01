@@ -295,10 +295,16 @@ class PuzzleControllerIntegrationTest {
         assertEquals(60.0, puzzle.mistakeRate, 0.01)
         assertEquals(50, puzzle.evalCp)
         assertTrue(puzzle.priority > 0.0)
+        assertEquals(puzzle.priority, puzzle.recommendationPriority)
+        assertEquals("INACCURATE", puzzle.objectiveEvidenceState.name)
+        assertEquals(null, puzzle.evidenceCombination)
+        assertEquals("POSITION", puzzle.practicalEvidence.scope.name)
+        assertEquals(false, puzzle.practicalEvidence.rankingApplied)
         assertEquals(1, puzzle.acceptableMoves.size)
         assertEquals("e4", puzzle.acceptableMoves[0].move)
         assertEquals(1, puzzle.movesPlayed.size)
         assertEquals("Qh5", puzzle.movesPlayed[0].move)
+        assertEquals("DECISION", puzzle.movesPlayed[0].practicalEvidence?.scope?.name)
     }
 
     @Test
@@ -326,6 +332,20 @@ class PuzzleControllerIntegrationTest {
                 String::class.java,
             )
         assertTrue(response.statusCode.isError)
+    }
+
+    @Test
+    fun `negative puzzle page remains a 400 validation error instead of being clamped`() {
+        val response =
+            restTemplate.exchange(
+                "/api/puzzles?platform=CHESS_COM&username=puzzleuser&playerColor=white&minEvalLoss=0.8&page=-1",
+                HttpMethod.GET,
+                null,
+                String::class.java,
+            )
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.statusCode)
+        assertTrue(response.body.orEmpty().contains("VALIDATION_ERROR"))
     }
 
     @Test

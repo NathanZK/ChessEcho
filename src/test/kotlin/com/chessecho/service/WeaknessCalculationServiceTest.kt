@@ -1,5 +1,8 @@
 package com.chessecho.service
 
+import com.chessecho.config.ComparatorMethod
+import com.chessecho.config.ConfidenceMethod
+import com.chessecho.config.PracticalEvidenceProperties
 import com.chessecho.domain.AppUser
 import com.chessecho.domain.ChessAccount
 import com.chessecho.domain.EngineAnalysis
@@ -15,18 +18,24 @@ import com.chessecho.repository.PositionOccurrenceRepository
 import com.chessecho.repository.WeaknessAggregation
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.extension.ExtendWith
 import org.mockito.InjectMocks
 import org.mockito.Mock
+import org.mockito.Mockito.lenient
 import org.mockito.Mockito.`when`
 import org.mockito.junit.jupiter.MockitoExtension
 import org.mockito.kotlin.any
+import org.mockito.kotlin.anyOrNull
+import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.never
+import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import java.time.Instant
+import java.util.UUID
 
 @ExtendWith(MockitoExtension::class)
 class WeaknessCalculationServiceTest {
@@ -39,8 +48,42 @@ class WeaknessCalculationServiceTest {
     @Mock
     private lateinit var engineAnalysisRepository: EngineAnalysisRepository
 
+    @Mock
+    private lateinit var practicalEvidenceService: PracticalEvidenceService
+
+    @Mock
+    private lateinit var weaknessPriorityPolicy: WeaknessPriorityPolicy
+
     @InjectMocks
     private lateinit var weaknessCalculationService: WeaknessCalculationService
+
+    @BeforeEach
+    fun defaultPracticalFallback() {
+        lenient().`when`(
+            practicalEvidenceService.summarize(
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+            ),
+        ).thenReturn(emptyMap())
+
+        val fallbackPolicy = WeaknessPriorityPolicy(PracticalEvidenceProperties())
+        lenient().`when`(
+            weaknessPriorityPolicy.evaluate(
+                any(),
+                any(),
+                anyOrNull(),
+            ),
+        ).thenAnswer { invocation ->
+            fallbackPolicy.evaluate(
+                invocation.getArgument(0),
+                invocation.getArgument(1),
+                invocation.getArgument(2),
+            )
+        }
+    }
 
     @Test
     fun `test dynamic minEvalLoss changes mistakeCount and classifies moves accurately`() {
@@ -97,6 +140,7 @@ class WeaknessCalculationServiceTest {
             WeaknessAggregation(
                 positionId = position.id,
                 fen = position.fen,
+                playerColor = "WHITE",
                 timesReached = 3,
                 bestMove = "best",
                 baselineEvalCp = 100,
@@ -230,6 +274,7 @@ class WeaknessCalculationServiceTest {
             WeaknessAggregation(
                 positionId = position.id,
                 fen = position.fen,
+                playerColor = "WHITE",
                 timesReached = 8,
                 bestMove = "Qh4",
                 baselineEvalCp = 100,
@@ -311,6 +356,7 @@ class WeaknessCalculationServiceTest {
             WeaknessAggregation(
                 positionId = position.id,
                 fen = position.fen,
+                playerColor = "WHITE",
                 timesReached = 5,
                 bestMove = "best",
                 baselineEvalCp = 100,
@@ -363,6 +409,7 @@ class WeaknessCalculationServiceTest {
             WeaknessAggregation(
                 positionId = position.id,
                 fen = position.fen,
+                playerColor = "WHITE",
                 timesReached = 5,
                 bestMove = "best",
                 baselineEvalCp = 100,
@@ -432,6 +479,7 @@ class WeaknessCalculationServiceTest {
             WeaknessAggregation(
                 positionId = posRecent.id,
                 fen = posRecent.fen,
+                playerColor = "WHITE",
                 timesReached = 5,
                 bestMove = "best",
                 baselineEvalCp = 100,
@@ -443,6 +491,7 @@ class WeaknessCalculationServiceTest {
             WeaknessAggregation(
                 positionId = posOld.id,
                 fen = posOld.fen,
+                playerColor = "WHITE",
                 timesReached = 5,
                 bestMove = "best",
                 baselineEvalCp = 100,
@@ -468,6 +517,354 @@ class WeaknessCalculationServiceTest {
         assertEquals(posOld.id, weaknesses[1].positionId)
         assertTrue(weaknesses[0].priority > weaknesses[1].priority)
     }
+
+    @Test
+    fun `ranking on orders lower objective poor evidence before higher objective successful evidence`() {
+        val account =
+            ChessAccount(
+                user = AppUser(email = "recommendation-order@test.com"),
+                platform = "CHESS_COM",
+                username = "recommendation-order",
+            )
+        val poorPosition =
+            Position(
+                id = UUID.fromString("00000000-0000-0000-0000-000000000020"),
+                hash = "lower-objective-poor",
+                fen = "lower-objective-poor-fen",
+            )
+        val successfulPosition =
+            Position(
+                id = UUID.fromString("00000000-0000-0000-0000-000000000010"),
+                hash = "higher-objective-successful",
+                fen = "higher-objective-successful-fen",
+            )
+        val playedAt = Instant.now()
+        val poorOccurrences =
+            (1..5).map {
+                occurrence(account, poorPosition, "WHITE", "bad", "poor-game-$it", playedAt)
+            }
+        val successfulOccurrences =
+            (1..5).map {
+                occurrence(account, successfulPosition, "WHITE", "bad", "successful-game-$it", playedAt)
+            }
+
+        `when`(
+            chessAccountRepository.findByPlatformAndUsernameIgnoreCase(
+                "CHESS_COM",
+                account.username,
+            ),
+        ).thenReturn(account)
+        `when`(
+            positionOccurrenceRepository.findWeaknessAggregations(
+                account.id,
+                "WHITE",
+                0.8,
+                5,
+                3,
+            ),
+        ).thenReturn(
+            listOf(
+                WeaknessAggregation(
+                    positionId = poorPosition.id,
+                    fen = poorPosition.fen,
+                    playerColor = "WHITE",
+                    timesReached = 5,
+                    bestMove = "best",
+                    baselineEvalCp = 100,
+                    mistakeCount = 5,
+                    averageLoss = 1.6,
+                    rawTotalLoss = 8.0,
+                ),
+                WeaknessAggregation(
+                    positionId = successfulPosition.id,
+                    fen = successfulPosition.fen,
+                    playerColor = "WHITE",
+                    timesReached = 5,
+                    bestMove = "best",
+                    baselineEvalCp = 100,
+                    mistakeCount = 5,
+                    averageLoss = 1.8,
+                    rawTotalLoss = 9.0,
+                ),
+            ),
+        )
+        `when`(
+            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(
+                eq(account.id),
+                eq("WHITE"),
+                any(),
+            ),
+        ).thenReturn(poorOccurrences + successfulOccurrences)
+        `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(any())).thenReturn(
+            listOf(
+                analysis(poorPosition, evalLoss = 1.6),
+                analysis(successfulPosition, evalLoss = 1.8),
+            ),
+        )
+
+        val poorScope = PracticalEvidenceScope(account.id, poorPosition.id, "WHITE")
+        val successfulScope = PracticalEvidenceScope(account.id, successfulPosition.id, "WHITE")
+        `when`(
+            practicalEvidenceService.summarize(
+                eq(account.id),
+                eq(account.username),
+                any(),
+                any(),
+                any(),
+            ),
+        ).thenReturn(
+            mapOf(
+                poorScope to practicalSummary(poorScope, wins = 0, losses = 5),
+                successfulScope to practicalSummary(successfulScope, wins = 5, losses = 0),
+            ),
+        )
+        val rankingPolicy =
+            WeaknessPriorityPolicy(
+                PracticalEvidenceProperties(
+                    rankingEnabled = true,
+                    sampleFloor = 5,
+                    comparatorMethod = ComparatorMethod.FIXED_SCORE_RATE,
+                    comparatorScoreRate = 0.5,
+                    confidenceMethod = ConfidenceMethod.BERNOULLI_WILSON_SCORE_POINTS_HALF_DRAW_CONSERVATIVE,
+                    wilsonZScore = 1.0,
+                    meaningfulDifference = 0.1,
+                    maxPriorityAdjustment = 0.25,
+                    observationWindowDays = 365,
+                    policyVersion = "service-order-test-v1",
+                ),
+            )
+        `when`(
+            weaknessPriorityPolicy.evaluate(
+                any(),
+                any(),
+                anyOrNull(),
+            ),
+        ).thenAnswer { invocation ->
+            rankingPolicy.evaluate(
+                invocation.getArgument(0),
+                invocation.getArgument(1),
+                invocation.getArgument(2),
+            )
+        }
+
+        val weaknesses =
+            weaknessCalculationService.getWeaknesses(
+                Platform.CHESS_COM,
+                account.username,
+                PlayerColor.WHITE,
+            )
+
+        assertEquals(
+            listOf(poorPosition.id, successfulPosition.id),
+            weaknesses.map { it.positionId },
+        )
+        val poor = weaknesses.single { it.positionId == poorPosition.id }
+        val successful = weaknesses.single { it.positionId == successfulPosition.id }
+        assertEquals(8.0, poor.priority, 0.001)
+        assertEquals(9.0, successful.priority, 0.001)
+        assertEquals(
+            listOf(successfulPosition.id, poorPosition.id),
+            weaknesses.sortedByDescending { it.priority }.map { it.positionId },
+        )
+        assertEquals(10.0, poor.recommendationPriority, 0.001)
+        assertEquals(6.75, successful.recommendationPriority, 0.001)
+        assertEquals(PracticalAssessment.POOR, poor.practicalEvidence.practicalAssessment)
+        assertEquals(PracticalAssessment.SUCCESSFUL, successful.practicalEvidence.practicalAssessment)
+    }
+
+    @Test
+    fun `practical integration scopes by color uses all rows passes INACCURATE and applies total order`() {
+        val account = ChessAccount(user = AppUser(email = "scope@test.com"), platform = "CHESS_COM", username = "scope-user")
+        val firstPosition =
+            Position(
+                id = UUID.fromString("00000000-0000-0000-0000-000000000001"),
+                hash = "first-hash",
+                fen = "first-fen",
+            )
+        val secondPosition =
+            Position(
+                id = UUID.fromString("00000000-0000-0000-0000-000000000002"),
+                hash = "second-hash",
+                fen = "second-fen",
+            )
+        val playedAt = Instant.parse("2026-08-31T12:00:00Z")
+        val occurrences =
+            buildList {
+                repeat(3) { index ->
+                    add(occurrence(account, firstPosition, "WHITE", "bad", "first-white-$index", playedAt))
+                    add(occurrence(account, firstPosition, "BLACK", "bad", "first-black-$index", playedAt))
+                    add(occurrence(account, secondPosition, "WHITE", "bad", "second-white-$index", playedAt))
+                }
+                add(occurrence(account, firstPosition, "WHITE", "unanalysed", "complete-position-evidence", playedAt))
+            }
+
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "scope-user")).thenReturn(account)
+        `when`(
+            positionOccurrenceRepository.findWeaknessAggregations(
+                account.id,
+                "BOTH",
+                0.8,
+                1,
+                1,
+            ),
+        ).thenReturn(
+            listOf(
+                aggregation(firstPosition, "WHITE"),
+                aggregation(firstPosition, "BLACK"),
+                aggregation(secondPosition, "WHITE"),
+            ),
+        )
+        `when`(
+            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(
+                eq(account.id),
+                eq("BOTH"),
+                any(),
+            ),
+        ).thenReturn(occurrences)
+        `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(any())).thenReturn(
+            listOf(analysis(firstPosition), analysis(secondPosition)),
+        )
+
+        val beforeRequest = Instant.now()
+        val weaknesses =
+            weaknessCalculationService.getWeaknesses(
+                Platform.CHESS_COM,
+                account.username,
+                PlayerColor.BOTH,
+                minEvalLoss = 0.8,
+                minMistakeCount = 1,
+                minTimesReached = 1,
+            )
+        val afterRequest = Instant.now()
+
+        assertEquals(
+            listOf(
+                firstPosition.id to "BLACK",
+                firstPosition.id to "WHITE",
+                secondPosition.id to "WHITE",
+            ),
+            weaknesses.map { it.positionId to it.playerColor },
+        )
+        weaknesses.forEach {
+            assertEquals(it.priority, it.recommendationPriority)
+            assertEquals(ObjectiveEvidenceState.INACCURATE, it.objectiveEvidenceState)
+        }
+
+        val occurrenceCaptor = argumentCaptor<List<PositionOccurrence>>()
+        val scopeCaptor = argumentCaptor<Set<PracticalEvidenceScope>>()
+        val asOfCaptor = argumentCaptor<Instant>()
+        verify(practicalEvidenceService).summarize(
+            eq(account.id),
+            eq(account.username),
+            occurrenceCaptor.capture(),
+            scopeCaptor.capture(),
+            asOfCaptor.capture(),
+        )
+        assertEquals(occurrences, occurrenceCaptor.firstValue)
+        assertEquals(6, scopeCaptor.firstValue.size)
+        assertTrue(
+            scopeCaptor.firstValue.containsAll(
+                setOf(
+                    PracticalEvidenceScope(account.id, firstPosition.id, "WHITE"),
+                    PracticalEvidenceScope(account.id, firstPosition.id, "WHITE", "bad"),
+                    PracticalEvidenceScope(account.id, firstPosition.id, "BLACK"),
+                    PracticalEvidenceScope(account.id, firstPosition.id, "BLACK", "bad"),
+                    PracticalEvidenceScope(account.id, secondPosition.id, "WHITE"),
+                    PracticalEvidenceScope(account.id, secondPosition.id, "WHITE", "bad"),
+                ),
+            ),
+        )
+        assertTrue(!asOfCaptor.firstValue.isBefore(beforeRequest))
+        assertTrue(!asOfCaptor.firstValue.isAfter(afterRequest))
+
+        val objectiveCaptor = argumentCaptor<ObjectiveEvidenceState>()
+        verify(weaknessPriorityPolicy, times(3)).evaluate(
+            objectiveCaptor.capture(),
+            any(),
+            anyOrNull(),
+        )
+        assertTrue(objectiveCaptor.allValues.all { it == ObjectiveEvidenceState.INACCURATE })
+    }
+
+    private fun aggregation(
+        position: Position,
+        color: String,
+    ): WeaknessAggregation =
+        WeaknessAggregation(
+            positionId = position.id,
+            fen = position.fen,
+            playerColor = color,
+            timesReached = 3,
+            bestMove = "best",
+            baselineEvalCp = 100,
+            mistakeCount = 3,
+            averageLoss = 1.0,
+            rawTotalLoss = 3.0,
+        )
+
+    private fun analysis(
+        position: Position,
+        evalLoss: Double = 1.0,
+    ): EngineAnalysis =
+        EngineAnalysis(
+            position = position,
+            depth = 16,
+            baselineEvalCp = 100,
+            bestMove = "best",
+            bestMoveEvalCp = 100,
+        ).also {
+            it.moveEvaluations.add(
+                MoveEvaluation(
+                    engineAnalysis = it,
+                    move = "bad",
+                    evalCp = 0,
+                    evalLossFromBest = evalLoss,
+                ),
+            )
+        }
+
+    private fun practicalSummary(
+        scope: PracticalEvidenceScope,
+        wins: Int,
+        losses: Int,
+    ): PracticalEvidenceSummary =
+        PracticalEvidenceSummary(
+            scope = scope,
+            candidateGames = wins + losses,
+            eligibleGames = wins + losses,
+            ineligibleGames = 0,
+            excludedGames = 0,
+            wins = wins,
+            draws = 0,
+            losses = losses,
+            sideCorroborationConflictGames = 0,
+            scoreRate = wins.toDouble() / (wins + losses),
+        )
+
+    private fun occurrence(
+        account: ChessAccount,
+        position: Position,
+        color: String,
+        san: String,
+        gameId: String,
+        playedAt: Instant,
+    ): PositionOccurrence =
+        PositionOccurrence(
+            game =
+                Game(
+                    chessAccount = account,
+                    platformGameId = gameId,
+                    timeControl = "blitz",
+                    pgn = "[Result \"1-0\"]\n\n1. e4",
+                    result = "win",
+                    playedAt = playedAt,
+                ),
+            position = position,
+            chessAccount = account,
+            plyNumber = 1,
+            movePlayed = san,
+            playerColor = color,
+        )
 
     private fun mockGame(
         platformGameId: String = "123",
