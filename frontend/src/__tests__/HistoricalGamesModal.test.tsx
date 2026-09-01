@@ -1,6 +1,6 @@
 import React from 'react';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { vi, describe, it, expect, afterEach } from 'vitest';
 import { HistoricalGamesModal } from '../components/HistoricalGamesModal';
 
 describe('HistoricalGamesModal', () => {
@@ -116,7 +116,7 @@ describe('HistoricalGamesModal', () => {
 
   it('renders nothing when urls is null', () => {
     const { container } = render(
-      <HistoricalGamesModal urls={null as any} onClose={mockOnClose} />
+      <HistoricalGamesModal urls={null} onClose={mockOnClose} />
     );
 
     expect(container.firstChild).toBeNull();

@@ -68,18 +68,23 @@ export const MonthPicker: React.FC<MonthPickerProps> = ({
   const [navYear, setNavYear] = useState<number>(Math.min(Math.max(parsedYear, minYear), maxYear));
 
   // Sync navYear if value changes externally
-  useEffect(() => {
+  const [trackedValueBounds, setTrackedValueBounds] = useState({ value, minYear, maxYear });
+  if (
+    trackedValueBounds.value !== value ||
+    trackedValueBounds.minYear !== minYear ||
+    trackedValueBounds.maxYear !== maxYear
+  ) {
+    setTrackedValueBounds({ value, minYear, maxYear });
     if (value && /^\d{4}/.test(value)) {
       const yr = parseInt(value.split('-')[0], 10);
       setNavYear(Math.min(Math.max(yr, minYear), maxYear));
     }
-  }, [value, minYear, maxYear]);
+  }
 
   const updatePopoverPosition = useCallback(() => {
     if (!triggerRef.current || !popoverRef.current) return;
 
     const triggerRect = triggerRef.current.getBoundingClientRect();
-    const popoverRect = popoverRef.current.getBoundingClientRect();
     const viewportHeight = window.innerHeight;
     const viewportWidth = window.innerWidth;
 

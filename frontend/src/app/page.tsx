@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useSyncExternalStore } from 'react';
 import { Header, TabType } from '@/components/Header';
 import { EvalBar } from '@/components/EvalBar';
 import { ChessBoardArea } from '@/components/ChessBoardArea';
@@ -11,12 +11,36 @@ import { Puzzle } from '@/mock/mockData';
 import { fetchPuzzles, JobStatusResponse, ContinuationMode, ContinuationCandidate, ExplorationPlayMode, toWhitePerspective, fetchPuzzleContinuation } from '@/services/api';
 import { soundService } from '@/services/soundService';
 import { usePuzzleContinuation } from '@/utils/usePuzzleContinuation';
+import { activeTabStore, activeUsernameStore, puzzleSettingsStore } from '@/utils/browserStores';
 
 export const EXPLORATION_STEP_DELAY_MS = 800;
 
+type PuzzleFeedbackState = {
+  status: 'IDLE' | 'CORRECT' | 'HISTORICAL_MISTAKE' | 'INCORRECT' | 'EXPLORING';
+  lastMove?: string;
+  historicalInfo?: { timesPlayed: number; averageLoss: number };
+};
+
+function errorMessageOf(e: unknown): string | undefined {
+  if (e instanceof Error) return e.message;
+  if (typeof e === 'object' && e !== null && 'message' in e) {
+    const message = (e as { message?: unknown }).message;
+    return typeof message === 'string' ? message : undefined;
+  }
+  return undefined;
+}
+
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<TabType>('puzzles');
-  const [activeUsername, setActiveUsername] = useState<string | undefined>(undefined);
+  const activeTab = useSyncExternalStore(
+    activeTabStore.subscribe,
+    activeTabStore.getSnapshot,
+    activeTabStore.getServerSnapshot
+  );
+  const activeUsername = useSyncExternalStore(
+    activeUsernameStore.subscribe,
+    activeUsernameStore.getSnapshot,
+    activeUsernameStore.getServerSnapshot
+  );
   const [activeJobStatus, setActiveJobStatus] = useState<JobStatusResponse | null>(null);
   const [weaknessRefreshKey, setWeaknessRefreshKey] = useState<number>(0);
 
@@ -27,63 +51,15 @@ export default function Home() {
     }
   };
 
-  // Sync state from localStorage & window hash after client mount to prevent SSR hydration mismatch
-  React.useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const hash = window.location.hash.replace('#', '');
-      if (hash === 'weaknesses' || hash === 'import' || hash === 'puzzles') {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setActiveTab(hash as TabType);
-      } else {
-        const savedTab = localStorage.getItem('chessecho_active_tab');
-        if (savedTab === 'weaknesses' || savedTab === 'import' || savedTab === 'puzzles') {
-          setActiveTab(savedTab as TabType);
-        }
-      }
-
-      const savedUser = localStorage.getItem('chessecho_username');
-      if (savedUser) {
-        setActiveUsername(savedUser);
-      }
-    }
-  }, []);
-
-  // Listen to hashchange / popstate for browser back & forward navigation
-  React.useEffect(() => {
-    const syncHash = () => {
-      if (typeof window !== 'undefined') {
-        const hash = window.location.hash.replace('#', '');
-        if (hash === 'weaknesses' || hash === 'import' || hash === 'puzzles') {
-          setActiveTab(hash as TabType);
-          localStorage.setItem('chessecho_active_tab', hash);
-        }
-      }
-    };
-    window.addEventListener('hashchange', syncHash);
-    window.addEventListener('popstate', syncHash);
-    return () => {
-      window.removeEventListener('hashchange', syncHash);
-      window.removeEventListener('popstate', syncHash);
-    };
-  }, []);
-
   const changeTab = (tab: TabType) => {
-    setActiveTab(tab);
+    activeTabStore.set(tab);
     if (typeof window !== 'undefined') {
-      localStorage.setItem('chessecho_active_tab', tab);
       window.history.pushState(null, '', `#${tab}`);
     }
   };
 
   const handleSetUsername = (user: string | undefined) => {
-    setActiveUsername(user);
-    if (typeof window !== 'undefined') {
-      if (user) {
-        localStorage.setItem('chessecho_username', user);
-      } else {
-        localStorage.removeItem('chessecho_username');
-      }
-    }
+    activeUsernameStore.set(user);
   };
 
   const [weaknessCount, setWeaknessCount] = useState<number>(0);
@@ -123,25 +99,22 @@ export default function Home() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Restore puzzle filter settings from localStorage ONCE after client mount
-  React.useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const savedColor = localStorage.getItem('chessecho_puzzle_color_filter');
-      if (savedColor === 'BOTH' || savedColor === 'WHITE' || savedColor === 'BLACK') {
-        setPuzzleColorFilter(savedColor as 'BOTH' | 'WHITE' | 'BLACK');
-      }
-      const savedEvalLoss = localStorage.getItem('chessecho_min_eval_loss');
-      if (savedEvalLoss && !isNaN(Number(savedEvalLoss))) {
-        setMinEvalLoss(Number(savedEvalLoss));
-      }
-      const savedMistakes = localStorage.getItem('chessecho_min_mistake_count');
-      if (savedMistakes && !isNaN(Number(savedMistakes))) {
-        setMinMistakeCount(Number(savedMistakes));
-      }
-      setSoundEnabled(soundService.isSoundEnabled());
-      setIsSettingsInitialized(true);
-    }
-  }, []);
+  // Restore puzzle filter settings from the browser store during render (no mount effect)
+  const settings = useSyncExternalStore(
+    puzzleSettingsStore.subscribe,
+    puzzleSettingsStore.getSnapshot,
+    puzzleSettingsStore.getServerSnapshot
+  );
+  const [appliedSettings, setAppliedSettings] = useState(puzzleSettingsStore.getServerSnapshot);
+
+  if (appliedSettings !== settings) {
+    setAppliedSettings(settings);
+    setPuzzleColorFilter(settings.colorFilter);
+    setMinEvalLoss(settings.minEvalLoss);
+    setMinMistakeCount(settings.minMistakeCount);
+    setSoundEnabled(settings.soundEnabled);
+    setIsSettingsInitialized(true);
+  }
 
   const handleMinEvalLossChange = (val: number) => {
     setMinEvalLoss(val);
@@ -173,12 +146,12 @@ export default function Home() {
 
   // History stacks for EvalBar and feedback state matching board undo/redo index
   const [evalHistory, setEvalHistory] = useState<number[]>([35]);
-  const [feedbackHistory, setFeedbackHistory] = useState<unknown[]>([{ status: 'IDLE' }]);
+  const [feedbackHistory, setFeedbackHistory] = useState<PuzzleFeedbackState[]>([{ status: 'IDLE' }]);
   const [historyIndex, setHistoryIndex] = useState<number>(0);
 
   const [currentEvalCp, setCurrentEvalCp] = useState<number>(35);
   const [isEvalUnknown, setIsEvalUnknown] = useState<boolean>(false);
-  const [moveHistory, setMoveHistory] = useState<string[]>([]);
+  const [, setMoveHistory] = useState<string[]>([]);
   const [hintSquare, setHintSquare] = useState<string | undefined>(undefined);
 
   const [feedback, setFeedback] = useState<{
@@ -197,14 +170,14 @@ export default function Home() {
   const [challengeCandidatesByFen, setChallengeCandidatesByFen] = useState<Record<string, ContinuationCandidate[]>>({});
   const [challengeSubmissionByFen, setChallengeSubmissionByFen] = useState<Record<string, ChallengeSubmissionResult>>({});
   const [challengeInputByFen, setChallengeInputByFen] = useState<Record<string, string>>({});
-  const [challengeFeedbackByFen, setChallengeFeedbackByFen] = useState<Record<string, { message: string, type: 'success' | 'error' | 'info' }>>({});
+  const [challengeFeedbackByFen, setChallengeFeedbackByFen] = useState<Record<string, { message: string, type: 'success' | 'error' | 'info' } | null>>({});
   const [isChallengeLoading, setIsChallengeLoading] = useState<boolean>(false);
   const [continuationMode, setContinuationMode] = useState<ContinuationMode>('ENGINE');
   const [opponentRatingBand, setOpponentRatingBand] = useState<string>('1200-1400');
   const [pendingContinuationCandidate, setPendingContinuationCandidate] = useState<ContinuationCandidate | null>(null);
   const [requestedContinuationFen, setRequestedContinuationFen] = useState<string | undefined>(undefined);
 
-  const [explorationFeedbackByFen, setExplorationFeedbackByFen] = useState<Record<string, { message: string, type: 'best' | 'good' }>>({});
+  const [explorationFeedbackByFen, setExplorationFeedbackByFen] = useState<Record<string, { message: string, type: 'best' | 'good' } | null>>({});
   const [lastContinuationCandidates, setLastContinuationCandidates] = useState<{
     parentFen: string;
     candidates: ContinuationCandidate[];
@@ -239,78 +212,126 @@ export default function Home() {
     return currentBoardFen.split(' ')[1] === 'w' ? 'White' : 'Black';
   }, [currentBoardFen, activePuzzle]);
 
-  const explorationTurn = React.useMemo(() => {
-    if (!activePuzzle || !currentBoardFen) return 'USER';
-    if (explorationPlayMode === 'BOTH_SIDES') return 'USER';
-    const fenColor = currentBoardFen.split(' ')[1]; // 'w' or 'b'
-    const isWhiteTurn = fenColor === 'w';
-    const isUserWhite = activePuzzle.playerColor === 'WHITE';
-    return isWhiteTurn === isUserWhite ? 'USER' : 'CHESSECHO';
-  }, [currentBoardFen, activePuzzle, explorationPlayMode]);
-
   const continuation = usePuzzleContinuation(requestedContinuationFen, continuationMode, undefined, opponentRatingBand);
 
   // When ChessEcho turn is active and a candidate is selected, stage it for the board (only in CHESSECHO mode)
-  React.useEffect(() => {
-    if (!isExplorationActive) return;
-    if (explorationPlayMode !== 'CHESSECHO') return;
-    if (continuation.loading) return;
+  const [trackedStaging, setTrackedStaging] = useState({
+    isExplorationActive,
+    explorationPlayMode,
+    selectedCandidate: continuation.selectedCandidate,
+    loading: continuation.loading,
+    response: continuation.response,
+    requestedContinuationFen,
+    currentBoardFen,
+    currentEvalCp,
+  });
 
-    if (
-      continuation.response?.fen === requestedContinuationFen &&
-      currentBoardFen === requestedContinuationFen &&
-      continuation.selectedCandidate
-    ) {
-      const candidate = continuation.selectedCandidate;
-      setPendingContinuationCandidate(candidate);
-      setLastContinuationCandidates({
-        parentFen: requestedContinuationFen,
-        candidates: continuation.candidates,
-        selected: candidate
-      });
+  if (
+    trackedStaging.isExplorationActive !== isExplorationActive ||
+    trackedStaging.explorationPlayMode !== explorationPlayMode ||
+    trackedStaging.selectedCandidate !== continuation.selectedCandidate ||
+    trackedStaging.loading !== continuation.loading ||
+    trackedStaging.response !== continuation.response ||
+    trackedStaging.requestedContinuationFen !== requestedContinuationFen ||
+    trackedStaging.currentBoardFen !== currentBoardFen ||
+    trackedStaging.currentEvalCp !== currentEvalCp
+  ) {
+    setTrackedStaging({
+      isExplorationActive,
+      explorationPlayMode,
+      selectedCandidate: continuation.selectedCandidate,
+      loading: continuation.loading,
+      response: continuation.response,
+      requestedContinuationFen,
+      currentBoardFen,
+      currentEvalCp,
+    });
 
-      if (candidate.evalCp != null) {
-        const whiteEval = toWhitePerspective(candidate.evalCp, requestedContinuationFen);
-        setCurrentEvalCp(whiteEval);
-        setIsEvalUnknown(false);
-        setExplorationEvalMap((prev) => ({
-          ...prev,
-          [candidate.resultingFen]: { evalCp: whiteEval, isUnknown: false },
-        }));
-      } else {
-        setIsEvalUnknown(true);
-        setExplorationEvalMap((prev) => ({
-          ...prev,
-          [candidate.resultingFen]: { evalCp: currentEvalCp, isUnknown: true },
-        }));
+    if (isExplorationActive && explorationPlayMode === 'CHESSECHO' && !continuation.loading) {
+      if (
+        continuation.response?.fen === requestedContinuationFen &&
+        currentBoardFen === requestedContinuationFen &&
+        continuation.selectedCandidate
+      ) {
+        const candidate = continuation.selectedCandidate;
+        setPendingContinuationCandidate(candidate);
+        setLastContinuationCandidates({
+          parentFen: requestedContinuationFen,
+          candidates: continuation.candidates,
+          selected: candidate
+        });
+
+        if (candidate.evalCp != null) {
+          const whiteEval = toWhitePerspective(candidate.evalCp, requestedContinuationFen);
+          setCurrentEvalCp(whiteEval);
+          setIsEvalUnknown(false);
+          setExplorationEvalMap((prev) => ({
+            ...prev,
+            [candidate.resultingFen]: { evalCp: whiteEval, isUnknown: false },
+          }));
+        } else {
+          setIsEvalUnknown(true);
+          setExplorationEvalMap((prev) => ({
+            ...prev,
+            [candidate.resultingFen]: { evalCp: currentEvalCp, isUnknown: true },
+          }));
+        }
       }
     }
-  }, [isExplorationActive, explorationPlayMode, continuation.selectedCandidate, continuation.loading, continuation.response, requestedContinuationFen, currentBoardFen, currentEvalCp]);
+  }
 
   // Keep lastContinuationCandidates synchronized with board history
-  React.useEffect(() => {
+  const [trackedHistorySync, setTrackedHistorySync] = useState({
+    currentBoardFen,
+    lastContinuationCandidates,
+  });
+
+  if (
+    trackedHistorySync.currentBoardFen !== currentBoardFen ||
+    trackedHistorySync.lastContinuationCandidates !== lastContinuationCandidates
+  ) {
+    setTrackedHistorySync({ currentBoardFen, lastContinuationCandidates });
     if (lastContinuationCandidates) {
       // If we are still at parentFen, it means the move is pending application by ChessBoardArea
-      if (currentBoardFen === lastContinuationCandidates.parentFen) return;
-
-      const actualSelected = lastContinuationCandidates.candidates.find(c => c.resultingFen === currentBoardFen);
-      if (!actualSelected) {
-        setLastContinuationCandidates(null);
-      } else if (actualSelected.move !== lastContinuationCandidates.selected.move) {
-        setLastContinuationCandidates(prev => prev ? { ...prev, selected: actualSelected } : null);
+      if (currentBoardFen !== lastContinuationCandidates.parentFen) {
+        const actualSelected = lastContinuationCandidates.candidates.find(c => c.resultingFen === currentBoardFen);
+        if (!actualSelected) {
+          setLastContinuationCandidates(null);
+        } else if (actualSelected.move !== lastContinuationCandidates.selected.move) {
+          setLastContinuationCandidates(prev => prev ? { ...prev, selected: actualSelected } : null);
+        }
       }
     }
-  }, [currentBoardFen, lastContinuationCandidates]);
+  }
 
   // Synchronize EvalBar with the board's active position during exploration
-  React.useEffect(() => {
-    if (!isExplorationActive || !currentBoardFen) return;
-    const entry = explorationEvalMap[currentBoardFen];
-    if (entry) {
-      setCurrentEvalCp(entry.evalCp);
-      setIsEvalUnknown(entry.isUnknown);
+  const evalEntry = isExplorationActive && currentBoardFen
+    ? explorationEvalMap[currentBoardFen]
+    : undefined;
+  const [trackedEvalSync, setTrackedEvalSync] = useState({
+    currentBoardFen,
+    isExplorationActive,
+    evalCp: evalEntry?.evalCp,
+    isUnknown: evalEntry?.isUnknown,
+  });
+
+  if (
+    trackedEvalSync.currentBoardFen !== currentBoardFen ||
+    trackedEvalSync.isExplorationActive !== isExplorationActive ||
+    trackedEvalSync.evalCp !== evalEntry?.evalCp ||
+    trackedEvalSync.isUnknown !== evalEntry?.isUnknown
+  ) {
+    setTrackedEvalSync({
+      currentBoardFen,
+      isExplorationActive,
+      evalCp: evalEntry?.evalCp,
+      isUnknown: evalEntry?.isUnknown,
+    });
+    if (evalEntry) {
+      setCurrentEvalCp(evalEntry.evalCp);
+      setIsEvalUnknown(evalEntry.isUnknown);
     }
-  }, [currentBoardFen, isExplorationActive, explorationEvalMap]);
+  }
 
   const handleExplorationPlayModeChange = (mode: ExplorationPlayMode) => {
     setExplorationPlayMode(mode);
@@ -407,11 +428,11 @@ export default function Home() {
         }));
       }
     } else {
-      setExplorationFeedbackByFen(prev => ({ ...prev, [nextFen]: null as any }));
+      setExplorationFeedbackByFen(prev => ({ ...prev, [nextFen]: null }));
     }
   };
 
-  const handleChessEchoExplorationMove = (moveSan: string) => {
+  const handleChessEchoExplorationMove = () => {
     // ChessEcho made its move. Clear request.
     setRequestedContinuationFen(undefined);
   };
@@ -499,7 +520,23 @@ export default function Home() {
   const [isFetchingMorePuzzles, setIsFetchingMorePuzzles] = useState<boolean>(false);
 
   // Fetch live puzzles whenever activeUsername, puzzleColorFilter, minEvalLoss, or minMistakeCount changes, guarded by isSettingsInitialized gate
-  React.useEffect(() => {
+  const [trackedPuzzleQuery, setTrackedPuzzleQuery] = useState<{
+    isSettingsInitialized: boolean;
+    activeUsername?: string;
+    puzzleColorFilter: 'BOTH' | 'WHITE' | 'BLACK';
+    minEvalLoss: number;
+    minMistakeCount: number;
+  } | null>(null);
+
+  if (
+    !trackedPuzzleQuery ||
+    trackedPuzzleQuery.isSettingsInitialized !== isSettingsInitialized ||
+    trackedPuzzleQuery.activeUsername !== activeUsername ||
+    trackedPuzzleQuery.puzzleColorFilter !== puzzleColorFilter ||
+    trackedPuzzleQuery.minEvalLoss !== minEvalLoss ||
+    trackedPuzzleQuery.minMistakeCount !== minMistakeCount
+  ) {
+    setTrackedPuzzleQuery({ isSettingsInitialized, activeUsername, puzzleColorFilter, minEvalLoss, minMistakeCount });
     if (!isSettingsInitialized || !activeUsername) {
       if (!activeUsername) {
         setPuzzlesList([]);
@@ -511,6 +548,11 @@ export default function Home() {
         setPuzzlePage(0);
         setHasMorePuzzles(false);
       }
+    }
+  }
+
+  React.useEffect(() => {
+    if (!isSettingsInitialized || !activeUsername) {
       return;
     }
 
@@ -727,7 +769,7 @@ export default function Home() {
     const prevIndex = Math.max(0, historyIndex - 1);
     setHistoryIndex(prevIndex);
     setCurrentEvalCp(evalHistory[prevIndex] ?? (activePuzzle?.evalCp ?? 35));
-    const prevFeedback = feedbackHistory[prevIndex] as any;
+    const prevFeedback = feedbackHistory[prevIndex];
     setFeedback(prevFeedback ?? { status: 'IDLE' });
     setIsEvalUnknown(false);
   };
@@ -745,7 +787,7 @@ export default function Home() {
       const nextIndex = historyIndex + 1;
       setHistoryIndex(nextIndex);
       setCurrentEvalCp(evalHistory[nextIndex]);
-      const nextFeedback = feedbackHistory[nextIndex] as any;
+      const nextFeedback = feedbackHistory[nextIndex];
       setFeedback(nextFeedback ?? { status: 'IDLE' });
     }
   };
@@ -763,7 +805,7 @@ export default function Home() {
 
     setHistoryIndex(0);
     setCurrentEvalCp(evalHistory[0] ?? (activePuzzle?.evalCp ?? 35));
-    const firstFeedback = feedbackHistory[0] as any;
+    const firstFeedback = feedbackHistory[0];
     setFeedback(firstFeedback ?? { status: 'IDLE' });
     setIsEvalUnknown(false);
   };
@@ -780,7 +822,6 @@ export default function Home() {
     setHintSquare(undefined);
 
     const startCp = activePuzzle.evalCp ?? 35;
-    const isAlreadySolved = feedback.status === 'CORRECT' || feedback.status === 'EXPLORING';
 
     if (isInitialDecision) {
       // Calculate evaluation update based on move played for initial decision
@@ -886,13 +927,31 @@ export default function Home() {
     setCalculationInput('');
   };
 
+  const challengeSubmission = challengeSubmissionByFen[currentBoardFen];
+  const [trackedChallengeQuery, setTrackedChallengeQuery] = useState<{
+    currentBoardFen: string;
+    explorationPlayMode: ExplorationPlayMode | undefined;
+    submission: ChallengeSubmissionResult | undefined;
+  } | null>(null);
+
+  if (
+    !trackedChallengeQuery ||
+    trackedChallengeQuery.currentBoardFen !== currentBoardFen ||
+    trackedChallengeQuery.explorationPlayMode !== explorationPlayMode ||
+    trackedChallengeQuery.submission !== challengeSubmission
+  ) {
+    setTrackedChallengeQuery({ currentBoardFen, explorationPlayMode, submission: challengeSubmission });
+    if (explorationPlayMode === 'CHALLENGE' && currentBoardFen && !challengeSubmission) {
+      setChallengeFeedbackByFen(prev => ({ ...prev, [currentBoardFen]: null }));
+      setChallengeInputByFen(prev => ({ ...prev, [currentBoardFen]: '' }));
+    }
+  }
+
   React.useEffect(() => {
     if (explorationPlayMode !== 'CHALLENGE' || !currentBoardFen) return;
     if (challengeSubmissionByFen[currentBoardFen]) return;
 
     let isMounted = true;
-    setChallengeFeedbackByFen(prev => ({ ...prev, [currentBoardFen]: null as any }));
-    setChallengeInputByFen(prev => ({ ...prev, [currentBoardFen]: '' }));
 
     const fetchCandidates = async () => {
       setIsChallengeLoading(true);
@@ -902,7 +961,7 @@ export default function Home() {
           const strongCandidates = result.candidates.filter(c => (c.evalLoss ?? 0) <= 0.20);
           setChallengeCandidatesByFen(prev => ({ ...prev, [currentBoardFen]: strongCandidates }));
         }
-      } catch (err) {
+      } catch {
         if (isMounted) setChallengeFeedbackByFen(prev => ({ ...prev, [currentBoardFen]: { type: 'error', message: 'Failed to load candidates.' } }));
       } finally {
         if (isMounted) setIsChallengeLoading(false);
@@ -924,7 +983,7 @@ export default function Home() {
     if (tokens.length === 0) return;
 
     setIsChallengeLoading(true);
-    setChallengeFeedbackByFen(prev => ({ ...prev, [currentBoardFen]: null as any }));
+    setChallengeFeedbackByFen(prev => ({ ...prev, [currentBoardFen]: null }));
 
     const currentCandidates = challengeCandidatesByFen[currentBoardFen] || [];
 
@@ -971,8 +1030,8 @@ export default function Home() {
         } else {
           moveResults.push({ san: canonicalSan, status: 'weak', errorMsg: 'Failed to evaluate.' });
         }
-      } catch (e: any) {
-         moveResults.push({ san: canonicalSan, status: 'weak', errorMsg: e.message });
+      } catch (e: unknown) {
+         moveResults.push({ san: canonicalSan, status: 'weak', errorMsg: errorMessageOf(e) });
       }
     }
 
@@ -1046,8 +1105,8 @@ export default function Home() {
       } else {
         setCalculationFeedback({ type: 'error', message: `Not strong enough (loses ${(res?.evalLoss || 0).toFixed(2)}). Try again.` });
       }
-    } catch (err: any) {
-      setCalculationFeedback({ type: 'error', message: err.message || 'Evaluation failed.' });
+    } catch (err: unknown) {
+      setCalculationFeedback({ type: 'error', message: errorMessageOf(err) || 'Evaluation failed.' });
     } finally {
       setIsCalculationLoading(false);
     }
@@ -1173,7 +1232,6 @@ export default function Home() {
                   <PuzzleFeedbackPanel
                     puzzle={activePuzzle}
                     feedback={feedback}
-                    moveHistory={moveHistory}
                     onPreviousPuzzle={handlePreviousPuzzle}
                     onNextPuzzle={handleNextPuzzle}
                     puzzleColorFilter={puzzleColorFilter}
@@ -1185,7 +1243,6 @@ export default function Home() {
                     onApplySettings={handleApplyPuzzleSettings}
                     username={activeUsername}
                     isExplorationActive={isExplorationActive}
-                    explorationTurn={explorationTurn}
                     onEnterExploration={handleEnterExploration}
                     onExitExploration={handleExitExploration}
                     continuationMode={continuationMode}
@@ -1196,8 +1253,6 @@ export default function Home() {
                     onExplorationPlayModeChange={handleExplorationPlayModeChange}
                     sideToMove={sideToMove}
                     continuationCandidate={continuation.selectedCandidate}
-                    effectiveProvider={continuation.effectiveProvider}
-                    isContinuationFallback={continuation.isFallback}
                     isContinuationLoading={continuation.loading || !!requestedContinuationFen}
                     unacceptableMoveMessage={unacceptableMoveMessage}
                     explorationFeedback={explorationFeedbackByFen[currentBoardFen] || null}

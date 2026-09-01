@@ -5,7 +5,6 @@ import { vi, describe, it, expect, beforeEach } from 'vitest';
 import Home from '../app/page';
 import { BoardControls } from '../components/BoardControls';
 import { PuzzleFeedbackPanel } from '../components/PuzzleFeedbackPanel';
-import { WeaknessesList } from '../components/WeaknessesList';
 import * as api from '../services/api';
 import { Puzzle } from '../mock/mockData';
 
@@ -74,8 +73,6 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
     expect(screen.getByText('Target Opening Weakness')).toBeInTheDocument();
 
     // Now press Next Puzzle repeatedly and verify it traverses through all 7 positions before wrapping around
-    const visitedIds: string[] = [];
-
     for (let step = 0; step < 7; step++) {
       const nextBtn = screen.getByRole('button', { name: /Next Puzzle/i });
       await act(async () => {
@@ -327,7 +324,6 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
         {...defaultSettingsProps}
         puzzle={testPuzzle}
         feedback={feedbackState}
-        moveHistory={['e5']}
         onNextPuzzle={vi.fn()}
       />
     );
@@ -374,7 +370,6 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
         {...defaultSettingsProps}
         puzzle={puzzleWithQh4Best}
         feedback={feedbackState}
-        moveHistory={['Qh4']}
         onNextPuzzle={vi.fn()}
         onPreviousPuzzle={vi.fn()}
       />

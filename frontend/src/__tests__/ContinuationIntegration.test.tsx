@@ -81,7 +81,6 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
       <PuzzleFeedbackPanel
         puzzle={mockPuzzle}
         feedback={{ status: 'CORRECT', lastMove: 'Bb5' }}
-        moveHistory={['Bb5']}
         onNextPuzzle={() => {}}
         puzzleColorFilter="BOTH"
         onColorFilterChange={() => {}}
@@ -92,7 +91,6 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
         onApplySettings={() => {}}
         isExplorationActive={true}
         explorationPlayMode="CHESSECHO"
-        explorationTurn="USER"
         onEnterExploration={handleEnterExploration}
         onExitExploration={handleExitExploration}
         continuationCandidate={{
@@ -109,13 +107,10 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
   });
 
   it('2. Reject unacceptable move: board remains unchanged and shows error message', () => {
-    const handleUnacceptableMove = vi.fn();
-
     render(
       <PuzzleFeedbackPanel
         puzzle={mockPuzzle}
         feedback={{ status: 'CORRECT', lastMove: 'Bb5' }}
-        moveHistory={['Bb5']}
         onNextPuzzle={() => {}}
         puzzleColorFilter="BOTH"
         onColorFilterChange={() => {}}
@@ -126,7 +121,6 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
         onApplySettings={() => {}}
         isExplorationActive={true}
         explorationPlayMode="CHESSECHO"
-        explorationTurn="USER"
         unacceptableMoveMessage="That move is outside the acceptable range."
       />
     );
@@ -137,7 +131,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
   it('3. Undo after ChessEcho response maintains correct board history and position', async () => {
     const handleFenChange = vi.fn();
     const handleMoveAttempt = vi.fn();
-    let rerenderFn: (ui: React.ReactElement) => void;
+    const rerenderBox: { fn?: (ui: React.ReactElement) => void } = {};
 
     const candidate: api.ContinuationCandidate = {
       move: 'Bb5',
@@ -146,7 +140,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
     };
 
     const handleContinuationApplied = vi.fn(() => {
-      rerenderFn(
+      rerenderBox.fn?.(
         <ChessBoardArea
           initialFen={mockPuzzle.fen}
           playerColor="WHITE"
@@ -178,7 +172,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
         explorationPlayMode="CHESSECHO"
       />
     );
-    rerenderFn = rerender;
+    rerenderBox.fn = rerender;
 
     expect(handleFenChange).toHaveBeenCalledWith(mockPuzzle.fen);
 
@@ -214,7 +208,6 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
       <PuzzleFeedbackPanel
         puzzle={mockPuzzle}
         feedback={{ status: 'CORRECT', lastMove: 'Bb5' }}
-        moveHistory={['Bb5']}
         onNextPuzzle={() => {}}
         puzzleColorFilter="BOTH"
         onColorFilterChange={() => {}}
@@ -225,7 +218,6 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
         onApplySettings={() => {}}
         isExplorationActive={true}
         explorationPlayMode="CHESSECHO"
-        explorationTurn="USER"
         onExitExploration={handleExitExploration}
       />
     );
@@ -293,7 +285,6 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
           <PuzzleFeedbackPanel
             puzzle={mockPuzzle}
             feedback={{ status: 'CORRECT', lastMove: 'Bb5' }}
-            moveHistory={['Bb5']}
             onNextPuzzle={() => {}}
             puzzleColorFilter="BOTH"
             onColorFilterChange={() => {}}
@@ -303,7 +294,6 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
             onMinMistakeCountChange={() => {}}
             onApplySettings={() => {}}
             isExplorationActive={isExplorationActive}
-            explorationTurn={isExplorationActive ? explorationTurn as 'USER' | 'CHESSECHO' : undefined}
             isContinuationLoading={explorationTurn === 'CHESSECHO'}
             explorationPlayMode="CHESSECHO"
             onEnterExploration={() => setExplorationTurn('CHESSECHO')}
@@ -319,11 +309,11 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
             onNextPuzzle={() => {}}
             onFenChange={(fen) => setCurrentBoardFen(fen)}
             isExplorationActive={isExplorationActive}
-            onUserExplorationMove={(moveSan) => {
+            onUserExplorationMove={() => {
               // Emulate user making a move -> transition to CHESSECHO turn
               setExplorationTurn('CHESSECHO');
             }}
-            onChessEchoExplorationMove={(moveSan) => {
+            onChessEchoExplorationMove={() => {
               // Transition to USER turn
               setExplorationTurn('USER');
             }}

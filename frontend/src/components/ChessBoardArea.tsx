@@ -1,11 +1,11 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { Chess } from 'chess.js';
 import { Chessboard } from 'react-chessboard';
 import { BoardControls } from './BoardControls';
 import { playSound } from '@/services/soundService';
-import { continuationService, moveEvaluationService } from '@/services/continuationService';
+import { moveEvaluationService } from '@/services/continuationService';
 import { ContinuationCandidate, ExplorationPlayMode } from '@/services/api';
 
 export const CHALLENGE_MAX_EVAL_LOSS = 0.20;
@@ -83,23 +83,49 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
 }) => {
   const [game, setGame] = useState<Chess>(new Chess(initialFen));
   const currentBoardFenRef = useRef<string>(initialFen);
-  currentBoardFenRef.current = game.fen();
   const [fenHistory, setFenHistory] = useState<string[]>([initialFen]);
   const [historyIndex, setHistoryIndex] = useState<number>(0);
   const [customSquareStyles, setCustomSquareStyles] = useState<Record<string, React.CSSProperties>>({});
 
-  // Reset board state whenever initialFen changes
+  // Commit-phase mirror of the board position used by the stale-evaluation guard
   useEffect(() => {
-    const newGame = new Chess(initialFen);
-    setGame(newGame);
+    currentBoardFenRef.current = game.fen();
+  }, [game]);
+
+  // Latest-callback refs, declared before every consumer
+  const onFenChangeRef = useRef(onFenChange);
+  const onChessEchoExplorationMoveRef = useRef(onChessEchoExplorationMove);
+  const onContinuationAppliedRef = useRef(onContinuationApplied);
+  const onAlternativeContinuationAppliedRef = useRef(onAlternativeContinuationApplied);
+  useLayoutEffect(() => {
+    onFenChangeRef.current = onFenChange;
+    onChessEchoExplorationMoveRef.current = onChessEchoExplorationMove;
+    onContinuationAppliedRef.current = onContinuationApplied;
+    onAlternativeContinuationAppliedRef.current = onAlternativeContinuationApplied;
+  });
+
+  // Reset board state whenever initialFen changes
+  const [fenNotification, setFenNotification] = useState<{ fen: string }>({ fen: initialFen });
+  const [trackedInitialFen, setTrackedInitialFen] = useState(initialFen);
+  if (trackedInitialFen !== initialFen) {
+    setTrackedInitialFen(initialFen);
+    setGame(new Chess(initialFen));
     setFenHistory([initialFen]);
     setHistoryIndex(0);
     setCustomSquareStyles({});
-    onFenChange?.(initialFen);
-  }, [initialFen]);
+    setFenNotification({ fen: initialFen });
+  }
+
+  // Delivered in the same commit as the render that produced the position, so a
+  // deferred notification can never overwrite a newer position with a stale one.
+  useLayoutEffect(() => {
+    onFenChangeRef.current?.(fenNotification.fen);
+  }, [fenNotification]);
 
   // Apply hint square highlight if hint is triggered
-  useEffect(() => {
+  const [trackedHint, setTrackedHint] = useState<{ value: typeof hintSquare } | null>(null);
+  if (!trackedHint || trackedHint.value !== hintSquare) {
+    setTrackedHint({ value: hintSquare });
     if (hintSquare) {
       setCustomSquareStyles({
         [hintSquare]: {
@@ -110,17 +136,22 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
     } else {
       setCustomSquareStyles({});
     }
-  }, [hintSquare]);
+  }
+
+  type BoardEffectuation =
+    | { kind: 'applied'; fen: string; move?: string; source: 'pending' | 'alternative' }
+    | { kind: 'failed'; error: unknown; source: 'pending' | 'alternative' };
+
+  const [effectuation, setEffectuation] = useState<BoardEffectuation | null>(null);
 
   // Apply continuation candidate move when pendingContinuationCandidate changes
-  useEffect(() => {
-    if (!isExplorationActive) return;
-
-    if (pendingContinuationCandidate?.resultingFen) {
+  const [trackedPending, setTrackedPending] = useState<{ value: typeof pendingContinuationCandidate } | null>(null);
+  if (!trackedPending || trackedPending.value !== pendingContinuationCandidate) {
+    setTrackedPending({ value: pendingContinuationCandidate });
+    if (isExplorationActive && pendingContinuationCandidate?.resultingFen) {
+      const nextFen = pendingContinuationCandidate.resultingFen;
       try {
-        const nextFen = pendingContinuationCandidate.resultingFen;
-        const newGame = new Chess(nextFen);
-        setGame(newGame);
+        setGame(new Chess(nextFen));
 
         setFenHistory((prev) => {
           const newHistory = prev.slice(0, historyIndex + 1);
@@ -129,54 +160,81 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
         });
         setHistoryIndex((prev) => prev + 1);
 
-        playSound('move');
-        onFenChange?.(nextFen);
-
-        if (pendingContinuationCandidate.move && onChessEchoExplorationMove) {
-          onChessEchoExplorationMove(pendingContinuationCandidate.move);
-        }
+        setEffectuation({
+          kind: 'applied',
+          fen: nextFen,
+          move: pendingContinuationCandidate.move,
+          source: 'pending',
+        });
       } catch (e) {
-        console.error('Failed to apply continuation candidate resultingFen:', e);
-      } finally {
-        onContinuationApplied?.();
+        setEffectuation({ kind: 'failed', error: e, source: 'pending' });
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingContinuationCandidate]);
+  }
 
   // Apply alternative continuation candidate (replaces the current ChessEcho move)
-  useEffect(() => {
-    if (!isExplorationActive || !alternativeContinuationToApply) return;
-    const { parentFen, candidate } = alternativeContinuationToApply;
+  const [trackedAlternative, setTrackedAlternative] = useState<{ value: typeof alternativeContinuationToApply } | null>(null);
+  if (!trackedAlternative || trackedAlternative.value !== alternativeContinuationToApply) {
+    setTrackedAlternative({ value: alternativeContinuationToApply });
+    if (isExplorationActive && alternativeContinuationToApply) {
+      const { parentFen, candidate } = alternativeContinuationToApply;
 
-    // Find parentFen strictly in fenHistory using exact match
-    const parentIndex = fenHistory.findIndex(f => f === parentFen);
-    if (parentIndex !== -1) {
-      try {
-        const nextFen = candidate.resultingFen;
-        const newGame = new Chess(nextFen);
-        setGame(newGame);
+      // Find parentFen strictly in fenHistory using exact match
+      const parentIndex = fenHistory.findIndex(f => f === parentFen);
+      if (parentIndex !== -1) {
+        try {
+          const nextFen = candidate.resultingFen;
+          setGame(new Chess(nextFen));
 
-        setFenHistory((prev) => {
-          const newHistory = prev.slice(0, parentIndex + 1);
-          newHistory.push(nextFen);
-          return newHistory;
-        });
-        setHistoryIndex(parentIndex + 1);
+          setFenHistory((prev) => {
+            const newHistory = prev.slice(0, parentIndex + 1);
+            newHistory.push(nextFen);
+            return newHistory;
+          });
+          setHistoryIndex(parentIndex + 1);
 
-        playSound('move');
-        onFenChange?.(nextFen);
-
-        if (candidate.move && onChessEchoExplorationMove) {
-          onChessEchoExplorationMove(candidate.move);
+          setEffectuation({
+            kind: 'applied',
+            fen: nextFen,
+            move: candidate.move,
+            source: 'alternative',
+          });
+        } catch (e) {
+          setEffectuation({ kind: 'failed', error: e, source: 'alternative' });
         }
-      } catch (e) {
-        console.error('Failed to apply alternative candidate:', e);
-      } finally {
-        onAlternativeContinuationApplied?.();
       }
     }
-  }, [alternativeContinuationToApply]);
+  }
+
+  // Replay the side effects of an applied (or failed) candidate after it is committed
+  useEffect(() => {
+    if (!effectuation) return;
+    const isPending = effectuation.source === 'pending';
+    const message = isPending
+      ? 'Failed to apply continuation candidate resultingFen:'
+      : 'Failed to apply alternative candidate:';
+    try {
+      if (effectuation.kind === 'failed') {
+        console.error(message, effectuation.error);
+        return;
+      }
+
+      playSound('move');
+      onFenChangeRef.current?.(effectuation.fen);
+
+      if (effectuation.move && onChessEchoExplorationMoveRef.current) {
+        onChessEchoExplorationMoveRef.current(effectuation.move);
+      }
+    } catch (e) {
+      console.error(message, e);
+    } finally {
+      if (isPending) {
+        onContinuationAppliedRef.current?.();
+      } else {
+        onAlternativeContinuationAppliedRef.current?.();
+      }
+    }
+  }, [effectuation]);
 
 
 
@@ -366,20 +424,27 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   };
 
   // Laptop arrow key navigation (ArrowLeft = <, ArrowRight = >)
+  const handleUndoRef = useRef(handleUndo);
+  const handleRedoRef = useRef(handleRedo);
+  useEffect(() => {
+    handleUndoRef.current = handleUndo;
+    handleRedoRef.current = handleRedo;
+  });
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't trigger if user is typing in an input field
       if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return;
 
       if (e.key === 'ArrowLeft') {
-        handleUndo();
+        handleUndoRef.current();
       } else if (e.key === 'ArrowRight') {
-        handleRedo();
+        handleRedoRef.current();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [historyIndex, fenHistory]);
+  }, []);
 
   const handleReset = () => {
     const resetGame = new Chess(initialFen);

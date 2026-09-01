@@ -198,7 +198,7 @@ describe('Puzzles Tab Features and Fixes', () => {
   it('refetches puzzles with updated minEvalLoss and minMistakeCount when Apply is clicked, displaying loading spinner and updating active puzzle', async () => {
     localStorage.setItem('chessecho_username', 'hikaru');
 
-    const { container } = render(<Home />);
+    render(<Home />);
 
     await waitFor(() => {
       expect(screen.getByText("King's Pawn Opening")).toBeInTheDocument();
@@ -274,7 +274,6 @@ describe('Puzzles Tab Features and Fixes', () => {
         {...defaultSettingsProps}
         puzzle={mockPuzzles[0]}
         feedback={{ status: 'CORRECT', lastMove: 'e4' }}
-        moveHistory={['e4']}
         onNextPuzzle={vi.fn()}
       />
     );
@@ -289,7 +288,6 @@ describe('Puzzles Tab Features and Fixes', () => {
         {...defaultSettingsProps}
         puzzle={mockPuzzles[0]}
         feedback={{ status: 'IDLE' }}
-        moveHistory={[]}
         onNextPuzzle={vi.fn()}
       />
     );
@@ -303,7 +301,6 @@ describe('Puzzles Tab Features and Fixes', () => {
         {...defaultSettingsProps}
         puzzle={mockPuzzles[0]}
         feedback={{ status: 'INCORRECT', lastMove: 'h3' }}
-        moveHistory={['h3']}
         onNextPuzzle={vi.fn()}
       />
     );
@@ -324,7 +321,6 @@ describe('Puzzles Tab Features and Fixes', () => {
           lastMove: 'd6',
           historicalInfo: { timesPlayed: 2, averageLoss: 0.8 },
         }}
-        moveHistory={['d6']}
         onNextPuzzle={vi.fn()}
       />
     );
@@ -347,7 +343,6 @@ describe('Puzzles Tab Features and Fixes', () => {
           lastMove: 'd6',
           historicalInfo: { timesPlayed: 2, averageLoss: 0.8 },
         }}
-        moveHistory={['d6', 'Qxb4']}
         onNextPuzzle={vi.fn()}
       />
     );
@@ -367,7 +362,6 @@ describe('Puzzles Tab Features and Fixes', () => {
           lastMove: 'Nc3',
           historicalInfo: { timesPlayed: 1, averageLoss: 0.58 },
         }}
-        moveHistory={['Nc3']}
         onNextPuzzle={vi.fn()}
       />
     );
@@ -387,7 +381,6 @@ describe('Puzzles Tab Features and Fixes', () => {
         {...defaultSettingsProps}
         puzzle={mockPuzzles[0]}
         feedback={{ status: 'CORRECT', lastMove: 'e4' }}
-        moveHistory={['e4']}
         onNextPuzzle={vi.fn()}
       />
     );
@@ -400,7 +393,6 @@ describe('Puzzles Tab Features and Fixes', () => {
         {...defaultSettingsProps}
         puzzle={mockPuzzles[0]}
         feedback={{ status: 'CORRECT', lastMove: 'e4' }}
-        moveHistory={['e4', 'Nf3']}
         onNextPuzzle={vi.fn()}
         isExplorationActive={true}
         explorationPlayMode="CHESSECHO"
@@ -478,7 +470,6 @@ describe('Puzzles Tab Features and Fixes', () => {
           {...defaultSettingsProps}
           puzzle={puzzleWithUrls}
           feedback={{ status: 'IDLE' }}
-          moveHistory={[]}
           onNextPuzzle={vi.fn()}
         />
       );
@@ -526,7 +517,6 @@ describe('Puzzles Tab Features and Fixes', () => {
           {...defaultSettingsProps}
           puzzle={puzzleWithoutUrls}
           feedback={{ status: 'IDLE' }}
-          moveHistory={[]}
           onNextPuzzle={vi.fn()}
         />
       );

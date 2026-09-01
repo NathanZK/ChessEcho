@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Target, Flame, Swords, ExternalLink, Filter, AlertCircle, RefreshCw, X } from 'lucide-react';
+import { Target, Flame, Swords, ExternalLink, Filter, AlertCircle, RefreshCw } from 'lucide-react';
 import { Chessboard } from 'react-chessboard';
 import { fetchWeaknesses, WeaknessResponse } from '../services/api';
 import { Puzzle } from '../mock/mockData';
@@ -96,11 +96,9 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
     onColorFilterChange?.(newColor);
   };
 
-  useEffect(() => {
-    if (activeColorFilter && activeColorFilter !== colorFilter) {
-      setColorFilter(activeColorFilter);
-    }
-  }, [activeColorFilter, colorFilter]);
+  if (activeColorFilter && activeColorFilter !== colorFilter) {
+    setColorFilter(activeColorFilter);
+  }
 
   const [weaknesses, setWeaknesses] = useState<WeaknessResponse[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -120,7 +118,23 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
   }, [weaknesses.length, onWeaknessCountChange]);
 
   // Initial load or filter change reset
-  useEffect(() => {
+  const [trackedWeaknessQuery, setTrackedWeaknessQuery] = useState<{
+    username?: string;
+    colorFilter: 'ALL' | 'WHITE' | 'BLACK';
+    minMistakeCount: number;
+    minEvalLoss: number;
+    refreshKey?: number;
+  } | null>(null);
+
+  if (
+    !trackedWeaknessQuery ||
+    trackedWeaknessQuery.username !== username ||
+    trackedWeaknessQuery.colorFilter !== colorFilter ||
+    trackedWeaknessQuery.minMistakeCount !== minMistakeCount ||
+    trackedWeaknessQuery.minEvalLoss !== minEvalLoss ||
+    trackedWeaknessQuery.refreshKey !== refreshKey
+  ) {
+    setTrackedWeaknessQuery({ username, colorFilter, minMistakeCount, minEvalLoss, refreshKey });
     if (!username) {
       setWeaknesses([]);
       setIsLoading(false);
@@ -128,6 +142,11 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
       setError(null);
       setPage(0);
       setHasMore(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!username) {
       return;
     }
 

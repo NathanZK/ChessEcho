@@ -65,7 +65,6 @@ export interface ChallengeSubmissionResult {
 interface PuzzleFeedbackPanelProps {
   puzzle: Puzzle;
   feedback: FeedbackState;
-  moveHistory: string[];
   onPreviousPuzzle?: () => void;
   onNextPuzzle: () => void;
   // Settings props
@@ -79,7 +78,6 @@ interface PuzzleFeedbackPanelProps {
   username?: string;
   // Continuation & Exploration props
   isExplorationActive?: boolean;
-  explorationTurn?: 'USER' | 'CHESSECHO';
   onEnterExploration?: () => void;
   onExitExploration?: () => void;
   continuationMode?: ContinuationMode;
@@ -91,8 +89,6 @@ interface PuzzleFeedbackPanelProps {
   continuationCandidate?: ContinuationCandidate | null;
   isContinuationLoading?: boolean;
   sideToMove?: 'White' | 'Black';
-  effectiveProvider?: string | null;
-  isContinuationFallback?: boolean;
   unacceptableMoveMessage?: string | null;
   explorationFeedback?: { message: string, type: 'best' | 'good' } | null;
   lastContinuationCandidates?: {
@@ -118,18 +114,15 @@ interface PuzzleFeedbackPanelProps {
   puzzleComplete?: boolean;
   hasMorePuzzles?: boolean;
   onStartExploration?: () => void;
-  onChangePlayMode?: (mode: any) => void;
   onCalculationInputChange?: (val: string) => void;
   onCalculationSubmit?: (e: React.FormEvent) => void;
   onCalculationBack?: () => void;
-  onContinueMilestone?: () => void;
   onFinishChallenge?: () => void;
 }
 
 export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
   puzzle,
   feedback,
-  moveHistory,
   onPreviousPuzzle,
   onNextPuzzle,
   puzzleColorFilter,
@@ -141,7 +134,6 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
   onApplySettings,
   username,
   isExplorationActive = false,
-  explorationTurn = 'USER',
   onEnterExploration,
   onExitExploration,
   continuationMode = 'ENGINE',
@@ -152,8 +144,6 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
   onExplorationPlayModeChange,
   sideToMove,
   continuationCandidate,
-  effectiveProvider,
-  isContinuationFallback = false,
   isContinuationLoading = false,
   unacceptableMoveMessage,
   explorationFeedback,
@@ -170,7 +160,6 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
   activeChallengeCandidate = null,
   challengeBranches = {},
   onBackToCandidates,
-  onContinueMilestone,
   onFinishChallenge,
   calculationInput = '',
   onCalculationInputChange,
@@ -505,7 +494,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
                       </span>
                     </div>
                     <p className="text-[11px] text-slate-400 leading-normal">
-                      Find a strong candidate move. ChessEcho won't respond.
+                      Find a strong candidate move. ChessEcho won&apos;t respond.
                     </p>
                   </button>
                 </div>
@@ -770,7 +759,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
                                 </div>
                               </div>
 
-                              Don't move the pieces. Visualize the {currentBranchLine.length === 1 ? 'resulting position' : 'position'}.
+                              Don&apos;t move the pieces. Visualize the {currentBranchLine.length === 1 ? 'resulting position' : 'position'}.
                               <br /><br />
                               <span className="font-bold text-white">What is {currentBranchLine.length > 0 ? (currentBranchLine[currentBranchLine.length - 1].isWhite ? "Black's" : "White's") : "Unknown"} best continuation?</span>
                             </div>

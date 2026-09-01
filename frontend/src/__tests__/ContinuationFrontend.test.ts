@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { continuationService, defaultSelectionPolicy, createStochasticSelectionPolicy, ContinuationCacheService, moveEvaluationService } from '../services/continuationService';
+import { continuationService, createStochasticSelectionPolicy, moveEvaluationService } from '../services/continuationService';
 import { usePuzzleContinuation } from '../utils/usePuzzleContinuation';
 import * as api from '../services/api';
 
