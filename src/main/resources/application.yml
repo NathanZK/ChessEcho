@@ -27,6 +27,18 @@ chess:
     max-retries: ${CHESS_PUBAPI_MAX_RETRIES:3}
     initial-backoff-ms: ${CHESS_PUBAPI_INITIAL_BACKOFF_MS:1000}
     max-backoff-ms: ${CHESS_PUBAPI_MAX_BACKOFF_MS:10000}
+  weakness:
+    practical:
+      ranking-enabled: ${CHESS_WEAKNESS_PRACTICAL_RANKING_ENABLED:false}
+      sample-floor: ${CHESS_WEAKNESS_PRACTICAL_SAMPLE_FLOOR:}
+      comparator-method: ${CHESS_WEAKNESS_PRACTICAL_COMPARATOR_METHOD:DISABLED}
+      comparator-score-rate: ${CHESS_WEAKNESS_PRACTICAL_COMPARATOR_SCORE_RATE:}
+      confidence-method: ${CHESS_WEAKNESS_PRACTICAL_CONFIDENCE_METHOD:DISABLED}
+      wilson-z-score: ${CHESS_WEAKNESS_PRACTICAL_WILSON_Z_SCORE:}
+      meaningful-difference: ${CHESS_WEAKNESS_PRACTICAL_MEANINGFUL_DIFFERENCE:}
+      max-priority-adjustment: ${CHESS_WEAKNESS_PRACTICAL_MAX_PRIORITY_ADJUSTMENT:}
+      observation-window-days: ${CHESS_WEAKNESS_PRACTICAL_OBSERVATION_WINDOW_DAYS:}
+      policy-version: ${CHESS_WEAKNESS_PRACTICAL_POLICY_VERSION:uncalibrated-v1}
 
 engine:
   analysis:
@@ -38,7 +50,6 @@ engine:
   exploration:
     # exploration.max-eval-loss controls how much evaluation loss we allow from the user during interactive exploration.
     max-eval-loss: ${ENGINE_EXPLORATION_MAX_EVAL_LOSS:0.80}
-
 
 
 

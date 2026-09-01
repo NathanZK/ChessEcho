@@ -26,8 +26,7 @@ RAW USER DATA
     ├── ChessAccount
     ├── Game
     ├── Position
-    ├── PositionOccurrence
-    └── UserPositionStats
+    └── PositionOccurrence
             │
             ▼
 GLOBAL ENGINE DATA
@@ -46,6 +45,10 @@ FUTURE MATERIALIZED READ MODEL (RESERVED)
     └── UserPositionWeakness
 ```
 
+`UserPositionStats` is a separately import-maintained recurrence summary. It is
+raw user data, but it is not part of the active weakness interpretation path
+shown above.
+
 ## 2.1 Raw Data
 
 ### Game
@@ -57,21 +60,25 @@ It must retain enough information to identify the players and determine which si
 Relevant fields include:
 
 * `id`
-* `chessAccountId`
-* `platform`
+* `chessAccount`
 * `platformGameId`
-* `whitePlayer`
-* `blackPlayer`
-* `whitePlayerRating`
-* `blackPlayerRating`
-* `playedAt`
-* `timeControl`
-* `result`
 * `pgn`
+* nullable `timeControl`
+* nullable `playedAt`
+* nullable `result`
+* nullable `whiteUsername`
+* nullable `blackUsername`
+* `createdAt`
 
-The `chessAccountId` identifies the imported user's account. `whitePlayer` and `blackPlayer` identify the actual players in the game.
+The associated `ChessAccount` identifies the imported user's account and owns
+the platform. Player ratings are not persisted. `whiteUsername` and
+`blackUsername` identify the players and allow the imported account's side to
+be determined.
 
-This allows the system to determine whether the imported user played White or Black.
+The current Chess.com import writes `white.result` directly into `Game.result`
+regardless of whether the imported account played White or Black. Therefore
+`result` is currently a white-side source value, not a normalized
+account-perspective outcome.
 
 ---
 
@@ -124,26 +131,26 @@ Stockfish analysis is global because the same position has the same engine evalu
 
 ## 3.1 EngineAnalysis
 
-There is one `EngineAnalysis` record per analyzed position and analysis configuration.
+There is one `EngineAnalysis` record per analyzed position. The uniqueness
+constraint covers `position_id` only; no analysis-configuration identity is
+persisted.
 
 It contains:
 
-* `positionId`
+* `id`
+* `position`
 * `depth`
-* `baselineEvalCp`
-* `baselineEvalMate`
-* `bestMove`
-* `bestMoveEvalCp`
-* `bestMoveEvalMate`
+* nullable `baselineEvalCp`
+* nullable `bestMove`
+* nullable `bestMoveEvalCp`
+* child `moveEvaluations`
 * `analyzedAt`
 
-`baselineEval*` represents the evaluation of the position before the player moves.
+`baselineEvalCp` represents the evaluation of the position before the player moves.
 
-`bestMoveEval*` represents the evaluation after Stockfish's best move.
+`bestMoveEvalCp` represents the evaluation after Stockfish's best move.
 
 Both are retained because move loss/gain must be calculated relative to the best available continuation.
-
-The mate fields are retained because a mate evaluation cannot be represented accurately by centipawns alone.
 
 ---
 
@@ -155,11 +162,10 @@ Move evaluations are global and are attached to `EngineAnalysis`.
 
 Each record contains:
 
-* `engineAnalysisId`
+* `engineAnalysis`
 * `move`
-* `evalCp`
-* `evalMate`
-* `evalLossFromBest`
+* nullable `evalCp`
+* nullable `evalLossFromBest`
 
 The `evalLossFromBest` represents how much worse the move is than Stockfish's best move from the player's perspective.
 
@@ -239,7 +245,6 @@ The aggregate contains:
 * `chessAccountId`
 * `positionId`
 * `playerColor`
-* `timesReached`
 * `mistakeCount`
 * `mistakeRate`
 * `averageLoss`
@@ -248,7 +253,9 @@ The aggregate contains:
 * `gameUrls`
 * `updatedAt`
 
-Note: `UserPositionWeakness` exists in the schema/codebase as a future materialized read model, but is **not currently used in the active MVP read path**.
+The moves and game URLs are serialized values. `UserPositionWeakness` exists in
+the schema/codebase as an inactive, reserved future materialized read model, but
+the active service does not read it.
 
 ---
 
@@ -259,8 +266,14 @@ Note: `UserPositionWeakness` exists in the schema/codebase as a future materiali
 Number of times the user reached the position while playing the specified color.
 
 ```text
-timesReached = UserPositionStats.timesReached
+timesReached = COUNT(PositionOccurrence.id)
 ```
+
+The active `PositionOccurrenceRepository.findWeaknessAggregations` count is over
+occurrences joined to matching engine/move evaluation data. Separately,
+`UserPositionStats.timesReached` is an import-maintained all-occurrence summary
+updated by `GameImportService.updateUserPositionStats`; it is not an input to
+the active weakness read path.
 
 ## mistakeCount
 
@@ -280,13 +293,26 @@ mistakeRate = mistakeCount / timesReached
 
 Average evaluation loss across the user's mistakes.
 
-## priority
+## priority and recommendationPriority
 
-Priority is computed from evaluating mistakes, recency weighting, and raw mistake rate:
+`priority` remains the objective-only value computed from engine-classified
+mistakes, recency weighting, and raw mistake rate:
 
 ```text
 priority = sum(evalLoss × weight) × (mistakeCount / timesReached)
 ```
+
+[Practical Evidence in Weakness Prioritization](practical-weakness-prioritization.md)
+is implemented as a separate, account-specific W/D/L evidence dimension derived
+at read time from `PositionOccurrence` and `Game`. This slice adds no schema,
+materialization, or backfill and does not activate `UserPositionWeakness`.
+
+`recommendationPriority` is the shared weakness/puzzle ordering key. It equals
+the objective `priority` whenever practical ranking is disabled, uncalibrated,
+absent, insufficient, or inconclusive. Only explicitly enabled, calibrated, and
+confidence-eligible practical evidence may apply the bounded adjustment. The
+production defaults (`chess.weakness.practical.ranking-enabled=false` and
+`policy-version=uncalibrated-v1`) therefore preserve objective-only ordering.
 
 ---
 
@@ -294,28 +320,45 @@ priority = sum(evalLoss × weight) × (mistakeCount / timesReached)
 
 ### Current MVP Architecture
 
-The active MVP read path calculates weakness dynamically at query time from immutable/objective engine-analysis data:
+The active MVP read path calculates objective weakness and additive practical
+evidence dynamically at query time:
 
 ```text
 PositionOccurrence
-+
-UserPositionStats
 +
 EngineAnalysis
 +
 MoveEvaluation
         │
-        ▼
-PostgreSQL JPQL Aggregation + Bounded Batch Reads
-        │
-        ▼
-WeaknessCalculationService
-        │
-        ▼
-WeaknessResponse / PuzzleResponse
+        ├── objective aggregation ────────────────┐
+        │                                         │
+PositionOccurrence + Game                        │
+        │                                         │
+        └── PracticalEvidenceService (W/D/L) ─────┤
+                                                  ▼
+                                  WeaknessCalculationService
+                                                  +
+                                  WeaknessPriorityPolicy
+                                  (confidence-gated adjustment)
+                                                  │
+                                                  ▼
+                           shared deterministic pre-pagination order
+                    recommendationPriority, priority, position ID, color
+                                                  │
+                                                  ▼
+                               WeaknessResponse / PuzzleResponse
 ```
 
-`UserPositionWeakness` exists in the schema and codebase as a potential future materialized read model, but is **NOT currently part of the active weakness read path**.
+`priority` stays objective-only. `recommendationPriority` changes ordering only
+when practical ranking is explicitly configured, calibrated, and admitted by
+the confidence gate; it is equal to `priority` under the default-off
+configuration. Both weaknesses and puzzles consume this same total order before
+pagination.
+
+The read path performs no database writes and invokes no Stockfish analysis.
+Practical evidence is derived from existing occurrence and game data rather
+than materialized. `UserPositionWeakness` remains an inactive future escape
+hatch and is **not** part of the active read path.
 
 ---
 
@@ -332,7 +375,8 @@ After introducing a composite index on `PositionOccurrence(chess_account_id, pla
 The optimized dynamic approach provides:
 - **0 Stockfish calls** during weakness/puzzle reads.
 - **0 database writes** during weakness/puzzle reads.
-- **4 bounded database queries total** (down from up to 1,003 queries).
+- **A fixed set of batched database reads** with no per-game query. The
+  practical-evidence occurrence fetch is account-scoped but not row-capped.
 - **Interactive query-time threshold adjustments** (`minEvalLoss = 0.3` vs `0.8`) with zero database recalculation writes or cache invalidation overhead.
 
 Therefore, the dynamic query-time architecture is fully sufficient for the MVP.

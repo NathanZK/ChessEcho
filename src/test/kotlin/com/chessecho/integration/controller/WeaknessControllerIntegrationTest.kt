@@ -17,6 +17,8 @@ import com.chessecho.repository.PositionOccurrenceRepository
 import com.chessecho.repository.PositionRepository
 import com.chessecho.repository.UserPositionStatsRepository
 import com.chessecho.service.StockfishService
+import com.chessecho.service.WeaknessCalculationService
+import com.fasterxml.jackson.databind.ObjectMapper
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -59,8 +61,13 @@ class WeaknessControllerIntegrationTest {
     @Autowired
     private lateinit var engineAnalysisRepository: EngineAnalysisRepository
 
+    @Autowired
+    private lateinit var objectMapper: ObjectMapper
+
     @MockBean
     private lateinit var stockfishService: StockfishService
+
+    private lateinit var defaultPosition: Position
 
     @BeforeEach
     fun setup() {
@@ -78,7 +85,7 @@ class WeaknessControllerIntegrationTest {
                 ),
             )
 
-        val position =
+        defaultPosition =
             positionRepository.save(
                 Position(hash = "testhash", fen = "rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq e6 0 2"),
             )
@@ -86,7 +93,7 @@ class WeaknessControllerIntegrationTest {
         userPositionStatsRepository.save(
             UserPositionStats(
                 chessAccount = account,
-                position = position,
+                position = defaultPosition,
                 playerColor = "WHITE",
                 timesReached = 5,
             ),
@@ -97,7 +104,7 @@ class WeaknessControllerIntegrationTest {
             positionOccurrenceRepository.save(
                 PositionOccurrence(
                     game = game,
-                    position = position,
+                    position = defaultPosition,
                     chessAccount = account,
                     plyNumber = 2,
                     movePlayed = if (i <= 3) "Qh5" else "e4",
@@ -109,7 +116,7 @@ class WeaknessControllerIntegrationTest {
         val analysis =
             engineAnalysisRepository.save(
                 EngineAnalysis(
-                    position = position,
+                    position = defaultPosition,
                     depth = 16,
                     baselineEvalCp = 50,
                     bestMove = "e4",
@@ -172,6 +179,11 @@ class WeaknessControllerIntegrationTest {
         assertEquals(3, weakness.mistakeCount)
         assertEquals(60.0, weakness.mistakeRate, 0.01)
         assertEquals(2.0, weakness.averageLoss)
+        assertEquals("WHITE", weakness.playerColor)
+        assertEquals(weakness.priority, weakness.recommendationPriority)
+        assertEquals("INACCURATE", weakness.objectiveEvidenceState.name)
+        assertEquals(null, weakness.evidenceCombination)
+        assertEquals(false, weakness.practicalEvidence.rankingApplied)
     }
 
     @Test
@@ -276,27 +288,57 @@ class WeaknessControllerIntegrationTest {
         val user = appUserRepository.save(AppUser(email = "both@test.com"))
         val account = chessAccountRepository.save(ChessAccount(user = user, platform = "CHESS_COM", username = "bothuser"))
 
-        val game =
-            gameRepository.save(
-                Game(chessAccount = account, platformGameId = "gameboth", timeControl = "blitz", pgn = "pgn", result = "win"),
-            )
         val position =
             positionRepository.save(
                 Position(hash = "bothhash", fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"),
             )
 
         userPositionStatsRepository.save(
-            UserPositionStats(chessAccount = account, position = position, playerColor = "WHITE", timesReached = 3),
+            UserPositionStats(
+                chessAccount = account,
+                position = position,
+                playerColor = "WHITE",
+                timesReached = WeaknessCalculationService.DEFAULT_MIN_TIMES_REACHED,
+            ),
         )
         userPositionStatsRepository.save(
-            UserPositionStats(chessAccount = account, position = position, playerColor = "BLACK", timesReached = 3),
+            UserPositionStats(
+                chessAccount = account,
+                position = position,
+                playerColor = "BLACK",
+                timesReached = WeaknessCalculationService.DEFAULT_MIN_TIMES_REACHED,
+            ),
         )
 
-        // Save 3 WHITE occurrences (move "a3") and 3 BLACK occurrences (move "a6")
-        for (i in 1..3) {
+        // Each color independently meets the real objective floor using distinct games.
+        for (i in 1..WeaknessCalculationService.DEFAULT_MIN_TIMES_REACHED) {
+            val whiteGame =
+                gameRepository.save(
+                    Game(
+                        chessAccount = account,
+                        platformGameId = "gameboth-white-$i",
+                        timeControl = "blitz",
+                        pgn = "pgn",
+                        result = "win",
+                        whiteUsername = account.username,
+                        blackUsername = "white-opponent-$i",
+                    ),
+                )
+            val blackGame =
+                gameRepository.save(
+                    Game(
+                        chessAccount = account,
+                        platformGameId = "gameboth-black-$i",
+                        timeControl = "blitz",
+                        pgn = "pgn",
+                        result = "resigned",
+                        whiteUsername = "black-opponent-$i",
+                        blackUsername = account.username,
+                    ),
+                )
             positionOccurrenceRepository.save(
                 PositionOccurrence(
-                    game = game,
+                    game = whiteGame,
                     position = position,
                     chessAccount = account,
                     plyNumber = 1,
@@ -306,7 +348,7 @@ class WeaknessControllerIntegrationTest {
             )
             positionOccurrenceRepository.save(
                 PositionOccurrence(
-                    game = game,
+                    game = blackGame,
                     position = position,
                     chessAccount = account,
                     plyNumber = 2,
@@ -343,10 +385,45 @@ class WeaknessControllerIntegrationTest {
         assertEquals(HttpStatus.OK, response.statusCode)
         val weaknesses = response.body
         assertNotNull(weaknesses)
-        assertEquals(1, weaknesses.size)
-        val w = weaknesses[0]
-        assertEquals(6, w.mistakeCount)
-        assertEquals(6, w.timesReached)
+        assertEquals(2, weaknesses.size)
+        assertEquals(setOf("WHITE", "BLACK"), weaknesses.map { it.playerColor }.toSet())
+        weaknesses.forEach { weakness ->
+            assertEquals(WeaknessCalculationService.DEFAULT_MIN_TIMES_REACHED, weakness.mistakeCount)
+            assertEquals(WeaknessCalculationService.DEFAULT_MIN_TIMES_REACHED, weakness.timesReached)
+            assertEquals(WeaknessCalculationService.DEFAULT_MIN_TIMES_REACHED, weakness.practicalEvidence.candidateGames)
+            assertEquals(WeaknessCalculationService.DEFAULT_MIN_TIMES_REACHED, weakness.practicalEvidence.eligibleGames)
+        }
+    }
+
+    @Test
+    fun `additive practical fields preserve the complete legacy objective JSON projection`() {
+        val response =
+            restTemplate.getForEntity(
+                "/api/positions/weaknesses?platform=CHESS_COM&username=integrationuser&playerColor=WHITE&minEvalLoss=0.8",
+                String::class.java,
+            )
+
+        assertEquals(HttpStatus.OK, response.statusCode)
+        val weakness = objectMapper.readTree(response.body).single()
+
+        assertEquals(defaultPosition.id.toString(), weakness["positionId"].textValue())
+        assertEquals("rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq e6 0 2", weakness["fen"].textValue())
+        assertEquals(5, weakness["timesReached"].intValue())
+        assertEquals(3, weakness["mistakeCount"].intValue())
+        assertEquals(60.0, weakness["mistakeRate"].doubleValue(), 0.001)
+        assertEquals(2.0, weakness["averageLoss"].doubleValue(), 0.001)
+        assertEquals(3.6, weakness["priority"].doubleValue(), 0.001)
+        assertEquals("e4", weakness["bestMove"].textValue())
+        assertEquals(1, weakness["acceptableMoves"].size())
+        assertEquals("e4", weakness["acceptableMoves"][0]["move"].textValue())
+        assertEquals(0.05, weakness["acceptableMoves"][0]["evalLoss"].doubleValue(), 0.001)
+        assertEquals(1, weakness["movesPlayed"].size())
+        assertEquals("Qh5", weakness["movesPlayed"][0]["move"].textValue())
+        assertEquals(3, weakness["movesPlayed"][0]["timesPlayed"].intValue())
+        assertEquals(2.0, weakness["movesPlayed"][0]["averageLoss"].doubleValue(), 0.001)
+        assertEquals(listOf("https://www.chess.com/game/live/game1"), weakness["gameUrls"].map { it.textValue() })
+        assertEquals(50, weakness["evalCp"].intValue())
+        kotlin.test.assertTrue(weakness["lastSeenAt"].isTextual)
     }
 
     @Test

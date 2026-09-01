@@ -10,7 +10,10 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer
 
 @Configuration
 @EnableAsync
-@EnableConfigurationProperties(ChessPubApiProperties::class)
+@EnableConfigurationProperties(
+    ChessPubApiProperties::class,
+    PracticalEvidenceProperties::class,
+)
 class AppConfig {
     @Bean
     fun restClientBuilder(): RestClient.Builder = RestClient.builder()

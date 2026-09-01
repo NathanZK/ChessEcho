@@ -23,6 +23,8 @@ interface PositionOccurrenceRepository : JpaRepository<PositionOccurrence, UUID>
     @Query(
         """
         SELECT po FROM PositionOccurrence po
+        JOIN FETCH po.game
+        JOIN FETCH po.position
         WHERE po.chessAccount.id = :chessAccountId
           AND (:playerColor = 'BOTH' OR po.playerColor = :playerColor)
           AND po.position.id IN :positionIds
@@ -100,6 +102,7 @@ interface PositionOccurrenceRepository : JpaRepository<PositionOccurrence, UUID>
         SELECT new com.chessecho.repository.WeaknessAggregation(
             p.id,
             p.fen,
+            po.playerColor,
             CAST(COUNT(po.id) AS int),
             ea.bestMove,
             ea.baselineEvalCp,
@@ -113,7 +116,7 @@ interface PositionOccurrenceRepository : JpaRepository<PositionOccurrence, UUID>
         JOIN MoveEvaluation me ON me.engineAnalysis.id = ea.id AND me.move = po.movePlayed
         WHERE po.chessAccount.id = :chessAccountId
           AND (:playerColor = 'BOTH' OR po.playerColor = :playerColor)
-        GROUP BY p.id, p.fen, ea.bestMove, ea.baselineEvalCp
+        GROUP BY p.id, p.fen, po.playerColor, ea.bestMove, ea.baselineEvalCp
         HAVING COUNT(po.id) >= :minTimesReached
            AND SUM(CASE WHEN (COALESCE(me.evalLossFromBest, CASE WHEN (ea.bestMoveEvalCp IS NOT NULL AND me.evalCp IS NOT NULL AND (ea.bestMoveEvalCp - me.evalCp) > 0) THEN (ea.bestMoveEvalCp - me.evalCp) / 100.0 ELSE 0.0 END) >= :minEvalLoss) THEN 1 ELSE 0 END) >= :minMistakeCount
         """,
@@ -141,6 +144,7 @@ data class HistoricalMoveStats(
 data class WeaknessAggregation(
     val positionId: UUID,
     val fen: String,
+    val playerColor: String,
     val timesReached: Int,
     val bestMove: String?,
     val baselineEvalCp: Int?,

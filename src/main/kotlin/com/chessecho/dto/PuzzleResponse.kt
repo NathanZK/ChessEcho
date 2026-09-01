@@ -1,5 +1,7 @@
 package com.chessecho.dto
 
+import com.chessecho.service.EvidenceCombination
+import com.chessecho.service.ObjectiveEvidenceState
 import com.fasterxml.jackson.annotation.JsonInclude
 import java.util.UUID
 
@@ -17,4 +19,8 @@ data class PuzzleResponse(
     val mistakeRate: Double,
     val evalCp: Int? = null,
     val gameUrls: List<String> = emptyList(),
+    val recommendationPriority: Double,
+    val objectiveEvidenceState: ObjectiveEvidenceState,
+    val evidenceCombination: EvidenceCombination?,
+    val practicalEvidence: PracticalEvidenceResponse,
 )
