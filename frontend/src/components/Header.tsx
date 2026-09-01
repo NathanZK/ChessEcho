@@ -20,48 +20,107 @@ export const Header: React.FC<HeaderProps> = ({
   weaknessCount = 0,
   onDisconnect,
 }) => {
+  const isPuzzlesLayout = activeTab === 'puzzles';
+
   return (
-    <header className="bg-slate-900 border-b border-slate-800 sticky top-0 z-50 px-4 lg:px-8 py-3">
-      <div className="max-w-7xl mx-auto flex items-center justify-between">
+    <header
+      className={`bg-slate-900 border-b border-slate-800 sticky top-0 z-50 px-4 lg:px-8 py-3 ${
+        isPuzzlesLayout
+          ? 'w-full shrink-0 2xl:w-[280px] 2xl:h-screen 2xl:border-r 2xl:border-b-0 2xl:left-0 2xl:px-4 2xl:py-4 2xl:overflow-y-auto'
+          : ''
+      }`}
+    >
+      <div
+        className={`max-w-7xl mx-auto flex items-center justify-between ${
+          isPuzzlesLayout
+            ? 'flex-wrap gap-3 2xl:max-w-none 2xl:mx-0 2xl:h-full 2xl:flex-col 2xl:flex-nowrap 2xl:items-stretch 2xl:justify-start'
+            : ''
+        }`}
+      >
         {/* Brand Logo */}
-        <div className="flex items-center space-x-3 cursor-pointer" onClick={() => setActiveTab('puzzles')}>
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-700 flex items-center justify-center shadow-lg shadow-emerald-900/30">
+        <div
+          className={`flex items-center space-x-3 cursor-pointer ${
+            isPuzzlesLayout ? 'order-1 min-w-0 max-w-full 2xl:w-full 2xl:shrink-0' : ''
+          }`}
+          onClick={() => setActiveTab('puzzles')}
+        >
+          <div
+            className={`w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-emerald-700 flex items-center justify-center shadow-lg shadow-emerald-900/30 ${
+              isPuzzlesLayout ? 'shrink-0' : ''
+            }`}
+          >
             <span className="text-2xl font-bold text-white">♟</span>
           </div>
-          <div>
+          <div className={isPuzzlesLayout ? 'min-w-0' : ''}>
             <h1 className="text-xl font-bold tracking-tight text-white flex items-center gap-1.5">
               Chess<span className="text-emerald-400">Echo</span>
             </h1>
-            <p className="text-xs text-slate-400 font-medium">Pattern-Based Opening Training</p>
+            <p
+              className={`text-xs text-slate-400 font-medium ${
+                isPuzzlesLayout ? 'break-words leading-tight' : ''
+              }`}
+            >
+              Pattern-Based Opening Training
+            </p>
           </div>
         </div>
 
         {/* Center 3-Tab Navigation */}
-        <nav className="flex items-center space-x-1 bg-slate-950 p-1.5 rounded-xl border border-slate-800">
+        <nav
+          className={`flex items-center bg-slate-950 p-1.5 rounded-xl border border-slate-800 ${
+            isPuzzlesLayout
+              ? 'gap-1 order-3 w-full min-w-0 overflow-x-auto 2xl:order-2 2xl:flex-col 2xl:items-stretch 2xl:overflow-visible'
+              : 'space-x-1'
+          }`}
+        >
           <button
             onClick={() => setActiveTab('puzzles')}
             className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 cursor-pointer ${
+              isPuzzlesLayout ? 'shrink-0 2xl:w-full 2xl:min-w-0 2xl:justify-start' : ''
+            } ${
               activeTab === 'puzzles'
                 ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/40'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
             }`}
           >
             <Swords className="w-4 h-4" />
-            <span>Practice Puzzles</span>
+            <span
+              className={
+                isPuzzlesLayout
+                  ? '2xl:min-w-0 2xl:whitespace-normal 2xl:text-left 2xl:leading-tight'
+                  : ''
+              }
+            >
+              Practice Puzzles
+            </span>
           </button>
 
           <button
             onClick={() => setActiveTab('weaknesses')}
             className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 cursor-pointer ${
+              isPuzzlesLayout ? 'shrink-0 2xl:w-full 2xl:min-w-0 2xl:justify-start' : ''
+            } ${
               activeTab === 'weaknesses'
                 ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/40'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
             }`}
           >
             <Target className="w-4 h-4" />
-            <span>Weaknesses Library</span>
+            <span
+              className={
+                isPuzzlesLayout
+                  ? '2xl:min-w-0 2xl:whitespace-normal 2xl:text-left 2xl:leading-tight'
+                  : ''
+              }
+            >
+              Weaknesses Library
+            </span>
             {weaknessCount > 0 && (
-              <span className="ml-1.5 px-2 py-0.5 text-xs font-bold bg-emerald-500/20 text-emerald-300 rounded-full border border-emerald-500/30">
+              <span
+                className={`ml-1.5 px-2 py-0.5 text-xs font-bold bg-emerald-500/20 text-emerald-300 rounded-full border border-emerald-500/30 ${
+                  isPuzzlesLayout ? 'shrink-0 2xl:ml-auto' : ''
+                }`}
+              >
                 {weaknessCount}
               </span>
             )}
@@ -70,25 +129,55 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={() => setActiveTab('import')}
             className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 cursor-pointer ${
+              isPuzzlesLayout ? 'shrink-0 2xl:w-full 2xl:min-w-0 2xl:justify-start' : ''
+            } ${
               activeTab === 'import'
                 ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/40'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
             }`}
           >
             <Download className="w-4 h-4" />
-            <span>Import Games</span>
+            <span
+              className={
+                isPuzzlesLayout
+                  ? '2xl:min-w-0 2xl:whitespace-normal 2xl:text-left 2xl:leading-tight'
+                  : ''
+              }
+            >
+              Import Games
+            </span>
           </button>
         </nav>
 
         {/* User Profile Badge */}
         {username ? (
-          <div className="flex items-center space-x-3 bg-slate-800/80 px-3.5 py-1.5 rounded-xl border border-slate-700/60">
-            <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-slate-300 border border-slate-600">
+          <div
+            className={`flex items-center bg-slate-800/80 px-3.5 py-1.5 rounded-xl border border-slate-700/60 ${
+              isPuzzlesLayout
+                ? 'order-2 ml-auto max-w-full min-w-0 flex-wrap gap-2 2xl:order-3 2xl:mt-auto 2xl:ml-0 2xl:w-full 2xl:shrink-0 2xl:flex-col 2xl:items-stretch'
+                : 'space-x-3'
+            }`}
+          >
+            <div
+              className={`w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-slate-300 border border-slate-600 ${
+                isPuzzlesLayout ? 'shrink-0 2xl:self-start' : ''
+              }`}
+            >
               <User className="w-4 h-4" />
             </div>
-            <div className="text-left hidden sm:block">
-              <div className="text-sm font-semibold text-slate-200">{username}</div>
-              <div className="text-[11px] text-emerald-400 font-medium flex items-center gap-1">
+            <div
+              className={`text-left hidden sm:block ${
+                isPuzzlesLayout ? 'min-w-0 flex-wrap 2xl:block 2xl:w-full' : ''
+              }`}
+            >
+              <div className={`text-sm font-semibold text-slate-200 ${isPuzzlesLayout ? 'break-all' : ''}`}>
+                {username}
+              </div>
+              <div
+                className={`text-[11px] text-emerald-400 font-medium flex items-center gap-1 ${
+                  isPuzzlesLayout ? 'flex-wrap' : ''
+                }`}
+              >
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                 Chess.com Connected
               </div>
@@ -97,20 +186,27 @@ export const Header: React.FC<HeaderProps> = ({
               <button
                 onClick={onDisconnect}
                 title="Disconnect Account"
-                className="ml-2 px-2.5 py-1 bg-slate-700 hover:bg-rose-600 text-slate-300 hover:text-white text-[11px] font-bold rounded-lg transition border border-slate-600 hover:border-rose-500 cursor-pointer"
+                className={`ml-2 px-2.5 py-1 bg-slate-700 hover:bg-rose-600 text-slate-300 hover:text-white text-[11px] font-bold rounded-lg transition border border-slate-600 hover:border-rose-500 cursor-pointer ${
+                  isPuzzlesLayout ? 'shrink-0 max-w-full whitespace-normal 2xl:w-full 2xl:ml-0' : ''
+                }`}
               >
                 Disconnect
               </button>
             )}
           </div>
         ) : (
-          <div className="flex items-center space-x-2 bg-slate-950 px-3.5 py-1.5 rounded-xl border border-slate-800 text-xs font-semibold text-slate-400">
-            <User className="w-4 h-4 text-slate-500" />
-            <span>Not Connected</span>
+          <div
+            className={`flex items-center bg-slate-950 px-3.5 py-1.5 rounded-xl border border-slate-800 text-xs font-semibold text-slate-400 ${
+              isPuzzlesLayout
+                ? 'order-2 ml-auto max-w-full min-w-0 flex-wrap gap-2 2xl:order-3 2xl:mt-auto 2xl:ml-0 2xl:w-full 2xl:shrink-0 2xl:flex-col 2xl:items-start'
+                : 'space-x-2'
+            }`}
+          >
+            <User className={`w-4 h-4 text-slate-500 ${isPuzzlesLayout ? 'shrink-0' : ''}`} />
+            <span className={isPuzzlesLayout ? 'min-w-0 break-words' : ''}>Not Connected</span>
           </div>
         )}
       </div>
     </header>
   );
 };
-

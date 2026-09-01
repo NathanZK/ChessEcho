@@ -59,6 +59,141 @@ const mockPuzzles: Puzzle[] = [
   },
 ];
 
+function requireElement(element: Element | null | undefined, description: string): Element {
+  if (!(element instanceof Element)) {
+    throw new Error(`Expected ${description} to be an Element`);
+  }
+  return element;
+}
+
+function expectClassTokens(element: Element, tokens: string[]) {
+  tokens.forEach((token) => expect(element).toHaveClass(token));
+}
+
+function expectNoClassTokens(element: Element, tokens: string[]) {
+  tokens.forEach((token) => expect(element).not.toHaveClass(token));
+}
+
+function expectClassNameTokens(className: string, tokens: string[]) {
+  const classTokens = className.split(/\s+/);
+  tokens.forEach((token) => expect(classTokens).toContain(token));
+}
+
+function getHomeLayout() {
+  const header = screen.getByRole('banner');
+  return {
+    shell: requireElement(header.parentElement, 'Home shell'),
+    header,
+    headerInner: requireElement(header.firstElementChild, 'header inner container'),
+    nav: screen.getByRole('navigation'),
+    main: screen.getByRole('main'),
+  };
+}
+
+function expectWideTopHeader() {
+  const { shell, header, headerInner, nav } = getHomeLayout();
+
+  expectNoClassTokens(shell, ['2xl:flex-row']);
+  expectClassTokens(header, [
+    'bg-slate-900',
+    'border-b',
+    'border-slate-800',
+    'sticky',
+    'top-0',
+    'z-50',
+    'px-4',
+    'lg:px-8',
+    'py-3',
+  ]);
+  expectNoClassTokens(header, [
+    'w-full',
+    'shrink-0',
+    '2xl:w-[280px]',
+    '2xl:h-screen',
+    '2xl:border-r',
+    '2xl:border-b-0',
+    '2xl:left-0',
+    '2xl:px-4',
+    '2xl:py-4',
+    '2xl:overflow-y-auto',
+  ]);
+  expectClassTokens(headerInner, ['max-w-7xl', 'mx-auto', 'flex', 'items-center', 'justify-between']);
+  expectNoClassTokens(headerInner, [
+    'flex-wrap',
+    'gap-3',
+    '2xl:max-w-none',
+    '2xl:mx-0',
+    '2xl:h-full',
+    '2xl:flex-col',
+    '2xl:flex-nowrap',
+    '2xl:items-stretch',
+    '2xl:justify-start',
+  ]);
+  expectClassTokens(nav, ['flex', 'items-center', 'space-x-1']);
+  expectNoClassTokens(nav, [
+    'gap-1',
+    'order-3',
+    'w-full',
+    'min-w-0',
+    'overflow-x-auto',
+    '2xl:order-2',
+    '2xl:flex-col',
+    '2xl:items-stretch',
+    '2xl:overflow-visible',
+  ]);
+
+  const brand = requireElement(headerInner.children.item(0), 'brand');
+  const logo = requireElement(brand.children.item(0), 'brand logo');
+  const brandText = requireElement(brand.children.item(1), 'brand text');
+  expectClassTokens(brand, ['flex', 'items-center', 'space-x-3']);
+  expectNoClassTokens(brand, ['order-1', 'min-w-0', 'max-w-full', '2xl:w-full', '2xl:shrink-0']);
+  expectNoClassTokens(logo, ['shrink-0']);
+  expectNoClassTokens(brandText, ['min-w-0']);
+  expectNoClassTokens(requireElement(brandText.querySelector('p'), 'brand subtitle'), ['break-words', 'leading-tight']);
+
+  const navButtons = Array.from(nav.querySelectorAll('button'));
+  expect(navButtons).toHaveLength(3);
+  navButtons.forEach((button) => {
+    expectNoClassTokens(button, ['shrink-0', '2xl:w-full', '2xl:min-w-0', '2xl:justify-start']);
+    expectNoClassTokens(requireElement(button.querySelector('span'), 'navigation label'), [
+      '2xl:min-w-0',
+      '2xl:whitespace-normal',
+      '2xl:text-left',
+      '2xl:leading-tight',
+    ]);
+  });
+  const weaknessBadge = requireElement(navButtons[1].querySelectorAll('span').item(1), 'weakness badge');
+  expectNoClassTokens(weaknessBadge, ['shrink-0', '2xl:ml-auto']);
+
+  const account = requireElement(headerInner.children.item(2), 'connected account');
+  const disconnect = requireElement(account.querySelector('button'), 'account Disconnect button');
+  const avatar = requireElement(account.children.item(0), 'account avatar');
+  const accountText = requireElement(account.children.item(1), 'account text');
+  const username = requireElement(screen.getByText('hikaru'), 'username');
+  const status = requireElement(screen.getByText('Chess.com Connected').parentElement, 'connection status');
+  expectClassTokens(account, ['flex', 'items-center', 'space-x-3']);
+  expectNoClassTokens(account, [
+    'order-2',
+    'ml-auto',
+    'max-w-full',
+    'min-w-0',
+    'flex-wrap',
+    'gap-2',
+    '2xl:order-3',
+    '2xl:mt-auto',
+    '2xl:ml-0',
+    '2xl:w-full',
+    '2xl:shrink-0',
+    '2xl:flex-col',
+    '2xl:items-stretch',
+  ]);
+  expectNoClassTokens(avatar, ['shrink-0', '2xl:self-start']);
+  expectNoClassTokens(accountText, ['min-w-0', '2xl:block', '2xl:w-full']);
+  expectNoClassTokens(username, ['break-all']);
+  expectNoClassTokens(status, ['flex-wrap']);
+  expectNoClassTokens(disconnect, ['shrink-0', 'max-w-full', 'whitespace-normal', '2xl:w-full', '2xl:ml-0']);
+}
+
 describe('Puzzles Tab Features and Fixes', () => {
   beforeEach(() => {
     localStorage.clear();
@@ -587,27 +722,405 @@ describe('Puzzles Tab Features and Fixes', () => {
     });
   });
 
-  describe('8. Expanded Desktop Puzzle Workspace Layout', () => {
-    it('applies expanded viewport container and board/panel max-width classes', async () => {
+  describe('8. Responsive Puzzles navigation and workspace layout', () => {
+    it('uses the real loaded Home fixture for the overflow-safe rail, workspace, account, and source-game contracts', async () => {
       localStorage.setItem('chessecho_username', 'hikaru');
+
+      const layoutPuzzle: Puzzle = {
+        ...mockPuzzles[0],
+        puzzleId: 'layout-puzzle-102',
+        gameUrls: ['https://www.chess.com/game/live/layoutGame1'],
+      };
+      vi.mocked(api.fetchPuzzles).mockResolvedValue([layoutPuzzle]);
 
       render(<Home />);
 
       await waitFor(() => {
         expect(screen.getByText("King's Pawn Opening")).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /View Games \(1\)/i })).toBeInTheDocument();
       });
 
-      // 1. Verify outer puzzle container uses expanded max-w-[1536px]
-      const puzzleWorkspaceContainer = screen.getByText("King's Pawn Opening").closest('.max-w-\\[1536px\\]');
-      expect(puzzleWorkspaceContainer).toBeInTheDocument();
+      const { shell, header, headerInner, nav, main } = getHomeLayout();
+      const settingsButton = screen.getByRole('button', { name: /Puzzle Settings/i });
+      const feedbackPanel = requireElement(settingsButton.parentElement?.parentElement, 'feedback panel');
+      const feedbackWrapper = requireElement(feedbackPanel.parentElement, 'feedback wrapper');
+      const loadedRow = requireElement(feedbackWrapper.parentElement, 'loaded puzzle row');
+      const boardWrapper = requireElement(loadedRow.children.item(1), 'board wrapper');
+      const boardRoot = requireElement(boardWrapper.firstElementChild, 'ChessBoardArea root');
+      const workspace = requireElement(loadedRow.parentElement?.parentElement, 'Puzzles workspace');
 
-      // 2. Verify center board wrapper grows into available space (flex-1 min-h-0)
-      const boardWrapper = screen.getByText("King's Pawn Opening").closest('.max-w-\\[1536px\\]')?.querySelector('.flex-1');
-      expect(boardWrapper).toBeInTheDocument();
+      expectClassTokens(shell, ['h-screen', 'flex', 'flex-col', 'overflow-hidden', '2xl:flex-row']);
+      expectClassTokens(header, [
+        'bg-slate-900',
+        'border-b',
+        'border-slate-800',
+        'sticky',
+        'top-0',
+        'z-50',
+        'px-4',
+        'lg:px-8',
+        'py-3',
+        'w-full',
+        'shrink-0',
+        '2xl:w-[280px]',
+        '2xl:h-screen',
+        '2xl:border-r',
+        '2xl:border-b-0',
+        '2xl:left-0',
+        '2xl:px-4',
+        '2xl:py-4',
+        '2xl:overflow-y-auto',
+      ]);
+      expectClassTokens(headerInner, [
+        'max-w-7xl',
+        'mx-auto',
+        'flex',
+        'items-center',
+        'justify-between',
+        'flex-wrap',
+        'gap-3',
+        '2xl:max-w-none',
+        '2xl:mx-0',
+        '2xl:h-full',
+        '2xl:flex-col',
+        '2xl:flex-nowrap',
+        '2xl:items-stretch',
+        '2xl:justify-start',
+      ]);
+      expectClassTokens(main, ['flex-1', 'min-w-0', 'overflow-y-auto']);
+      expectClassTokens(workspace, ['w-full', 'px-4', 'lg:px-8', '2xl:max-w-none', '2xl:px-4']);
 
-      // 3. Verify right feedback panel wrapper uses max-w-[480px]
-      const feedbackWrapper = screen.getByText("King's Pawn Opening").closest('.max-w-\\[1536px\\]')?.querySelector('.max-w-\\[480px\\]');
-      expect(feedbackWrapper).toBeInTheDocument();
+      expectClassTokens(loadedRow, [
+        'flex',
+        'flex-col',
+        'items-center',
+        'justify-center',
+        'gap-4',
+        'lg:flex-row',
+        'lg:flex-wrap',
+        'lg:items-start',
+        '2xl:flex-nowrap',
+      ]);
+      expectNoClassTokens(loadedRow, ['xl:gap-8']);
+
+      expectClassTokens(boardWrapper, [
+        'w-full',
+        'max-w-[640px]',
+        'shrink-0',
+        '2xl:max-w-[760px]',
+        '2xl:w-auto',
+        '2xl:min-w-0',
+        '2xl:basis-[760px]',
+        '2xl:grow',
+        '2xl:shrink',
+      ]);
+      expectNoClassTokens(boardWrapper, ['xl:max-w-[680px]']);
+      expectClassTokens(boardRoot, ['w-full', 'max-w-[640px]', '2xl:max-w-[760px]']);
+      expectNoClassTokens(boardRoot, ['xl:max-w-[680px]']);
+      expectClassTokens(feedbackWrapper, [
+        'w-full',
+        'max-w-[480px]',
+        'shrink-0',
+        '2xl:max-w-[360px]',
+        '2xl:w-auto',
+        '2xl:min-w-0',
+        '2xl:basis-[360px]',
+        '2xl:shrink',
+      ]);
+
+      expectClassTokens(nav, [
+        'flex',
+        'items-center',
+        'gap-1',
+        'order-3',
+        'w-full',
+        'min-w-0',
+        'overflow-x-auto',
+        '2xl:order-2',
+        '2xl:flex-col',
+        '2xl:items-stretch',
+        '2xl:overflow-visible',
+      ]);
+      expectNoClassTokens(nav, ['space-x-1']);
+
+      const navButtons = Array.from(nav.querySelectorAll('button'));
+      expect(navButtons).toHaveLength(3);
+      navButtons.forEach((button) => {
+        expectClassTokens(button, ['shrink-0', '2xl:w-full', '2xl:min-w-0', '2xl:justify-start']);
+        const label = requireElement(button.querySelector('span'), 'navigation label');
+        expectClassTokens(label, ['2xl:min-w-0', '2xl:whitespace-normal', '2xl:text-left', '2xl:leading-tight']);
+      });
+      const weaknessBadge = requireElement(navButtons[1].querySelectorAll('span').item(1), 'weakness badge');
+      expect(weaknessBadge).toHaveTextContent('1');
+      expectClassTokens(weaknessBadge, ['shrink-0', '2xl:ml-auto']);
+
+      const brand = requireElement(headerInner.children.item(0), 'brand');
+      const logo = requireElement(brand.children.item(0), 'brand logo');
+      const brandText = requireElement(brand.children.item(1), 'brand text');
+      expectClassTokens(brand, ['order-1', 'min-w-0', 'max-w-full', '2xl:w-full', '2xl:shrink-0']);
+      expectClassTokens(logo, ['shrink-0']);
+      expectClassTokens(brandText, ['min-w-0']);
+      expectClassTokens(requireElement(brandText.querySelector('p'), 'brand subtitle'), ['break-words', 'leading-tight']);
+
+      const account = requireElement(headerInner.children.item(2), 'connected account');
+      expectClassTokens(account, [
+        'flex',
+        'items-center',
+        'order-2',
+        'ml-auto',
+        'max-w-full',
+        'min-w-0',
+        'flex-wrap',
+        'gap-2',
+        '2xl:order-3',
+        '2xl:mt-auto',
+        '2xl:ml-0',
+        '2xl:w-full',
+        '2xl:shrink-0',
+        '2xl:flex-col',
+        '2xl:items-stretch',
+      ]);
+      expectClassTokens(requireElement(account.children.item(0), 'account avatar'), ['shrink-0', '2xl:self-start']);
+      const accountText = requireElement(account.children.item(1), 'account text');
+      expectClassTokens(accountText, ['min-w-0', '2xl:block', '2xl:w-full']);
+      expectClassTokens(requireElement(screen.getByText('hikaru'), 'username'), ['break-all']);
+      expectClassTokens(requireElement(screen.getByText('Chess.com Connected').parentElement, 'connection status'), ['flex-wrap']);
+      const disconnect = screen.getByRole('button', { name: /^Disconnect$/i });
+      expectClassTokens(disconnect, ['shrink-0', 'max-w-full', 'whitespace-normal', '2xl:w-full', '2xl:ml-0']);
+      expect(settingsButton).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: /View Games \(1\)/i }));
+      expect(screen.getByText('Source Games')).toBeInTheDocument();
+      expect(screen.getByText(/layoutGame1/i).closest('a')).toHaveAttribute(
+        'href',
+        'https://www.chess.com/game/live/layoutGame1'
+      );
+    });
+
+    it('restores the wide top header across real Puzzles, Weaknesses, and Import transitions', async () => {
+      localStorage.setItem('chessecho_username', 'hikaru');
+      const layoutPuzzle: Puzzle = {
+        ...mockPuzzles[0],
+        puzzleId: 'layout-transition-puzzle-102',
+        gameUrls: ['https://www.chess.com/game/live/layoutGame1'],
+      };
+      vi.mocked(api.fetchPuzzles).mockResolvedValue([layoutPuzzle]);
+      vi.mocked(api.fetchWeaknesses).mockResolvedValue([
+        {
+          positionId: 'layout-transition-weakness-102',
+          fen: layoutPuzzle.fen,
+          timesReached: 5,
+          mistakeCount: 3,
+          mistakeRate: 60,
+          averageLoss: 1.2,
+          priority: 2.5,
+          bestMove: 'e4',
+          acceptableMoves: [],
+          movesPlayed: [],
+          gameUrls: [],
+        },
+      ]);
+
+      render(<Home />);
+      await waitFor(() => {
+        expect(screen.getByText("King's Pawn Opening")).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /View Games \(1\)/i })).toBeInTheDocument();
+      });
+
+      let layout = getHomeLayout();
+      const initialPuzzlesClasses = {
+        shell: layout.shell.className,
+        header: layout.header.className,
+        headerInner: layout.headerInner.className,
+        nav: layout.nav.className,
+      };
+
+      fireEvent.click(screen.getByRole('button', { name: /Weaknesses Library/i }));
+      await waitFor(() => {
+        expect(screen.getByRole('heading', { name: /Recurring Opening Weaknesses Library/i })).toBeInTheDocument();
+        expect(window.location.hash).toBe('#weaknesses');
+        expect(screen.getByRole('navigation').querySelectorAll('button')[1].querySelectorAll('span')).toHaveLength(2);
+      });
+      expectWideTopHeader();
+
+      fireEvent.click(screen.getByRole('button', { name: /Import Games/i }));
+      await waitFor(() => {
+        expect(screen.getByRole('heading', { name: /Import & Analyze Your Game History/i })).toBeInTheDocument();
+        expect(window.location.hash).toBe('#import');
+      });
+      expectWideTopHeader();
+
+      fireEvent.click(screen.getByRole('button', { name: /Practice Puzzles/i }));
+      await waitFor(() => {
+        expect(screen.getByText("King's Pawn Opening")).toBeInTheDocument();
+        expect(window.location.hash).toBe('#puzzles');
+      });
+      layout = getHomeLayout();
+      expectClassNameTokens(initialPuzzlesClasses.shell, ['2xl:flex-row']);
+      expectClassNameTokens(initialPuzzlesClasses.header, ['2xl:w-[280px]', '2xl:h-screen', '2xl:overflow-y-auto']);
+      expectClassNameTokens(initialPuzzlesClasses.headerInner, ['flex-wrap', 'gap-3', '2xl:flex-col', '2xl:flex-nowrap']);
+      expectClassNameTokens(initialPuzzlesClasses.nav, ['order-3', 'w-full', 'min-w-0', 'overflow-x-auto', '2xl:flex-col']);
+      expectClassTokens(layout.shell, ['2xl:flex-row']);
+      expectClassTokens(layout.header, ['2xl:w-[280px]', '2xl:h-screen', '2xl:overflow-y-auto']);
+      expectClassTokens(layout.headerInner, ['flex-wrap', 'gap-3', '2xl:flex-col', '2xl:flex-nowrap']);
+      expectClassTokens(layout.nav, ['order-3', 'w-full', 'min-w-0', 'overflow-x-auto', '2xl:flex-col']);
+    });
+
+    it('keeps the Puzzles rail and connected account usable while puzzles are loading', async () => {
+      localStorage.setItem('chessecho_username', 'hikaru');
+      let resolvePuzzles: (value: Puzzle[]) => void;
+      const pendingPuzzles = new Promise<Puzzle[]>((resolve) => {
+        resolvePuzzles = resolve;
+      });
+      vi.mocked(api.fetchPuzzles).mockReturnValue(pendingPuzzles);
+
+      render(<Home />);
+
+      expect(screen.getByText(/Loading Practice Puzzles/i)).toBeInTheDocument();
+      expect(screen.queryByText("King's Pawn Opening")).not.toBeInTheDocument();
+      const { shell, header, headerInner, nav, main } = getHomeLayout();
+      const account = requireElement(screen.getByRole('button', { name: /^Disconnect$/i }).parentElement, 'connected account');
+      const avatar = requireElement(account.children.item(0), 'account avatar');
+      const accountText = requireElement(account.children.item(1), 'account text');
+      const status = requireElement(screen.getByText('Chess.com Connected').parentElement, 'connection status');
+      const disconnect = screen.getByRole('button', { name: /^Disconnect$/i });
+
+      expectClassTokens(shell, ['h-screen', 'flex', 'flex-col', 'overflow-hidden', '2xl:flex-row']);
+      expectClassTokens(header, [
+        'bg-slate-900',
+        'border-b',
+        'border-slate-800',
+        'sticky',
+        'top-0',
+        'z-50',
+        'px-4',
+        'lg:px-8',
+        'py-3',
+        'w-full',
+        'shrink-0',
+        '2xl:w-[280px]',
+        '2xl:h-screen',
+        '2xl:border-r',
+        '2xl:border-b-0',
+        '2xl:left-0',
+        '2xl:px-4',
+        '2xl:py-4',
+        '2xl:overflow-y-auto',
+      ]);
+      expectClassTokens(headerInner, [
+        'max-w-7xl',
+        'mx-auto',
+        'flex',
+        'items-center',
+        'justify-between',
+        'flex-wrap',
+        'gap-3',
+        '2xl:max-w-none',
+        '2xl:mx-0',
+        '2xl:h-full',
+        '2xl:flex-col',
+        '2xl:flex-nowrap',
+        '2xl:items-stretch',
+        '2xl:justify-start',
+      ]);
+      expectClassTokens(nav, [
+        'flex',
+        'items-center',
+        'gap-1',
+        'order-3',
+        'w-full',
+        'min-w-0',
+        'overflow-x-auto',
+        '2xl:order-2',
+        '2xl:flex-col',
+        '2xl:items-stretch',
+        '2xl:overflow-visible',
+      ]);
+      expectNoClassTokens(nav, ['space-x-1']);
+      const navButtons = Array.from(nav.querySelectorAll('button'));
+      expect(navButtons).toHaveLength(3);
+      navButtons.forEach((button) => {
+        expectClassTokens(button, ['shrink-0', '2xl:w-full', '2xl:min-w-0', '2xl:justify-start']);
+        expectClassTokens(requireElement(button.querySelector('span'), 'navigation label'), [
+          '2xl:min-w-0',
+          '2xl:whitespace-normal',
+          '2xl:text-left',
+          '2xl:leading-tight',
+        ]);
+      });
+      const brand = requireElement(headerInner.children.item(0), 'brand');
+      const logo = requireElement(brand.children.item(0), 'brand logo');
+      const brandText = requireElement(brand.children.item(1), 'brand text');
+      expectClassTokens(brand, ['order-1', 'min-w-0', 'max-w-full', '2xl:w-full', '2xl:shrink-0']);
+      expectClassTokens(logo, ['shrink-0']);
+      expectClassTokens(brandText, ['min-w-0']);
+      expectClassTokens(requireElement(brandText.querySelector('p'), 'brand subtitle'), ['break-words', 'leading-tight']);
+      expectClassTokens(main, ['flex-1', 'min-w-0', 'overflow-y-auto']);
+      expectClassTokens(account, [
+        'flex',
+        'items-center',
+        'order-2',
+        'ml-auto',
+        'max-w-full',
+        'min-w-0',
+        'flex-wrap',
+        'gap-2',
+        '2xl:order-3',
+        '2xl:mt-auto',
+        '2xl:ml-0',
+        '2xl:w-full',
+        '2xl:shrink-0',
+        '2xl:flex-col',
+        '2xl:items-stretch',
+      ]);
+      expectClassTokens(avatar, ['shrink-0', '2xl:self-start']);
+      expectClassTokens(accountText, ['min-w-0', '2xl:block', '2xl:w-full']);
+      expectClassTokens(requireElement(screen.getByText('hikaru'), 'username'), ['break-all']);
+      expectClassTokens(status, ['flex-wrap']);
+      expectClassTokens(disconnect, ['shrink-0', 'max-w-full', 'whitespace-normal', '2xl:w-full', '2xl:ml-0']);
+
+      resolvePuzzles!(mockPuzzles);
+      await waitFor(() => expect(screen.getByText("King's Pawn Opening")).toBeInTheDocument());
+    });
+
+    it('keeps the Puzzles rail, scrolling, and disconnected empty account shrink-safe', async () => {
+      render(<Home />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/No Practice Puzzles Available/i)).toBeInTheDocument();
+      });
+      expect(screen.getByText('Not Connected')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^Disconnect$/i })).not.toBeInTheDocument();
+
+      const { shell, header, headerInner, nav, main } = getHomeLayout();
+      const accountLabel = screen.getByText('Not Connected');
+      const account = requireElement(accountLabel.parentElement, 'disconnected account');
+      const accountIcon = requireElement(account.querySelector('svg'), 'disconnected account icon');
+
+      expectClassTokens(shell, ['2xl:flex-row']);
+      expectClassTokens(header, ['2xl:w-[280px]', '2xl:h-screen', '2xl:overflow-y-auto']);
+      expectClassTokens(headerInner, ['flex-wrap', 'gap-3', '2xl:flex-col', '2xl:flex-nowrap']);
+      expectClassTokens(nav, ['order-3', 'w-full', 'min-w-0', 'overflow-x-auto', '2xl:flex-col']);
+      expectClassTokens(main, ['min-w-0', 'overflow-y-auto']);
+      expectClassTokens(account, [
+        'flex',
+        'items-center',
+        'order-2',
+        'ml-auto',
+        'max-w-full',
+        'min-w-0',
+        'flex-wrap',
+        'gap-2',
+        '2xl:order-3',
+        '2xl:mt-auto',
+        '2xl:ml-0',
+        '2xl:w-full',
+        '2xl:shrink-0',
+        '2xl:flex-col',
+        '2xl:items-start',
+      ]);
+      expectClassTokens(accountIcon, ['shrink-0']);
+      expectClassTokens(accountLabel, ['min-w-0', 'break-words']);
     });
   });
 
