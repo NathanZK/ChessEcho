@@ -90,9 +90,16 @@ curl http://localhost:8080/api/jobs/3fa85f64-5717-4562-b3fc-2c963f66afa6
   "status": "QUEUED | PROCESSING | COMPLETED | FAILED",
   "gamesImported": 120,
   "gamesSkipped": 5,
-  "errorMessage": null
+  "gamesProcessed": 150,
+  "gamesFilteredOut": 25,
+  "errorMessage": null,
+  "analysisStatus": "NOT_STARTED | ANALYZING | COMPLETED | FAILED"
 }
 ```
+
+`status` tracks game ingestion and becomes `COMPLETED` before Stockfish analysis starts.
+Progress counters are updated after each archive. `analysisStatus` tracks the subsequent,
+independent analysis lifecycle; an analysis failure does not change a completed import status.
 
 #### `404 Not Found`
 ```json
@@ -365,5 +372,3 @@ Returned when the specified position FEN is invalid or the attempted move is ill
   ]
 }
 ```
-
-

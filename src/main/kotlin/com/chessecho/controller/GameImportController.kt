@@ -53,7 +53,10 @@ class GameImportController(
                 status = job.status,
                 gamesImported = job.gamesImported,
                 gamesSkipped = job.gamesSkipped,
+                gamesProcessed = job.gamesProcessed,
+                gamesFilteredOut = job.gamesFilteredOut,
                 errorMessage = job.errorMessage,
+                analysisStatus = job.analysisStatus,
             ),
         )
     }

@@ -216,7 +216,7 @@ Move-order transpositions that produce legally identical positions are grouped t
 
 **PostgreSQL** — stores users, chess accounts, imported games, board positions, position occurrences, engine analysis results, and import job state. Schema is managed by Flyway with a single migration.
 
-**Asynchronous import job** — when a game import is started, the backend creates a job record and executes the full pipeline asynchronously. Stockfish analysis runs inside the same job. The frontend polls for job status every two seconds.
+**Asynchronous import job** — when a game import is started, the backend creates a job record and executes the pipeline asynchronously. Live game progress is checkpointed after each archive. Game ingestion and the subsequent Stockfish analysis have independent statuses on the same job, and the frontend polls both every two seconds.
 
 **Stockfish analysis** — qualifying positions are analyzed by spawning Stockfish as a subprocess. The baseline position evaluation and the evaluation of each historically played move are stored. Analysis runs at depth 16.
 
@@ -352,7 +352,7 @@ Returns `202 Accepted` with a `jobId`. Returns `409 Conflict` if an import is al
 ```http
 GET /api/jobs/{jobId}
 ```
-Returns `QUEUED`, `PROCESSING`, `COMPLETED`, or `FAILED` with counts of games imported and games skipped (already imported).
+Returns the ingestion status (`QUEUED`, `PROCESSING`, `COMPLETED`, or `FAILED`), live processed/imported/skipped/filtered game counters, and a separate Stockfish analysis status. Ingestion becomes `COMPLETED` before analysis begins; analysis failures do not change the completed import status.
 
 
 

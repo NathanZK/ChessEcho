@@ -17,15 +17,18 @@ CREATE TABLE chess_account
 
 CREATE TABLE async_job
 (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    username        VARCHAR(255) NOT NULL,
-    platform        VARCHAR(20)  NOT NULL,
-    status          VARCHAR(20)  NOT NULL DEFAULT 'QUEUED',
-    games_imported  INT                   DEFAULT 0,
-    games_skipped   INT                   DEFAULT 0,
-    error_message   TEXT,
-    created_at      TIMESTAMP             DEFAULT now(),
-    updated_at      TIMESTAMP             DEFAULT now()
+    id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    username               VARCHAR(255) NOT NULL,
+    platform               VARCHAR(20)  NOT NULL,
+    status                 VARCHAR(20)  NOT NULL DEFAULT 'QUEUED',
+    games_imported         INT                   DEFAULT 0,
+    games_skipped          INT                   DEFAULT 0,
+    games_processed        INT          NOT NULL DEFAULT 0,
+    games_filtered_out     INT          NOT NULL DEFAULT 0,
+    analysis_status        VARCHAR(20)  NOT NULL DEFAULT 'NOT_STARTED',
+    error_message          TEXT,
+    created_at             TIMESTAMP             DEFAULT now(),
+    updated_at             TIMESTAMP             DEFAULT now()
 );
 
 

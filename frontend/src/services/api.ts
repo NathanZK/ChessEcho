@@ -12,7 +12,10 @@ export interface JobStatusResponse {
   status: 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
   gamesImported: number;
   gamesSkipped: number;
+  gamesProcessed?: number;
+  gamesFilteredOut?: number;
   errorMessage?: string | null;
+  analysisStatus?: 'NOT_STARTED' | 'ANALYZING' | 'COMPLETED' | 'FAILED';
 }
 
 
@@ -230,4 +233,3 @@ export async function pollJobStatus(jobId: string): Promise<JobStatusResponse> {
 
   return await response.json();
 }
-

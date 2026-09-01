@@ -20,6 +20,8 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.argumentCaptor
+import org.mockito.kotlin.doAnswer
+import org.mockito.kotlin.doThrow
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import org.springframework.beans.factory.annotation.Autowired
@@ -27,9 +29,12 @@ import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.mock.mockito.MockBean
 import org.springframework.test.context.ActiveProfiles
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
@@ -160,6 +165,8 @@ class GameImportServiceIntegrationTest {
         assertNotNull(completedJob, "Import job did not complete within timeout")
         assertEquals(1, completedJob.gamesImported)
         assertEquals(0, completedJob.gamesSkipped, "No duplicate games on fresh import")
+        assertEquals(2, completedJob.gamesProcessed)
+        assertEquals(1, completedJob.gamesFilteredOut)
 
         val account = chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "hikaru")
         assertNotNull(account)
@@ -169,6 +176,19 @@ class GameImportServiceIntegrationTest {
 
         val stats = userPositionStatsRepository.findByChessAccountIdAndPlayerColor(account.id, "WHITE")
         assertFalse(stats.isEmpty(), "UserPositionStats should be updated for account")
+
+        var analysisJob: AsyncJob? = null
+        attempts = 0
+        while (attempts < 50) {
+            val currentJob = asyncJobRepository.findById(job.id).orElse(null)
+            if (currentJob != null && currentJob.analysisStatus in listOf("COMPLETED", "FAILED")) {
+                analysisJob = currentJob
+                break
+            }
+            Thread.sleep(100)
+            attempts++
+        }
+        assertNotNull(analysisJob, "Analysis did not reach a terminal state within timeout")
 
         val affectedCaptor = argumentCaptor<Set<UUID>>()
         verify(engineAnalysisOrchestrator).analyzeAffectedPositions(affectedCaptor.capture())
@@ -240,7 +260,128 @@ class GameImportServiceIntegrationTest {
         val stats = userPositionStatsRepository.findByChessAccountIdAndPlayerColor(account.id, "WHITE")
         assertFalse(stats.isEmpty(), "UserPositionStats should still be updated after 404 archive skipping")
 
+        var analysisJob: AsyncJob? = null
+        attempts = 0
+        while (attempts < 50) {
+            val currentJob = asyncJobRepository.findById(job.id).orElse(null)
+            if (currentJob != null && currentJob.analysisStatus in listOf("COMPLETED", "FAILED")) {
+                analysisJob = currentJob
+                break
+            }
+            Thread.sleep(100)
+            attempts++
+        }
+        assertNotNull(analysisJob, "Analysis did not reach a terminal state within timeout")
+
         verify(engineAnalysisOrchestrator).analyzeAffectedPositions(any())
+    }
+
+    @Test
+    fun `import is completed while slow analysis remains in progress`() {
+        val analysisStarted = CountDownLatch(1)
+        val releaseAnalysis = CountDownLatch(1)
+        doAnswer {
+            analysisStarted.countDown()
+            releaseAnalysis.await(5, TimeUnit.SECONDS)
+            null
+        }.whenever(engineAnalysisOrchestrator).analyzeAffectedPositions(any())
+
+        val request =
+            ImportGamesRequest(
+                username = "hikaru",
+                platform = Platform.CHESS_COM,
+                timeControls = listOf(com.chessecho.domain.TimeControl.BLITZ),
+                playerColor = PlayerColor.BOTH,
+            )
+
+        val job = gameImportService.createImportJob(request)
+        gameImportService.executeImportJob(job.id, request)
+
+        try {
+            assertTrue(analysisStarted.await(5, TimeUnit.SECONDS), "Analysis did not start within timeout")
+
+            var completedDuringAnalysis: AsyncJob? = null
+            var attempts = 0
+            while (attempts < 50) {
+                val currentJob = asyncJobRepository.findById(job.id).orElse(null)
+                if (currentJob != null && currentJob.status == "COMPLETED" && currentJob.analysisStatus == "ANALYZING") {
+                    completedDuringAnalysis = currentJob
+                    break
+                }
+                Thread.sleep(100)
+                attempts++
+            }
+
+            assertNotNull(completedDuringAnalysis, "Import did not complete before the blocked analysis returned")
+        } finally {
+            releaseAnalysis.countDown()
+        }
+    }
+
+    @Test
+    fun `analysis failure status is recorded separately after import completes`() {
+        doThrow(IllegalStateException())
+            .whenever(engineAnalysisOrchestrator).analyzeAffectedPositions(any())
+
+        val request =
+            ImportGamesRequest(
+                username = "hikaru",
+                platform = Platform.CHESS_COM,
+                timeControls = listOf(com.chessecho.domain.TimeControl.BLITZ),
+                playerColor = PlayerColor.BOTH,
+            )
+
+        val job = gameImportService.createImportJob(request)
+        gameImportService.executeImportJob(job.id, request)
+
+        var terminalAnalysisJob: AsyncJob? = null
+        var attempts = 0
+        while (attempts < 50) {
+            val currentJob = asyncJobRepository.findById(job.id).orElse(null)
+            if (currentJob != null && currentJob.analysisStatus in listOf("COMPLETED", "FAILED")) {
+                terminalAnalysisJob = currentJob
+                break
+            }
+            Thread.sleep(100)
+            attempts++
+        }
+
+        assertNotNull(terminalAnalysisJob, "Analysis did not reach a terminal state within timeout")
+        assertEquals("COMPLETED", terminalAnalysisJob.status)
+        assertEquals(null, terminalAnalysisJob.errorMessage)
+        assertEquals("FAILED", terminalAnalysisJob.analysisStatus)
+    }
+
+    @Test
+    fun `persistImportProgress records non-final counter checkpoints`() {
+        val job =
+            asyncJobRepository.save(
+                AsyncJob(
+                    username = "checkpoint-user",
+                    platform = "CHESS_COM",
+                    status = "PROCESSING",
+                ),
+            )
+        val targetService = org.springframework.test.util.AopTestUtils.getUltimateTargetObject<GameImportService>(gameImportService)
+        val method =
+            GameImportService::class.java.getDeclaredMethod(
+                "persistImportProgress",
+                AsyncJob::class.java,
+                Int::class.javaPrimitiveType,
+                Int::class.javaPrimitiveType,
+                Int::class.javaPrimitiveType,
+                Int::class.javaPrimitiveType,
+            )
+        method.isAccessible = true
+
+        method.invoke(targetService, job, 3, 1, 2, 6)
+
+        val checkpoint = asyncJobRepository.findById(job.id).orElseThrow()
+        assertEquals("PROCESSING", checkpoint.status)
+        assertEquals(3, checkpoint.gamesImported)
+        assertEquals(1, checkpoint.gamesSkipped)
+        assertEquals(2, checkpoint.gamesFilteredOut)
+        assertEquals(6, checkpoint.gamesProcessed)
     }
 
     @Test
@@ -543,6 +684,8 @@ class GameImportServiceIntegrationTest {
         assertEquals("COMPLETED", completedJob1.status)
         assertEquals(1, completedJob1.gamesImported)
         assertEquals(0, completedJob1.gamesSkipped)
+        assertEquals(1, completedJob1.gamesFilteredOut)
+        assertEquals(2, completedJob1.gamesProcessed)
 
         // Clear imported_archive record to force re-evaluation of month games
         importedArchiveRepository.deleteAll()
@@ -566,6 +709,8 @@ class GameImportServiceIntegrationTest {
         assertEquals("COMPLETED", completedJob2.status)
         assertEquals(0, completedJob2.gamesImported)
         assertEquals(1, completedJob2.gamesSkipped)
+        assertEquals(1, completedJob2.gamesFilteredOut)
+        assertEquals(2, completedJob2.gamesProcessed)
     }
 
     @Test

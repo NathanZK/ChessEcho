@@ -25,6 +25,12 @@ class AsyncJob(
     var gamesImported: Int = 0,
     @Column(name = "games_skipped")
     var gamesSkipped: Int = 0,
+    @Column(name = "games_processed")
+    var gamesProcessed: Int = 0,
+    @Column(name = "games_filtered_out")
+    var gamesFilteredOut: Int = 0,
+    @Column(name = "analysis_status", nullable = false)
+    var analysisStatus: String = "NOT_STARTED",
     @Column(name = "error_message")
     var errorMessage: String? = null,
     @Column(name = "created_at")
