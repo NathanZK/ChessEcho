@@ -12,5 +12,7 @@ data class JobStatusResponse(
     val status: String,
     val gamesImported: Int,
     val gamesSkipped: Int,
+    val gamesProcessed: Int,
     val errorMessage: String?,
+    val analysisStatus: String,
 )

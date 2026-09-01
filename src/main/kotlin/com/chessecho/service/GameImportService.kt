@@ -106,6 +106,7 @@ class GameImportService(
 
             var imported = 0
             var skipped = 0
+            var processed = 0
             val allAffectedPositionIds = mutableSetOf<UUID>()
 
             for (archiveUrl in archiveUrls) {
@@ -124,21 +125,30 @@ class GameImportService(
                         importedArchive.gameCount,
                     )
                     skipped += importedArchive.gameCount
+                    processed += importedArchive.gameCount
+                    transactionTemplate.executeWithoutResult {
+                        persistImportProgress(job, imported, skipped, processed)
+                    }
                     continue
                 }
 
                 val res = importMonth(account, archiveUrl, yearMonth, isPastMonth, request)
                 imported += res.imported
                 skipped += res.skipped
+                processed += res.processed
                 allAffectedPositionIds.addAll(res.affectedPositionIds)
+                transactionTemplate.executeWithoutResult {
+                    persistImportProgress(job, imported, skipped, processed)
+                }
             }
 
             updateUserPositionStats(account, allAffectedPositionIds)
-            engineAnalysisOrchestrator.analyzeAffectedPositions(allAffectedPositionIds)
 
             transactionTemplate.executeWithoutResult {
                 job.gamesImported = imported
                 job.gamesSkipped = skipped
+                job.gamesProcessed = processed
+                job.analysisStatus = "ANALYZING"
                 updateJobStatus(job, "COMPLETED")
             }
             log.info(
@@ -147,6 +157,22 @@ class GameImportService(
                 imported,
                 skipped,
             )
+
+            try {
+                engineAnalysisOrchestrator.analyzeAffectedPositions(allAffectedPositionIds)
+                transactionTemplate.executeWithoutResult {
+                    job.analysisStatus = "COMPLETED"
+                    job.updatedAt = Instant.now()
+                    asyncJobRepository.save(job)
+                }
+            } catch (analysisEx: Exception) {
+                log.error("Engine analysis failed for job ${job.id}", analysisEx)
+                transactionTemplate.executeWithoutResult {
+                    job.analysisStatus = "FAILED"
+                    job.updatedAt = Instant.now()
+                    asyncJobRepository.save(job)
+                }
+            }
         } catch (ex: Exception) {
             log.error("Import job ${job.id} failed", ex)
             transactionTemplate.executeWithoutResult {
@@ -154,6 +180,19 @@ class GameImportService(
                 updateJobStatus(job, "FAILED")
             }
         }
+    }
+
+    private fun persistImportProgress(
+        job: AsyncJob,
+        imported: Int,
+        skipped: Int,
+        processed: Int,
+    ) {
+        job.gamesImported = imported
+        job.gamesSkipped = skipped
+        job.gamesProcessed = processed
+        job.updatedAt = Instant.now()
+        asyncJobRepository.save(job)
     }
 
     private fun updateJobStatus(
@@ -188,6 +227,7 @@ class GameImportService(
     private data class ImportMonthResult(
         val imported: Int,
         val skipped: Int,
+        val processed: Int,
         val affectedPositionIds: Set<UUID>,
     )
 
@@ -202,7 +242,7 @@ class GameImportService(
         log.debug("Fetching games from $archiveUrl")
 
         // External HTTP request executed outside any DB transaction
-        val games = chessComClient.fetchMonthlyGames(archiveUrl) ?: return ImportMonthResult(0, 0, emptySet())
+        val games = chessComClient.fetchMonthlyGames(archiveUrl) ?: return ImportMonthResult(0, 0, 0, emptySet())
 
         val allUrls = games.mapNotNull { it["url"] as? String }
         val existingUrls =
@@ -308,6 +348,7 @@ class GameImportService(
         return ImportMonthResult(
             gamesToSave.size,
             skipped,
+            games.size,
             affectedPositionIds,
         )
     }

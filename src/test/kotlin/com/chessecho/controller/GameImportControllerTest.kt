@@ -19,6 +19,8 @@ import org.springframework.test.web.servlet.get
 import org.springframework.test.web.servlet.post
 import java.util.Optional
 import java.util.UUID
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 @WebMvcTest(GameImportController::class)
 class GameImportControllerTest {
@@ -122,17 +124,39 @@ class GameImportControllerTest {
                 status = "COMPLETED",
                 gamesImported = 142,
                 gamesSkipped = 30,
+                gamesProcessed = 200,
+                analysisStatus = "FAILED",
             )
         whenever(asyncJobRepository.findById(eq(jobId))).thenReturn(Optional.of(job))
 
-        mockMvc.get("/api/jobs/$jobId")
-            .andExpect {
-                status { isOk() }
-                jsonPath("$.jobId") { value(jobId.toString()) }
-                jsonPath("$.status") { value("COMPLETED") }
-                jsonPath("$.gamesImported") { value(142) }
-                jsonPath("$.gamesSkipped") { value(30) }
-            }
+        val result =
+            mockMvc.get("/api/jobs/$jobId")
+                .andExpect {
+                    status { isOk() }
+                    jsonPath("$.jobId") { value(jobId.toString()) }
+                    jsonPath("$.status") { value("COMPLETED") }
+                    jsonPath("$.gamesImported") { value(142) }
+                    jsonPath("$.gamesSkipped") { value(30) }
+                    jsonPath("$.gamesProcessed") { value(200) }
+                    jsonPath("$.analysisStatus") { value("FAILED") }
+                }
+                .andReturn()
+
+        val response = objectMapper.readTree(result.response.contentAsString)
+        assertTrue(response.path("errorMessage").isNull)
+        val responseFields = response.fieldNames().asSequence().toSet()
+        assertEquals(
+            setOf(
+                "jobId",
+                "status",
+                "gamesImported",
+                "gamesSkipped",
+                "gamesProcessed",
+                "errorMessage",
+                "analysisStatus",
+            ),
+            responseFields,
+        )
     }
 
     @Test

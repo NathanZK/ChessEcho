@@ -20,6 +20,8 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.argumentCaptor
+import org.mockito.kotlin.doAnswer
+import org.mockito.kotlin.doThrow
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import org.springframework.beans.factory.annotation.Autowired
@@ -27,9 +29,12 @@ import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.mock.mockito.MockBean
 import org.springframework.test.context.ActiveProfiles
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
@@ -160,6 +165,7 @@ class GameImportServiceIntegrationTest {
         assertNotNull(completedJob, "Import job did not complete within timeout")
         assertEquals(1, completedJob.gamesImported)
         assertEquals(0, completedJob.gamesSkipped, "No duplicate games on fresh import")
+        assertEquals(2, completedJob.gamesProcessed)
 
         val account = chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "hikaru")
         assertNotNull(account)
@@ -169,6 +175,19 @@ class GameImportServiceIntegrationTest {
 
         val stats = userPositionStatsRepository.findByChessAccountIdAndPlayerColor(account.id, "WHITE")
         assertFalse(stats.isEmpty(), "UserPositionStats should be updated for account")
+
+        var analysisJob: AsyncJob? = null
+        attempts = 0
+        while (attempts < 50) {
+            val currentJob = asyncJobRepository.findById(job.id).orElse(null)
+            if (currentJob != null && currentJob.analysisStatus in listOf("COMPLETED", "FAILED")) {
+                analysisJob = currentJob
+                break
+            }
+            Thread.sleep(100)
+            attempts++
+        }
+        assertNotNull(analysisJob, "Analysis did not reach a terminal state within timeout")
 
         val affectedCaptor = argumentCaptor<Set<UUID>>()
         verify(engineAnalysisOrchestrator).analyzeAffectedPositions(affectedCaptor.capture())
@@ -233,6 +252,8 @@ class GameImportServiceIntegrationTest {
             "Expected COMPLETED status despite 404 archive, got error: ${completedJob.errorMessage}",
         )
         assertEquals(1, completedJob.gamesImported)
+        assertEquals(0, completedJob.gamesSkipped)
+        assertEquals(1, completedJob.gamesProcessed, "The null archive must contribute zero processed entries")
 
         val account = chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "test404")
         assertNotNull(account)
@@ -240,7 +261,201 @@ class GameImportServiceIntegrationTest {
         val stats = userPositionStatsRepository.findByChessAccountIdAndPlayerColor(account.id, "WHITE")
         assertFalse(stats.isEmpty(), "UserPositionStats should still be updated after 404 archive skipping")
 
+        var analysisJob: AsyncJob? = null
+        attempts = 0
+        while (attempts < 50) {
+            val currentJob = asyncJobRepository.findById(job.id).orElse(null)
+            if (currentJob != null && currentJob.analysisStatus in listOf("COMPLETED", "FAILED")) {
+                analysisJob = currentJob
+                break
+            }
+            Thread.sleep(100)
+            attempts++
+        }
+        assertNotNull(analysisJob, "Analysis did not reach a terminal state within timeout")
+
         verify(engineAnalysisOrchestrator).analyzeAffectedPositions(any())
+    }
+
+    @Test
+    fun `import is completed while slow analysis remains in progress`() {
+        val analysisStarted = CountDownLatch(1)
+        val releaseAnalysis = CountDownLatch(1)
+        doAnswer {
+            analysisStarted.countDown()
+            releaseAnalysis.await(5, TimeUnit.SECONDS)
+            null
+        }.whenever(engineAnalysisOrchestrator).analyzeAffectedPositions(any())
+
+        val request =
+            ImportGamesRequest(
+                username = "hikaru",
+                platform = Platform.CHESS_COM,
+                timeControls = listOf(com.chessecho.domain.TimeControl.BLITZ),
+                playerColor = PlayerColor.BOTH,
+            )
+
+        val job = gameImportService.createImportJob(request)
+        gameImportService.executeImportJob(job.id, request)
+
+        try {
+            assertTrue(analysisStarted.await(5, TimeUnit.SECONDS), "Analysis did not start within timeout")
+
+            var completedDuringAnalysis: AsyncJob? = null
+            var attempts = 0
+            while (attempts < 50) {
+                val currentJob = asyncJobRepository.findById(job.id).orElse(null)
+                if (currentJob != null && currentJob.status == "COMPLETED" && currentJob.analysisStatus == "ANALYZING") {
+                    completedDuringAnalysis = currentJob
+                    break
+                }
+                Thread.sleep(100)
+                attempts++
+            }
+
+            assertNotNull(completedDuringAnalysis, "Import did not complete before the blocked analysis returned")
+        } finally {
+            releaseAnalysis.countDown()
+        }
+    }
+
+    @Test
+    fun `analysis failure status is recorded separately after import completes`() {
+        doThrow(IllegalStateException())
+            .whenever(engineAnalysisOrchestrator).analyzeAffectedPositions(any())
+
+        val request =
+            ImportGamesRequest(
+                username = "hikaru",
+                platform = Platform.CHESS_COM,
+                timeControls = listOf(com.chessecho.domain.TimeControl.BLITZ),
+                playerColor = PlayerColor.BOTH,
+            )
+
+        val job = gameImportService.createImportJob(request)
+        gameImportService.executeImportJob(job.id, request)
+
+        var terminalAnalysisJob: AsyncJob? = null
+        var attempts = 0
+        while (attempts < 50) {
+            val currentJob = asyncJobRepository.findById(job.id).orElse(null)
+            if (currentJob != null && currentJob.analysisStatus in listOf("COMPLETED", "FAILED")) {
+                terminalAnalysisJob = currentJob
+                break
+            }
+            Thread.sleep(100)
+            attempts++
+        }
+
+        assertNotNull(terminalAnalysisJob, "Analysis did not reach a terminal state within timeout")
+        assertEquals("COMPLETED", terminalAnalysisJob.status)
+        assertEquals(null, terminalAnalysisJob.errorMessage)
+        assertEquals("FAILED", terminalAnalysisJob.analysisStatus)
+    }
+
+    @Test
+    fun `persistImportProgress records non-final counter checkpoints`() {
+        val job =
+            asyncJobRepository.save(
+                AsyncJob(
+                    username = "checkpoint-user",
+                    platform = "CHESS_COM",
+                    status = "PROCESSING",
+                ),
+            )
+        val targetService = org.springframework.test.util.AopTestUtils.getUltimateTargetObject<GameImportService>(gameImportService)
+        val method =
+            GameImportService::class.java.getDeclaredMethod(
+                "persistImportProgress",
+                AsyncJob::class.java,
+                Int::class.javaPrimitiveType,
+                Int::class.javaPrimitiveType,
+                Int::class.javaPrimitiveType,
+            )
+        method.isAccessible = true
+
+        method.invoke(targetService, job, 3, 1, 6)
+
+        val checkpoint = asyncJobRepository.findById(job.id).orElseThrow()
+        assertEquals("PROCESSING", checkpoint.status)
+        assertEquals(3, checkpoint.gamesImported)
+        assertEquals(1, checkpoint.gamesSkipped)
+        assertEquals(6, checkpoint.gamesProcessed)
+    }
+
+    @Test
+    fun `gamesProcessed checkpoints and aggregates every examined entry once across archives`() {
+        val firstArchive = "https://api.chess.com/pub/player/checkpointuser/games/2024/01"
+        val secondArchive = "https://api.chess.com/pub/player/checkpointuser/games/2024/02"
+        whenever(chessComClient.fetchArchiveUrls("checkpointuser")).thenReturn(listOf(firstArchive, secondArchive))
+
+        val firstAccepted =
+            importGame(
+                url = "https://www.chess.com/game/live/checkpoint-1",
+                username = "checkpointuser",
+            )
+        val excludedDaily =
+            importGame(
+                url = "https://www.chess.com/game/daily/checkpoint-2",
+                username = "checkpointuser",
+                timeClass = "daily",
+            )
+        val secondAccepted =
+            importGame(
+                url = "https://www.chess.com/game/live/checkpoint-3",
+                username = "checkpointuser",
+            )
+        val malformedWithoutParticipants =
+            mapOf<String, Any>(
+                "url" to "https://www.chess.com/game/live/checkpoint-4",
+                "pgn" to "[Event \"Live Chess\"]\n1. e4 e5",
+                "time_class" to "blitz",
+                "rules" to "chess",
+            )
+        val malformedWithoutUrl =
+            mapOf<String, Any>(
+                "pgn" to "[Event \"Live Chess\"]\n1. d4 d5",
+                "time_class" to "blitz",
+                "rules" to "chess",
+                "white" to mapOf("username" to "checkpointuser", "result" to "win"),
+                "black" to mapOf("username" to "opponent", "result" to "checkmated"),
+            )
+        whenever(chessComClient.fetchMonthlyGames(firstArchive)).thenReturn(listOf(firstAccepted, excludedDaily))
+
+        val secondArchiveRequested = CountDownLatch(1)
+        val releaseSecondArchive = CountDownLatch(1)
+        doAnswer {
+            secondArchiveRequested.countDown()
+            assertTrue(releaseSecondArchive.await(5, TimeUnit.SECONDS), "Second archive was not released")
+            listOf(secondAccepted, malformedWithoutParticipants, malformedWithoutUrl)
+        }.whenever(chessComClient).fetchMonthlyGames(secondArchive)
+
+        val request =
+            ImportGamesRequest(
+                username = "checkpointuser",
+                platform = Platform.CHESS_COM,
+                timeControls = listOf(com.chessecho.domain.TimeControl.BLITZ),
+                playerColor = PlayerColor.BOTH,
+            )
+        val job = gameImportService.createImportJob(request)
+        gameImportService.executeImportJob(job.id, request)
+
+        try {
+            assertTrue(secondArchiveRequested.await(5, TimeUnit.SECONDS), "Second archive request did not start")
+            val checkpoint = asyncJobRepository.findById(job.id).orElseThrow()
+            assertEquals("PROCESSING", checkpoint.status)
+            assertEquals(1, checkpoint.gamesImported)
+            assertEquals(0, checkpoint.gamesSkipped)
+            assertEquals(2, checkpoint.gamesProcessed)
+        } finally {
+            releaseSecondArchive.countDown()
+        }
+
+        val completedJob = waitForJob(job.id)
+        assertEquals("COMPLETED", completedJob.status)
+        assertEquals(2, completedJob.gamesImported)
+        assertEquals(0, completedJob.gamesSkipped)
+        assertEquals(5, completedJob.gamesProcessed)
     }
 
     @Test
@@ -543,6 +758,7 @@ class GameImportServiceIntegrationTest {
         assertEquals("COMPLETED", completedJob1.status)
         assertEquals(1, completedJob1.gamesImported)
         assertEquals(0, completedJob1.gamesSkipped)
+        assertEquals(2, completedJob1.gamesProcessed)
 
         // Clear imported_archive record to force re-evaluation of month games
         importedArchiveRepository.deleteAll()
@@ -566,6 +782,7 @@ class GameImportServiceIntegrationTest {
         assertEquals("COMPLETED", completedJob2.status)
         assertEquals(0, completedJob2.gamesImported)
         assertEquals(1, completedJob2.gamesSkipped)
+        assertEquals(2, completedJob2.gamesProcessed)
     }
 
     @Test
@@ -613,8 +830,35 @@ class GameImportServiceIntegrationTest {
         assertEquals("COMPLETED", completedJob.status)
         assertEquals(1, completedJob.gamesImported)
         assertEquals(1, completedJob.gamesSkipped, "Duplicate URL in same batch should increment gamesSkipped")
+        assertEquals(2, completedJob.gamesProcessed)
 
         val savedGames = gameRepository.findAll().filter { it.platformGameId == "https://www.chess.com/game/live/batchdup1" }
         assertEquals(1, savedGames.size, "Duplicate entry in batch must not create duplicate Game entity")
     }
+
+    private fun waitForJob(jobId: UUID): AsyncJob {
+        repeat(50) {
+            val job = asyncJobRepository.findById(jobId).orElse(null)
+            if (job != null && job.status in listOf("COMPLETED", "FAILED")) {
+                return job
+            }
+            Thread.sleep(100)
+        }
+        throw AssertionError("Import job did not complete within timeout")
+    }
+
+    private fun importGame(
+        url: String,
+        username: String,
+        timeClass: String = "blitz",
+    ): Map<String, Any> =
+        mapOf(
+            "url" to url,
+            "pgn" to "[Event \"Live Chess\"]\n[White \"$username\"]\n[Black \"opponent\"]\n1. e4 e5 1-0",
+            "time_class" to timeClass,
+            "rules" to "chess",
+            "end_time" to 1704067200L,
+            "white" to mapOf("username" to username, "result" to "win"),
+            "black" to mapOf("username" to "opponent", "result" to "checkmated"),
+        )
 }

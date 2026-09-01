@@ -43,12 +43,20 @@ export default function Home() {
   );
   const [activeJobStatus, setActiveJobStatus] = useState<JobStatusResponse | null>(null);
   const [weaknessRefreshKey, setWeaknessRefreshKey] = useState<number>(0);
+  const prevJobRef = React.useRef<JobStatusResponse | null>(null);
 
   const handleJobStatusUpdate = (job: JobStatusResponse | null) => {
-    setActiveJobStatus(job);
-    if (job?.status === 'COMPLETED') {
-      setWeaknessRefreshKey((k) => k + 1);
+    const previousJob = prevJobRef.current;
+    const importCompleted =
+      job?.status === 'COMPLETED' && previousJob?.status !== 'COMPLETED';
+    const analysisCompleted =
+      previousJob?.analysisStatus === 'ANALYZING' &&
+      (job?.analysisStatus === 'COMPLETED' || job?.analysisStatus === 'FAILED');
+    if (importCompleted || analysisCompleted) {
+      setWeaknessRefreshKey((key) => key + 1);
     }
+    prevJobRef.current = job;
+    setActiveJobStatus(job);
   };
 
   const changeTab = (tab: TabType) => {
@@ -1393,7 +1401,7 @@ export default function Home() {
             onWeaknessCountChange={setWeaknessCount}
             activeColorFilter={puzzleColorFilter === 'BOTH' ? 'ALL' : puzzleColorFilter}
             onColorFilterChange={(c) => handleColorFilterChange(c === 'ALL' ? 'BOTH' : c)}
-            isAnalysisActive={!!activeUsername && (activeJobStatus?.status === 'QUEUED' || activeJobStatus?.status === 'PROCESSING')}
+            isAnalysisActive={!!activeUsername && activeJobStatus?.analysisStatus === 'ANALYZING'}
             refreshKey={weaknessRefreshKey}
           />
         )}

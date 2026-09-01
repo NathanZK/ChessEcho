@@ -21,6 +21,28 @@ vi.mock('../services/api', async () => {
   };
 });
 
+vi.mock('../components/WeaknessesList', () => ({
+  WeaknessesList: ({
+    username,
+    isAnalysisActive,
+    refreshKey,
+  }: {
+    username?: string;
+    isAnalysisActive?: boolean;
+    refreshKey?: number;
+  }) => (
+    <div>
+      <h2>Recurring Opening Weaknesses Library</h2>
+      <span data-testid="weakness-refresh-key">{refreshKey ?? 0}</span>
+      {isAnalysisActive && (
+        <div>
+          Stockfish Engine Analysis Active: Evaluating positions for <strong>{username}</strong>.
+        </div>
+      )}
+    </div>
+  ),
+}));
+
 describe('Account Context and Import Games MVP Behavior', () => {
   beforeEach(() => {
     localStorage.clear();
@@ -31,6 +53,7 @@ describe('Account Context and Import Games MVP Behavior', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -490,6 +513,137 @@ describe('Account Context and Import Games MVP Behavior', () => {
       expect(onImportStartedMock).toHaveBeenCalledWith('newplayer');
 
       vi.useRealTimers();
+    });
+
+    it('continues polling completed import through analysis and stops at analysis terminality through Home', async () => {
+      vi.useFakeTimers();
+      const processingJob = {
+        jobId: 'job-home-analysis',
+        status: 'PROCESSING' as const,
+        gamesImported: 10,
+        gamesSkipped: 0,
+      };
+      localStorage.setItem('chessecho_username', 'analysisplayer');
+      localStorage.setItem('chessecho_active_job', JSON.stringify(processingJob));
+      vi.mocked(api.pollJobStatus)
+        .mockResolvedValueOnce({
+          ...processingJob,
+          status: 'COMPLETED',
+          gamesImported: 20,
+          analysisStatus: 'ANALYZING',
+        })
+        .mockResolvedValueOnce({
+          ...processingJob,
+          status: 'COMPLETED',
+          gamesImported: 20,
+          analysisStatus: 'COMPLETED',
+        });
+
+      render(<Home />);
+      fireEvent.click(screen.getByRole('button', { name: /^import games$/i }));
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(api.pollJobStatus).toHaveBeenCalledTimes(1);
+      expect(screen.getByText(/Import Completed Successfully!/i)).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(api.pollJobStatus).toHaveBeenCalledTimes(2);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4000);
+      });
+      expect(api.pollJobStatus).toHaveBeenCalledTimes(2);
+    });
+
+    it('shows analysis activity from analysisStatus rather than import status', async () => {
+      vi.useFakeTimers();
+      const processingJob = {
+        jobId: 'job-analysis-banner',
+        status: 'PROCESSING' as const,
+        gamesImported: 10,
+        gamesSkipped: 0,
+      };
+      localStorage.setItem('chessecho_username', 'bannerplayer');
+      localStorage.setItem('chessecho_active_job', JSON.stringify(processingJob));
+      vi.mocked(api.pollJobStatus)
+        .mockResolvedValueOnce({
+          ...processingJob,
+          analysisStatus: 'NOT_STARTED',
+        })
+        .mockResolvedValueOnce({
+          ...processingJob,
+          status: 'COMPLETED',
+          gamesImported: 20,
+          analysisStatus: 'ANALYZING',
+        });
+
+      render(<Home />);
+      fireEvent.click(screen.getByRole('button', { name: /^import games$/i }));
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      fireEvent.click(screen.getByRole('button', { name: /^weaknesses library$/i }));
+      expect(screen.queryByText(/Stockfish Engine Analysis Active/i)).not.toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: /^import games$/i }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      fireEvent.click(screen.getByRole('button', { name: /^weaknesses library$/i }));
+      expect(screen.getByText(/Stockfish Engine Analysis Active/i)).toBeInTheDocument();
+      expect(screen.getByText(/Stockfish Engine Analysis Active/i)).toHaveTextContent('bannerplayer');
+    });
+
+    it('refreshes weaknesses once per import and analysis terminal transition without repeats', async () => {
+      vi.useFakeTimers();
+      const processingJob = {
+        jobId: 'job-refresh-transitions',
+        status: 'PROCESSING' as const,
+        gamesImported: 10,
+        gamesSkipped: 0,
+      };
+      localStorage.setItem('chessecho_username', 'refreshplayer');
+      localStorage.setItem('chessecho_active_job', JSON.stringify(processingJob));
+      vi.mocked(api.pollJobStatus)
+        .mockResolvedValueOnce({
+          ...processingJob,
+          status: 'COMPLETED',
+          gamesImported: 20,
+          analysisStatus: 'ANALYZING',
+        })
+        .mockResolvedValueOnce({
+          ...processingJob,
+          status: 'COMPLETED',
+          gamesImported: 20,
+          analysisStatus: 'ANALYZING',
+        })
+        .mockResolvedValueOnce({
+          ...processingJob,
+          status: 'COMPLETED',
+          gamesImported: 20,
+          analysisStatus: 'COMPLETED',
+        });
+
+      render(<Home />);
+      fireEvent.click(screen.getByRole('button', { name: /^import games$/i }));
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: /^weaknesses library$/i }));
+      expect(screen.getByTestId('weakness-refresh-key')).toHaveTextContent('2');
     });
 
     it('clears stale activeJob from localStorage, stops polling, and displays a message when pollJobStatus returns 404', async () => {
