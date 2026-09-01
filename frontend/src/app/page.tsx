@@ -491,6 +491,7 @@ export default function Home() {
       };
 
   const handleExitExploration = () => {
+    const returnToWeaknesses = Boolean(activePuzzle?.explorationContext);
     setIsExplorationActive(false);
     setExplorationPlayMode(undefined);
     setRequestedContinuationFen(undefined);
@@ -501,7 +502,20 @@ export default function Home() {
     setExplorationEvalMap({});
     setChallengeBranchesByFen({});
     setChallengeActiveCandidateByFen({});
-        setFeedback({ status: 'CORRECT', lastMove: activePuzzle?.targetMove });
+    if (returnToWeaknesses) {
+      const returnPuzzle = puzzlesList[currentPuzzleIndex] ?? puzzlesList[0] ?? null;
+      setActivePuzzle(returnPuzzle);
+      if (returnPuzzle) {
+        setCurrentPuzzleIndex(Math.max(0, puzzlesList.indexOf(returnPuzzle)));
+        resetPuzzleInteractionState(returnPuzzle);
+      } else {
+        setFeedback({ status: 'IDLE' });
+        setCurrentBoardFen('');
+      }
+      changeTab('weaknesses');
+    } else {
+      setFeedback({ status: 'CORRECT', lastMove: activePuzzle?.targetMove });
+    }
   };
 
   const handleUnacceptableMove = (message?: string | null) => {
@@ -819,6 +833,39 @@ export default function Home() {
     changeTab('puzzles');
   };
 
+  const handleExploreDecisionFromLibrary = (puzzle: Puzzle) => {
+    const decision = puzzle.explorationContext;
+    if (!decision) return;
+
+    setActivePuzzle(puzzle);
+    resetPuzzleInteractionState(puzzle);
+    setFeedback({
+      status: 'EXPLORING',
+      lastMove: decision.decisionMove,
+      historicalInfo: {
+        timesPlayed: decision.timesPlayed,
+        averageLoss: decision.averageLoss,
+      },
+    });
+    setFeedbackHistory([{
+      status: 'EXPLORING',
+      lastMove: decision.decisionMove,
+      historicalInfo: {
+        timesPlayed: decision.timesPlayed,
+        averageLoss: decision.averageLoss,
+      },
+    }]);
+    setMoveHistory([decision.decisionMove]);
+    setIsEvalUnknown(true);
+    setExplorationEvalMap({
+      [puzzle.fen]: { evalCp: puzzle.evalCp ?? 35, isUnknown: true },
+    });
+    setIsExplorationActive(true);
+    setExplorationPlayMode('CHESSECHO');
+    setRequestedContinuationFen(puzzle.fen);
+    changeTab('puzzles');
+  };
+
   const handleBoardUndo = () => {
     setRequestedContinuationFen(undefined);
     setPendingContinuationCandidate(null);
@@ -857,7 +904,6 @@ export default function Home() {
   const handleBoardReset = () => {
     setRequestedContinuationFen(undefined);
     setPendingContinuationCandidate(null);
-    setIsExplorationActive(false);
     setUnacceptableMoveMessage(null);
     setLastContinuationCandidates(null);
     setAlternativeContinuationToApply(null);
@@ -869,7 +915,19 @@ export default function Home() {
     setCurrentEvalCp(evalHistory[0] ?? (activePuzzle?.evalCp ?? 35));
     const firstFeedback = feedbackHistory[0];
     setFeedback(firstFeedback ?? { status: 'IDLE' });
-    setIsEvalUnknown(false);
+
+    if (activePuzzle?.explorationContext) {
+      setIsExplorationActive(true);
+      setExplorationPlayMode('CHESSECHO');
+      setIsEvalUnknown(true);
+      setExplorationEvalMap({
+        [activePuzzle.fen]: { evalCp: activePuzzle.evalCp ?? 35, isUnknown: true },
+      });
+      setRequestedContinuationFen(activePuzzle.fen);
+    } else {
+      setIsExplorationActive(false);
+      setIsEvalUnknown(false);
+    }
   };
 
   const handleMoveAttempt = (
@@ -1373,6 +1431,7 @@ export default function Home() {
             minMistakeCount={minMistakeCount}
             onMinMistakeCountChange={handleMinMistakeCountChange}
             onSelectPractice={handleSelectPracticeFromLibrary}
+            onExploreDecision={handleExploreDecisionFromLibrary}
             onWeaknessCountChange={setWeaknessCount}
             activeColorFilter={puzzleColorFilter === 'BOTH' ? 'ALL' : puzzleColorFilter}
             onColorFilterChange={(c) => handleColorFilterChange(c === 'ALL' ? 'BOTH' : c)}

@@ -276,7 +276,19 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
       </div>
 
       {/* Dynamic Feedback / Success Card */}
-      {feedback.status === 'CORRECT' ? (
+      {feedback.status === 'EXPLORING' && puzzle.explorationContext ? (
+        <div className="flex items-start space-x-3 p-3.5 bg-amber-500/15 border border-amber-500/40 rounded-xl text-amber-300 animate-in fade-in duration-200">
+          <Sparkles className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+          <div>
+            <h4 className="font-bold text-sm text-amber-200">Exploring your historical decision</h4>
+            <p className="text-xs mt-0.5 text-amber-300/90">
+              The board starts after <span className="font-bold text-white">{puzzle.explorationContext.decisionMove}</span>,
+              played in <span className="font-bold text-white">{puzzle.explorationContext.timesPlayed} {puzzle.explorationContext.timesPlayed === 1 ? 'game' : 'games'}</span>.
+              Explore the position it created and ChessEcho&apos;s continuation.
+            </p>
+          </div>
+        </div>
+      ) : feedback.status === 'CORRECT' ? (
         <div className="p-3.5 bg-gradient-to-br from-emerald-950/80 to-slate-900 border-2 border-emerald-500/50 rounded-2xl space-y-2.5 shadow-lg shadow-emerald-950/40 animate-in fade-in duration-200">
           <div className="flex items-center space-x-3">
             <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0">

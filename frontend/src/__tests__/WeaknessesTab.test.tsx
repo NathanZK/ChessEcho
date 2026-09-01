@@ -1,9 +1,15 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { WeaknessesList, adaptWeaknessToPuzzle, formatLastSeen } from '../components/WeaknessesList';
+import {
+  WeaknessesList,
+  adaptWeaknessToPuzzle,
+  buildDecisionExplorationPuzzle,
+  formatLastSeen,
+} from '../components/WeaknessesList';
 import * as api from '../services/api';
 import { WeaknessResponse } from '../services/api';
+import { Chess } from 'chess.js';
 
 // Mock react-chessboard to prevent canvas / window rendering issues in jsdom environment
 vi.mock('react-chessboard', () => ({
@@ -105,6 +111,43 @@ describe('Weaknesses Tab MVP', () => {
       const puzzle = adaptWeaknessToPuzzle(whiteItem);
       expect(puzzle.playerColor).toBe('WHITE');
       expect(puzzle.targetMove).toBe('Bb5');
+    });
+
+    it('builds a decision exploration from the position after the historical move', () => {
+      const sourceFen = new Chess().fen();
+      const weakness: WeaknessResponse = {
+        ...mockWeaknessItem,
+        fen: sourceFen,
+        movesPlayed: [{ move: 'e4', timesPlayed: 3, averageLoss: 1.1 }],
+      };
+
+      const puzzle = buildDecisionExplorationPuzzle(weakness, weakness.movesPlayed[0]);
+      expect(puzzle).not.toBeNull();
+
+      const resultingPosition = new Chess(sourceFen);
+      resultingPosition.move('e4');
+      expect(puzzle?.fen).toBe(resultingPosition.fen());
+      expect(puzzle?.explorationContext).toEqual({
+        sourceFen,
+        decisionMove: 'e4',
+        timesPlayed: 3,
+        averageLoss: 1.1,
+      });
+    });
+
+    it('does not build an exploration when the historical move cannot be applied', () => {
+      const weakness: WeaknessResponse = {
+        ...mockWeaknessItem,
+        fen: new Chess().fen(),
+      };
+
+      expect(
+        buildDecisionExplorationPuzzle(weakness, {
+          move: 'not-a-move',
+          timesPlayed: 1,
+          averageLoss: 1,
+        })
+      ).toBeNull();
     });
   });
 
@@ -291,6 +334,35 @@ describe('Weaknesses Tab MVP', () => {
       expect(adaptedPuzzle.puzzleId).toBe('w-pos-123');
       expect(adaptedPuzzle.targetMove).toBe('Nc6');
       expect(adaptedPuzzle.playerColor).toBe('BLACK');
+    });
+
+    it('only exposes decision exploration for historical moves applicable to the source position', async () => {
+      const sourceFen = new Chess().fen();
+      const weakness: WeaknessResponse = {
+        ...mockWeaknessItem,
+        fen: sourceFen,
+        movesPlayed: [
+          { move: 'e4', timesPlayed: 3, averageLoss: 1.1 },
+          { move: 'not-a-move', timesPlayed: 1, averageLoss: 1.5 },
+        ],
+      };
+      vi.mocked(api.fetchWeaknesses).mockResolvedValue([weakness]);
+      const onExploreDecision = vi.fn();
+
+      render(
+        <WeaknessesList
+          username="hikaru"
+          onSelectPractice={vi.fn()}
+          onExploreDecision={onExploreDecision}
+        />
+      );
+
+      const action = await screen.findByRole('button', { name: 'Explore this decision' });
+      expect(screen.getAllByRole('button', { name: 'Explore this decision' })).toHaveLength(1);
+      fireEvent.click(action);
+
+      expect(onExploreDecision).toHaveBeenCalledTimes(1);
+      expect(onExploreDecision.mock.calls[0][0].explorationContext?.decisionMove).toBe('e4');
     });
 
     it('maintains persistent sentinel element in DOM and appends page 1', async () => {

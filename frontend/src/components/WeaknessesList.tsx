@@ -1,10 +1,11 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Target, Flame, Swords, ExternalLink, Filter, AlertCircle, RefreshCw } from 'lucide-react';
+import { Target, Flame, Swords, ExternalLink, Filter, AlertCircle, RefreshCw, Sparkles } from 'lucide-react';
 import { Chessboard } from 'react-chessboard';
+import { Chess } from 'chess.js';
 import { fetchWeaknesses, WeaknessResponse } from '../services/api';
-import { Puzzle } from '../mock/mockData';
+import { MoveBreakdown, Puzzle } from '../mock/mockData';
 import { HistoricalGamesModal } from './HistoricalGamesModal';
 
 export function adaptWeaknessToPuzzle(
@@ -55,6 +56,33 @@ export function formatLastSeen(lastSeenAt?: string | null): string | null {
   return `Last seen ${diffYears} years ago`;
 }
 
+export function buildDecisionExplorationPuzzle(
+  weakness: WeaknessResponse,
+  decision: MoveBreakdown
+): Puzzle | null {
+  if (!weakness.fen || !decision.move) return null;
+
+  try {
+    const game = new Chess(weakness.fen);
+    if (!game.move(decision.move)) return null;
+
+    return {
+      ...adaptWeaknessToPuzzle(weakness),
+      puzzleId: `${weakness.positionId}:${decision.move}:decision`,
+      fen: game.fen(),
+      openingTitle: 'Historical Decision Exploration',
+      explorationContext: {
+        sourceFen: weakness.fen,
+        decisionMove: decision.move,
+        timesPlayed: decision.timesPlayed,
+        averageLoss: decision.averageLoss,
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
 interface WeaknessesListProps {
   username?: string;
   minEvalLoss?: number;
@@ -62,6 +90,7 @@ interface WeaknessesListProps {
   minMistakeCount?: number;
   onMinMistakeCountChange?: (val: number) => void;
   onSelectPractice: (puzzle: Puzzle, fullList?: Puzzle[]) => void;
+  onExploreDecision?: (puzzle: Puzzle) => void;
   onWeaknessCountChange?: (count: number) => void;
   activeColorFilter?: 'ALL' | 'WHITE' | 'BLACK';
   onColorFilterChange?: (color: 'ALL' | 'WHITE' | 'BLACK') => void;
@@ -78,6 +107,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
   minMistakeCount = 3,
   onMinMistakeCountChange,
   onSelectPractice,
+  onExploreDecision,
   onWeaknessCountChange,
   activeColorFilter,
   onColorFilterChange,
@@ -510,15 +540,30 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                         <div className="text-[11px] font-semibold text-slate-400 mb-1.5">
                           Your Decisions in Source Games:
                         </div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {item.movesPlayed.map((m, idx) => (
-                            <span
-                              key={idx}
-                              className="px-2 py-1 bg-rose-500/10 border border-rose-500/20 text-rose-300 rounded-lg text-xs font-mono font-semibold"
-                            >
-                              {m.move} ({m.timesPlayed}x, -{m.averageLoss.toFixed(2)} pawns)
-                            </span>
-                          ))}
+                        <div className="space-y-1.5">
+                          {item.movesPlayed.map((m, idx) => {
+                            const explorationPuzzle = buildDecisionExplorationPuzzle(item, m);
+                            return (
+                              <div
+                                key={`${m.move}-${idx}`}
+                                className="flex flex-wrap items-center justify-between gap-2"
+                              >
+                                <span className="px-2 py-1 bg-rose-500/10 border border-rose-500/20 text-rose-300 rounded-lg text-xs font-mono font-semibold">
+                                  {m.move} ({m.timesPlayed}x, -{m.averageLoss.toFixed(2)} pawns)
+                                </span>
+                                {explorationPuzzle && onExploreDecision && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onExploreDecision(explorationPuzzle)}
+                                    className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-bold text-amber-300 hover:text-amber-200 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 rounded-lg transition cursor-pointer"
+                                  >
+                                    <Sparkles className="w-3 h-3" />
+                                    <span>Explore this decision</span>
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     )}
