@@ -185,6 +185,7 @@ export default function Home() {
   // Continuation & Line Exploration turn-based state machine
   const [isExplorationActive, setIsExplorationActive] = useState<boolean>(false);
   const [explorationPlayMode, setExplorationPlayMode] = useState<ExplorationPlayMode | undefined>(undefined);
+  const [explorationDecisionMove, setExplorationDecisionMove] = useState<string | null>(null);
   const [unacceptableMoveMessage, setUnacceptableMoveMessage] = useState<string | null>(null);
   const [currentBoardFen, setCurrentBoardFen] = useState<string>('');
 
@@ -459,7 +460,11 @@ export default function Home() {
     setRequestedContinuationFen(undefined);
   };
 
-  const handleEnterExploration = (initialMode?: ExplorationPlayMode) => {
+  const handleEnterExploration = (
+    initialMode?: ExplorationPlayMode,
+    decisionMove?: string
+  ) => {
+    setExplorationDecisionMove(decisionMove ?? null);
     setIsExplorationActive(true);
     setExplorationPlayMode(initialMode);
     const baselineFen = currentBoardFen || activePuzzle?.fen || '';
@@ -488,7 +493,7 @@ export default function Home() {
     setAlternativeContinuationToApply(null);
     setChallengeBranchesByFen({});
     setChallengeActiveCandidateByFen({});
-      };
+  };
 
   const handleExitExploration = () => {
     setIsExplorationActive(false);
@@ -501,7 +506,12 @@ export default function Home() {
     setExplorationEvalMap({});
     setChallengeBranchesByFen({});
     setChallengeActiveCandidateByFen({});
-        setFeedback({ status: 'CORRECT', lastMove: activePuzzle?.targetMove });
+    setExplorationDecisionMove(null);
+    if (explorationDecisionMove) {
+      setFeedback({ status: 'IDLE' });
+    } else {
+      setFeedback({ status: 'CORRECT', lastMove: activePuzzle?.targetMove });
+    }
   };
 
   const handleUnacceptableMove = (message?: string | null) => {
@@ -529,13 +539,14 @@ export default function Home() {
     setPendingContinuationCandidate(null);
     setRequestedContinuationFen(undefined);
     setIsExplorationActive(false);
+    setExplorationDecisionMove(null);
     setUnacceptableMoveMessage(null);
     setLastContinuationCandidates(null);
     setAlternativeContinuationToApply(null);
     setExplorationEvalMap({});
     setChallengeBranchesByFen({});
     setChallengeActiveCandidateByFen({});
-      };
+  };
 
   const [puzzlePage, setPuzzlePage] = useState<number>(0);
   const [hasMorePuzzles, setHasMorePuzzles] = useState<boolean>(true);
@@ -858,6 +869,7 @@ export default function Home() {
     setRequestedContinuationFen(undefined);
     setPendingContinuationCandidate(null);
     setIsExplorationActive(false);
+    setExplorationDecisionMove(null);
     setUnacceptableMoveMessage(null);
     setLastContinuationCandidates(null);
     setAlternativeContinuationToApply(null);
@@ -1327,6 +1339,7 @@ export default function Home() {
                     onApplySettings={handleApplyPuzzleSettings}
                     username={activeUsername}
                     isExplorationActive={isExplorationActive}
+                    explorationDecisionMove={explorationDecisionMove}
                     onEnterExploration={handleEnterExploration}
                     onExitExploration={handleExitExploration}
                     continuationMode={continuationMode}

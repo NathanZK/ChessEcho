@@ -78,7 +78,8 @@ interface PuzzleFeedbackPanelProps {
   username?: string;
   // Continuation & Exploration props
   isExplorationActive?: boolean;
-  onEnterExploration?: () => void;
+  explorationDecisionMove?: string | null;
+  onEnterExploration?: (initialMode?: ExplorationPlayMode, decisionMove?: string) => void;
   onExitExploration?: () => void;
   continuationMode?: ContinuationMode;
   onContinuationModeChange?: (mode: ContinuationMode) => void;
@@ -113,7 +114,6 @@ interface PuzzleFeedbackPanelProps {
   isCalculationLoading?: boolean;
   puzzleComplete?: boolean;
   hasMorePuzzles?: boolean;
-  onStartExploration?: () => void;
   onCalculationInputChange?: (val: string) => void;
   onCalculationSubmit?: (e: React.FormEvent) => void;
   onCalculationBack?: () => void;
@@ -134,6 +134,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
   onApplySettings,
   username,
   isExplorationActive = false,
+  explorationDecisionMove,
   onEnterExploration,
   onExitExploration,
   continuationMode = 'ENGINE',
@@ -373,35 +374,59 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
           </div>
         </div>
       ) : feedback.status === 'HISTORICAL_MISTAKE' ? (
-        <div className="flex items-start space-x-3 p-3.5 bg-amber-500/15 border border-amber-500/40 rounded-xl text-amber-300 animate-in fade-in duration-200">
-          <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
-          <div>
-            <h4 className="font-bold text-sm text-amber-200">Recurring Weakness Detected!</h4>
-            <p className="text-xs mt-0.5 text-amber-300/90">
-              You played <span className="font-bold text-white">{feedback.lastMove}</span> in{' '}
-              <span className="font-bold text-white">
-                {feedback.historicalInfo?.timesPlayed}{' '}
-                {feedback.historicalInfo?.timesPlayed === 1 ? 'game' : 'games'}
-              </span>{' '}
-              —{' '}
-              <span className="font-bold text-white">
-                {formatDecimal(feedback.historicalInfo?.averageLoss ?? 0, 2)} pawns worse
-              </span>{' '}
-              than the best move. Try{' '}
-              <span className="font-bold text-emerald-300">{puzzle.targetMove}</span> instead!
-            </p>
+        <>
+          <div className="flex items-start space-x-3 p-3.5 bg-amber-500/15 border border-amber-500/40 rounded-xl text-amber-300 animate-in fade-in duration-200">
+            <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+            <div>
+              <h4 className="font-bold text-sm text-amber-200">Recurring Weakness Detected!</h4>
+              <p className="text-xs mt-0.5 text-amber-300/90">
+                You played <span className="font-bold text-white">{feedback.lastMove}</span> in{' '}
+                <span className="font-bold text-white">
+                  {feedback.historicalInfo?.timesPlayed}{' '}
+                  {feedback.historicalInfo?.timesPlayed === 1 ? 'game' : 'games'}
+                </span>{' '}
+                —{' '}
+                <span className="font-bold text-white">
+                  {formatDecimal(feedback.historicalInfo?.averageLoss ?? 0, 2)} pawns worse
+                </span>{' '}
+                than the best move. Try{' '}
+                <span className="font-bold text-emerald-300">{puzzle.targetMove}</span> instead!
+              </p>
+            </div>
           </div>
-        </div>
+          {!isExplorationActive && onEnterExploration && feedback.lastMove && (
+            <button
+              type="button"
+              onClick={() => onEnterExploration(undefined, feedback.lastMove)}
+              className="w-full mt-2 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold text-xs rounded-xl transition border border-amber-500/30 flex items-center justify-center space-x-1.5 cursor-pointer"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+              <span>Explore this decision</span>
+            </button>
+          )}
+        </>
       ) : feedback.status === 'INCORRECT' ? (
-        <div className="flex items-start space-x-3 p-3.5 bg-rose-500/15 border border-rose-500/40 rounded-xl text-rose-300 animate-in fade-in duration-200">
-          <XCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
-          <div>
-            <h4 className="font-bold text-sm text-rose-200">Not the Recommended Move</h4>
-            <p className="text-xs mt-0.5 text-rose-300/90">
-              <span className="font-bold text-white">{feedback.lastMove}</span> is not the recommended move.
-            </p>
+        <>
+          <div className="flex items-start space-x-3 p-3.5 bg-rose-500/15 border border-rose-500/40 rounded-xl text-rose-300 animate-in fade-in duration-200">
+            <XCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+            <div>
+              <h4 className="font-bold text-sm text-rose-200">Not the Recommended Move</h4>
+              <p className="text-xs mt-0.5 text-rose-300/90">
+                <span className="font-bold text-white">{feedback.lastMove}</span> is not the recommended move.
+              </p>
+            </div>
           </div>
-        </div>
+          {!isExplorationActive && onEnterExploration && feedback.lastMove && (
+            <button
+              type="button"
+              onClick={() => onEnterExploration(undefined, feedback.lastMove)}
+              className="w-full mt-2 py-2 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 font-bold text-xs rounded-xl transition border border-rose-500/30 flex items-center justify-center space-x-1.5 cursor-pointer"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-rose-400" />
+              <span>Explore this decision</span>
+            </button>
+          )}
+        </>
       ) : (
         <div className="flex items-center space-x-3 p-3 bg-slate-950/60 border border-slate-800/80 rounded-xl text-slate-400">
           <HelpCircle className="w-4 h-4 text-slate-400 shrink-0" />
@@ -418,7 +443,14 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
             <div className="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
               <div className="flex items-center gap-2 font-bold text-emerald-300">
                 <Sparkles className="w-4 h-4 text-emerald-400" />
-                <span className="text-xs font-bold text-white tracking-wider uppercase">Line Exploration</span>
+                <span className="text-xs font-bold text-white tracking-wider uppercase">
+                  Line Exploration
+                  {explorationDecisionMove && (
+                    <span className="text-amber-300 normal-case font-normal ml-1">
+                      (from {explorationDecisionMove})
+                    </span>
+                  )}
+                </span>
               </div>
 
               {/* Exit Exploration Button */}
