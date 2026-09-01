@@ -297,7 +297,7 @@ This is a known open problem in the design — not a bug — and is an active ar
 - **Stockfish runs sequentially as a subprocess.** A new process is spawned per position analysis. There is no persistent engine connection or analysis pool. This is the primary performance bottleneck for large imports.
 - **Exact position matching only.** Weaknesses are identified from identical recurring board states, not from generalized chess concepts or strategic patterns.
 - **Intentional or unusual opening choices can produce false positives.** Evaluation loss does not always mean a recurring mistake by human standards.
-- **No opening name classification.** Weakness positions are not currently labeled with ECO codes or opening names.
+- **No opening name classification.** Weakness positions are not currently labeled with ECO codes or opening names; the [Chess.com metadata investigation](docs/architecture/chesscom-opening-metadata.md) recommends treating them as optional game context rather than position identity.
 - **No explicit progress-tracking UI.** As new games are imported, weakness scores update automatically. There is no dedicated dashboard showing how a weakness has evolved over time.
 
 ---
