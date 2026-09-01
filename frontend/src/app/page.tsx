@@ -1196,21 +1196,23 @@ export default function Home() {
   };
 
   return (
-    <div className="h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-emerald-500 selection:text-white overflow-hidden">
-      {/* Top Header */}
+    <div className={`h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-emerald-500 selection:text-white overflow-hidden ${
+      activeTab === 'puzzles' ? '2xl:flex-row' : ''
+    }`}>
       <Header
         activeTab={activeTab}
         setActiveTab={changeTab}
         username={activeUsername}
         weaknessCount={weaknessCount}
         onDisconnect={handleDisconnect}
+        sideNavigation={activeTab === 'puzzles'}
       />
 
       {/* Main Content Area */}
       <main className={`flex-1 flex flex-col ${activeTab === 'import' ? 'justify-center overflow-hidden py-2' : 'justify-start overflow-y-auto py-2'}`}>
         {/* TAB 1: PRACTICE PUZZLES */}
         {activeTab === 'puzzles' && (
-          <div className="max-w-[1536px] w-full mx-auto px-4 lg:px-8 flex-1 flex flex-col justify-center min-h-0">
+          <div className="max-w-[1760px] w-full mx-auto px-4 lg:px-8 2xl:px-6 flex-1 flex flex-col justify-center min-h-0">
 
             <div className="flex-1 flex flex-col justify-center min-h-0">
               {isLoadingPuzzles ? (
@@ -1273,7 +1275,7 @@ export default function Home() {
                 </div>
 
                 {/* Center Interactive Chessboard & Controls */}
-                <div className="w-full max-w-[640px] 2xl:max-w-[680px] shrink-0">
+                <div className="w-full max-w-[640px] xl:max-w-[680px] 2xl:max-w-[720px] min-[1800px]:max-w-[760px] shrink-0">
                   <ChessBoardArea
                     initialFen={activePuzzle.fen}
                     playerColor={activePuzzle.playerColor}
@@ -1308,7 +1310,7 @@ export default function Home() {
                 </div>
 
                 {/* Right Feedback & Settings Panel */}
-                <div className="w-full max-w-[480px] shrink-0">
+                <div className="w-full max-w-[480px] 2xl:max-w-[440px] min-[1800px]:max-w-[480px] shrink-0">
                   <PuzzleFeedbackPanel
                     puzzle={activePuzzle}
                     feedback={feedback}

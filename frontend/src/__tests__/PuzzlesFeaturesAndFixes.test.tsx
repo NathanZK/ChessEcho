@@ -587,8 +587,8 @@ describe('Puzzles Tab Features and Fixes', () => {
     });
   });
 
-  describe('8. Expanded Desktop Puzzle Workspace Layout', () => {
-    it('applies expanded viewport container and board/panel max-width classes', async () => {
+  describe('8. Responsive Puzzle Workspace Layout', () => {
+    it('uses a large-screen side navigation and wider board while retaining the top layout below 2xl', async () => {
       localStorage.setItem('chessecho_username', 'hikaru');
 
       render(<Home />);
@@ -597,17 +597,33 @@ describe('Puzzles Tab Features and Fixes', () => {
         expect(screen.getByText("King's Pawn Opening")).toBeInTheDocument();
       });
 
-      // 1. Verify outer puzzle container uses expanded max-w-[1536px]
-      const puzzleWorkspaceContainer = screen.getByText("King's Pawn Opening").closest('.max-w-\\[1536px\\]');
+      const navigation = screen.getByTestId('app-navigation');
+      expect(navigation).toHaveClass('border-b', '2xl:w-52', '2xl:border-r', '2xl:border-b-0');
+      expect(navigation.closest('.h-screen')).toHaveClass('flex-col', '2xl:flex-row');
+
+      const puzzleWorkspaceContainer = screen.getByText("King's Pawn Opening").closest('.max-w-\\[1760px\\]');
       expect(puzzleWorkspaceContainer).toBeInTheDocument();
 
-      // 2. Verify center board wrapper grows into available space (flex-1 min-h-0)
-      const boardWrapper = screen.getByText("King's Pawn Opening").closest('.max-w-\\[1536px\\]')?.querySelector('.flex-1');
-      expect(boardWrapper).toBeInTheDocument();
+      const board = puzzleWorkspaceContainer?.querySelector('.max-w-\\[640px\\]');
+      expect(board).toHaveClass('xl:max-w-[680px]', '2xl:max-w-[720px]', 'min-[1800px]:max-w-[760px]');
 
-      // 3. Verify right feedback panel wrapper uses max-w-[480px]
-      const feedbackWrapper = screen.getByText("King's Pawn Opening").closest('.max-w-\\[1536px\\]')?.querySelector('.max-w-\\[480px\\]');
-      expect(feedbackWrapper).toBeInTheDocument();
+      const feedbackWrapper = screen.getByRole('button', { name: /Puzzle Settings/i }).closest('.max-w-\\[480px\\]');
+      expect(feedbackWrapper).toHaveClass('max-w-[480px]', 'min-[1800px]:max-w-[480px]');
+    });
+
+    it('returns to the unchanged top navigation shell outside the Puzzles tab', async () => {
+      localStorage.setItem('chessecho_username', 'hikaru');
+      render(<Home />);
+
+      await waitFor(() => {
+        expect(screen.getByText("King's Pawn Opening")).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: /Weaknesses Library/i }));
+
+      const navigation = screen.getByTestId('app-navigation');
+      expect(navigation).not.toHaveClass('2xl:w-52', '2xl:border-r');
+      expect(navigation.closest('.h-screen')).not.toHaveClass('2xl:flex-row');
     });
   });
 
