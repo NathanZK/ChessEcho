@@ -479,7 +479,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   const orientation = boardOrientation ?? (playerColor === 'BLACK' ? 'black' : 'white');
 
   return (
-    <div className="flex flex-col space-y-2.5 w-full max-w-[640px] 2xl:max-w-[680px] mx-auto">
+    <div className="flex flex-col space-y-2.5 w-full max-w-[640px] 2xl:max-w-[760px] mx-auto">
       {/* Chessboard Container with Chess.com Green Theme */}
       <div className="rounded-2xl overflow-hidden shadow-2xl border border-slate-800 bg-slate-900 p-2">
         <Chessboard

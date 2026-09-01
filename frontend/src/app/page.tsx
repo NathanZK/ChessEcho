@@ -1196,7 +1196,11 @@ export default function Home() {
   };
 
   return (
-    <div className="h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-emerald-500 selection:text-white overflow-hidden">
+    <div
+      className={`h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-emerald-500 selection:text-white overflow-hidden ${
+        activeTab === 'puzzles' ? '2xl:flex-row' : ''
+      }`}
+    >
       {/* Top Header */}
       <Header
         activeTab={activeTab}
@@ -1207,10 +1211,10 @@ export default function Home() {
       />
 
       {/* Main Content Area */}
-      <main className={`flex-1 flex flex-col ${activeTab === 'import' ? 'justify-center overflow-hidden py-2' : 'justify-start overflow-y-auto py-2'}`}>
+      <main className={`flex-1 min-w-0 flex flex-col ${activeTab === 'import' ? 'justify-center overflow-hidden py-2' : 'justify-start overflow-y-auto py-2'}`}>
         {/* TAB 1: PRACTICE PUZZLES */}
         {activeTab === 'puzzles' && (
-          <div className="max-w-[1536px] w-full mx-auto px-4 lg:px-8 flex-1 flex flex-col justify-center min-h-0">
+          <div className="max-w-[1536px] w-full mx-auto px-4 lg:px-8 2xl:max-w-none 2xl:px-4 flex-1 flex flex-col justify-center min-h-0">
 
             <div className="flex-1 flex flex-col justify-center min-h-0">
               {isLoadingPuzzles ? (
@@ -1259,7 +1263,7 @@ export default function Home() {
                   </button>
                 </div>
               ) : (
-              <div className="flex flex-col lg:flex-row items-center lg:items-start justify-center gap-5 xl:gap-8">
+              <div className="flex flex-col items-center justify-center gap-4 lg:flex-row lg:flex-wrap lg:items-start 2xl:flex-nowrap">
                 {/* Left Stockfish Eval Bar */}
                 <div className="hidden sm:flex flex-col items-center pt-1">
                   <span className="text-[10px] font-bold text-slate-400 mb-1.5 uppercase tracking-wider">
@@ -1273,7 +1277,7 @@ export default function Home() {
                 </div>
 
                 {/* Center Interactive Chessboard & Controls */}
-                <div className="w-full max-w-[640px] 2xl:max-w-[680px] shrink-0">
+                <div className="w-full max-w-[640px] shrink-0 2xl:max-w-[760px] 2xl:w-auto 2xl:min-w-0 2xl:basis-[760px] 2xl:grow 2xl:shrink">
                   <ChessBoardArea
                     initialFen={activePuzzle.fen}
                     playerColor={activePuzzle.playerColor}
@@ -1308,7 +1312,7 @@ export default function Home() {
                 </div>
 
                 {/* Right Feedback & Settings Panel */}
-                <div className="w-full max-w-[480px] shrink-0">
+                <div className="w-full max-w-[480px] shrink-0 2xl:max-w-[360px] 2xl:w-auto 2xl:min-w-0 2xl:basis-[360px] 2xl:shrink">
                   <PuzzleFeedbackPanel
                     puzzle={activePuzzle}
                     feedback={feedback}
