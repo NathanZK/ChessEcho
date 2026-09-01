@@ -88,14 +88,6 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
     activeColorFilter || 'ALL'
   );
 
-  const handleColorChange = (newColor: 'ALL' | 'WHITE' | 'BLACK') => {
-    setColorFilter(newColor);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('chessecho_weakness_color_filter', newColor);
-    }
-    onColorFilterChange?.(newColor);
-  };
-
   if (activeColorFilter && activeColorFilter !== colorFilter) {
     setColorFilter(activeColorFilter);
   }
@@ -104,6 +96,8 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadMoreError, setLoadMoreError] = useState<boolean>(false);
+  const [reloadToken, setReloadToken] = useState<number>(0);
 
   const [page, setPage] = useState<number>(0);
   const [hasMore, setHasMore] = useState<boolean>(true);
@@ -111,6 +105,40 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
   const [activeGameModalUrls, setActiveGameModalUrls] = useState<string[] | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const isFetchingRef = useRef<boolean>(false);
+  // Monotonic request generation. A completion only owns the current generation
+  // when its captured seq still equals loadSeqRef.current; otherwise every one of
+  // its effects (data/error setters, loading flags, and the fetch lock release) is
+  // skipped, so a stale/superseded request can never mutate the current UI.
+  const loadSeqRef = useRef<number>(0);
+
+  const invalidateWeaknessRequests = () => {
+    loadSeqRef.current++;
+    isFetchingRef.current = false;
+  };
+
+  const handleColorChange = (newColor: 'ALL' | 'WHITE' | 'BLACK') => {
+    invalidateWeaknessRequests();
+    setColorFilter(newColor);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('chessecho_weakness_color_filter', newColor);
+    }
+    onColorFilterChange?.(newColor);
+  };
+
+  const handleMinEvalLossChange = (value: number) => {
+    invalidateWeaknessRequests();
+    onMinEvalLossChange?.(value);
+  };
+
+  const handleMinMistakeCountChange = (value: number) => {
+    invalidateWeaknessRequests();
+    onMinMistakeCountChange?.(value);
+  };
+
+  const handleRetryInitialLoad = () => {
+    invalidateWeaknessRequests();
+    setReloadToken((token) => token + 1);
+  };
 
   // Notify parent of total weakness count in a side-effect safe useEffect
   useEffect(() => {
@@ -140,6 +168,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
       setIsLoading(false);
       setIsLoadingMore(false);
       setError(null);
+      setLoadMoreError(false);
       setPage(0);
       setHasMore(false);
     }
@@ -149,11 +178,16 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
     if (!username) {
       return;
     }
+    const requestSequence = loadSeqRef;
+    const fetchLock = isFetchingRef;
 
     async function loadInitialWeaknesses() {
+      const seq = ++loadSeqRef.current;
       setIsLoading(true);
       setError(null);
+      setLoadMoreError(false);
       setPage(0);
+      setIsLoadingMore(false);
       isFetchingRef.current = true;
       try {
         const backendColor = colorFilter === 'ALL' ? 'BOTH' : colorFilter;
@@ -166,28 +200,41 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
           0,
           PAGE_SIZE
         );
+        if (seq !== loadSeqRef.current) return;
         setWeaknesses(data);
         setHasMore(data.length === PAGE_SIZE);
       } catch (err) {
+        if (seq !== loadSeqRef.current) return;
         console.error('Failed to fetch weaknesses:', err);
-        setError('Failed to load weakness data from backend API');
+        setError("We couldn't load your weaknesses. Please try again.");
         setWeaknesses([]);
         setHasMore(false);
       } finally {
-        setIsLoading(false);
-        isFetchingRef.current = false;
+        if (seq === loadSeqRef.current) {
+          setIsLoading(false);
+          isFetchingRef.current = false;
+        }
       }
     }
 
     loadInitialWeaknesses();
-  }, [username, colorFilter, minMistakeCount, minEvalLoss, refreshKey]);
+    return () => {
+      requestSequence.current++;
+      fetchLock.current = false;
+    };
+  }, [username, colorFilter, minMistakeCount, minEvalLoss, refreshKey, reloadToken]);
 
   // Load next page function
-  const loadNextPage = useCallback(async () => {
+  const loadNextPage = useCallback(async (isRetry: boolean = false) => {
     if (!username || isLoading || isLoadingMore || !hasMore || isFetchingRef.current) return;
+    // While a pagination error is unresolved, only an explicit Retry may proceed;
+    // this suppresses the auto-loader so the error stays a stable manual state.
+    if (loadMoreError && !isRetry) return;
 
+    const seq = ++loadSeqRef.current;
     isFetchingRef.current = true;
     setIsLoadingMore(true);
+    if (loadMoreError) setLoadMoreError(false);
     const nextPage = page + 1;
     try {
       const backendColor = colorFilter === 'ALL' ? 'BOTH' : colorFilter;
@@ -201,6 +248,8 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
         PAGE_SIZE
       );
 
+      if (seq !== loadSeqRef.current) return;
+
       if (data && data.length > 0) {
         setWeaknesses((prev) => {
           const existingIds = new Set(prev.map((w) => w.positionId));
@@ -213,23 +262,28 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
         setHasMore(false);
       }
     } catch (err) {
+      if (seq !== loadSeqRef.current) return;
       console.error('Failed to load more weaknesses:', err);
-      setHasMore(false);
+      // A pagination failure is surfaced as a retryable inline error. It must NOT
+      // collapse to a terminal "no more data" state, so hasMore is preserved.
+      setLoadMoreError(true);
     } finally {
-      setIsLoadingMore(false);
-      isFetchingRef.current = false;
+      if (seq === loadSeqRef.current) {
+        setIsLoadingMore(false);
+        isFetchingRef.current = false;
+      }
     }
-  }, [username, isLoading, isLoadingMore, hasMore, page, colorFilter, minMistakeCount, minEvalLoss]);
+  }, [username, isLoading, isLoadingMore, hasMore, page, colorFilter, minMistakeCount, minEvalLoss, loadMoreError]);
 
   // IntersectionObserver for infinite scroll sentinel
   useEffect(() => {
     const target = sentinelRef.current;
-    if (!target || !hasMore || isLoading || isLoadingMore) return;
+    if (!target || !hasMore || isLoading || isLoadingMore || loadMoreError) return;
     if (typeof window === 'undefined' || !('IntersectionObserver' in window)) return;
 
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && hasMore && !isLoading && !isLoadingMore && !isFetchingRef.current) {
+        if (entries[0].isIntersecting && hasMore && !isLoading && !isLoadingMore && !loadMoreError && !isFetchingRef.current) {
           loadNextPage();
         }
       },
@@ -240,7 +294,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
     return () => {
       observer.disconnect();
     };
-  }, [sentinelRef, hasMore, isLoading, isLoadingMore, loadNextPage]);
+  }, [sentinelRef, hasMore, isLoading, isLoadingMore, loadMoreError, loadNextPage]);
 
   return (
     <div className="max-w-[1536px] w-full mx-auto px-4 lg:px-8 space-y-4 py-2 text-slate-200">
@@ -295,7 +349,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
             <span className="text-slate-400">Mistake Threshold:</span>
             <select
               value={minEvalLoss}
-              onChange={(e) => onMinEvalLossChange?.(Number(e.target.value))}
+              onChange={(e) => handleMinEvalLossChange(Number(e.target.value))}
               className="bg-slate-900 text-emerald-400 font-bold border border-slate-800 rounded px-2 py-0.5 outline-none cursor-pointer text-xs"
             >
               <option value={0.3}>0.3 pawns (Strict)</option>
@@ -311,7 +365,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
             <span className="text-slate-400">Min Mistakes:</span>
             <select
               value={minMistakeCount}
-              onChange={(e) => onMinMistakeCountChange?.(Number(e.target.value))}
+              onChange={(e) => handleMinMistakeCountChange(Number(e.target.value))}
               className="bg-slate-900 text-emerald-400 font-bold border border-slate-800 rounded px-2 py-0.5 outline-none cursor-pointer text-xs"
             >
               <option value={1}>1 (All)</option>
@@ -350,9 +404,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
             <p className="text-xs text-rose-300 mt-1">{error}</p>
           </div>
           <button
-            onClick={() => {
-              setColorFilter((prev) => prev);
-            }}
+            onClick={handleRetryInitialLoad}
             className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded-xl transition inline-flex items-center gap-1.5 cursor-pointer"
           >
             <RefreshCw className="w-3.5 h-3.5" />
@@ -519,10 +571,29 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                 <span>Loading more weaknesses...</span>
               </div>
             )}
-            {!isLoadingMore && hasMore && weaknesses.length >= PAGE_SIZE && (
+            {!isLoadingMore && loadMoreError && (
+              <div
+                data-testid="weaknesses-load-more-error"
+                className="flex flex-col sm:flex-row items-center gap-3 bg-slate-900 px-4 py-3 rounded-xl border border-rose-900/50 text-xs"
+              >
+                <div className="flex items-center gap-2 text-rose-300 font-semibold">
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>We couldn&apos;t load more weaknesses. Please try again.</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => loadNextPage(true)}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl transition inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Retry</span>
+                </button>
+              </div>
+            )}
+            {!isLoadingMore && !loadMoreError && hasMore && weaknesses.length >= PAGE_SIZE && (
               <button
                 type="button"
-                onClick={loadNextPage}
+                onClick={() => loadNextPage()}
                 className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-bold rounded-xl border border-slate-800 transition cursor-pointer"
               >
                 Load More Weaknesses
