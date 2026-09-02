@@ -90,6 +90,16 @@
           "cwd": "frontend"
         }
       ]
+    },
+    "workflow-tooling": {
+      "test_paths": ["scripts/tests/**/*"],
+      "checks": [
+        {
+          "name": "agent-workflow-tests",
+          "command": ["make", "agent-workflow-test"],
+          "cwd": "."
+        }
+      ]
     }
   }
 }

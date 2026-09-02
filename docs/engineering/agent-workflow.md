@@ -130,7 +130,7 @@ After implementation is complete but before submitting it for the validation tha
 1. Fetch the configured target base. This latest-remote step is agent guidance, not a claim made by the CLI.
 2. Reconcile with the fetched target base if needed.
 3. Verify no unrelated work is mixed into the branch.
-4. Normalize the current issue to exactly one commit relative to the configured local tracking ref (for example, `origin/main`).
+4. Normalize the current issue to exactly one commit relative to the configured local tracking ref (for example, `origin/main`). Inside a correction run the anchor is the source run's validated `HEAD` instead of the tracking ref, so exactly one *correction* commit is required on top of it (see [Corrections](#corrections)).
 5. Stop and require explicit separation if unrelated commits or changes are present. Never silently drop them.
 6. Record the resulting final `HEAD` SHA in the implementation report.
 
@@ -145,7 +145,7 @@ fetch/reconcile/squash once
   -> draft PR from that same HEAD
 ```
 
-Before running checks, `run-validation` mechanically captures a clean worktree, `HEAD`, the configured local target-base ref and its resolved SHA, workspace fingerprint, approved-test fingerprint, ancestry, and the exactly-one-commit invariant. After every check finishes, it recaptures the same evidence and requires the tracking ref to have remained on the same base SHA for the duration of validation. Any command-induced file/test/HEAD change, base-ref movement, dirty worktree, ancestry change, or commit-count change invalidates the run, clears stale evidence, records `VALIDATION_INVALIDATED`, and returns to `IMPLEMENTATION` without certifying PASS results.
+Before running checks, `run-validation` mechanically captures a clean worktree, `HEAD`, the run's base ref and its resolved SHA, workspace fingerprint, approved-test fingerprint, ancestry, and the exactly-one-commit invariant. For a normal run the base ref is the configured local target-base ref; for a correction run it is the synthetic `parent-run-head:<sha>` label naming the source run's validated `HEAD`. After every check finishes, it recaptures the same evidence and requires that base SHA to have remained unchanged for the duration of validation. Any command-induced file/test/HEAD change, base-ref movement, dirty worktree, ancestry change, or commit-count change invalidates the run, clears stale evidence, records `VALIDATION_INVALIDATED`, and returns to `IMPLEMENTATION` without certifying PASS results.
 
 Successful validation freezes that resolved base SHA in structured `validation_evidence`. Final review, draft creation, metadata revision, and approval verify ancestry and the one-commit invariant against the frozen SHA, not the later value of mutable `origin/main`. Therefore unrelated target-base advances after validation do not invalidate unchanged evidence. Final validation, final review, and draft-PR preparation must refer to one identical final `HEAD`; reviewer readiness records the reviewed `HEAD`, and GitHub's remote head must match it. A same-tree history rewrite cannot pass. The submitted implementation report is hash-protected after submission, but its prose is reviewer-readable context; structured workflow state is the mechanical authority for Git evidence.
 
@@ -166,6 +166,8 @@ The issue's `backend`, `frontend`, or `full-stack` label selects the repository-
 ```bash
 python3 scripts/agent_workflow.py init ISSUE --scope frontend
 ```
+
+A workflow-tooling-only issue carries none of those labels and is initialized with `--scope workflow-tooling`.
 
 Inspect resumable status at any time:
 
@@ -255,6 +257,9 @@ Before executing checks, the command enforces the configured local base ancestry
 | Backend | `./gradlew ktlintCheck`; `./gradlew test` |
 | Frontend | `npm run lint`; `npx tsc --noEmit`; `npm run test`; `npm run build` in `frontend/` |
 | Full stack | All backend and frontend commands |
+| Workflow tooling | `make agent-workflow-test` |
+
+The `workflow-tooling` scope is for issues that change only the workflow tooling under `scripts/`. Scope inference reads only the `backend`, `frontend`, and `full-stack` labels, so such an issue must carry none of them and must pass `--scope workflow-tooling` explicitly. An issue that changes workflow tooling *and* product code stays on its product scope and needs the workflow tooling test path added to that run's frozen contract at `init`.
 
 A failure returns the workflow to `IMPLEMENTATION`. A pass moves it to `FINAL_REVIEW`, where the Reviewer records its verdict with `review-final`.
 
@@ -298,6 +303,61 @@ Final PR approval verifies that the workspace, Git revision, base branch, draft 
 
 Do not manually edit state or history. If an agent or command fails before recording an event, inspect `status` and rerun the action appropriate to that unchanged state.
 
+## Corrections
+
+A run that has reached `WAITING_FOR_PR_HUMAN_APPROVAL` or `PR_APPROVED` is never reopened or mutated. A bounded post-approval fix instead forks an immutable, linked correction run:
+
+```bash
+python3 scripts/agent_workflow.py start-correction ISSUE \
+  --classification implementation-only \
+  --by GITHUB_LOGIN --reason "Post-approval API contract fix" \
+  [--from-correction N]
+```
+
+The correction is a child run beside its source, and every later command addresses it with `--correction N`:
+
+```text
+.agent-workflow/runs/issue-ISSUE/                 # source run, never written by a correction
+.agent-workflow/runs/issue-ISSUE/corrections/1/   # child state.json, history.jsonl, artifacts/, validation/
+```
+
+```bash
+python3 scripts/agent_workflow.py submit-implementation ISSUE --correction 1 \
+  --artifact .agent-workflow/runs/issue-ISSUE/corrections/1/artifacts/implementation-report.md \
+  --agent chess-echo-implementer
+python3 scripts/agent_workflow.py run-validation ISSUE --correction 1
+python3 scripts/agent_workflow.py status ISSUE --correction 1
+```
+
+`--correction` is accepted by every subcommand except `init` and `start-correction`. Artifacts, validation logs, state, and history for a correction live under the child directory; artifacts recorded for a correction must be inside its own `artifacts/` directory.
+
+### Classifications and evidence
+
+| Classification | Entry state | Inherited | Invalidated |
+|---|---|---|---|
+| `metadata-only` | `WAITING_FOR_PR_HUMAN_APPROVAL` | All six artifacts, plan and test approvals, all validation/final/draft evidence | PR approval |
+| `implementation-only` | `IMPLEMENTATION` | Plan, plan review, test report, test review, plan and test approvals | Implementation report, final review, PR approval, all validation/final/draft evidence |
+| `test-contract` | `TEST_IMPLEMENTATION` | Plan, plan review, plan approval | Test evidence, implementation evidence, PR approval, all validation/final/draft evidence |
+| `architecture` | `PLANNING` | Nothing | Everything |
+
+Each child records `correction` (number, classification, reason, requesting human, timestamp, and the exhaustive, disjoint `inherited`/`invalidated` token lists) and `parent_run` (issue, source correction number, source state, source validated head/base, and the SHA-256 of the source `state.json` and `history.jsonl` at fork time). Inherited artifact records still point at the source run's files, so any later edit to inherited evidence fails the correction closed at every downstream gate. A `test-contract` correction re-derives the inherited plan approval's non-test fingerprint, exactly as `reopen-tests` does, so the child's test phase measures the current tree.
+
+### Fail-closed fork checks
+
+`start-correction` reads its source read-only and writes nothing outside the new child directory. It refuses to fork unless the source is at one of the two PR-gate states with a recorded validated head and base, the current `HEAD` descends from that validated head with at most one commit on top of it, and the worktree is clean. A `metadata-only` fork additionally requires the live workspace fingerprint and `HEAD` to equal the source's validated values and all approved source artifacts to be unchanged; a changed tree or head is refused rather than accepted under a weaker label, and the operator must re-run with a code-changing classification.
+
+Misclassification discovered later escalates through the existing human commands inside the child run: an `implementation-only` correction that must change approved tests uses `reopen-tests ISSUE --correction N`, and a `test-contract` correction that must change non-test files uses `reopen-plan ISSUE --correction N`. There is no de-escalation back to a narrower class.
+
+### Chaining, siblings, and validation anchoring
+
+Numbering is flat per issue. A new correction is refused while any other correction for the issue is in flight, that is, in any state before its own PR gate; multiple settled corrections may coexist. When the latest correction validated a different `HEAD` from the selected source, every later correction must use `--from-correction N` with that latest correction number. This mechanically keeps code-changing history linear and prevents newer settled evidence from being orphaned. Settled metadata-only corrections may remain siblings because they retain the same validated `HEAD`. `status ISSUE` lists every correction with its number, classification, state, requesting human, and creation time. A `corrections/<n>/` directory without `state.json`, such as one created by a mistyped `--correction`, is ignored by both the listing and numbering.
+
+Inside a correction, validation anchors on the source run's validated `HEAD` rather than the configured target base: `run-validation` resolves that SHA, records it as `validated_base` with the synthetic `parent-run-head:<sha>` base ref, and still requires exactly one commit relative to it. Every other safeguard is unchanged — clean worktree, ancestry, validated/reviewed head equality, frozen final review, and the draft-PR fingerprint checks all apply to the correction's own evidence. The latest-correction requirement above prevents selecting an older anchor whose branch history could orphan newer settled evidence.
+
+The draft PR follows existing behaviour. A code-changing correction starts with no recorded draft, so `create-draft-pr ISSUE --correction N` adopts the still-open draft when its base, head, title, and body match, otherwise routes metadata differences through `revise-pr-metadata ISSUE --correction N`, and opens a fresh draft when no open PR matches the branch. A `metadata-only` correction inherits the draft record and goes straight to `revise-pr-metadata` and `approve-pr`; it fails closed if that pull request is no longer an open draft.
+
+The source run's `issue.md` remains the authoritative issue snapshot for its corrections; child runs do not copy it.
+
 ## Limitations
 
 - Agent invocation is coordinated by Copilot rather than a continuously running service.
@@ -305,4 +365,5 @@ Do not manually edit state or history. If an agent or command fails before recor
 - Durable run files remain local until committed or otherwise preserved with the branch.
 - GitHub CI runs independently after draft PR creation; this workflow gates creation on local validation, not later CI status.
 - Final PR approval is recorded but intentionally does not merge or mark the draft ready.
+- A correction that is in flight blocks starting another correction for the same issue; drive it back to its PR gate first. Nothing is permanently marked, so completing it unblocks the issue.
 - Validation subprocess output is captured in memory before it is written to logs; output is not currently size-bounded.

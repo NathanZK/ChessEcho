@@ -33,6 +33,53 @@ APPROVAL_CONFIRMATIONS = {
 GENERATED_DIRECTORIES = {
     ".git", ".gradle", ".next", "__pycache__", "build", "coverage", "node_modules"
 }
+CORRECTION_ARTIFACT_KINDS = (
+    "plan",
+    "plan_review",
+    "test_report",
+    "test_review",
+    "implementation_report",
+    "final_review",
+)
+CORRECTION_APPROVAL_KEYS = ("plan", "tests", "pr")
+CORRECTION_EVIDENCE_FIELDS = (
+    "validation",
+    "validated_fingerprint",
+    "validated_head",
+    "validated_base",
+    "validated_test_fingerprint",
+    "validation_evidence",
+    "final_review",
+    "draft_pr",
+)
+CORRECTION_SOURCE_STATES = ("WAITING_FOR_PR_HUMAN_APPROVAL", "PR_APPROVED")
+CORRECTION_CLASSES = {
+    "metadata-only": {
+        "state": "WAITING_FOR_PR_HUMAN_APPROVAL",
+        "artifacts": CORRECTION_ARTIFACT_KINDS,
+        "approvals": ("plan", "tests"),
+        "evidence": CORRECTION_EVIDENCE_FIELDS,
+    },
+    "implementation-only": {
+        "state": "IMPLEMENTATION",
+        "artifacts": ("plan", "plan_review", "test_report", "test_review"),
+        "approvals": ("plan", "tests"),
+        "evidence": (),
+    },
+    "test-contract": {
+        "state": "TEST_IMPLEMENTATION",
+        "artifacts": ("plan", "plan_review"),
+        "approvals": ("plan",),
+        "evidence": (),
+    },
+    "architecture": {
+        "state": "PLANNING",
+        "artifacts": (),
+        "approvals": (),
+        "evidence": (),
+    },
+}
+CORRECTION_CLASSIFICATIONS = tuple(CORRECTION_CLASSES)
 
 
 class WorkflowError(Exception):
@@ -43,17 +90,30 @@ def now():
     return dt.datetime.now(dt.timezone.utc).isoformat()
 
 
-def run_dir(root, issue):
-    return root / ".agent-workflow" / "runs" / ("issue-%s" % issue)
+def run_dir(root, issue, correction=None):
+    directory = root / ".agent-workflow" / "runs" / ("issue-%s" % issue)
+    if correction is None:
+        return directory
+    return directory / "corrections" / str(int(correction))
 
 
-def state_path(root, issue):
-    return run_dir(root, issue) / "state.json"
+def state_path(root, issue, correction=None):
+    return run_dir(root, issue, correction) / "state.json"
 
 
-def load_state(root, issue):
-    path = state_path(root, issue)
+def correction_of(args):
+    value = getattr(args, "correction", None)
+    return None if value is None else int(value)
+
+
+def load_state(root, issue, correction=None):
+    path = state_path(root, issue, correction)
     if not path.exists():
+        if correction is not None:
+            raise WorkflowError(
+                "Issue %s has no correction %s; start it with start-correction"
+                % (issue, correction)
+            )
         raise WorkflowError("Issue %s has no workflow run; initialize it first" % issue)
     with path.open() as handle:
         state = json.load(handle)
@@ -82,8 +142,58 @@ def load_state(root, issue):
                 "approved_test_fingerprint": state["validated_test_fingerprint"],
                 "migrated_from_version": 2,
             }
-    sync_history(root, issue, state)
+    sync_history(root, issue, state, correction)
     return state
+
+
+def read_run_state(root, issue, correction=None):
+    path = state_path(root, issue, correction)
+    if not path.exists():
+        raise WorkflowError("Run %s has no workflow state" % path)
+    data = path.read_bytes()
+    state = json.loads(data.decode())
+    if state.get("version") != VERSION:
+        raise WorkflowError(
+            "Run %s is at schema version %s; run any command on that run to migrate it first"
+            % (path, state.get("version"))
+        )
+    return state, hashlib.sha256(data).hexdigest()
+
+
+def run_history_bytes(root, issue, correction=None):
+    path = run_dir(root, issue, correction) / "history.jsonl"
+    return path.read_bytes() if path.is_file() else b""
+
+
+def correction_numbers(root, issue):
+    directory = run_dir(root, issue) / "corrections"
+    if not directory.is_dir():
+        return []
+    numbers = []
+    for entry in directory.iterdir():
+        if not entry.is_dir() or not entry.name.isdigit():
+            continue
+        if str(int(entry.name)) != entry.name:
+            continue
+        if not (entry / "state.json").is_file():
+            continue
+        numbers.append(int(entry.name))
+    return sorted(numbers)
+
+
+def load_correction_summaries(root, issue):
+    summaries = []
+    for number in correction_numbers(root, issue):
+        state, _ = read_run_state(root, issue, number)
+        correction = state.get("correction") or {}
+        summaries.append({
+            "number": number,
+            "classification": correction.get("classification"),
+            "state": state["state"],
+            "requested_by": correction.get("requested_by"),
+            "created_at": correction.get("created_at"),
+        })
+    return summaries
 
 
 def write_json_atomic(path, value):
@@ -116,12 +226,21 @@ def write_text_atomic(path, value):
 
 
 @contextmanager
-def locked_run(root, issue):
-    directory = run_dir(root, issue)
+def lock_directory(directory):
     directory.mkdir(parents=True, exist_ok=True)
     with (directory / ".lock").open("a+") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         yield
+
+
+@contextmanager
+def locked_run(root, issue, correction=None):
+    with lock_directory(run_dir(root, issue)):
+        if correction is None:
+            yield
+        else:
+            with lock_directory(run_dir(root, issue, correction)):
+                yield
 
 
 def append_event(state, event, actor, details=None):
@@ -137,19 +256,19 @@ def append_event(state, event, actor, details=None):
     state["updated_at"] = entry["timestamp"]
 
 
-def sync_history(root, issue, state):
+def sync_history(root, issue, state, correction=None):
     content = "".join(
         json.dumps(entry, sort_keys=True) + "\n" for entry in state.get("history", [])
     )
-    path = run_dir(root, issue) / "history.jsonl"
+    path = run_dir(root, issue, correction) / "history.jsonl"
     if not path.exists() or path.read_text() != content:
         write_text_atomic(path, content)
 
 
-def persist(root, issue, state, event, actor, details=None):
+def persist(root, issue, state, event, actor, details=None, correction=None):
     append_event(state, event, actor, details)
-    write_json_atomic(state_path(root, issue), state)
-    sync_history(root, issue, state)
+    write_json_atomic(state_path(root, issue, correction), state)
+    sync_history(root, issue, state, correction)
 
 
 def require_state(state, *allowed):
@@ -160,12 +279,12 @@ def require_state(state, *allowed):
         )
 
 
-def artifact_record(root, issue, artifact, producer):
+def artifact_record(root, issue, artifact, producer, correction=None):
     path = pathlib.Path(artifact)
     if not path.is_absolute():
         path = root / path
     path = path.resolve()
-    artifact_root = (run_dir(root, issue) / "artifacts").resolve()
+    artifact_root = (run_dir(root, issue, correction) / "artifacts").resolve()
     try:
         relative = path.relative_to(artifact_root)
     except ValueError:
@@ -417,8 +536,9 @@ def command_init(args, root, runner):
 
 
 def submit_artifact(args, root, kind, expected, target, event):
-    with locked_run(root, args.issue):
-        state = load_state(root, args.issue)
+    correction = correction_of(args)
+    with locked_run(root, args.issue, correction):
+        state = load_state(root, args.issue, correction)
         require_state(state, expected)
         verify_approved_artifacts(
             root, state, include_implementation=kind != "implementation_report"
@@ -435,15 +555,18 @@ def submit_artifact(args, root, kind, expected, target, event):
                 )
         elif kind == "test_report":
             require_test_only_phase_unchanged(root, state)
-        record = artifact_record(root, args.issue, args.artifact, args.agent)
+        record = artifact_record(root, args.issue, args.artifact, args.agent, correction)
         state["artifacts"][kind] = record
         state["state"] = target
-        persist(root, args.issue, state, event, args.agent, {"artifact": record})
+        persist(
+            root, args.issue, state, event, args.agent, {"artifact": record}, correction
+        )
 
 
 def review(args, root, runner, kind, expected, revision_target, waiting_target, event):
-    with locked_run(root, args.issue):
-        state = load_state(root, args.issue)
+    correction = correction_of(args)
+    with locked_run(root, args.issue, correction):
+        state = load_state(root, args.issue, correction)
         require_state(state, expected)
         verify_approved_artifacts(
             root,
@@ -462,7 +585,7 @@ def review(args, root, runner, kind, expected, revision_target, waiting_target, 
                     raise WorkflowError("Workspace changed after validation; record NEEDS_REVISION")
                 if current_head != state.get("validated_head"):
                     raise WorkflowError("Git revision changed after validation; record NEEDS_REVISION")
-        record = artifact_record(root, args.issue, args.artifact, args.reviewer)
+        record = artifact_record(root, args.issue, args.artifact, args.reviewer, correction)
         record["status"] = args.status
         if kind == "plan_review":
             record["subject_sha256"] = state["artifacts"]["plan"]["sha256"]
@@ -495,12 +618,14 @@ def review(args, root, runner, kind, expected, revision_target, waiting_target, 
         persist(
             root, args.issue, state, event, args.reviewer,
             {"status": args.status, "artifact": record},
+            correction,
         )
 
 
 def approval(args, root, expected, target, key, event):
-    with locked_run(root, args.issue):
-        state = load_state(root, args.issue)
+    correction = correction_of(args)
+    with locked_run(root, args.issue, correction):
+        state = load_state(root, args.issue, correction)
         require_state(state, expected)
         verify_approved_artifacts(root, state)
         required_confirmation = APPROVAL_CONFIRMATIONS[key]
@@ -544,12 +669,13 @@ def approval(args, root, expected, target, key, event):
             )
         state["approvals"][key] = approval_record
         state["state"] = target
-        persist(root, args.issue, state, event, args.by)
+        persist(root, args.issue, state, event, args.by, None, correction)
 
 
 def rejection(args, root, expected, target, key, event):
-    with locked_run(root, args.issue):
-        state = load_state(root, args.issue)
+    correction = correction_of(args)
+    with locked_run(root, args.issue, correction):
+        state = load_state(root, args.issue, correction)
         require_state(state, expected)
         state["approvals"][key] = {
             "approved": False, "by": args.by, "at": now(), "reason": args.reason,
@@ -557,12 +683,15 @@ def rejection(args, root, expected, target, key, event):
         state["state"] = target
         if key == "pr":
             clear_after_revision(state)
-        persist(root, args.issue, state, event, args.by, {"reason": args.reason})
+        persist(
+            root, args.issue, state, event, args.by, {"reason": args.reason}, correction
+        )
 
 
 def command_reopen_tests(args, root):
-    with locked_run(root, args.issue):
-        state = load_state(root, args.issue)
+    correction = correction_of(args)
+    with locked_run(root, args.issue, correction):
+        state = load_state(root, args.issue, correction)
         require_state(state, "IMPLEMENTATION", "VALIDATION", "FINAL_REVIEW")
         state["approvals"]["tests"] = {
             "approved": False,
@@ -579,7 +708,7 @@ def command_reopen_tests(args, root):
         state["state"] = "TEST_IMPLEMENTATION"
         persist(
             root, args.issue, state, "TESTS_HUMAN_REOPENED", args.by,
-            {"reason": args.reason},
+            {"reason": args.reason}, correction,
         )
 
 
@@ -592,8 +721,9 @@ def command_reopen_plan(args, root):
         "VALIDATION",
         "FINAL_REVIEW",
     )
-    with locked_run(root, args.issue):
-        state = load_state(root, args.issue)
+    correction = correction_of(args)
+    with locked_run(root, args.issue, correction):
+        state = load_state(root, args.issue, correction)
         require_state(state, *allowed)
         state["approvals"]["plan"] = {
             "approved": False,
@@ -615,7 +745,7 @@ def command_reopen_plan(args, root):
         state["state"] = "PLANNING"
         persist(
             root, args.issue, state, "PLAN_HUMAN_REOPENED", args.by,
-            {"reason": args.reason},
+            {"reason": args.reason}, correction,
         )
 
 
@@ -688,14 +818,52 @@ def verify_git_against_base(root, runner, base, base_ref):
 
 
 def resolve_validation_git(root, state, runner):
-    base_ref = "origin/%s" % state["target_base"]
-    base = git_output(
+    anchor = (state.get("parent_run") or {}).get("validated_head")
+    if anchor:
+        base_ref = "parent-run-head:%s" % anchor
+        base = git_output(
+            root,
+            runner,
+            ["git", "rev-parse", "--verify", "%s^{commit}" % anchor],
+            "Cannot resolve the source run's validated head %s; restore it before validation"
+            % anchor,
+        )
+    else:
+        base_ref = "origin/%s" % state["target_base"]
+        base = git_output(
+            root,
+            runner,
+            ["git", "rev-parse", "--verify", base_ref],
+            "Cannot resolve local tracking ref %s; fetch it before final validation" % base_ref,
+        )
+    return verify_git_against_base(root, runner, base, base_ref)
+
+
+def verify_correction_ancestry(root, runner, anchor):
+    ancestor = runner(
+        ["git", "merge-base", "--is-ancestor", anchor, "HEAD"],
+        cwd=str(root), text=True, capture_output=True,
+    )
+    if ancestor.returncode != 0:
+        raise WorkflowError(
+            "Current HEAD must descend from the source run's validated head %s" % anchor
+        )
+    count_text = git_output(
         root,
         runner,
-        ["git", "rev-parse", "--verify", base_ref],
-        "Cannot resolve local tracking ref %s; fetch it before final validation" % base_ref,
+        ["git", "rev-list", "--count", "%s..HEAD" % anchor],
+        "Cannot count commits relative to the source run's validated head %s" % anchor,
     )
-    return verify_git_against_base(root, runner, base, base_ref)
+    try:
+        count = int(count_text)
+    except ValueError:
+        raise WorkflowError("Git returned an invalid commit count")
+    if count not in (0, 1):
+        raise WorkflowError(
+            "A correction may hold at most one commit relative to the source run's validated head %s"
+            % anchor
+        )
+    return count
 
 
 def capture_validation_snapshot(root, state, runner, expected_base=None):
@@ -1013,8 +1181,9 @@ def verify_frozen_final_state(root, state, runner, requested_base=None):
 
 
 def command_run_validation(args, root, runner):
-    with locked_run(root, args.issue):
-        state = load_state(root, args.issue)
+    correction = correction_of(args)
+    with locked_run(root, args.issue, correction):
+        state = load_state(root, args.issue, correction)
         require_state(state, "VALIDATION")
         if args.agent != ROLE_NAMES["implementer"]:
             raise WorkflowError("%s must run validation" % ROLE_NAMES["implementer"])
@@ -1024,7 +1193,7 @@ def command_run_validation(args, root, runner):
             raise WorkflowError("Approved tests changed; explicitly reopen test implementation")
         before = capture_validation_snapshot(root, state, runner)
         state["validation"] = {}
-        log_directory = run_dir(root, args.issue) / "validation"
+        log_directory = run_dir(root, args.issue, correction) / "validation"
         log_directory.mkdir(exist_ok=True)
         failed = False
         for check in state["required_checks"]:
@@ -1082,6 +1251,7 @@ def command_run_validation(args, root, runner):
                 "VALIDATION_INVALIDATED",
                 args.agent,
                 {"reason": str(error), "before": before},
+                correction,
             )
             raise WorkflowError("Validation evidence changed while checks ran: %s" % error)
         state["state"] = "IMPLEMENTATION" if failed else "FINAL_REVIEW"
@@ -1104,14 +1274,16 @@ def command_run_validation(args, root, runner):
                 "passed": not failed,
                 **after,
             },
+            correction,
         )
         if failed:
             raise WorkflowError("Validation failed; see the run's validation logs")
 
 
 def command_create_draft_pr(args, root, runner):
-    with locked_run(root, args.issue):
-        state = load_state(root, args.issue)
+    correction = correction_of(args)
+    with locked_run(root, args.issue, correction):
+        state = load_state(root, args.issue, correction)
         require_state(state, "FINAL_REVIEW", "DRAFT_PR_CREATED")
         verify_approved_artifacts(root, state)
         base = args.base or state["target_base"]
@@ -1156,7 +1328,10 @@ def command_create_draft_pr(args, root, runner):
                 "created_by": args.actor,
             }
             state["state"] = "DRAFT_PR_CREATED"
-            persist(root, args.issue, state, "DRAFT_PR_CREATED", args.actor, {"url": url})
+            persist(
+                root, args.issue, state, "DRAFT_PR_CREATED", args.actor, {"url": url},
+                correction,
+            )
         else:
             draft = state["draft_pr"]
             pull_request = read_pr(root, runner, draft["url"])
@@ -1167,12 +1342,16 @@ def command_create_draft_pr(args, root, runner):
             if pull_request.get("title") != args.title or pull_request.get("body") != expected_body:
                 raise WorkflowError("Draft pull request metadata does not match recovery request")
         state["state"] = "WAITING_FOR_PR_HUMAN_APPROVAL"
-        persist(root, args.issue, state, "PR_HUMAN_APPROVAL_REQUESTED", args.actor)
+        persist(
+            root, args.issue, state, "PR_HUMAN_APPROVAL_REQUESTED", args.actor, None,
+            correction,
+        )
 
 
 def command_revise_pr_metadata(args, root, runner):
-    with locked_run(root, args.issue):
-        state = load_state(root, args.issue)
+    correction = correction_of(args)
+    with locked_run(root, args.issue, correction):
+        state = load_state(root, args.issue, correction)
         require_state(state, "WAITING_FOR_PR_HUMAN_APPROVAL", "FINAL_REVIEW")
         verify_approved_artifacts(root, state)
         expected_body = read_expected_pr_body(root, args.body_file)
@@ -1229,13 +1408,14 @@ def command_revise_pr_metadata(args, root, runner):
         state["state"] = "WAITING_FOR_PR_HUMAN_APPROVAL"
         persist(
             root, args.issue, state, "PR_METADATA_HUMAN_REVISED", args.by,
-            {"reason": args.reason, "url": draft["url"]},
+            {"reason": args.reason, "url": draft["url"]}, correction,
         )
 
 
 def command_approve_pr(args, root, runner):
-    with locked_run(root, args.issue):
-        state = load_state(root, args.issue)
+    correction = correction_of(args)
+    with locked_run(root, args.issue, correction):
+        state = load_state(root, args.issue, correction)
         require_state(state, "WAITING_FOR_PR_HUMAN_APPROVAL")
         verify_approved_artifacts(root, state)
         if args.confirm != APPROVAL_CONFIRMATIONS["pr"]:
@@ -1262,12 +1442,178 @@ def command_approve_pr(args, root, runner):
             "pr_fingerprint": draft["pr_fingerprint"],
         }
         state["state"] = "PR_APPROVED"
-        persist(root, args.issue, state, "PR_HUMAN_APPROVED", args.by)
+        persist(
+            root, args.issue, state, "PR_HUMAN_APPROVED", args.by, None, correction
+        )
+
+
+def build_correction_state(
+    root, args, source_state, source_correction, source_state_sha256,
+    source_history_sha256, number,
+):
+    profile = CORRECTION_CLASSES[args.classification]
+    missing_artifacts = [
+        kind for kind in profile["artifacts"] if kind not in source_state["artifacts"]
+    ]
+    if missing_artifacts:
+        raise WorkflowError(
+            "Source run is missing inheritable artifacts: %s"
+            % ", ".join(missing_artifacts)
+        )
+    missing_approvals = [
+        key for key in profile["approvals"]
+        if not source_state["approvals"].get(key, {}).get("approved")
+    ]
+    if missing_approvals:
+        raise WorkflowError(
+            "Source run is missing inheritable approvals: %s"
+            % ", ".join(missing_approvals)
+        )
+    inherited = []
+    invalidated = []
+    for kind in CORRECTION_ARTIFACT_KINDS:
+        target = inherited if kind in profile["artifacts"] else invalidated
+        target.append("artifact:%s" % kind)
+    for key in CORRECTION_APPROVAL_KEYS:
+        target = inherited if key in profile["approvals"] else invalidated
+        target.append("approval:%s" % key)
+    for field in CORRECTION_EVIDENCE_FIELDS:
+        target = inherited if field in profile["evidence"] else invalidated
+        target.append("evidence:%s" % field)
+    timestamp = now()
+    state = {
+        "version": VERSION,
+        "issue": source_state["issue"],
+        "scope": source_state["scope"],
+        "target_base": source_state["target_base"],
+        "state": profile["state"],
+        "required_checks": source_state["required_checks"],
+        "test_paths": source_state["test_paths"],
+        "artifacts": {
+            kind: dict(source_state["artifacts"][kind]) for kind in profile["artifacts"]
+        },
+        "approvals": {
+            key: dict(source_state["approvals"][key]) for key in profile["approvals"]
+        },
+        "validation": {},
+        "validated_fingerprint": None,
+        "validated_head": None,
+        "validated_base": None,
+        "validated_test_fingerprint": None,
+        "validation_evidence": None,
+        "final_review": None,
+        "draft_pr": None,
+        "history": [],
+        "created_at": timestamp,
+        "updated_at": timestamp,
+        "correction": {
+            "number": number,
+            "classification": args.classification,
+            "reason": args.reason,
+            "requested_by": args.by,
+            "created_at": timestamp,
+            "inherited": inherited,
+            "invalidated": invalidated,
+        },
+        "parent_run": {
+            "issue": args.issue,
+            "correction": source_correction,
+            "state": source_state["state"],
+            "validated_head": source_state["validated_head"],
+            "validated_base": source_state["validated_base"],
+            "state_sha256": source_state_sha256,
+            "history_sha256": source_history_sha256,
+        },
+    }
+    for field in profile["evidence"]:
+        state[field] = source_state[field]
+    if args.classification == "test-contract":
+        state["approvals"]["plan"]["non_test_fingerprint"] = non_test_fingerprint(
+            root, state["test_paths"]
+        )
+    return state
+
+
+def command_start_correction(args, root, runner):
+    source_correction = args.from_correction
+    with locked_run(root, args.issue):
+        source_state, source_state_sha256 = read_run_state(
+            root, args.issue, source_correction
+        )
+        source_history_sha256 = hashlib.sha256(
+            run_history_bytes(root, args.issue, source_correction)
+        ).hexdigest()
+        require_state(source_state, *CORRECTION_SOURCE_STATES)
+        anchor = source_state.get("validated_head")
+        if not anchor or not source_state.get("validated_base"):
+            raise WorkflowError(
+                "The source run has no validated head and base to anchor a correction on"
+            )
+        existing = correction_numbers(root, args.issue)
+        if existing:
+            latest = max(existing)
+            if source_correction != latest:
+                latest_state, _ = read_run_state(root, args.issue, latest)
+                if latest_state.get("validated_head") != anchor:
+                    raise WorkflowError(
+                        "Correction %s has newer validated evidence; start from it with "
+                        "--from-correction %s" % (latest, latest)
+                    )
+        for number in existing:
+            if number == source_correction:
+                continue
+            sibling, _ = read_run_state(root, args.issue, number)
+            if sibling["state"] not in CORRECTION_SOURCE_STATES:
+                raise WorkflowError(
+                    "Correction %s is still in flight in %s; finish it before starting another"
+                    % (number, sibling["state"])
+                )
+        number = (max(existing) if existing else 0) + 1
+        if state_path(root, args.issue, number).exists():
+            raise WorkflowError(
+                "Correction %s already exists for issue %s" % (number, args.issue)
+            )
+        verify_correction_ancestry(root, runner, anchor)
+        require_clean_worktree(root, runner)
+        if args.classification == "metadata-only":
+            verify_approved_artifacts(root, source_state)
+            if files_fingerprint(root) != source_state["validated_fingerprint"]:
+                raise WorkflowError(
+                    "Workspace changed since the source run was validated; "
+                    "start a code-changing correction instead"
+                )
+            if git_head(root, runner) != anchor:
+                raise WorkflowError(
+                    "Git revision changed since the source run was validated; "
+                    "start a code-changing correction instead"
+                )
+        state = build_correction_state(
+            root, args, source_state, source_correction, source_state_sha256,
+            source_history_sha256, number,
+        )
+        directory = run_dir(root, args.issue, number)
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "artifacts").mkdir(exist_ok=True)
+        persist(
+            root,
+            args.issue,
+            state,
+            "CORRECTION_CREATED",
+            args.by,
+            {
+                "number": number,
+                "classification": args.classification,
+                "reason": args.reason,
+                "parent_correction": source_correction,
+            },
+            number,
+        )
 
 
 def command_status(args, root):
-    with locked_run(root, args.issue):
-        state = load_state(root, args.issue)
+    correction = correction_of(args)
+    with locked_run(root, args.issue, correction):
+        state = load_state(root, args.issue, correction)
         summary = {
             "issue": state["issue"],
             "state": state["state"],
@@ -1284,6 +1630,11 @@ def command_status(args, root):
             "validation_evidence": state.get("validation_evidence"),
             "draft_pr": state["draft_pr"],
         }
+        if correction is None:
+            summary["corrections"] = load_correction_summaries(root, args.issue)
+        else:
+            summary["correction"] = state["correction"]
+            summary["parent_run"] = state["parent_run"]
     print(json.dumps(summary, indent=2, sort_keys=True))
 
 
@@ -1291,6 +1642,7 @@ def add_artifact_arguments(parser, role):
     parser.add_argument("issue", type=int)
     parser.add_argument("--artifact", required=True)
     parser.add_argument("--%s" % role, required=True)
+    parser.add_argument("--correction", type=int, default=None)
 
 
 def add_human_arguments(parser, rejection=False):
@@ -1300,6 +1652,7 @@ def add_human_arguments(parser, rejection=False):
         parser.add_argument("--reason", required=True)
     else:
         parser.add_argument("--confirm", required=True)
+    parser.add_argument("--correction", type=int, default=None)
 
 
 def build_parser():
@@ -1310,7 +1663,9 @@ def build_parser():
     init = subparsers.add_parser("init")
     init.add_argument("issue", type=int)
     init.add_argument("--repo", default="NathanZK/ChessEcho")
-    init.add_argument("--scope", choices=("backend", "frontend", "full-stack"))
+    init.add_argument(
+        "--scope", choices=("backend", "frontend", "full-stack", "workflow-tooling")
+    )
     init.add_argument("--issue-file")
     init.add_argument("--title")
     init.add_argument("--url")
@@ -1318,6 +1673,19 @@ def build_parser():
 
     status = subparsers.add_parser("status")
     status.add_argument("issue", type=int)
+    status.add_argument("--correction", type=int, default=None)
+
+    start_correction = subparsers.add_parser(
+        "start-correction",
+        help="fork an immutable, linked correction run from a settled run",
+    )
+    start_correction.add_argument("issue", type=int)
+    start_correction.add_argument(
+        "--classification", required=True, choices=CORRECTION_CLASSIFICATIONS
+    )
+    start_correction.add_argument("--by", required=True)
+    start_correction.add_argument("--reason", required=True)
+    start_correction.add_argument("--from-correction", type=int, default=None)
 
     for name, role in (
         ("submit-plan", "agent"),
@@ -1341,6 +1709,7 @@ def build_parser():
     validate = subparsers.add_parser("run-validation")
     validate.add_argument("issue", type=int)
     validate.add_argument("--agent", default="chess-echo-implementer")
+    validate.add_argument("--correction", type=int, default=None)
 
     draft = subparsers.add_parser("create-draft-pr")
     draft.add_argument("issue", type=int)
@@ -1348,6 +1717,7 @@ def build_parser():
     draft.add_argument("--body-file", required=True)
     draft.add_argument("--base")
     draft.add_argument("--actor", default="chess-echo-orchestrator")
+    draft.add_argument("--correction", type=int, default=None)
     revise_metadata = subparsers.add_parser(
         "revise-pr-metadata",
         help="apply a human-authorized title/body-only revision to the frozen draft",
@@ -1397,6 +1767,10 @@ def dispatch(args, root, runner):
         command_revise_pr_metadata(args, root, runner)
     elif args.command == "reject-pr":
         rejection(args, root, "WAITING_FOR_PR_HUMAN_APPROVAL", "IMPLEMENTATION", "pr", "PR_HUMAN_REJECTED")
+    elif args.command == "start-correction":
+        command_start_correction(args, root, runner)
+    else:
+        raise WorkflowError("Unknown command: %s" % args.command)
 
 
 def main(argv=None, runner=subprocess.run):
