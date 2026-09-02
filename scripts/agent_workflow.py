@@ -2,6 +2,8 @@
 """Durable, guarded state machine for ChessEcho's issue agent workflow."""
 
 import argparse
+import base64
+import copy
 import datetime as dt
 import fcntl
 import hashlib
@@ -16,7 +18,57 @@ import tempfile
 from contextlib import contextmanager
 from urllib.parse import urlparse
 
-VERSION = 3
+VERSION = 4
+INTEGRITY_FORMAT = "chess-echo-run-integrity-v4"
+COMMITTED_MODE = "v4-committed"
+SETTLED_LEGACY_MODE = "settled-legacy-adoption"
+ADOPTION_TRANSACTION_FORMAT = "chess-echo-legacy-adoption-transaction-v1"
+BOOTSTRAP_TRANSACTION_FORMAT = "chess-echo-bootstrap-transaction-v1"
+PR_TRANSITION_TRANSACTION_FORMAT = "chess-echo-pr-transition-transaction-v1"
+ACTIVE_ADOPTION_MODE = "active-legacy-adoption"
+SETTLED_CONVERSION_MODE = "settled-legacy-conversion"
+ROOT_BOOTSTRAP_MODE = "root-initialization"
+CORRECTION_BOOTSTRAP_MODE = "correction-initialization"
+PR_TRANSITION_MODE = "pr-gate-transition"
+SETTLED_STATES = ("WAITING_FOR_PR_HUMAN_APPROVAL", "PR_APPROVED")
+LEGACY_ADOPTION_CONFIRMATION = "legacy_run_trusted"
+LEGACY_STATES = {
+    "PLANNING",
+    "PLAN_REVIEW",
+    "WAITING_FOR_PLAN_HUMAN_APPROVAL",
+    "TEST_IMPLEMENTATION",
+    "TEST_REVIEW",
+    "WAITING_FOR_TEST_HUMAN_APPROVAL",
+    "IMPLEMENTATION",
+    "VALIDATION",
+    "FINAL_REVIEW",
+    "DRAFT_PR_CREATED",
+    "WAITING_FOR_PR_HUMAN_APPROVAL",
+    "PR_APPROVED",
+}
+LEGACY_EVENTS = {
+    "WORKFLOW_INITIALIZED",
+    "PLAN_SUBMITTED",
+    "PLAN_REVIEWED",
+    "PLAN_HUMAN_APPROVED",
+    "PLAN_HUMAN_REJECTED",
+    "PLAN_HUMAN_REOPENED",
+    "TESTS_SUBMITTED",
+    "TESTS_REVIEWED",
+    "TESTS_HUMAN_APPROVED",
+    "TESTS_HUMAN_REJECTED",
+    "TESTS_HUMAN_REOPENED",
+    "IMPLEMENTATION_SUBMITTED",
+    "VALIDATION_COMPLETED",
+    "VALIDATION_INVALIDATED",
+    "IMPLEMENTATION_REVIEWED",
+    "DRAFT_PR_CREATED",
+    "PR_HUMAN_APPROVAL_REQUESTED",
+    "PR_HUMAN_APPROVED",
+    "PR_HUMAN_REJECTED",
+    "PR_METADATA_HUMAN_REVISED",
+    "CORRECTION_CREATED",
+}
 READY = "READY_FOR_HUMAN_APPROVAL"
 REVISION = "NEEDS_REVISION"
 REVIEW_STATUSES = (READY, REVISION)
@@ -101,68 +153,496 @@ def state_path(root, issue, correction=None):
     return run_dir(root, issue, correction) / "state.json"
 
 
+def history_path(root, issue, correction=None):
+    return run_dir(root, issue, correction) / "history.jsonl"
+
+
+def integrity_path(root, issue, correction=None):
+    return run_dir(root, issue, correction) / "integrity.json"
+
+
+def adoption_transaction_path(root, issue, correction=None):
+    return run_dir(root, issue, correction) / "adoption-transaction.json"
+
+
+def bootstrap_transaction_path(root, issue, correction=None):
+    return run_dir(root, issue, correction) / "bootstrap-transaction.json"
+
+
+def pr_transition_transaction_path(root, issue, correction=None):
+    return run_dir(root, issue, correction) / "pr-transition-transaction.json"
+
+
 def correction_of(args):
     value = getattr(args, "correction", None)
     return None if value is None else int(value)
 
 
-def load_state(root, issue, correction=None):
-    path = state_path(root, issue, correction)
-    if not path.exists():
+def canonical_state_bytes(state):
+    return (json.dumps(state, indent=2, sort_keys=True) + "\n").encode()
+
+
+def canonical_history_bytes(history):
+    return "".join(
+        json.dumps(entry, sort_keys=True) + "\n" for entry in history
+    ).encode()
+
+
+def sha256(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def parse_json_object(data, label):
+    try:
+        value = json.loads(data.decode())
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise WorkflowError("%s is not valid JSON: %s" % (label, error))
+    if not isinstance(value, dict):
+        raise WorkflowError("%s must contain a JSON object" % label)
+    return value
+
+
+def parse_history(data):
+    events = []
+    try:
+        text = data.decode()
+    except UnicodeDecodeError as error:
+        raise WorkflowError("Workflow history is not UTF-8: %s" % error)
+    for line_number, line in enumerate(text.splitlines(), 1):
+        if not line:
+            raise WorkflowError("Workflow history contains an empty line")
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise WorkflowError(
+                "Workflow history line %s is not valid JSON: %s" % (line_number, error)
+            )
+        if not isinstance(event, dict):
+            raise WorkflowError("Workflow history events must be JSON objects")
+        events.append(event)
+    return events
+
+
+def validate_run_structure(state, events, issue, correction, versions):
+    version = state.get("version", 1)
+    if type(version) is not int or version not in versions:
+        raise WorkflowError("Workflow schema version is invalid: %r" % version)
+    issue_record = state.get("issue")
+    if (
+        not isinstance(issue_record, dict)
+        or type(issue_record.get("number")) is not int
+        or issue_record.get("number") != issue
+    ):
+        raise WorkflowError("Workflow state does not belong to issue %s" % issue)
+    for field in ("artifacts", "approvals", "validation"):
+        if not isinstance(state.get(field), dict):
+            raise WorkflowError("Workflow state field %s must be an object" % field)
+    string_fields = ("scope", "target_base") if version == VERSION else ("scope",)
+    for field in string_fields:
+        if not isinstance(state.get(field), str) or not state[field]:
+            raise WorkflowError("Workflow state field %s must be a non-empty string" % field)
+    if not isinstance(state.get("required_checks"), list):
+        raise WorkflowError("Workflow required_checks must be a list")
+    if not isinstance(state.get("test_paths"), list):
+        raise WorkflowError("Workflow test_paths must be a list")
+    embedded = state.get("history")
+    if not isinstance(embedded, list) or embedded != events:
+        raise WorkflowError("Embedded workflow history does not match history.jsonl")
+    correction_record = state.get("correction")
+    if correction is None:
+        if correction_record is not None:
+            raise WorkflowError("Root workflow state has a correction identity")
+    elif (
+        not isinstance(correction_record, dict)
+        or type(correction_record.get("number")) is not int
+        or correction_record.get("number") != correction
+    ):
+        raise WorkflowError("Workflow state does not belong to correction %s" % correction)
+    for sequence, event in enumerate(events, 1):
+        if type(event.get("sequence")) is not int or event.get("sequence") != sequence:
+            raise WorkflowError("Workflow history sequence must be contiguous")
+        for field in ("timestamp", "event", "actor", "state", "details"):
+            if field not in event:
+                raise WorkflowError("Workflow history event is missing %s" % field)
+        if (
+            not isinstance(event["timestamp"], str)
+            or not isinstance(event["event"], str)
+            or not isinstance(event["actor"], str)
+            or not isinstance(event["state"], str)
+            or not isinstance(event["details"], dict)
+        ):
+            raise WorkflowError("Workflow history event has invalid field types")
+    if not events:
+        raise WorkflowError("Workflow history must contain at least one event")
+    if not isinstance(state.get("state"), str) or events[-1]["state"] != state["state"]:
+        raise WorkflowError("Latest workflow history state does not match current state")
+    return state
+
+
+def validate_legacy_lifecycle(state, events):
+    if state["state"] not in LEGACY_STATES:
+        raise WorkflowError("Legacy workflow lifecycle state is unknown: %s" % state["state"])
+    for event in events:
+        if event["state"] not in LEGACY_STATES:
+            raise WorkflowError(
+                "Legacy workflow event state is unknown: %s" % event["state"]
+            )
+        if event["event"] not in LEGACY_EVENTS:
+            raise WorkflowError(
+                "Legacy workflow history event is unknown: %s" % event["event"]
+            )
+
+
+def validate_legacy_payload(state_data, history_data, issue, correction):
+    state = parse_json_object(state_data, "Workflow state")
+    events = parse_history(history_data)
+    validate_run_structure(state, events, issue, correction, {1, 2, 3})
+    if history_data != canonical_history_bytes(events):
+        raise WorkflowError("Legacy history is not canonically serialized")
+    validate_legacy_lifecycle(state, events)
+    return state, events
+
+
+def read_projection_bytes(root, issue, correction=None):
+    state_file = state_path(root, issue, correction)
+    if not state_file.is_file():
         if correction is not None:
             raise WorkflowError(
                 "Issue %s has no correction %s; start it with start-correction"
                 % (issue, correction)
             )
         raise WorkflowError("Issue %s has no workflow run; initialize it first" % issue)
-    with path.open() as handle:
-        state = json.load(handle)
-    if state.get("version", 1) < VERSION:
-        previous_version = state.get("version", 1)
-        state["version"] = VERSION
-        state.setdefault("target_base", load_config(root)["target_base"])
-        state.setdefault("validated_head", None)
-        state.setdefault("validated_base", None)
-        state.setdefault("validated_test_fingerprint", None)
-        state.setdefault("validation_evidence", None)
-        if (
-            previous_version == 2
-            and state.get("validation_evidence") is None
-            and state.get("validated_head")
-            and state.get("validated_base")
-            and state.get("validated_fingerprint")
-            and state.get("validated_test_fingerprint")
-        ):
-            state["validation_evidence"] = {
-                "head": state["validated_head"],
-                "base": state["validated_base"],
-                "base_ref": "origin/%s" % state["target_base"],
-                "commit_count": 1,
-                "workspace_fingerprint": state["validated_fingerprint"],
-                "approved_test_fingerprint": state["validated_test_fingerprint"],
-                "migrated_from_version": 2,
-            }
-    sync_history(root, issue, state, correction)
+    history_file = history_path(root, issue, correction)
+    if not history_file.is_file():
+        raise WorkflowError("Workflow history is missing for issue %s" % issue)
+    return state_file.read_bytes(), history_file.read_bytes()
+
+
+def normalize_legacy_state(root, state):
+    state = copy.deepcopy(state)
+    previous_version = state.get("version", 1)
+    state["version"] = VERSION
+    state.setdefault("target_base", load_config(root)["target_base"])
+    state.setdefault("validated_head", None)
+    state.setdefault("validated_base", None)
+    state.setdefault("validated_test_fingerprint", None)
+    state.setdefault("validation_evidence", None)
+    if (
+        previous_version == 2
+        and state.get("validation_evidence") is None
+        and state.get("validated_head")
+        and state.get("validated_base")
+        and state.get("validated_fingerprint")
+        and state.get("validated_test_fingerprint")
+    ):
+        state["validation_evidence"] = {
+            "head": state["validated_head"],
+            "base": state["validated_base"],
+            "base_ref": "origin/%s" % state["target_base"],
+            "commit_count": 1,
+            "workspace_fingerprint": state["validated_fingerprint"],
+            "approved_test_fingerprint": state["validated_test_fingerprint"],
+            "migrated_from_version": 2,
+        }
     return state
 
 
-def read_run_state(root, issue, correction=None):
-    path = state_path(root, issue, correction)
-    if not path.exists():
-        raise WorkflowError("Run %s has no workflow state" % path)
-    data = path.read_bytes()
-    state = json.loads(data.decode())
-    if state.get("version") != VERSION:
-        raise WorkflowError(
-            "Run %s is at schema version %s; run any command on that run to migrate it first"
-            % (path, state.get("version"))
+def validate_committed_envelope(envelope, issue, correction):
+    if envelope.get("format") != INTEGRITY_FORMAT or envelope.get("mode") != COMMITTED_MODE:
+        raise WorkflowError("Integrity record is not a v4 committed envelope")
+    if (
+        type(envelope.get("issue")) is not int
+        or envelope.get("issue") != issue
+        or envelope.get("correction") != correction
+        or (
+            correction is not None
+            and type(envelope.get("correction")) is not int
         )
-    return state, hashlib.sha256(data).hexdigest()
+    ):
+        raise WorkflowError("Integrity record has the wrong run identity")
+    state = envelope.get("state")
+    events = envelope.get("history")
+    if not isinstance(state, dict) or not isinstance(events, list):
+        raise WorkflowError("Integrity envelope snapshot is invalid")
+    validate_run_structure(state, events, issue, correction, {VERSION})
+    state_data = canonical_state_bytes(state)
+    history_data = canonical_history_bytes(events)
+    if envelope.get("sequence") != events[-1]["sequence"]:
+        raise WorkflowError("Integrity envelope sequence is stale")
+    if envelope.get("state_sha256") != sha256(state_data):
+        raise WorkflowError("Integrity envelope state hash is stale")
+    if envelope.get("history_sha256") != sha256(history_data):
+        raise WorkflowError("Integrity envelope history hash is stale")
+    return state, state_data, history_data
+
+
+def encoded_snapshot(state_data, history_data):
+    return {
+        "state_sha256": sha256(state_data),
+        "history_sha256": sha256(history_data),
+        "state_bytes": base64.b64encode(state_data).decode(),
+        "history_bytes": base64.b64encode(history_data).decode(),
+    }
+
+
+def decode_snapshot(record, prefix, issue, correction):
+    try:
+        state_data = base64.b64decode(
+            record["%sstate_bytes" % prefix], validate=True
+        )
+        history_data = base64.b64decode(
+            record["%shistory_bytes" % prefix], validate=True
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise WorkflowError("Transaction snapshot payload is invalid: %s" % error)
+    if (
+        record.get("%sstate_sha256" % prefix) != sha256(state_data)
+        or record.get("%shistory_sha256" % prefix) != sha256(history_data)
+    ):
+        raise WorkflowError("Transaction snapshot hashes are invalid")
+    state = parse_json_object(state_data, "Transaction state snapshot")
+    events = parse_history(history_data)
+    validate_run_structure(state, events, issue, correction, {VERSION})
+    if (
+        state_data != canonical_state_bytes(state)
+        or history_data != canonical_history_bytes(events)
+    ):
+        raise WorkflowError("Transaction snapshot is not canonically serialized")
+    return state, state_data, history_data
+
+
+def validate_transaction_identity(record, expected_format, expected_mode, issue, correction):
+    if (
+        record.get("format") != expected_format
+        or record.get("mode") != expected_mode
+    ):
+        raise WorkflowError("Transaction format or mode is invalid")
+    if (
+        type(record.get("issue")) is not int
+        or record.get("issue") != issue
+        or record.get("correction") != correction
+        or (correction is not None and type(record.get("correction")) is not int)
+    ):
+        raise WorkflowError("Transaction has the wrong run identity")
+
+
+def bootstrap_record(mode, issue, correction, request, state_data, history_data, issue_data=None):
+    record = {
+        "format": BOOTSTRAP_TRANSACTION_FORMAT,
+        "mode": mode,
+        "issue": issue,
+        "correction": correction,
+        "request": copy.deepcopy(request),
+    }
+    record.update(encoded_snapshot(state_data, history_data))
+    if issue_data is not None:
+        record.update({
+            "issue_sha256": sha256(issue_data),
+            "issue_bytes": base64.b64encode(issue_data).decode(),
+        })
+    return record
+
+
+def decode_bootstrap_record(record, mode, issue, correction, request):
+    validate_transaction_identity(
+        record, BOOTSTRAP_TRANSACTION_FORMAT, mode, issue, correction
+    )
+    if record.get("request") != request:
+        raise WorkflowError("Creation command conflicts with the incomplete transaction")
+    state, state_data, history_data = decode_snapshot(record, "", issue, correction)
+    expected_event = (
+        "WORKFLOW_INITIALIZED"
+        if mode == ROOT_BOOTSTRAP_MODE
+        else "CORRECTION_CREATED"
+    )
+    if state["history"][-1]["event"] != expected_event:
+        raise WorkflowError("Creation transaction has the wrong initial event")
+    issue_data = None
+    if mode == ROOT_BOOTSTRAP_MODE:
+        try:
+            issue_data = base64.b64decode(record["issue_bytes"], validate=True)
+        except (KeyError, TypeError, ValueError) as error:
+            raise WorkflowError("Creation issue snapshot is invalid: %s" % error)
+        if record.get("issue_sha256") != sha256(issue_data):
+            raise WorkflowError("Creation issue snapshot hash is invalid")
+    elif "issue_bytes" in record or "issue_sha256" in record:
+        raise WorkflowError("Correction creation transaction has an issue snapshot")
+    return state, state_data, history_data, issue_data
+
+
+def finish_bootstrap_transaction(root, issue, correction, mode, request):
+    transaction_file = bootstrap_transaction_path(root, issue, correction)
+    if not transaction_file.is_file():
+        raise WorkflowError("Creation transaction is missing")
+    transaction = parse_json_object(
+        transaction_file.read_bytes(), "Creation transaction"
+    )
+    state, state_data, history_data, issue_data = decode_bootstrap_record(
+        transaction, mode, issue, correction, request
+    )
+    state_file = state_path(root, issue, correction)
+    history_file = history_path(root, issue, correction)
+    record_file = integrity_path(root, issue, correction)
+    live_state = state_file.read_bytes() if state_file.is_file() else None
+    live_history = history_file.read_bytes() if history_file.is_file() else None
+    if live_state not in (None, state_data):
+        raise WorkflowError("State projection conflicts with the creation transaction")
+    if live_history not in (None, history_data):
+        raise WorkflowError("History projection conflicts with the creation transaction")
+    if correction is None:
+        issue_file = run_dir(root, issue) / "issue.md"
+        live_issue = issue_file.read_bytes() if issue_file.is_file() else None
+        if live_issue not in (None, issue_data):
+            raise WorkflowError("Issue projection conflicts with the creation transaction")
+    if record_file.is_file():
+        record = parse_json_object(record_file.read_bytes(), "Integrity record")
+        _, committed_state, committed_history = validate_committed_envelope(
+            record, issue, correction
+        )
+        if committed_state != state_data or committed_history != history_data:
+            raise WorkflowError("Integrity record conflicts with the creation transaction")
+
+    directory = run_dir(root, issue, correction)
+    (directory / "artifacts").mkdir(parents=True, exist_ok=True)
+    if correction is None:
+        write_text_atomic(directory / "issue.md", issue_data.decode())
+    write_text_atomic(state_file, state_data.decode())
+    write_text_atomic(history_file, history_data.decode())
+    write_json_atomic(
+        record_file,
+        committed_envelope(issue, correction, state, state_data, history_data),
+    )
+    transaction_file.unlink()
+    return state
+
+
+def validate_adoption_timestamp(value, label):
+    if not isinstance(value, str) or not value:
+        raise WorkflowError("%s is invalid" % label)
+    try:
+        parsed = dt.datetime.fromisoformat(value)
+    except ValueError:
+        raise WorkflowError("%s is invalid" % label)
+    if parsed.tzinfo is None:
+        raise WorkflowError("%s must include a timezone" % label)
+
+
+def decode_legacy_record(record, issue, correction, expected_format, allowed_modes):
+    if record.get("format") != expected_format:
+        raise WorkflowError("Legacy adoption record format is invalid")
+    if record.get("mode") not in allowed_modes:
+        raise WorkflowError("Legacy adoption record mode is invalid")
+    if (
+        type(record.get("issue")) is not int
+        or record.get("issue") != issue
+        or record.get("correction") != correction
+        or (
+            correction is not None
+            and type(record.get("correction")) is not int
+        )
+    ):
+        raise WorkflowError("Legacy adoption record has the wrong run identity")
+    if record.get("confirmation") != LEGACY_ADOPTION_CONFIRMATION:
+        raise WorkflowError("Legacy adoption confirmation is invalid")
+    for field in ("adopted_by", "reason"):
+        if not isinstance(record.get(field), str) or not record[field].strip():
+            raise WorkflowError("Legacy adoption %s is invalid" % field)
+    validate_adoption_timestamp(record.get("adopted_at"), "Legacy adoption timestamp")
+    try:
+        state_data = base64.b64decode(record["state_bytes"], validate=True)
+        history_data = base64.b64decode(record["history_bytes"], validate=True)
+    except (KeyError, TypeError, ValueError) as error:
+        raise WorkflowError("Legacy adoption payload is invalid: %s" % error)
+    if (
+        record.get("state_sha256") != sha256(state_data)
+        or record.get("history_sha256") != sha256(history_data)
+    ):
+        raise WorkflowError("Legacy adoption payload hashes are invalid")
+    state, events = validate_legacy_payload(
+        state_data, history_data, issue, correction
+    )
+    if (
+        type(record.get("legacy_version")) is not int
+        or record["legacy_version"] != state.get("version", 1)
+    ):
+        raise WorkflowError("Legacy adoption version does not match")
+    return state, events, state_data, history_data
+
+
+def validate_settled_legacy_envelope(
+    envelope, issue, correction, state_data, history_data
+):
+    state, _, adopted_state, adopted_history = decode_legacy_record(
+        envelope,
+        issue,
+        correction,
+        INTEGRITY_FORMAT,
+        {SETTLED_LEGACY_MODE},
+    )
+    if state["state"] not in SETTLED_STATES:
+        raise WorkflowError("Settled legacy adoption refers to an active run")
+    if adopted_state != state_data or adopted_history != history_data:
+        raise WorkflowError("Settled legacy adoption payload does not match projections")
+    return state
+
+
+def verified_run(root, issue, correction=None):
+    if bootstrap_transaction_path(root, issue, correction).exists():
+        raise WorkflowError(
+            "Creation is incomplete; rerun the exact initialization command"
+        )
+    if pr_transition_transaction_path(root, issue, correction).exists():
+        raise WorkflowError(
+            "PR-gate transition is incomplete; use recover-run"
+        )
+    if adoption_transaction_path(root, issue, correction).exists():
+        raise WorkflowError(
+            "Legacy adoption is incomplete; rerun the exact controlled command"
+        )
+    state_data, history_data = read_projection_bytes(root, issue, correction)
+    integrity_file = integrity_path(root, issue, correction)
+    if not integrity_file.is_file():
+        raw_state = parse_json_object(state_data, "Workflow state")
+        if raw_state.get("version", 1) == VERSION:
+            raise WorkflowError(
+                "V4 run has no integrity envelope and cannot be read or recovered"
+            )
+        raise WorkflowError(
+            "Run has no integrity record; use adopt-legacy-run after explicit review"
+        )
+    envelope = parse_json_object(integrity_file.read_bytes(), "Integrity record")
+    mode = envelope.get("mode")
+    if mode == COMMITTED_MODE:
+        state, expected_state, expected_history = validate_committed_envelope(
+            envelope, issue, correction
+        )
+        if state_data != expected_state or history_data != expected_history:
+            raise WorkflowError(
+                "Workflow projections do not match committed integrity; use recover-run"
+            )
+        live_state = parse_json_object(state_data, "Workflow state")
+        live_history = parse_history(history_data)
+        validate_run_structure(live_state, live_history, issue, correction, {VERSION})
+        return state, state_data, history_data
+    if mode == SETTLED_LEGACY_MODE:
+        state = validate_settled_legacy_envelope(
+            envelope, issue, correction, state_data, history_data
+        )
+        return normalize_legacy_state(root, state), state_data, history_data
+    raise WorkflowError("Integrity record mode is invalid")
+
+
+def load_state(root, issue, correction=None):
+    return verified_run(root, issue, correction)[0]
+
+
+def read_run_state(root, issue, correction=None):
+    state, state_data, _ = verified_run(root, issue, correction)
+    return state, sha256(state_data)
 
 
 def run_history_bytes(root, issue, correction=None):
-    path = run_dir(root, issue, correction) / "history.jsonl"
-    return path.read_bytes() if path.is_file() else b""
+    return verified_run(root, issue, correction)[2]
 
 
 def correction_numbers(root, issue):
@@ -174,6 +654,8 @@ def correction_numbers(root, issue):
         if not entry.is_dir() or not entry.name.isdigit():
             continue
         if str(int(entry.name)) != entry.name:
+            continue
+        if (entry / "bootstrap-transaction.json").exists():
             continue
         if not (entry / "state.json").is_file():
             continue
@@ -257,18 +739,310 @@ def append_event(state, event, actor, details=None):
 
 
 def sync_history(root, issue, state, correction=None):
-    content = "".join(
-        json.dumps(entry, sort_keys=True) + "\n" for entry in state.get("history", [])
+    return canonical_history_bytes(state.get("history", [])).decode()
+
+
+def committed_envelope(issue, correction, state, state_data, history_data):
+    return {
+        "format": INTEGRITY_FORMAT,
+        "mode": COMMITTED_MODE,
+        "issue": issue,
+        "correction": correction,
+        "sequence": state["history"][-1]["sequence"],
+        "state_sha256": sha256(state_data),
+        "history_sha256": sha256(history_data),
+        "state": copy.deepcopy(state),
+        "history": copy.deepcopy(state["history"]),
+    }
+
+
+def write_committed_snapshot(root, issue, correction, state, state_data, history_data):
+    write_text_atomic(state_path(root, issue, correction), state_data.decode())
+    write_text_atomic(history_path(root, issue, correction), history_data.decode())
+    write_json_atomic(
+        integrity_path(root, issue, correction),
+        committed_envelope(issue, correction, state, state_data, history_data),
     )
-    path = run_dir(root, issue, correction) / "history.jsonl"
-    if not path.exists() or path.read_text() != content:
-        write_text_atomic(path, content)
 
 
 def persist(root, issue, state, event, actor, details=None, correction=None):
     append_event(state, event, actor, details)
-    write_json_atomic(state_path(root, issue, correction), state)
-    sync_history(root, issue, state, correction)
+    state_data = canonical_state_bytes(state)
+    history_data = canonical_history_bytes(state["history"])
+    write_committed_snapshot(
+        root, issue, correction, state, state_data, history_data
+    )
+
+
+def prefixed_snapshot(prefix, state_data, history_data):
+    return {
+        "%s%s" % (prefix, key): value
+        for key, value in encoded_snapshot(state_data, history_data).items()
+    }
+
+
+def persist_pr_transition(
+    root, issue, state, event, actor, details=None, correction=None
+):
+    record_file = integrity_path(root, issue, correction)
+    record = parse_json_object(record_file.read_bytes(), "Integrity record")
+    source, source_state_data, source_history_data = validate_committed_envelope(
+        record, issue, correction
+    )
+    if source["state"] != "WAITING_FOR_PR_HUMAN_APPROVAL":
+        raise WorkflowError("PR transition source is not at the human approval gate")
+    live_state, live_history = read_projection_bytes(root, issue, correction)
+    if live_state != source_state_data or live_history != source_history_data:
+        raise WorkflowError(
+            "Workflow projections do not match committed integrity; use recover-run"
+        )
+
+    append_event(state, event, actor, details)
+    target_state_data = canonical_state_bytes(state)
+    target_history_data = canonical_history_bytes(state["history"])
+    transaction = {
+        "format": PR_TRANSITION_TRANSACTION_FORMAT,
+        "mode": PR_TRANSITION_MODE,
+        "issue": issue,
+        "correction": correction,
+        "event": event,
+    }
+    transaction.update(
+        prefixed_snapshot("source_", source_state_data, source_history_data)
+    )
+    transaction.update(
+        prefixed_snapshot("target_", target_state_data, target_history_data)
+    )
+    transaction_file = pr_transition_transaction_path(root, issue, correction)
+    write_json_atomic(transaction_file, transaction)
+    write_committed_snapshot(
+        root, issue, correction, state, target_state_data, target_history_data
+    )
+    transaction_file.unlink()
+
+
+def adoption_record(
+    mode, issue, correction, legacy_version, state_data, history_data,
+    adopted_at, adopted_by, reason,
+):
+    return {
+        "format": ADOPTION_TRANSACTION_FORMAT,
+        "mode": mode,
+        "issue": issue,
+        "correction": correction,
+        "legacy_version": legacy_version,
+        "state_sha256": sha256(state_data),
+        "history_sha256": sha256(history_data),
+        "state_bytes": base64.b64encode(state_data).decode(),
+        "history_bytes": base64.b64encode(history_data).decode(),
+        "adopted_at": adopted_at,
+        "adopted_by": adopted_by,
+        "confirmation": LEGACY_ADOPTION_CONFIRMATION,
+        "reason": reason,
+    }
+
+
+def adopted_snapshot(root, transaction, legacy_state):
+    state = normalize_legacy_state(root, legacy_state)
+    entry = {
+        "sequence": len(state["history"]) + 1,
+        "timestamp": transaction["adopted_at"],
+        "event": "LEGACY_RUN_ADOPTED",
+        "actor": transaction["adopted_by"],
+        "state": state["state"],
+        "details": {
+            "legacy_version": transaction["legacy_version"],
+            "state_sha256": transaction["state_sha256"],
+            "history_sha256": transaction["history_sha256"],
+            "reason": transaction["reason"],
+        },
+    }
+    state["history"].append(entry)
+    state["updated_at"] = entry["timestamp"]
+    return state
+
+
+def committed_record_matches(record, issue, correction, state_data, history_data):
+    state, committed_state, committed_history = validate_committed_envelope(
+        record, issue, correction
+    )
+    return (
+        committed_state == state_data
+        and committed_history == history_data
+        and state["history"][-1]["event"] == "LEGACY_RUN_ADOPTED"
+    )
+
+
+def finish_adoption_transaction(root, issue, correction, expected_mode):
+    transaction_file = adoption_transaction_path(root, issue, correction)
+    if not transaction_file.is_file():
+        raise WorkflowError("Legacy adoption transaction is missing")
+    transaction = parse_json_object(
+        transaction_file.read_bytes(), "Legacy adoption transaction"
+    )
+    legacy_state, _, legacy_state_data, legacy_history_data = decode_legacy_record(
+        transaction,
+        issue,
+        correction,
+        ADOPTION_TRANSACTION_FORMAT,
+        {expected_mode},
+    )
+    if (
+        expected_mode == ACTIVE_ADOPTION_MODE
+        and legacy_state["state"] in SETTLED_STATES
+    ):
+        raise WorkflowError("Active adoption transaction refers to a settled run")
+    if (
+        expected_mode == SETTLED_CONVERSION_MODE
+        and legacy_state["state"] != "WAITING_FOR_PR_HUMAN_APPROVAL"
+    ):
+        raise WorkflowError("Settled conversion transaction has an invalid lifecycle")
+    adopted = adopted_snapshot(root, transaction, legacy_state)
+    adopted_state_data = canonical_state_bytes(adopted)
+    adopted_history_data = canonical_history_bytes(adopted["history"])
+    state_file = state_path(root, issue, correction)
+    history_file = history_path(root, issue, correction)
+    live_state = state_file.read_bytes() if state_file.is_file() else None
+    live_history = history_file.read_bytes() if history_file.is_file() else None
+    if live_state not in (legacy_state_data, adopted_state_data):
+        raise WorkflowError("State projection conflicts with the adoption transaction")
+    if live_history not in (legacy_history_data, adopted_history_data):
+        raise WorkflowError("History projection conflicts with the adoption transaction")
+
+    record_file = integrity_path(root, issue, correction)
+    if record_file.is_file():
+        record = parse_json_object(record_file.read_bytes(), "Integrity record")
+        if record.get("mode") == SETTLED_LEGACY_MODE:
+            settled = validate_settled_legacy_envelope(
+                record, issue, correction, legacy_state_data, legacy_history_data
+            )
+            if (
+                expected_mode != SETTLED_CONVERSION_MODE
+                or record["adopted_by"] != transaction["adopted_by"]
+                or record["reason"] != transaction["reason"]
+                or record["confirmation"] != transaction["confirmation"]
+                or record["adopted_at"] != transaction["adopted_at"]
+                or settled["state"] != "WAITING_FOR_PR_HUMAN_APPROVAL"
+            ):
+                raise WorkflowError(
+                    "Integrity record conflicts with the adoption transaction"
+                )
+        elif not committed_record_matches(
+            record, issue, correction, adopted_state_data, adopted_history_data
+        ):
+            raise WorkflowError("Integrity record conflicts with the adoption transaction")
+    elif expected_mode == SETTLED_CONVERSION_MODE:
+        raise WorkflowError("Settled conversion integrity sidecar is missing")
+
+    write_text_atomic(state_file, adopted_state_data.decode())
+    write_text_atomic(history_file, adopted_history_data.decode())
+    write_json_atomic(
+        record_file,
+        committed_envelope(
+            issue, correction, adopted, adopted_state_data, adopted_history_data
+        ),
+    )
+    transaction_file.unlink()
+    return adopted
+
+
+def correction_depends_on_source_bytes(
+    root, issue, source_correction, source_state_sha256, source_history_sha256
+):
+    for number in correction_numbers(root, issue):
+        if number == source_correction:
+            continue
+        child, _, _ = verified_run(root, issue, number)
+        parent = child.get("parent_run") or {}
+        if (
+            parent.get("issue") == issue
+            and parent.get("correction") == source_correction
+            and parent.get("state_sha256") == source_state_sha256
+            and parent.get("history_sha256") == source_history_sha256
+        ):
+            return number
+    pending = pending_correction_bootstrap(root, issue)
+    if pending is not None:
+        transaction_file = bootstrap_transaction_path(root, issue, pending)
+        transaction = parse_json_object(
+            transaction_file.read_bytes(), "Correction creation transaction"
+        )
+        request = transaction.get("request")
+        if not isinstance(request, dict):
+            raise WorkflowError("Correction creation request identity is invalid")
+        child, _, _, _ = decode_bootstrap_record(
+            transaction,
+            CORRECTION_BOOTSTRAP_MODE,
+            issue,
+            pending,
+            request,
+        )
+        parent = child.get("parent_run") or {}
+        if (
+            parent.get("issue") == issue
+            and parent.get("correction") == source_correction
+            and parent.get("state_sha256") == source_state_sha256
+            and parent.get("history_sha256") == source_history_sha256
+        ):
+            return pending
+    return None
+
+
+def prepare_settled_transition(root, issue, correction):
+    transaction_file = adoption_transaction_path(root, issue, correction)
+    if transaction_file.exists():
+        finish_adoption_transaction(
+            root, issue, correction, SETTLED_CONVERSION_MODE
+        )
+        return
+    record_file = integrity_path(root, issue, correction)
+    if not record_file.is_file():
+        return
+    record = parse_json_object(record_file.read_bytes(), "Integrity record")
+    if record.get("mode") == COMMITTED_MODE:
+        state, state_data, history_data = validate_committed_envelope(
+            record, issue, correction
+        )
+        if state["state"] != "WAITING_FOR_PR_HUMAN_APPROVAL":
+            return
+        dependent = correction_depends_on_source_bytes(
+            root, issue, correction, sha256(state_data), sha256(history_data)
+        )
+        if dependent is not None:
+            raise WorkflowError(
+                "Correction %s depends on the exact committed source bytes"
+                % dependent
+            )
+        return
+    if record.get("mode") != SETTLED_LEGACY_MODE:
+        return
+    state_data, history_data = read_projection_bytes(root, issue, correction)
+    state = validate_settled_legacy_envelope(
+        record, issue, correction, state_data, history_data
+    )
+    if state["state"] == "PR_APPROVED":
+        return
+    dependent = correction_depends_on_source_bytes(
+        root, issue, correction, sha256(state_data), sha256(history_data)
+    )
+    if dependent is not None:
+        raise WorkflowError(
+            "Correction %s depends on the exact settled legacy source bytes"
+            % dependent
+        )
+    transaction = adoption_record(
+        SETTLED_CONVERSION_MODE,
+        issue,
+        correction,
+        state.get("version", 1),
+        state_data,
+        history_data,
+        record["adopted_at"],
+        record["adopted_by"],
+        record["reason"],
+    )
+    write_json_atomic(transaction_file, transaction)
+    finish_adoption_transaction(root, issue, correction, SETTLED_CONVERSION_MODE)
 
 
 def require_state(state, *allowed):
@@ -450,11 +1224,36 @@ def infer_scope(issue_data):
     return None
 
 
+def init_bootstrap_request(args):
+    return {
+        "command": "init",
+        "issue": args.issue,
+        "repo": args.repo,
+        "scope": args.scope,
+        "issue_file": args.issue_file,
+        "title": args.title,
+        "url": args.url,
+        "actor": args.actor,
+    }
+
+
 def command_init(args, root, runner):
     directory = run_dir(root, args.issue)
     path = state_path(root, args.issue)
+    request = init_bootstrap_request(args)
     with locked_run(root, args.issue):
-        if path.exists():
+        transaction_file = bootstrap_transaction_path(root, args.issue)
+        if transaction_file.exists():
+            finish_bootstrap_transaction(
+                root, args.issue, None, ROOT_BOOTSTRAP_MODE, request
+            )
+            return
+        if (
+            path.exists()
+            or history_path(root, args.issue).exists()
+            or integrity_path(root, args.issue).exists()
+            or (directory / "issue.md").exists()
+        ):
             raise WorkflowError("Workflow run already exists for issue %s" % args.issue)
         if args.issue_file:
             issue_source = pathlib.Path(args.issue_file)
@@ -496,14 +1295,11 @@ def command_init(args, root, runner):
         if len(names) != len(set(names)):
             raise WorkflowError("Validation check names must be unique")
 
-        directory.mkdir(parents=True, exist_ok=True)
-        (directory / "artifacts").mkdir(exist_ok=True)
         issue_text = "# %s\n\nSource: %s\n\n%s\n" % (
             issue_data["title"],
             issue_data.get("url") or "local issue snapshot",
             issue_data.get("body") or "",
         )
-        (directory / "issue.md").write_text(issue_text)
         timestamp = now()
         state = {
             "version": VERSION,
@@ -532,7 +1328,24 @@ def command_init(args, root, runner):
             "created_at": timestamp,
             "updated_at": timestamp,
         }
-        persist(root, args.issue, state, "WORKFLOW_INITIALIZED", args.actor, {"scope": scope})
+        append_event(state, "WORKFLOW_INITIALIZED", args.actor, {"scope": scope})
+        state_data = canonical_state_bytes(state)
+        history_data = canonical_history_bytes(state["history"])
+        write_json_atomic(
+            transaction_file,
+            bootstrap_record(
+                ROOT_BOOTSTRAP_MODE,
+                args.issue,
+                None,
+                request,
+                state_data,
+                history_data,
+                issue_text.encode(),
+            ),
+        )
+        finish_bootstrap_transaction(
+            root, args.issue, None, ROOT_BOOTSTRAP_MODE, request
+        )
 
 
 def submit_artifact(args, root, kind, expected, target, event):
@@ -675,6 +1488,8 @@ def approval(args, root, expected, target, key, event):
 def rejection(args, root, expected, target, key, event):
     correction = correction_of(args)
     with locked_run(root, args.issue, correction):
+        if key == "pr":
+            prepare_settled_transition(root, args.issue, correction)
         state = load_state(root, args.issue, correction)
         require_state(state, expected)
         state["approvals"][key] = {
@@ -683,7 +1498,8 @@ def rejection(args, root, expected, target, key, event):
         state["state"] = target
         if key == "pr":
             clear_after_revision(state)
-        persist(
+        writer = persist_pr_transition if key == "pr" else persist
+        writer(
             root, args.issue, state, event, args.by, {"reason": args.reason}, correction
         )
 
@@ -1351,8 +2167,10 @@ def command_create_draft_pr(args, root, runner):
 def command_revise_pr_metadata(args, root, runner):
     correction = correction_of(args)
     with locked_run(root, args.issue, correction):
+        prepare_settled_transition(root, args.issue, correction)
         state = load_state(root, args.issue, correction)
         require_state(state, "WAITING_FOR_PR_HUMAN_APPROVAL", "FINAL_REVIEW")
+        from_pr_gate = state["state"] == "WAITING_FOR_PR_HUMAN_APPROVAL"
         verify_approved_artifacts(root, state)
         expected_body = read_expected_pr_body(root, args.body_file)
         current_fingerprint, git_state = verify_frozen_final_state(root, state, runner)
@@ -1406,7 +2224,8 @@ def command_revise_pr_metadata(args, root, runner):
             "metadata_only": True,
         }
         state["state"] = "WAITING_FOR_PR_HUMAN_APPROVAL"
-        persist(
+        writer = persist_pr_transition if from_pr_gate else persist
+        writer(
             root, args.issue, state, "PR_METADATA_HUMAN_REVISED", args.by,
             {"reason": args.reason, "url": draft["url"]}, correction,
         )
@@ -1415,6 +2234,7 @@ def command_revise_pr_metadata(args, root, runner):
 def command_approve_pr(args, root, runner):
     correction = correction_of(args)
     with locked_run(root, args.issue, correction):
+        prepare_settled_transition(root, args.issue, correction)
         state = load_state(root, args.issue, correction)
         require_state(state, "WAITING_FOR_PR_HUMAN_APPROVAL")
         verify_approved_artifacts(root, state)
@@ -1442,8 +2262,247 @@ def command_approve_pr(args, root, runner):
             "pr_fingerprint": draft["pr_fingerprint"],
         }
         state["state"] = "PR_APPROVED"
-        persist(
+        persist_pr_transition(
             root, args.issue, state, "PR_HUMAN_APPROVED", args.by, None, correction
+        )
+
+
+def command_adopt_legacy(args, root):
+    correction = correction_of(args)
+    with locked_run(root, args.issue, correction):
+        if not args.by.strip() or not args.reason.strip():
+            raise WorkflowError("Adopter identity and reason must be non-empty")
+        if args.confirm != LEGACY_ADOPTION_CONFIRMATION:
+            raise WorkflowError(
+                "Explicit confirmation must be exactly: %s"
+                % LEGACY_ADOPTION_CONFIRMATION
+            )
+        transaction_file = adoption_transaction_path(root, args.issue, correction)
+        if transaction_file.exists():
+            transaction = parse_json_object(
+                transaction_file.read_bytes(), "Legacy adoption transaction"
+            )
+            decode_legacy_record(
+                transaction,
+                args.issue,
+                correction,
+                ADOPTION_TRANSACTION_FORMAT,
+                {ACTIVE_ADOPTION_MODE},
+            )
+            if (
+                transaction["adopted_by"] != args.by
+                or transaction["reason"] != args.reason
+                or transaction["confirmation"] != args.confirm
+            ):
+                raise WorkflowError(
+                    "Adoption command conflicts with the incomplete transaction"
+                )
+            finish_adoption_transaction(
+                root, args.issue, correction, ACTIVE_ADOPTION_MODE
+            )
+            return
+
+        record_path = integrity_path(root, args.issue, correction)
+        if record_path.exists():
+            existing = parse_json_object(record_path.read_bytes(), "Integrity record")
+            if existing.get("mode") == SETTLED_LEGACY_MODE:
+                state_data, history_data = read_projection_bytes(
+                    root, args.issue, correction
+                )
+                validate_settled_legacy_envelope(
+                    existing, args.issue, correction, state_data, history_data
+                )
+                if (
+                    existing["adopted_by"] != args.by
+                    or existing["reason"] != args.reason
+                    or existing["confirmation"] != args.confirm
+                ):
+                    raise WorkflowError(
+                        "Settled legacy adoption trust metadata conflicts"
+                    )
+                return
+            raise WorkflowError("Run already has an integrity record; adoption is refused")
+
+        state_data, history_data = read_projection_bytes(root, args.issue, correction)
+        state, _ = validate_legacy_payload(
+            state_data, history_data, args.issue, correction
+        )
+        legacy_version = state.get("version", 1)
+        if state["state"] in SETTLED_STATES:
+            write_json_atomic(record_path, {
+                "format": INTEGRITY_FORMAT,
+                "mode": SETTLED_LEGACY_MODE,
+                "issue": args.issue,
+                "correction": correction,
+                "legacy_version": legacy_version,
+                "state_sha256": sha256(state_data),
+                "history_sha256": sha256(history_data),
+                "state_bytes": base64.b64encode(state_data).decode(),
+                "history_bytes": base64.b64encode(history_data).decode(),
+                "adopted_at": now(),
+                "adopted_by": args.by,
+                "confirmation": args.confirm,
+                "reason": args.reason,
+            })
+            return
+        transaction = adoption_record(
+            ACTIVE_ADOPTION_MODE,
+            args.issue,
+            correction,
+            legacy_version,
+            state_data,
+            history_data,
+            now(),
+            args.by,
+            args.reason,
+        )
+        write_json_atomic(transaction_file, transaction)
+        finish_adoption_transaction(
+            root, args.issue, correction, ACTIVE_ADOPTION_MODE
+        )
+
+
+def decode_pr_transition_record(record, issue, correction):
+    validate_transaction_identity(
+        record,
+        PR_TRANSITION_TRANSACTION_FORMAT,
+        PR_TRANSITION_MODE,
+        issue,
+        correction,
+    )
+    source, source_state_data, source_history_data = decode_snapshot(
+        record, "source_", issue, correction
+    )
+    target, target_state_data, target_history_data = decode_snapshot(
+        record, "target_", issue, correction
+    )
+    event = record.get("event")
+    target_states = {
+        "PR_HUMAN_APPROVED": "PR_APPROVED",
+        "PR_HUMAN_REJECTED": "IMPLEMENTATION",
+        "PR_METADATA_HUMAN_REVISED": "WAITING_FOR_PR_HUMAN_APPROVAL",
+    }
+    if (
+        source["state"] != "WAITING_FOR_PR_HUMAN_APPROVAL"
+        or event not in target_states
+        or target["state"] != target_states[event]
+        or len(target["history"]) != len(source["history"]) + 1
+        or target["history"][:-1] != source["history"]
+        or target["history"][-1]["event"] != event
+    ):
+        raise WorkflowError("PR transition transaction lifecycle is invalid")
+    return (
+        source,
+        source_state_data,
+        source_history_data,
+        target,
+        target_state_data,
+        target_history_data,
+    )
+
+
+def recover_pr_transition(root, issue, correction):
+    transaction_file = pr_transition_transaction_path(root, issue, correction)
+    transaction = parse_json_object(
+        transaction_file.read_bytes(), "PR transition transaction"
+    )
+    (
+        source,
+        source_state_data,
+        source_history_data,
+        target,
+        target_state_data,
+        target_history_data,
+    ) = decode_pr_transition_record(transaction, issue, correction)
+    record_file = integrity_path(root, issue, correction)
+    if not record_file.is_file():
+        raise WorkflowError("PR transition recovery requires its committed envelope")
+    envelope = parse_json_object(record_file.read_bytes(), "Integrity record")
+    committed, committed_state, committed_history = validate_committed_envelope(
+        envelope, issue, correction
+    )
+    state_file = state_path(root, issue, correction)
+    history_file = history_path(root, issue, correction)
+    live_state = state_file.read_bytes() if state_file.is_file() else None
+    live_history = history_file.read_bytes() if history_file.is_file() else None
+
+    if (
+        committed_state == source_state_data
+        and committed_history == source_history_data
+    ):
+        if live_state not in (source_state_data, target_state_data):
+            raise WorkflowError(
+                "State projection conflicts with the PR transition transaction"
+            )
+        if live_history not in (source_history_data, target_history_data):
+            raise WorkflowError(
+                "History projection conflicts with the PR transition transaction"
+            )
+        write_text_atomic(state_file, source_state_data.decode())
+        write_text_atomic(history_file, source_history_data.decode())
+        transaction_file.unlink()
+        return source
+
+    if (
+        committed_state == target_state_data
+        and committed_history == target_history_data
+    ):
+        if live_state != target_state_data or live_history != target_history_data:
+            raise WorkflowError(
+                "Committed PR transition projections are not byte-exact"
+            )
+        if committed != target:
+            raise WorkflowError("Committed PR transition snapshot conflicts")
+        transaction_file.unlink()
+        return target
+    raise WorkflowError("Committed envelope conflicts with the PR transition transaction")
+
+
+def command_recover_run(args, root):
+    correction = correction_of(args)
+    with locked_run(root, args.issue, correction):
+        if bootstrap_transaction_path(root, args.issue, correction).exists():
+            raise WorkflowError(
+                "Recovery is unavailable while creation is incomplete"
+            )
+        if adoption_transaction_path(root, args.issue, correction).exists():
+            raise WorkflowError(
+                "Recovery is unavailable while legacy adoption is incomplete"
+            )
+        if pr_transition_transaction_path(root, args.issue, correction).exists():
+            recover_pr_transition(root, args.issue, correction)
+            return
+        record_path = integrity_path(root, args.issue, correction)
+        if not record_path.is_file():
+            raise WorkflowError("Recovery requires an existing v4 committed envelope")
+        envelope = parse_json_object(record_path.read_bytes(), "Integrity record")
+        state, committed_state, committed_history = validate_committed_envelope(
+            envelope, args.issue, correction
+        )
+        if state["state"] in SETTLED_STATES:
+            raise WorkflowError("Settled runs are immutable and cannot be recovered")
+        state_file = state_path(root, args.issue, correction)
+        history_file = history_path(root, args.issue, correction)
+        live_state = state_file.read_bytes() if state_file.is_file() else None
+        live_history = history_file.read_bytes() if history_file.is_file() else None
+        if live_state == committed_state and live_history == committed_history:
+            raise WorkflowError("Workflow projections already match committed integrity")
+        observed = {
+            "observed_state_sha256": sha256(live_state) if live_state is not None else None,
+            "observed_history_sha256": (
+                sha256(live_history) if live_history is not None else None
+            ),
+            "committed_sequence": envelope["sequence"],
+        }
+        recovered = copy.deepcopy(state)
+        persist(
+            root,
+            args.issue,
+            recovered,
+            "RUN_INTEGRITY_RECOVERED",
+            "chess-echo-orchestrator",
+            observed,
+            correction,
         )
 
 
@@ -1534,15 +2593,58 @@ def build_correction_state(
     return state
 
 
+def correction_bootstrap_request(args):
+    return {
+        "command": "start-correction",
+        "issue": args.issue,
+        "classification": args.classification,
+        "by": args.by,
+        "reason": args.reason,
+        "from_correction": args.from_correction,
+    }
+
+
+def pending_correction_bootstrap(root, issue):
+    directory = run_dir(root, issue) / "corrections"
+    if not directory.is_dir():
+        return None
+    pending = []
+    for entry in directory.iterdir():
+        transaction = entry / "bootstrap-transaction.json"
+        if not transaction.exists():
+            continue
+        if (
+            not entry.is_dir()
+            or not entry.name.isdigit()
+            or str(int(entry.name)) != entry.name
+        ):
+            raise WorkflowError("Correction creation transaction has an invalid path")
+        pending.append(int(entry.name))
+    if len(pending) > 1:
+        raise WorkflowError("Multiple correction creation transactions exist")
+    return pending[0] if pending else None
+
+
 def command_start_correction(args, root, runner):
     source_correction = args.from_correction
+    request = correction_bootstrap_request(args)
     with locked_run(root, args.issue):
-        source_state, source_state_sha256 = read_run_state(
+        pending = pending_correction_bootstrap(root, args.issue)
+        if pending is not None:
+            with lock_directory(run_dir(root, args.issue, pending)):
+                finish_bootstrap_transaction(
+                    root,
+                    args.issue,
+                    pending,
+                    CORRECTION_BOOTSTRAP_MODE,
+                    request,
+                )
+            return
+        source_state, source_state_data, source_history_data = verified_run(
             root, args.issue, source_correction
         )
-        source_history_sha256 = hashlib.sha256(
-            run_history_bytes(root, args.issue, source_correction)
-        ).hexdigest()
+        source_state_sha256 = sha256(source_state_data)
+        source_history_sha256 = sha256(source_history_data)
         require_state(source_state, *CORRECTION_SOURCE_STATES)
         anchor = source_state.get("validated_head")
         if not anchor or not source_state.get("validated_base"):
@@ -1592,11 +2694,16 @@ def command_start_correction(args, root, runner):
             source_history_sha256, number,
         )
         directory = run_dir(root, args.issue, number)
-        directory.mkdir(parents=True, exist_ok=True)
-        (directory / "artifacts").mkdir(exist_ok=True)
-        persist(
-            root,
-            args.issue,
+        for projection in (
+            state_path(root, args.issue, number),
+            history_path(root, args.issue, number),
+            integrity_path(root, args.issue, number),
+        ):
+            if projection.exists():
+                raise WorkflowError(
+                    "Correction %s has conflicting partial creation files" % number
+                )
+        append_event(
             state,
             "CORRECTION_CREATED",
             args.by,
@@ -1606,8 +2713,29 @@ def command_start_correction(args, root, runner):
                 "reason": args.reason,
                 "parent_correction": source_correction,
             },
-            number,
         )
+        state_data = canonical_state_bytes(state)
+        history_data = canonical_history_bytes(state["history"])
+        transaction_file = bootstrap_transaction_path(root, args.issue, number)
+        write_json_atomic(
+            transaction_file,
+            bootstrap_record(
+                CORRECTION_BOOTSTRAP_MODE,
+                args.issue,
+                number,
+                request,
+                state_data,
+                history_data,
+            ),
+        )
+        with lock_directory(directory):
+            finish_bootstrap_transaction(
+                root,
+                args.issue,
+                number,
+                CORRECTION_BOOTSTRAP_MODE,
+                request,
+            )
 
 
 def command_status(args, root):
@@ -1675,6 +2803,23 @@ def build_parser():
     status.add_argument("issue", type=int)
     status.add_argument("--correction", type=int, default=None)
 
+    adopt = subparsers.add_parser(
+        "adopt-legacy-run",
+        help="explicitly trust and adopt a structurally consistent v1-v3 run",
+    )
+    adopt.add_argument("issue", type=int)
+    adopt.add_argument("--by", required=True)
+    adopt.add_argument("--reason", required=True)
+    adopt.add_argument("--confirm", required=True)
+    adopt.add_argument("--correction", type=int, default=None)
+
+    recover = subparsers.add_parser(
+        "recover-run",
+        help="restore active projections from the last valid v4 committed envelope",
+    )
+    recover.add_argument("issue", type=int)
+    recover.add_argument("--correction", type=int, default=None)
+
     start_correction = subparsers.add_parser(
         "start-correction",
         help="fork an immutable, linked correction run from a settled run",
@@ -1733,6 +2878,10 @@ def dispatch(args, root, runner):
         command_init(args, root, runner)
     elif args.command == "status":
         command_status(args, root)
+    elif args.command == "adopt-legacy-run":
+        command_adopt_legacy(args, root)
+    elif args.command == "recover-run":
+        command_recover_run(args, root)
     elif args.command == "submit-plan":
         submit_artifact(args, root, "plan", "PLANNING", "PLAN_REVIEW", "PLAN_SUBMITTED")
     elif args.command == "review-plan":
