@@ -51,6 +51,28 @@ The CLI rejects any action that is invalid in the current state. Reviewer readin
 | Implementer | Write tests after plan approval, code after test approval, and run validation | Self-approval, weakening approved tests, or direct PR creation |
 | Human | Explicitly approve or reject the plan, tests, and draft PR | N/A |
 
+## Bounded, risk-aware validation policy
+
+Validation is proportional to risk, but it never weakens a gate.
+
+**Mandatory validation** covers the issue and contract, exact source symbol, signature, and call site evidence needed for source alignment, acceptance mapping, current workflow status and documented precondition, relevant test and helper behavior, and every applicable approval, integrity, migration, recovery, final-validation, Git, and pull request gate.
+
+**Optional/deep validation** is additional investigation beyond that mandatory set. Before doing it, record this five-field declaration:
+
+- **Uncertainty or risk**: the concrete question or material risk.
+- **Impact and reversibility**: the consequence and whether the action can be safely undone.
+- **Source insufficiency**: why the issue, contract, source, and existing tests cannot settle it.
+- **Smallest probe**: the narrowest targeted check capable of answering it.
+- **Stopping result**: the result that makes the evidence sufficient.
+
+Prefer an exact source read, one call-site trace, or one targeted existing test. Routine planning, review, test authoring, and workflow execution must not use broad reinspection, a scratch implementation, transcribed harness, copied harness, mutation campaign, or exhaustive experiment. Implementation-level testing during planning or review is prohibited unless source insufficiency leaves a named material uncertainty that requires the smallest probe.
+
+Stop when source alignment, executability, acceptance coverage, relevant risk, and open findings have sufficient evidence. Another validation pass requires changed scope, changed source, new evidence, an open finding, or a newly named risk; repetition merely to increase confidence is not justified.
+
+Deep validation is mandatory for integrity, approval, or security boundaries; migration or recovery; irreversible or destructive changes; an external contract or external dependency; final certification; and material uncertainty. A contradiction, unknown lifecycle, unknown signature, or insufficient high-risk evidence must fail closed until resolved.
+
+Workflow authority remains controlled regardless of validation depth. Never use direct authority mutation of `state.json`, `history.jsonl`, or approvals. Use only documented commands, including explicit `adopt-legacy-run` and `recover-run` where applicable.
+
 ## Mandatory source-alignment and executability gate
 
 Before every plan submission, the Planner must align the proposed work with the repository's actual source. This is a required pre-submission gate, not work delegated to the Reviewer.
@@ -295,17 +317,31 @@ At that state, do not merge, mark ready, deploy, close the issue, or continue im
 
 ## Audit and recovery
 
-`state.json` is the resumable snapshot and contains the complete sequenced event history. `history.jsonl` is an atomically regenerated, append-only audit view of those events, so a process interruption cannot leave it authoritative over conflicting state. Submitted artifacts include SHA-256 hashes, so later edits are detectable. Validation configuration accepts only safe filename-slug check names, non-empty string argument lists, and working directories that resolve inside the repository; execution revalidates those constraints. Validation logs record command, working directory, output, exit code, and timestamps.
+Version 4 runs have three projections: canonical `state.json`, canonical append-only `history.jsonl`, and an `integrity.json` committed envelope containing their hashes, sequence, identity, and complete recoverable snapshot. A guarded writer appends one event, writes state and history atomically, and writes the envelope last as the commit marker. Initial root and correction creation first records an exact-identity bootstrap transaction containing the intended canonical bytes; the exact creation command can reconcile an interruption, while conflicting or malformed partial creation fails closed. Every normal transition, status, correction summary, and correction-source/latest/sibling read verifies object structure, root-or-correction identity, version, contiguous sequence, embedded/JSONL equality, latest state, committed sequence, and both hashes before using authority. Reads never repair, migrate, synchronize, or write.
+
+An internally consistent version 1-3 run without independent integrity evidence is not trusted automatically. The Orchestrator may explicitly run:
+
+```bash
+python3 scripts/agent_workflow.py adopt-legacy-run ISSUE \
+  --by ASSERTED_IDENTITY --reason "Reviewed legacy records" \
+  --confirm legacy_run_trusted [--correction N]
+```
+
+Active legacy adoption verifies exact state/history agreement, supported lifecycle names, and structure, then writes an exact pre-adoption transaction before either projection. Ordinary commands fail closed while that record exists; rerunning the exact adoption command validates its bytes, hashes, identity, timestamp, and trust metadata, reconciles only the recorded legacy or derived adopted bytes, commits the v4 envelope, and removes the transaction. Adoption applies compatibility defaults and appends `LEGACY_RUN_ADOPTED` without changing lifecycle, approvals, artifacts, validation, or Git evidence. A settled legacy root or correction at either PR gate is initially adopted sidecar-only with exact lossless bytes and trust metadata; later reads and idempotent adoption fully verify the sidecar against those live bytes and normalize only in memory. Consistency is not proof of provenance, and conflicting adoption fails closed.
+
+`PR_APPROVED` legacy projections remain permanently byte-immutable. An adopted legacy run at `WAITING_FOR_PR_HUMAN_APPROVAL` still supports the existing approve, reject, and metadata-revision commands. Immediately before one of those transitions, the CLI uses the same interruption guard to commit the audited v4 adoption event; conversion is refused if an existing correction names that run as its exact source, so correction parent hashes and every settled ancestor remain unchanged. Status, correction reads, and other ordinary commands never trigger conversion.
+
+If active v4 projections differ after an interruption, the Orchestrator may run `recover-run ISSUE [--correction N]`. Recovery independently validates the last committed envelope, restores only its snapshot, and appends `RUN_INTEGRITY_RECOVERED` with fixed `chess-echo-orchestrator` attribution and observed hashes. Approve, reject, and metadata-revision transitions from `WAITING_FOR_PR_HUMAN_APPROVAL` first record their source and intended bytes in a transaction. If interrupted before the envelope-last commit, recovery validates that transaction and restores the exact committed waiting bytes without an event, lifecycle change, or approval change; if the intended envelope committed, recovery only removes its completed marker after byte-exact verification. It does not replay the rejected action, grant or revoke approval, or infer tool success; the original action must be rerun deliberately. Missing, malformed, stale, wrong-identity, ambiguous, legacy, already-matching, adoption-in-progress, and arbitrary settled recovery attempts fail closed. `PR_APPROVED` remains byte-immutable.
 
 Plan and test approvals verify that the human is seeing the exact artifacts and tests the Reviewer marked ready. Approved plan/review and test/review artifacts are rechecked at every downstream gate. Plan approval freezes a fingerprint of every non-test file through the test-review gate, preventing production implementation before test approval. Test approval records a fingerprint of the test files, and implementation submission refuses changed approved tests. Fingerprints include file type and permissions and cover Git-tracked plus non-ignored untracked files. Successful validation records workspace, `HEAD`, and the frozen base revision; final review records workspace and reviewed `HEAD`. Draft-PR creation requires all evidence to match, frozen-base ancestry and one-commit history to remain valid, all non-run changes to be committed, and no Git `assume-unchanged` or `skip-worktree` flags. If GitHub creates the PR but the local process stops before recording it, rerunning `create-draft-pr` reconciles only an open draft with the expected base, reviewed head, title, and body instead of creating another. After an implementation-level PR rejection completes a new validated/reviewed cycle, changed title/body metadata on the existing draft requires the explicit human-authorized `revise-pr-metadata` path.
 
 Final PR approval verifies that the workspace, Git revision, base branch, draft status, title, body, and remote PR head are unchanged since draft creation.
 
-Do not manually edit state or history. If an agent or command fails before recording an event, inspect `status` and rerun the action appropriate to that unchanged state.
+Do not manually edit state, history, integrity, or approvals. Actor strings and filesystem locks coordinate cooperating processes but do not authenticate callers sharing an OS account; external signing and credentials are outside this local-file authority model.
 
 ## Corrections
 
-A run that has reached `WAITING_FOR_PR_HUMAN_APPROVAL` or `PR_APPROVED` is never reopened or mutated. A bounded post-approval fix instead forks an immutable, linked correction run:
+A run at a PR gate is never reopened or mutated **to perform a bounded correction**; normal `approve-pr`, `reject-pr`, and `revise-pr-metadata` gate behavior remains as described above. A bounded post-approval fix instead forks an immutable, linked correction run:
 
 ```bash
 python3 scripts/agent_workflow.py start-correction ISSUE \
@@ -350,7 +386,7 @@ Misclassification discovered later escalates through the existing human commands
 
 ### Chaining, siblings, and validation anchoring
 
-Numbering is flat per issue. A new correction is refused while any other correction for the issue is in flight, that is, in any state before its own PR gate; multiple settled corrections may coexist. When the latest correction validated a different `HEAD` from the selected source, every later correction must use `--from-correction N` with that latest correction number. This mechanically keeps code-changing history linear and prevents newer settled evidence from being orphaned. Settled metadata-only corrections may remain siblings because they retain the same validated `HEAD`. `status ISSUE` lists every correction with its number, classification, state, requesting human, and creation time. A `corrections/<n>/` directory without `state.json`, such as one created by a mistyped `--correction`, is ignored by both the listing and numbering.
+Numbering is flat per issue. A new correction is refused while any other correction for the issue is in flight, that is, in any state before its own PR gate; multiple settled corrections may coexist. Once a committed or in-progress child records the exact parent hashes, that waiting source cannot be approved, rejected, or metadata-revised. When the latest correction validated a different `HEAD` from the selected source, every later correction must use `--from-correction N` with that latest correction number. This mechanically keeps code-changing history linear and prevents newer settled evidence from being orphaned. Settled metadata-only corrections may remain siblings because they retain the same validated `HEAD`. `status ISSUE` lists every committed correction with its number, classification, state, requesting human, and creation time. An incomplete bootstrap is hidden from summaries and reserves its number until the exact command reconciles it; an unrelated `corrections/<n>/` directory without `state.json` remains ignored by both listing and numbering.
 
 Inside a correction, validation anchors on the source run's validated `HEAD` rather than the configured target base: `run-validation` resolves that SHA, records it as `validated_base` with the synthetic `parent-run-head:<sha>` base ref, and still requires exactly one commit relative to it. Every other safeguard is unchanged — clean worktree, ancestry, validated/reviewed head equality, frozen final review, and the draft-PR fingerprint checks all apply to the correction's own evidence. The latest-correction requirement above prevents selecting an older anchor whose branch history could orphan newer settled evidence.
 

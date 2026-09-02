@@ -1,9 +1,11 @@
+import base64
 import contextlib
 import hashlib
 import importlib.util
 import io
 import json
 import pathlib
+import re
 import subprocess
 import tempfile
 import unittest
@@ -336,6 +338,81 @@ class AgentWorkflowTest(unittest.TestCase):
             (directory / "state.json").read_bytes(),
             (directory / "history.jsonl").read_bytes(),
         )
+
+    def integrity_path(self, directory=None):
+        return (directory or self.source_dir()) / "integrity.json"
+
+    def integrity(self, directory=None):
+        return json.loads(self.integrity_path(directory).read_text())
+
+    def authoritative_bytes(self, directory=None):
+        directory = directory or self.source_dir()
+        return self.run_bytes(directory) + (self.integrity_path(directory).read_bytes(),)
+
+    def write_projections(self, state, directory=None, write_history=True):
+        directory = directory or self.source_dir()
+        (directory / "state.json").write_text(
+            json.dumps(state, indent=2, sort_keys=True) + "\n"
+        )
+        if write_history:
+            (directory / "history.jsonl").write_text(
+                "".join(
+                    json.dumps(event, sort_keys=True) + "\n"
+                    for event in state["history"]
+                )
+            )
+
+    def make_legacy(self, version=3, directory=None):
+        directory = directory or self.source_dir()
+        state = json.loads((directory / "state.json").read_text())
+        state["version"] = version
+        self.write_projections(state, directory)
+        if self.integrity_path(directory).exists():
+            self.integrity_path(directory).unlink()
+        return self.run_bytes(directory)
+
+    def adopt_legacy(self, *extra, correction=None, expected=0):
+        arguments = [
+            "adopt-legacy-run", "42", "--by", "NathanZK",
+            "--reason", "Trust the pre-integrity run after review",
+            "--confirm", "legacy_run_trusted",
+        ]
+        if correction is not None:
+            arguments.extend(("--correction", str(correction)))
+        arguments.extend(extra)
+        self.run_cli(*arguments, expected=expected)
+
+    def settle_implementation_correction(self, number, head):
+        self.drive_correction_to_pr_gate(number, head=head)
+
+    def assert_hashes_match_bytes(self, parent, source_bytes):
+        self.assertEqual(
+            hashlib.sha256(source_bytes[0]).hexdigest(), parent["state_sha256"]
+        )
+        self.assertEqual(
+            hashlib.sha256(source_bytes[1]).hexdigest(), parent["history_sha256"]
+        )
+
+    def assert_rejected_without_authority_change(
+        self, arguments, directory=None, expected=2
+    ):
+        directory = directory or self.source_dir()
+        before = (
+            (directory / "state.json").read_bytes(),
+            (directory / "history.jsonl").read_bytes(),
+            self.integrity_path(directory).read_bytes()
+            if self.integrity_path(directory).exists() else None,
+        )
+        calls = list(self.runner.calls)
+        self.run_cli(*arguments, expected=expected)
+        after = (
+            (directory / "state.json").read_bytes(),
+            (directory / "history.jsonl").read_bytes(),
+            self.integrity_path(directory).read_bytes()
+            if self.integrity_path(directory).exists() else None,
+        )
+        self.assertEqual(before, after)
+        self.assertEqual(calls, self.runner.calls)
 
     def capture_status(self, *extra):
         stream = io.StringIO()
@@ -817,16 +894,10 @@ class AgentWorkflowTest(unittest.TestCase):
         state["state"] = "DRAFT_PR_CREATED"
         state_path.write_text(json.dumps(state))
         body = self.artifact("pr-recovery.md", self.pr_body())
-        self.run_cli("create-draft-pr", "42", "--title", "Fix issue", "--body-file", body)
-        self.assertEqual("WAITING_FOR_PR_HUMAN_APPROVAL", self.state()["state"])
-        self.runner.pr_body = "externally changed"
-        state = self.state()
-        state["state"] = "DRAFT_PR_CREATED"
-        state_path.write_text(json.dumps(state))
-        self.run_cli(
+        self.assert_rejected_without_authority_change((
             "create-draft-pr", "42", "--title", "Fix issue", "--body-file", body,
-            expected=2,
-        )
+        ))
+        self.assert_rejected_without_authority_change(("recover-run", "42"))
 
     def test_version_two_draft_recovery_reconstructs_frozen_evidence(self):
         self.advance_to_pr_gate()
@@ -837,10 +908,15 @@ class AgentWorkflowTest(unittest.TestCase):
         state.pop("validation_evidence")
         state_path.write_text(json.dumps(state))
         body = self.artifact("pr-recovery.md", self.pr_body())
-        self.run_cli("create-draft-pr", "42", "--title", "Fix issue", "--body-file", body)
-        migrated = self.state()
-        self.assertEqual("WAITING_FOR_PR_HUMAN_APPROVAL", migrated["state"])
-        self.assertEqual(2, migrated["validation_evidence"]["migrated_from_version"])
+        self.assert_rejected_without_authority_change((
+            "create-draft-pr", "42", "--title", "Fix issue", "--body-file", body,
+        ))
+        self.assert_rejected_without_authority_change(("recover-run", "42"))
+        self.assert_rejected_without_authority_change((
+            "adopt-legacy-run", "42", "--by", "NathanZK",
+            "--reason", "Trust the pre-integrity run after review",
+            "--confirm", "legacy_run_trusted",
+        ))
 
     def test_approval_rejects_external_remote_invariants(self):
         cases = (
@@ -1558,6 +1634,663 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual(
             [1], [entry["number"] for entry in self.capture_status()["corrections"]]
         )
+
+    # --- Issue #120: bounded validation and guarded authority -------------
+
+    def test_routine_artifact_transition_is_bounded_and_has_no_subprocess_work(self):
+        self.runner.calls.clear()
+        self.run_cli(
+            "submit-plan", "42", "--artifact", self.artifact("plan.md"),
+            "--agent", workflow.ROLE_NAMES["planner"],
+        )
+        self.assertEqual("PLAN_REVIEW", self.state()["state"])
+        self.assertEqual([], self.runner.calls)
+        self.assertEqual("PLAN_SUBMITTED", self.state()["history"][-1]["event"])
+
+    def test_run_validation_retains_deep_repository_and_check_evidence(self):
+        self.advance_to_implementation()
+        self.run_cli(
+            "submit-implementation", "42",
+            "--artifact", self.artifact("implementation.md"),
+            "--agent", workflow.ROLE_NAMES["implementer"],
+        )
+        self.runner.calls.clear()
+        self.run_cli("run-validation", "42")
+        calls = self.runner.calls
+        self.assertEqual(2, sum(call[:3] == ["git", "rev-parse", "HEAD"] for call in calls))
+        self.assertEqual(
+            2, sum(call[:3] == ["git", "status", "--porcelain=v1"] for call in calls)
+        )
+        self.assertEqual(
+            2, sum(call[:3] == ["git", "merge-base", "--is-ancestor"] for call in calls)
+        )
+        self.assertEqual(
+            2, sum(call[:3] == ["git", "rev-list", "--count"] for call in calls)
+        )
+        self.assertIn(["lint"], calls)
+        self.assertIn(["tests"], calls)
+        evidence = self.state()["validation_evidence"]
+        self.assertEqual(self.runner.head, evidence["head"])
+        self.assertEqual(self.runner.base, evidence["base"])
+        self.assertEqual(1, evidence["commit_count"])
+        self.assertEqual(
+            self.state()["approvals"]["tests"]["test_fingerprint"],
+            evidence["approved_test_fingerprint"],
+        )
+
+    def test_v4_initialization_and_transition_create_verifiable_envelopes(self):
+        state = self.state()
+        envelope = self.integrity()
+        self.assertEqual(4, state["version"])
+        self.assertEqual("v4-committed", envelope["mode"])
+        self.assertEqual(42, envelope["issue"])
+        self.assertIsNone(envelope["correction"])
+        self.assertEqual(state["history"][-1]["sequence"], envelope["sequence"])
+        self.assertEqual(state, envelope["state"])
+        self.assertEqual(state["history"], envelope["history"])
+        self.assertEqual(
+            hashlib.sha256((self.source_dir() / "state.json").read_bytes()).hexdigest(),
+            envelope["state_sha256"],
+        )
+        self.assertEqual(
+            hashlib.sha256((self.source_dir() / "history.jsonl").read_bytes()).hexdigest(),
+            envelope["history_sha256"],
+        )
+        previous = self.integrity_path().read_bytes()
+        self.run_cli(
+            "submit-plan", "42", "--artifact", self.artifact("plan.md"),
+            "--agent", workflow.ROLE_NAMES["planner"],
+        )
+        self.assertNotEqual(previous, self.integrity_path().read_bytes())
+        self.capture_status()
+
+    def test_history_append_delete_reorder_and_replace_are_rejected(self):
+        mutations = {
+            "append": lambda lines: lines + [lines[-1]],
+            "delete": lambda lines: lines[:-1],
+            "reorder": lambda lines: list(reversed(lines)),
+            "replace": lambda lines: [
+                json.dumps(dict(json.loads(lines[0]), actor="forger"), sort_keys=True)
+            ] + lines[1:],
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(mutation=name):
+                self.tearDown()
+                self.setUp()
+                self.run_cli(
+                    "submit-plan", "42", "--artifact", self.artifact("plan.md"),
+                    "--agent", workflow.ROLE_NAMES["planner"],
+                )
+                history_path = self.source_dir() / "history.jsonl"
+                lines = history_path.read_text().splitlines()
+                history_path.write_text("\n".join(mutate(lines)) + "\n")
+                self.assert_rejected_without_authority_change(("status", "42"))
+
+    def test_forged_lifecycle_state_is_rejected_before_transition(self):
+        state = self.state()
+        state["state"] = "WAITING_FOR_PLAN_HUMAN_APPROVAL"
+        state["history"][-1]["state"] = state["state"]
+        self.write_projections(state)
+        self.assert_rejected_without_authority_change((
+            "approve-plan", "42", "--by", "forger", "--confirm", "plan_approved",
+        ))
+
+    def test_forged_approvals_are_rejected_by_real_gate_commands(self):
+        for approval in ("plan", "tests", "pr"):
+            with self.subTest(approval=approval):
+                self.tearDown()
+                self.setUp()
+                if approval == "plan":
+                    self.run_cli(
+                        "submit-plan", "42", "--artifact", self.artifact("plan.md"),
+                        "--agent", workflow.ROLE_NAMES["planner"],
+                    )
+                    self.run_cli(
+                        "review-plan", "42",
+                        "--artifact", self.artifact("plan-review.md"),
+                        "--reviewer", workflow.ROLE_NAMES["reviewer"],
+                        "--status", workflow.READY,
+                    )
+                    self.run_cli(
+                        "approve-plan", "42", "--by", "human",
+                        "--confirm", "plan_approved",
+                    )
+                    command = (
+                        "submit-tests", "42",
+                        "--artifact", self.artifact("test-report.md"),
+                        "--agent", workflow.ROLE_NAMES["implementer"],
+                    )
+                elif approval == "tests":
+                    self.advance_to_implementation()
+                    command = (
+                        "submit-implementation", "42",
+                        "--artifact", self.artifact("implementation.md"),
+                        "--agent", workflow.ROLE_NAMES["implementer"],
+                    )
+                elif approval == "pr":
+                    self.advance_to_pr_approved()
+                    command = (
+                        "start-correction", "42",
+                        "--classification", "implementation-only",
+                        "--by", "human",
+                        "--reason", "Post-approval correction",
+                    )
+                state = self.state()
+                state["approvals"][approval].update(
+                    {"by": "forger", "confirmation": "forged"}
+                )
+                self.write_projections(state)
+                self.assertFalse(self.correction_dir(1).exists())
+                self.assert_rejected_without_authority_change(command)
+                self.assertFalse(self.correction_dir(1).exists())
+
+    def test_coherent_state_and_history_forgery_is_rejected_by_envelope(self):
+        state = self.state()
+        state["state"] = "PR_APPROVED"
+        state["approvals"]["plan"] = {"approved": True, "by": "forger"}
+        state["history"][-1]["state"] = "PR_APPROVED"
+        self.write_projections(state)
+        self.assert_rejected_without_authority_change(("status", "42"))
+
+    def test_missing_corrupt_stale_and_wrong_identity_integrity_fail_closed(self):
+        def missing(path, envelope):
+            path.unlink()
+
+        def corrupt(path, envelope):
+            path.write_text("{")
+
+        def stale(path, envelope):
+            envelope["state_sha256"] = "0" * 64
+            path.write_text(json.dumps(envelope))
+
+        def wrong_identity(path, envelope):
+            envelope["issue"] = 99
+            path.write_text(json.dumps(envelope))
+
+        for name, mutation in (
+            ("missing", missing),
+            ("corrupt", corrupt),
+            ("stale", stale),
+            ("wrong-identity", wrong_identity),
+        ):
+            with self.subTest(case=name):
+                self.tearDown()
+                self.setUp()
+                path = self.integrity_path()
+                mutation(path, self.integrity())
+                self.assert_rejected_without_authority_change(("status", "42"))
+
+    def test_active_v4_recovery_restores_committed_state_without_replaying_action(self):
+        for projections in ("state-only", "state-and-history"):
+            with self.subTest(projections=projections):
+                self.tearDown()
+                self.setUp()
+                self.advance_to_implementation()
+                committed = self.state()
+                forged = json.loads(json.dumps(committed))
+                forged["state"] = "VALIDATION"
+                forged["approvals"]["pr"] = {"approved": True, "by": "forger"}
+                forged["history"].append({
+                    "sequence": len(forged["history"]) + 1,
+                    "timestamp": "2099-01-01T00:00:00+00:00",
+                    "event": "IMPLEMENTATION_SUBMITTED",
+                    "actor": "forger",
+                    "state": "VALIDATION",
+                    "details": {},
+                })
+                self.write_projections(
+                    forged, write_history=projections == "state-and-history"
+                )
+                self.runner.calls.clear()
+                self.run_cli("recover-run", "42")
+                recovered = self.state()
+                self.assertEqual(committed["state"], recovered["state"])
+                self.assertEqual(committed["approvals"], recovered["approvals"])
+                self.assertEqual(
+                    committed["history"], recovered["history"][:-1]
+                )
+                event = recovered["history"][-1]
+                self.assertEqual("RUN_INTEGRITY_RECOVERED", event["event"])
+                self.assertEqual("chess-echo-orchestrator", event["actor"])
+                self.assertEqual([], self.runner.calls)
+                self.assertEqual({"plan", "tests"}, set(recovered["approvals"]))
+                self.assertNotIn("implementation_report", recovered["artifacts"])
+                self.run_cli(
+                    "submit-implementation", "42",
+                    "--artifact", self.artifact("implementation.md"),
+                    "--agent", workflow.ROLE_NAMES["implementer"],
+                )
+                self.assertEqual("VALIDATION", self.state()["state"])
+
+    def test_recovery_fails_closed_for_legacy_ambiguous_and_settled_runs(self):
+        self.make_legacy()
+        self.assert_rejected_without_authority_change(("recover-run", "42"))
+
+        self.tearDown()
+        self.setUp()
+        self.assert_rejected_without_authority_change(("recover-run", "42"))
+
+        self.tearDown()
+        self.setUp()
+        self.integrity_path().write_text("{")
+        self.assert_rejected_without_authority_change(("recover-run", "42"))
+
+        self.tearDown()
+        self.setUp()
+        self.advance_to_pr_gate()
+        settled = self.state()
+        settled["draft_pr"]["title"] = "forged"
+        self.write_projections(settled)
+        self.assert_rejected_without_authority_change(("recover-run", "42"))
+
+    def test_recover_run_independently_rejects_invalid_envelopes_without_effects(self):
+        def stale(envelope):
+            envelope["state_sha256"] = "0" * 64
+
+        def wrong_issue(envelope):
+            envelope["issue"] = 99
+
+        def wrong_correction(envelope):
+            envelope["correction"] = 1
+
+        def invalid_snapshot_sequence(envelope):
+            envelope["history"][-1]["sequence"] += 1
+
+        for name, mutation in (
+            ("stale", stale),
+            ("wrong-root-identity", wrong_issue),
+            ("wrong-correction-identity", wrong_correction),
+            ("invalid-snapshot-sequence", invalid_snapshot_sequence),
+        ):
+            with self.subTest(case=name):
+                self.tearDown()
+                self.setUp()
+                self.advance_to_implementation()
+                envelope = self.integrity()
+                mutation(envelope)
+                self.integrity_path().write_text(json.dumps(envelope))
+                committed = self.state()
+                lifecycle = committed["state"]
+                approvals = json.loads(json.dumps(committed["approvals"]))
+                history = json.loads(json.dumps(committed["history"]))
+                self.runner.calls.clear()
+                self.assert_rejected_without_authority_change(("recover-run", "42"))
+                unchanged = self.state()
+                self.assertEqual(lifecycle, unchanged["state"])
+                self.assertEqual(approvals, unchanged["approvals"])
+                self.assertEqual(history, unchanged["history"])
+                self.assertEqual([], self.runner.calls)
+
+    def test_unadopted_legacy_run_rejects_reads_and_transitions(self):
+        self.make_legacy()
+        self.assert_rejected_without_authority_change(("status", "42"))
+        self.assert_rejected_without_authority_change((
+            "submit-plan", "42", "--artifact", self.artifact("plan.md"),
+            "--agent", workflow.ROLE_NAMES["planner"],
+        ))
+        with self.assertRaises(workflow.WorkflowError):
+            workflow.read_run_state(self.root, 42)
+
+    def test_active_v1_v2_v3_adoption_audits_reason_and_exact_prior_hashes(self):
+        reason = "Trust the pre-integrity run after review"
+        for version in (1, 2, 3):
+            with self.subTest(version=version):
+                self.tearDown()
+                self.setUp()
+                before = self.make_legacy(version)
+                self.runner.calls.clear()
+                self.adopt_legacy()
+                state = self.state()
+                self.assertEqual(4, state["version"])
+                self.assertEqual("PLANNING", state["state"])
+                self.assertEqual({}, state["approvals"])
+                event = state["history"][-1]
+                self.assertEqual("LEGACY_RUN_ADOPTED", event["event"])
+                self.assertEqual("NathanZK", event["actor"])
+                self.assertEqual(2, len(state["history"]))
+                self.assertEqual(version, event["details"]["legacy_version"])
+                self.assertEqual(reason, event["details"]["reason"])
+                self.assert_hashes_match_bytes(event["details"], before)
+                self.assertEqual("v4-committed", self.integrity()["mode"])
+                self.assertEqual([], self.runner.calls)
+
+    def test_legacy_adoption_requires_the_exact_confirmation(self):
+        before = self.make_legacy()
+        self.assert_rejected_without_authority_change((
+            "adopt-legacy-run", "42", "--by", "NathanZK",
+            "--reason", "Reviewed legacy run",
+            "--confirm", "legacy-run-trusted",
+        ))
+        self.assertEqual(before, self.run_bytes(self.source_dir()))
+
+    def test_invalid_conflicting_and_re_adoption_attempts_fail_closed(self):
+        for case in ("inconsistent", "structurally-invalid"):
+            with self.subTest(case=case):
+                self.tearDown()
+                self.setUp()
+                self.make_legacy()
+                if case == "inconsistent":
+                    history = self.source_dir() / "history.jsonl"
+                    history.write_text(
+                        history.read_text().replace("WORKFLOW_INITIALIZED", "FORGED")
+                    )
+                else:
+                    state = self.state()
+                    del state["history"][0]["sequence"]
+                    self.write_projections(state)
+                self.assert_rejected_without_authority_change((
+                    "adopt-legacy-run", "42", "--by", "NathanZK",
+                    "--reason", "Reviewed legacy run",
+                    "--confirm", "legacy_run_trusted",
+                ))
+
+        self.tearDown()
+        self.setUp()
+        self.make_legacy()
+        self.adopt_legacy()
+        self.assert_rejected_without_authority_change((
+            "adopt-legacy-run", "42", "--by", "NathanZK",
+            "--reason", "Trust the pre-integrity run after review",
+            "--confirm", "legacy_run_trusted",
+        ))
+
+        self.tearDown()
+        self.setUp()
+        self.advance_to_pr_gate()
+        self.make_legacy()
+        self.adopt_legacy()
+        self.assert_rejected_without_authority_change((
+            "adopt-legacy-run", "42", "--by", "NathanZK",
+            "--reason", "A conflicting trust rationale",
+            "--confirm", "legacy_run_trusted",
+        ))
+
+    def test_settled_legacy_adoption_is_sidecar_only_and_verifies_status(self):
+        self.advance_to_pr_gate()
+        before = self.make_legacy()
+        self.adopt_legacy()
+        self.assertEqual(before, self.run_bytes(self.source_dir()))
+        sidecar = self.integrity()
+        self.assertEqual("settled-legacy-adoption", sidecar["mode"])
+        self.assertEqual(3, sidecar["legacy_version"])
+        self.assertEqual("NathanZK", sidecar["adopted_by"])
+        self.assertEqual("legacy_run_trusted", sidecar["confirmation"])
+        self.assertEqual("Trust the pre-integrity run after review", sidecar["reason"])
+        self.assertEqual(
+            hashlib.sha256(before[0]).hexdigest(), sidecar["state_sha256"]
+        )
+        self.assertEqual(
+            hashlib.sha256(before[1]).hexdigest(), sidecar["history_sha256"]
+        )
+        encoded_sidecar = json.dumps(sidecar)
+        self.assertIn(base64.b64encode(before[0]).decode(), encoded_sidecar)
+        self.assertIn(base64.b64encode(before[1]).decode(), encoded_sidecar)
+        self.assertEqual(
+            "WAITING_FOR_PR_HUMAN_APPROVAL", self.capture_status()["state"]
+        )
+        self.assertEqual(before, self.run_bytes(self.source_dir()))
+
+    def test_settled_legacy_correction_adoption_is_sidecar_only(self):
+        self.advance_to_pr_gate()
+        self.start_correction("implementation-only")
+        self.settle_implementation_correction(1, "def456")
+        child = self.correction_dir(1)
+        before = self.make_legacy(directory=child)
+        self.adopt_legacy(correction=1)
+        self.assertEqual(before, self.run_bytes(child))
+        sidecar = self.integrity(child)
+        self.assertEqual("settled-legacy-adoption", sidecar["mode"])
+        self.assertEqual(42, sidecar["issue"])
+        self.assertEqual(1, sidecar["correction"])
+        self.assertEqual(3, sidecar["legacy_version"])
+        self.assertEqual("NathanZK", sidecar["adopted_by"])
+        self.assertEqual("legacy_run_trusted", sidecar["confirmation"])
+        self.assertEqual("Trust the pre-integrity run after review", sidecar["reason"])
+        self.assert_hashes_match_bytes(sidecar, before)
+        encoded_sidecar = json.dumps(sidecar)
+        self.assertIn(base64.b64encode(before[0]).decode(), encoded_sidecar)
+        self.assertIn(base64.b64encode(before[1]).decode(), encoded_sidecar)
+        self.assertEqual(
+            "WAITING_FOR_PR_HUMAN_APPROVAL",
+            self.capture_status("--correction", "1")["state"],
+        )
+        self.assertEqual(before, self.run_bytes(child))
+
+    def test_chaining_from_adopted_legacy_preserves_every_settled_ancestor(self):
+        self.advance_to_pr_gate()
+        root_before = self.make_legacy()
+        self.adopt_legacy()
+        self.start_correction("implementation-only")
+        child = self.correction_state(1)
+        self.assertEqual(4, child["version"])
+        self.assert_hashes_match_bytes(child["parent_run"], root_before)
+        self.assertEqual("v4-committed", self.integrity(self.correction_dir(1))["mode"])
+        self.settle_implementation_correction(1, "def456")
+        child_before = self.run_bytes(self.correction_dir(1))
+        self.start_correction(
+            "implementation-only", "--from-correction", "1"
+        )
+        second = self.correction_state(2)
+        self.assert_hashes_match_bytes(second["parent_run"], child_before)
+        self.assertEqual(root_before, self.run_bytes(self.source_dir()))
+        self.assertEqual(child_before, self.run_bytes(self.correction_dir(1)))
+
+    def test_tampered_correction_source_read_is_isolated(self):
+        self.advance_to_pr_gate()
+        self.start_correction("implementation-only")
+        self.settle_implementation_correction(1, "def456")
+        child = self.correction_dir(1)
+        child_state = self.correction_state(1)
+        child_state["state"] = "PR_APPROVED"
+        self.write_projections(child_state, child)
+        before = self.authoritative_bytes(child)
+        self.start_correction(
+            "implementation-only", "--from-correction", "1", expected=2
+        )
+        self.assertEqual(before, self.authoritative_bytes(child))
+        self.assert_no_correction(2)
+
+    def test_tampered_latest_correction_read_is_isolated(self):
+        self.advance_to_pr_gate()
+        self.start_correction("implementation-only")
+        self.settle_implementation_correction(1, "def456")
+        child = self.correction_dir(1)
+        child_state = self.correction_state(1)
+        child_state["state"] = "PR_APPROVED"
+        self.write_projections(child_state, child)
+        before = self.authoritative_bytes(child)
+        self.start_correction("implementation-only", expected=2)
+        self.assertEqual(before, self.authoritative_bytes(child))
+        self.assert_no_correction(2)
+
+    def test_tampered_sibling_correction_read_is_isolated(self):
+        self.advance_to_pr_gate()
+        self.start_correction("implementation-only")
+        self.settle_implementation_correction(1, "def456")
+        self.start_correction("implementation-only", "--from-correction", "1")
+        self.settle_implementation_correction(2, "fed789")
+        sibling = self.correction_dir(1)
+        sibling_state = self.correction_state(1)
+        sibling_state["state"] = "PR_APPROVED"
+        self.write_projections(sibling_state, sibling)
+        before = self.authoritative_bytes(sibling)
+        self.start_correction(
+            "implementation-only", "--from-correction", "2", expected=2
+        )
+        self.assertEqual(before, self.authoritative_bytes(sibling))
+        self.assert_no_correction(3)
+
+    def test_unadopted_legacy_correction_rejects_summary_and_correction_source(self):
+        self.advance_to_pr_gate()
+        self.start_correction("implementation-only")
+        self.settle_implementation_correction(1, "def456")
+        child = self.correction_dir(1)
+        before = self.make_legacy(directory=child)
+        self.run_cli("status", "42", expected=2)
+        self.start_correction(
+            "implementation-only", "--from-correction", "1", expected=2
+        )
+        self.assertEqual(before, self.run_bytes(child))
+        self.assert_no_correction(2)
+
+    def test_parser_covers_guarded_adoption_recovery_and_command_categories(self):
+        parser = workflow.build_parser()
+        adopted = parser.parse_args([
+            "adopt-legacy-run", "42", "--by", "NathanZK", "--reason", "reviewed",
+            "--confirm", "legacy_run_trusted", "--correction", "2",
+        ])
+        self.assertEqual("adopt-legacy-run", adopted.command)
+        self.assertEqual(2, adopted.correction)
+        recovered = parser.parse_args(["recover-run", "42", "--correction", "2"])
+        self.assertEqual("recover-run", recovered.command)
+        self.assertEqual(2, recovered.correction)
+        self.assertFalse(hasattr(recovered, "agent"))
+        guarded = {
+            parser.parse_args([command, "42", *arguments]).command
+            for command, arguments in CORRECTION_ADDRESSED_COMMANDS
+        }
+        self.assertEqual(
+            {command for command, _ in CORRECTION_ADDRESSED_COMMANDS}, guarded
+        )
+
+    def test_guide_declares_the_complete_bounded_validation_policy(self):
+        repository = MODULE_PATH.parents[1]
+        guide = (repository / "docs/engineering/agent-workflow.md").read_text()
+
+        def policy_section(document):
+            lines = document.splitlines()
+            for index, line in enumerate(lines):
+                match = re.match(r"^(#{2,4})\s+(.+)$", line)
+                if not match:
+                    continue
+                title = match.group(2).lower()
+                if "bounded" not in title or "validation" not in title:
+                    continue
+                level = len(match.group(1))
+                end = len(lines)
+                for candidate in range(index + 1, len(lines)):
+                    next_heading = re.match(r"^(#+)\s+", lines[candidate])
+                    if next_heading and len(next_heading.group(1)) <= level:
+                        end = candidate
+                        break
+                return "\n".join(lines[index:end]).lower()
+            self.fail("guide must contain an explicit bounded-validation policy section")
+
+        policy = policy_section(guide)
+        for declaration in (
+            "uncertainty or risk",
+            "impact and reversibility",
+            "source insufficiency",
+            "smallest probe",
+            "stopping result",
+        ):
+            self.assertRegex(
+                policy,
+                r"(?m)^\s*(?:[-*]\s*)?(?:\*\*)?%s(?:\*\*)?\s*:"
+                % re.escape(declaration),
+            )
+
+        required_concepts = {
+            "validation levels": ("mandatory validation", "optional/deep validation"),
+            "mandatory evidence": (
+                "issue", "contract", "symbol", "signature", "call site",
+                "acceptance", "precondition", "test", "approval", "integrity",
+                "migration", "recovery", "git", "pull request",
+            ),
+            "sufficient stopping evidence": (
+                "source alignment", "executability", "acceptance coverage",
+                "relevant risk", "open findings", "sufficient evidence",
+            ),
+            "repeat-pass reasons": (
+                "changed scope", "changed source", "new evidence",
+                "open finding", "newly named risk",
+            ),
+            "prohibited routine techniques": (
+                "broad reinspection", "scratch implementation", "transcribed harness",
+                "copied harness", "mutation campaign", "exhaustive experiment",
+            ),
+            "high-risk triggers": (
+                "integrity", "approval", "security", "migration", "recovery",
+                "irreversible", "destructive", "external contract",
+                "external dependency", "final certification", "material uncertainty",
+            ),
+            "fail-closed exceptions": (
+                "contradiction", "unknown lifecycle", "unknown signature",
+                "insufficient high-risk evidence", "fail closed",
+            ),
+            "authority controls": (
+                "adopt-legacy-run", "recover-run", "direct authority mutation",
+            ),
+        }
+        for contract, terms in required_concepts.items():
+            with self.subTest(contract=contract):
+                missing = [term for term in terms if term not in policy]
+                self.assertEqual([], missing)
+
+    def test_each_role_declares_its_phase_specific_validation_obligations(self):
+        repository = MODULE_PATH.parents[1]
+        profiles = {
+            role: (repository / ".github/agents" / ("chess-echo-%s.md" % role))
+            .read_text()
+            for role in ("planner", "reviewer", "implementer", "orchestrator")
+        }
+
+        def bounded_section(role, document):
+            lines = document.splitlines()
+            for index, line in enumerate(lines):
+                match = re.match(r"^(#{2,4})\s+(.+)$", line)
+                if not match:
+                    continue
+                title = match.group(2).lower()
+                if "bounded" not in title or "validation" not in title:
+                    continue
+                level = len(match.group(1))
+                end = len(lines)
+                for candidate in range(index + 1, len(lines)):
+                    next_heading = re.match(r"^(#+)\s+", lines[candidate])
+                    if next_heading and len(next_heading.group(1)) <= level:
+                        end = candidate
+                        break
+                return "\n".join(lines[index:end]).lower()
+            self.fail("%s profile must have an explicit bounded-validation section" % role)
+
+        sections = {
+            role: bounded_section(role, content)
+            for role, content in profiles.items()
+        }
+        common = (
+            "mandatory", "optional", "deep", "uncertainty", "impact",
+            "reversibility", "source insufficiency", "smallest probe",
+            "stopping result", "direct authority mutation",
+        )
+        for role, content in sections.items():
+            with self.subTest(role=role):
+                self.assertEqual([], [term for term in common if term not in content])
+
+        role_contracts = {
+            "planner": (
+                "source alignment", "executability", "implementation-level testing",
+                "source insufficiency", "stop",
+            ),
+            "reviewer": (
+                "targeted", "evidence-based", "stop", "open finding",
+                "high-risk", "implementation-level testing",
+            ),
+            "implementer": (
+                "test authoring", "approved tests", "routine", "bounded",
+                "configured validation", "high-risk",
+            ),
+            "orchestrator": (
+                "routine execution", "status", "documented preconditions",
+                "adopt-legacy-run", "recover-run", "high-risk",
+                "inferred approval",
+            ),
+        }
+        for role, terms in role_contracts.items():
+            with self.subTest(role_contract=role):
+                self.assertEqual(
+                    [], [term for term in terms if term not in sections[role]]
+                )
 
     def test_workflow_tooling_profile_initialises(self):
         self.tearDown()
