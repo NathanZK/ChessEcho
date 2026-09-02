@@ -1,4 +1,7 @@
+import contextlib
+import hashlib
 import importlib.util
+import io
 import json
 import pathlib
 import subprocess
@@ -10,6 +13,84 @@ MODULE_PATH = pathlib.Path(__file__).parents[1] / "agent_workflow.py"
 SPEC = importlib.util.spec_from_file_location("agent_workflow", MODULE_PATH)
 workflow = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(workflow)
+
+CORRECTION_CLASSIFICATIONS = (
+    "metadata-only",
+    "implementation-only",
+    "test-contract",
+    "architecture",
+)
+ARTIFACT_TOKENS = (
+    "artifact:plan",
+    "artifact:plan_review",
+    "artifact:test_report",
+    "artifact:test_review",
+    "artifact:implementation_report",
+    "artifact:final_review",
+)
+APPROVAL_TOKENS = ("approval:plan", "approval:tests", "approval:pr")
+EVIDENCE_TOKENS = (
+    "evidence:validation",
+    "evidence:validated_fingerprint",
+    "evidence:validated_head",
+    "evidence:validated_base",
+    "evidence:validated_test_fingerprint",
+    "evidence:validation_evidence",
+    "evidence:final_review",
+    "evidence:draft_pr",
+)
+CORRECTION_TOKENS = frozenset(ARTIFACT_TOKENS + APPROVAL_TOKENS + EVIDENCE_TOKENS)
+INHERITED_TOKENS = {
+    "metadata-only": frozenset(
+        ARTIFACT_TOKENS + ("approval:plan", "approval:tests") + EVIDENCE_TOKENS
+    ),
+    "implementation-only": frozenset({
+        "artifact:plan",
+        "artifact:plan_review",
+        "artifact:test_report",
+        "artifact:test_review",
+        "approval:plan",
+        "approval:tests",
+    }),
+    "test-contract": frozenset({
+        "artifact:plan", "artifact:plan_review", "approval:plan",
+    }),
+    "architecture": frozenset(),
+}
+STATUS_SUMMARY_KEYS = (
+    "issue",
+    "state",
+    "scope",
+    "target_base",
+    "approvals",
+    "validation",
+    "final_review",
+    "validated_head",
+    "validated_base",
+    "validated_test_fingerprint",
+    "validation_evidence",
+    "draft_pr",
+)
+CORRECTION_ADDRESSED_COMMANDS = (
+    ("status", ()),
+    ("submit-plan", ("--artifact", "plan.md", "--agent", "chess-echo-planner")),
+    ("submit-tests", ("--artifact", "tests.md", "--agent", "chess-echo-implementer")),
+    ("submit-implementation", ("--artifact", "impl.md", "--agent", "chess-echo-implementer")),
+    ("review-plan", ("--artifact", "r.md", "--reviewer", "chess-echo-reviewer", "--status", workflow.READY)),
+    ("review-tests", ("--artifact", "r.md", "--reviewer", "chess-echo-reviewer", "--status", workflow.READY)),
+    ("review-final", ("--artifact", "r.md", "--reviewer", "chess-echo-reviewer", "--status", workflow.READY)),
+    ("approve-plan", ("--by", "human", "--confirm", "plan_approved")),
+    ("approve-tests", ("--by", "human", "--confirm", "tests_approved")),
+    ("approve-pr", ("--by", "human", "--confirm", "I approve this draft PR.")),
+    ("reject-plan", ("--by", "human", "--reason", "why")),
+    ("reject-tests", ("--by", "human", "--reason", "why")),
+    ("reject-pr", ("--by", "human", "--reason", "why")),
+    ("reopen-tests", ("--by", "human", "--reason", "why")),
+    ("reopen-plan", ("--by", "human", "--reason", "why")),
+    ("run-validation", ()),
+    ("create-draft-pr", ("--title", "Fix issue", "--body-file", "pr.md")),
+    ("revise-pr-metadata", ("--by", "human", "--reason", "why", "--title", "T", "--body-file", "pr.md")),
+)
 
 
 class FakeRunner:
@@ -32,6 +113,7 @@ class FakeRunner:
         self.pr_view_error = None
         self.multiple_prs = False
         self.command_effects = {}
+        self.dirty_status_output = None
 
     def pull_request(self):
         return {
@@ -48,6 +130,13 @@ class FakeRunner:
         self.calls.append(command)
         if command[0:3] == ["git", "rev-parse", "HEAD"]:
             return subprocess.CompletedProcess(command, 0, self.head + "\n", "")
+        if (
+            command[0:3] == ["git", "rev-parse", "--verify"]
+            and len(command) > 3
+            and command[3].endswith("^{commit}")
+        ):
+            revision = command[3][: -len("^{commit}")]
+            return subprocess.CompletedProcess(command, 0, revision + "\n", "")
         if command[0:3] == ["git", "rev-parse", "--verify"]:
             return subprocess.CompletedProcess(command, 0, self.base + "\n", "")
         if command[0:3] == ["git", "merge-base", "--is-ancestor"]:
@@ -59,7 +148,7 @@ class FakeRunner:
         if command[0:3] == ["git", "ls-files", "-v"]:
             return subprocess.CompletedProcess(command, 0, "H production.txt\n", "")
         if command[0:3] == ["git", "status", "--porcelain=v1"]:
-            return subprocess.CompletedProcess(command, 0, "", "")
+            return subprocess.CompletedProcess(command, 0, self.dirty_status_output or "", "")
         if command[0:3] == ["gh", "pr", "create"]:
             self.has_pr = True
             self.pr_title = command[command.index("--title") + 1]
@@ -171,6 +260,99 @@ class AgentWorkflowTest(unittest.TestCase):
         body = self.artifact("pr.md", self.pr_body())
         self.run_cli("create-draft-pr", "42", "--title", "Fix issue", "--body-file", body)
         return body
+
+    def advance_to_pr_approved(self):
+        body = self.advance_to_pr_gate()
+        self.run_cli("approve-pr", "42", "--by", "human", "--confirm", "I approve this draft PR.")
+        return body
+
+    def initialize_workflow_tooling(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.temporary.name)
+        config_dir = self.root / ".agent-workflow"
+        config_dir.mkdir()
+        (config_dir / "config.json").write_text(json.dumps({
+            "target_base": "main",
+            "validation_profiles": {
+                "backend": {
+                    "test_paths": ["tests/**/*"],
+                    "checks": [{"name": "lint", "command": ["lint"]}],
+                },
+                "workflow-tooling": {
+                    "test_paths": ["scripts/tests/**/*"],
+                    "checks": [
+                        {
+                            "name": "agent-workflow-tests",
+                            "command": ["make", "agent-workflow-test"],
+                            "cwd": ".",
+                        }
+                    ],
+                },
+            }
+        }))
+        (self.root / "tests").mkdir()
+        (self.root / "tests" / "behavior.test").write_text("expected behavior")
+        (self.root / "scripts" / "tests").mkdir(parents=True)
+        (self.root / "scripts" / "tests" / "placeholder.test").write_text("workflow tooling")
+        self.issue_file = self.root / "issue.md"
+        self.issue_file.write_text("## Acceptance criteria\n\n1. It works.\n")
+        self.runner = FakeRunner()
+        self.run_cli(
+            "init", "42", "--scope", "workflow-tooling", "--issue-file", str(self.issue_file),
+            "--title", "Workflow tooling issue",
+        )
+
+    def start_correction(self, classification, *extra, expected=0):
+        self.run_cli(
+            "start-correction", "42",
+            "--classification", classification,
+            "--by", "human",
+            "--reason", "Post-approval correction",
+            *extra,
+            expected=expected,
+        )
+
+    def source_dir(self):
+        return self.root / ".agent-workflow" / "runs" / "issue-42"
+
+    def correction_dir(self, number):
+        return self.source_dir() / "corrections" / str(number)
+
+    def correction_state(self, number):
+        return json.loads((self.correction_dir(number) / "state.json").read_text())
+
+    def correction_artifact(self, number, name, content="artifact"):
+        directory = self.correction_dir(number) / "artifacts"
+        self.assertTrue(
+            directory.is_dir(),
+            "correction %s must own an artifacts directory" % number,
+        )
+        path = directory / name
+        path.write_text(content)
+        return str(path)
+
+    def run_bytes(self, directory):
+        return (
+            (directory / "state.json").read_bytes(),
+            (directory / "history.jsonl").read_bytes(),
+        )
+
+    def capture_status(self, *extra):
+        stream = io.StringIO()
+        with contextlib.redirect_stdout(stream):
+            self.run_cli("status", "42", *extra)
+        return json.loads(stream.getvalue())
+
+    def assert_usage_error(self, *arguments):
+        stream = io.StringIO()
+        with contextlib.redirect_stderr(stream):
+            with self.assertRaises(SystemExit) as raised:
+                workflow.main(["--root", str(self.root), *arguments], runner=self.runner)
+        self.assertEqual(2, raised.exception.code)
+        return stream.getvalue()
+
+    def assert_no_correction(self, number):
+        self.assertFalse((self.correction_dir(number) / "state.json").exists())
 
     def test_happy_path_requires_every_gate(self):
         self.advance_to_final_review()
@@ -837,6 +1019,572 @@ class AgentWorkflowTest(unittest.TestCase):
         workflow.verify_pr_repository(
             {"url": "https://github.test/nathanzk/chessecho/pull/1"},
             "NathanZK/ChessEcho",
+        )
+
+    # --- Issue #117: linked correction runs ------------------------------
+
+    def test_start_correction_requires_pr_gate_state(self):
+        self.advance_to_implementation()
+        self.start_correction("metadata-only", expected=2)
+        self.assert_no_correction(1)
+        self.assertEqual("IMPLEMENTATION", self.state()["state"])
+
+    def test_start_correction_from_waiting_for_pr_human_approval(self):
+        self.advance_to_pr_gate()
+        source = self.state()
+        self.start_correction("metadata-only")
+        child = self.correction_state(1)
+        parent = child["parent_run"]
+        self.assertEqual(42, parent["issue"])
+        self.assertIsNone(parent["correction"])
+        self.assertEqual("WAITING_FOR_PR_HUMAN_APPROVAL", parent["state"])
+        self.assertEqual(source["validated_head"], parent["validated_head"])
+        self.assertEqual(source["validated_base"], parent["validated_base"])
+        self.assertEqual(
+            hashlib.sha256((self.source_dir() / "state.json").read_bytes()).hexdigest(),
+            parent["state_sha256"],
+        )
+        self.assertEqual(
+            hashlib.sha256((self.source_dir() / "history.jsonl").read_bytes()).hexdigest(),
+            parent["history_sha256"],
+        )
+        correction = child["correction"]
+        self.assertEqual(1, correction["number"])
+        self.assertEqual("metadata-only", correction["classification"])
+        self.assertEqual("Post-approval correction", correction["reason"])
+        self.assertEqual("human", correction["requested_by"])
+        self.assertTrue(correction["created_at"])
+        self.assertEqual(source["issue"], child["issue"])
+        self.assertEqual(1, len(child["history"]))
+        self.assertEqual("CORRECTION_CREATED", child["history"][0]["event"])
+        self.assertTrue((self.correction_dir(1) / "history.jsonl").is_file())
+
+    def test_start_correction_from_pr_approved(self):
+        self.advance_to_pr_approved()
+        self.start_correction("implementation-only")
+        child = self.correction_state(1)
+        self.assertEqual("PR_APPROVED", child["parent_run"]["state"])
+        self.assertEqual("abc123", child["parent_run"]["validated_head"])
+        self.assertEqual("base123", child["parent_run"]["validated_base"])
+        self.assertEqual("PR_APPROVED", self.state()["state"])
+
+    def test_invalid_classification_is_rejected(self):
+        self.advance_to_pr_gate()
+        message = self.assert_usage_error(
+            "start-correction", "42", "--classification", "bogus",
+            "--by", "human", "--reason", "Post-approval correction",
+        )
+        self.assertIn("--classification", message)
+        self.assertIn("bogus", message)
+        self.assert_no_correction(1)
+
+    def test_correction_actor_and_reason_are_required(self):
+        self.advance_to_pr_gate()
+        missing_actor = self.assert_usage_error(
+            "start-correction", "42", "--classification", "metadata-only",
+            "--reason", "Post-approval correction",
+        )
+        self.assertIn("--by", missing_actor)
+        missing_reason = self.assert_usage_error(
+            "start-correction", "42", "--classification", "metadata-only",
+            "--by", "human",
+        )
+        self.assertIn("--reason", missing_reason)
+        self.assert_no_correction(1)
+
+    def test_metadata_only_inherits_full_evidence(self):
+        self.advance_to_pr_gate()
+        source = self.state()
+        self.start_correction("metadata-only")
+        child = self.correction_state(1)
+        self.assertEqual("WAITING_FOR_PR_HUMAN_APPROVAL", child["state"])
+        self.assertEqual(
+            {
+                "plan", "plan_review", "test_report", "test_review",
+                "implementation_report", "final_review",
+            },
+            set(child["artifacts"]),
+        )
+        for kind, record in source["artifacts"].items():
+            self.assertEqual(record, child["artifacts"][kind])
+        self.assertEqual({"plan", "tests"}, set(child["approvals"]))
+        self.assertEqual(source["approvals"]["plan"], child["approvals"]["plan"])
+        self.assertEqual(source["approvals"]["tests"], child["approvals"]["tests"])
+        self.assertEqual(source["validation"], child["validation"])
+        for field in (
+            "validated_fingerprint", "validated_head", "validated_base",
+            "validated_test_fingerprint", "validation_evidence", "final_review",
+            "draft_pr",
+        ):
+            self.assertIsNotNone(child[field])
+            self.assertEqual(source[field], child[field])
+        revised = self.correction_artifact(1, "revised-pr.md", self.pr_body(what="Clarified."))
+        self.run_cli(
+            "revise-pr-metadata", "42", "--correction", "1", "--by", "human",
+            "--reason", "Clarify", "--title", "Clarified fix", "--body-file", revised,
+            expected=2,
+        )
+        self.runner.pr_title = "Clarified fix"
+        self.runner.pr_body = pathlib.Path(revised).read_text()
+        self.run_cli(
+            "revise-pr-metadata", "42", "--correction", "1", "--by", "human",
+            "--reason", "Clarify", "--title", "Clarified fix", "--body-file", revised,
+        )
+        self.run_cli(
+            "approve-pr", "42", "--correction", "1", "--by", "human",
+            "--confirm", "I approve this draft PR.",
+        )
+        self.assertEqual("PR_APPROVED", self.correction_state(1)["state"])
+        self.assertTrue(self.correction_state(1)["approvals"]["pr"]["approved"])
+        self.assertEqual("WAITING_FOR_PR_HUMAN_APPROVAL", self.state()["state"])
+        self.assertNotIn("pr", self.state()["approvals"])
+
+    def test_metadata_only_refuses_changed_workspace_head_or_dirty_tree(self):
+        cases = (
+            ("workspace", lambda: (self.root / "production.txt").write_text("changed")),
+            ("head", lambda: setattr(self.runner, "head", "def456")),
+            (
+                "dirty",
+                lambda: setattr(
+                    self.runner, "dirty_status_output", " M production.txt\0"
+                ),
+            ),
+        )
+        for case, mutate in cases:
+            with self.subTest(case=case):
+                self.tearDown()
+                self.setUp()
+                self.advance_to_pr_gate()
+                mutate()
+                self.start_correction("metadata-only", expected=2)
+                self.assert_no_correction(1)
+
+    def test_implementation_only_clears_downstream_evidence(self):
+        self.advance_to_pr_gate()
+        source = self.state()
+        self.start_correction("implementation-only")
+        child = self.correction_state(1)
+        self.assertEqual("IMPLEMENTATION", child["state"])
+        self.assertEqual({}, child["validation"])
+        for field in (
+            "validated_fingerprint", "validated_head", "validated_base",
+            "validated_test_fingerprint", "validation_evidence", "final_review",
+            "draft_pr",
+        ):
+            self.assertIsNone(child[field])
+        self.assertEqual(
+            {"plan", "plan_review", "test_report", "test_review"},
+            set(child["artifacts"]),
+        )
+        self.assertEqual({"plan", "tests"}, set(child["approvals"]))
+        self.assertEqual(
+            source["approvals"]["tests"]["test_fingerprint"],
+            child["approvals"]["tests"]["test_fingerprint"],
+        )
+        self.assertEqual(
+            source["approvals"]["plan"]["non_test_fingerprint"],
+            child["approvals"]["plan"]["non_test_fingerprint"],
+        )
+
+    def test_test_contract_rederives_non_test_fingerprint(self):
+        self.advance_to_pr_gate()
+        source = self.state()
+        (self.root / "production.txt").write_text("implemented behavior")
+        self.start_correction("test-contract")
+        child = self.correction_state(1)
+        self.assertEqual("TEST_IMPLEMENTATION", child["state"])
+        self.assertEqual({"plan", "plan_review"}, set(child["artifacts"]))
+        self.assertEqual({"plan"}, set(child["approvals"]))
+        self.assertNotEqual(
+            source["approvals"]["plan"]["non_test_fingerprint"],
+            child["approvals"]["plan"]["non_test_fingerprint"],
+        )
+        self.run_cli(
+            "submit-tests", "42", "--correction", "1",
+            "--artifact", self.artifact("test-report.md"),
+            "--agent", workflow.ROLE_NAMES["implementer"],
+            expected=2,
+        )
+        self.assertEqual("TEST_IMPLEMENTATION", self.correction_state(1)["state"])
+        self.run_cli(
+            "submit-tests", "42", "--correction", "1",
+            "--artifact", self.correction_artifact(1, "test-report.md", "corrected tests"),
+            "--agent", workflow.ROLE_NAMES["implementer"],
+        )
+        child = self.correction_state(1)
+        self.assertEqual("TEST_REVIEW", child["state"])
+        self.assertEqual(
+            ".agent-workflow/runs/issue-42/corrections/1/artifacts/test-report.md",
+            child["artifacts"]["test_report"]["path"],
+        )
+
+    def test_architecture_correction_starts_empty(self):
+        self.advance_to_pr_gate()
+        source = self.state()
+        self.start_correction("architecture")
+        child = self.correction_state(1)
+        self.assertEqual("PLANNING", child["state"])
+        self.assertEqual({}, child["artifacts"])
+        self.assertEqual({}, child["approvals"])
+        self.assertEqual({}, child["validation"])
+        for field in ("required_checks", "test_paths", "target_base", "scope"):
+            self.assertEqual(source[field], child[field])
+        self.run_cli(
+            "submit-plan", "42", "--correction", "1",
+            "--artifact", self.correction_artifact(1, "plan.md", "corrected plan"),
+            "--agent", workflow.ROLE_NAMES["planner"],
+        )
+        self.assertEqual("PLAN_REVIEW", self.correction_state(1)["state"])
+
+    def test_source_run_files_are_untouched_by_a_fork(self):
+        for classification in CORRECTION_CLASSIFICATIONS:
+            with self.subTest(classification=classification):
+                self.tearDown()
+                self.setUp()
+                self.advance_to_pr_gate()
+                before = self.run_bytes(self.source_dir())
+                self.start_correction(classification)
+                self.assertEqual(before, self.run_bytes(self.source_dir()))
+
+    def test_correction_ancestry_is_enforced(self):
+        self.advance_to_pr_gate()
+        self.runner.base_is_ancestor = False
+        self.start_correction("implementation-only", expected=2)
+        self.assert_no_correction(1)
+        self.runner.base_is_ancestor = True
+        self.runner.commit_count = 2
+        self.start_correction("implementation-only", expected=2)
+        self.assert_no_correction(1)
+        self.runner.commit_count = 0
+        self.start_correction("implementation-only")
+        self.assertEqual("IMPLEMENTATION", self.correction_state(1)["state"])
+
+    def test_one_commit_invariant_anchors_on_the_source_head(self):
+        self.advance_to_pr_gate()
+        source_log = (self.source_dir() / "validation" / "lint.log").read_bytes()
+        self.start_correction("implementation-only")
+        self.run_cli(
+            "submit-implementation", "42", "--correction", "1",
+            "--artifact", self.correction_artifact(1, "implementation.md"),
+            "--agent", workflow.ROLE_NAMES["implementer"],
+        )
+        self.run_cli("run-validation", "42", "--correction", "1")
+        child = self.correction_state(1)
+        self.assertEqual("FINAL_REVIEW", child["state"])
+        self.assertIn(["git", "rev-list", "--count", "abc123..HEAD"], self.runner.calls)
+        self.assertTrue(child["validation_evidence"]["base_ref"].startswith("parent-run-head:"))
+        self.assertEqual("abc123", child["validated_base"])
+        self.assertEqual(
+            ".agent-workflow/runs/issue-42/corrections/1/validation/lint.log",
+            child["validation"]["lint"]["log"],
+        )
+        self.assertTrue((self.correction_dir(1) / "validation" / "lint.log").is_file())
+        self.assertEqual(
+            source_log, (self.source_dir() / "validation" / "lint.log").read_bytes()
+        )
+        self.assertEqual("WAITING_FOR_PR_HUMAN_APPROVAL", self.state()["state"])
+
+    def test_correction_retains_head_and_single_commit_safeguards(self):
+        self.advance_to_pr_gate()
+        self.start_correction("implementation-only")
+        self.run_cli(
+            "submit-implementation", "42", "--correction", "1",
+            "--artifact", self.correction_artifact(1, "implementation.md"),
+            "--agent", workflow.ROLE_NAMES["implementer"],
+        )
+        self.runner.commit_count = 2
+        self.run_cli("run-validation", "42", "--correction", "1", expected=2)
+        self.assertEqual("VALIDATION", self.correction_state(1)["state"])
+        self.runner.commit_count = 1
+        self.run_cli("run-validation", "42", "--correction", "1")
+        self.runner.head = "def456"
+        self.run_cli(
+            "review-final", "42", "--correction", "1",
+            "--artifact", self.correction_artifact(1, "final-review.md"),
+            "--reviewer", workflow.ROLE_NAMES["reviewer"], "--status", workflow.READY,
+            expected=2,
+        )
+        self.assertEqual("FINAL_REVIEW", self.correction_state(1)["state"])
+        self.runner.head = "abc123"
+        self.run_cli(
+            "review-final", "42", "--correction", "1",
+            "--artifact", self.correction_artifact(1, "final-review.md"),
+            "--reviewer", workflow.ROLE_NAMES["reviewer"], "--status", workflow.READY,
+        )
+        (self.root / "production.txt").write_text("changed after final review")
+        self.run_cli(
+            "create-draft-pr", "42", "--correction", "1", "--title", "Fix issue",
+            "--body-file", self.correction_artifact(1, "pr.md", self.pr_body()),
+            expected=2,
+        )
+        self.assertEqual(
+            1, sum(call[0:3] == ["gh", "pr", "create"] for call in self.runner.calls)
+        )
+
+    def test_child_run_is_excluded_from_fingerprint_and_worktree(self):
+        self.advance_to_pr_gate()
+        before = workflow.files_fingerprint(self.root)
+        self.start_correction("implementation-only")
+        self.assertEqual(before, workflow.files_fingerprint(self.root))
+        self.runner.dirty_status_output = (
+            "?? .agent-workflow/runs/issue-42/corrections/1/state.json\0"
+        )
+        workflow.require_clean_worktree(self.root, self.runner)
+
+    def test_status_output_contract_is_preserved_for_normal_runs(self):
+        self.advance_to_pr_gate()
+        state = self.state()
+        summary = self.capture_status()
+        self.assertEqual(set(STATUS_SUMMARY_KEYS) | {"corrections"}, set(summary))
+        self.assertNotIn("artifacts", summary)
+        self.assertNotIn("validated_fingerprint", summary)
+        self.assertEqual([], summary["corrections"])
+        for key in STATUS_SUMMARY_KEYS:
+            if key == "validation":
+                self.assertEqual(
+                    {name: result["status"] for name, result in state["validation"].items()},
+                    summary["validation"],
+                )
+            else:
+                self.assertEqual(state[key], summary[key])
+
+    def test_status_reports_corrections_and_child_addressing(self):
+        self.advance_to_pr_gate()
+        self.start_correction("metadata-only")
+        self.start_correction("metadata-only")
+        summary = self.capture_status()
+        self.assertEqual([1, 2], [entry["number"] for entry in summary["corrections"]])
+        for entry in summary["corrections"]:
+            self.assertEqual("metadata-only", entry["classification"])
+            self.assertEqual("WAITING_FOR_PR_HUMAN_APPROVAL", entry["state"])
+            self.assertEqual("human", entry["requested_by"])
+            self.assertTrue(entry["created_at"])
+        child_summary = self.capture_status("--correction", "1")
+        self.assertEqual(
+            set(STATUS_SUMMARY_KEYS) | {"correction", "parent_run"},
+            set(child_summary),
+        )
+        self.assertEqual(1, child_summary["correction"]["number"])
+        self.assertEqual("abc123", child_summary["parent_run"]["validated_head"])
+
+    def test_implementation_only_escalates_to_reopen_tests(self):
+        self.advance_to_pr_gate()
+        self.start_correction("implementation-only")
+        (self.root / "tests" / "behavior.test").write_text("weaker behavior")
+        self.run_cli(
+            "submit-implementation", "42", "--correction", "1",
+            "--artifact", self.correction_artifact(1, "implementation.md"),
+            "--agent", workflow.ROLE_NAMES["implementer"],
+            expected=2,
+        )
+        self.assertEqual("IMPLEMENTATION", self.correction_state(1)["state"])
+        self.run_cli(
+            "reopen-tests", "42", "--correction", "1", "--by", "human",
+            "--reason", "The approved expectation was incomplete",
+        )
+        child = self.correction_state(1)
+        self.assertEqual("TEST_IMPLEMENTATION", child["state"])
+        self.assertFalse(child["approvals"]["tests"]["approved"])
+        self.assertEqual("WAITING_FOR_PR_HUMAN_APPROVAL", self.state()["state"])
+        self.assertTrue(self.state()["approvals"]["tests"]["approved"])
+
+    def test_test_contract_escalates_to_reopen_plan(self):
+        self.advance_to_pr_gate()
+        self.start_correction("test-contract")
+        (self.root / "production.txt").write_text("unexpected production change")
+        self.run_cli(
+            "submit-tests", "42", "--correction", "1",
+            "--artifact", self.correction_artifact(1, "test-report.md"),
+            "--agent", workflow.ROLE_NAMES["implementer"],
+            expected=2,
+        )
+        self.assertEqual("TEST_IMPLEMENTATION", self.correction_state(1)["state"])
+        self.run_cli(
+            "reopen-plan", "42", "--correction", "1", "--by", "human",
+            "--reason", "The correction needs a material design change",
+        )
+        child = self.correction_state(1)
+        self.assertEqual("PLANNING", child["state"])
+        self.assertFalse(child["approvals"]["plan"]["approved"])
+        self.assertTrue(self.state()["approvals"]["plan"]["approved"])
+
+    def drive_correction_to_pr_gate(self, number, head=None):
+        self.run_cli(
+            "submit-implementation", "42", "--correction", str(number),
+            "--artifact", self.correction_artifact(number, "implementation.md"),
+            "--agent", workflow.ROLE_NAMES["implementer"],
+        )
+        if head is not None:
+            self.runner.head = head
+            self.runner.pr_head = head
+        self.run_cli("run-validation", "42", "--correction", str(number))
+        self.run_cli(
+            "review-final", "42", "--correction", str(number),
+            "--artifact", self.correction_artifact(number, "final-review.md"),
+            "--reviewer", workflow.ROLE_NAMES["reviewer"], "--status", workflow.READY,
+        )
+        self.run_cli(
+            "create-draft-pr", "42", "--correction", str(number),
+            "--title", "Fix issue",
+            "--body-file", self.correction_artifact(number, "pr.md", self.pr_body()),
+        )
+        self.assertEqual(
+            "WAITING_FOR_PR_HUMAN_APPROVAL", self.correction_state(number)["state"]
+        )
+
+    def test_sibling_guard_blocks_active_work_and_allows_chaining(self):
+        self.advance_to_pr_gate()
+        self.start_correction("implementation-only")
+        self.assertEqual("IMPLEMENTATION", self.correction_state(1)["state"])
+        self.start_correction("implementation-only", expected=2)
+        self.assert_no_correction(2)
+        self.drive_correction_to_pr_gate(1, head="def456")
+        self.start_correction("implementation-only", "--from-correction", "1")
+        chained = self.correction_state(2)
+        self.assertEqual(2, chained["correction"]["number"])
+        self.assertEqual(1, chained["parent_run"]["correction"])
+        self.assertEqual("def456", self.correction_state(1)["validated_head"])
+        self.assertEqual("def456", chained["parent_run"]["validated_head"])
+        self.assertEqual(
+            hashlib.sha256((self.correction_dir(1) / "state.json").read_bytes()).hexdigest(),
+            chained["parent_run"]["state_sha256"],
+        )
+        self.assertEqual(
+            hashlib.sha256(
+                (self.correction_dir(1) / "history.jsonl").read_bytes()
+            ).hexdigest(),
+            chained["parent_run"]["history_sha256"],
+        )
+        self.assertEqual(
+            "WAITING_FOR_PR_HUMAN_APPROVAL", chained["parent_run"]["state"]
+        )
+
+    def test_stale_inherited_artifact_fails_the_correction_closed(self):
+        self.advance_to_pr_gate()
+        self.start_correction("metadata-only")
+        (self.source_dir() / "artifacts" / "plan.md").write_text("changed after approval")
+        self.run_cli(
+            "approve-pr", "42", "--correction", "1", "--by", "human",
+            "--confirm", "I approve this draft PR.",
+            expected=2,
+        )
+        self.assertEqual(
+            "WAITING_FOR_PR_HUMAN_APPROVAL", self.correction_state(1)["state"]
+        )
+
+    def test_inherited_and_invalidated_evidence_is_exhaustive_and_disjoint(self):
+        for classification in CORRECTION_CLASSIFICATIONS:
+            with self.subTest(classification=classification):
+                self.tearDown()
+                self.setUp()
+                self.advance_to_pr_gate()
+                self.start_correction(classification)
+                correction = self.correction_state(1)["correction"]
+                inherited = set(correction["inherited"])
+                invalidated = set(correction["invalidated"])
+                self.assertEqual(len(inherited), len(correction["inherited"]))
+                self.assertEqual(len(invalidated), len(correction["invalidated"]))
+                self.assertEqual(CORRECTION_TOKENS, inherited | invalidated)
+                self.assertEqual(set(), inherited & invalidated)
+                self.assertEqual(INHERITED_TOKENS[classification], inherited)
+
+    def test_chained_correction_leaves_every_ancestor_byte_identical(self):
+        self.advance_to_pr_gate()
+        self.start_correction("implementation-only")
+        self.drive_correction_to_pr_gate(1, head="def456")
+        source_before = self.run_bytes(self.source_dir())
+        correction_before = self.run_bytes(self.correction_dir(1))
+        self.start_correction("implementation-only", "--from-correction", "1")
+        self.run_cli(
+            "submit-implementation", "42", "--correction", "2",
+            "--artifact", self.correction_artifact(2, "implementation.md"),
+            "--agent", workflow.ROLE_NAMES["implementer"],
+        )
+        before_validation = len(self.runner.calls)
+        self.run_cli("run-validation", "42", "--correction", "2")
+        validation_calls = self.runner.calls[before_validation:]
+        self.assertIn(["git", "rev-list", "--count", "def456..HEAD"], validation_calls)
+        self.assertNotIn(["git", "rev-list", "--count", "abc123..HEAD"], validation_calls)
+        self.assertEqual("def456", self.correction_state(2)["validated_base"])
+        self.assertEqual("FINAL_REVIEW", self.correction_state(2)["state"])
+        self.assertEqual(source_before, self.run_bytes(self.source_dir()))
+        self.assertEqual(correction_before, self.run_bytes(self.correction_dir(1)))
+
+    def test_metadata_only_correction_requires_an_open_draft(self):
+        self.advance_to_pr_gate()
+        self.start_correction("metadata-only")
+        self.runner.pr_state = "CLOSED"
+        revised = self.correction_artifact(1, "revised-pr.md", self.pr_body(what="Clarified."))
+        self.run_cli(
+            "revise-pr-metadata", "42", "--correction", "1", "--by", "human",
+            "--reason", "Clarify", "--title", "Clarified fix", "--body-file", revised,
+            expected=2,
+        )
+        self.assertEqual(1, len(self.pr_mutations()))
+        self.assertEqual(
+            "WAITING_FOR_PR_HUMAN_APPROVAL", self.correction_state(1)["state"]
+        )
+
+    def test_code_changing_correction_opens_a_new_draft_when_none_is_open(self):
+        self.advance_to_pr_approved()
+        self.start_correction("implementation-only")
+        self.runner.pr_list_output = "[]"
+        self.drive_correction_to_pr_gate(1)
+        self.assertEqual(
+            2, sum(call[0:3] == ["gh", "pr", "create"] for call in self.runner.calls)
+        )
+        self.assertEqual("PR_APPROVED", self.state()["state"])
+
+    def test_every_downstream_command_accepts_correction_addressing(self):
+        self.advance_to_pr_gate()
+        before = self.run_bytes(self.source_dir())
+        for command, arguments in CORRECTION_ADDRESSED_COMMANDS:
+            with self.subTest(command=command):
+                self.run_cli(
+                    command, "42", *arguments, "--correction", "9", expected=2
+                )
+                self.assertEqual(before, self.run_bytes(self.source_dir()))
+
+    def test_stray_state_less_correction_directory_never_blocks_the_run(self):
+        self.advance_to_pr_gate()
+        self.run_cli("status", "42", "--correction", "9", expected=2)
+        self.assert_no_correction(9)
+        self.correction_dir(9).mkdir(parents=True, exist_ok=True)
+        self.assertEqual([], self.capture_status()["corrections"])
+        self.start_correction("metadata-only")
+        self.assertEqual(1, self.correction_state(1)["correction"]["number"])
+        self.assertTrue((self.correction_dir(1) / "state.json").is_file())
+        self.assert_no_correction(10)
+        self.assertEqual(
+            [1], [entry["number"] for entry in self.capture_status()["corrections"]]
+        )
+
+    def test_workflow_tooling_profile_initialises(self):
+        self.tearDown()
+        self.initialize_workflow_tooling()
+        state = self.state()
+        self.assertEqual("workflow-tooling", state["scope"])
+        self.assertEqual(["scripts/tests/**/*"], state["test_paths"])
+        self.assertEqual(
+            [
+                {
+                    "name": "agent-workflow-tests",
+                    "command": ["make", "agent-workflow-test"],
+                    "cwd": ".",
+                }
+            ],
+            state["required_checks"],
+        )
+
+    def test_repository_config_defines_the_workflow_tooling_profile(self):
+        config = json.loads(
+            (MODULE_PATH.parents[1] / ".agent-workflow" / "config.json").read_text()
+        )
+        profile = config["validation_profiles"]["workflow-tooling"]
+        self.assertIn("scripts/tests/**/*", profile["test_paths"])
+        self.assertEqual(
+            [{"name": "agent-workflow-tests", "command": ["make", "agent-workflow-test"], "cwd": "."}],
+            profile["checks"],
         )
 
 

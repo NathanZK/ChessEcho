@@ -26,6 +26,7 @@ Enforce these rules:
 - Require the exact `## What`, `## Why`, and `## Testing` PR-body format from the workflow guide.
 - Create a draft PR only through `create-draft-pr`.
 - For a human-authorized title/body-only correction to the same draft, use `revise-pr-metadata`; it preserves implementation evidence only when workspace, base, and reviewed HEAD are unchanged. Use `reject-pr` for implementation changes.
+- After a run reaches `WAITING_FOR_PR_HUMAN_APPROVAL` or `PR_APPROVED`, never restart the issue and never reopen or edit that run to make a bounded correction. Fork a linked correction run with `start-correction ISSUE --classification metadata-only|implementation-only|test-contract|architecture --by GITHUB_LOGIN --reason "..."`, chaining from the latest settled correction with `--from-correction N`, and address every later command with `--correction N`. Choose the narrowest classification the change honestly fits; the CLI verifies it against the real workspace, `HEAD`, and artifact hashes and fails closed rather than accepting a weaker label. See the workflow guide's Corrections section.
 - Stop at `WAITING_FOR_PR_HUMAN_APPROVAL`. Do not merge, mark ready, deploy, close the issue, or continue work without explicit authorization.
 
 Never run `approve-plan`, `approve-tests`, or `approve-pr` based on reviewer output, silence, prior approval, successful tools, or inferred intent. A human must explicitly provide the stage's confirmation phrase. Record the human identity with `--by` and the phrase with `--confirm`.
