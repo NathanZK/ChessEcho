@@ -372,3 +372,85 @@ Returned when the specified position FEN is invalid or the attempted move is ill
   ]
 }
 ```
+---
+
+## Identity & Session (Issue #113)
+
+The identity/session foundation adds a provider-neutral authenticated boundary
+(#79 D1/D2/D7). Sessions are opaque, server-side, and cookie-based; only the
+SHA-256 hash of the secret is persisted. See
+[`docs/architecture/identity-and-session.md`](docs/architecture/identity-and-session.md)
+for the full contract.
+
+### Cookies
+
+- **`CHESSECHO_SESSION`** — the opaque session secret. `HttpOnly`, `Path=/`,
+  `SameSite` and `Secure` are configurable (`chessecho.auth.cookie.*`). Never
+  readable by JavaScript and never returned in a response body.
+- **`XSRF-TOKEN`** — the readable double-submit CSRF token, seeded on safe
+  requests. Not `HttpOnly`. The SPA echoes it in the `X-XSRF-TOKEN` header on
+  state-changing requests.
+
+### CORS
+
+Credentialed CORS (`Access-Control-Allow-Credentials: true`) is restricted to the
+configured explicit origins (`http://localhost:3000`, `http://127.0.0.1:3000`).
+Allowed request headers include `Content-Type` and `X-XSRF-TOKEN`.
+
+## Current Session
+
+Returns the current authenticated principal summary, or `401` when the session is
+missing, expired, or revoked. Exposes no reusable credential.
+
+- **Endpoint:** `GET /api/me`
+- **Auth:** session cookie (optional)
+- **CSRF:** not required (safe method)
+
+### Responses
+#### `200 OK`
+```json
+{
+  "userId": "b1e5f2c0-0000-0000-0000-000000000000",
+  "devPrincipal": false,
+  "email": null
+}
+```
+
+#### `401 Unauthorized`
+```json
+{
+  "error": "UNAUTHENTICATED",
+  "details": ["Authentication required"]
+}
+```
+
+## Logout
+
+Revokes the current session (idempotent) and clears the session cookie by
+replaying its attributes with `Max-Age=0`.
+
+- **Endpoint:** `POST /api/logout`
+- **Auth:** session cookie (the raw secret is read from the cookie, never from the
+  principal)
+- **CSRF:** required (`X-XSRF-TOKEN` header must equal the `XSRF-TOKEN` cookie)
+
+### Responses
+- **`204 No Content`** — session revoked (or no session was present; still `204`).
+- **`403 Forbidden`** — `{"error": "CSRF_FAILED", ...}` when the CSRF token is
+  missing or does not match.
+
+## Development Session (dev/local only)
+
+Establishes a session through the shared identity/session path using a fixed
+development principal. It is a fail-closed allowlist endpoint: present only under
+the `{dev, local}` profile allowlist AND when `chessecho.auth.dev-mode.enabled=true`
+(default off). Under any other profile the endpoint is absent (`404`). If dev mode
+is enabled outside the allowlist, application boot is aborted by a startup guard.
+
+- **Endpoint:** `POST /api/dev/session`
+- **CSRF:** required
+
+### Responses
+- **`200 OK`** — `CurrentUserResponse` plus a `Set-Cookie: CHESSECHO_SESSION` (`HttpOnly`).
+- **`404 Not Found`** — outside the `{dev, local}` allowlist or when dev mode is disabled.
+- **`403 Forbidden`** — `{"error": "CSRF_FAILED", ...}`.

@@ -2,6 +2,8 @@ package com.chessecho.controller
 
 import com.chessecho.dto.ErrorResponse
 import com.chessecho.service.ActiveImportJobException
+import com.chessecho.web.CsrfException
+import com.chessecho.web.UnauthenticatedException
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.MethodArgumentNotValidException
@@ -11,6 +13,18 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 
 @RestControllerAdvice
 class GlobalExceptionHandler {
+    @ExceptionHandler(UnauthenticatedException::class)
+    fun handleUnauthenticated(ex: UnauthenticatedException): ResponseEntity<ErrorResponse> =
+        ResponseEntity
+            .status(HttpStatus.UNAUTHORIZED)
+            .body(ErrorResponse(error = "UNAUTHENTICATED", details = listOf(ex.message ?: "Authentication required")))
+
+    @ExceptionHandler(CsrfException::class)
+    fun handleCsrf(ex: CsrfException): ResponseEntity<ErrorResponse> =
+        ResponseEntity
+            .status(HttpStatus.FORBIDDEN)
+            .body(ErrorResponse(error = "CSRF_FAILED", details = listOf(ex.message ?: "CSRF validation failed")))
+
     @ExceptionHandler(NoSuchElementException::class)
     fun handleNotFound(ex: NoSuchElementException): ResponseEntity<ErrorResponse> =
         ResponseEntity

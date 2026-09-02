@@ -5,12 +5,16 @@ import { Swords, Target, Download, User } from 'lucide-react';
 
 export type TabType = 'puzzles' | 'weaknesses' | 'import';
 
+export type HeaderSessionStatus = 'loading' | 'authenticated' | 'unauthenticated' | 'error';
+
 interface HeaderProps {
   activeTab: TabType;
   setActiveTab: (tab: TabType) => void;
   username?: string;
   weaknessCount?: number;
   onDisconnect?: () => void;
+  sessionStatus?: HeaderSessionStatus;
+  onSignIn?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -19,8 +23,14 @@ export const Header: React.FC<HeaderProps> = ({
   username,
   weaknessCount = 0,
   onDisconnect,
+  sessionStatus,
+  onSignIn,
 }) => {
   const isPuzzlesLayout = activeTab === 'puzzles';
+  // The connected affordance is derived from session state, not a stored
+  // Chess.com username: an explicitly unauthenticated session is never shown as
+  // connected even if a username lingers in localStorage (#113 AC13).
+  const showConnected = !!username && sessionStatus !== 'unauthenticated';
 
   return (
     <header
@@ -150,7 +160,7 @@ export const Header: React.FC<HeaderProps> = ({
         </nav>
 
         {/* User Profile Badge */}
-        {username ? (
+        {showConnected ? (
           <div
             className={`flex items-center bg-slate-800/80 px-3.5 py-1.5 rounded-xl border border-slate-700/60 ${
               isPuzzlesLayout
@@ -204,6 +214,16 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <User className={`w-4 h-4 text-slate-500 ${isPuzzlesLayout ? 'shrink-0' : ''}`} />
             <span className={isPuzzlesLayout ? 'min-w-0 break-words' : ''}>Not Connected</span>
+            {sessionStatus === 'unauthenticated' && onSignIn && (
+              <button
+                onClick={onSignIn}
+                className={`ml-2 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold rounded-lg transition cursor-pointer ${
+                  isPuzzlesLayout ? 'shrink-0 max-w-full whitespace-normal 2xl:w-full 2xl:ml-0' : ''
+                }`}
+              >
+                Sign In
+              </button>
+            )}
           </div>
         )}
       </div>

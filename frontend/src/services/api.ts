@@ -2,6 +2,85 @@ import { Puzzle } from '../mock/mockData';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api';
 
+/**
+ * Non-persistent session state. Session material is never written to
+ * `localStorage`; the authoritative session lives in the `HttpOnly` cookie and
+ * is reflected here only in memory for the current render.
+ */
+export type SessionState =
+  | { status: 'loading' }
+  | { status: 'authenticated'; userId?: string; devPrincipal?: boolean }
+  | { status: 'unauthenticated' }
+  | { status: 'error' };
+
+/** Reads the readable double-submit CSRF token from the `XSRF-TOKEN` cookie. */
+function csrfToken(): string {
+  if (typeof document === 'undefined') return '';
+  const match = document.cookie
+    .split(';')
+    .map((c) => c.trim())
+    .find((c) => c.startsWith('XSRF-TOKEN='));
+  return match ? decodeURIComponent(match.substring('XSRF-TOKEN='.length)) : '';
+}
+
+/**
+ * Bootstraps the current session from `GET /api/me`. A `200` resolves to an
+ * authenticated principal summary (no reusable credential), a `401` to
+ * unauthenticated (missing/expired/revoked), and any other outcome to an error.
+ */
+export async function fetchCurrentSession(): Promise<SessionState> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/me`, { credentials: 'include' });
+    if (response.ok) {
+      const body = await response.json().catch(() => ({}));
+      return { status: 'authenticated', userId: body?.userId, devPrincipal: body?.devPrincipal };
+    }
+    if (response.status === 401) {
+      return { status: 'unauthenticated' };
+    }
+    return { status: 'error' };
+  } catch {
+    return { status: 'error' };
+  }
+}
+
+/**
+ * Signs the current session out via `POST /api/logout`, sending credentials and
+ * the double-submit CSRF header. Network failures are swallowed so the caller can
+ * always clear local state.
+ */
+export async function logout(): Promise<void> {
+  try {
+    await fetch(`${API_BASE_URL}/logout`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'X-XSRF-TOKEN': csrfToken() },
+    });
+  } catch {
+    // Ignore: local state is cleared regardless of the network result.
+  }
+}
+
+/**
+ * Establishes a development session via `POST /api/dev/session`. Only meaningful
+ * when the backend runs under the development allowlist; otherwise the endpoint
+ * is absent (404) and this resolves to `null`.
+ */
+export async function devLogin(): Promise<SessionState | null> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/dev/session`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'X-XSRF-TOKEN': csrfToken() },
+    });
+    if (!response.ok) return null;
+    const body = await response.json().catch(() => ({}));
+    return { status: 'authenticated', userId: body?.userId, devPrincipal: body?.devPrincipal };
+  } catch {
+    return null;
+  }
+}
+
 export interface ImportJobResponse {
   jobId: string;
   status: 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
