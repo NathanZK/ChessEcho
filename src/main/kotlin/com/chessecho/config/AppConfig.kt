@@ -13,6 +13,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer
 @EnableConfigurationProperties(
     ChessPubApiProperties::class,
     PracticalEvidenceProperties::class,
+    SessionCookieProperties::class,
 )
 class AppConfig {
     @Bean
@@ -32,7 +33,8 @@ class AppConfig {
                 registry.addMapping("/**")
                     .allowedOrigins("http://localhost:3000", "http://127.0.0.1:3000")
                     .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
-                    .allowedHeaders("*")
+                    .allowedHeaders("Content-Type", "X-XSRF-TOKEN")
+                    .allowCredentials(true)
             }
 
             override fun addFormatters(registry: org.springframework.format.FormatterRegistry) {

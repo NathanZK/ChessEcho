@@ -15,8 +15,8 @@ class AppUser(
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     val id: UUID = UUID.randomUUID(),
-    @Column(nullable = false, unique = true)
-    val email: String,
+    @Column(nullable = true, unique = true)
+    val email: String? = null,
     @Column(name = "created_at")
     val createdAt: Instant = Instant.now(),
 )

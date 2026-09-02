@@ -8,10 +8,10 @@ import { PuzzleFeedbackPanel, type ChallengeSubmissionResult } from '@/component
 import { WeaknessesList } from '@/components/WeaknessesList';
 import { ImportGamesView } from '@/components/ImportGamesView';
 import { Puzzle } from '@/mock/mockData';
-import { fetchPuzzles, JobStatusResponse, ContinuationMode, ContinuationCandidate, ExplorationPlayMode, toWhitePerspective, fetchPuzzleContinuation } from '@/services/api';
+import { fetchPuzzles, JobStatusResponse, ContinuationMode, ContinuationCandidate, ExplorationPlayMode, toWhitePerspective, fetchPuzzleContinuation, fetchCurrentSession, logout as apiLogout, type SessionState } from '@/services/api';
 import { soundService } from '@/services/soundService';
 import { usePuzzleContinuation } from '@/utils/usePuzzleContinuation';
-import { activeTabStore, activeUsernameStore, puzzleSettingsStore } from '@/utils/browserStores';
+import { activeTabStore, activeUsernameStore, activeJobStore, puzzleSettingsStore } from '@/utils/browserStores';
 
 export const EXPLORATION_STEP_DELAY_MS = 800;
 
@@ -44,6 +44,23 @@ export default function Home() {
   const [activeJobStatus, setActiveJobStatus] = useState<JobStatusResponse | null>(null);
   const [weaknessRefreshKey, setWeaknessRefreshKey] = useState<number>(0);
   const prevJobRef = React.useRef<JobStatusResponse | null>(null);
+
+  // Non-persistent session state, bootstrapped from /api/me. The auth indicator is
+  // derived from this — never from a stored Chess.com username (#113 AC7/AC13).
+  const [sessionStatus, setSessionStatus] = useState<SessionState['status']>('loading');
+  // Personalized fetches are gated on the session resolving. The gate is a shared
+  // one-shot promise so the puzzle load can await it without a pre-fetch render;
+  // it opens for authenticated (or an unreachable backend / error fallback) and
+  // stays closed for an explicitly unauthenticated session.
+  const sessionGateRef = React.useRef<{ promise: Promise<boolean>; resolve: (open: boolean) => void } | null>(null);
+  if (sessionGateRef.current === null) {
+    let resolveGate!: (open: boolean) => void;
+    const promise = new Promise<boolean>((res) => {
+      resolveGate = res;
+    });
+    sessionGateRef.current = { promise, resolve: resolveGate };
+  }
+  const sessionGateOpen = sessionStatus === 'authenticated' || sessionStatus === 'error';
 
   const handleJobStatusUpdate = (job: JobStatusResponse | null) => {
     const previousJob = prevJobRef.current;
@@ -102,6 +119,30 @@ export default function Home() {
     setHasMorePuzzles(false);
     setIsFetchingMorePuzzles(false);
     setWeaknessCount(0);
+  };
+
+  // Logout/expiry: clear private state, invalidate in-flight generations, drop the
+  // persisted active job, and mark the session unauthenticated so a late response
+  // cannot restore the prior user's data (#113 AC8). Generations are bumped first.
+  const clearSessionState = () => {
+    invalidatePuzzleRequests();
+    handleDisconnect();
+    activeJobStore.set(null);
+    setActiveJobStatus(null);
+    setWeaknessRefreshKey((k) => k + 1);
+  };
+
+  const handleLogout = () => {
+    clearSessionState();
+    setSessionStatus('unauthenticated');
+    void apiLogout();
+  };
+
+  const handleSignIn = () => {
+    // No production provider is wired in this slice; re-check the session so a
+    // session established out-of-band (e.g. the dev endpoint) is picked up.
+    setSessionStatus('loading');
+    fetchCurrentSession().then((state) => setSessionStatus(state.status));
   };
 
   // Explicit client initialization gate to prevent hydration mismatch and double-fetch
@@ -602,6 +643,15 @@ export default function Home() {
 
     async function loadData() {
       const seq = ++puzzleLoadSeqRef.current;
+      // Gate on session resolution without forcing an extra committed render:
+      // await the shared session gate so no personalized fetch fires while the
+      // session is unresolved, and none fires at all when it is not open.
+      const open = await sessionGateRef.current!.promise;
+      if (seq !== puzzleLoadSeqRef.current) return;
+      if (!open) {
+        setIsLoadingPuzzles(false);
+        return;
+      }
       setIsLoadingPuzzles(true);
       setPuzzleLoadError(false);
       setPuzzlePage(0);
@@ -658,6 +708,25 @@ export default function Home() {
       requestSequence.current++;
     };
   }, [isSettingsInitialized, activeUsername, puzzleColorFilter, minEvalLoss, minMistakeCount, puzzleReloadToken]);
+
+  // Bootstrap the session from /api/me once on mount, resolving the shared gate so
+  // personalized fetches proceed only after the session resolves (and only when it
+  // is authenticated or the backend is unreachable). A late resolve after unmount
+  // is ignored (#113 AC7).
+  React.useEffect(() => {
+    let active = true;
+    fetchCurrentSession().then((state) => {
+      if (!active) return;
+      setSessionStatus(state.status);
+      sessionGateRef.current!.resolve(state.status === 'authenticated' || state.status === 'error');
+      if (state.status === 'unauthenticated') {
+        setIsLoadingPuzzles(false);
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleRetryPuzzleLoad = () => {
     invalidatePuzzleRequests();
@@ -1227,7 +1296,9 @@ export default function Home() {
         setActiveTab={changeTab}
         username={activeUsername}
         weaknessCount={weaknessCount}
-        onDisconnect={handleDisconnect}
+        onDisconnect={handleLogout}
+        sessionStatus={sessionStatus}
+        onSignIn={handleSignIn}
       />
 
       {/* Main Content Area */}
@@ -1392,7 +1463,7 @@ export default function Home() {
         {/* TAB 2: WEAKNESSES LIBRARY */}
         {activeTab === 'weaknesses' && (
           <WeaknessesList
-            username={activeUsername}
+            username={sessionGateOpen ? activeUsername : undefined}
             minEvalLoss={minEvalLoss}
             onMinEvalLossChange={handleMinEvalLossChange}
             minMistakeCount={minMistakeCount}

@@ -17,6 +17,22 @@ spring:
     enabled: true
     locations: classpath:db/migration
 
+chessecho:
+  auth:
+    cookie:
+      name: CHESSECHO_SESSION
+      secure: ${CHESSECHO_AUTH_COOKIE_SECURE:false}
+      same-site: ${CHESSECHO_AUTH_COOKIE_SAME_SITE:Lax}
+      path: /
+    csrf:
+      cookie-name: XSRF-TOKEN
+      header-name: X-XSRF-TOKEN
+    session:
+      idle-timeout: ${CHESSECHO_AUTH_SESSION_IDLE_TIMEOUT:PT30M}
+      absolute-timeout: ${CHESSECHO_AUTH_SESSION_ABSOLUTE_TIMEOUT:P30D}
+    dev-mode:
+      enabled: ${CHESSECHO_AUTH_DEV_MODE_ENABLED:false}
+
 chess:
   stockfish:
     path: ${STOCKFISH_PATH:stockfish}
