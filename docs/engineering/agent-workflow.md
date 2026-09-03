@@ -5,7 +5,8 @@ ChessEcho uses a repository-scoped, resumable workflow for taking a GitHub issue
 ## Architecture
 
 - `.github/agents/` defines the Orchestrator, Planner, Reviewer, and Implementer roles using GitHub Copilot custom-agent profiles.
-- `scripts/agent_workflow.py` is the authoritative state machine. It exposes specific events rather than an unrestricted transition command.
+- `scripts/agent_workflow.py` owns legacy lifecycle policy and orchestration. It exposes specific events rather than an unrestricted transition command.
+- `scripts/workflow_kernel.py` owns the legacy v4 integrity, locking, and atomic projection-persistence primitives consumed by that policy. See [Workflow Module Boundaries](workflow-boundaries.md).
 - `.agent-workflow/config.json` maps issue scope to ChessEcho's existing validation commands.
 - `.agent-workflow/runs/issue-<number>/` contains the issue snapshot, current `state.json`, append-only `history.jsonl`, artifacts, and validation logs.
 - `scripts/tests/test_agent_workflow.py` verifies gates, revision loops, failure handling, and draft-PR blocking.
