@@ -945,7 +945,7 @@ def require_test_only_phase_unchanged(root, state):
 
 
 def load_config(root):
-    path = root / ".agent-workflow" / "config.json"
+    path = root / ".github" / "agent-workflow.json"
     with path.open() as handle:
         return json.load(handle)
 

@@ -14,6 +14,13 @@ jobs:
       agents: ${{ steps.filter.outputs.agents }}
     steps:
       - uses: actions/checkout@v4
+      - name: Reject tracked agent workflow runtime state
+        run: |
+          if [ -n "$(git ls-files -- '.agent-workflow/**')" ]; then
+            echo "::error::Runtime state under .agent-workflow/ must not be tracked."
+            git ls-files -- '.agent-workflow/**'
+            exit 1
+          fi
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -38,6 +45,7 @@ jobs:
             agents:
               - 'AGENTS.md'
               - '.agent-workflow/**'
+              - '.github/agent-workflow.json'
               - '.github/agents/**'
               - 'docs/engineering/agent-workflow.md'
               - 'docs/engineering/workflow-boundaries.md'
