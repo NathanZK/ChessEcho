@@ -14,6 +14,7 @@ the workflow lifecycle or changing its stored formats.
 | Immutable durable-CAS object publication | `workflow_cas.py` |
 | Canonical evidence manifests, provenance, bindings, and derived views | `workflow_evidence.py` |
 | Deterministic legacy/durable compatibility planning and immutable publication | `workflow_migration.py` |
+| Dependency invalidation and convergence policy evaluation | `workflow_policy.py` |
 | Lifecycle, approvals, reviews, corrections, validation, migration, and recovery policy | `agent_workflow.py` |
 | Git, GitHub, process execution, command parsing, and human-facing output | `agent_workflow.py` |
 | Durable-store inspection and checkpoints | `workflow_inspector.py` |
@@ -34,6 +35,7 @@ agent_workflow   -> workflow_kernel
 
 workflow_evidence -> workflow_inspector, workflow_cas
 workflow_migration -> workflow_inspector, workflow_cas, workflow_evidence, workflow_kernel
+workflow_policy -> workflow_inspector, workflow_evidence, workflow_migration
 workflow_repair   -> workflow_inspector, workflow_cas
 workflow_cas
 workflow_inspector
@@ -68,6 +70,13 @@ downward on the inspector, CAS, evidence, and trusted kernel modules, but never
 on the lifecycle CLI or repair. It consumes self-contained exact projection
 bytes or a complete inspector checkpoint with explicit reachable selections.
 It cannot mutate a pointer, projection, transaction, or lifecycle state.
+
+`workflow_policy.py` is the inactive #134 policy evaluator. It verifies #132
+bindings and #133 migration plans, computes a fixed dependency closure, and
+applies bounded convergence rules to a self-contained canonical state. It
+cannot publish or apply the result, read `.agent-workflow/**`, execute a
+process, or import the legacy CLI, kernel, repair tool, supervisor, or CAS
+publisher.
 
 ## Kernel boundary
 
@@ -122,5 +131,9 @@ implement dependency-aware invalidation.
 
 #133 adds only deterministic migration planning and immutable evidence
 publication. It does not move migration into `agent_workflow.py`, invoke
-`workflow_repair.py`, activate policy, implement #125/#134, or modify frozen
+`workflow_repair.py`, activate policy, implement #125, or modify frozen
 #115 authority.
+
+#134 adds only deterministic dependency invalidation and convergence
+evaluation. It does not activate that policy, mutate workflow authority, or
+change legacy reopen/correction behavior.
