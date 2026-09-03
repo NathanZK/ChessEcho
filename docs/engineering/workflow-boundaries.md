@@ -13,6 +13,7 @@ the workflow lifecycle or changing its stored formats.
 | Bounded external process execution and process-group cleanup | `workflow_supervisor.py` |
 | Immutable durable-CAS object publication | `workflow_cas.py` |
 | Canonical evidence manifests, provenance, bindings, and derived views | `workflow_evidence.py` |
+| Deterministic legacy/durable compatibility planning and immutable publication | `workflow_migration.py` |
 | Lifecycle, approvals, reviews, corrections, validation, migration, and recovery policy | `agent_workflow.py` |
 | Git, GitHub, process execution, command parsing, and human-facing output | `agent_workflow.py` |
 | Durable-store inspection and checkpoints | `workflow_inspector.py` |
@@ -32,6 +33,7 @@ The mechanically enforced internal dependency graph is:
 agent_workflow   -> workflow_kernel
 
 workflow_evidence -> workflow_inspector, workflow_cas
+workflow_migration -> workflow_inspector, workflow_cas, workflow_evidence, workflow_kernel
 workflow_repair   -> workflow_inspector, workflow_cas
 workflow_cas
 workflow_inspector
@@ -60,6 +62,12 @@ serialization, independent reads, and immutable publication. None imports the
 legacy workflow CLI or the extracted legacy kernel. This keeps durable
 inspection, repair, and evidence authoritative independently of lifecycle
 policy.
+
+`workflow_migration.py` is the only #133 compatibility adapter. It depends
+downward on the inspector, CAS, evidence, and trusted kernel modules, but never
+on the lifecycle CLI or repair. It consumes self-contained exact projection
+bytes or a complete inspector checkpoint with explicit reachable selections.
+It cannot mutate a pointer, projection, transaction, or lifecycle state.
 
 ## Kernel boundary
 
@@ -111,3 +119,8 @@ does not repair or resume frozen issue #115, and it does not implement #131,
 #132 adds only canonical evidence objects and read-only derived/v4 views. It
 does not integrate them into legacy lifecycle policy, perform migration, or
 implement dependency-aware invalidation.
+
+#133 adds only deterministic migration planning and immutable evidence
+publication. It does not move migration into `agent_workflow.py`, invoke
+`workflow_repair.py`, activate policy, implement #125/#134, or modify frozen
+#115 authority.

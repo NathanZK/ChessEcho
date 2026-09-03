@@ -130,6 +130,13 @@ IDs. The evidence layer verifies these facts but does not decide which workflow
 correction class may inherit evidence. Invalidated evidence has no child
 binding. Lifecycle invalidation remains outside #132.
 
+Binding identity is caller-asserted and structurally validated. Migration
+adapter tags select graph validation rules; they are not signatures or producer
+attestations. #133 derives legacy and durable identities by rebuilding its
+deterministic migration plan. Consumers that require that derivation must
+verify through the migration plan or supply its expected identity and subject
+to `verify`.
+
 An expectation supplied to `verify` must exactly match the binding identity and
 subject. A mismatch is `stale`, not silently accepted.
 

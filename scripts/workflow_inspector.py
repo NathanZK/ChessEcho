@@ -45,6 +45,7 @@ JSON_OBJECT_KINDS = {
     "evidence-provenance",
     "issue-index",
     "legacy-migration-manifest",
+    "migration-source-manifest",
     "run-envelope",
     "run-event",
     "run-history",
@@ -276,7 +277,7 @@ def validate_reference(reference, expected_kind=None):
             "Expected object kind %s, found %r" % (expected_kind, kind),
             digest,
         )
-    if kind not in SUPPORTED_OBJECT_KINDS:
+    if not isinstance(kind, str) or kind not in SUPPORTED_OBJECT_KINDS:
         raise InspectionFailure(
             "unsupported",
             "unsupported-object-kind",

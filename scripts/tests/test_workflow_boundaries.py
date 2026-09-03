@@ -14,6 +14,7 @@ PRODUCTION_MODULES = (
     "workflow_evidence",
     "workflow_inspector",
     "workflow_kernel",
+    "workflow_migration",
     "workflow_repair",
     "workflow_supervisor",
 )
@@ -108,6 +109,15 @@ class WorkflowBoundaryTest(unittest.TestCase):
         self.assertEqual(set(), project_imports("workflow_kernel"))
         self.assertEqual(set(), project_imports("workflow_inspector"))
         self.assertEqual(
+            {
+                "workflow_cas",
+                "workflow_evidence",
+                "workflow_inspector",
+                "workflow_kernel",
+            },
+            project_imports("workflow_migration"),
+        )
+        self.assertEqual(
             {"workflow_cas", "workflow_inspector"},
             project_imports("workflow_repair"),
         )
@@ -165,6 +175,22 @@ class WorkflowBoundaryTest(unittest.TestCase):
         commands = (
             [sys.executable, str(SCRIPTS / "agent_workflow.py"), "--help"],
             [sys.executable, "-m", "scripts.agent_workflow", "--help"],
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                result = subprocess.run(
+                    command,
+                    cwd=str(repository),
+                    text=True,
+                    capture_output=True,
+                )
+                self.assertEqual(0, result.returncode, result.stderr)
+
+    def test_migration_cli_supports_script_and_package_execution(self):
+        repository = SCRIPTS.parent
+        commands = (
+            [sys.executable, str(SCRIPTS / "workflow_migration.py"), "--help"],
+            [sys.executable, "-m", "scripts.workflow_migration", "--help"],
         )
         for command in commands:
             with self.subTest(command=command):
