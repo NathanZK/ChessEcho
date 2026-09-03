@@ -10,6 +10,7 @@ the workflow lifecycle or changing its stored formats.
 | Legacy v4 projection paths and canonical serialization | `workflow_kernel.py` |
 | Legacy v4 envelope and transaction-snapshot integrity checks | `workflow_kernel.py` |
 | Per-run locking and atomic projection-file replacement | `workflow_kernel.py` |
+| Bounded external process execution and process-group cleanup | `workflow_supervisor.py` |
 | Lifecycle, approvals, reviews, corrections, validation, migration, and recovery policy | `agent_workflow.py` |
 | Git, GitHub, process execution, command parsing, and human-facing output | `agent_workflow.py` |
 | Durable-store inspection and checkpoints | `workflow_inspector.py` |
@@ -31,11 +32,16 @@ agent_workflow -> workflow_kernel
 workflow_repair -> workflow_inspector
 workflow_inspector
 workflow_kernel
+workflow_supervisor
 ```
 
 `workflow_kernel.py` imports only the Python standard library. It must not
 import lifecycle policy, CLI code, the inspector, or repair. `agent_workflow.py`
 may use kernel primitives, but the kernel cannot call upward into policy.
+
+`workflow_supervisor.py` is another standard-library-only leaf. It owns bounded
+process execution but no lifecycle, retry, validation, or agent-selection
+policy. #131 does not migrate legacy callers to it.
 
 `workflow_inspector.py` remains an independent read-only trusted component.
 `workflow_repair.py` continues to depend only on the inspector. Neither imports

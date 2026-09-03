@@ -13,6 +13,7 @@ PRODUCTION_MODULES = (
     "workflow_inspector",
     "workflow_kernel",
     "workflow_repair",
+    "workflow_supervisor",
 )
 KERNEL_EXPORTS = {
     "COMMITTED_MODE",
@@ -100,6 +101,7 @@ class WorkflowBoundaryTest(unittest.TestCase):
         self.assertEqual(set(), project_imports("workflow_kernel"))
         self.assertEqual(set(), project_imports("workflow_inspector"))
         self.assertEqual({"workflow_inspector"}, project_imports("workflow_repair"))
+        self.assertEqual(set(), project_imports("workflow_supervisor"))
 
     def test_dependency_check_recognizes_qualified_and_relative_imports(self):
         tree = ast.parse(
