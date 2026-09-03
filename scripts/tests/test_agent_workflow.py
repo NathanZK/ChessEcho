@@ -189,9 +189,9 @@ class AgentWorkflowTest(unittest.TestCase):
     def initialize(self, target_base="main", checks=None, expected_init=0):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = pathlib.Path(self.temporary.name)
-        config_dir = self.root / ".agent-workflow"
+        config_dir = self.root / ".github"
         config_dir.mkdir()
-        (config_dir / "config.json").write_text(json.dumps({
+        (config_dir / "agent-workflow.json").write_text(json.dumps({
             "target_base": target_base,
             "validation_profiles": {
                 "backend": {
@@ -269,9 +269,9 @@ class AgentWorkflowTest(unittest.TestCase):
     def initialize_workflow_tooling(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = pathlib.Path(self.temporary.name)
-        config_dir = self.root / ".agent-workflow"
+        config_dir = self.root / ".github"
         config_dir.mkdir()
-        (config_dir / "config.json").write_text(json.dumps({
+        (config_dir / "agent-workflow.json").write_text(json.dumps({
             "target_base": "main",
             "validation_profiles": {
                 "backend": {
@@ -1080,7 +1080,7 @@ class AgentWorkflowTest(unittest.TestCase):
 
     def test_repository_config_includes_frontend_test_support(self):
         config = json.loads(
-            (MODULE_PATH.parents[1] / ".agent-workflow" / "config.json").read_text()
+            (MODULE_PATH.parents[1] / ".github" / "agent-workflow.json").read_text()
         )
         for profile_name in ("frontend", "full-stack"):
             paths = config["validation_profiles"][profile_name]["test_paths"]
@@ -2309,7 +2309,7 @@ class AgentWorkflowTest(unittest.TestCase):
 
     def test_repository_config_defines_the_workflow_tooling_profile(self):
         config = json.loads(
-            (MODULE_PATH.parents[1] / ".agent-workflow" / "config.json").read_text()
+            (MODULE_PATH.parents[1] / ".github" / "agent-workflow.json").read_text()
         )
         profile = config["validation_profiles"]["workflow-tooling"]
         self.assertIn("scripts/tests/**/*", profile["test_paths"])
