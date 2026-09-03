@@ -11,6 +11,8 @@ the workflow lifecycle or changing its stored formats.
 | Legacy v4 envelope and transaction-snapshot integrity checks | `workflow_kernel.py` |
 | Per-run locking and atomic projection-file replacement | `workflow_kernel.py` |
 | Bounded external process execution and process-group cleanup | `workflow_supervisor.py` |
+| Immutable durable-CAS object publication | `workflow_cas.py` |
+| Canonical evidence manifests, provenance, bindings, and derived views | `workflow_evidence.py` |
 | Lifecycle, approvals, reviews, corrections, validation, migration, and recovery policy | `agent_workflow.py` |
 | Git, GitHub, process execution, command parsing, and human-facing output | `agent_workflow.py` |
 | Durable-store inspection and checkpoints | `workflow_inspector.py` |
@@ -27,9 +29,11 @@ dispatch chain.
 The mechanically enforced internal dependency graph is:
 
 ```text
-agent_workflow -> workflow_kernel
+agent_workflow   -> workflow_kernel
 
-workflow_repair -> workflow_inspector
+workflow_evidence -> workflow_inspector, workflow_cas
+workflow_repair   -> workflow_inspector, workflow_cas
+workflow_cas
 workflow_inspector
 workflow_kernel
 workflow_supervisor
@@ -43,10 +47,19 @@ may use kernel primitives, but the kernel cannot call upward into policy.
 process execution but no lifecycle, retry, validation, or agent-selection
 policy. #131 does not migrate legacy callers to it.
 
+`workflow_cas.py` is a standard-library-only leaf extracted from the reviewed
+#129 immutable publication path. It owns create-exclusive temporary writes,
+fsync ordering, hard-link publication, immutable collision verification, and
+concurrent idempotence. It does not own pointers, transactions, evidence
+schemas, lifecycle policy, or projections.
+
 `workflow_inspector.py` remains an independent read-only trusted component.
-`workflow_repair.py` continues to depend only on the inspector. Neither imports
-the legacy workflow CLI or the extracted legacy kernel. This keeps durable
-inspection and repair authoritative independently of lifecycle policy.
+`workflow_repair.py` depends on the inspector and CAS leaf.
+`workflow_evidence.py` uses those same lower-level components for canonical
+serialization, independent reads, and immutable publication. None imports the
+legacy workflow CLI or the extracted legacy kernel. This keeps durable
+inspection, repair, and evidence authoritative independently of lifecycle
+policy.
 
 ## Kernel boundary
 
@@ -94,3 +107,7 @@ not duplicate the kernel or make policy authoritative for trusted repair.
 recovery behavior, corrections, validation policy, or process supervision. It
 does not repair or resume frozen issue #115, and it does not implement #131,
 #132, #133, or #134.
+
+#132 adds only canonical evidence objects and read-only derived/v4 views. It
+does not integrate them into legacy lifecycle policy, perform migration, or
+implement dependency-aware invalidation.
