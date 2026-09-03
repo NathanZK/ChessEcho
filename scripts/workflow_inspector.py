@@ -40,7 +40,9 @@ OUTCOME_EXIT_CODES = {
 JSON_OBJECT_KINDS = {
     "context-capsule",
     "context-reuse-manifest",
+    "evidence-binding",
     "evidence-manifest",
+    "evidence-provenance",
     "issue-index",
     "legacy-migration-manifest",
     "run-envelope",
@@ -54,6 +56,7 @@ JSON_OBJECT_KINDS = {
 }
 BASE64_PAYLOAD_KINDS = {"plan-change-manifest"}
 RAW_OBJECT_KINDS = {
+    "evidence-payload",
     "issue-snapshot",
     "legacy-raw-evidence",
     "pr-body",
@@ -503,7 +506,7 @@ class AuthorityReader:
 def _reference_shape(value, payload_root=False):
     if (
         not isinstance(value, dict)
-        or value.get("kind") in {"regular", "symlink"}
+        or value.get("kind") in {"regular", "symlink", "deleted"}
         or "bytes_base64" in value
     ):
         return "ordinary"

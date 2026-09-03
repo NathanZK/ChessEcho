@@ -10,6 +10,8 @@ import unittest
 SCRIPTS = pathlib.Path(__file__).parents[1]
 PRODUCTION_MODULES = (
     "agent_workflow",
+    "workflow_cas",
+    "workflow_evidence",
     "workflow_inspector",
     "workflow_kernel",
     "workflow_repair",
@@ -98,9 +100,17 @@ def project_imports(module):
 class WorkflowBoundaryTest(unittest.TestCase):
     def test_internal_dependencies_point_only_downward(self):
         self.assertEqual({"workflow_kernel"}, project_imports("agent_workflow"))
+        self.assertEqual(set(), project_imports("workflow_cas"))
+        self.assertEqual(
+            {"workflow_cas", "workflow_inspector"},
+            project_imports("workflow_evidence"),
+        )
         self.assertEqual(set(), project_imports("workflow_kernel"))
         self.assertEqual(set(), project_imports("workflow_inspector"))
-        self.assertEqual({"workflow_inspector"}, project_imports("workflow_repair"))
+        self.assertEqual(
+            {"workflow_cas", "workflow_inspector"},
+            project_imports("workflow_repair"),
+        )
         self.assertEqual(set(), project_imports("workflow_supervisor"))
 
     def test_dependency_check_recognizes_qualified_and_relative_imports(self):

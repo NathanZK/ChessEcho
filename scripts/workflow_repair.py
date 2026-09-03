@@ -13,6 +13,11 @@ import sys
 
 import workflow_inspector as inspector
 
+try:
+    import workflow_cas
+except ModuleNotFoundError:
+    from scripts import workflow_cas
+
 
 BUNDLE_FORMAT = "chess-echo-workflow-repair-bundle-v1"
 REQUEST_FORMAT = "chess-echo-workflow-repair-request-v1"
@@ -1176,126 +1181,25 @@ def dry_run(root, bundle):
 
 
 def _fsync_directory(path):
-    descriptor = os.open(str(path), os.O_RDONLY)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+    workflow_cas.fsync_directory(path)
 
 
 def _write_all(descriptor, data):
-    view = memoryview(data)
-    written = 0
-    while written < len(data):
-        count = os.write(descriptor, view[written:])
-        if count < 1:
-            raise OSError(errno.EIO, "short write")
-        written += count
+    workflow_cas.write_all(descriptor, data)
 
 
 def _ensure_directory(path):
-    try:
-        info = path.lstat()
-    except FileNotFoundError:
-        _ensure_directory(path.parent)
-        try:
-            os.mkdir(str(path), 0o700)
-            _fsync_directory(path.parent)
-        except FileExistsError:
-            pass
-        info = path.lstat()
-    if not stat.S_ISDIR(info.st_mode):
-        _fail("conflict", "unsafe-directory", "Repair store path is not a directory")
+    workflow_cas.ensure_directory(path, _fail)
 
 
 def _verify_existing(path, data):
-    try:
-        initial = os.lstat(str(path))
-    except FileNotFoundError:
-        return False
-    except OSError:
-        _fail("conflict", "immutable-destination-unreadable", "Immutable destination is unreadable")
-    if not stat.S_ISREG(initial.st_mode):
-        _fail("conflict", "immutable-destination-not-regular", "Immutable destination is not regular")
-    flags = os.O_RDONLY
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    try:
-        descriptor = os.open(str(path), flags)
-    except FileNotFoundError:
-        _fail("conflict", "immutable-destination-changed", "Immutable destination changed during verification")
-    except OSError as error:
-        if error.errno in (errno.ELOOP, errno.ENOTDIR):
-            _fail(
-                "conflict",
-                "immutable-destination-not-regular",
-                "Immutable destination is not regular",
-            )
-        _fail("conflict", "immutable-destination-unreadable", "Immutable destination is unreadable")
-    try:
-        info = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(info.st_mode)
-            or info.st_dev != initial.st_dev
-            or info.st_ino != initial.st_ino
-        ):
-            _fail(
-                "conflict",
-                "immutable-destination-changed",
-                "Immutable destination changed during verification",
-            )
-        chunks = []
-        while True:
-            chunk = os.read(descriptor, 1024 * 1024)
-            if not chunk:
-                break
-            chunks.append(chunk)
-        existing = b"".join(chunks)
-    except OSError:
-        _fail("conflict", "immutable-destination-unreadable", "Immutable destination is unreadable")
-    finally:
-        os.close(descriptor)
-    try:
-        current = os.lstat(str(path))
-    except OSError:
-        _fail("conflict", "immutable-destination-changed", "Immutable destination changed during verification")
-    if (
-        not stat.S_ISREG(current.st_mode)
-        or current.st_dev != info.st_dev
-        or current.st_ino != info.st_ino
-    ):
-        _fail("conflict", "immutable-destination-changed", "Immutable destination changed during verification")
-    if len(existing) != len(data) or inspector.sha256(existing) != inspector.sha256(data):
-        _fail("conflict", "immutable-object-collision", "Immutable destination has conflicting bytes")
-    return True
+    return workflow_cas.verify_existing(path, data, _fail)
 
 
 def _publish_immutable(path, data):
-    _ensure_directory(path.parent)
-    if _verify_existing(path, data):
-        return
-    suffix = ".repair-%s-%s" % (os.getpid(), id(data))
-    temporary = path.parent / (".%s%s" % (path.name, suffix))
-    descriptor = None
-    try:
-        descriptor = os.open(str(temporary), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        _write_all(descriptor, data)
-        os.fsync(descriptor)
-        os.close(descriptor)
-        descriptor = None
-        try:
-            os.link(str(temporary), str(path))
-            _fsync_directory(path.parent)
-        except FileExistsError:
-            _verify_existing(path, data)
-    finally:
-        if descriptor is not None:
-            os.close(descriptor)
-        try:
-            temporary.unlink()
-            _fsync_directory(path.parent)
-        except FileNotFoundError:
-            pass
+    workflow_cas.publish_immutable(
+        path, data, _fail, legacy_temporary_name=True
+    )
 
 
 def _publish_singleton(path, data):
