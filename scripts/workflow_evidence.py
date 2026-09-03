@@ -24,6 +24,16 @@ BINDING_FORMAT = "chess-echo-evidence-binding-v1"
 RESULT_FORMAT = "chess-echo-evidence-result-v1"
 PROJECTION_FORMAT = "chess-echo-evidence-projection-v1"
 V4_ADAPTER_FORMAT = "chess-echo-v4-evidence-adapter-v1"
+MIGRATION_ADAPTER_FORMAT = "chess-echo-workflow-migration-v1"
+MIGRATION_SOURCE_MANIFEST_FORMAT = "chess-echo-migration-source-manifest-v1"
+MIGRATION_SOURCE_VARIANTS = {
+    "projection-v1",
+    "projection-v2",
+    "projection-v3",
+    "projection-v4",
+    "settled-adoption",
+    "durable-v4",
+}
 
 PAYLOAD_LIMIT = 64 * 1024 * 1024
 STRUCTURED_OBJECT_LIMIT = 8 * 1024 * 1024
@@ -49,7 +59,7 @@ RFC3339_RE = re.compile(
 GIT_OID_RE = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 ENTRY_KINDS = {"regular", "symlink", "deleted"}
 ENTRY_MODES = {"regular": {"100644", "100755"}, "symlink": {"120000"}}
-SOURCE_TYPES = {"workspace", "git", "v4", "external"}
+SOURCE_TYPES = {"workspace", "git", "v4", "external", "migration"}
 LINEAGE_STATUSES = {"original", "inherited", "replacement"}
 V4_EVIDENCE_KINDS = (
     inspector.TYPED_PAYLOAD_KINDS
@@ -117,13 +127,18 @@ def _validate_reference(value, expected_kind=None):
 
 
 def _validate_path(value, label="path"):
+    try:
+        encoded = value.encode("utf-8") if isinstance(value, str) else None
+    except UnicodeEncodeError:
+        encoded = None
     if (
         not isinstance(value, str)
         or not value
         or "\0" in value
         or "\\" in value
         or value.startswith("/")
-        or len(value.encode("utf-8")) > 4096
+        or encoded is None
+        or len(encoded) > 4096
     ):
         _fail("unsupported", "invalid-evidence-path", "%s is not a supported path" % label)
     parts = value.split("/")
@@ -140,13 +155,16 @@ def _validate_entry(value):
     )
     path = _validate_path(value["path"])
     kind = value["kind"]
-    if kind not in ENTRY_KINDS:
+    if not isinstance(kind, str) or kind not in ENTRY_KINDS:
         _fail("unsupported", "unsupported-entry-kind", "Evidence entry kind is unsupported")
     if kind == "deleted":
         if any(value[field] is not None for field in ("mode", "content_sha256", "size", "payload")):
             _fail("corrupt", "invalid-deleted-entry", "Deleted entry facts must be null")
     else:
-        if value["mode"] not in ENTRY_MODES[kind]:
+        if (
+            not isinstance(value["mode"], str)
+            or value["mode"] not in ENTRY_MODES[kind]
+        ):
             _fail("unsupported", "unsupported-entry-mode", "Evidence entry mode is unsupported")
         digest = value["content_sha256"]
         if not isinstance(digest, str) or SHA256_RE.fullmatch(digest) is None:
@@ -195,7 +213,11 @@ def _entry_digest(entry):
 
 
 def _validate_source(value):
-    if not isinstance(value, dict) or value.get("type") not in SOURCE_TYPES:
+    if (
+        not isinstance(value, dict)
+        or not isinstance(value.get("type"), str)
+        or value["type"] not in SOURCE_TYPES
+    ):
         _fail("unsupported", "unsupported-provenance-source", "Provenance source is unsupported")
     source_type = value["type"]
     if source_type == "workspace":
@@ -215,8 +237,18 @@ def _validate_source(value):
         _exact_keys(value, {"type", "object"}, "v4-source")
         _validate_reference(value["object"])
     else:
-        _exact_keys(value, {"type", "location"}, "external-source")
-        _validate_path(value["location"], "external source location")
+        if source_type == "external":
+            _exact_keys(value, {"type", "location"}, "external-source")
+            _validate_path(value["location"], "external source location")
+        else:
+            _exact_keys(
+                value,
+                {"type", "object", "source_manifest", "logical_path"},
+                "migration-source",
+            )
+            _validate_reference(value["object"])
+            _validate_reference(value["source_manifest"], "migration-source-manifest")
+            _validate_path(value["logical_path"], "migration logical path")
     return value
 
 
@@ -235,11 +267,32 @@ def _validate_capture(value, entry_digests):
     if (
         not isinstance(value["capture_method"], str)
         or SAFE_SLUG_RE.fullmatch(value["capture_method"]) is None
-        or not isinstance(value["captured_at"], str)
-        or RFC3339_RE.fullmatch(value["captured_at"]) is None
+        or (
+            value["captured_at"] is not None
+            and (
+                not isinstance(value["captured_at"], str)
+                or RFC3339_RE.fullmatch(value["captured_at"]) is None
+            )
+        )
     ):
         _fail("corrupt", "invalid-capture-metadata", "Capture metadata is invalid")
-    _validate_source(value["source"])
+    if (value["capture_method"] == "deterministic-migration") != (
+        value["captured_at"] is None
+    ):
+        _fail(
+            "corrupt",
+            "invalid-capture-metadata",
+            "Only deterministic migration captures omit capture time",
+        )
+    source = _validate_source(value["source"])
+    if (source["type"] == "migration") != (
+        value["capture_method"] == "deterministic-migration"
+    ):
+        _fail(
+            "corrupt",
+            "invalid-capture-metadata",
+            "Deterministic migration capture metadata requires a migration source",
+        )
     _exact_keys(value["tool"], {"name", "version"}, "capture-tool")
     if any(not isinstance(value["tool"][field], str) or not value["tool"][field] for field in ("name", "version")):
         _fail("corrupt", "invalid-capture-tool", "Capture tool identity is invalid")
@@ -331,7 +384,10 @@ def _validate_decision(value):
 
 def _validate_lineage(value):
     _exact_keys(value, {"status", "parent_binding"}, "binding-lineage")
-    if value["status"] not in LINEAGE_STATUSES:
+    if (
+        not isinstance(value["status"], str)
+        or value["status"] not in LINEAGE_STATUSES
+    ):
         _fail("unsupported", "unsupported-lineage-status", "Binding lineage status is unsupported")
     if value["status"] == "original":
         if value["parent_binding"] is not None:
@@ -345,10 +401,274 @@ def _validate_migration(value):
     if value is None:
         return None
     _exact_keys(value, {"adapter", "source"}, "binding-migration")
-    if value["adapter"] != V4_ADAPTER_FORMAT:
+    if (
+        not isinstance(value["adapter"], str)
+        or value["adapter"] not in {V4_ADAPTER_FORMAT, MIGRATION_ADAPTER_FORMAT}
+    ):
         _fail("unsupported", "unsupported-migration-adapter", "Migration adapter is unsupported")
-    _validate_reference(value["source"])
+    source = _validate_reference(
+        value["source"],
+        "migration-source-manifest"
+        if value["adapter"] == MIGRATION_ADAPTER_FORMAT
+        else None,
+    )
+    if (
+        value["adapter"] == MIGRATION_ADAPTER_FORMAT
+        and source["size"] > STRUCTURED_OBJECT_LIMIT
+    ):
+        _fail(
+            "unsupported",
+            "structured-object-too-large",
+            "Migration source manifest exceeds 8 MiB",
+        )
     return value
+
+
+def _validate_migration_source_manifest(value):
+    _exact_keys(
+        value,
+        {
+            "kind",
+            "format",
+            "variant",
+            "issue",
+            "correction",
+            "migration_metadata",
+            "objects",
+        },
+        "migration-source-manifest",
+    )
+    if (
+        value["kind"] != "migration-source-manifest"
+        or value["format"] != MIGRATION_SOURCE_MANIFEST_FORMAT
+    ):
+        _fail(
+            "unsupported",
+            "unsupported-migration-source-format",
+            "Migration source manifest format is unsupported",
+        )
+    if (
+        not _exact_int(value["issue"])
+        or value["issue"] < 1
+        or (
+            value["correction"] is not None
+            and (
+                not _exact_int(value["correction"])
+                or value["correction"] < 1
+            )
+        )
+        or not isinstance(value["variant"], str)
+        or not value["variant"]
+    ):
+        _fail("corrupt", "invalid-migration-source", "Migration source identity is invalid")
+    if value["variant"] not in MIGRATION_SOURCE_VARIANTS:
+        _fail(
+            "unsupported",
+            "unsupported-migration-source-variant",
+            "Migration source variant is unsupported",
+        )
+    metadata = value["migration_metadata"]
+    if (
+        not isinstance(metadata, dict)
+        or set(metadata) != {"status"}
+        or not isinstance(metadata["status"], str)
+        or metadata["status"] not in {"not-recorded", "none", "recorded"}
+    ):
+        _fail(
+            "corrupt",
+            "invalid-migration-metadata",
+            "Migration source metadata status is invalid",
+        )
+    if not isinstance(value["objects"], list):
+        _fail("corrupt", "invalid-migration-objects", "Migration objects must be a list")
+    if not value["objects"]:
+        _fail("missing", "migration-source-empty", "Migration source has no objects")
+    if len(value["objects"]) > MANIFEST_ENTRY_LIMIT:
+        _fail("unsupported", "manifest-entry-limit", "Migration source exceeds 10,000 objects")
+    normalized = []
+    for item in value["objects"]:
+        _exact_keys(
+            item,
+            {
+                "logical_path",
+                "object",
+                "encoding",
+                "payload_sha256",
+                "payload_size",
+            },
+            "migration-source-object",
+        )
+        _validate_path(item["logical_path"], "migration logical path")
+        reference = _validate_reference(item["object"])
+        if reference["size"] > PAYLOAD_LIMIT:
+            _fail(
+                "unsupported",
+                "source-object-too-large",
+                "Migration source object exceeds 64 MiB",
+            )
+        if (
+            reference["kind"]
+            in (inspector.JSON_OBJECT_KINDS | inspector.TYPED_PAYLOAD_KINDS)
+            and reference["size"] > STRUCTURED_OBJECT_LIMIT
+        ):
+            _fail(
+                "unsupported",
+                "structured-object-too-large",
+                "Structured migration source exceeds 8 MiB",
+            )
+        encoding = item["encoding"]
+        if (
+            encoding is not None
+            and (
+                not isinstance(encoding, str)
+                or encoding not in {"raw", "base64", "typed-base64"}
+            )
+        ):
+            _fail("unsupported", "unsupported-source-encoding", "Source encoding is unsupported")
+        payload_digest = item["payload_sha256"]
+        payload_size = item["payload_size"]
+        if encoding is None:
+            if payload_digest is not None or payload_size is not None:
+                _fail("corrupt", "invalid-source-payload", "Unselected source has payload facts")
+        elif (
+            not isinstance(payload_digest, str)
+            or SHA256_RE.fullmatch(payload_digest) is None
+            or not _exact_int(payload_size)
+            or payload_size < 0
+        ):
+            _fail("corrupt", "invalid-source-payload", "Selected source payload facts are invalid")
+        elif payload_size > PAYLOAD_LIMIT:
+            _fail(
+                "unsupported",
+                "payload-too-large",
+                "Migration source payload exceeds 64 MiB",
+            )
+        normalized.append((item, reference))
+    unique_payloads = {}
+    for item, _reference_value in normalized:
+        if item["encoding"] is None:
+            continue
+        previous = unique_payloads.get(item["payload_sha256"])
+        if previous is not None and previous != item["payload_size"]:
+            _fail(
+                "corrupt",
+                "source-payload-mismatch",
+                "A migration payload hash has conflicting sizes",
+            )
+        unique_payloads[item["payload_sha256"]] = item["payload_size"]
+    if sum(unique_payloads.values()) > PUBLICATION_PAYLOAD_LIMIT:
+        _fail(
+            "unsupported",
+            "publication-payload-limit",
+            "Migration source payloads exceed 512 MiB",
+        )
+    paths = [item["logical_path"] for item, _reference_value in normalized]
+    if len(paths) != len(set(paths)):
+        _fail("ambiguous", "duplicate-source-path", "Migration source paths are duplicated")
+    if paths != sorted(paths, key=lambda path: path.encode("utf-8")):
+        _fail("corrupt", "noncanonical-source-order", "Migration source objects are not ordered")
+    _canonical_bytes(value, "migration source manifest")
+    return normalized
+
+
+def _decode_migration_source_payload(data, item, manifest):
+    encoding = item["encoding"]
+    native_payload = None
+    if item["object"]["kind"] in inspector.BASE64_PAYLOAD_KINDS:
+        try:
+            native_payload = base64.b64decode(data, validate=True)
+        except (TypeError, ValueError):
+            _fail(
+                "corrupt",
+                "invalid-base64-payload",
+                "Migration source payload is invalid",
+            )
+    elif item["object"]["kind"] in inspector.TYPED_PAYLOAD_KINDS:
+        try:
+            wrapper = inspector.parse_json_object(data, "typed migration source")
+        except inspector.InspectionFailure as failure:
+            _fail(failure.status, failure.code, failure.message, failure.subject)
+        if (
+            _canonical_bytes(wrapper, "typed migration source") != data
+            or set(wrapper)
+            != {
+                "correction",
+                "issue",
+                "kind",
+                "logical_path",
+                "object_kind",
+                "payload_base64",
+            }
+            or wrapper.get("kind") != "typed-evidence"
+            or wrapper.get("object_kind") != item["object"]["kind"]
+            or not _exact_int(wrapper.get("issue"))
+            or wrapper["issue"] != manifest["issue"]
+            or (
+                manifest["correction"] is not None
+                and not _exact_int(wrapper.get("correction"))
+            )
+            or wrapper.get("correction") != manifest["correction"]
+            or wrapper.get("logical_path") != item["logical_path"]
+            or not isinstance(wrapper.get("payload_base64"), str)
+        ):
+            _fail("corrupt", "invalid-typed-payload", "Typed migration source is invalid")
+        try:
+            native_payload = base64.b64decode(
+                wrapper["payload_base64"], validate=True
+            )
+        except (TypeError, ValueError):
+            _fail("corrupt", "invalid-typed-payload", "Typed migration payload is invalid")
+    if encoding is None:
+        return None
+    if encoding == "raw":
+        payload = data
+    elif encoding == "base64":
+        if item["object"]["kind"] not in inspector.BASE64_PAYLOAD_KINDS:
+            _fail(
+                "unsupported",
+                "encoding-kind-mismatch",
+                "Base64 migration source has the wrong object kind",
+            )
+        payload = native_payload
+    else:
+        if item["object"]["kind"] not in inspector.TYPED_PAYLOAD_KINDS:
+            _fail(
+                "unsupported",
+                "encoding-kind-mismatch",
+                "Typed migration source has the wrong object kind",
+            )
+        payload = native_payload
+    if (
+        len(payload) != item["payload_size"]
+        or inspector.sha256(payload) != item["payload_sha256"]
+    ):
+        _fail("corrupt", "source-payload-mismatch", "Migration source payload facts differ")
+    if len(payload) > PAYLOAD_LIMIT:
+        _fail("unsupported", "payload-too-large", "Migration source payload exceeds 64 MiB")
+    return payload
+
+
+def _read_migration_sources(reader, binding):
+    migration = binding["migration"]
+    if migration is None or migration["adapter"] != MIGRATION_ADAPTER_FORMAT:
+        return {}
+    source_ref = migration["source"]
+    manifest = _read_json(reader, source_ref, "migration-source-manifest")
+    records = {}
+    for item, reference in _validate_migration_source_manifest(manifest):
+        data = _read_bytes(reader, reference, reference["kind"])
+        payload = _decode_migration_source_payload(data, item, manifest)
+        records[(reference["sha256"], item["logical_path"])] = {
+            "item": item,
+            "payload": payload,
+            "reference": reference,
+        }
+    if (
+        manifest["issue"] != binding["identity"]["issue"]
+        or manifest["correction"] != binding["identity"]["correction"]
+    ):
+        _fail("corrupt", "migration-source-identity-mismatch", "Source identity differs")
+    return records
 
 
 def _validate_binding(value):
@@ -522,6 +842,7 @@ def _preflight_external_references(root, decoded):
     binding = decoded["binding"][0]
     reader = _reader(root, binding["identity"]["issue"])
     _read_bytes(reader, binding["subject"], binding["subject"]["kind"])
+    _read_migration_sources(reader, binding)
     lineage = binding["lineage"]
     if lineage["status"] == "original":
         return
@@ -546,7 +867,7 @@ def _preflight_external_references(root, decoded):
         )
 
 
-def publish(root, publication):
+def publish(root, publication, before_binding=None):
     decoded = _load_publication(publication)
     store = inspector.resolve_store(root)
     _preflight_external_references(root, decoded)
@@ -555,10 +876,15 @@ def publish(root, publication):
         reference = {"kind": "evidence-payload", "sha256": digest, "size": len(data)}
         _publish(store, reference, data)
         published.append(reference)
-    for key in ("manifest", "provenance", "binding"):
+    for key in ("manifest", "provenance"):
         _value, data, reference = decoded[key]
         _publish(store, reference, data)
         published.append(reference)
+    if before_binding is not None:
+        before_binding()
+    _value, data, reference = decoded["binding"]
+    _publish(store, reference, data)
+    published.append(reference)
     binding_ref = decoded["binding"][2]
     verification = verify(root, binding_ref)
     return {
@@ -601,6 +927,48 @@ def _verify_graph(root, binding_ref):
     entries = _validate_manifest(manifest)
     provenance = _read_json(reader, binding["provenance"], "evidence-provenance")
     _validate_provenance(provenance, binding["manifest"], entries)
+    migration_sources = _read_migration_sources(reader, binding)
+    if (
+        binding["migration"] is not None
+        and binding["migration"]["adapter"] == MIGRATION_ADAPTER_FORMAT
+    ):
+        entry_by_digest = {_entry_digest(entry): entry for entry in entries}
+        for capture in provenance["captures"]:
+            source = capture["source"]
+            if source["type"] != "migration":
+                _fail(
+                    "corrupt",
+                    "migration-provenance-missing",
+                    "Migrated evidence requires deterministic migration provenance",
+                )
+            if source["source_manifest"] != binding["migration"]["source"]:
+                _fail(
+                    "corrupt",
+                    "migration-source-manifest-mismatch",
+                    "Capture names another migration source manifest",
+                )
+            record = migration_sources.get(
+                (source["object"]["sha256"], source["logical_path"])
+            )
+            if record is None:
+                _fail(
+                    "missing",
+                    "migration-source-object-missing",
+                    "Capture source is absent from its migration manifest",
+                )
+            if record["reference"] != source["object"]:
+                _fail(
+                    "corrupt",
+                    "migration-source-reference-mismatch",
+                    "Capture source reference differs from its migration manifest",
+                )
+            entry = entry_by_digest[capture["entry_sha256"]]
+            if record["item"]["payload_sha256"] != entry["content_sha256"]:
+                _fail(
+                    "corrupt",
+                    "migration-payload-mismatch",
+                    "Capture source payload differs from semantic evidence",
+                )
     _read_bytes(reader, binding["subject"], binding["subject"]["kind"])
     for entry in entries:
         if entry["kind"] == "deleted":
@@ -726,6 +1094,133 @@ def adapt_v4(root, issue, run_id=None, correction=None):
         "migration": migration,
         "objects": objects,
     }
+
+
+def read_verified_v4_sources(
+    root, checkpoint, selections, include_migration=False
+):
+    """Read explicitly selected reachable v4 objects against an exact checkpoint."""
+    if (
+        not isinstance(checkpoint, dict)
+        or checkpoint.get("format") != inspector.CHECKPOINT_FORMAT
+    ):
+        _fail("unsupported", "unsupported-checkpoint", "A v1 inspector checkpoint is required")
+    authority = checkpoint.get("authority")
+    if not isinstance(authority, dict):
+        _fail("corrupt", "invalid-checkpoint", "Checkpoint authority is invalid")
+    issue = authority.get("issue")
+    correction = authority.get("correction")
+    if not _exact_int(issue) or issue < 1:
+        _fail("corrupt", "invalid-checkpoint", "Checkpoint issue is invalid")
+    if not isinstance(selections, list) or not selections:
+        _fail("missing", "selection-missing", "At least one reachable object must be selected")
+    if len(selections) > MANIFEST_ENTRY_LIMIT:
+        _fail("unsupported", "manifest-entry-limit", "Selection exceeds 10,000 objects")
+    normalized_selections = []
+    for selection in selections:
+        if not isinstance(selection, dict) or set(selection) != {
+            "logical_path", "path", "entry_kind", "mode", "encoding", "object"
+        }:
+            _fail("corrupt", "invalid-selection", "Durable selection schema is invalid")
+        reference = _validate_reference(selection["object"])
+        if reference["size"] > PAYLOAD_LIMIT:
+            _fail(
+                "unsupported",
+                "source-object-too-large",
+                "Selected source object exceeds 64 MiB",
+            )
+        if (
+            reference["kind"]
+            in (inspector.JSON_OBJECT_KINDS | inspector.TYPED_PAYLOAD_KINDS)
+            and reference["size"] > STRUCTURED_OBJECT_LIMIT
+        ):
+            _fail(
+                "unsupported",
+                "structured-object-too-large",
+                "Selected structured source exceeds 8 MiB",
+            )
+        normalized_selections.append((selection, reference))
+    expected_digest = checkpoint.get("checkpoint_sha256")
+    unsigned = dict(checkpoint)
+    unsigned.pop("checkpoint_sha256", None)
+    if (
+        not isinstance(expected_digest, str)
+        or inspector.sha256(inspector.canonical_bytes(unsigned)) != expected_digest
+    ):
+        _fail("corrupt", "checkpoint-digest-mismatch", "Checkpoint digest is invalid")
+    try:
+        selector = (
+            {"correction": correction}
+            if correction is not None
+            else {"run_id": authority.get("run_id")}
+        )
+        inspected = inspector.inspect(root, issue, **selector)
+        current = inspector.checkpoint_document(inspected)
+    except inspector.InspectionFailure as failure:
+        _fail(failure.status, failure.code, failure.message, failure.subject)
+    if inspector.canonical_bytes(current) != inspector.canonical_bytes(checkpoint):
+        _fail("stale", "checkpoint-stale", "Durable authority differs from the migration checkpoint")
+    verified_objects = authority.get("verified_objects")
+    if not isinstance(verified_objects, list):
+        _fail("corrupt", "invalid-checkpoint", "Checkpoint reachable objects are invalid")
+    reachable = {}
+    for item in verified_objects:
+        if (
+            not isinstance(item, dict)
+            or set(item) != {"kinds", "sha256", "size"}
+            or not isinstance(item["kinds"], list)
+            or not all(isinstance(kind, str) for kind in item["kinds"])
+        ):
+            _fail("corrupt", "invalid-checkpoint", "Checkpoint reachable objects are invalid")
+        reachable[(item["sha256"], item["size"])] = set(item["kinds"])
+    reader = inspector.AuthorityReader(inspector.resolve_store(root), issue)
+    reader.correction = correction
+    state = _read_json(
+        reader,
+        _validate_reference(authority.get("state"), "run-state"),
+        "run-state",
+    )
+    if "migration" not in state:
+        migration = {"status": "not-recorded"}
+    elif state["migration"] is None:
+        migration = {"status": "none"}
+    elif isinstance(state["migration"], dict):
+        migration = {"status": "recorded"}
+    else:
+        _fail(
+            "corrupt",
+            "invalid-v4-migration",
+            "v4 migration metadata has an invalid type",
+        )
+    records = []
+    seen_paths = set()
+    seen_objects = {}
+    for selection, reference in normalized_selections:
+        logical_path = _validate_path(selection["logical_path"], "selected logical path")
+        _validate_path(selection["path"], "selected evidence path")
+        if logical_path in seen_paths:
+            _fail("ambiguous", "duplicate-selection", "A logical path is selected more than once")
+        seen_paths.add(logical_path)
+        key = (reference["sha256"], reference["size"])
+        if reference["kind"] not in reachable.get(key, set()):
+            _fail("stale", "object-not-reachable", "Selected object is not reachable from checkpoint")
+        previous = seen_objects.get(reference["sha256"])
+        if previous is not None and previous != selection:
+            _fail("ambiguous", "conflicting-selection", "An object has conflicting selections")
+        seen_objects[reference["sha256"]] = selection
+        data = _read_bytes(reader, reference, reference["kind"])
+        records.append(
+            {
+                "logical_path": logical_path,
+                "kind": reference["kind"],
+                "sha256": reference["sha256"],
+                "size": reference["size"],
+                "bytes_base64": base64.b64encode(data).decode("ascii"),
+            }
+        )
+    if include_migration:
+        return {"records": records, "migration": migration}
+    return records
 
 
 def _load_json(path, label):
