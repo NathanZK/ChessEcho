@@ -1,7 +1,6 @@
 import base64
 import contextlib
 import hashlib
-import importlib.util
 import io
 import json
 import pathlib
@@ -10,11 +9,10 @@ import subprocess
 import tempfile
 import unittest
 
+from scripts import agent_workflow as workflow
+
 
 MODULE_PATH = pathlib.Path(__file__).parents[1] / "agent_workflow.py"
-SPEC = importlib.util.spec_from_file_location("agent_workflow", MODULE_PATH)
-workflow = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(workflow)
 
 CORRECTION_CLASSIFICATIONS = (
     "metadata-only",

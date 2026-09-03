@@ -5,7 +5,6 @@ import argparse
 import base64
 import copy
 import datetime as dt
-import fcntl
 import hashlib
 import json
 import os
@@ -14,13 +13,67 @@ import re
 import stat
 import subprocess
 import sys
-import tempfile
-from contextlib import contextmanager
 from urllib.parse import urlparse
 
-VERSION = 4
-INTEGRITY_FORMAT = "chess-echo-run-integrity-v4"
-COMMITTED_MODE = "v4-committed"
+if __package__:
+    from .workflow_kernel import (
+        COMMITTED_MODE,
+        INTEGRITY_FORMAT,
+        VERSION,
+        WorkflowError,
+        adoption_transaction_path,
+        bootstrap_transaction_path,
+        canonical_history_bytes,
+        canonical_state_bytes,
+        committed_envelope,
+        decode_snapshot,
+        encoded_snapshot,
+        history_path,
+        integrity_path,
+        lock_directory,
+        locked_run,
+        parse_history,
+        parse_json_object,
+        pr_transition_transaction_path,
+        run_dir,
+        sha256,
+        state_path,
+        validate_committed_envelope,
+        validate_run_structure,
+        write_committed_snapshot,
+        write_json_atomic,
+        write_text_atomic,
+    )
+else:
+    from workflow_kernel import (
+        COMMITTED_MODE,
+        INTEGRITY_FORMAT,
+        VERSION,
+        WorkflowError,
+        adoption_transaction_path,
+        bootstrap_transaction_path,
+        canonical_history_bytes,
+        canonical_state_bytes,
+        committed_envelope,
+        decode_snapshot,
+        encoded_snapshot,
+        history_path,
+        integrity_path,
+        lock_directory,
+        locked_run,
+        parse_history,
+        parse_json_object,
+        pr_transition_transaction_path,
+        run_dir,
+        sha256,
+        state_path,
+        validate_committed_envelope,
+        validate_run_structure,
+        write_committed_snapshot,
+        write_json_atomic,
+        write_text_atomic,
+    )
+
 SETTLED_LEGACY_MODE = "settled-legacy-adoption"
 ADOPTION_TRANSACTION_FORMAT = "chess-echo-legacy-adoption-transaction-v1"
 BOOTSTRAP_TRANSACTION_FORMAT = "chess-echo-bootstrap-transaction-v1"
@@ -134,149 +187,13 @@ CORRECTION_CLASSES = {
 CORRECTION_CLASSIFICATIONS = tuple(CORRECTION_CLASSES)
 
 
-class WorkflowError(Exception):
-    pass
-
-
 def now():
     return dt.datetime.now(dt.timezone.utc).isoformat()
-
-
-def run_dir(root, issue, correction=None):
-    directory = root / ".agent-workflow" / "runs" / ("issue-%s" % issue)
-    if correction is None:
-        return directory
-    return directory / "corrections" / str(int(correction))
-
-
-def state_path(root, issue, correction=None):
-    return run_dir(root, issue, correction) / "state.json"
-
-
-def history_path(root, issue, correction=None):
-    return run_dir(root, issue, correction) / "history.jsonl"
-
-
-def integrity_path(root, issue, correction=None):
-    return run_dir(root, issue, correction) / "integrity.json"
-
-
-def adoption_transaction_path(root, issue, correction=None):
-    return run_dir(root, issue, correction) / "adoption-transaction.json"
-
-
-def bootstrap_transaction_path(root, issue, correction=None):
-    return run_dir(root, issue, correction) / "bootstrap-transaction.json"
-
-
-def pr_transition_transaction_path(root, issue, correction=None):
-    return run_dir(root, issue, correction) / "pr-transition-transaction.json"
 
 
 def correction_of(args):
     value = getattr(args, "correction", None)
     return None if value is None else int(value)
-
-
-def canonical_state_bytes(state):
-    return (json.dumps(state, indent=2, sort_keys=True) + "\n").encode()
-
-
-def canonical_history_bytes(history):
-    return "".join(
-        json.dumps(entry, sort_keys=True) + "\n" for entry in history
-    ).encode()
-
-
-def sha256(data):
-    return hashlib.sha256(data).hexdigest()
-
-
-def parse_json_object(data, label):
-    try:
-        value = json.loads(data.decode())
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise WorkflowError("%s is not valid JSON: %s" % (label, error))
-    if not isinstance(value, dict):
-        raise WorkflowError("%s must contain a JSON object" % label)
-    return value
-
-
-def parse_history(data):
-    events = []
-    try:
-        text = data.decode()
-    except UnicodeDecodeError as error:
-        raise WorkflowError("Workflow history is not UTF-8: %s" % error)
-    for line_number, line in enumerate(text.splitlines(), 1):
-        if not line:
-            raise WorkflowError("Workflow history contains an empty line")
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError as error:
-            raise WorkflowError(
-                "Workflow history line %s is not valid JSON: %s" % (line_number, error)
-            )
-        if not isinstance(event, dict):
-            raise WorkflowError("Workflow history events must be JSON objects")
-        events.append(event)
-    return events
-
-
-def validate_run_structure(state, events, issue, correction, versions):
-    version = state.get("version", 1)
-    if type(version) is not int or version not in versions:
-        raise WorkflowError("Workflow schema version is invalid: %r" % version)
-    issue_record = state.get("issue")
-    if (
-        not isinstance(issue_record, dict)
-        or type(issue_record.get("number")) is not int
-        or issue_record.get("number") != issue
-    ):
-        raise WorkflowError("Workflow state does not belong to issue %s" % issue)
-    for field in ("artifacts", "approvals", "validation"):
-        if not isinstance(state.get(field), dict):
-            raise WorkflowError("Workflow state field %s must be an object" % field)
-    string_fields = ("scope", "target_base") if version == VERSION else ("scope",)
-    for field in string_fields:
-        if not isinstance(state.get(field), str) or not state[field]:
-            raise WorkflowError("Workflow state field %s must be a non-empty string" % field)
-    if not isinstance(state.get("required_checks"), list):
-        raise WorkflowError("Workflow required_checks must be a list")
-    if not isinstance(state.get("test_paths"), list):
-        raise WorkflowError("Workflow test_paths must be a list")
-    embedded = state.get("history")
-    if not isinstance(embedded, list) or embedded != events:
-        raise WorkflowError("Embedded workflow history does not match history.jsonl")
-    correction_record = state.get("correction")
-    if correction is None:
-        if correction_record is not None:
-            raise WorkflowError("Root workflow state has a correction identity")
-    elif (
-        not isinstance(correction_record, dict)
-        or type(correction_record.get("number")) is not int
-        or correction_record.get("number") != correction
-    ):
-        raise WorkflowError("Workflow state does not belong to correction %s" % correction)
-    for sequence, event in enumerate(events, 1):
-        if type(event.get("sequence")) is not int or event.get("sequence") != sequence:
-            raise WorkflowError("Workflow history sequence must be contiguous")
-        for field in ("timestamp", "event", "actor", "state", "details"):
-            if field not in event:
-                raise WorkflowError("Workflow history event is missing %s" % field)
-        if (
-            not isinstance(event["timestamp"], str)
-            or not isinstance(event["event"], str)
-            or not isinstance(event["actor"], str)
-            or not isinstance(event["state"], str)
-            or not isinstance(event["details"], dict)
-        ):
-            raise WorkflowError("Workflow history event has invalid field types")
-    if not events:
-        raise WorkflowError("Workflow history must contain at least one event")
-    if not isinstance(state.get("state"), str) or events[-1]["state"] != state["state"]:
-        raise WorkflowError("Latest workflow history state does not match current state")
-    return state
 
 
 def validate_legacy_lifecycle(state, events):
@@ -345,70 +262,6 @@ def normalize_legacy_state(root, state):
             "migrated_from_version": 2,
         }
     return state
-
-
-def validate_committed_envelope(envelope, issue, correction):
-    if envelope.get("format") != INTEGRITY_FORMAT or envelope.get("mode") != COMMITTED_MODE:
-        raise WorkflowError("Integrity record is not a v4 committed envelope")
-    if (
-        type(envelope.get("issue")) is not int
-        or envelope.get("issue") != issue
-        or envelope.get("correction") != correction
-        or (
-            correction is not None
-            and type(envelope.get("correction")) is not int
-        )
-    ):
-        raise WorkflowError("Integrity record has the wrong run identity")
-    state = envelope.get("state")
-    events = envelope.get("history")
-    if not isinstance(state, dict) or not isinstance(events, list):
-        raise WorkflowError("Integrity envelope snapshot is invalid")
-    validate_run_structure(state, events, issue, correction, {VERSION})
-    state_data = canonical_state_bytes(state)
-    history_data = canonical_history_bytes(events)
-    if envelope.get("sequence") != events[-1]["sequence"]:
-        raise WorkflowError("Integrity envelope sequence is stale")
-    if envelope.get("state_sha256") != sha256(state_data):
-        raise WorkflowError("Integrity envelope state hash is stale")
-    if envelope.get("history_sha256") != sha256(history_data):
-        raise WorkflowError("Integrity envelope history hash is stale")
-    return state, state_data, history_data
-
-
-def encoded_snapshot(state_data, history_data):
-    return {
-        "state_sha256": sha256(state_data),
-        "history_sha256": sha256(history_data),
-        "state_bytes": base64.b64encode(state_data).decode(),
-        "history_bytes": base64.b64encode(history_data).decode(),
-    }
-
-
-def decode_snapshot(record, prefix, issue, correction):
-    try:
-        state_data = base64.b64decode(
-            record["%sstate_bytes" % prefix], validate=True
-        )
-        history_data = base64.b64decode(
-            record["%shistory_bytes" % prefix], validate=True
-        )
-    except (KeyError, TypeError, ValueError) as error:
-        raise WorkflowError("Transaction snapshot payload is invalid: %s" % error)
-    if (
-        record.get("%sstate_sha256" % prefix) != sha256(state_data)
-        or record.get("%shistory_sha256" % prefix) != sha256(history_data)
-    ):
-        raise WorkflowError("Transaction snapshot hashes are invalid")
-    state = parse_json_object(state_data, "Transaction state snapshot")
-    events = parse_history(history_data)
-    validate_run_structure(state, events, issue, correction, {VERSION})
-    if (
-        state_data != canonical_state_bytes(state)
-        or history_data != canonical_history_bytes(events)
-    ):
-        raise WorkflowError("Transaction snapshot is not canonically serialized")
-    return state, state_data, history_data
 
 
 def validate_transaction_identity(record, expected_format, expected_mode, issue, correction):
@@ -678,53 +531,6 @@ def load_correction_summaries(root, issue):
     return summaries
 
 
-def write_json_atomic(path, value):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(dir=str(path.parent), prefix=".state-", text=True)
-    try:
-        with os.fdopen(descriptor, "w") as handle:
-            json.dump(value, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
-
-
-def write_text_atomic(path, value):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, temporary = tempfile.mkstemp(dir=str(path.parent), prefix=".history-", text=True)
-    try:
-        with os.fdopen(descriptor, "w") as handle:
-            handle.write(value)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
-
-
-@contextmanager
-def lock_directory(directory):
-    directory.mkdir(parents=True, exist_ok=True)
-    with (directory / ".lock").open("a+") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        yield
-
-
-@contextmanager
-def locked_run(root, issue, correction=None):
-    with lock_directory(run_dir(root, issue)):
-        if correction is None:
-            yield
-        else:
-            with lock_directory(run_dir(root, issue, correction)):
-                yield
-
-
 def append_event(state, event, actor, details=None):
     entry = {
         "sequence": len(state["history"]) + 1,
@@ -740,29 +546,6 @@ def append_event(state, event, actor, details=None):
 
 def sync_history(root, issue, state, correction=None):
     return canonical_history_bytes(state.get("history", [])).decode()
-
-
-def committed_envelope(issue, correction, state, state_data, history_data):
-    return {
-        "format": INTEGRITY_FORMAT,
-        "mode": COMMITTED_MODE,
-        "issue": issue,
-        "correction": correction,
-        "sequence": state["history"][-1]["sequence"],
-        "state_sha256": sha256(state_data),
-        "history_sha256": sha256(history_data),
-        "state": copy.deepcopy(state),
-        "history": copy.deepcopy(state["history"]),
-    }
-
-
-def write_committed_snapshot(root, issue, correction, state, state_data, history_data):
-    write_text_atomic(state_path(root, issue, correction), state_data.decode())
-    write_text_atomic(history_path(root, issue, correction), history_data.decode())
-    write_json_atomic(
-        integrity_path(root, issue, correction),
-        committed_envelope(issue, correction, state, state_data, history_data),
-    )
 
 
 def persist(root, issue, state, event, actor, details=None, correction=None):
@@ -2873,53 +2656,203 @@ def build_parser():
     return parser
 
 
+def _dispatch_init(args, root, runner):
+    command_init(args, root, runner)
+
+
+def _dispatch_status(args, root, runner):
+    command_status(args, root)
+
+
+def _dispatch_adopt_legacy(args, root, runner):
+    command_adopt_legacy(args, root)
+
+
+def _dispatch_recover_run(args, root, runner):
+    command_recover_run(args, root)
+
+
+def _dispatch_submit_plan(args, root, runner):
+    submit_artifact(
+        args, root, "plan", "PLANNING", "PLAN_REVIEW", "PLAN_SUBMITTED"
+    )
+
+
+def _dispatch_review_plan(args, root, runner):
+    review(
+        args,
+        root,
+        runner,
+        "plan_review",
+        "PLAN_REVIEW",
+        "PLANNING",
+        "WAITING_FOR_PLAN_HUMAN_APPROVAL",
+        "PLAN_REVIEWED",
+    )
+
+
+def _dispatch_approve_plan(args, root, runner):
+    approval(
+        args,
+        root,
+        "WAITING_FOR_PLAN_HUMAN_APPROVAL",
+        "TEST_IMPLEMENTATION",
+        "plan",
+        "PLAN_HUMAN_APPROVED",
+    )
+
+
+def _dispatch_reject_plan(args, root, runner):
+    rejection(
+        args,
+        root,
+        "WAITING_FOR_PLAN_HUMAN_APPROVAL",
+        "PLANNING",
+        "plan",
+        "PLAN_HUMAN_REJECTED",
+    )
+
+
+def _dispatch_submit_tests(args, root, runner):
+    submit_artifact(
+        args,
+        root,
+        "test_report",
+        "TEST_IMPLEMENTATION",
+        "TEST_REVIEW",
+        "TESTS_SUBMITTED",
+    )
+
+
+def _dispatch_review_tests(args, root, runner):
+    review(
+        args,
+        root,
+        runner,
+        "test_review",
+        "TEST_REVIEW",
+        "TEST_IMPLEMENTATION",
+        "WAITING_FOR_TEST_HUMAN_APPROVAL",
+        "TESTS_REVIEWED",
+    )
+
+
+def _dispatch_approve_tests(args, root, runner):
+    approval(
+        args,
+        root,
+        "WAITING_FOR_TEST_HUMAN_APPROVAL",
+        "IMPLEMENTATION",
+        "tests",
+        "TESTS_HUMAN_APPROVED",
+    )
+
+
+def _dispatch_reject_tests(args, root, runner):
+    rejection(
+        args,
+        root,
+        "WAITING_FOR_TEST_HUMAN_APPROVAL",
+        "TEST_IMPLEMENTATION",
+        "tests",
+        "TESTS_HUMAN_REJECTED",
+    )
+
+
+def _dispatch_reopen_tests(args, root, runner):
+    command_reopen_tests(args, root)
+
+
+def _dispatch_reopen_plan(args, root, runner):
+    command_reopen_plan(args, root)
+
+
+def _dispatch_submit_implementation(args, root, runner):
+    submit_artifact(
+        args,
+        root,
+        "implementation_report",
+        "IMPLEMENTATION",
+        "VALIDATION",
+        "IMPLEMENTATION_SUBMITTED",
+    )
+
+
+def _dispatch_run_validation(args, root, runner):
+    command_run_validation(args, root, runner)
+
+
+def _dispatch_review_final(args, root, runner):
+    review(
+        args,
+        root,
+        runner,
+        "final_review",
+        "FINAL_REVIEW",
+        "IMPLEMENTATION",
+        "FINAL_REVIEW",
+        "IMPLEMENTATION_REVIEWED",
+    )
+
+
+def _dispatch_create_draft_pr(args, root, runner):
+    command_create_draft_pr(args, root, runner)
+
+
+def _dispatch_approve_pr(args, root, runner):
+    command_approve_pr(args, root, runner)
+
+
+def _dispatch_revise_pr_metadata(args, root, runner):
+    command_revise_pr_metadata(args, root, runner)
+
+
+def _dispatch_reject_pr(args, root, runner):
+    rejection(
+        args,
+        root,
+        "WAITING_FOR_PR_HUMAN_APPROVAL",
+        "IMPLEMENTATION",
+        "pr",
+        "PR_HUMAN_REJECTED",
+    )
+
+
+def _dispatch_start_correction(args, root, runner):
+    command_start_correction(args, root, runner)
+
+
+COMMAND_HANDLERS = {
+    "init": _dispatch_init,
+    "status": _dispatch_status,
+    "adopt-legacy-run": _dispatch_adopt_legacy,
+    "recover-run": _dispatch_recover_run,
+    "submit-plan": _dispatch_submit_plan,
+    "review-plan": _dispatch_review_plan,
+    "approve-plan": _dispatch_approve_plan,
+    "reject-plan": _dispatch_reject_plan,
+    "submit-tests": _dispatch_submit_tests,
+    "review-tests": _dispatch_review_tests,
+    "approve-tests": _dispatch_approve_tests,
+    "reject-tests": _dispatch_reject_tests,
+    "reopen-tests": _dispatch_reopen_tests,
+    "reopen-plan": _dispatch_reopen_plan,
+    "submit-implementation": _dispatch_submit_implementation,
+    "run-validation": _dispatch_run_validation,
+    "review-final": _dispatch_review_final,
+    "create-draft-pr": _dispatch_create_draft_pr,
+    "approve-pr": _dispatch_approve_pr,
+    "revise-pr-metadata": _dispatch_revise_pr_metadata,
+    "reject-pr": _dispatch_reject_pr,
+    "start-correction": _dispatch_start_correction,
+}
+
+
 def dispatch(args, root, runner):
-    if args.command == "init":
-        command_init(args, root, runner)
-    elif args.command == "status":
-        command_status(args, root)
-    elif args.command == "adopt-legacy-run":
-        command_adopt_legacy(args, root)
-    elif args.command == "recover-run":
-        command_recover_run(args, root)
-    elif args.command == "submit-plan":
-        submit_artifact(args, root, "plan", "PLANNING", "PLAN_REVIEW", "PLAN_SUBMITTED")
-    elif args.command == "review-plan":
-        review(args, root, runner, "plan_review", "PLAN_REVIEW", "PLANNING", "WAITING_FOR_PLAN_HUMAN_APPROVAL", "PLAN_REVIEWED")
-    elif args.command == "approve-plan":
-        approval(args, root, "WAITING_FOR_PLAN_HUMAN_APPROVAL", "TEST_IMPLEMENTATION", "plan", "PLAN_HUMAN_APPROVED")
-    elif args.command == "reject-plan":
-        rejection(args, root, "WAITING_FOR_PLAN_HUMAN_APPROVAL", "PLANNING", "plan", "PLAN_HUMAN_REJECTED")
-    elif args.command == "submit-tests":
-        submit_artifact(args, root, "test_report", "TEST_IMPLEMENTATION", "TEST_REVIEW", "TESTS_SUBMITTED")
-    elif args.command == "review-tests":
-        review(args, root, runner, "test_review", "TEST_REVIEW", "TEST_IMPLEMENTATION", "WAITING_FOR_TEST_HUMAN_APPROVAL", "TESTS_REVIEWED")
-    elif args.command == "approve-tests":
-        approval(args, root, "WAITING_FOR_TEST_HUMAN_APPROVAL", "IMPLEMENTATION", "tests", "TESTS_HUMAN_APPROVED")
-    elif args.command == "reject-tests":
-        rejection(args, root, "WAITING_FOR_TEST_HUMAN_APPROVAL", "TEST_IMPLEMENTATION", "tests", "TESTS_HUMAN_REJECTED")
-    elif args.command == "reopen-tests":
-        command_reopen_tests(args, root)
-    elif args.command == "reopen-plan":
-        command_reopen_plan(args, root)
-    elif args.command == "submit-implementation":
-        submit_artifact(args, root, "implementation_report", "IMPLEMENTATION", "VALIDATION", "IMPLEMENTATION_SUBMITTED")
-    elif args.command == "run-validation":
-        command_run_validation(args, root, runner)
-    elif args.command == "review-final":
-        review(args, root, runner, "final_review", "FINAL_REVIEW", "IMPLEMENTATION", "FINAL_REVIEW", "IMPLEMENTATION_REVIEWED")
-    elif args.command == "create-draft-pr":
-        command_create_draft_pr(args, root, runner)
-    elif args.command == "approve-pr":
-        command_approve_pr(args, root, runner)
-    elif args.command == "revise-pr-metadata":
-        command_revise_pr_metadata(args, root, runner)
-    elif args.command == "reject-pr":
-        rejection(args, root, "WAITING_FOR_PR_HUMAN_APPROVAL", "IMPLEMENTATION", "pr", "PR_HUMAN_REJECTED")
-    elif args.command == "start-correction":
-        command_start_correction(args, root, runner)
-    else:
+    handler = COMMAND_HANDLERS.get(args.command)
+    if handler is None:
         raise WorkflowError("Unknown command: %s" % args.command)
+    handler(args, root, runner)
 
 
 def main(argv=None, runner=subprocess.run):
