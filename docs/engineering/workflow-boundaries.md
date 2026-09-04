@@ -16,6 +16,7 @@ the workflow lifecycle or changing its stored formats.
 | Deterministic legacy/durable compatibility planning and immutable publication | `workflow_migration.py` |
 | Dependency invalidation and convergence policy evaluation | `workflow_policy.py` |
 | Inactive work-type intake, route, advisory targeted-check, and structural completion policy | `workflow_work_type_policy.py` |
+| Inactive incremental reviewed-plan revision policy | `workflow_plan_revision_policy.py` |
 | Lifecycle, approvals, reviews, corrections, validation, migration, and recovery policy | `agent_workflow.py` |
 | Git, GitHub, process execution, command parsing, and human-facing output | `agent_workflow.py` |
 | Durable-store inspection and checkpoints | `workflow_inspector.py` |
@@ -38,6 +39,7 @@ workflow_evidence -> workflow_inspector, workflow_cas
 workflow_migration -> workflow_inspector, workflow_cas, workflow_evidence, workflow_kernel
 workflow_policy -> workflow_inspector, workflow_evidence, workflow_migration
 workflow_work_type_policy -> workflow_inspector, workflow_evidence, workflow_supervisor
+workflow_plan_revision_policy -> workflow_inspector, workflow_evidence
 workflow_repair   -> workflow_inspector, workflow_cas
 workflow_cas
 workflow_inspector
@@ -90,6 +92,13 @@ escaped descendants. The module does not import the legacy lifecycle or #134,
 publish evidence, acquire trust anchors, execute comprehensive validation,
 authenticate actors, or transition authority. Future #144 orchestration owns
 activation and composition of the separate #116 and #134 policy results.
+
+`workflow_plan_revision_policy.py` is the inactive #125 read-only evaluator.
+It validates native evidence-backed plan snapshots, exact diffs, dispositions,
+and technical-review coverage, then derives an incremental or full review
+requirement. It cannot publish evidence, mutate lifecycle state, authenticate
+actors, preserve approval, or establish freshness. Future #144 is the sole
+owner of composing #116, #125, and #134 results and activating their effects.
 
 ## Kernel boundary
 

@@ -16,6 +16,7 @@ PRODUCTION_MODULES = (
     "workflow_kernel",
     "workflow_migration",
     "workflow_policy",
+    "workflow_plan_revision_policy",
     "workflow_repair",
     "workflow_supervisor",
     "workflow_work_type_policy",
@@ -139,6 +140,10 @@ class WorkflowBoundaryTest(unittest.TestCase):
                 "workflow_supervisor",
             },
             project_imports("workflow_work_type_policy"),
+        )
+        self.assertEqual(
+            {"workflow_evidence", "workflow_inspector"},
+            project_imports("workflow_plan_revision_policy"),
         )
 
     def test_dependency_check_recognizes_qualified_and_relative_imports(self):
@@ -267,6 +272,24 @@ class WorkflowBoundaryTest(unittest.TestCase):
         self.assertEqual(set(subparsers.choices), set(work_type.COMMAND_HANDLERS))
         for handler in work_type.COMMAND_HANDLERS.values():
             self.assertIs(handler, getattr(work_type, handler.__name__))
+
+    def test_plan_revision_policy_cli_and_parser_handlers(self):
+        repository = SCRIPTS.parent
+        for command in (
+            [sys.executable, str(SCRIPTS / "workflow_plan_revision_policy.py"), "--help"],
+            [sys.executable, "-m", "scripts.workflow_plan_revision_policy", "--help"],
+        ):
+            with self.subTest(command=command):
+                result = subprocess.run(command, cwd=str(repository), text=True, capture_output=True)
+                self.assertEqual(0, result.returncode, result.stderr)
+        policy = importlib.import_module("scripts.workflow_plan_revision_policy")
+        parser = policy.build_parser()
+        subparsers = next(
+            action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
+        )
+        self.assertEqual(set(subparsers.choices), set(policy.COMMAND_HANDLERS))
+        for handler in policy.COMMAND_HANDLERS.values():
+            self.assertIs(handler, getattr(policy, handler.__name__))
 
     def test_every_parser_command_has_one_explicit_handler(self):
         workflow = importlib.import_module("scripts.agent_workflow")
