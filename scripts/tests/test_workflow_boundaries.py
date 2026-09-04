@@ -18,6 +18,7 @@ PRODUCTION_MODULES = (
     "workflow_policy",
     "workflow_repair",
     "workflow_supervisor",
+    "workflow_work_type_policy",
 )
 KERNEL_EXPORTS = {
     "COMMITTED_MODE",
@@ -131,6 +132,14 @@ class WorkflowBoundaryTest(unittest.TestCase):
             project_imports("workflow_repair"),
         )
         self.assertEqual(set(), project_imports("workflow_supervisor"))
+        self.assertEqual(
+            {
+                "workflow_evidence",
+                "workflow_inspector",
+                "workflow_supervisor",
+            },
+            project_imports("workflow_work_type_policy"),
+        )
 
     def test_dependency_check_recognizes_qualified_and_relative_imports(self):
         tree = ast.parse(
@@ -226,6 +235,38 @@ class WorkflowBoundaryTest(unittest.TestCase):
                     capture_output=True,
                 )
                 self.assertEqual(0, result.returncode, result.stderr)
+
+    def test_work_type_policy_cli_supports_script_and_package_execution(self):
+        repository = SCRIPTS.parent
+        commands = (
+            [
+                sys.executable,
+                str(SCRIPTS / "workflow_work_type_policy.py"),
+                "--help",
+            ],
+            [sys.executable, "-m", "scripts.workflow_work_type_policy", "--help"],
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                result = subprocess.run(
+                    command,
+                    cwd=str(repository),
+                    text=True,
+                    capture_output=True,
+                )
+                self.assertEqual(0, result.returncode, result.stderr)
+
+    def test_work_type_policy_parser_has_explicit_handlers(self):
+        work_type = importlib.import_module("scripts.workflow_work_type_policy")
+        parser = work_type.build_parser()
+        subparsers = next(
+            action
+            for action in parser._actions
+            if isinstance(action, argparse._SubParsersAction)
+        )
+        self.assertEqual(set(subparsers.choices), set(work_type.COMMAND_HANDLERS))
+        for handler in work_type.COMMAND_HANDLERS.values():
+            self.assertIs(handler, getattr(work_type, handler.__name__))
 
     def test_every_parser_command_has_one_explicit_handler(self):
         workflow = importlib.import_module("scripts.agent_workflow")

@@ -15,6 +15,7 @@ the workflow lifecycle or changing its stored formats.
 | Canonical evidence manifests, provenance, bindings, and derived views | `workflow_evidence.py` |
 | Deterministic legacy/durable compatibility planning and immutable publication | `workflow_migration.py` |
 | Dependency invalidation and convergence policy evaluation | `workflow_policy.py` |
+| Inactive work-type intake, route, advisory targeted-check, and structural completion policy | `workflow_work_type_policy.py` |
 | Lifecycle, approvals, reviews, corrections, validation, migration, and recovery policy | `agent_workflow.py` |
 | Git, GitHub, process execution, command parsing, and human-facing output | `agent_workflow.py` |
 | Durable-store inspection and checkpoints | `workflow_inspector.py` |
@@ -36,6 +37,7 @@ agent_workflow   -> workflow_kernel
 workflow_evidence -> workflow_inspector, workflow_cas
 workflow_migration -> workflow_inspector, workflow_cas, workflow_evidence, workflow_kernel
 workflow_policy -> workflow_inspector, workflow_evidence, workflow_migration
+workflow_work_type_policy -> workflow_inspector, workflow_evidence, workflow_supervisor
 workflow_repair   -> workflow_inspector, workflow_cas
 workflow_cas
 workflow_inspector
@@ -77,6 +79,17 @@ applies bounded convergence rules to a self-contained canonical state. It
 cannot publish or apply the result, read `.agent-workflow/**`, execute a
 process, or import the legacy CLI, kernel, repair tool, supervisor, or CAS
 publisher.
+
+`workflow_work_type_policy.py` is the inactive #116 policy surface. It verifies
+explicit #132-bound intake, baseline, diff, artifact, review, and acceptance
+documents; returns deterministic work-type routes and scope assessments; and
+may invoke only policy-selected targeted checks directly through
+`workflow_supervisor` without shell parsing.
+Those process results are advisory because #131 explicitly cannot observe
+escaped descendants. The module does not import the legacy lifecycle or #134,
+publish evidence, acquire trust anchors, execute comprehensive validation,
+authenticate actors, or transition authority. Future #144 orchestration owns
+activation and composition of the separate #116 and #134 policy results.
 
 ## Kernel boundary
 
@@ -137,3 +150,8 @@ publication. It does not move migration into `agent_workflow.py`, invoke
 #134 adds only deterministic dependency invalidation and convergence
 evaluation. It does not activate that policy, mutate workflow authority, or
 change legacy reopen/correction behavior.
+
+#116 adds complete but inactive work-type policy contracts. It does not alter
+legacy initialization or completion, treat #134's invalidation DAG as a
+lifecycle, make targeted checks authoritative, or claim latest-tip,
+revocation, replay prevention, temporal freshness, or authenticated approval.
