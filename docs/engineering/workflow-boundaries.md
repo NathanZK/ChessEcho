@@ -11,16 +11,23 @@ the workflow lifecycle or changing its stored formats.
 | Legacy v4 envelope and transaction-snapshot integrity checks | `workflow_kernel.py` |
 | Per-run locking and atomic projection-file replacement | `workflow_kernel.py` |
 | Bounded external process execution and process-group cleanup | `workflow_supervisor.py` |
-| Immutable durable-CAS object publication | `workflow_cas.py` |
+| Immutable durable content-addressed storage (CAS) publication | `workflow_cas.py` |
 | Canonical evidence manifests, provenance, bindings, and derived views | `workflow_evidence.py` |
 | Deterministic legacy/durable compatibility planning and immutable publication | `workflow_migration.py` |
 | Dependency invalidation and convergence policy evaluation | `workflow_policy.py` |
 | Inactive work-type intake, route, advisory targeted-check, and structural completion policy | `workflow_work_type_policy.py` |
 | Inactive incremental reviewed-plan revision policy | `workflow_plan_revision_policy.py` |
-| Lifecycle, approvals, reviews, corrections, validation, migration, and recovery policy | `agent_workflow.py` |
+| Legacy lifecycle, approvals, reviews, corrections, validation, adoption/migration, and projection-recovery policy | `agent_workflow.py` |
 | Git, GitHub, process execution, command parsing, and human-facing output | `agent_workflow.py` |
 | Durable-store inspection and checkpoints | `workflow_inspector.py` |
 | Durable-store repair bundles and recovery | `workflow_repair.py` |
+
+The canonical [architecture and status
+map](agent-workflow.md#architecture) distinguishes the active legacy lifecycle,
+independently callable trusted mechanisms, inactive policy evaluators, and
+future #144 composition. In this table, legacy adoption/migration and
+projection recovery are intentionally separate from the durable evidence
+migration and durable-store repair owners.
 
 The merged baseline has no duplicate top-level production definitions or
 `globals()` aliases. A structural test preserves that property. The explicit

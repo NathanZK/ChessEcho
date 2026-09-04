@@ -1,9 +1,12 @@
 # Workflow Repair
 
 `scripts/workflow_repair.py` is a standalone, bounded repair tool for the v4
-durable workflow authority. It imports only `workflow_inspector.py`; it never
-imports the lifecycle implementation, invokes workflow commands, evaluates
-policy, or writes worktree projections.
+durable workflow authority. It depends only on `workflow_inspector.py` and the
+`workflow_cas.py` publication leaf; it never imports the lifecycle
+implementation, invokes workflow commands, evaluates policy, or writes worktree
+projections. See the canonical [architecture and status
+map](agent-workflow.md#architecture) for how this independently callable tool
+relates to the active legacy lifecycle.
 
 ## Commands and trust boundary
 
@@ -253,10 +256,14 @@ repair projections, migrate legacy data, accept arbitrary setters/patches,
 overwrite objects, resolve conflicts heuristically, or treat a confirmation
 phrase as authorization.
 
-## Future use with frozen issue #115
+## Frozen issue #115 boundary
 
-Issue #115 is not special-cased. A future operator may first obtain a public
-#128 checkpoint and construct the same canonical request used for any issue.
-Until that separately reviewed action, integration tests may inspect #115
-read-only when its durable pointer is available; they never prepare files in,
-apply to, recover, or otherwise mutate its store.
+Issue #115 is permanently frozen historical evidence and is not a repair target.
+The repair CLI's generic issue selector is not authorization to prepare, apply,
+recover, or otherwise mutate #115. Historical source and postmortem material may
+inform architecture documentation, but no operational workflow should depend on
+or resume its runtime state.
+
+Existing optional integration coverage, when the historical durable pointer is
+available, is limited to asserting read-only byte preservation. It does not
+authorize an operator to construct or apply a repair.

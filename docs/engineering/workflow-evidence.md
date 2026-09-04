@@ -2,7 +2,11 @@
 
 Issue #132 defines immutable semantic evidence independently of the legacy
 workflow orchestrator. `scripts/workflow_evidence.py` uses the existing durable
-CAS below the Git common directory and never writes `.agent-workflow/**`.
+content-addressed storage (CAS) below the Git common directory and never writes
+`.agent-workflow/**`. See
+the canonical [architecture and status map](agent-workflow.md#architecture) for
+the distinction between independently callable evidence mechanisms, inactive
+policy, and the active legacy lifecycle.
 
 ## Commands
 
@@ -54,6 +58,14 @@ primitive from #129. Dependencies are published first and the binding is
 published last. An interruption can leave only unreachable immutable objects;
 it cannot produce a success result or a binding with unpublished dependencies.
 Concurrent publication of identical bytes is idempotent.
+
+"Immutable" here describes the supported publication protocol: writers never
+overwrite a conflicting destination, and readers verify exact hash, size, kind,
+and graph references. It is not a filesystem permission, signature, retention
+policy, or defense against an actor with direct write access to the store.
+Binding-last is the evidence-graph commit point, not a multi-object filesystem
+transaction or a guarantee that an interrupted publication leaves no orphaned
+objects.
 
 ## Semantic manifest
 
@@ -142,10 +154,17 @@ subject. A mismatch is `stale`, not silently accepted.
 
 ## Authority and projections
 
-Raw payloads, manifests, provenance records, and bindings are authoritative
-immutable objects. `project` expands a verified binding into a deterministic
-human-readable view without payload bytes. The projection contains its exact
-authority references and is never persisted as authority.
+Raw payloads, manifests, provenance records, and bindings are canonical
+content-addressed records whose stored bytes are authoritative for their own
+identity after verification. A binding becomes workflow authority only when an
+external authority mechanism selects that exact binding under its current
+preconditions. Publication alone does not authenticate a producer, establish a
+latest tip, prove freshness or non-revocation, record human approval, or
+activate a lifecycle.
+
+`project` expands a verified binding into a deterministic human-readable view
+without payload bytes. The projection contains its exact source references and
+is never persisted as authority.
 
 ## v4 compatibility
 
