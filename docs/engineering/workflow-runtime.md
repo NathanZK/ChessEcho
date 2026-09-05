@@ -1,11 +1,11 @@
 # Workflow runtime
 
 `scripts/workflow_runtime.py` is the inactive external boundary for the future
-orchestrator. It supplies fixed Git and GitHub observations, baseline-pinned
-command resolution, bounded execution, cancellation pass-through, and
-uncertain GitHub-write reconciliation. It does not select lifecycle state,
-publish evidence, read or write an authority pointer, migrate or repair a run,
-or define retry policy.
+orchestrator. It supplies fixed Git and GitHub observations, including trusted
+remote-head observations, baseline-pinned command resolution, bounded execution,
+cancellation pass-through, and uncertain GitHub-write reconciliation. It does
+not select lifecycle state, publish evidence, read or write an authority
+pointer, migrate or repair a run, publish branches, or define retry policy.
 
 The runtime imports exactly `workflow_inspector` and `workflow_supervisor`.
 Every external process goes through `workflow_supervisor.supervise` on the
@@ -98,7 +98,8 @@ Commands are derived from the bootstrap bytes, not caller argv:
   and
 - the only write operation is `create-draft-pr`, constructed from an exact
   typed payload whose refs and title/body hashes match its reconciliation
-  expectation.
+  expectation; it requires a validated repository observation and a stable
+  trusted remote-head observation before the mutation starts.
 
 Each call receives a newly isolated `HOME`. Common environment keys are exactly
 `PATH`, `HOME`, `LC_ALL=C.UTF-8`, `LANG=C.UTF-8`, and `TZ=UTC`. Git additionally
@@ -110,16 +111,24 @@ only `GH_HOST=github.com`, `GH_PROMPT_DISABLED=1`, and the designated
 alternate-object, and other environment entries are never inherited.
 GitHub write refs, title, and body are rejected before preflight if they contain
 the designated token, and process output is rejected if it discloses that token.
+Execution and security-sensitive read results are checked against the exact
+command hash, configured limits, containment shape, outcome/reason pairing, and
+stream schema before their state can authorize a decision. Only a complete
+canonical `cancelled-before-start` result proves that a write did not begin.
 
-The optional caller-owned `cancel_event` is passed to #131 unchanged for
-preflight, primary execution, reconciliation, and postflight calls. A
-pre-cancelled request skips external pre/post observations, invokes the primary
-supervisor once to obtain its canonical cancelled result, and never starts the
-child. A write cancelled before process start is not reconciled because no
-mutation was attempted; cancellation after a possible start retains the
-uncertain-write reconciliation rule. A cancellation before postflight can
-never retain a `succeeded` outcome. Runtime does not watch or mutate authority.
-Agent, validation, mutation,
+The optional caller-owned `cancel_event` is passed to #131 unchanged while
+preflight remains eligible. If it is already set or becomes set during a
+cancelled preflight, runtime latches that decision in a private always-set event
+before invoking the primary supervisor; clearing the caller's event cannot then
+start an unverified child. A pre-cancelled request skips external pre/post
+observations, obtains the supervisor's canonical cancelled result, and never
+starts the child. A write cancelled before process start is not reconciled
+because no mutation was attempted. Once a write may have started, its single
+bounded reconciliation and local postflight run without that cancellation
+event so a completed mutation cannot be mislabeled cancelled and retried.
+They also run before propagating an interruption or malformed supervisor result
+reported after invocation of the write command.
+Runtime does not watch or mutate authority. Agent, validation, mutation,
 authorization, migration, and repair calls are never automatically retried.
 
 ## Observation documents
@@ -153,6 +162,19 @@ Pull-request observations use
 state, draft flag, base/head refs and SHAs, title/body hashes, source request
 binding, and observation time. The caller supplies the originating workflow
 issue separately so frozen-issue denial occurs before any PR lookup.
+
+Remote-head observations use
+`chess-echo-github-remote-head-observation-v1` and bind the bootstrapped
+repository, exact `refs/heads/<branch>` ref, resolved commit SHA, source
+repository-observation digest, and observation time. `observe_remote_head(...)`
+accepts no expected-SHA argument: it derives that value only from the validated
+`repository_before.head.commit`. The runtime performs a complete local
+observation, reads the remote ref, completely revalidates the local repository,
+and reads the remote ref again immediately before mutation. It retries that
+sequence at most once and fails closed on malformed, missing, divergent, or
+moving refs. Branch names are validated before any external call. An
+unpublished branch is rejected; the runtime never pushes or otherwise
+publishes it.
 
 Authorization observations require that same originating workflow issue and use
 `chess-echo-github-authorization-observation-v1`. Numeric account ID is primary;
@@ -216,7 +238,10 @@ The exact request keys are `format`, `issue`, `family_run_id`, `attempt_id`,
 
 The exact result keys are `format`, `request_binding`, `attempt_id`,
 `process_result`, `candidate_output`, `repository_after`, `reconciliation`,
-`sandbox`, `outcome`, and `result_sha256`. Candidate output contains only
+`sandbox`, `outcome`, and `result_sha256`. For a GitHub write,
+`reconciliation.remote_head` contains the canonical trusted remote-head
+observation (or null when cancellation prevented preflight); other operations
+retain the existing reconciliation shape. Candidate output contains only
 SHA-256 and size; stdout bytes remain solely in the #131 process result.
 Canonical documents are limited to 2 MiB and digests omit only their final
 digest field. Agent and validation requests require a runtime-produced
@@ -232,16 +257,33 @@ without a success-shaped repository observation.
 
 A GitHub write carries an exact non-authoritative expectation containing
 repository, base ref/SHA, head ref/SHA, title SHA-256, and body SHA-256.
-Successful direct creation needs no reconciliation. Timeout, interruption, or
-another non-success never repeats the mutation. One owner-qualified,
-URL-encoded `--paginate --slurp` read-only query follows:
+The expectation's head SHA must equal the revalidated
+`repository_before.head.commit`; a parallel caller-provided SHA is rejected.
+Runtime freezes caller-owned expectation and payload dictionaries when
+execution begins, so later mutation cannot substitute a different head after
+validation.
+The named branch must already exist in the bootstrapped repository, and its
+trusted remote observation must resolve to that same validated local SHA before
+`gh pr create` runs. Reviewer, agent, or other caller output naming a
+`head_ref` cannot establish source identity by itself.
+
+The mutation is never retried. Unless cancellation prevented process start, one
+owner-qualified, URL-encoded `--paginate --slurp` read-only query follows both
+successful and unsuccessful creation attempts:
 
 - exactly one matching open draft is `succeeded/confirmed`;
 - zero matches or query failure is `uncertain/unknown`; and
 - multiple matches are a typed `ambiguous` failure.
 
 Runtime compares live values only. It does not dereference evidence to derive
-the expectation and does not retry a failed reconciliation query.
+the expectation and does not retry a failed reconciliation query. Requiring
+post-create reconciliation prevents a successful command from becoming a
+success-shaped result if the PR's live head SHA no longer matches the
+pre-create trusted remote-head observation. Malformed reconciliation rows are
+uncertain rather than matchable, and reconciliation plus local postflight still
+run after a possible mutation even when process output is malformed or exposes
+the designated credential. A confirmed pull request has a positive numeric
+`number` and the exact canonical repository pull-request URL for that number.
 
 ## Sandbox activation boundary
 
