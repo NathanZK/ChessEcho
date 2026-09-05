@@ -11,6 +11,7 @@ SCRIPTS = pathlib.Path(__file__).parents[1]
 PRODUCTION_MODULES = (
     "agent_workflow",
     "workflow_cas",
+    "workflow_authority",
     "workflow_evidence",
     "workflow_inspector",
     "workflow_kernel",
@@ -106,6 +107,10 @@ class WorkflowBoundaryTest(unittest.TestCase):
         self.assertEqual({"workflow_kernel"}, project_imports("agent_workflow"))
         self.assertEqual(set(), project_imports("workflow_cas"))
         self.assertEqual(
+            {"workflow_cas", "workflow_evidence", "workflow_inspector"},
+            project_imports("workflow_authority"),
+        )
+        self.assertEqual(
             {"workflow_cas", "workflow_inspector"},
             project_imports("workflow_evidence"),
         )
@@ -156,6 +161,57 @@ class WorkflowBoundaryTest(unittest.TestCase):
             {"agent_workflow", "workflow_kernel", "workflow_repair"},
             project_imports_from_tree(tree),
         )
+
+    def test_authority_owns_only_its_approved_persistence_boundary(self):
+        authority_path = SCRIPTS / "workflow_authority.py"
+        self.assertLessEqual(len(authority_path.read_text().splitlines()), 700)
+        allowed_replace = {
+            "workflow_authority",
+            "workflow_kernel",
+            "workflow_repair",
+        }
+        allowed_link = {"workflow_cas", "workflow_repair"}
+        for module in PRODUCTION_MODULES:
+            tree = syntax_tree(module)
+            calls = {
+                (node.func.value.id, node.func.attr)
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+            }
+            with self.subTest(module=module):
+                self.assertEqual(
+                    module in allowed_replace,
+                    ("os", "replace") in calls,
+                )
+                self.assertEqual(module in allowed_link, ("os", "link") in calls)
+        authority_tree = syntax_tree("workflow_authority")
+        imported = set()
+        for node in ast.walk(authority_tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imported.add((node.module or "").split(".")[0])
+        self.assertTrue(
+            {"subprocess", "socket", "urllib", "http", "requests"}.isdisjoint(imported)
+        )
+        calls = {
+            (node.func.value.id, node.func.attr)
+            for node in ast.walk(authority_tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+        }
+        self.assertTrue(
+            {
+                ("workflow_cas", "ensure_directory"),
+                ("workflow_cas", "fsync_directory"),
+                ("workflow_cas", "publish_immutable"),
+                ("workflow_cas", "write_all"),
+            }.issubset(calls)
+        )
+        self.assertTrue({("os", "link"), ("os", "mkdir"), ("os", "write")}.isdisjoint(calls))
 
     def test_production_modules_have_no_shadowed_top_level_definitions(self):
         for module in PRODUCTION_MODULES:
