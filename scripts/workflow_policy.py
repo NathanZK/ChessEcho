@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministic, read-only workflow invalidation and convergence policy."""
+"""Deterministic, read-only workflow state construction and evaluation policy."""
 
 import argparse
 import json
@@ -18,6 +18,7 @@ except ModuleNotFoundError:
 
 
 POLICY_VERSION = "1.0.0"
+INITIALIZE_REQUEST_FORMAT = "chess-echo-workflow-policy-initialize-request-v1"
 REQUEST_FORMAT = "chess-echo-workflow-policy-request-v1"
 STATE_FORMAT = "chess-echo-workflow-policy-state-v1"
 RESULT_FORMAT = "chess-echo-workflow-policy-result-v1"
@@ -566,6 +567,17 @@ def _state_binding_digests(state):
 def _operation_binding_digests(operation):
     digests = set()
     operation_type = operation.get("type") if isinstance(operation, dict) else None
+    if operation_type == "bind":
+        binding = operation.get("binding")
+        if isinstance(binding, dict) and isinstance(binding.get("sha256"), str):
+            digests.add(binding["sha256"])
+        dependencies = operation.get("dependencies")
+        if isinstance(dependencies, list):
+            for item in dependencies:
+                if isinstance(item, dict) and isinstance(item.get("binding"), dict):
+                    digest = item["binding"].get("sha256")
+                    if isinstance(digest, str):
+                        digests.add(digest)
     if operation_type in {"reopen", "correction"}:
         replacements = operation.get("replacements")
         if isinstance(replacements, list):
@@ -645,6 +657,20 @@ def _verify_node_bindings(state, operation, verified):
                 "convergence-evidence-context-mismatch",
                 "Historical convergence evidence is bound to another context",
             )
+    if operation["type"] == "bind":
+        require_exact(operation["binding"], "Bound node")
+        if (
+            verified[operation["binding"]["sha256"]]["decision"]["type"]
+            != NODE_DECISIONS[operation["node"]]
+        ):
+            _fail(
+                "stale",
+                "node-decision-mismatch",
+                "Bound evidence decision does not match its policy node",
+                operation["node"],
+            )
+        for item in operation["dependencies"]:
+            require_exact(item["binding"], "Bound dependency")
     if operation["type"] in {"reopen", "correction"}:
         for node, reference in operation["replacements"].items():
             require_exact(reference, "Replacement")
@@ -665,6 +691,36 @@ def _validate_reason(value):
     if not isinstance(value, str) or not value.strip():
         _fail("corrupt", "invalid-policy-reason", "Policy reason must be nonempty")
     return value
+
+
+def _validate_bind_dependencies(value, node):
+    if not isinstance(value, list):
+        _fail("corrupt", "invalid-node-dependencies", "Node dependencies must be a list")
+    expected = DEPENDENCIES[node]
+    if len(value) != len(expected):
+        _fail("corrupt", "invalid-node-dependencies", "Node dependency set is incomplete")
+    dependencies = []
+    seen = set()
+    for index, item in enumerate(value):
+        _exact_keys(item, {"node", "binding"}, "node-dependency")
+        parent = item["node"]
+        if not isinstance(parent, str):
+            _fail(
+                "corrupt",
+                "invalid-node-dependency-identifier",
+                "Node dependency identifier must be a string",
+            )
+        if parent in seen:
+            _fail("ambiguous", "duplicate-node-dependency", "Node dependency is duplicated")
+        seen.add(parent)
+        if parent != expected[index]:
+            _fail(
+                "corrupt",
+                "invalid-node-dependencies",
+                "Node dependencies must use fixed direct-dependency order",
+            )
+        dependencies.append({"node": parent, "binding": _reference(item["binding"])})
+    return dependencies
 
 
 def _validate_replacements(value, expected_roots):
@@ -782,6 +838,28 @@ def _validate_operation(value):
     if not isinstance(value, dict):
         _fail("corrupt", "invalid-operation", "Policy operation must be an object")
     operation_type = value.get("type")
+    if operation_type == "bind":
+        _exact_keys(
+            value,
+            {"type", "node", "binding", "dependencies", "reason"},
+            "bind-operation",
+        )
+        node = value["node"]
+        if not isinstance(node, str):
+            _fail(
+                "corrupt",
+                "invalid-policy-node-identifier",
+                "Bound node identifier must be a string",
+            )
+        if node not in DEPENDENCIES:
+            _fail("unsupported", "unsupported-policy-node", "Policy node is unsupported")
+        return {
+            "type": operation_type,
+            "node": node,
+            "binding": _reference(value["binding"]),
+            "dependencies": _validate_bind_dependencies(value["dependencies"], node),
+            "reason": _validate_reason(value["reason"]),
+        }
     if operation_type == "reopen":
         _exact_keys(value, {"type", "target", "reason", "replacements"}, "reopen-operation")
         if not isinstance(value["target"], str):
@@ -1091,7 +1169,9 @@ def _evaluate_recorded_transition(state, operation, verified):
         state, operation, verified, trusted_correction
     )
     transition_id = _transition_id(state, operation)
-    if operation["type"] == "convergence":
+    if operation["type"] == "bind":
+        result = _evaluate_bind(state, operation, transition_id)
+    elif operation["type"] == "convergence":
         result = _evaluate_convergence(state, operation, verified, transition_id)
     else:
         result = _evaluate_invalidation(state, operation, transition_id)
@@ -1150,10 +1230,26 @@ def _validate_authority_chain(value, current_state, verified, issue, family_run_
         _state_binding_matches(authority, state)
         lineage = authority["lineage"]
         if index == 0:
+            implementation = state["active"].get("implementation-a")
+            expected_history = (
+                [
+                    {
+                        "node": "implementation-a",
+                        "binding": implementation["binding"],
+                        "status": "active",
+                        "transition_id": None,
+                    }
+                ]
+                if implementation is not None
+                else []
+            )
             if (
                 state["generation"] != 0
                 or lineage["status"] != "original"
                 or lineage["parent_binding"] is not None
+                or set(state["active"]) != {"implementation-a"}
+                or implementation["dependencies"] != {}
+                or state["history"] != expected_history
                 or state["budgets"]["reopens"] != 0
                 or any(state["budgets"]["retries"].values())
                 or state["convergence"] != {
@@ -1402,6 +1498,94 @@ def _evaluate_invalidation(state, operation, transition_id):
     return result
 
 
+def _evaluate_bind(state, operation, transition_id):
+    node = operation["node"]
+    if node == "implementation-a":
+        _fail(
+            "unsupported",
+            "bind-implementation-a-forbidden",
+            "Implementation A can only be installed by policy initialization",
+            node,
+        )
+    if node in state["active"]:
+        _fail(
+            "stale",
+            "bind-node-already-active",
+            "Bound node is already active",
+            node,
+        )
+    if any(
+        item["node"] == node and item["binding"] == operation["binding"]
+        for item in state["history"]
+    ):
+        _fail(
+            "stale",
+            "bind-already-historical",
+            "Bound evidence is already in this node's history",
+            node,
+        )
+    dependencies = {}
+    for item in operation["dependencies"]:
+        parent = item["node"]
+        if parent not in state["active"]:
+            _fail(
+                "stale",
+                "bind-dependency-inactive",
+                "Bound node depends on an inactive node",
+                node,
+            )
+        if item["binding"] != state["active"][parent]["binding"]:
+            _fail(
+                "stale",
+                "bind-dependency-mismatch",
+                "Bound node dependency does not match the active binding",
+                node,
+            )
+        dependencies[parent] = item["binding"]
+    active = dict(state["active"])
+    active[node] = {
+        "node": node,
+        "binding": operation["binding"],
+        "dependencies": dependencies,
+    }
+    history = list(state["history"])
+    history.append(
+        {
+            "node": node,
+            "binding": operation["binding"],
+            "status": "active",
+            "transition_id": transition_id,
+        }
+    )
+    next_state = {
+        "format": STATE_FORMAT,
+        "issue": state["issue"],
+        "family_run_id": state["family_run_id"],
+        "generation": state["generation"] + 1,
+        "transition_tip": transition_id,
+        "transition": operation,
+        "active": active,
+        "history": history,
+        "budgets": state["budgets"],
+        "convergence": state["convergence"],
+    }
+    next_document = _state_document(next_state)
+    result = {
+        "format": RESULT_FORMAT,
+        "outcome": {"status": "resolved", "code": "evaluated"},
+        "input_state_sha256": state["state_sha256"],
+        "transition_id": transition_id,
+        "operation": operation,
+        "changed_roots": [node],
+        "invalidated": [],
+        "preserved": _active_document(state["active"]),
+        "next_state": next_document,
+        "escalation": None,
+    }
+    result["result_sha256"] = _result_digest(result)
+    return result
+
+
 def _evaluate_convergence(state, operation, verified, transition_id):
     current = state["convergence"]["state"]
     if operation["from"] != current:
@@ -1502,6 +1686,69 @@ def _evaluate_convergence(state, operation, verified, transition_id):
     return result
 
 
+def initialize(root, issue, family_run_id, implementation_a_binding_record):
+    root = _resolve_root(root)
+    if (
+        not _exact_int(issue)
+        or issue < 1
+        or not isinstance(family_run_id, str)
+        or RUN_ID_RE.fullmatch(family_run_id) is None
+    ):
+        _fail(
+            "corrupt",
+            "invalid-initialize-identity",
+            "Policy initialization identity is invalid",
+        )
+    verified = _verify_binding_inputs(
+        root,
+        [implementation_a_binding_record],
+        issue,
+        family_run_id,
+    )
+    reference, _migration_plan = _validate_binding_record(
+        implementation_a_binding_record
+    )
+    if verified[reference["sha256"]]["decision"]["type"] != NODE_DECISIONS[
+        "implementation-a"
+    ]:
+        _fail(
+            "stale",
+            "node-decision-mismatch",
+            "Evidence decision does not match its policy node",
+            "implementation-a",
+        )
+    return _state_document(
+        {
+            "format": STATE_FORMAT,
+            "issue": issue,
+            "family_run_id": family_run_id,
+            "generation": 0,
+            "transition_tip": None,
+            "transition": None,
+            "active": {
+                "implementation-a": {
+                    "node": "implementation-a",
+                    "binding": reference,
+                    "dependencies": {},
+                }
+            },
+            "history": [
+                {
+                    "node": "implementation-a",
+                    "binding": reference,
+                    "status": "active",
+                    "transition_id": None,
+                }
+            ],
+            "budgets": {
+                "reopens": 0,
+                "retries": {stage: 0 for stage in CONVERGENCE_STATES},
+            },
+            "convergence": {"episode": 0, "state": "UNKNOWN", "evidence": []},
+        }
+    )
+
+
 def evaluate(
     root,
     request,
@@ -1581,6 +1828,8 @@ def evaluate(
         state, operation, verified, trusted_correction_binding
     )
     transition_id = _transition_id(state, operation)
+    if operation["type"] == "bind":
+        return _evaluate_bind(state, operation, transition_id)
     if operation["type"] == "convergence":
         return _evaluate_convergence(state, operation, verified, transition_id)
     return _evaluate_invalidation(state, operation, transition_id)
@@ -1600,6 +1849,66 @@ def _load_json(path):
     return value
 
 
+def _initialize_from_request(root, request, trusted_implementation_a_binding):
+    if (
+        not isinstance(trusted_implementation_a_binding, str)
+        or SHA256_RE.fullmatch(trusted_implementation_a_binding) is None
+    ):
+        _fail(
+            "corrupt",
+            "invalid-trusted-implementation-a-binding",
+            "Trusted implementation A binding must be 64 lowercase hex",
+        )
+    _exact_keys(
+        request,
+        {
+            "format",
+            "issue",
+            "family_run_id",
+            "implementation_a",
+            "request_sha256",
+        },
+        "policy-initialize-request",
+    )
+    if request["format"] != INITIALIZE_REQUEST_FORMAT:
+        _fail(
+            "unsupported",
+            "unsupported-initialize-request-format",
+            "Policy initialize request format is unsupported",
+        )
+    if (
+        not isinstance(request["request_sha256"], str)
+        or SHA256_RE.fullmatch(request["request_sha256"]) is None
+    ):
+        _fail(
+            "corrupt",
+            "invalid-initialize-request-digest",
+            "Policy initialize request digest is invalid",
+        )
+    unsigned = dict(request)
+    supplied_digest = unsigned.pop("request_sha256")
+    if _digest(unsigned) != supplied_digest:
+        _fail(
+            "stale",
+            "policy-initialize-request-stale",
+            "Policy initialize request digest is stale",
+        )
+    record = request["implementation_a"]
+    reference, _migration_plan = _validate_binding_record(record)
+    if reference["sha256"] != trusted_implementation_a_binding:
+        _fail(
+            "stale",
+            "trusted-implementation-a-binding-mismatch",
+            "Policy initialize request does not match the trusted implementation A binding",
+        )
+    return initialize(
+        root,
+        request["issue"],
+        request["family_run_id"],
+        record,
+    )
+
+
 class PolicyArgumentParser(argparse.ArgumentParser):
     def error(self, message):
         _fail("unsupported", "invalid-cli", "Invalid command line: %s" % message)
@@ -1608,6 +1917,10 @@ class PolicyArgumentParser(argparse.ArgumentParser):
 def build_parser():
     parser = PolicyArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
+    initialize_parser = commands.add_parser("initialize")
+    initialize_parser.add_argument("--root", default=".")
+    initialize_parser.add_argument("--request", required=True)
+    initialize_parser.add_argument("--implementation-a-binding", required=True)
     evaluate_parser = commands.add_parser("evaluate")
     evaluate_parser.add_argument("--root", default=".")
     evaluate_parser.add_argument("--request", required=True)
@@ -1619,12 +1932,20 @@ def build_parser():
 def main(argv=None):
     try:
         args = build_parser().parse_args(argv)
-        document = evaluate(
-            args.root,
-            _load_json(args.request),
-            args.trusted_state_binding,
-            args.trusted_correction_binding,
-        )
+        request = _load_json(args.request)
+        if args.command == "initialize":
+            document = _initialize_from_request(
+                args.root,
+                request,
+                args.implementation_a_binding,
+            )
+        else:
+            document = evaluate(
+                args.root,
+                request,
+                args.trusted_state_binding,
+                args.trusted_correction_binding,
+            )
         exit_code = 0
     except PolicyFailure as failure:
         document = failure.document()

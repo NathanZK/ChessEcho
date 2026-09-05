@@ -1,14 +1,19 @@
 # Workflow Invalidation and Convergence Policy
 
-Issue #134 adds a deterministic policy evaluator outside the workflow
-lifecycle. `scripts/workflow_policy.py` verifies canonical evidence, computes a
-minimal invalidation closure, and enforces convergence limits. It is read-only:
-it never activates a transition, publishes an object, changes a pointer, writes
-a projection, executes a command, or reads `.agent-workflow/**`.
+Issue #134 adds deterministic policy construction and evaluation outside the
+workflow lifecycle. `scripts/workflow_policy.py` verifies canonical evidence,
+constructs the restricted policy genesis, computes forward binding and minimal
+invalidation, and enforces convergence limits. It is read-only: it returns
+candidate state bytes but never publishes an object, selects authority, changes
+a pointer, writes a projection, executes a command, or reads
+`.agent-workflow/**`.
 
 ## Command
 
 ```text
+python3 scripts/workflow_policy.py initialize --root ROOT \
+  --request INITIALIZE.json --implementation-a-binding SHA256
+
 python3 scripts/workflow_policy.py evaluate --root ROOT --request REQUEST.json \
   --trusted-state-binding SHA256
 ```
@@ -16,6 +21,9 @@ python3 scripts/workflow_policy.py evaluate --root ROOT --request REQUEST.json \
 The equivalent package command is:
 
 ```text
+python3 -m scripts.workflow_policy initialize --root ROOT \
+  --request INITIALIZE.json --implementation-a-binding SHA256
+
 python3 -m scripts.workflow_policy evaluate --root ROOT --request REQUEST.json \
   --trusted-state-binding SHA256
 ```
@@ -50,12 +58,46 @@ records the exact binding for every direct dependency. Preservation requires
 byte-identical references. Semantic similarity, matching prose, or an agent
 classification cannot preserve a node.
 
+Generation zero is policy-owned and contains exactly `implementation-a`.
+`plan-approval` and every other node must be added later through `bind`; a
+self-consistent authority chain with an empty, duplicate, or expanded genesis
+is invalid. `implementation-a` cannot be added through `bind`.
+
 When a root changes, the evaluator invalidates that root and every reachable
 active descendant. Ancestors and unrelated siblings remain active. Invalidated
 bindings stay in immutable CAS and in the historical table; only the derived
 next active table clears them.
 
-## Request and state
+## Initialization
+
+`initialize(root, issue, family_run_id, implementation_a_binding_record)`
+verifies the complete #132 evidence graph, exact issue and family, migration
+metadata, and decision type `implementation-a`. It returns the canonical
+generation-zero state with only that binding active and historical, zero
+budgets, a null transition and tip, and convergence episode 0 in `UNKNOWN` with
+no evidence.
+
+The CLI request has exactly:
+
+```json
+{
+  "format": "chess-echo-workflow-policy-initialize-request-v1",
+  "issue": 134,
+  "family_run_id": "0123456789abcdef0123456789abcdef",
+  "implementation_a": {
+    "binding": {"kind": "evidence-binding", "sha256": "...", "size": 123},
+    "migration_plan": null
+  },
+  "request_sha256": "<64 lowercase hex>"
+}
+```
+
+`request_sha256` is the inspector-canonical SHA-256 of the request before that
+field is added. `--implementation-a-binding` is an independently designated
+digest and must equal `implementation_a.binding.sha256`. Initialization returns
+only the candidate state document; it does not publish or activate it.
+
+## Evaluation request and state
 
 `chess-echo-workflow-policy-request-v1` has exactly:
 
@@ -73,9 +115,10 @@ next active table clears them.
 ```
 
 `bindings` must contain exactly one input for every active, historical,
-convergence, parent, replacement, authority-chain, or operation evidence
-reference. Recorded transition inputs, including historical correction
-authorizations, remain required for deterministic replay:
+convergence, parent, bound-node, bound-dependency, replacement,
+authority-chain, or operation evidence reference. Recorded transition inputs,
+including historical binds and correction authorizations, remain required for
+deterministic replay:
 
 ```json
 {
@@ -121,14 +164,14 @@ fails because its chain tip does not match the trusted binding.
   "transition": null,
   "active": [
     {
-      "node": "plan-approval",
+      "node": "implementation-a",
       "binding": {"kind": "evidence-binding", "sha256": "...", "size": 123},
       "dependencies": []
     }
   ],
   "history": [
     {
-      "node": "plan-approval",
+      "node": "implementation-a",
       "binding": {"kind": "evidence-binding", "sha256": "...", "size": 123},
       "status": "active",
       "transition_id": null
@@ -166,6 +209,42 @@ chain; changing and rehashing a counter, or publishing a reset child state,
 fails closed.
 
 ## Operations
+
+### Bind
+
+```json
+{
+  "type": "bind",
+  "node": "test-manifest",
+  "binding": {"kind": "evidence-binding", "sha256": "...", "size": 123},
+  "dependencies": [
+    {
+      "node": "plan-approval",
+      "binding": {"kind": "evidence-binding", "sha256": "...", "size": 123}
+    },
+    {
+      "node": "implementation-a",
+      "binding": {"kind": "evidence-binding", "sha256": "...", "size": 123}
+    }
+  ],
+  "reason": "Activate reviewed test manifest"
+}
+```
+
+`bind` activates exactly one inactive fixed-DAG node other than
+`implementation-a`. Its dependency list must name every direct dependency in
+the code-defined order, each dependency must already be active, and each
+reference must byte-equal that active binding. The new binding's decision type
+must equal the node and the same reference cannot already occur for that node
+in history.
+
+A successful bind increments generation, changes the transition tip and active
+table digest, and adds one active/history row with the transition ID. It returns
+`changed_roots` containing only the node, no invalidation, and the complete
+prior active table in `preserved`. Existing active/history rows, budgets, and
+the complete convergence object are unchanged. Bind never replaces an active
+node and never escalates. Any convergence evidence prepared against the prior
+tip or active table must be re-issued.
 
 ### Reopen
 
@@ -316,9 +395,9 @@ and preserved bindings, complete next state, escalation or null, and
 `result_sha256`. The result digest covers canonical bytes before its digest
 field is added.
 
-The result is derived review evidence only. It is not an authorization, durable
-policy state, lifecycle transition, compare-and-swap, approval, or mutation
-request.
+The result, like an initialized state, is derived review evidence only. It is
+not an authorization, durable policy state, lifecycle transition,
+compare-and-swap, approval, or mutation request.
 
 ## Trust and mutation boundary
 
@@ -338,9 +417,9 @@ values discovered while comparing current or recorded authoritative state.
 ## Rollout and non-goals
 
 V1 ships inactive. New canonical evidence and exact migrated evidence can be
-evaluated, but no output is applied automatically. A separate reviewed issue
-must define durable policy-state publication, expected-tip CAS, authorization,
-recovery, and lifecycle integration.
+initialized or evaluated, but no output is applied automatically. A separate
+reviewed issue must define durable policy-state publication, expected-tip CAS,
+authorization, recovery, and lifecycle integration.
 
 #134 does not implement risk tiers (#127), work-type triage (#116), incremental
 review (#125), evidence compaction (#135), storage redesign, automatic
