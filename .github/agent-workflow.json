@@ -1,5 +1,67 @@
 {
   "target_base": "main",
+  "orchestrator": {
+    "format": "chess-echo-orchestrator-config-v1",
+    "mode": "inactive",
+    "frozen_issues": [115],
+    "agent_roles": [
+      {
+        "role": "implementer",
+        "command_prefix": ["chess-echo-agent-sandbox"],
+        "cwd": ".",
+        "timeout_ms": 3600000,
+        "grace_ms": 2000,
+        "output_limit_bytes": 524288,
+        "containment": "external-sandbox-v1",
+        "provider_name": "external-sandbox-required",
+        "provider_source_sha256": "f1bba91b33ee233390e581a17bf5eba25d7cf47bcacea7a35137818d5140cbf3"
+      },
+      {
+        "role": "planner",
+        "command_prefix": ["chess-echo-agent-sandbox"],
+        "cwd": ".",
+        "timeout_ms": 3600000,
+        "grace_ms": 2000,
+        "output_limit_bytes": 524288,
+        "containment": "external-sandbox-v1",
+        "provider_name": "external-sandbox-required",
+        "provider_source_sha256": "f1bba91b33ee233390e581a17bf5eba25d7cf47bcacea7a35137818d5140cbf3"
+      },
+      {
+        "role": "reviewer",
+        "command_prefix": ["chess-echo-agent-sandbox"],
+        "cwd": ".",
+        "timeout_ms": 3600000,
+        "grace_ms": 2000,
+        "output_limit_bytes": 524288,
+        "containment": "external-sandbox-v1",
+        "provider_name": "external-sandbox-required",
+        "provider_source_sha256": "f1bba91b33ee233390e581a17bf5eba25d7cf47bcacea7a35137818d5140cbf3"
+      }
+    ],
+    "git": {
+      "command": ["git"],
+      "timeout_ms": 30000,
+      "grace_ms": 1000,
+      "output_limit_bytes": 8388608
+    },
+    "github": {
+      "command": ["gh"],
+      "timeout_ms": 30000,
+      "grace_ms": 1000,
+      "output_limit_bytes": 524288
+    },
+    "validation_path": ["/bin", "/usr/bin", "/usr/local/bin"],
+    "human_approval": {
+      "allowed_accounts": [
+        {
+          "account_id": 95658930,
+          "login": "NathanZK"
+        }
+      ],
+      "allowed_associations": ["COLLABORATOR", "MEMBER", "OWNER"]
+    }
+  },
   "validation_profiles": {
     "backend": {
       "test_paths": ["src/test/**/*"],

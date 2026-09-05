@@ -1,0 +1,80 @@
+{
+  "authorization": {
+    "author_association": "OWNER",
+    "body": "approve exact challenge",
+    "created_at": "2026-09-05T00:00:00Z",
+    "html_url": "https://github.com/NathanZK/ChessEcho/issues/152#issuecomment-1",
+    "id": 1,
+    "issue_url": "https://api.github.com/repos/NathanZK/ChessEcho/issues/152",
+    "node_id": "IC_kwDO-test",
+    "updated_at": "2026-09-05T00:00:00Z",
+    "user": {
+      "id": 42,
+      "login": "nathankebede"
+    }
+  },
+  "issue": {
+    "body": "Runtime issue",
+    "html_url": "https://github.com/NathanZK/ChessEcho/issues/152",
+    "labels": [
+      {
+        "name": "enhancement"
+      }
+    ],
+    "number": 152,
+    "title": "Workflow Runtime",
+    "updated_at": "2026-09-05T00:00:00Z"
+  },
+  "pull_request": {
+    "base": {
+      "ref": "main",
+      "sha": "1111111111111111111111111111111111111111"
+    },
+    "body": "body",
+    "draft": true,
+    "head": {
+      "ref": "runtime",
+      "sha": "2222222222222222222222222222222222222222"
+    },
+    "html_url": "https://github.com/NathanZK/ChessEcho/pull/155",
+    "number": 155,
+    "state": "open",
+    "title": "runtime"
+  },
+  "review": {
+    "author_association": "OWNER",
+    "body": "approve exact challenge",
+    "html_url": "https://github.com/NathanZK/ChessEcho/pull/155#pullrequestreview-2",
+    "id": 2,
+    "node_id": "PRR_kwDO-test",
+    "submitted_at": "2026-09-05T00:00:01Z",
+    "user": {
+      "id": 42,
+      "login": "nathankebede"
+    }
+  },
+  "review_graphql": {
+    "data": {
+      "node": {
+        "author": {
+          "databaseId": 42,
+          "login": "nathankebede"
+        },
+        "authorAssociation": "OWNER",
+        "body": "approve exact challenge",
+        "createdAt": "2026-09-05T00:00:00Z",
+        "databaseId": 2,
+        "id": "PRR_kwDO-test",
+        "lastEditedAt": null,
+        "submittedAt": "2026-09-05T00:00:01Z",
+        "url": "https://github.com/NathanZK/ChessEcho/pull/155#pullrequestreview-2"
+      }
+    }
+  },
+  "repository": {
+    "default_branch": "main"
+  },
+  "tip": {
+    "sha": "1111111111111111111111111111111111111111"
+  }
+}

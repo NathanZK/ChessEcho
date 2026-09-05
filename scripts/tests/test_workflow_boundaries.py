@@ -1,5 +1,6 @@
 import argparse
 import ast
+import hashlib
 import importlib
 import pathlib
 import subprocess
@@ -19,6 +20,7 @@ PRODUCTION_MODULES = (
     "workflow_policy",
     "workflow_plan_revision_policy",
     "workflow_repair",
+    "workflow_runtime",
     "workflow_supervisor",
     "workflow_work_type_policy",
 )
@@ -139,6 +141,10 @@ class WorkflowBoundaryTest(unittest.TestCase):
         )
         self.assertEqual(set(), project_imports("workflow_supervisor"))
         self.assertEqual(
+            {"workflow_inspector", "workflow_supervisor"},
+            project_imports("workflow_runtime"),
+        )
+        self.assertEqual(
             {
                 "workflow_evidence",
                 "workflow_inspector",
@@ -232,6 +238,66 @@ class WorkflowBoundaryTest(unittest.TestCase):
                         for node in ast.walk(tree)
                     )
                 )
+
+    def test_runtime_has_a_small_exact_external_boundary(self):
+        path = SCRIPTS / "workflow_runtime.py"
+        self.assertLessEqual(len(path.read_text().splitlines()), 900)
+        tree = syntax_tree("workflow_runtime")
+        imported = set()
+        inspector_calls = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imported.add((node.module or "").split(".")[0])
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "workflow_inspector"
+            ):
+                inspector_calls.add(node.func.attr)
+        self.assertTrue(
+            {"subprocess", "socket", "urllib", "http", "requests", "importlib"}.isdisjoint(
+                imported
+            )
+        )
+        self.assertEqual(
+            {"canonical_bytes", "canonical_document", "resolve_store", "sha256"},
+            inspector_calls,
+        )
+        source = path.read_text()
+        self.assertNotIn("AuthorityReader", source)
+        self.assertNotIn("inspect_repository", source)
+        self.assertNotIn("workflow_inspector.inspect", source)
+
+    def test_runtime_cli_supports_script_and_package_execution(self):
+        repository = SCRIPTS.parent
+        for command in (
+            [sys.executable, str(SCRIPTS / "workflow_runtime.py"), "--help"],
+            [sys.executable, "-m", "scripts.workflow_runtime", "--help"],
+        ):
+            with self.subTest(command=command):
+                result = subprocess.run(
+                    command, cwd=str(repository), text=True, capture_output=True
+                )
+                self.assertEqual(0, result.returncode, result.stderr)
+
+    def test_runtime_config_contains_no_test_sandbox_provider(self):
+        config = (
+            SCRIPTS.parent / ".github" / "agent-workflow.json"
+        ).read_text()
+        fake_hash = hashlib.sha256(
+            (
+                SCRIPTS
+                / "tests"
+                / "fixtures"
+                / "workflow-orchestrator"
+                / "fake_agent.py"
+            ).read_bytes()
+        ).hexdigest()
+        self.assertNotIn("runtime-test-", config)
+        self.assertNotIn(fake_hash, config)
 
     def test_kernel_symbols_are_imported_not_reimplemented(self):
         tree = syntax_tree("agent_workflow")
