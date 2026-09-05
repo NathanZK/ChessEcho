@@ -37,16 +37,18 @@ OUTCOME_EXIT_CODES = {
 IMPLEMENTATION_PHASES = frozenset(
     """INTAKE PLANNING PLAN_REVIEW WAITING_FOR_PLAN_APPROVAL TEST_IMPLEMENTATION
     TEST_REVIEW WAITING_FOR_TEST_APPROVAL IMPLEMENTATION VALIDATION FINAL_REVIEW
-    PR_PREPARATION WAITING_FOR_FINAL_APPROVAL COMPLETED PAUSED""".split()
+    WAITING_FOR_FINAL_APPROVAL PR_PREPARATION
+    WAITING_FOR_PR_PUBLICATION_APPROVAL COMPLETED PAUSED""".split()
 )
 CANDIDATE_SLOTS = frozenset(
-    """plan-snapshot plan-revision plan-review test-manifest test-review
+    """plan-snapshot plan-revision plan-review plan-observation test-manifest test-review
     implementation-report validation final-review pr-metadata artifact artifact-review
     documentation-content-check documentation-diff-check human-challenge
     human-authorization cutover-authorization revocation-intent execution-request
-    execution-result""".split()
+    execution-result final-gate-satisfaction pr-publication-gate-satisfaction
+    pr-publication-observation supervision-policy-change""".split()
 )
-PENDING_KINDS = frozenset("agent validation git-read github-read github-write human".split())
+PENDING_KINDS = frozenset("agent validation git-read github-read github-write human policy".split())
 PENDING_STATUSES = frozenset(("requested", "cancel-requested"))
 TRANSITION_TYPES = frozenset(
     """initialize classify plan-request plan-review plan-revision plan-approve plan-reject
@@ -56,7 +58,8 @@ TRANSITION_TYPES = frozenset(
     validation-request validation-record final-review pr-prepare pr-reconcile
     final-approve final-reject final-revoke artifact-request artifact-review
     artifact-accept artifact-reject artifact-revoke cancel-request abandon pause
-    recover cutover complete""".split()
+    recover supervision-change-request supervision-change publication-request
+    publication-approve cutover complete""".split()
 )
 class AuthorityFailure(Exception):
     def __init__(self, status, code, message, subject=None):
@@ -234,8 +237,8 @@ def _state_shape(state, issue, generation):
     _keys(state, {
         "format", "issue", "family_run_id", "generation", "previous_authority",
         "previous_pointer_sha256", "route", "phase", "triage_binding",
-        "policy_state_binding", "candidates", "pending", "cutover", "transition",
-        "state_sha256",
+        "policy_state_binding", "supervision_policy_binding", "candidates",
+        "pending", "cutover", "transition", "state_sha256",
     }, "orchestration-state", "authority-binding-invalid")
     _require(state["format"] == STATE_FORMAT, "unsupported", "authority-binding-invalid", "State format is unsupported")
     valid = (type(state["issue"]) is int and state["issue"] == issue
@@ -247,6 +250,8 @@ def _state_shape(state, issue, generation):
     _require(isinstance(state["phase"], str) and state["phase"] in IMPLEMENTATION_PHASES, "unsupported", "authority-binding-invalid", "Phase is unsupported")
     state["triage_binding"] = _reference(state["triage_binding"], "triage")
     state["policy_state_binding"] = _reference(state["policy_state_binding"], "policy-state")
+    state["supervision_policy_binding"] = _reference(
+        state["supervision_policy_binding"], "supervision-policy")
     _require(isinstance(state["candidates"], list), "corrupt", "authority-binding-invalid", "Candidates must be a list")
     normalized = []
     for item in state["candidates"]:
@@ -294,6 +299,10 @@ def _related(root, state, cache):
     issue, family = state["issue"], state["family_run_id"]
     policy = _projection(root, state["policy_state_binding"], issue, family, cache)
     _require(policy["decision"]["type"] == "policy-state", "corrupt", "authority-binding-invalid", "Policy decision is invalid")
+    supervision = _projection(
+        root, state["supervision_policy_binding"], issue, family, cache)
+    _require(supervision["decision"]["type"] == "supervision-policy", "corrupt",
+             "authority-binding-invalid", "Supervision policy decision is invalid")
     _projection(root, state["triage_binding"], issue, family, cache)
     for item in state["candidates"]:
         _related_projection(root, item["binding"], state, cache)
@@ -303,8 +312,14 @@ def _related(root, state, cache):
         decision = _related_projection(
             root, pending["request_binding"], state, cache,
             state["previous_authority"])["decision"]["type"]
-        expected = "human-challenge" if pending["kind"] == "human" else "execution-request"
-        _require(decision == expected, "stale", "authority-binding-invalid", "Pending request decision is invalid")
+        if pending["kind"] == "policy":
+            expected = {"gate-challenge"}
+        elif pending["kind"] == "human":
+            expected = {"gate-challenge", "human-challenge",
+                        "supervision-policy-change"}
+        else:
+            expected = {"execution-request"}
+        _require(decision in expected, "stale", "authority-binding-invalid", "Pending request decision is invalid")
     for field, reference in state["transition"].items():
         if field != "type" and reference is not None:
             subject = (state["previous_authority"] if field == "request_binding"

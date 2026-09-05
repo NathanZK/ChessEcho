@@ -58,6 +58,12 @@ records the exact binding for every direct dependency. Preservation requires
 byte-identical references. Semantic similarity, matching prose, or an agent
 classification cannot preserve a node.
 
+Per-gate supervision does not alter this DAG. `final-review` retains its existing
+meaning, `pr-metadata` remains post-write metadata, and `pr-approval` retains
+direct dependencies `final-review` and `pr-metadata`. Standalone `final` and
+`pr-publication` satisfaction are orchestration evidence bound by the existing
+node wrapper; they are not new DAG nodes or replacement meanings.
+
 Generation zero is policy-owned and contains exactly `implementation-a`.
 `plan-approval` and every other node must be added later through `bind`; a
 self-consistent authority chain with an empty, duplicate, or expanded genesis

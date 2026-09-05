@@ -455,6 +455,10 @@ hidden orchestrator:
 - The **dependency/convergence policy** (issue #134) verifies exact evidence
   dependencies, invalidation, correction roots, and convergence against a
   caller-supplied trusted policy-state binding.
+- The **supervision policy** (issue #165) verifies the inactive replacement
+  workflow's exact `plan`, `tests`, `final`, and `pr-publication` modes. It
+  produces deterministic gate evidence but never authenticates a human or
+  performs a GitHub write.
 
 [Issue #144](https://github.com/NathanZK/ChessEcho/issues/144) already owns the
 unimplemented gaps:
@@ -465,8 +469,9 @@ unimplemented gaps:
 3. sequence work-type classification, plan-revision review, evidence
    publication, and dependency/convergence evaluation without duplicating their
    contracts;
-4. bind comprehensive validation, independent final review, and explicit human
-   approval to exact current repository and evidence observations;
+4. bind comprehensive validation, independent final review, configurable gate
+   satisfaction, and mandatory-human operations to exact current repository and
+   evidence observations;
 5. publish and activate one lifecycle authority with named mutation ownership;
 6. reconcile uncertain Git/GitHub outcomes by exact identity and preconditions;
 7. keep repair and migration explicit rather than lifecycle side effects; and

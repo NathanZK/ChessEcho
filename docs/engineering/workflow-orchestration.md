@@ -39,6 +39,7 @@ python3 scripts/workflow_orchestrator.py plan-next ISSUE --root ROOT
 python3 scripts/workflow_orchestrator.py init ISSUE --root ROOT --request REQUEST
 python3 scripts/workflow_orchestrator.py step ISSUE --root ROOT --expected-tip SHA256 [--request HANDOFF]
 python3 scripts/workflow_orchestrator.py approve ISSUE --root ROOT --expected-tip SHA256 --authorization AUTHORIZATION
+python3 scripts/workflow_orchestrator.py set-supervision ISSUE --root ROOT --expected-tip SHA256 --supervision SUPERVISION
 python3 scripts/workflow_orchestrator.py cancel ISSUE --root ROOT --expected-tip SHA256 --reason REASON
 python3 scripts/workflow_orchestrator.py recover ISSUE --root ROOT --expected-tip SHA256 [--authorization AUTHORIZATION]
 ```
@@ -61,16 +62,17 @@ There is no run-until-done loop or automatic retry.
 2. The planner's stdout is parsed as a strict candidate, converted to a
    plan snapshot, and passed to `workflow_plan_revision_policy`.
 3. A Reviewer produces a separately validated technical review. A
-   `technical-review-accepted` result is not approval: it opens an exact
-   GitHub plan challenge.
-4. Verified human approval activates `plan-approval`. A reviewer-requested
+   `technical-review-accepted` result is not gate satisfaction: it opens an
+   exact policy-bound plan challenge.
+4. Supervised human authorization or deterministic automatic satisfaction,
+   according to the selected policy revision, activates `plan-approval`. A reviewer-requested
    revision before approval is evaluated through the revision policy; a
    subsequent unsupported revision pauses. A revision after approval is never
    carried forward and pauses with `unsupported-policy-transition`.
 5. The test author runs before the implementation author. Its clean,
    test-path-only repository observation is wrapped as `test-manifest`;
-   technical test review then opens the independent human test challenge.
-6. Verified test approval activates `test-approval`. The implementation report
+   technical test review then opens the independent test challenge.
+6. Policy-governed test satisfaction activates `test-approval`. The implementation report
    and its clean, one-commit in-scope observation are re-evaluated by the public
    #116 completion policy before activating `implementation-submission`.
 7. Every configured comprehensive-validation check has its own claim/execution
@@ -78,9 +80,20 @@ There is no run-until-done loop or automatic retry.
    requests/results in profile order and activates `validation`. A failed check
    pauses with `unsupported-policy-transition`; it cannot silently replace
    implementation evidence.
-8. A validated final technical review activates `final-review`. Its strict PR
-   metadata must use exactly `## What`, `## Why`, and `## Testing`.
-9. Draft-PR creation is claimed and run once. A failed/uncertain write is
+8. A validated final technical review activates `final-review` and opens the
+   pre-publication `final` gate. Its strict PR metadata must use exactly
+   `## What`, `## Why`, and `## Testing`. Final satisfaction binds final-review,
+   validation, and a fresh clean local observation; it never depends on
+   `pr-metadata`.
+9. PR preparation obtains a fresh clean local observation and opens the distinct
+   `pr-publication` gate. Its selected standalone satisfaction is mandatory
+   before a GitHub-write request can be claimed. Both selected gate
+   satisfactions and their supervised authorization sources are re-observed
+   before that claim and again after the initial trusted remote-head preflight;
+   both gates must retain one common final-approved repository/config snapshot.
+   The runtime repeats the complete local/remote-head observation after those
+   authorization reads and immediately before the mutation process starts.
+10. Draft-PR creation is claimed and run once. A failed/uncertain write is
    reconciled by a later exact PR observation, never by another create request.
    The runtime independently observes the already-published remote head twice
    around complete local observations and requires it to equal the validated
@@ -88,12 +101,11 @@ There is no run-until-done loop or automatic retry.
    it embeds that exact trusted remote-head observation.
    `pr-metadata` requires an `OPEN`, draft PR matching base, head, title, and
    body hashes.
-10. The final GitHub challenge is bound to the final review, validation, PR
-    observation, and local observation. Its exact human authorization activates
-    `pr-approval`; after authorization, both the PR and local repository are
-    freshly re-observed for the same clean head/base/open-draft metadata, then
-    the exact authorization source is re-observed before the single successor
-    pointer state is `COMPLETED`.
+11. After `pr-metadata` is selected, local state is observed before and after a
+    fresh PR observation for the same clean head/base/open-draft metadata. A deterministic
+    follow-up binds final satisfaction, publication satisfaction, final review,
+    and the PR observation into existing `pr-approval`, then moves the single
+    successor pointer to `COMPLETED`.
 
 The active #134 bindings are evaluated and published in this exact order:
 `plan-approval`, `test-manifest`, `test-approval`,
@@ -105,9 +117,23 @@ each node.
 Completion is an authority-pointer transition, not a merge. The orchestrator
 never marks a draft ready, merges it, or deploys it.
 
+The four configurable gates and policy-revision protocol are specified in
+[`workflow-supervision-policy.md`](workflow-supervision-policy.md). Automatic
+satisfaction is deterministic policy evidence, not human authorization and not
+agent or reviewer output. Mandatory-human recovery, activation, cutover,
+irreversible repair/authority transfer, and production credential/provider
+authorization remain outside that configuration.
+
+Every mutating public command reconstructs the selected supervision-policy
+history. Genesis must equal the base-pinned configuration, and each replacement
+must be the exact human-authorized successor selected by authority.
+The same replay validates lifecycle phase origins, every configurable-gate
+successor, and both sides of mandatory-human recovery. Structural authority
+selection alone cannot skip an approval or resume a paused/cancelled attempt.
+
 ## Human authority and recovery
 
-Every human command resolves one live GitHub comment or review with the exact
+Every human command resolves one live GitHub issue comment with the exact
 challenge confirmation, numeric account identity, configured association, and
 unedited body. Technical review output cannot satisfy a human gate.
 

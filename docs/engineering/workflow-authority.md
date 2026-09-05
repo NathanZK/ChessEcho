@@ -84,6 +84,11 @@ The canonical state has a 2 MiB maximum and exact schema:
     "sha256": "64-lowercase-hex",
     "size": 1
   },
+  "supervision_policy_binding": {
+    "kind": "evidence-binding",
+    "sha256": "64-lowercase-hex",
+    "size": 1
+  },
   "candidates": [],
   "pending": null,
   "cutover": {
@@ -111,8 +116,8 @@ is `SHA256("orchestration-tip-v1\0" || canonical-state-bytes)`.
 
 Only `route=implementation` is accepted in this slice. Any other route returns
 `unsupported-route-not-activated`. Authority verifies the state, state-binding,
-and policy-state-binding issue and family. The policy binding decision must be
-`policy-state`.
+and policy/supervision-policy binding issue and family. Their decisions must be
+`policy-state` and `supervision-policy`, respectively.
 
 At genesis, the state binding subject equals `policy_state_binding`, its lineage
 is original, and both previous fields are null. Later generations require:
@@ -127,9 +132,12 @@ bindings are fully verified, share the issue and family, use a nonfuture
 generation with its matching sequence, and have original, non-migrated lineage.
 A pending request and a transition request are subject-bound to the previous
 authority; transition outputs are subject-bound to their request. A human
-pending request must select a `human-challenge` decision; every process pending
-request must select an `execution-request` decision. Authority validates these
+pending request selects a `human-challenge`, `gate-challenge`, or
+`supervision-policy-change`; an automatic gate selects `gate-challenge`; every
+process pending request selects `execution-request`. Authority validates these
 identity links, not challenge, command, phase-transition, or policy semantics.
+The orchestrator therefore replays selected history before dispatch and validates
+the configurable-gate and mandatory-recovery semantics at that composition layer.
 
 Every evidence graph is checked through public `workflow_evidence.verify`, and
 binding identity, decision, subject, lineage, and manifest facts come from
