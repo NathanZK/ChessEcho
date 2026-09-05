@@ -23,6 +23,8 @@ FIXTURE_MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(FIXTURE_MODULE)
 InspectorFixture = FIXTURE_MODULE.InspectorFixture
 
+BIND_ORDER = tuple(node for node in policy.NODE_ORDER if node != "implementation-a")
+
 
 class PolicyFixture:
     def __init__(self):
@@ -130,47 +132,45 @@ class PolicyFixture:
         )
 
     def make_state(self):
-        active = []
-        history = []
-        for node in policy.NODE_ORDER:
-            binding = self.bindings[node]
-            active.append(
-                {
-                    "node": node,
-                    "binding": binding,
-                    "dependencies": [
-                        {"node": parent, "binding": self.bindings[parent]}
-                        for parent in policy.DEPENDENCIES[node]
-                    ],
-                }
-            )
-            history.append(
-                {
-                    "node": node,
-                    "binding": binding,
-                    "status": "active",
-                    "transition_id": None,
-                }
-            )
-        state = {
-            "format": policy.STATE_FORMAT,
-            "issue": self.authority.issue,
-            "family_run_id": self.authority.run_id,
-            "generation": 0,
-            "transition_tip": None,
-            "transition": None,
-            "active": active,
-            "history": history,
-            "budgets": {
-                "reopens": 0,
-                "retries": {stage: 0 for stage in policy.CONVERGENCE_STATES},
-            },
-            "convergence": {"episode": 0, "state": "UNKNOWN", "evidence": []},
-        }
-        state["state_sha256"] = policy._state_digest(state)
+        state = policy.initialize(
+            self.root,
+            self.authority.issue,
+            self.authority.run_id,
+            self.inputs["implementation-a"],
+        )
         state_binding = self.bind_state(state)
         self.authority_chain = [{"binding": state_binding, "state": copy.deepcopy(state)}]
-        return state
+        self.state = state
+        self.genesis_state = copy.deepcopy(state)
+        self.genesis_authority_chain = copy.deepcopy(self.authority_chain)
+        for node in BIND_ORDER:
+            result = policy.evaluate(
+                self.root,
+                self.request(self.bind_operation(node), [node]),
+                self.authority_chain[-1]["binding"]["sha256"],
+            )
+            self.adopt(result)
+        return self.state
+
+    def use_genesis(self):
+        self.state = copy.deepcopy(self.genesis_state)
+        self.authority_chain = copy.deepcopy(self.genesis_authority_chain)
+
+    def bind_operation(self, node, binding=None, dependencies=None):
+        if binding is None:
+            binding = self.bindings[node]
+        if dependencies is None:
+            dependencies = [
+                {"node": parent, "binding": self.bindings[parent]}
+                for parent in policy.DEPENDENCIES[node]
+            ]
+        return {
+            "type": "bind",
+            "node": node,
+            "binding": binding,
+            "dependencies": dependencies,
+            "reason": "Activate %s" % node,
+        }
 
     def request(self, operation, extra_inputs=()):
         required = {
@@ -321,6 +321,18 @@ class WorkflowPolicyTest(unittest.TestCase):
             trusted_correction_binding,
         )
 
+    def initialize_request(self, binding_record=None):
+        request = {
+            "format": policy.INITIALIZE_REQUEST_FORMAT,
+            "issue": self.fixture.authority.issue,
+            "family_run_id": self.fixture.authority.run_id,
+            "implementation_a": copy.deepcopy(
+                binding_record or self.fixture.inputs["implementation-a"]
+            ),
+        }
+        request["request_sha256"] = policy._digest(request)
+        return request
+
     def reopen(self, target, suffix):
         root = policy.REOPEN_ROOTS[target][0]
         name, binding = self.fixture.replacement(root, suffix)
@@ -383,6 +395,441 @@ class WorkflowPolicyTest(unittest.TestCase):
         )
     def correction(self, classification, suffix):
         return self.evaluate(self.correction_request(classification, suffix))
+
+    def test_initialize_creates_only_the_safe_canonical_genesis(self):
+        first = policy.initialize(
+            self.fixture.root,
+            self.fixture.authority.issue,
+            self.fixture.authority.run_id,
+            self.fixture.inputs["implementation-a"],
+        )
+        second = policy.initialize(
+            self.fixture.root,
+            self.fixture.authority.issue,
+            self.fixture.authority.run_id,
+            copy.deepcopy(self.fixture.inputs["implementation-a"]),
+        )
+        self.assertEqual(first, second)
+        self.assertEqual(policy.STATE_FORMAT, first["format"])
+        self.assertEqual(0, first["generation"])
+        self.assertIsNone(first["transition_tip"])
+        self.assertIsNone(first["transition"])
+        self.assertEqual(
+            [
+                {
+                    "node": "implementation-a",
+                    "binding": self.fixture.bindings["implementation-a"],
+                    "dependencies": [],
+                }
+            ],
+            first["active"],
+        )
+        self.assertEqual(
+            [
+                {
+                    "node": "implementation-a",
+                    "binding": self.fixture.bindings["implementation-a"],
+                    "status": "active",
+                    "transition_id": None,
+                }
+            ],
+            first["history"],
+        )
+        self.assertEqual(
+            {
+                "reopens": 0,
+                "retries": {stage: 0 for stage in policy.CONVERGENCE_STATES},
+            },
+            first["budgets"],
+        )
+        self.assertEqual(
+            {"episode": 0, "state": "UNKNOWN", "evidence": []},
+            first["convergence"],
+        )
+        self.assertEqual(policy._state_digest(first), first["state_sha256"])
+
+    def test_initialize_rejects_wrong_decision_identity_and_schema(self):
+        with self.assertRaises(policy.PolicyFailure) as raised:
+            policy.initialize(
+                self.fixture.root,
+                self.fixture.authority.issue,
+                self.fixture.authority.run_id,
+                self.fixture.inputs["plan-approval"],
+            )
+        self.assertEqual("stale", raised.exception.status)
+        self.assertEqual("node-decision-mismatch", raised.exception.code)
+
+        wrong_identity_name = "implementation-a-wrong-family"
+        wrong_identity = {
+            "issue": self.fixture.authority.issue,
+            "run_id": "a" * 32,
+            "family_run_id": "b" * 32,
+            "correction": None,
+            "run_generation": 0,
+            "sequence": 1,
+            "event_tip": "c" * 64,
+        }
+        self.fixture.add_binding(
+            wrong_identity_name,
+            "implementation-a",
+            identity=wrong_identity,
+        )
+        with self.assertRaises(policy.PolicyFailure) as raised:
+            policy.initialize(
+                self.fixture.root,
+                self.fixture.authority.issue,
+                self.fixture.authority.run_id,
+                self.fixture.inputs[wrong_identity_name],
+            )
+        self.assertEqual("stale", raised.exception.status)
+        self.assertEqual("binding-lineage-mismatch", raised.exception.code)
+
+        for issue, family_run_id, code in (
+            (True, self.fixture.authority.run_id, "invalid-initialize-identity"),
+            (self.fixture.authority.issue, "not-a-run-id", "invalid-initialize-identity"),
+        ):
+            with self.subTest(issue=issue, family_run_id=family_run_id):
+                with self.assertRaises(policy.PolicyFailure) as raised:
+                    policy.initialize(
+                        self.fixture.root,
+                        issue,
+                        family_run_id,
+                        self.fixture.inputs["implementation-a"],
+                    )
+                self.assertEqual("corrupt", raised.exception.status)
+                self.assertEqual(code, raised.exception.code)
+
+    def test_authority_chain_rejects_every_non_safe_genesis(self):
+        variants = {}
+
+        empty = copy.deepcopy(self.fixture.genesis_state)
+        empty["active"] = []
+        empty["history"] = []
+        variants["empty"] = (empty, "invalid-policy-genesis")
+
+        plan_only = copy.deepcopy(self.fixture.genesis_state)
+        plan_only["active"] = [
+            {
+                "node": "plan-approval",
+                "binding": self.fixture.bindings["plan-approval"],
+                "dependencies": [],
+            }
+        ]
+        plan_only["history"] = [
+            {
+                "node": "plan-approval",
+                "binding": self.fixture.bindings["plan-approval"],
+                "status": "active",
+                "transition_id": None,
+            }
+        ]
+        variants["plan-approval"] = (plan_only, "invalid-policy-genesis")
+
+        extra = copy.deepcopy(self.fixture.genesis_state)
+        extra["active"].insert(
+            0,
+            {
+                "node": "plan-approval",
+                "binding": self.fixture.bindings["plan-approval"],
+                "dependencies": [],
+            },
+        )
+        extra["history"].insert(
+            0,
+            {
+                "node": "plan-approval",
+                "binding": self.fixture.bindings["plan-approval"],
+                "status": "active",
+                "transition_id": None,
+            },
+        )
+        variants["extra"] = (extra, "invalid-policy-genesis")
+
+        duplicate = copy.deepcopy(self.fixture.genesis_state)
+        duplicate["active"].append(copy.deepcopy(duplicate["active"][0]))
+        variants["duplicate"] = (duplicate, "duplicate-active-node")
+
+        for name, (genesis, code) in variants.items():
+            with self.subTest(name=name):
+                genesis["state_sha256"] = policy._state_digest(genesis)
+                binding = self.fixture.bind_state(genesis)
+                request = self.fixture.request(
+                    self.fixture.bind_operation("implementation-a")
+                )
+                request["authority_chain"][0] = {
+                    "binding": binding,
+                    "state": genesis,
+                }
+                request["bindings"].append(
+                    copy.deepcopy(
+                        self.fixture.inputs[
+                            "policy-state-0-%s" % genesis["state_sha256"][:12]
+                        ]
+                    )
+                )
+                self.assert_failure("stale" if name != "duplicate" else "ambiguous", code, request)
+
+    def test_bind_activates_the_fixed_dag_in_order_and_replays(self):
+        self.fixture.use_genesis()
+        for generation, node in enumerate(BIND_ORDER, start=1):
+            previous = copy.deepcopy(self.fixture.state)
+            request = self.fixture.request(
+                self.fixture.bind_operation(node),
+                [node],
+            )
+            first = self.evaluate(request)
+            second = self.evaluate(copy.deepcopy(request))
+            self.assertEqual(first, second)
+            self.assertEqual("evaluated", first["outcome"]["code"])
+            self.assertEqual([node], first["changed_roots"])
+            self.assertEqual([], first["invalidated"])
+            self.assertEqual(previous["active"], first["preserved"])
+            self.assertEqual(previous["budgets"], first["next_state"]["budgets"])
+            self.assertEqual(
+                previous["convergence"], first["next_state"]["convergence"]
+            )
+            for historical in previous["history"]:
+                self.assertIn(historical, first["next_state"]["history"])
+            self.assertEqual(generation, first["next_state"]["generation"])
+            bound_history = next(
+                item
+                for item in first["next_state"]["history"]
+                if item["node"] == node
+            )
+            self.assertEqual(
+                first["transition_id"],
+                bound_history["transition_id"],
+            )
+            self.fixture.adopt(first)
+        self.assertEqual(list(policy.NODE_ORDER), [item["node"] for item in self.fixture.state["active"]])
+        self.assertEqual(9, len(self.fixture.authority_chain))
+
+        request, replayed = self.reopen("tests", "after-bind-chain")
+        self.assertEqual("evaluated", replayed["outcome"]["code"])
+        self.assertEqual(
+            request["authority_chain"][-1]["state_sha256"]
+            if "state_sha256" in request["authority_chain"][-1]
+            else request["state"]["state_sha256"],
+            replayed["input_state_sha256"],
+        )
+
+    def test_bind_rejects_forbidden_active_and_historical_targets(self):
+        self.fixture.use_genesis()
+        implementation = self.fixture.request(
+            self.fixture.bind_operation("implementation-a")
+        )
+        self.assert_failure(
+            "unsupported", "bind-implementation-a-forbidden", implementation
+        )
+
+        plan = self.evaluate(
+            self.fixture.request(
+                self.fixture.bind_operation("plan-approval"),
+                ["plan-approval"],
+            )
+        )
+        self.fixture.adopt(plan)
+        already_active = self.fixture.request(
+            self.fixture.bind_operation("plan-approval")
+        )
+        self.assert_failure(
+            "stale", "bind-node-already-active", already_active
+        )
+
+        self.fixture.make_state()
+        _request, reopened = self.reopen("tests", "bind-history")
+        self.fixture.adopt(reopened)
+        historical = self.fixture.request(
+            self.fixture.bind_operation(
+                "test-approval",
+                self.fixture.bindings["test-approval"],
+                [
+                    {
+                        "node": "test-manifest",
+                        "binding": self.fixture.state["active"][2]["binding"],
+                    }
+                ],
+            )
+        )
+        self.assert_failure("stale", "bind-already-historical", historical)
+
+    def test_bind_rejects_decision_dependency_and_order_mismatches(self):
+        self.fixture.use_genesis()
+        wrong_decision = self.fixture.request(
+            self.fixture.bind_operation(
+                "plan-approval",
+                self.fixture.bindings["test-manifest"],
+                [],
+            ),
+            ["test-manifest"],
+        )
+        self.assert_failure("stale", "node-decision-mismatch", wrong_decision)
+
+        inactive_dependency = self.fixture.request(
+            self.fixture.bind_operation("test-manifest"),
+            ["plan-approval", "test-manifest"],
+        )
+        self.assert_failure(
+            "stale", "bind-dependency-inactive", inactive_dependency
+        )
+
+        plan = self.evaluate(
+            self.fixture.request(
+                self.fixture.bind_operation("plan-approval"),
+                ["plan-approval"],
+            )
+        )
+        self.fixture.adopt(plan)
+        wrong_order = self.fixture.request(
+            self.fixture.bind_operation(
+                "test-manifest",
+                dependencies=[
+                    {
+                        "node": "implementation-a",
+                        "binding": self.fixture.bindings["implementation-a"],
+                    },
+                    {
+                        "node": "plan-approval",
+                        "binding": self.fixture.bindings["plan-approval"],
+                    },
+                ],
+            ),
+            ["test-manifest"],
+        )
+        self.assert_failure("corrupt", "invalid-node-dependencies", wrong_order)
+
+        stale_name = "stale-plan-dependency"
+        stale_binding = self.fixture.add_binding(
+            stale_name,
+            "plan-approval",
+            len(self.fixture.bindings) + 20,
+        )
+        stale_dependency = self.fixture.request(
+            self.fixture.bind_operation(
+                "test-manifest",
+                dependencies=[
+                    {"node": "plan-approval", "binding": stale_binding},
+                    {
+                        "node": "implementation-a",
+                        "binding": self.fixture.bindings["implementation-a"],
+                    },
+                ],
+            ),
+            ["test-manifest", stale_name],
+        )
+        self.assert_failure(
+            "stale", "bind-dependency-mismatch", stale_dependency
+        )
+
+    def test_bind_invalidates_prepared_convergence_context(self):
+        self.fixture.use_genesis()
+        cause_name = "cause-before-bind"
+        cause_binding = self.fixture.convergence_binding(
+            cause_name, "cause-establishment"
+        )
+        plan = self.evaluate(
+            self.fixture.request(
+                self.fixture.bind_operation("plan-approval"),
+                ["plan-approval"],
+            )
+        )
+        self.fixture.adopt(plan)
+        request = self.fixture.request(
+            {
+                "type": "convergence",
+                "from": "UNKNOWN",
+                "to": "CAUSE_ESTABLISHED",
+                "evidence": cause_binding,
+                "retry": False,
+            },
+            [cause_name],
+        )
+        self.assert_failure(
+            "stale", "convergence-evidence-context-mismatch", request
+        )
+
+    def test_initialize_cli_is_canonical_typed_and_read_only(self):
+        request = self.initialize_request()
+        request_path = self.fixture.root / "initialize.json"
+        request_path.write_text(json.dumps(request))
+        marker = self.fixture.root / ".agent-workflow" / "runs" / "issue-150" / "state.json"
+        marker.parent.mkdir(parents=True)
+        marker.write_bytes(b"sentinel\n")
+        prefixes = (
+            [sys.executable, str(SCRIPTS / "workflow_policy.py")],
+            [sys.executable, "-m", "scripts.workflow_policy"],
+        )
+        expected = policy.initialize(
+            self.fixture.root,
+            request["issue"],
+            request["family_run_id"],
+            request["implementation_a"],
+        )
+        for prefix in prefixes:
+            with self.subTest(prefix=prefix):
+                result = subprocess.run(
+                    prefix
+                    + [
+                        "initialize",
+                        "--root",
+                        str(self.fixture.root),
+                        "--request",
+                        str(request_path),
+                        "--implementation-a-binding",
+                        request["implementation_a"]["binding"]["sha256"],
+                    ],
+                    cwd=REPOSITORY,
+                    capture_output=True,
+                )
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertEqual(inspector.canonical_document(expected), result.stdout)
+                self.assertEqual(b"sentinel\n", marker.read_bytes())
+
+        stale = copy.deepcopy(request)
+        stale["request_sha256"] = "0" * 64
+        request_path.write_text(json.dumps(stale))
+        result = subprocess.run(
+            prefixes[0]
+            + [
+                "initialize",
+                "--root",
+                str(self.fixture.root),
+                "--request",
+                str(request_path),
+                "--implementation-a-binding",
+                request["implementation_a"]["binding"]["sha256"],
+            ],
+            cwd=REPOSITORY,
+            capture_output=True,
+        )
+        self.assertEqual(7, result.returncode, result.stderr)
+        self.assertNotIn(b"Traceback", result.stderr)
+        self.assertEqual(
+            "policy-initialize-request-stale",
+            json.loads(result.stdout)["outcome"]["code"],
+        )
+
+        request_path.write_text(json.dumps(request))
+        result = subprocess.run(
+            prefixes[1]
+            + [
+                "initialize",
+                "--root",
+                str(self.fixture.root),
+                "--request",
+                str(request_path),
+                "--implementation-a-binding",
+                "0" * 64,
+            ],
+            cwd=REPOSITORY,
+            capture_output=True,
+        )
+        self.assertEqual(7, result.returncode, result.stderr)
+        self.assertNotIn(b"Traceback", result.stderr)
+        self.assertEqual(
+            "trusted-implementation-a-binding-mismatch",
+            json.loads(result.stdout)["outcome"]["code"],
+        )
 
     def test_reopen_plan_has_minimal_deterministic_closure(self):
         request, first = self.reopen("plan", "v2")
@@ -1037,7 +1484,7 @@ class WorkflowPolicyTest(unittest.TestCase):
         tampered = copy.deepcopy(self.fixture.state)
         tampered["budgets"]["reopens"] = 0
         tampered["state_sha256"] = policy._state_digest(tampered)
-        parent = self.fixture.authority_chain[0]["binding"]
+        parent = self.fixture.authority_chain[-2]["binding"]
         tampered_binding = self.fixture.bind_state(tampered, parent)
         self.fixture.state = tampered
         self.fixture.authority_chain[-1] = {
@@ -1099,7 +1546,7 @@ class WorkflowPolicyTest(unittest.TestCase):
         with self.assertRaises(policy.PolicyFailure) as raised:
             self.evaluate(request, trusted_state_binding=trusted_tip)
         self.assertEqual("stale", raised.exception.status)
-        self.assertEqual("trusted-state-binding-mismatch", raised.exception.code)
+        self.assertEqual("invalid-policy-genesis", raised.exception.code)
 
     def test_authoritative_chain_rejects_retry_counter_reset(self):
         retry_name = "authority-retry"
@@ -1118,7 +1565,7 @@ class WorkflowPolicyTest(unittest.TestCase):
         tampered = copy.deepcopy(self.fixture.state)
         tampered["budgets"]["retries"]["UNKNOWN"] = 0
         tampered["state_sha256"] = policy._state_digest(tampered)
-        parent = self.fixture.authority_chain[0]["binding"]
+        parent = self.fixture.authority_chain[-2]["binding"]
         tampered_binding = self.fixture.bind_state(tampered, parent)
         self.fixture.state = tampered
         self.fixture.authority_chain[-1] = {
@@ -1461,79 +1908,40 @@ class WorkflowPolicyTest(unittest.TestCase):
         plan = migration.plan(self.fixture.root, migration_request)
         binding = migration.apply(self.fixture.root, plan)["binding"]
         identity = evidence.project(self.fixture.root, binding)["identity"]
-        state = {
-            "format": policy.STATE_FORMAT,
-            "issue": identity["issue"],
-            "family_run_id": identity["family_run_id"],
-            "generation": 0,
-            "transition_tip": None,
-            "transition": None,
-            "active": [
-                {"node": "plan-approval", "binding": binding, "dependencies": []}
-            ],
-            "history": [
-                {
-                    "node": "plan-approval",
-                    "binding": binding,
-                    "status": "active",
-                    "transition_id": None,
-                }
-            ],
-            "budgets": {
-                "reopens": 0,
-                "retries": {stage: 0 for stage in policy.CONVERGENCE_STATES},
-            },
-            "convergence": {"episode": 0, "state": "UNKNOWN", "evidence": []},
+        implementation_name = "migration-implementation-a"
+        self.fixture.add_binding(
+            implementation_name,
+            "implementation-a",
+            700,
+            identity=identity,
+        )
+        migrated_name = "migrated-plan-approval"
+        self.fixture.bindings[migrated_name] = binding
+        self.fixture.inputs[migrated_name] = {
+            "binding": binding,
+            "migration_plan": plan,
         }
-        state["state_sha256"] = policy._state_digest(state)
+        state = policy.initialize(
+            self.fixture.root,
+            identity["issue"],
+            identity["family_run_id"],
+            self.fixture.inputs[implementation_name],
+        )
         state_authority = self.fixture.bind_state(state)
-        active = {
-            "plan-approval": {
-                "node": "plan-approval",
-                "binding": binding,
-                "dependencies": {},
-            }
-        }
-        context_id = policy._convergence_decision_id(
-            0, None, policy._active_sha256(active)
+        self.fixture.state = state
+        self.fixture.authority_chain = [
+            {"binding": state_authority, "state": copy.deepcopy(state)}
+        ]
+        request = self.fixture.request(
+            self.fixture.bind_operation(
+                "plan-approval",
+                binding,
+                [],
+            ),
+            [migrated_name],
         )
-        convergence_name = "migration-retry-context"
-        convergence_identity = {
-            "issue": identity["issue"],
-            "run_id": hashlib.sha256(convergence_name.encode()).hexdigest()[:32],
-            "family_run_id": identity["family_run_id"],
-            "correction": 1,
-            "run_generation": 0,
-            "sequence": 2,
-            "event_tip": hashlib.sha256(b"migration-retry-tip").hexdigest(),
-        }
-        convergence_binding = self.fixture.add_binding(
-            convergence_name,
-            "retry-observation",
-            701,
-            decision_id=context_id,
-            identity=convergence_identity,
-        )
-        request = {
-            "format": policy.REQUEST_FORMAT,
-            "issue": identity["issue"],
-            "family_run_id": identity["family_run_id"],
-            "state": state,
-            "expected_state_sha256": state["state_sha256"],
-            "bindings": [
-                {"binding": binding, "migration_plan": plan},
-                {"binding": state_authority, "migration_plan": None},
-                {"binding": convergence_binding, "migration_plan": None},
-            ],
-            "authority_chain": [{"binding": state_authority, "state": state}],
-            "operation": {
-                "type": "convergence",
-                "from": "UNKNOWN",
-                "to": "UNKNOWN",
-                "evidence": convergence_binding,
-                "retry": True,
-            },
-        }
+        request["issue"] = identity["issue"]
+        request["family_run_id"] = identity["family_run_id"]
         self.assertEqual(
             "evaluated",
             policy.evaluate(
@@ -1542,7 +1950,12 @@ class WorkflowPolicyTest(unittest.TestCase):
                 state_authority["sha256"],
             )["outcome"]["code"],
         )
-        request["bindings"][0]["migration_plan"] = None
+        migrated_input = next(
+            item
+            for item in request["bindings"]
+            if item["binding"]["sha256"] == binding["sha256"]
+        )
+        migrated_input["migration_plan"] = None
         self.assert_failure("missing", "migration-plan-required", request)
 
         no_op = migration.plan(
@@ -1557,7 +1970,7 @@ class WorkflowPolicyTest(unittest.TestCase):
                 "lineage": None,
             },
         )
-        request["bindings"][0]["migration_plan"] = no_op
+        migrated_input["migration_plan"] = no_op
         self.assert_failure("stale", "migration-plan-not-authoritative", request)
 
 
