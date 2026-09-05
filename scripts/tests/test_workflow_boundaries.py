@@ -17,6 +17,7 @@ PRODUCTION_MODULES = (
     "workflow_inspector",
     "workflow_kernel",
     "workflow_migration",
+    "workflow_orchestrator",
     "workflow_policy",
     "workflow_plan_revision_policy",
     "workflow_repair",
@@ -24,6 +25,15 @@ PRODUCTION_MODULES = (
     "workflow_supervisor",
     "workflow_work_type_policy",
 )
+ORCHESTRATOR_IMPORTS = {
+    "workflow_authority",
+    "workflow_evidence",
+    "workflow_inspector",
+    "workflow_policy",
+    "workflow_plan_revision_policy",
+    "workflow_runtime",
+    "workflow_work_type_policy",
+}
 KERNEL_EXPORTS = {
     "COMMITTED_MODE",
     "INTEGRITY_FORMAT",
@@ -155,6 +165,10 @@ class WorkflowBoundaryTest(unittest.TestCase):
         self.assertEqual(
             {"workflow_evidence", "workflow_inspector"},
             project_imports("workflow_plan_revision_policy"),
+        )
+        self.assertEqual(
+            ORCHESTRATOR_IMPORTS,
+            project_imports("workflow_orchestrator"),
         )
 
     def test_dependency_check_recognizes_qualified_and_relative_imports(self):
@@ -394,6 +408,91 @@ class WorkflowBoundaryTest(unittest.TestCase):
         self.assertEqual(set(subparsers.choices), set(work_type.COMMAND_HANDLERS))
         for handler in work_type.COMMAND_HANDLERS.values():
             self.assertIs(handler, getattr(work_type, handler.__name__))
+
+    def test_orchestrator_is_thin_and_composes_only_public_apis(self):
+        path = SCRIPTS / "workflow_orchestrator.py"
+        self.assertLessEqual(len(path.read_text().splitlines()), 800)
+        tree = syntax_tree("workflow_orchestrator")
+        tops = [
+            node for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        ]
+        self.assertLessEqual(len(tops), 30)
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                statements = sum(
+                    1 for child in ast.walk(node)
+                    if isinstance(child, ast.stmt)
+                    and not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                )
+                with self.subTest(function=node.name):
+                    self.assertLessEqual(statements, 60)
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imported.add((node.module or "").split(".")[0])
+        self.assertTrue(
+            {"subprocess", "socket", "urllib", "http", "requests", "fcntl", "ctypes", "os"}.isdisjoint(imported)
+        )
+        downward = project_imports("workflow_orchestrator")
+        for prohibited in ("agent_workflow", "workflow_cas", "workflow_supervisor",
+                           "workflow_kernel", "workflow_repair"):
+            self.assertNotIn(prohibited, downward)
+        calls = {
+            (node.func.value.id, node.func.attr)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+        }
+        self.assertTrue({("os", "replace"), ("os", "link")}.isdisjoint(calls))
+        for module in ("workflow_cas", "workflow_supervisor", "agent_workflow"):
+            self.assertFalse(any(name == module for name, _ in calls))
+        private_lower_calls = {
+            (node.func.value.id, node.func.attr)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id in {
+                "authority", "evidence", "inspector", "plan_policy", "policy",
+                "runtime", "work_type_policy",
+            }
+            and node.func.attr.startswith("_")
+        }
+        self.assertEqual(set(), private_lower_calls)
+        self.assertIn(("evidence", "publish"), calls)
+        self.assertIn(("authority", "prepare"), calls)
+        self.assertIn(("authority", "commit"), calls)
+
+    def test_orchestrator_parser_has_explicit_handlers(self):
+        module = importlib.import_module("scripts.workflow_orchestrator")
+        parser = module.build_parser()
+        subparsers = next(
+            action for action in parser._actions
+            if isinstance(action, argparse._SubParsersAction)
+        )
+        self.assertEqual(set(subparsers.choices), set(module.COMMAND_HANDLERS))
+        self.assertEqual(
+            {"status", "plan-next", "init", "step", "approve", "cancel", "recover"},
+            set(module.COMMAND_HANDLERS),
+        )
+        for handler in module.COMMAND_HANDLERS.values():
+            self.assertIs(handler, getattr(module, handler.__name__))
+
+    def test_orchestrator_cli_supports_script_and_package_execution(self):
+        repository = SCRIPTS.parent
+        for command in (
+            [sys.executable, str(SCRIPTS / "workflow_orchestrator.py"), "--help"],
+            [sys.executable, "-m", "scripts.workflow_orchestrator", "--help"],
+        ):
+            with self.subTest(command=command):
+                result = subprocess.run(
+                    command, cwd=str(repository), text=True, capture_output=True
+                )
+                self.assertEqual(0, result.returncode, result.stderr)
 
     def test_plan_revision_policy_cli_and_parser_handlers(self):
         repository = SCRIPTS.parent
