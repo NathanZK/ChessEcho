@@ -30,23 +30,44 @@ def reference(kind="evidence-binding", digest=HASH, size=1):
     return {"kind": kind, "sha256": digest, "size": size}
 
 
-def process_result(command, outcome="success", reason="process-exited", stdout=b""):
+def process_result(
+    command,
+    outcome="success",
+    reason="process-exited",
+    stdout=b"",
+    containment_kind="posix-process-group",
+):
+    limits = {
+        "gh": (30_000, 1_000, 512 * 1024),
+        "make": (3_600_000, 2_000, 512 * 1024),
+        "agent": (5_000, 100, 4_096),
+        "fake_agent.py": (5_000, 100, 4_096),
+    }.get(pathlib.Path(command[0]).name, (30_000, 1_000, 8 * 1024 * 1024))
+    if pathlib.Path(command[0]).name == "git" and "show" in command and any(
+        part.endswith(":.github/agent-workflow.json") for part in command
+    ):
+        limits = (30_000, 1_000, 1024 * 1024)
+    containment = {
+        "kind": containment_kind,
+        "cleanup_scope": (
+            "original-process-group" if containment_kind != "none" else "none"
+        ),
+        "escaped_descendants": (
+            "not-observable" if containment_kind != "none" else "not-applicable"
+        ),
+        "descendant_cleanup_verified": False,
+    }
     return {
         "format": "chess-echo-process-result-v1",
         "command_sha256": hashlib.sha256(
             json.dumps(command, ensure_ascii=True, separators=(",", ":")).encode()
         ).hexdigest(),
         "limits": {
-            "timeout_ms": 30_000,
-            "grace_ms": 1_000,
-            "output_bytes_per_stream": 8 * 1024 * 1024,
+            "timeout_ms": limits[0],
+            "grace_ms": limits[1],
+            "output_bytes_per_stream": limits[2],
         },
-        "containment": {
-            "kind": "posix-process-group",
-            "cleanup_scope": "original-process-group",
-            "escaped_descendants": "not-observable",
-            "descendant_cleanup_verified": False,
-        },
+        "containment": containment,
         "outcome": outcome,
         "reason": reason,
         "exit_code": 0 if outcome == "success" else None,
@@ -152,6 +173,25 @@ class BootstrapFixture:
             "refs/remotes/origin/main^{tree}",
         ]:
             stdout = (TREE + "\n").encode()
+        elif args == ["rev-parse", "--show-object-format"]:
+            stdout = b"sha1\n"
+        elif args == ["rev-parse", "--verify", OID + "^{tree}"]:
+            stdout = (TREE + "\n").encode()
+        elif args == ["merge-base", OID, OID]:
+            stdout = (OID + "\n").encode()
+        elif args == ["rev-list", "--count", OID + ".." + OID]:
+            stdout = b"0\n"
+        elif args == [
+            "diff-tree",
+            "-r",
+            "--no-commit-id",
+            "--raw",
+            "-z",
+            "--no-renames",
+            OID,
+            OID,
+        ]:
+            stdout = b""
         elif args == ["status", "--porcelain=v1", "-z", "--untracked-files=all"]:
             stdout = b""
         elif args == ["ls-files", "-v", "-z"]:
@@ -187,6 +227,13 @@ class BootstrapFixture:
                 json.loads((FIXTURES / "runtime-github.json").read_text())[
                     "pull_request"
                 ]
+            ).encode()
+        elif args == [
+            "api",
+            "repos/NathanZK/ChessEcho/git/matching-refs/heads/runtime",
+        ]:
+            stdout = json.dumps(
+                [{"ref": "refs/heads/runtime", "object": {"type": "commit", "sha": OID}}]
             ).encode()
         elif args == ["api", "repos/NathanZK/ChessEcho/issues/comments/1"]:
             stdout = json.dumps(
@@ -237,6 +284,8 @@ class WorkflowRuntimeTest(unittest.TestCase):
         pull = json.loads((FIXTURES / "runtime-github.json").read_text())[
             "pull_request"
         ]
+        pull["head"]["sha"] = OID
+        repository_before = self.repository_before()
         expectation = {
             "repository": "NathanZK/ChessEcho",
             "base_ref": pull["base"]["ref"],
@@ -261,7 +310,7 @@ class WorkflowRuntimeTest(unittest.TestCase):
         }
         authority = reference(digest="6" * 64)
         attempt = runtime.execution_attempt_id(
-            authority, operation, source, [], None, limits, expectation
+            authority, operation, source, [], repository_before, limits, expectation
         )
         request = adapter.build_request(
             issue=152,
@@ -271,7 +320,7 @@ class WorkflowRuntimeTest(unittest.TestCase):
             operation=operation,
             command_source=source,
             input_bindings=[],
-            repository_before=None,
+            repository_before=repository_before,
             limits=limits,
             reconciliation_expectation=expectation,
         )
@@ -345,7 +394,7 @@ class WorkflowRuntimeTest(unittest.TestCase):
             "triage_binding": reference(digest="a" * 64),
             "observer": {
                 "name": "workflow-runtime",
-                "version": "1.0.0",
+                "version": runtime.RUNTIME_VERSION,
                 "source_sha256": inspector.sha256(
                     pathlib.Path(runtime.__file__).read_bytes()
                 ),
@@ -664,7 +713,7 @@ class WorkflowRuntimeTest(unittest.TestCase):
         result = process_result(
             [str(self.fixture.make), "agent-workflow-test"],
             outcome="terminated",
-            reason="cancelled-before-start",
+            reason="cancelled",
         )
         def supervised(command, **options):
             if pathlib.Path(command[0]) == self.fixture.make:
@@ -969,6 +1018,636 @@ class WorkflowRuntimeTest(unittest.TestCase):
         query = next(command[-1] for command in calls if command[1:4] == ["api", "--paginate", "--slurp"])
         self.assertIn("head=NathanZK%3Aruntime", query)
 
+    def test_remote_head_observation_binds_validated_repository_head(self):
+        adapter = self.fixture.bootstrap()
+        repository_before = self.repository_before()
+        with mock.patch.object(
+            runtime.workflow_supervisor,
+            "supervise",
+            side_effect=self.fixture.supervise,
+        ):
+            observed = adapter.observe_remote_head(
+                152,
+                FAMILY,
+                repository_before,
+                "runtime",
+                observed_at="2026-09-05T00:04:00Z",
+            )
+        self.assertEqual(
+            {
+                "format": "chess-echo-github-remote-head-observation-v1",
+                "repository": "NathanZK/ChessEcho",
+                "ref": "refs/heads/runtime",
+                "sha": repository_before["head"]["commit"],
+                "repository_observation_sha256": repository_before[
+                    "observation_sha256"
+                ],
+                "observed_at": "2026-09-05T00:04:00Z",
+            },
+            {key: value for key, value in observed.items() if key != "observation_sha256"},
+        )
+        unsigned = dict(observed)
+        digest = unsigned.pop("observation_sha256")
+        self.assertEqual(inspector.sha256(inspector.canonical_bytes(unsigned)), digest)
+        remote_calls = [
+            command
+            for command, _options in self.fixture.calls
+            if command[1:]
+            == [
+                "api",
+                "repos/NathanZK/ChessEcho/git/matching-refs/heads/runtime",
+            ]
+        ]
+        self.assertEqual(2, len(remote_calls))
+
+    def test_remote_head_rejects_divergent_unpublished_and_malformed_refs(self):
+        adapter = self.fixture.bootstrap()
+        repository_before = self.repository_before()
+        endpoint = [
+            "api",
+            "repos/NathanZK/ChessEcho/git/matching-refs/heads/runtime",
+        ]
+        cases = (
+            (
+                [{"ref": "refs/heads/runtime", "object": {"type": "commit", "sha": "9" * 40}}],
+                "remote-head-mismatch",
+            ),
+            ([], "remote-head-unpublished"),
+            ([{"ref": "refs/heads/runtime", "object": {"type": "tag", "sha": OID}}], "invalid-remote-head"),
+        )
+        for response, expected_code in cases:
+            with self.subTest(expected_code=expected_code):
+                def supervised(command, **options):
+                    if list(command)[1:] == endpoint:
+                        return process_result(command, stdout=json.dumps(response).encode())
+                    return self.fixture.supervise(command, **options)
+
+                with mock.patch.object(
+                    runtime.workflow_supervisor,
+                    "supervise",
+                    side_effect=supervised,
+                ):
+                    with self.assertRaises(runtime.RuntimeFailure) as raised:
+                        adapter.observe_remote_head(
+                            152, FAMILY, repository_before, "runtime"
+                        )
+                self.assertEqual(expected_code, raised.exception.code)
+
+    def test_remote_head_observation_rejects_remote_and_local_races(self):
+        adapter = self.fixture.bootstrap()
+        repository_before = self.repository_before()
+        endpoint = [
+            "api",
+            "repos/NathanZK/ChessEcho/git/matching-refs/heads/runtime",
+        ]
+        remote_shas = iter((OID, "9" * 40, OID, "9" * 40))
+
+        def moving_remote(command, **options):
+            if list(command)[1:] == endpoint:
+                value = {
+                    "ref": "refs/heads/runtime",
+                    "object": {"type": "commit", "sha": next(remote_shas)},
+                }
+                return process_result(command, stdout=json.dumps([value]).encode())
+            return self.fixture.supervise(command, **options)
+
+        with mock.patch.object(
+            runtime.workflow_supervisor,
+            "supervise",
+            side_effect=moving_remote,
+        ):
+            with self.assertRaises(runtime.RuntimeFailure) as raised:
+                adapter.observe_remote_head(152, FAMILY, repository_before, "runtime")
+        self.assertEqual("remote-head-moved", raised.exception.code)
+
+        changed = copy.deepcopy(repository_before)
+        changed["head"]["commit"] = "9" * 40
+        with mock.patch.object(
+            runtime.Runtime,
+            "observe_diff",
+            side_effect=(repository_before, changed, repository_before, changed),
+        ), mock.patch.object(
+            runtime.workflow_supervisor,
+            "supervise",
+            side_effect=self.fixture.supervise,
+        ):
+            with self.assertRaises(runtime.RuntimeFailure) as raised:
+                adapter.observe_remote_head(152, FAMILY, repository_before, "runtime")
+        self.assertEqual("repository-observation-moved", raised.exception.code)
+
+    def test_remote_head_final_read_follows_local_revalidation(self):
+        adapter = self.fixture.bootstrap()
+        repository_before = self.repository_before()
+        order = []
+
+        def observe(*args, **kwargs):
+            order.append("local")
+            return repository_before
+
+        def remote(*args, **kwargs):
+            order.append("remote")
+            return OID
+
+        with mock.patch.object(
+            runtime.Runtime, "observe_diff", side_effect=observe
+        ), mock.patch.object(
+            runtime.Runtime, "_read_remote_head", side_effect=remote
+        ):
+            adapter.observe_remote_head(152, FAMILY, repository_before, "runtime")
+        self.assertEqual(["local", "remote", "local", "remote"], order)
+
+    def test_remote_head_query_failure_is_uncertain(self):
+        adapter = self.fixture.bootstrap()
+        endpoint = [
+            "api",
+            "repos/NathanZK/ChessEcho/git/matching-refs/heads/runtime",
+        ]
+
+        def failed_query(command, **options):
+            if list(command)[1:] == endpoint:
+                return process_result(
+                    command, outcome="nonzero-exit", reason="process-exited"
+                )
+            return self.fixture.supervise(command, **options)
+
+        with mock.patch.object(
+            runtime.workflow_supervisor, "supervise", side_effect=failed_query
+        ):
+            with self.assertRaises(runtime.RuntimeFailure) as raised:
+                adapter.observe_remote_head(
+                    152, FAMILY, self.repository_before(), "runtime"
+                )
+        self.assertEqual(
+            ("uncertain", "remote-head-query-failed"),
+            (raised.exception.status, raised.exception.code),
+        )
+
+    def test_remote_head_rejects_misattributed_local_git_result(self):
+        adapter = self.fixture.bootstrap()
+
+        def wrong_command(command, **options):
+            result = self.fixture.supervise(command, **options)
+            if list(command)[-3:] == ["rev-parse", "--verify", "HEAD^{commit}"]:
+                result["command_sha256"] = "9" * 64
+            return result
+
+        with mock.patch.object(
+            runtime.workflow_supervisor, "supervise", side_effect=wrong_command
+        ):
+            with self.assertRaises(runtime.RuntimeFailure) as raised:
+                adapter.observe_remote_head(
+                    152, FAMILY, self.repository_before(), "runtime"
+                )
+        self.assertEqual("invalid-process-result", raised.exception.code)
+
+    def test_github_write_rejects_untrusted_head_ref_without_mutation(self):
+        adapter = self.active_adapter()
+        request, expectation, payload, _pull = self.github_write_request(adapter)
+        attempt = runtime.execution_attempt_id(
+            request["authority_binding"],
+            request["operation"],
+            request["command_source"],
+            request["input_bindings"],
+            None,
+            request["limits"],
+            expectation,
+        )
+        with self.assertRaises(runtime.RuntimeFailure) as raised:
+            adapter.build_request(
+                issue=request["issue"],
+                family_run_id=request["family_run_id"],
+                attempt_id=attempt,
+                authority_binding=request["authority_binding"],
+                operation=request["operation"],
+                command_source=request["command_source"],
+                input_bindings=request["input_bindings"],
+                repository_before=None,
+                limits=request["limits"],
+                reconciliation_expectation=expectation,
+            )
+        self.assertEqual("repository-before-required", raised.exception.code)
+
+        expectation["head_ref"] = payload["head_ref"] = "reviewer-controlled"
+        request["attempt_id"] = runtime.execution_attempt_id(
+            request["authority_binding"],
+            request["operation"],
+            request["command_source"],
+            request["input_bindings"],
+            request["repository_before"],
+            request["limits"],
+            expectation,
+        )
+        unsigned = dict(request)
+        unsigned.pop("request_sha256")
+        request["request_sha256"] = inspector.sha256(
+            inspector.canonical_bytes(unsigned)
+        )
+        calls = []
+
+        def unpublished(command, **options):
+            calls.append(list(command))
+            if list(command)[1:] == [
+                "api",
+                "repos/NathanZK/ChessEcho/git/matching-refs/heads/reviewer-controlled",
+            ]:
+                return process_result(command, stdout=b"[]")
+            return self.fixture.supervise(command, **options)
+
+        with mock.patch.object(
+            runtime.workflow_supervisor, "supervise", side_effect=unpublished
+        ):
+            with self.assertRaises(runtime.RuntimeFailure) as raised:
+                adapter.execute(
+                    request,
+                    reference(digest="7" * 64),
+                    reconciliation_expectation=expectation,
+                    write_payload=payload,
+                )
+        self.assertEqual("remote-head-unpublished", raised.exception.code)
+        self.assertFalse(any(command[1:3] == ["pr", "create"] for command in calls))
+
+    def test_remote_head_rejects_malformed_branch_before_process(self):
+        adapter = self.fixture.bootstrap()
+        for head_ref in (
+            "../runtime",
+            "-runtime",
+            "owner:runtime",
+            "runtime.lock",
+            "runtime@{1}",
+            "runtime//nested",
+            "runtime\nnested",
+        ):
+            with self.subTest(head_ref=head_ref), mock.patch.object(
+                runtime.workflow_supervisor, "supervise"
+            ) as supervise:
+                with self.assertRaises(runtime.RuntimeFailure) as raised:
+                    adapter.observe_remote_head(
+                        152, FAMILY, self.repository_before(), head_ref
+                    )
+                self.assertEqual("invalid-head-ref", raised.exception.code)
+                supervise.assert_not_called()
+
+    def test_github_write_uses_validated_local_sha_not_caller_sha(self):
+        adapter = self.active_adapter()
+        request, expectation, payload, _pull = self.github_write_request(adapter)
+        expectation["head_sha"] = "9" * 40
+        request["attempt_id"] = runtime.execution_attempt_id(
+            request["authority_binding"],
+            request["operation"],
+            request["command_source"],
+            request["input_bindings"],
+            request["repository_before"],
+            request["limits"],
+            expectation,
+        )
+        unsigned = dict(request)
+        unsigned.pop("request_sha256")
+        request["request_sha256"] = inspector.sha256(
+            inspector.canonical_bytes(unsigned)
+        )
+        with mock.patch.object(runtime.workflow_supervisor, "supervise") as supervise:
+            with self.assertRaises(runtime.RuntimeFailure) as raised:
+                adapter.execute(
+                    request,
+                    reference(digest="7" * 64),
+                    reconciliation_expectation=expectation,
+                    write_payload=payload,
+                )
+        self.assertEqual("github-write-validated-head-mismatch", raised.exception.code)
+        supervise.assert_not_called()
+
+    def test_github_write_freezes_caller_owned_payload_before_remote_proof(self):
+        adapter = self.active_adapter()
+        request, expectation, payload, pull = self.github_write_request(adapter)
+        remote_head = {
+            "format": runtime.REMOTE_HEAD_OBSERVATION_FORMAT,
+            "repository": "NathanZK/ChessEcho",
+            "ref": "refs/heads/runtime",
+            "sha": OID,
+            "repository_observation_sha256": request["repository_before"][
+                "observation_sha256"
+            ],
+            "observed_at": "2026-09-05T00:04:00Z",
+            "observation_sha256": HASH,
+        }
+        calls = []
+
+        def mutate_payload(*args, **kwargs):
+            payload["head_ref"] = "attacker-controlled"
+            return remote_head
+
+        def supervised(command, **options):
+            calls.append(list(command))
+            args = list(command)[1:]
+            if args[:2] == ["pr", "create"]:
+                return process_result(command)
+            if args[:3] == ["api", "--paginate", "--slurp"]:
+                return process_result(command, stdout=json.dumps([[pull]]).encode())
+            return self.fixture.supervise(command, **options)
+
+        with mock.patch.object(
+            runtime.Runtime, "observe_remote_head", side_effect=mutate_payload
+        ), mock.patch.object(
+            runtime.Runtime,
+            "observe_diff",
+            return_value=request["repository_before"],
+        ), mock.patch.object(
+            runtime.workflow_supervisor, "supervise", side_effect=supervised
+        ):
+            result = adapter.execute(
+                request,
+                reference(digest="7" * 64),
+                reconciliation_expectation=expectation,
+                write_payload=payload,
+            )
+        create = next(command for command in calls if command[1:3] == ["pr", "create"])
+        self.assertEqual("runtime", create[create.index("--head") + 1])
+        self.assertEqual("succeeded", result["outcome"])
+
+    def test_exact_remote_head_match_is_required_and_recorded_for_write(self):
+        adapter = self.active_adapter()
+        request, expectation, payload, pull = self.github_write_request(adapter)
+        calls = []
+
+        def supervised(command, **options):
+            calls.append(list(command))
+            args = list(command)[1:]
+            if args[:2] == ["pr", "create"]:
+                return process_result(command, stdout=b"https://github.com/NathanZK/ChessEcho/pull/155\n")
+            if args[:3] == ["api", "--paginate", "--slurp"]:
+                return process_result(command, stdout=json.dumps([[pull]]).encode())
+            return self.fixture.supervise(command, **options)
+
+        with mock.patch.object(
+            runtime.workflow_supervisor, "supervise", side_effect=supervised
+        ):
+            result = adapter.execute(
+                request,
+                reference(digest="7" * 64),
+                reconciliation_expectation=expectation,
+                write_payload=payload,
+            )
+        self.assertEqual("succeeded", result["outcome"])
+        self.assertEqual("confirmed", result["reconciliation"]["status"])
+        self.assertEqual(
+            request["repository_before"]["head"]["commit"],
+            result["reconciliation"]["remote_head"]["sha"],
+        )
+        self.assertEqual(
+            request["repository_before"]["observation_sha256"],
+            result["reconciliation"]["remote_head"][
+                "repository_observation_sha256"
+            ],
+        )
+        self.assertEqual(1, sum(command[1:3] == ["pr", "create"] for command in calls))
+
+    def test_successful_write_is_uncertain_if_created_pr_head_moved(self):
+        adapter = self.active_adapter()
+        request, expectation, payload, pull = self.github_write_request(adapter)
+        pull["head"]["sha"] = "9" * 40
+        calls = []
+
+        def supervised(command, **options):
+            calls.append(list(command))
+            args = list(command)[1:]
+            if args[:2] == ["pr", "create"]:
+                return process_result(command)
+            if args[:3] == ["api", "--paginate", "--slurp"]:
+                return process_result(command, stdout=json.dumps([[pull]]).encode())
+            return self.fixture.supervise(command, **options)
+
+        with mock.patch.object(
+            runtime.workflow_supervisor, "supervise", side_effect=supervised
+        ):
+            result = adapter.execute(
+                request,
+                reference(digest="7" * 64),
+                reconciliation_expectation=expectation,
+                write_payload=payload,
+            )
+        self.assertEqual(("uncertain", "unknown"), (
+            result["outcome"],
+            result["reconciliation"]["status"],
+        ))
+        self.assertEqual(OID, result["reconciliation"]["remote_head"]["sha"])
+        self.assertEqual(1, sum(command[1:3] == ["pr", "create"] for command in calls))
+
+    def test_post_start_cancellation_cannot_skip_write_reconciliation(self):
+        adapter = self.active_adapter()
+        request, expectation, payload, pull = self.github_write_request(adapter)
+        cancel = threading.Event()
+        calls = []
+
+        def supervised(command, **options):
+            calls.append((list(command), options))
+            args = list(command)[1:]
+            if args[:2] == ["pr", "create"]:
+                cancel.set()
+                return process_result(
+                    command, outcome="terminated", reason="cancelled"
+                )
+            if args[:3] == ["api", "--paginate", "--slurp"]:
+                return process_result(command, stdout=json.dumps([[pull]]).encode())
+            return self.fixture.supervise(command, **options)
+
+        with mock.patch.object(
+            runtime.Runtime,
+            "observe_remote_head",
+            return_value={
+                "format": runtime.REMOTE_HEAD_OBSERVATION_FORMAT,
+                "repository": "NathanZK/ChessEcho",
+                "ref": "refs/heads/runtime",
+                "sha": OID,
+                "repository_observation_sha256": request["repository_before"][
+                    "observation_sha256"
+                ],
+                "observed_at": "2026-09-05T00:04:00Z",
+                "observation_sha256": HASH,
+            },
+        ), mock.patch.object(
+            runtime.Runtime,
+            "observe_diff",
+            return_value=request["repository_before"],
+        ) as observe_diff, mock.patch.object(
+            runtime.workflow_supervisor, "supervise", side_effect=supervised
+        ):
+            result = adapter.execute(
+                request,
+                reference(digest="7" * 64),
+                reconciliation_expectation=expectation,
+                cancel_event=cancel,
+                write_payload=payload,
+            )
+        reconciliation_call = next(
+            options
+            for command, options in calls
+            if command[1:4] == ["api", "--paginate", "--slurp"]
+        )
+        self.assertIsNone(reconciliation_call["cancel_event"])
+        self.assertIsNone(observe_diff.call_args.kwargs["cancel_event"])
+        self.assertEqual(("succeeded", "confirmed"), (
+            result["outcome"],
+            result["reconciliation"]["status"],
+        ))
+
+    def test_malformed_not_started_result_cannot_skip_reconciliation(self):
+        for case in ("command", "supervisor-error", "oversized-output"):
+            with self.subTest(case=case):
+                adapter = self.active_adapter()
+                request, expectation, payload, pull = self.github_write_request(adapter)
+                calls = []
+
+                def supervised(command, **options):
+                    calls.append(list(command))
+                    args = list(command)[1:]
+                    if args[:2] == ["pr", "create"]:
+                        result = process_result(
+                            command,
+                            outcome="terminated",
+                            reason="cancelled-before-start",
+                            containment_kind="none",
+                        )
+                        if case == "command":
+                            result["command_sha256"] = "9" * 64
+                        elif case == "supervisor-error":
+                            result["supervisor_error"] = 0
+                        else:
+                            data = b"x" * (512 * 1024 + 1)
+                            result["stdout"] = {
+                                "bytes": len(data),
+                                "base64": base64.b64encode(data).decode(),
+                            }
+                        return result
+                    if args[:3] == ["api", "--paginate", "--slurp"]:
+                        return process_result(
+                            command, stdout=json.dumps([[pull]]).encode()
+                        )
+                    return self.fixture.supervise(command, **options)
+
+                with mock.patch.object(
+                    runtime.workflow_supervisor, "supervise", side_effect=supervised
+                ):
+                    with self.assertRaises(runtime.RuntimeFailure) as raised:
+                        adapter.execute(
+                            request,
+                            reference(digest="7" * 64),
+                            reconciliation_expectation=expectation,
+                            write_payload=payload,
+                        )
+                self.assertEqual("invalid-process-result", raised.exception.code)
+                self.assertEqual(
+                    1,
+                    sum(
+                        command[1:4] == ["api", "--paginate", "--slurp"]
+                        for command in calls
+                    ),
+                )
+
+    def test_write_supervisor_exception_still_runs_recovery(self):
+        adapter = self.active_adapter()
+        request, expectation, payload, pull = self.github_write_request(adapter)
+        calls = []
+
+        def supervised(command, **options):
+            calls.append(list(command))
+            args = list(command)[1:]
+            if args[:2] == ["pr", "create"]:
+                raise KeyboardInterrupt()
+            if args[:3] == ["api", "--paginate", "--slurp"]:
+                return process_result(command, stdout=json.dumps([[pull]]).encode())
+            return self.fixture.supervise(command, **options)
+
+        with mock.patch.object(
+            runtime.Runtime,
+            "observe_remote_head",
+            return_value={
+                "format": runtime.REMOTE_HEAD_OBSERVATION_FORMAT,
+                "repository": "NathanZK/ChessEcho",
+                "ref": "refs/heads/runtime",
+                "sha": OID,
+                "repository_observation_sha256": request["repository_before"][
+                    "observation_sha256"
+                ],
+                "observed_at": "2026-09-05T00:04:00Z",
+                "observation_sha256": HASH,
+            },
+        ), mock.patch.object(
+            runtime.Runtime,
+            "observe_diff",
+            return_value=request["repository_before"],
+        ) as observe_diff, mock.patch.object(
+            runtime.workflow_supervisor, "supervise", side_effect=supervised
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                adapter.execute(
+                    request,
+                    reference(digest="7" * 64),
+                    reconciliation_expectation=expectation,
+                    write_payload=payload,
+                )
+        self.assertEqual(
+            1,
+            sum(command[1:4] == ["api", "--paginate", "--slurp"] for command in calls),
+        )
+        self.assertEqual(1, observe_diff.call_count)
+
+    def test_malformed_reconciliation_row_is_uncertain_after_mutation(self):
+        malformed_url = json.loads(
+            (FIXTURES / "runtime-github.json").read_text()
+        )["pull_request"]
+        malformed_url["head"]["sha"] = OID
+        malformed_url["html_url"] = (
+            "https://github.com/NathanZK/ChessEcho/pull/\uff11\uff15\uff15"
+        )
+        missing_body = copy.deepcopy(malformed_url)
+        missing_body["html_url"] = "https://github.com/NathanZK/ChessEcho/pull/155"
+        missing_body.pop("body")
+        for row in (42, {"body": False}, malformed_url, missing_body):
+            with self.subTest(row=row):
+                adapter = self.active_adapter()
+                request, expectation, payload, _pull = self.github_write_request(adapter)
+                if row is missing_body:
+                    payload["body"] = ""
+                    expectation["body_sha256"] = inspector.sha256(b"")
+                    request["attempt_id"] = runtime.execution_attempt_id(
+                        request["authority_binding"],
+                        request["operation"],
+                        request["command_source"],
+                        request["input_bindings"],
+                        request["repository_before"],
+                        request["limits"],
+                        expectation,
+                    )
+                    unsigned = dict(request)
+                    unsigned.pop("request_sha256")
+                    request["request_sha256"] = inspector.sha256(
+                        inspector.canonical_bytes(unsigned)
+                    )
+
+                def supervised(command, **options):
+                    args = list(command)[1:]
+                    if args[:2] == ["pr", "create"]:
+                        return process_result(command)
+                    if args[:3] == ["api", "--paginate", "--slurp"]:
+                        return process_result(
+                            command, stdout=json.dumps([[row]]).encode()
+                        )
+                    return self.fixture.supervise(command, **options)
+
+                with mock.patch.object(
+                    runtime.workflow_supervisor, "supervise", side_effect=supervised
+                ):
+                    result = adapter.execute(
+                        request,
+                        reference(digest="7" * 64),
+                        reconciliation_expectation=expectation,
+                        write_payload=payload,
+                    )
+                self.assertEqual(("uncertain", "unknown"), (
+                    result["outcome"],
+                    result["reconciliation"]["status"],
+                ))
+
     def test_github_write_command_source_must_match_operation(self):
         adapter = self.active_adapter()
         request, expectation, _payload, _pull = self.github_write_request(adapter)
@@ -1033,15 +1712,21 @@ class WorkflowRuntimeTest(unittest.TestCase):
     def test_github_write_never_serializes_a_disclosed_token(self):
         adapter = self.active_adapter()
         request, expectation, payload, _pull = self.github_write_request(adapter)
+        calls = []
 
         def supervised(command, **options):
+            calls.append(list(command))
             if list(command)[1:3] == ["pr", "create"]:
                 return process_result(command, stdout=b"secret-token")
             return self.fixture.supervise(command, **options)
 
         with mock.patch.object(
             runtime.workflow_supervisor, "supervise", side_effect=supervised
-        ):
+        ), mock.patch.object(
+            runtime.Runtime,
+            "observe_diff",
+            return_value=request["repository_before"],
+        ) as observe_diff:
             with self.assertRaises(runtime.RuntimeFailure) as raised:
                 adapter.execute(
                     request,
@@ -1050,6 +1735,12 @@ class WorkflowRuntimeTest(unittest.TestCase):
                     write_payload=payload,
                 )
         self.assertEqual("github-token-disclosed", raised.exception.code)
+        self.assertEqual("reconciliation:unknown", raised.exception.subject)
+        self.assertEqual(
+            1,
+            sum(command[1:4] == ["api", "--paginate", "--slurp"] for command in calls),
+        )
+        self.assertEqual(3, observe_diff.call_count)
 
     def test_github_write_rejects_token_in_payload_before_any_process(self):
         adapter = self.active_adapter()
@@ -1094,6 +1785,7 @@ class WorkflowRuntimeTest(unittest.TestCase):
                 command,
                 outcome="terminated",
                 reason="cancelled-before-start",
+                containment_kind="none",
             )
 
         with mock.patch.object(
@@ -1108,6 +1800,46 @@ class WorkflowRuntimeTest(unittest.TestCase):
             )
         self.assertEqual("cancelled", result["outcome"])
         self.assertEqual(1, len(calls))
+
+    def test_precancelled_write_latches_cancellation_before_process_start(self):
+        adapter = self.active_adapter()
+        request, expectation, payload, _pull = self.github_write_request(adapter)
+
+        class ClearingCancellation:
+            def __init__(self):
+                self.calls = 0
+
+            def is_set(self):
+                self.calls += 1
+                return self.calls == 1
+
+        cancel = ClearingCancellation()
+
+        def supervised(command, **options):
+            self.assertTrue(options["cancel_event"].is_set())
+            self.assertIsNot(cancel, options["cancel_event"])
+            return process_result(
+                command,
+                outcome="terminated",
+                reason="cancelled-before-start",
+                containment_kind="none",
+            )
+
+        with mock.patch.object(
+            runtime.workflow_supervisor, "supervise", side_effect=supervised
+        ), mock.patch.object(runtime.Runtime, "observe_remote_head") as remote, mock.patch.object(
+            runtime.Runtime, "observe_diff"
+        ) as observe_diff:
+            result = adapter.execute(
+                request,
+                reference(digest="7" * 64),
+                reconciliation_expectation=expectation,
+                cancel_event=cancel,
+                write_payload=payload,
+            )
+        self.assertEqual("cancelled", result["outcome"])
+        remote.assert_not_called()
+        observe_diff.assert_not_called()
 
     def test_github_observations_bind_exact_live_identity_and_challenge(self):
         adapter = self.fixture.bootstrap()
