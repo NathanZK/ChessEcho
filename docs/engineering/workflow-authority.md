@@ -25,6 +25,10 @@ python3 scripts/workflow_authority.py commit --root REPOSITORY \
 The same commands support package execution with
 `python3 -m scripts.workflow_authority`. Output is canonical JSON. `status`,
 `checkpoint`, and `prepare` are read-only; `commit` is the only mutating API.
+`validate_checkpoint`, `verify_checkpoint`, `parse_pointer`, and
+`inspect_pointer` are public library interfaces used by the separate,
+explicitly authorized repair boundary. They validate supplied bytes and
+immutable evidence without selecting a new lifecycle state.
 
 ## Pointer and lock
 
@@ -216,6 +220,13 @@ A crash before replacement leaves the source authoritative. A crash after
 replacement leaves the target authoritative. Immutable candidate evidence can
 remain unreachable without affecting current authority. There is no journal,
 rollback, repair inference, or hidden recovery state.
+
+Arbitrary pointer loss or malformed bytes are not an expected-tip commit
+recovery. They require the independently callable, checkpoint-bound operation
+documented in
+[`workflow-authority-repair.md`](workflow-authority-repair.md). That operation
+uses the same `authority.lock`; a retained expected-tip bundle remains the only
+way to finish a known interrupted authority commit.
 
 Stable failures include `orchestration-pointer-missing`,
 `unsupported-route-not-activated`, `pointer-not-regular`,

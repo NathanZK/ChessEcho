@@ -414,9 +414,14 @@ def _chain(root, pointer):
                    "authority": state["previous_authority"]}
     rows.reverse()
     return tip, rows
-def _inspection(root, issue):
+def parse_pointer(data, issue):
+    """Validate exact orchestration pointer bytes without selecting them."""
+    return _parse_pointer(data, _issue(issue))
+
+
+def _inspection_from_pointer(root, issue, data):
     issue = _issue(issue)
-    data, pointer = _read_pointer(_store(root), issue)
+    pointer = _parse_pointer(data, issue)
     state, chain = _chain(root, pointer)
     return {
         "format": INSPECTION_FORMAT, "canonicalization": CANONICALIZATION,
@@ -424,7 +429,20 @@ def _inspection(root, issue):
         "pointer_sha256": workflow_inspector.sha256(data), "pointer": pointer,
         "authority": pointer["authority"], "state_sha256": state["state_sha256"],
         "chain": chain, "chain_length": len(chain),
-    }
+    }, state
+
+
+def inspect_pointer(root, issue, data):
+    """Verify a supplied pointer and its complete selected predecessor chain."""
+    document, _state = _inspection_from_pointer(root, issue, data)
+    return document
+
+
+def _inspection(root, issue):
+    issue = _issue(issue)
+    data, _pointer = _read_pointer(_store(root), issue)
+    document, _state = _inspection_from_pointer(root, issue, data)
+    return document
 def status(root, issue):
     return _inspection(root, issue)
 def checkpoint(root, issue):
@@ -433,6 +451,77 @@ def checkpoint(root, issue):
     document["checkpoint_sha256"] = workflow_inspector.sha256(_canonical(document))
     _require(len(_canonical(document)) <= CHECKPOINT_LIMIT, "unsupported", "authority-checkpoint-too-large", "Checkpoint exceeds 4 MiB")
     return document
+
+
+def validate_checkpoint(document):
+    """Validate a canonical checkpoint document without reading the live pointer."""
+    _require(isinstance(document, dict), "corrupt", "invalid-authority-checkpoint",
+             "Checkpoint must be an object")
+    _require(len(_canonical(document)) <= CHECKPOINT_LIMIT, "unsupported",
+             "authority-checkpoint-too-large", "Checkpoint exceeds 4 MiB")
+    _keys(document, {
+        "format", "canonicalization", "outcome", "issue", "pointer_sha256",
+        "pointer", "authority", "state_sha256", "chain", "chain_length",
+        "checkpoint_sha256",
+    }, "authority-checkpoint", "invalid-authority-checkpoint")
+    _require(document["format"] == CHECKPOINT_FORMAT
+             and document["canonicalization"] == CANONICALIZATION
+             and document["outcome"] == {"status": "resolved", "code": "verified"},
+             "unsupported", "invalid-authority-checkpoint",
+             "Checkpoint format or outcome is unsupported")
+    issue = _issue(document["issue"])
+    pointer_data = _canonical(document["pointer"])
+    pointer = _parse_pointer(pointer_data, issue)
+    valid = (
+        isinstance(document["pointer_sha256"], str)
+        and document["pointer_sha256"] == workflow_inspector.sha256(pointer_data)
+        and document["authority"] == pointer["authority"]
+        and isinstance(document["state_sha256"], str)
+        and SHA256_RE.fullmatch(document["state_sha256"]) is not None
+        and type(document["chain_length"]) is int
+        and isinstance(document["chain"], list)
+        and document["chain_length"] == len(document["chain"])
+        and document["chain_length"] == pointer["generation"] + 1
+    )
+    _require(valid, "corrupt", "invalid-authority-checkpoint",
+             "Checkpoint pointer or chain summary is invalid")
+    for generation, row in enumerate(document["chain"]):
+        _keys(row, {"generation", "binding", "state_sha256"},
+              "authority-checkpoint-chain", "invalid-authority-checkpoint")
+        valid = (
+            row["generation"] == generation
+            and _reference(row["binding"], "checkpoint-chain") == row["binding"]
+            and isinstance(row["state_sha256"], str)
+            and SHA256_RE.fullmatch(row["state_sha256"]) is not None
+        )
+        _require(valid, "corrupt", "invalid-authority-checkpoint",
+                 "Checkpoint chain summary is invalid")
+    _require(document["chain"][-1]["binding"] == document["authority"]
+             and document["chain"][-1]["state_sha256"] == document["state_sha256"],
+             "corrupt", "invalid-authority-checkpoint",
+             "Checkpoint tip summary is inconsistent")
+    unsigned = dict(document)
+    digest = unsigned.pop("checkpoint_sha256")
+    _require(isinstance(digest, str) and SHA256_RE.fullmatch(digest) is not None
+             and digest == workflow_inspector.sha256(_canonical(unsigned)),
+             "corrupt", "invalid-authority-checkpoint",
+             "Checkpoint digest is invalid")
+    return document
+
+
+def verify_checkpoint(root, document):
+    """Verify a checkpoint against immutable evidence, not the live pointer."""
+    validate_checkpoint(document)
+    pointer_data = _canonical(document["pointer"])
+    inspection, state = _inspection_from_pointer(
+        root, document["issue"], pointer_data)
+    expected = dict(inspection)
+    expected["format"] = CHECKPOINT_FORMAT
+    expected["checkpoint_sha256"] = workflow_inspector.sha256(_canonical(expected))
+    _require(_canonical(expected) == _canonical(document), "stale",
+             "authority-checkpoint-mismatch",
+             "Checkpoint does not match the verified selected chain")
+    return {"inspection": expected, "state": state}
 def _target(issue, generation, candidate):
     pointer = {"format": POINTER_FORMAT, "issue": issue, "generation": generation,
                "authority": _reference(candidate, "candidate")}
