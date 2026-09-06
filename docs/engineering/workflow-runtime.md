@@ -27,6 +27,8 @@ format `chess-echo-orchestrator-config-v1`. It declares:
   `external-sandbox-v1` requirement, and provider name/source hash;
 - exact `git` and `gh` command names and limits;
 - an explicit absolute-directory `validation_path`; and
+- an exact structurally validated `supervision` object whose four-gate semantics
+  are owned by `workflow_supervision_policy.py`; and
 - human accounts sorted by numeric account ID plus lexically sorted allowed
   author associations.
 
@@ -99,7 +101,11 @@ Commands are derived from the bootstrap bytes, not caller argv:
 - the only write operation is `create-draft-pr`, constructed from an exact
   typed payload whose refs and title/body hashes match its reconciliation
   expectation; it requires a validated repository observation and a stable
-  trusted remote-head observation before the mutation starts.
+  trusted remote-head observation before the mutation starts. The orchestrator
+  supplies a pre-write check that runs after the initial remote-head preflight
+  to revalidate live final/publication authorization and unchanged authority.
+  The runtime then repeats the complete local/remote-head observation
+  immediately before process launch.
 
 Each call receives a newly isolated `HOME`. Common environment keys are exactly
 `PATH`, `HOME`, `LC_ALL=C.UTF-8`, `LANG=C.UTF-8`, and `TZ=UTC`. Git additionally

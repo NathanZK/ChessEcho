@@ -17,6 +17,10 @@ the workflow lifecycle or changing its stored formats.
 | Dependency invalidation and convergence policy evaluation | `workflow_policy.py` |
 | Inactive work-type intake, route, advisory targeted-check, and structural completion policy | `workflow_work_type_policy.py` |
 | Inactive incremental reviewed-plan revision policy | `workflow_plan_revision_policy.py` |
+| Inactive four-gate supervision policy | `workflow_supervision_policy.py` |
+| Inactive orchestration authority pointer | `workflow_authority.py` |
+| Inactive trusted Git/GitHub/process adapter | `workflow_runtime.py` |
+| Inactive lifecycle composition | `workflow_orchestrator.py` |
 | Legacy lifecycle, approvals, reviews, corrections, validation, adoption/migration, and projection-recovery policy | `agent_workflow.py` |
 | Git, GitHub, process execution, command parsing, and human-facing output | `agent_workflow.py` |
 | Durable-store inspection and checkpoints | `workflow_inspector.py` |
@@ -47,6 +51,12 @@ workflow_migration -> workflow_inspector, workflow_cas, workflow_evidence, workf
 workflow_policy -> workflow_inspector, workflow_evidence, workflow_migration
 workflow_work_type_policy -> workflow_inspector, workflow_evidence, workflow_supervisor
 workflow_plan_revision_policy -> workflow_inspector, workflow_evidence
+workflow_supervision_policy -> workflow_inspector
+workflow_authority -> workflow_inspector, workflow_evidence, workflow_cas
+workflow_runtime -> workflow_inspector, workflow_supervisor
+workflow_orchestrator -> workflow_inspector, workflow_evidence, workflow_authority,
+                         workflow_work_type_policy, workflow_plan_revision_policy,
+                         workflow_policy, workflow_supervision_policy, workflow_runtime
 workflow_repair   -> workflow_inspector, workflow_cas
 workflow_cas
 workflow_inspector
@@ -106,6 +116,15 @@ and technical-review coverage, then derives an incremental or full review
 requirement. It cannot publish evidence, mutate lifecycle state, authenticate
 actors, preserve approval, or establish freshness. Future #144 is the sole
 owner of composing #116, #125, and #134 results and activating their effects.
+
+`workflow_supervision_policy.py` is the inactive deterministic owner of the
+four configurable gates (`plan`, `tests`, `final`, and `pr-publication`). It
+cannot authenticate humans, publish evidence, select authority, perform a
+GitHub mutation, or configure mandatory-human activation, cutover, recovery,
+repair, credential/provider, or irreversible authority-transfer operations.
+`workflow_orchestrator.py` composes its decisions while
+`workflow_authority.py` selects state and `workflow_runtime.py` retains the
+external-operation boundary.
 
 ## Kernel boundary
 

@@ -205,7 +205,7 @@ def _index_flags(data):
 def _validate_config(config, root):
     if not isinstance(config, dict) or 'orchestrator' not in config: _fail('missing', 'orchestrator-config-missing', 'Base config has no orchestrator block')
     orchestrator = config['orchestrator']
-    _exact(orchestrator, {'format', 'mode', 'frozen_issues', 'agent_roles', 'git', 'github', 'validation_path', 'human_approval'}, 'orchestrator-config')
+    _exact(orchestrator, {'format', 'mode', 'frozen_issues', 'agent_roles', 'git', 'github', 'validation_path', 'supervision', 'human_approval'}, 'orchestrator-config')
     if orchestrator['format'] != 'chess-echo-orchestrator-config-v1': _fail('unsupported', 'orchestrator-config-format', 'Orchestrator config format is unsupported')
     if orchestrator['mode'] not in {'inactive', 'active'}: _fail('unsupported', 'orchestrator-mode', 'Orchestrator mode is unsupported')
     frozen = orchestrator['frozen_issues']
@@ -231,6 +231,14 @@ def _validate_config(config, root):
     if not isinstance(paths, list) or not paths or len(paths) > 32 or (len(paths) != len(set(paths))): _fail('corrupt', 'invalid-validation-path', 'Validation PATH must be a bounded unique list')
     for value in paths:
         if not isinstance(value, str) or os.pathsep in value or not pathlib.Path(value).is_absolute(): _fail('denied', 'invalid-validation-path', 'Validation PATH entries must be absolute')
+    supervision = orchestrator['supervision']
+    _exact(supervision, {'format', 'gates'}, 'supervision')
+    if not isinstance(supervision['format'], str) or not isinstance(supervision['gates'], list):
+        _fail('corrupt', 'invalid-supervision-config', 'Supervision configuration is invalid')
+    for row in supervision['gates']:
+        _exact(row, {'gate', 'mode'}, 'supervision-gate')
+        if not isinstance(row['gate'], str) or not isinstance(row['mode'], str):
+            _fail('corrupt', 'invalid-supervision-gate', 'Supervision gate values must be strings')
     approval = orchestrator['human_approval']
     _exact(approval, {'allowed_accounts', 'allowed_associations'}, 'human-approval')
     accounts = approval['allowed_accounts']
@@ -434,7 +442,7 @@ class Runtime:
         if repository_before is None or value['head_sha'] != repository_before['head']['commit']:
             _fail('stale', 'github-write-validated-head-mismatch', 'GitHub write head SHA differs from the validated local HEAD')
         return copy.deepcopy(value)
-    def execute(self, request_document, request_binding, reconciliation_expectation=None, cancel_event=None, sandbox_provider=None, write_payload=None):
+    def execute(self, request_document, request_binding, reconciliation_expectation=None, cancel_event=None, sandbox_provider=None, write_payload=None, pre_write_check=None):
         reconciliation_expectation, write_payload = copy.deepcopy((reconciliation_expectation, write_payload)); config = self._base_config()
         request = self._validate_request(request_document, reconciliation_expectation)
         request_binding = _reference(request_binding, 'request-binding')
@@ -443,6 +451,8 @@ class Runtime:
         if operation['kind'] == 'github-write':
             expectation = self._validate_expectation(reconciliation_expectation, request['repository_before'], write_payload); self._verify_tool(self._gh_executable, 'github')
         elif reconciliation_expectation is not None: _fail('corrupt', 'unexpected-reconciliation', 'Only GitHub writes may reconcile')
+        if pre_write_check is not None and not callable(pre_write_check): _fail('corrupt', 'invalid-pre-write-check', 'Pre-write authorization check must be callable')
+        if operation['kind'] != 'github-write' and pre_write_check is not None: _fail('corrupt', 'unexpected-pre-write-check', 'Only GitHub writes may use a pre-write authorization check')
         provider_row = None
         if operation['kind'] == 'agent':
             provider_row = next((item for item in self._config['agent_roles'] if item['role'] == operation['role']))
@@ -453,6 +463,8 @@ class Runtime:
                 self._ensure_config_current(cancel_event)
                 if operation['kind'] == 'github-write':
                     remote_head = self.observe_remote_head(request['issue'], request['family_run_id'], before, expectation['head_ref'], cancel_event=cancel_event)
+                    if pre_write_check is not None and pre_write_check(copy.deepcopy(remote_head)) is not True: _fail('denied', 'pre-write-authorization-stale', 'Trusted pre-write authorization check failed')
+                    if pre_write_check is not None: remote_head = self.observe_remote_head(request['issue'], request['family_run_id'], before, expectation['head_ref'], cancel_event=cancel_event)
                 elif before is not None and self.observe_diff(request['issue'], request['family_run_id'], before['triage_binding'], before['observed_at'], cancel_event) != before: _fail('stale', 'repository-before-mismatch', 'Current repository differs from request observation')
             except RuntimeFailure:
                 if cancel_event is None or not cancel_event.is_set(): raise

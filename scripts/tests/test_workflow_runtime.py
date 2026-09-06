@@ -126,6 +126,15 @@ class BootstrapFixture:
                 "output_limit_bytes": 512 * 1024,
             },
             "validation_path": [str(self.bin)],
+            "supervision": {
+                "format": "chess-echo-supervision-config-v1",
+                "gates": [
+                    {"gate": "final", "mode": "supervised"},
+                    {"gate": "plan", "mode": "supervised"},
+                    {"gate": "pr-publication", "mode": "supervised"},
+                    {"gate": "tests", "mode": "supervised"},
+                ],
+            },
             "human_approval": {
                 "allowed_accounts": [
                     {"account_id": 42, "login": "nathankebede"}
@@ -585,6 +594,12 @@ class WorkflowRuntimeTest(unittest.TestCase):
         injected_path = json.loads(self.fixture.config)
         injected_path["orchestrator"]["validation_path"] = ["/trusted:"]
         cases.append(injected_path)
+        extra_supervision = json.loads(self.fixture.config)
+        extra_supervision["orchestrator"]["supervision"]["unexpected"] = True
+        cases.append(extra_supervision)
+        malformed_supervision = json.loads(self.fixture.config)
+        malformed_supervision["orchestrator"]["supervision"]["gates"][0]["mode"] = 1
+        cases.append(malformed_supervision)
         for config in cases:
             with self.subTest(config=config["orchestrator"]):
                 self.fixture.config = json.dumps(config).encode()
@@ -1367,7 +1382,7 @@ class WorkflowRuntimeTest(unittest.TestCase):
     def test_exact_remote_head_match_is_required_and_recorded_for_write(self):
         adapter = self.active_adapter()
         request, expectation, payload, pull = self.github_write_request(adapter)
-        calls = []
+        calls, checks = [], []
 
         def supervised(command, **options):
             calls.append(list(command))
@@ -1378,6 +1393,11 @@ class WorkflowRuntimeTest(unittest.TestCase):
                 return process_result(command, stdout=json.dumps([[pull]]).encode())
             return self.fixture.supervise(command, **options)
 
+        def pre_write_check(remote_head):
+            self.assertFalse(any(call[1:3] == ["pr", "create"] for call in calls))
+            checks.append(remote_head)
+            return True
+
         with mock.patch.object(
             runtime.workflow_supervisor, "supervise", side_effect=supervised
         ):
@@ -1386,6 +1406,7 @@ class WorkflowRuntimeTest(unittest.TestCase):
                 reference(digest="7" * 64),
                 reconciliation_expectation=expectation,
                 write_payload=payload,
+                pre_write_check=pre_write_check,
             )
         self.assertEqual("succeeded", result["outcome"])
         self.assertEqual("confirmed", result["reconciliation"]["status"])
@@ -1400,6 +1421,73 @@ class WorkflowRuntimeTest(unittest.TestCase):
             ],
         )
         self.assertEqual(1, sum(command[1:3] == ["pr", "create"] for command in calls))
+        self.assertEqual(1, len(checks))
+        self.assertEqual(
+            {
+                key: result["reconciliation"]["remote_head"][key]
+                for key in ("repository", "ref", "sha", "repository_observation_sha256")
+            },
+            {
+                key: checks[0][key]
+                for key in ("repository", "ref", "sha", "repository_observation_sha256")
+            },
+        )
+
+    def test_failed_pre_write_check_prevents_github_mutation(self):
+        adapter = self.active_adapter()
+        request, expectation, payload, _pull = self.github_write_request(adapter)
+        calls = []
+
+        def supervised(command, **options):
+            calls.append(list(command))
+            return self.fixture.supervise(command, **options)
+
+        with mock.patch.object(
+            runtime.workflow_supervisor, "supervise", side_effect=supervised
+        ):
+            with self.assertRaises(runtime.RuntimeFailure) as raised:
+                adapter.execute(
+                    request,
+                    reference(digest="7" * 64),
+                    reconciliation_expectation=expectation,
+                    write_payload=payload,
+                    pre_write_check=lambda _remote_head: False,
+                )
+        self.assertEqual("pre-write-authorization-stale", raised.exception.code)
+        self.assertFalse(any(command[1:3] == ["pr", "create"] for command in calls))
+
+    def test_remote_head_is_rechecked_after_pre_write_authorization(self):
+        adapter = self.active_adapter()
+        request, expectation, payload, _pull = self.github_write_request(adapter)
+        moved = False
+
+        def remote(*_args, **_kwargs):
+            return "9" * 40 if moved else OID
+
+        def authorize(_remote_head):
+            nonlocal moved
+            moved = True
+            return True
+
+        with mock.patch.object(
+            runtime.Runtime, "_read_remote_head", side_effect=remote
+        ), mock.patch.object(
+            runtime.workflow_supervisor,
+            "supervise",
+            side_effect=self.fixture.supervise,
+        ):
+            with self.assertRaises(runtime.RuntimeFailure) as raised:
+                adapter.execute(
+                    request,
+                    reference(digest="7" * 64),
+                    reconciliation_expectation=expectation,
+                    write_payload=payload,
+                    pre_write_check=authorize,
+                )
+        self.assertEqual("remote-head-mismatch", raised.exception.code)
+        self.assertFalse(
+            any(call[0][1:3] == ["pr", "create"] for call in self.fixture.calls)
+        )
 
     def test_successful_write_is_uncertain_if_created_pr_head_moved(self):
         adapter = self.active_adapter()

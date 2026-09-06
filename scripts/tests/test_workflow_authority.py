@@ -35,6 +35,9 @@ class AuthorityFixture:
         self.family = self.inspector.run_id
         self.triage = self.publish_binding("triage", "work-type-triage")
         self.policy = self.publish_binding("policy", "policy-state")
+        self.supervision = self.publish_binding(
+            "supervision", "supervision-policy"
+        )
 
     def close(self):
         self.temporary.cleanup()
@@ -150,6 +153,7 @@ class AuthorityFixture:
             "phase": "PLANNING",
             "triage_binding": self.triage,
             "policy_state_binding": self.policy,
+            "supervision_policy_binding": self.supervision,
             "candidates": [],
             "pending": None,
             "cutover": {
@@ -570,7 +574,7 @@ class WorkflowAuthorityTest(unittest.TestCase):
     def test_pending_reference_kind_is_enforced(self):
         first, _state, _bundle = self.fixture.install_genesis()
         challenge = self.fixture.publish_binding(
-            "challenge", "human-challenge", subject=first
+            "challenge", "gate-challenge", subject=first
         )
         request = self.fixture.publish_binding(
             "request", "execution-request", subject=first
@@ -596,10 +600,15 @@ class WorkflowAuthorityTest(unittest.TestCase):
         binding, _state = self.fixture.next_candidate(first, pending=pending)
         authority.prepare(self.fixture.root, self.fixture.issue, binding)
 
+        pending["kind"] = "policy"
+        pending["request_binding"] = challenge
+        binding, _state = self.fixture.next_candidate(first, pending=pending)
+        authority.prepare(self.fixture.root, self.fixture.issue, binding)
+
     def test_cached_binding_cannot_hide_a_false_reference_size(self):
         first, _state, _bundle = self.fixture.install_genesis()
         challenge = self.fixture.publish_binding(
-            "challenge", "human-challenge", subject=first
+            "challenge", "gate-challenge", subject=first
         )
         false_reference = {**challenge, "size": challenge["size"] + 1}
         binding, _state = self.fixture.next_candidate(

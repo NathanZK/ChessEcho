@@ -1,4 +1,5 @@
 import base64
+import copy
 import json
 import os
 import pathlib
@@ -19,6 +20,7 @@ from scripts import workflow_orchestrator as orchestrator
 from scripts import workflow_plan_revision_policy as plan_policy
 from scripts import workflow_policy as policy
 from scripts import workflow_runtime as runtime
+from scripts import workflow_supervision_policy as supervision
 
 
 REPOSITORY = pathlib.Path(__file__).parents[2]
@@ -128,6 +130,15 @@ class OrchestratorFixture:
             "git": {"command": ["git"], "timeout_ms": 30000, "grace_ms": 1000, "output_limit_bytes": 8388608},
             "github": {"command": ["gh"], "timeout_ms": 30000, "grace_ms": 1000, "output_limit_bytes": 524288},
             "validation_path": self._paths(),
+            "supervision": {
+                "format": "chess-echo-supervision-config-v1",
+                "gates": [
+                    {"gate": "final", "mode": "supervised"},
+                    {"gate": "plan", "mode": "supervised"},
+                    {"gate": "pr-publication", "mode": "supervised"},
+                    {"gate": "tests", "mode": "supervised"},
+                ],
+            },
             "human_approval": {
                 "allowed_accounts": [{"account_id": ACCOUNT_ID, "login": LOGIN}],
                 "allowed_associations": ["COLLABORATOR", "MEMBER", "OWNER"],
@@ -294,13 +305,17 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         while self.fixture.state()["phase"] == "VALIDATION":
             self._agent_pair()
         self._agent_pair()
+        self.fixture.approve(7003)
+        opened = self.fixture.step()
+        self.assertEqual("WAITING_FOR_PR_PUBLICATION_APPROVAL", opened["phase"])
+        self.fixture.approve(7004)
         return self.fixture.state()
 
     def _finish(self):
         self._to_pr_preparation()
         self._agent_pair()
         self._agent_pair()
-        return self.fixture.approve(7003)
+        return self.fixture.step()
 
     def test_real_component_happy_path_binds_every_node_and_completes_draft(self):
         with mock.patch.object(policy, "evaluate", wraps=policy.evaluate) as evaluate, \
@@ -323,11 +338,15 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         for node, wrapper in wrappers.items():
             self.assertEqual(node, wrapper["node"])
             self.assertEqual(list(policy.DEPENDENCIES[node]), [row["node"] for row in wrapper["dependencies"]])
-        self.assertEqual({"technical-plan-review"}, {row["role"] for row in wrappers["plan-approval"]["evidence"]})
+        self.assertEqual({"gate-satisfaction", "technical-plan-review"}, {row["role"] for row in wrappers["plan-approval"]["evidence"]})
         self.assertEqual({"test-diff", "test-report"}, {row["role"] for row in wrappers["test-manifest"]["evidence"]})
         self.assertEqual({"implementation-report"}, {row["role"] for row in wrappers["implementation-submission"]["evidence"]})
         self.assertEqual({"comprehensive-validation"}, {row["role"] for row in wrappers["final-review"]["evidence"]})
         self.assertEqual({"github-pr-observation"}, {row["role"] for row in wrappers["pr-metadata"]["evidence"]})
+        self.assertEqual(
+            {"final-gate-satisfaction", "final-review", "github-pr-observation", "pr-publication-gate-satisfaction"},
+            {row["role"] for row in wrappers["pr-approval"]["evidence"]},
+        )
         validation = self.fixture.read(wrappers["validation"]["subject_binding"])
         self.assertEqual(["fixture-check-a", "fixture-check-b"], [row["name"] for row in validation["checks"]])
         self.assertEqual("pass", validation["status"])
@@ -345,8 +364,851 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         observation = self.fixture.read(wrapper["evidence"][0]["binding"])
         self.assertEqual(("OPEN", True), (observation["state"], observation["draft"]))
         remote_calls = [call for call in self.fixture.calls() if "/git/matching-refs/heads/issue-144" in " ".join(call)]
-        self.assertEqual(2, len(remote_calls))
+        self.assertEqual(4, len(remote_calls))
         self.assertFalse(any("merge" in " ".join(call) for call in self.fixture.calls()))
+
+    def test_all_automatic_gates_complete_without_human_gate_authorization(self):
+        requested = {gate: "automatic" for gate in ("final", "plan", "pr-publication", "tests")}
+        orchestrator.set_supervision(
+            self.fixture.root,
+            ISSUE,
+            expected_tip=self.fixture.tip(),
+            supervision_map=requested,
+        )
+        self.fixture.approve(7600)
+
+        self._agent_pair()
+        self._agent_pair()
+        self.assertEqual("TEST_IMPLEMENTATION", self.fixture.step()["phase"])
+        self._agent_pair()
+        self._agent_pair()
+        self.assertEqual("IMPLEMENTATION", self.fixture.step()["phase"])
+        self._agent_pair()
+        while self.fixture.state()["phase"] == "VALIDATION":
+            self._agent_pair()
+        self._agent_pair()
+        self.assertEqual("PR_PREPARATION", self.fixture.step()["phase"])
+        self.assertEqual(
+            "WAITING_FOR_PR_PUBLICATION_APPROVAL", self.fixture.step()["phase"]
+        )
+        self.assertEqual("PR_PREPARATION", self.fixture.step()["phase"])
+        self._agent_pair()
+        self._agent_pair()
+        completed = self.fixture.step()
+        self.assertEqual("COMPLETED", completed["phase"])
+
+        policy_state = self.fixture.read(
+            self.fixture.state()["policy_state_binding"], "workflow-policy/state.json"
+        )
+        nodes = {row["node"]: self.fixture.read(row["binding"]) for row in policy_state["active"]}
+        for node in ("plan-approval", "test-approval", "pr-approval"):
+            self.assertIsNone(nodes[node]["authorization_binding"])
+        satisfactions = [
+            self.fixture.read(row["binding"], supervision.SATISFACTION_PATH)
+            for node in ("plan-approval", "test-approval", "pr-approval")
+            for row in nodes[node]["evidence"]
+            if row["role"].endswith("gate-satisfaction") or row["role"] == "gate-satisfaction"
+        ]
+        self.assertEqual(4, len(satisfactions))
+        self.assertTrue(all(row["mode"] == "automatic" for row in satisfactions))
+        self.assertTrue(all(row["human_authorization_binding"] is None for row in satisfactions))
+
+    def test_supervision_change_requires_exact_human_authorization(self):
+        original = self.fixture.state()["supervision_policy_binding"]
+        requested = {
+            "final": "supervised",
+            "plan": "automatic",
+            "pr-publication": "supervised",
+            "tests": "automatic",
+        }
+        stale_tip = self.fixture.tip()
+        opened = orchestrator.set_supervision(
+            self.fixture.root,
+            ISSUE,
+            expected_tip=stale_tip,
+            supervision_map=requested,
+        )
+        self.assertEqual("supervision-change-requested", opened["outcome"]["code"])
+        self.assertEqual(original, self.fixture.state()["supervision_policy_binding"])
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            orchestrator.set_supervision(
+                self.fixture.root,
+                ISSUE,
+                expected_tip=stale_tip,
+                supervision_map=requested,
+            )
+        self.assertEqual("expected-tip-stale", raised.exception.code)
+        self.fixture.comment("approve supervision-policy-change wrong", 7601)
+        with self.assertRaises(orchestrator.OrchestratorFailure):
+            orchestrator.approve(
+                self.fixture.root,
+                ISSUE,
+                expected_tip=self.fixture.tip(),
+                authorization={"kind": "issue-comment", "id": 7601},
+            )
+        self.fixture.approve(7602)
+        state = self.fixture.state()
+        revised = self.fixture.read(
+            state["supervision_policy_binding"], supervision.POLICY_PATH
+        )
+        self.assertEqual(1, revised["revision"])
+        self.assertEqual(
+            requested, {row["gate"]: row["mode"] for row in revised["gates"]}
+        )
+        self._to_plan_gate()
+        self.assertEqual("policy", self.fixture.state()["pending"]["kind"])
+        self.assertEqual("automatic", self.fixture.challenge()["mode"])
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            orchestrator.set_supervision(
+                self.fixture.root,
+                ISSUE,
+                expected_tip=self.fixture.tip(),
+                supervision_map=requested,
+            )
+        self.assertEqual("supervision-change-pending", raised.exception.code)
+
+    def test_selected_supervision_change_revalidates_human_authorization_source(self):
+        requested = {gate: "automatic" for gate in supervision.GATES}
+        orchestrator.set_supervision(
+            self.fixture.root,
+            ISSUE,
+            expected_tip=self.fixture.tip(),
+            supervision_map=requested,
+        )
+        self.fixture.approve(7609)
+        self.fixture.comment("edited after policy selection", 7609)
+
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            orchestrator.plan_next(self.fixture.root, ISSUE)
+        self.assertEqual("authorization-confirmation-mismatch", raised.exception.code)
+
+    def test_supervision_cannot_change_after_publication_satisfaction(self):
+        self._to_pr_preparation()
+        requested = {gate: "automatic" for gate in supervision.GATES}
+
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            orchestrator.set_supervision(
+                self.fixture.root,
+                ISSUE,
+                expected_tip=self.fixture.tip(),
+                supervision_map=requested,
+            )
+        self.assertEqual("supervision-change-phase", raised.exception.code)
+
+    def test_forged_publication_phase_policy_change_cannot_be_consumed_or_replayed(self):
+        self._to_pr_preparation()
+        instance = orchestrator.Orchestrator(self.fixture.root, ISSUE)
+        inspection = instance._status()
+        state = instance._selected_state(inspection)
+        current = instance._supervision(state)
+        configuration = {
+            "format": supervision.CONFIG_FORMAT,
+            "gates": [
+                {"gate": gate, "mode": "automatic"} for gate in supervision.GATES
+            ],
+        }
+        challenge = supervision.build_change_challenge(
+            state["supervision_policy_binding"],
+            current,
+            inspection["authority"],
+            configuration,
+            state["phase"],
+        )
+        challenge_binding = instance._publish(
+            "supervision-policy-change",
+            "forged-publication-policy-change",
+            inspection["authority"],
+            [(supervision.CHANGE_PATH, challenge)],
+            state["generation"] + 1,
+        )
+        pending = {
+            "attempt_id": orchestrator._digest(
+                {
+                    "authority": inspection["authority"],
+                    "kind": "human",
+                    "challenge": challenge_binding,
+                }
+            ),
+            "kind": "human",
+            "request_binding": challenge_binding,
+            "status": "requested",
+        }
+        forged_request = instance._successor(
+            state,
+            inspection["authority"],
+            pending=pending,
+            candidates=orchestrator._put(
+                state["candidates"], "supervision-policy-change", challenge_binding
+            ),
+            transition={
+                "type": "supervision-change-request",
+                "request_binding": challenge_binding,
+                "result_binding": None,
+                "authorization_binding": None,
+                "repository_observation_binding": None,
+            },
+        )
+        instance._commit(forged_request)
+        self.fixture.comment(challenge["confirmation"], 7611)
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            orchestrator.approve(
+                self.fixture.root,
+                ISSUE,
+                expected_tip=self.fixture.tip(),
+                authorization={"kind": "issue-comment", "id": 7611},
+            )
+        self.assertEqual("supervision-change-phase", raised.exception.code)
+
+        inspection = instance._status()
+        state = instance._selected_state(inspection)
+        authorization = instance._authorization(
+            state, challenge, {"kind": "issue-comment", "id": 7611}
+        )
+        authorization_document = instance._read(
+            authorization, "workflow-orchestration/human-authorization.json"
+        )
+        revised = supervision.revise(
+            state["supervision_policy_binding"],
+            current,
+            challenge_binding,
+            challenge,
+            authorization,
+            authorization_document,
+            state["previous_authority"],
+            state["phase"],
+        )
+        revised_binding = instance._publish_supervision(
+            revised,
+            state["supervision_policy_binding"],
+            state["supervision_policy_binding"],
+            state["generation"] + 1,
+        )
+        forged_selection = instance._successor(
+            state,
+            inspection["authority"],
+            supervision_policy_binding=revised_binding,
+            candidates=orchestrator._drop(
+                state["candidates"], "supervision-policy-change"
+            ),
+            transition={
+                "type": "supervision-change",
+                "request_binding": None,
+                "result_binding": None,
+                "authorization_binding": None,
+                "repository_observation_binding": None,
+            },
+        )
+        instance._commit(forged_selection)
+        with self.assertRaises(orchestrator.OrchestratorFailure) as replayed:
+            orchestrator.plan_next(self.fixture.root, ISSUE)
+        self.assertEqual("supervision-policy-unselected", replayed.exception.code)
+
+    def test_publication_gate_blocks_and_revalidates_before_github_write(self):
+        self._to_validation()
+        while self.fixture.state()["phase"] == "VALIDATION":
+            self._agent_pair()
+        self._agent_pair()
+        self.fixture.approve(7603)
+        self.assertFalse(any(call[:2] == ["pr", "create"] for call in self.fixture.calls()))
+        opened = self.fixture.step()
+        self.assertEqual("WAITING_FOR_PR_PUBLICATION_APPROVAL", opened["phase"])
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            self.fixture.step()
+        self.assertEqual("human-gate-requires-approval", raised.exception.code)
+        self.fixture.approve(7604)
+        self.assertFalse(any(call[:2] == ["pr", "create"] for call in self.fixture.calls()))
+        self.fixture.comment("edited after publication approval", 7604)
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            self.fixture.step()
+        self.assertEqual("authorization-confirmation-mismatch", raised.exception.code)
+        self.assertFalse(any(call[:2] == ["pr", "create"] for call in self.fixture.calls()))
+
+    def test_orphaned_publication_satisfaction_is_not_authoritative(self):
+        requested = {
+            "final": "supervised",
+            "plan": "supervised",
+            "pr-publication": "automatic",
+            "tests": "supervised",
+        }
+        orchestrator.set_supervision(
+            self.fixture.root,
+            ISSUE,
+            expected_tip=self.fixture.tip(),
+            supervision_map=requested,
+        )
+        self.fixture.approve(7606)
+        self._to_validation()
+        while self.fixture.state()["phase"] == "VALIDATION":
+            self._agent_pair()
+        self._agent_pair()
+        self.fixture.approve(7607)
+
+        instance = orchestrator.Orchestrator(self.fixture.root, ISSUE)
+        inspection = instance._status()
+        state = instance._state(inspection)
+        instance.family = state["family_run_id"]
+        final_binding = instance._candidate_binding(state, "final-gate-satisfaction")
+        final_satisfaction = instance._read(
+            final_binding, supervision.SATISFACTION_PATH
+        )
+        transient = copy.deepcopy(state)
+        transient["candidates"] = orchestrator._put(
+            transient["candidates"],
+            "pr-publication-observation",
+            final_satisfaction["repository_observation_binding"],
+        )
+        subjects, repository = instance._gate_inputs(transient, "pr-publication")
+        policy_document = instance._supervision(state)
+        challenge = supervision.build_gate_challenge(
+            state["supervision_policy_binding"],
+            policy_document,
+            inspection["authority"],
+            "pr-publication",
+            [{"slot": slot, "binding": binding} for slot, binding in subjects],
+            repository,
+        )
+        challenge_binding = instance._publish(
+            "gate-challenge",
+            "orphan-challenge",
+            inspection["authority"],
+            [(supervision.CHALLENGE_PATH, challenge)],
+            state["generation"] + 1,
+        )
+        decision = supervision.automatic_decision(
+            state["supervision_policy_binding"],
+            policy_document,
+            challenge_binding,
+            challenge,
+            inspection["authority"],
+        )
+        decision_binding = instance._publish(
+            "automatic-gate-decision",
+            "orphan-decision",
+            challenge_binding,
+            [(supervision.AUTOMATIC_DECISION_PATH, decision)],
+            state["generation"] + 1,
+        )
+        satisfaction = supervision.gate_satisfaction(
+            state["supervision_policy_binding"],
+            policy_document,
+            inspection["authority"],
+            challenge_binding,
+            challenge,
+            decision_binding,
+            decision,
+            repository,
+        )
+        satisfaction_binding = instance._publish(
+            "gate-satisfaction",
+            "orphan-satisfaction",
+            challenge_binding,
+            [(supervision.SATISFACTION_PATH, satisfaction)],
+            state["generation"] + 1,
+        )
+        forged = copy.deepcopy(state)
+        forged["candidates"] = orchestrator._put(
+            forged["candidates"],
+            "pr-publication-gate-satisfaction",
+            satisfaction_binding,
+        )
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            instance._satisfaction_context(
+                forged,
+                inspection,
+                "pr-publication-gate-satisfaction",
+                "pr-publication",
+            )
+        self.assertEqual("gate-satisfaction-unselected", raised.exception.code)
+
+    def test_unselected_supervision_policy_cannot_replace_configured_policy(self):
+        instance = orchestrator.Orchestrator(self.fixture.root, ISSUE)
+        inspection = instance._status()
+        state = instance._selected_state(inspection)
+        _triage, _baseline, baseline_binding, _config = instance._facts(state)
+        forged = supervision.initialize(
+            ISSUE,
+            state["family_run_id"],
+            baseline_binding,
+            {
+                "format": supervision.CONFIG_FORMAT,
+                "gates": [
+                    {"gate": gate, "mode": "automatic"}
+                    for gate in supervision.GATES
+                ],
+            },
+        )
+        forged_binding = instance._publish_supervision(
+            forged, baseline_binding, None, state["generation"] + 1
+        )
+        successor = instance._successor(
+            state,
+            inspection["authority"],
+            supervision_policy_binding=forged_binding,
+            transition={
+                "type": "supervision-change",
+                "request_binding": None,
+                "result_binding": None,
+                "authorization_binding": None,
+                "repository_observation_binding": None,
+            },
+        )
+        instance._commit(successor)
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            orchestrator.plan_next(self.fixture.root, ISSUE)
+        self.assertEqual("supervision-policy-unselected", raised.exception.code)
+
+    def test_selected_satisfaction_cannot_replace_challenged_repository(self):
+        requested = {
+            "final": "automatic",
+            "plan": "supervised",
+            "pr-publication": "supervised",
+            "tests": "supervised",
+        }
+        orchestrator.set_supervision(
+            self.fixture.root,
+            ISSUE,
+            expected_tip=self.fixture.tip(),
+            supervision_map=requested,
+        )
+        self.fixture.approve(7608)
+        self._to_validation()
+        while self.fixture.state()["phase"] == "VALIDATION":
+            self._agent_pair()
+        self._agent_pair()
+
+        instance = orchestrator.Orchestrator(self.fixture.root, ISSUE)
+        inspection = instance._status()
+        state = instance._selected_state(inspection)
+        challenge_binding = state["pending"]["request_binding"]
+        challenge = instance._read(challenge_binding, supervision.CHALLENGE_PATH)
+        policy_document = instance._supervision(state)
+        decision = supervision.automatic_decision(
+            state["supervision_policy_binding"],
+            policy_document,
+            challenge_binding,
+            challenge,
+            state["previous_authority"],
+        )
+        decision_binding = instance._publish(
+            "automatic-gate-decision",
+            "substituted-repository-decision",
+            challenge_binding,
+            [(supervision.AUTOMATIC_DECISION_PATH, decision)],
+            state["generation"] + 1,
+        )
+        changed = copy.deepcopy(
+            instance._read(
+                challenge["repository_observation_binding"],
+                label="challenged repository",
+            )
+        )
+        changed["head"]["commit"] = "f" * 40
+        changed["observation_sha256"] = inspector.sha256(
+            inspector.canonical_bytes(
+                {key: value for key, value in changed.items() if key != "observation_sha256"}
+            )
+        )
+        changed_binding = instance._publish(
+            "work-type-diff-observation",
+            "substituted-repository",
+            challenge_binding,
+            [("workflow-work-type/diff-observation.json", changed)],
+            state["generation"] + 1,
+        )
+        satisfaction = supervision.gate_satisfaction(
+            state["supervision_policy_binding"],
+            policy_document,
+            state["previous_authority"],
+            challenge_binding,
+            challenge,
+            decision_binding,
+            decision,
+            changed_binding,
+        )
+        satisfaction_binding = instance._publish(
+            "gate-satisfaction",
+            "substituted-repository-satisfaction",
+            challenge_binding,
+            [(supervision.SATISFACTION_PATH, satisfaction)],
+            state["generation"] + 1,
+        )
+        successor = instance._successor(
+            state,
+            inspection["authority"],
+            phase="PR_PREPARATION",
+            candidates=orchestrator._put(
+                state["candidates"], "final-gate-satisfaction", satisfaction_binding
+            ),
+            transition={
+                "type": "final-approve",
+                "request_binding": None,
+                "result_binding": None,
+                "authorization_binding": None,
+                "repository_observation_binding": None,
+            },
+        )
+        instance._commit(successor)
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            self.fixture.step()
+        self.assertEqual("gate-satisfaction-repository-stale", raised.exception.code)
+
+    def test_publication_authorization_is_rechecked_after_remote_head_preflight(self):
+        self._to_pr_preparation()
+        original = runtime.Runtime.observe_remote_head
+
+        def revoke(adapter, *args, **kwargs):
+            result = original(adapter, *args, **kwargs)
+            self.fixture.comment("edited during remote preflight", 7004)
+            return result
+
+        with mock.patch.object(runtime.Runtime, "observe_remote_head", new=revoke):
+            with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+                self.fixture.step()
+        self.assertEqual("authorization-confirmation-mismatch", raised.exception.code)
+        self.assertFalse(any(call[:2] == ["pr", "create"] for call in self.fixture.calls()))
+
+    def test_publication_revalidates_final_authorization_before_github_write(self):
+        self._to_pr_preparation()
+        self.fixture.comment("edited after publication approval", 7003)
+
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            self.fixture.step()
+        self.assertEqual("authorization-confirmation-mismatch", raised.exception.code)
+        self.assertFalse(any(call[:2] == ["pr", "create"] for call in self.fixture.calls()))
+
+    def test_publication_rejects_substituted_current_gate_subjects(self):
+        self._to_pr_preparation()
+        instance = orchestrator.Orchestrator(self.fixture.root, ISSUE)
+        inspection = instance._status()
+        state = instance._selected_state(inspection)
+        original_node = instance._read(
+            instance._active(state, "final-review"), orchestrator.NODE_PATH
+        )
+        candidate = copy.deepcopy(
+            instance._read(
+                original_node["subject_binding"],
+                "workflow-orchestration/final-review.json",
+            )
+        )
+        candidate["pr"]["title"] = "Substituted after publication approval"
+        generation = state["generation"] + 1
+        forged_candidate = instance._publish(
+            "final-review-candidate",
+            "substituted-final-review",
+            original_node["subject_binding"],
+            [("workflow-orchestration/final-review.json", candidate)],
+            generation,
+        )
+        forged_node, _document = instance._node(
+            "final-review",
+            forged_candidate,
+            [(row["role"], row["binding"]) for row in original_node["evidence"]],
+            original_node["repository_observation_binding"],
+            original_node["authorization_binding"],
+            original_node["dependencies"],
+            generation,
+        )
+        policy_state = copy.deepcopy(
+            instance._read(state["policy_state_binding"], orchestrator.POLICY_PATH)
+        )
+        next(
+            row for row in policy_state["active"] if row["node"] == "final-review"
+        )["binding"] = forged_node
+        policy_state["state_sha256"] = policy._state_digest(policy_state)
+        forged_policy = instance._publish_policy(
+            policy_state,
+            state["policy_state_binding"],
+            state["policy_state_binding"],
+            generation,
+        )
+        successor = instance._successor(
+            state,
+            inspection["authority"],
+            policy_state_binding=forged_policy,
+            transition={
+                "type": "pr-prepare",
+                "request_binding": None,
+                "result_binding": None,
+                "authorization_binding": None,
+                "repository_observation_binding": None,
+            },
+        )
+        instance._commit(successor)
+
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            self.fixture.step()
+        self.assertEqual(
+            "gate-satisfaction-current-context-stale", raised.exception.code
+        )
+        self.assertFalse(any(call[:2] == ["pr", "create"] for call in self.fixture.calls()))
+
+    def test_publication_rejects_repository_divergence_from_final_approval(self):
+        requested = {gate: "supervised" for gate in supervision.GATES}
+        requested["pr-publication"] = "automatic"
+        orchestrator.set_supervision(
+            self.fixture.root,
+            ISSUE,
+            expected_tip=self.fixture.tip(),
+            supervision_map=requested,
+        )
+        self.fixture.approve(7610)
+        self._to_validation()
+        while self.fixture.state()["phase"] == "VALIDATION":
+            self._agent_pair()
+        self._agent_pair()
+        self.fixture.approve(7003)
+
+        (self.fixture.root / "scripts" / "post-final-change.py").write_text(
+            "CHANGED = True\n"
+        )
+        self.fixture._git("add", "scripts/post-final-change.py")
+        self.fixture._git("commit", "-m", "change after final approval")
+        instance = orchestrator.Orchestrator(self.fixture.root, ISSUE)
+        inspection = instance._status()
+        state = instance._selected_state(inspection)
+        observation = self.adapter.observe_diff(
+            ISSUE, state["family_run_id"], state["triage_binding"]
+        )
+        observed = instance._publish(
+            "work-type-diff-observation",
+            "divergent-publication-observation",
+            state["triage_binding"],
+            [("workflow-work-type/diff-observation.json", observation)],
+            state["generation"] + 1,
+        )
+        candidates = orchestrator._put(
+            state["candidates"], "pr-publication-observation", observed
+        )
+        transient = copy.deepcopy(state)
+        transient["candidates"] = candidates
+        subjects, repository = instance._gate_inputs(transient, "pr-publication")
+        _challenge, pending = instance._challenge(
+            transient,
+            inspection["authority"],
+            "pr-publication",
+            subjects,
+            repository,
+            state["generation"] + 1,
+        )
+        successor = instance._successor(
+            state,
+            inspection["authority"],
+            phase="WAITING_FOR_PR_PUBLICATION_APPROVAL",
+            candidates=candidates,
+            pending=pending,
+            transition={
+                "type": "publication-request",
+                "request_binding": pending["request_binding"],
+                "result_binding": None,
+                "authorization_binding": None,
+                "repository_observation_binding": None,
+            },
+        )
+        instance._commit(successor)
+        self.assertEqual("PR_PREPARATION", self.fixture.step()["phase"])
+
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            self.fixture.step()
+        self.assertEqual("gate-repository-chain-stale", raised.exception.code)
+        self.assertFalse(any(call[:2] == ["pr", "create"] for call in self.fixture.calls()))
+
+    def test_post_write_completion_detects_local_drift_during_pr_observation(self):
+        self._to_pr_preparation()
+        self._agent_pair()
+        self._agent_pair()
+        state = self.fixture.state()
+        publication = self.fixture.read(
+            next(
+                row["binding"]
+                for row in state["candidates"]
+                if row["slot"] == "pr-publication-gate-satisfaction"
+            ),
+            supervision.SATISFACTION_PATH,
+        )
+        challenge = self.fixture.read(
+            publication["challenge_binding"], supervision.CHALLENGE_PATH
+        )
+        original = runtime.Runtime.observe_pull_request
+
+        def drift(adapter, *args, **kwargs):
+            result = original(adapter, *args, **kwargs)
+            (self.fixture.root / "scripts" / "post-write-drift.py").write_text(
+                "DIRTY = True\n"
+            )
+            return result
+
+        with mock.patch.object(runtime.Runtime, "observe_pull_request", new=drift):
+            instance = orchestrator.Orchestrator(self.fixture.root, ISSUE)
+            instance.family = state["family_run_id"]
+            with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+                instance._fresh_pr(state, challenge["authority_binding"])
+        self.assertEqual("final-repository-mismatch", raised.exception.code)
+
+    def test_automatic_configuration_does_not_bypass_recovery(self):
+        requested = {gate: "automatic" for gate in ("final", "plan", "pr-publication", "tests")}
+        orchestrator.set_supervision(
+            self.fixture.root,
+            ISSUE,
+            expected_tip=self.fixture.tip(),
+            supervision_map=requested,
+        )
+        self.fixture.approve(7605)
+        self.fixture.mode("malformed")
+        paused = self._agent_pair()
+        self.assertEqual("PAUSED", paused["phase"])
+        requested_recovery = orchestrator.recover(
+            self.fixture.root,
+            ISSUE,
+            expected_tip=self.fixture.tip(),
+            authorization=None,
+        )
+        self.assertEqual("recovery-requested", requested_recovery["outcome"]["code"])
+        self.assertEqual("human", self.fixture.state()["pending"]["kind"])
+        self.assertEqual("recovery", self.fixture.challenge()["gate"])
+
+    def test_structural_successor_cannot_bypass_supervised_plan_gate(self):
+        self._to_plan_gate()
+        instance = orchestrator.Orchestrator(self.fixture.root, ISSUE)
+        inspection = instance._status()
+        state = instance._selected_state(inspection)
+        wrapper, policy_binding = instance._bind(
+            state,
+            inspection,
+            "plan-approval",
+            instance._candidate_binding(state, "plan-snapshot"),
+            [("technical-plan-review", instance._candidate_binding(state, "plan-review"))],
+            instance._candidate_binding(state, "plan-observation"),
+        )
+        self.assertIsNotNone(wrapper)
+        successor = instance._successor(
+            state,
+            inspection["authority"],
+            phase="TEST_IMPLEMENTATION",
+            policy_state_binding=policy_binding,
+            pending=None,
+            transition={
+                "type": "plan-approve",
+                "request_binding": None,
+                "result_binding": None,
+                "authorization_binding": None,
+                "repository_observation_binding": None,
+            },
+        )
+        instance._commit(successor)
+
+        with mock.patch.object(runtime.Runtime, "execute") as execute:
+            with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+                self.fixture.step()
+        self.assertEqual("gate-transition-unselected", raised.exception.code)
+        execute.assert_not_called()
+
+    def test_plan_approval_wrapper_cannot_substitute_approved_subject(self):
+        self._to_plan_gate()
+        instance = orchestrator.Orchestrator(self.fixture.root, ISSUE)
+        inspection = instance._status()
+        state = instance._selected_state(inspection)
+        challenge = instance._read(
+            state["pending"]["request_binding"], supervision.CHALLENGE_PATH
+        )
+        self.fixture.comment(challenge["confirmation"], 7612)
+        authorization = instance._authorization(
+            state, challenge, {"kind": "issue-comment", "id": 7612}
+        )
+        satisfaction = instance._publish_satisfaction(
+            state,
+            challenge,
+            authorization,
+            challenge["repository_observation_binding"],
+        )
+        _wrapper, policy_binding = instance._bind(
+            state,
+            inspection,
+            "plan-approval",
+            instance._candidate_binding(state, "plan-review"),
+            [
+                ("technical-plan-review", instance._candidate_binding(state, "plan-review")),
+                ("gate-satisfaction", satisfaction),
+            ],
+            challenge["repository_observation_binding"],
+            authorization,
+        )
+        successor = instance._successor(
+            state,
+            inspection["authority"],
+            phase="TEST_IMPLEMENTATION",
+            policy_state_binding=policy_binding,
+            pending=None,
+            transition={
+                "type": "plan-approve",
+                "request_binding": None,
+                "result_binding": None,
+                "authorization_binding": None,
+                "repository_observation_binding": None,
+            },
+        )
+        instance._commit(successor)
+
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            orchestrator.plan_next(self.fixture.root, ISSUE)
+        self.assertEqual("gate-approval-wrapper-stale", raised.exception.code)
+
+    def test_structural_successor_cannot_bypass_mandatory_recovery(self):
+        self.fixture.mode("malformed")
+        self.assertEqual("PAUSED", self._agent_pair()["phase"])
+        instance = orchestrator.Orchestrator(self.fixture.root, ISSUE)
+        inspection = instance._status()
+        state = instance._selected_state(inspection)
+        successor = instance._successor(
+            state,
+            inspection["authority"],
+            phase="TEST_IMPLEMENTATION",
+            pending=None,
+            transition={
+                "type": "recover",
+                "request_binding": None,
+                "result_binding": None,
+                "authorization_binding": None,
+                "repository_observation_binding": None,
+            },
+        )
+        instance._commit(successor)
+
+        with mock.patch.object(runtime.Runtime, "execute") as execute:
+            with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+                self.fixture.step()
+        self.assertEqual("recovery-transition-unselected", raised.exception.code)
+        execute.assert_not_called()
+
+    def test_structural_completion_cannot_skip_publication_and_pr_evidence(self):
+        self._to_validation()
+        while self.fixture.state()["phase"] == "VALIDATION":
+            self._agent_pair()
+        self._agent_pair()
+        self.fixture.approve(7613)
+        instance = orchestrator.Orchestrator(self.fixture.root, ISSUE)
+        inspection = instance._status()
+        state = instance._selected_state(inspection)
+        successor = instance._successor(
+            state,
+            inspection["authority"],
+            phase="COMPLETED",
+            pending=None,
+            transition={
+                "type": "complete",
+                "request_binding": None,
+                "result_binding": None,
+                "authorization_binding": None,
+                "repository_observation_binding": None,
+            },
+        )
+        instance._commit(successor)
+
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            orchestrator.plan_next(self.fixture.root, ISSUE)
+        self.assertIn(
+            raised.exception.code,
+            {"candidate-missing", "completion-transition-unselected"},
+        )
 
     def test_technical_reviews_do_not_cross_exact_human_gates(self):
         plan_gate = self._to_plan_gate()
@@ -366,8 +1228,6 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         self._agent_pair()
         while self.fixture.state()["phase"] == "VALIDATION":
             self._agent_pair()
-        self._agent_pair()
-        self._agent_pair()
         final_gate = self._agent_pair()
         self.assertEqual("WAITING_FOR_FINAL_APPROVAL", final_gate["phase"])
         self.assertEqual("final", self.fixture.challenge()["gate"])
@@ -517,7 +1377,9 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         creates = [call for call in self.fixture.calls() if call[:2] == ["pr", "create"]]
         self.assertEqual(1, len(creates))
         self._agent_pair()
-        self.assertEqual("WAITING_FOR_FINAL_APPROVAL", self.fixture.state()["phase"])
+        self.assertEqual("PR_PREPARATION", self.fixture.state()["phase"])
+        completed = self.fixture.step()
+        self.assertEqual("COMPLETED", completed["phase"])
 
     def test_final_gate_rejects_empty_body_sections_and_local_drift(self):
         self._to_validation()
@@ -533,8 +1395,9 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         other.seed_response_source()
         orchestrator.init(other.root, ISSUE, request=other.request())
         self.fixture = other
-        self._to_pr_preparation()
-        self._agent_pair()
+        self._to_validation()
+        while self.fixture.state()["phase"] == "VALIDATION":
+            self._agent_pair()
         self._agent_pair()
         challenge = self.fixture.challenge()
         self.fixture.comment(challenge["confirmation"], 7402)
@@ -543,7 +1406,7 @@ class OrchestratorLifecycleTest(unittest.TestCase):
             orchestrator.approve(
                 self.fixture.root, ISSUE, expected_tip=self.fixture.tip(),
                 authorization={"kind": "issue-comment", "id": 7402})
-        self.assertEqual("final-repository-mismatch", raised.exception.code)
+        self.assertEqual("gate-repository-mismatch", raised.exception.code)
 
     def test_cancel_keeps_cancel_requested_pending_and_recovery_uses_github_gate(self):
         self.fixture.mode("sleep")
@@ -692,19 +1555,24 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         self.assertEqual("candidate-output-invalid", malformed["outcome"]["code"])
 
     def test_final_authorization_is_reobserved_after_repository_and_pr_checks(self):
-        self._to_pr_preparation()
-        self._agent_pair()
+        self._to_validation()
+        while self.fixture.state()["phase"] == "VALIDATION":
+            self._agent_pair()
         self._agent_pair()
         challenge = self.fixture.challenge()
         self.fixture.comment(challenge["confirmation"], 7500)
-        original = orchestrator.Orchestrator._fresh_final
+        original = orchestrator.Orchestrator._fresh_local
+        calls = 0
 
-        def mutate(instance, state):
-            result = original(instance, state)
-            self.fixture.comment("edited after first observation", 7500)
+        def mutate(instance, state, expected_binding, subject_binding):
+            nonlocal calls
+            result = original(instance, state, expected_binding, subject_binding)
+            calls += 1
+            if calls == 1:
+                self.fixture.comment("edited after first observation", 7500)
             return result
 
-        with mock.patch.object(orchestrator.Orchestrator, "_fresh_final", new=mutate):
+        with mock.patch.object(orchestrator.Orchestrator, "_fresh_local", new=mutate):
             with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
                 orchestrator.approve(
                     self.fixture.root, ISSUE, expected_tip=self.fixture.tip(),
