@@ -6,8 +6,8 @@ try:
 except ImportError:
     import workflow_inspector
     import workflow_supervisor
-RUNTIME_VERSION = '1.1.0'
-(BOOTSTRAP_FORMAT, REQUEST_FORMAT, RESULT_FORMAT, PR_OBSERVATION_FORMAT, REMOTE_HEAD_OBSERVATION_FORMAT, AUTHORIZATION_OBSERVATION_FORMAT, SANDBOX_RESULT_FORMAT, ISSUE_SNAPSHOT_FORMAT, BASELINE_FORMAT, DIFF_OBSERVATION_FORMAT, FAILURE_FORMAT) = ('chess-echo-runtime-bootstrap-v1', 'chess-echo-execution-request-v1', 'chess-echo-execution-result-v1', 'chess-echo-github-pr-observation-v1', 'chess-echo-github-remote-head-observation-v1', 'chess-echo-github-authorization-observation-v1', 'chess-echo-external-sandbox-result-v1', 'chess-echo-work-type-issue-snapshot-v1', 'chess-echo-work-type-baseline-v1', 'chess-echo-work-type-diff-observation-v1', 'chess-echo-workflow-runtime-failure-v1')
+RUNTIME_VERSION = '1.2.0'
+(BOOTSTRAP_FORMAT, REQUEST_FORMAT, RESULT_FORMAT, SOURCE_PUBLICATION_REQUEST_FORMAT, SOURCE_PUBLICATION_RESULT_FORMAT, PR_OBSERVATION_FORMAT, REMOTE_HEAD_OBSERVATION_FORMAT, AUTHORIZATION_OBSERVATION_FORMAT, SANDBOX_RESULT_FORMAT, ISSUE_SNAPSHOT_FORMAT, BASELINE_FORMAT, DIFF_OBSERVATION_FORMAT, FAILURE_FORMAT) = ('chess-echo-runtime-bootstrap-v1', 'chess-echo-execution-request-v1', 'chess-echo-execution-result-v1', 'chess-echo-source-publication-request-v1', 'chess-echo-source-publication-result-v1', 'chess-echo-github-pr-observation-v1', 'chess-echo-github-remote-head-observation-v1', 'chess-echo-github-authorization-observation-v1', 'chess-echo-external-sandbox-result-v1', 'chess-echo-work-type-issue-snapshot-v1', 'chess-echo-work-type-baseline-v1', 'chess-echo-work-type-diff-observation-v1', 'chess-echo-workflow-runtime-failure-v1')
 (MAX_CONFIG_BYTES, MAX_DOCUMENT_BYTES, MAX_OUTPUT_BYTES, MAX_TIMEOUT_MS, MAX_GRACE_MS) = (1024 * 1024, 2 * 1024 * 1024, 8 * 1024 * 1024, 3600000, 60000)
 VALIDATION_LIMITS = {'timeout_ms': 3600000, 'grace_ms': 2000, 'output_limit_bytes': 512 * 1024}
 BOOTSTRAP_LIMITS = {'timeout_ms': 30000, 'grace_ms': 1000, 'output_limit_bytes': MAX_OUTPUT_BYTES}
@@ -183,6 +183,12 @@ def _branch(value, label):
     if value == '@' or value.startswith('-') or value.endswith('.') or '..' in value or '@{' in value or any((not part or part.startswith('.') or part.endswith('.lock') for part in parts)) or any((ord(char) < 32 or ord(char) == 127 or char in ' ~^:?*[\\' for char in value)):
         _fail('denied', 'invalid-%s' % label, '%s is not a safe branch name' % label)
     return value
+def _head_ref(value, label):
+    _text(value, label, maximum=266)
+    prefix = 'refs/heads/'
+    if not value.startswith(prefix):
+        _fail('denied', 'invalid-%s' % label, '%s must be an exact refs/heads branch' % label)
+    return _branch(value[len(prefix):], label)
 def _ref_path(value): return '/'.join(_urlencode(part) for part in value.split('/'))
 def _git_admin_trust(root):
     try: common = workflow_inspector.resolve_store(root).common_dir
@@ -255,10 +261,10 @@ def _validate_config(config, root):
 def execution_attempt_id(authority_binding, operation, command_source, input_bindings, repository_before, limits, reconciliation_expectation=None):
     return workflow_inspector.sha256(_canonical({'authority_binding': authority_binding, 'operation': operation, 'command_source': command_source, 'input_bindings': input_bindings, 'repository_before': repository_before, 'limits': limits, 'reconciliation_expectation': reconciliation_expectation}))
 class Runtime:
-    __slots__ = ('root', 'repository', '_git_executable', '_gh_executable', '_github_token', '_config', '_config_bytes', '_bootstrap')
-    def __init__(self, root, repository, git_executable, gh_executable, token, config, config_bytes, document):
+    __slots__ = ('root', 'repository', '_git_executable', '_gh_executable', '_github_token', '_publication_token', '_config', '_config_bytes', '_bootstrap')
+    def __init__(self, root, repository, git_executable, gh_executable, token, publication_token, config, config_bytes, document):
         self.root, self.repository = root, repository
-        self._git_executable, self._gh_executable, self._github_token = git_executable, gh_executable, token
+        self._git_executable, self._gh_executable, self._github_token, self._publication_token = git_executable, gh_executable, token, publication_token
         self._config, self._config_bytes, self._bootstrap = config, config_bytes, document
     def __repr__(self): return 'Runtime(root=%r, repository=%r, mode=%r)' % (str(self.root), self.repository, self._config['mode'])
     def bootstrap_document(self): return copy.deepcopy(self._bootstrap)
@@ -594,6 +600,149 @@ class Runtime:
                 if first != expected_sha: _fail('stale', 'remote-head-mismatch', 'Remote head differs from the validated local HEAD')
                 return _with_digest({'format': REMOTE_HEAD_OBSERVATION_FORMAT, 'repository': self.repository, 'ref': 'refs/heads/%s' % head_ref, 'sha': expected_sha, 'repository_observation_sha256': repository_before['observation_sha256'], 'observed_at': _timestamp(observed_at or _now(), 'observed-at')}, 'observation_sha256')
             if attempt: _fail('stale', 'remote-head-moved' if first != second else 'repository-observation-moved', 'Remote head or validated repository moved during both observations')
+    def build_source_publication_request(self, *, issue, family_run_id, repository_observation, repository, local_commit, local_tree, target_ref):
+        self._base_config()
+        self._deny_frozen(issue)
+        if not isinstance(family_run_id, str) or RUN_RE.fullmatch(family_run_id) is None:
+            _fail('corrupt', 'invalid-family-run-id', 'Family run ID is invalid')
+        observation = _repository_document(repository_observation, issue, family_run_id)
+        if observation is None:
+            _fail('missing', 'repository-observation-required', 'Source publication requires a repository observation')
+        if not isinstance(repository, str) or REPOSITORY_RE.fullmatch(repository) is None:
+            _fail('corrupt', 'invalid-publication-repository', 'Publication repository is invalid')
+        if repository != self.repository or observation['repository'] != self.repository:
+            _fail('denied', 'publication-repository-mismatch', 'Publication repository differs from the trusted runtime target')
+        _head_ref(target_ref, 'publication-target-ref')
+        oid_length = 40 if observation['object_format'] == 'sha1' else 64
+        _oid(local_commit, 'publication-local-commit', oid_length)
+        _oid(local_tree, 'publication-local-tree', oid_length)
+        if local_commit != observation['head']['commit'] or local_tree != observation['head']['tree']:
+            _fail('stale', 'publication-local-identity-mismatch', 'Publication source differs from the selected repository observation')
+        workspace = observation['workspace']
+        if any(workspace[field] for field in ('staged', 'unstaged', 'untracked_non_ignored', 'assume_unchanged', 'skip_worktree')):
+            _fail('stale', 'publication-worktree-dirty', 'Source publication requires a clean repository observation')
+        trust = observation['git_trust']
+        if trust['no_replace_objects'] is not True or trust['replacement_refs'] or trust['git_replace_ref_base'] is not None or trust['git_graft_file'] is not None or trust['info_grafts_present'] or trust['environment_redirections'] or trust['alternate_object_directories']:
+            _fail('denied', 'publication-git-trust', 'Source publication rejects Git object redirection')
+        if observation['ancestry']['base_is_ancestor'] is not True:
+            _fail('stale', 'publication-base-not-ancestor', 'Publication source is not descended from the selected base')
+        document = {'format': SOURCE_PUBLICATION_REQUEST_FORMAT, 'issue': issue, 'family_run_id': family_run_id, 'repository': repository, 'target_ref': target_ref, 'local_commit': local_commit, 'local_tree': local_tree, 'repository_observation': observation}
+        return _with_digest(document, 'request_sha256')
+    def _validate_source_publication_request(self, value):
+        _exact(value, {'format', 'issue', 'family_run_id', 'repository', 'target_ref', 'local_commit', 'local_tree', 'repository_observation', 'request_sha256'}, 'source-publication-request')
+        if value['format'] != SOURCE_PUBLICATION_REQUEST_FORMAT:
+            _fail('unsupported', 'source-publication-request-format', 'Source publication request format is unsupported')
+        rebuilt = self.build_source_publication_request(issue=value['issue'], family_run_id=value['family_run_id'], repository_observation=value['repository_observation'], repository=value['repository'], local_commit=value['local_commit'], local_tree=value['local_tree'], target_ref=value['target_ref'])
+        if value != rebuilt:
+            _fail('corrupt', 'source-publication-request-digest', 'Source publication request is not canonical')
+        return rebuilt
+    def _publication_remote_sha(self, request, cancel_event=None):
+        observation = request['repository_observation']
+        branch = _head_ref(request['target_ref'], 'publication-target-ref')
+        oid_length = 40 if observation['object_format'] == 'sha1' else 64
+        local_before = self.observe_diff(request['issue'], request['family_run_id'], observation['triage_binding'], observation['observed_at'], cancel_event)
+        first = self._read_remote_head(branch, oid_length, cancel_event)
+        local_after = self.observe_diff(request['issue'], request['family_run_id'], observation['triage_binding'], observation['observed_at'], cancel_event)
+        second = self._read_remote_head(branch, oid_length, cancel_event)
+        if local_before != observation or local_after != observation:
+            _fail('stale', 'publication-repository-moved', 'Repository differs from the selected publication observation')
+        if first != second:
+            _fail('stale', 'publication-remote-ref-moved', 'Publication target moved during observation')
+        return first
+    def _publication_remote_document(self, request, observed_at=None):
+        return _with_digest({'format': REMOTE_HEAD_OBSERVATION_FORMAT, 'repository': self.repository, 'ref': request['target_ref'], 'sha': request['repository_observation']['head']['commit'], 'repository_observation_sha256': request['repository_observation']['observation_sha256'], 'observed_at': _timestamp(observed_at or _now(), 'observed-at')}, 'observation_sha256')
+    def _publication_environment(self):
+        if self._publication_token is None:
+            _fail('denied', 'publication-credential-unavailable', 'Source publication credential is unavailable')
+        credential = base64.b64encode(('x-access-token:%s' % self._publication_token).encode('utf-8')).decode('ascii')
+        environment = _git_env(self._paths())
+        environment.update({'GIT_CONFIG_GLOBAL': os.devnull, 'GIT_CONFIG_SYSTEM': os.devnull, 'GIT_CONFIG_COUNT': '4', 'GIT_CONFIG_KEY_0': 'http.https://github.com/.extraheader', 'GIT_CONFIG_VALUE_0': 'AUTHORIZATION: basic %s' % credential, 'GIT_CONFIG_KEY_1': 'credential.helper', 'GIT_CONFIG_VALUE_1': '', 'GIT_CONFIG_KEY_2': 'core.hooksPath', 'GIT_CONFIG_VALUE_2': os.devnull, 'GIT_CONFIG_KEY_3': 'http.followRedirects', 'GIT_CONFIG_VALUE_3': 'false'})
+        return environment
+    def _publication_command(self, request):
+        source = request['repository_observation']['head']['commit']
+        destination = request['target_ref']
+        repository_url = 'https://github.com/%s.git' % self.repository
+        return [self._git_executable['path'], '-c', 'core.fsmonitor=false', 'push', '--porcelain', '--no-progress', '--no-verify', '--recurse-submodules=no', repository_url, '%s:%s' % (source, destination)]
+    def _publication_secret_disclosed(self, value):
+        if self._publication_token is None:
+            return False
+        token = self._publication_token.encode('utf-8')
+        encoded_token = base64.b64encode(token)
+        encoded_credential = base64.b64encode(b'x-access-token:' + token)
+        authorization = b'AUTHORIZATION: basic ' + encoded_credential
+        def disclosed(item):
+            if isinstance(item, bytes): return any(secret in item for secret in (token, encoded_token, encoded_credential, authorization))
+            if isinstance(item, str):
+                try: return disclosed(item.encode('utf-8'))
+                except UnicodeError: return False
+            if isinstance(item, dict): return any(disclosed(entry) for entry in item.values())
+            if isinstance(item, (list, tuple)): return any(disclosed(entry) for entry in item)
+            return False
+        return disclosed(value)
+    def _source_publication_result(self, request, outcome, code, mutation, idempotent, process_result=None, remote_head=None):
+        if outcome not in {'confirmed', 'uncertain', 'ambiguous', 'stale', 'denied', 'conflict'}:
+            _fail('corrupt', 'source-publication-outcome', 'Source publication outcome is invalid')
+        if mutation not in {'not-attempted', 'attempted', 'attempted-or-uncertain'}:
+            _fail('corrupt', 'source-publication-mutation', 'Source publication mutation state is invalid')
+        result = {'format': SOURCE_PUBLICATION_RESULT_FORMAT, 'request_sha256': request['request_sha256'], 'repository': request['repository'], 'target_ref': request['target_ref'], 'source_commit': request['repository_observation']['head']['commit'], 'source_tree': request['repository_observation']['head']['tree'], 'outcome': outcome, 'code': _slug(code, 'source-publication-code'), 'mutation': mutation, 'idempotent': idempotent, 'process_result': copy.deepcopy(process_result), 'remote_head': copy.deepcopy(remote_head)}
+        return _with_digest(result, 'result_sha256')
+    def _publication_failure_result(self, request, failure, mutation='not-attempted', process_result=None):
+        if failure.code == 'remote-head-mismatch':
+            outcome, code = 'conflict', 'publication-remote-ref-conflict'
+        elif failure.status in {'ambiguous', 'stale', 'denied', 'conflict'}:
+            outcome, code = failure.status, failure.code
+        else:
+            outcome, code = 'uncertain', 'publication-reconciliation-uncertain'
+        return self._source_publication_result(request, outcome, code, mutation, False, process_result)
+    def publish_validated_branch(self, request_document, cancel_event=None):
+        request = self._validate_source_publication_request(copy.deepcopy(request_document))
+        if self._base_config()['mode'] != 'active':
+            _fail('unsupported', 'runtime-inactive', 'Source publication is disabled by base configuration')
+        environment = self._publication_environment()
+        self._verify_tool(self._git_executable, 'git')
+        command = self._publication_command(request)
+        configured = {key: self._config['git'][key] for key in ('timeout_ms', 'grace_ms', 'output_limit_bytes')}
+        limits = _limits(configured, 'git')
+        preflight_cancelled = cancel_event is not None and cancel_event.is_set()
+        if not preflight_cancelled:
+            try:
+                self._ensure_config_current(cancel_event)
+                remote_sha = self._publication_remote_sha(request, cancel_event)
+            except RuntimeFailure as failure:
+                return self._publication_failure_result(request, failure)
+            if remote_sha == request['local_commit']:
+                return self._source_publication_result(request, 'confirmed', 'already-published', 'not-attempted', True, remote_head=self._publication_remote_document(request))
+            if remote_sha is not None:
+                return self._source_publication_result(request, 'conflict', 'publication-remote-ref-conflict', 'not-attempted', False)
+        process_cancel = cancel_event if not preflight_cancelled else threading.Event()
+        if preflight_cancelled: process_cancel.set()
+        raw_process, process, process_failure = None, None, None
+        try:
+            raw_process = _run(command, limits=limits, cwd=self.root, environment=environment, cancel_event=process_cancel)
+            disclosed = self._publication_secret_disclosed(raw_process)
+            try: process = _process_document(raw_process, command, limits, 'source-publication')
+            except RuntimeFailure as failure: process_failure = failure
+        except BaseException:
+            disclosed = False
+        if process is not None and process['reason'] in {'execution-timeout-before-start', 'external-signal-before-start', 'cancelled-before-start', 'process-not-started', 'process-session-isolation-unavailable', 'process-wide-signal-guard-unavailable'}:
+            code = 'publication-cancelled-before-start' if 'cancelled' in process['reason'] or 'signal' in process['reason'] else 'publication-not-started'
+            return self._source_publication_result(request, 'denied', code, 'not-attempted', False, None if disclosed else process)
+        mutation = 'attempted' if process is not None else 'attempted-or-uncertain'
+        try:
+            remote_head = self.observe_remote_head(request['issue'], request['family_run_id'], request['repository_observation'], _head_ref(request['target_ref'], 'publication-target-ref'), cancel_event=None)
+            outcome, code = 'confirmed', 'published'
+        except RuntimeFailure as failure:
+            result = self._publication_failure_result(request, failure, mutation, None if disclosed or process_failure is not None else process)
+            if disclosed:
+                return self._source_publication_result(request, 'denied', 'publication-credential-disclosed', mutation, False, remote_head=result['remote_head'])
+            return result
+        except BaseException:
+            if disclosed:
+                return self._source_publication_result(request, 'denied', 'publication-credential-disclosed', mutation, False)
+            return self._source_publication_result(request, 'uncertain', 'publication-reconciliation-uncertain', mutation, False, None if process_failure is not None else process)
+        if disclosed:
+            return self._source_publication_result(request, 'denied', 'publication-credential-disclosed', mutation, False, remote_head=remote_head)
+        return self._source_publication_result(request, outcome, code, mutation, False, None if process_failure is not None else process, remote_head)
     def observe_issue(self, issue, observed_at=None, _retrying=False):
         observed_at = observed_at or _now()
         self._deny_frozen(issue)
@@ -826,11 +975,17 @@ def _validation_executables(root, config, profiles):
             record = _executable(candidate, 'validation-executable') if candidate is not None and pathlib.Path(candidate).is_file() else {'path': None, 'sha256': None}
             rows.append({'profile': profile['id'], 'entry': check['name'], **record})
     return sorted(rows, key=lambda row: (row['profile'], row['entry']))
-def bootstrap(root, repository, git_executable, gh_executable, github_token):
+def bootstrap(root, repository, git_executable, gh_executable, github_token, publication_token=None):
     try: root = pathlib.Path(root).resolve(strict=True)
     except (OSError, RuntimeError, ValueError) as error: _fail('missing', 'repository-root-unavailable', 'Repository root is unavailable: %s' % error)
     if not root.is_dir() or not isinstance(repository, str) or REPOSITORY_RE.fullmatch(repository) is None: _fail('corrupt', 'invalid-bootstrap-target', 'Bootstrap root or repository is invalid')
     _text(github_token, 'github-token', maximum=16 * 1024)
+    if publication_token is not None:
+        _text(publication_token, 'publication-token', maximum=16 * 1024)
+        if any(ord(character) < 33 or ord(character) == 127 for character in publication_token):
+            _fail('denied', 'invalid-publication-token', 'Publication credential contains prohibited control characters')
+        if publication_token == github_token:
+            _fail('denied', 'publication-credential-not-isolated', 'Publication credential must be distinct from the general GitHub credential')
     git = _executable(git_executable, 'git')
     gh = _executable(gh_executable, 'github')
     paths = list(dict.fromkeys([str(pathlib.Path(git['path']).parent), str(pathlib.Path(gh['path']).parent)]))
@@ -875,13 +1030,13 @@ def bootstrap(root, repository, git_executable, gh_executable, github_token):
     config, profiles, git, gh = selected['config'], selected['profiles'], selected['git'], selected['github']
     document = {'format': BOOTSTRAP_FORMAT, 'repository': repository, 'initial_head': head, 'remote_tip': remote_tip, 'target_base': {'name': branch, 'ref': ref, 'commit': tracking, 'tree': tree}, 'config': {'path': '.github/agent-workflow.json', 'blob_oid': blob_oid, 'content_sha256': workflow_inspector.sha256(config_bytes), 'size': len(config_bytes)}, 'executables': {'git': git, 'github': gh}, 'validation_executables': selected['validation_executables'], 'profiles': profiles, 'mode': config['mode']}
     document = _with_digest(document, 'bootstrap_sha256')
-    return Runtime(root, repository, git, gh, github_token, config, config_bytes, document)
+    return Runtime(root, repository, git, gh, github_token, publication_token, config, config_bytes, document)
 class RuntimeArgumentParser(argparse.ArgumentParser):
     def error(self, message): raise RuntimeFailure('corrupt', 'invalid-arguments', message)
 def build_parser():
     parser = RuntimeArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest='command', required=True, parser_class=RuntimeArgumentParser)
-    for name in ('bootstrap', 'execute'):
+    for name in ('bootstrap', 'execute', 'publish-branch'):
         command = subparsers.add_parser(name)
         command.add_argument('--root', required=True)
         command.add_argument('--repository', required=True)
@@ -891,6 +1046,9 @@ def build_parser():
         if name == 'execute':
             command.add_argument('--request', required=True)
             command.add_argument('--request-binding', required=True)
+        if name == 'publish-branch':
+            command.add_argument('--request', required=True)
+            command.add_argument('--publication-token-stdin', action='store_true', required=True)
     return parser
 def _load_file(path, label):
     try:
@@ -902,9 +1060,12 @@ def main(argv=None):
     try:
         args = build_parser().parse_args(argv)
         token = sys.stdin.readline().rstrip('\n')
-        adapter = bootstrap(args.root, args.repository, args.git_executable, args.gh_executable, token)
+        publication_token = sys.stdin.readline().rstrip('\n') if args.command == 'publish-branch' else None
+        adapter = bootstrap(args.root, args.repository, args.git_executable, args.gh_executable, token, publication_token)
         if args.command == 'bootstrap':
             document = adapter.bootstrap_document()
+        elif args.command == 'publish-branch':
+            document = adapter.publish_validated_branch(_load_file(args.request, 'source-publication-request'))
         else:
             document = adapter.execute(_load_file(args.request, 'request'), _load_file(args.request_binding, 'request-binding'))
         sys.stdout.buffer.write(workflow_inspector.canonical_document(document))

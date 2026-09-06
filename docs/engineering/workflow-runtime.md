@@ -3,9 +3,10 @@
 `scripts/workflow_runtime.py` is the inactive external boundary for the future
 orchestrator. It supplies fixed Git and GitHub observations, including trusted
 remote-head observations, baseline-pinned command resolution, bounded execution,
-cancellation pass-through, and uncertain GitHub-write reconciliation. It does
-not select lifecycle state, publish evidence, read or write an authority
-pointer, migrate or repair a run, publish branches, or define retry policy.
+cancellation pass-through, uncertain GitHub-write reconciliation, and one
+supervised validated-source publication operation. It does not select lifecycle
+state, publish evidence, read or write an authority pointer, migrate or repair a
+run, or define retry policy.
 
 The runtime imports exactly `workflow_inspector` and `workflow_supervisor`.
 Every external process goes through `workflow_supervisor.supervise` on the
@@ -97,7 +98,8 @@ Commands are derived from the bootstrap bytes, not caller argv:
   resolved path and SHA-256, and execution rejects replacement;
 - agent execution chooses one configured role and appends only
   `--request-binding <canonical #132 reference>` to its fixed provider prefix;
-  and
+- source publication derives one exact non-force push from a canonical
+  observation-bound request and the bootstrapped repository identity; and
 - the only write operation is `create-draft-pr`, constructed from an exact
   typed payload whose refs and title/body hashes match its reconciliation
   expectation; it requires a validated repository observation and a stable
@@ -115,6 +117,12 @@ sets `GIT_OPTIONAL_LOCKS=0`, `GIT_NO_LAZY_FETCH=1`,
 only `GH_HOST=github.com`, `GH_PROMPT_DISABLED=1`, and the designated
 `GH_TOKEN`. Caller `GH_*`, `SSH_*`, `GNUPGHOME`, askpass, Git redirection,
 alternate-object, and other environment entries are never inherited.
+Source publication uses a separate host-supplied credential retained only in
+private runtime memory. It is supplied only to the fixed publication process as
+a host-scoped HTTP header through runtime-owned Git configuration; it is absent
+from argv, all agent/validation/read environments, canonical requests/results,
+and errors. The fixed command disables hooks, submodules, redirects,
+system/global config, prompting, and credential helpers.
 GitHub write refs, title, and body are rejected before preflight if they contain
 the designated token, and process output is rejected if it discloses that token.
 Execution and security-sensitive read results are checked against the exact
@@ -181,8 +189,41 @@ observation, reads the remote ref, completely revalidates the local repository,
 and reads the remote ref again immediately before mutation. It retries that
 sequence at most once and fails closed on malformed, missing, divergent, or
 moving refs. Branch names are validated before any external call. An
-unpublished branch is rejected; the runtime never pushes or otherwise
-publishes it.
+unpublished branch remains rejected by this read-only operation.
+
+## Validated source publication
+
+`build_source_publication_request(...)` accepts only the selected clean
+repository observation, its exact local commit and tree, the bootstrapped
+repository identity, and one exact safe `refs/heads/<branch>` target. The
+canonical request contains no credential or authority mutation. It rejects
+dirty worktrees, hidden index flags, replacement refs, grafts, alternates,
+environment redirection, non-descendant heads, parallel caller-selected SHAs,
+tags, deletes, force controls, wildcard/refspec input, URLs, configuration,
+hooks, shells, and unknown fields.
+
+`publish_validated_branch(...)` first revalidates the base-pinned config, full
+local observation, and exact remote ref. An existing exact ref returns
+`confirmed/already-published` without starting a mutation. A different ref
+returns `conflict`; updates require a separate future authorization contract.
+Only a stable missing ref can start the single fixed `git push`. The source SHA
+is always taken from the trusted observation, the destination URL is derived
+from the bootstrapped repository, and the destination is its exact requested
+branch.
+
+The mutation is never retried. After any process state that may have started,
+including timeout, cancellation, signal, malformed supervisor output, or an
+exception, the runtime performs one trusted exact remote-head reconciliation
+without the caller cancellation event. A match returns `confirmed`; otherwise
+the canonical result is `uncertain`, `ambiguous`, `stale`, `denied`, or
+`conflict`. A concurrent different ref can never become confirmed. Publication
+does not select or consume authority, create a pull request, merge, mark ready,
+or deploy; a future orchestrator must separately consume a confirmed result
+under its expected-tip rules.
+
+The CLI exposes `publish-branch`. Its standard input contains the general
+GitHub observation token on the first line and the distinct publication
+credential on the second; neither credential is accepted in argv.
 
 Authorization observations require that same originating workflow issue and use
 `chess-echo-github-authorization-observation-v1`. Numeric account ID is primary;

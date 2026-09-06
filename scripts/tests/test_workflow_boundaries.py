@@ -268,7 +268,7 @@ class WorkflowBoundaryTest(unittest.TestCase):
 
     def test_runtime_has_a_small_exact_external_boundary(self):
         path = SCRIPTS / "workflow_runtime.py"
-        self.assertLessEqual(len(path.read_text().splitlines()), 925)
+        self.assertLessEqual(len(path.read_text().splitlines()), 1100)
         tree = syntax_tree("workflow_runtime")
         imported = set()
         inspector_calls = set()

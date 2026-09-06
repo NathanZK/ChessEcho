@@ -19,7 +19,7 @@ the workflow lifecycle or changing its stored formats.
 | Inactive incremental reviewed-plan revision policy | `workflow_plan_revision_policy.py` |
 | Inactive four-gate supervision policy | `workflow_supervision_policy.py` |
 | Inactive orchestration authority pointer | `workflow_authority.py` |
-| Inactive trusted Git/GitHub/process adapter | `workflow_runtime.py` |
+| Inactive trusted Git/GitHub/process and validated-source publication adapter | `workflow_runtime.py` |
 | Trusted pre-genesis issue-source publication | `workflow_issue_source.py` |
 | Inactive lifecycle composition | `workflow_orchestrator.py` |
 | Legacy lifecycle, approvals, reviews, corrections, validation, adoption/migration, and projection-recovery policy | `agent_workflow.py` |
@@ -134,6 +134,13 @@ bytes. It obtains them through the base-pinned runtime, validates the canonical
 snapshot and GitHub identity, and delegates the one immutable raw-byte write to
 `workflow_cas.py`. It imports no evidence, authority, policy, migration, repair, or
 legacy lifecycle module and cannot create a generic CAS upload.
+
+`workflow_runtime.py` also owns the only source-branch write primitive. It
+accepts an exact clean repository observation and safe `refs/heads/<branch>`
+target, derives the source commit from that observation, executes one fixed
+non-force publication with a publication-only credential, and reconciles the
+exact remote ref. It does not expose generic Git writes or mutate orchestration
+authority.
 
 ## Kernel boundary
 
