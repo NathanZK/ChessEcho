@@ -264,7 +264,7 @@ class BootstrapFixture:
             return process_result(command)
         return process_result(command, stdout=stdout)
 
-    def bootstrap(self):
+    def bootstrap(self, publication_token=None):
         with mock.patch.object(
             runtime.workflow_supervisor, "supervise", side_effect=self.supervise
         ):
@@ -274,6 +274,7 @@ class BootstrapFixture:
                 self.git,
                 self.gh,
                 "secret-token",
+                publication_token,
             )
 
 
@@ -288,6 +289,25 @@ class WorkflowRuntimeTest(unittest.TestCase):
         self.fixture.close()
         self.fixture = BootstrapFixture(mode="active")
         return self.fixture.bootstrap()
+
+    def publication_adapter(self):
+        self.fixture.close()
+        self.fixture = BootstrapFixture(mode="active")
+        return self.fixture.bootstrap("publication-secret")
+
+    def publication_request(self, adapter, **overrides):
+        observation = overrides.pop("repository_observation", self.repository_before())
+        arguments = {
+            "issue": 152,
+            "family_run_id": FAMILY,
+            "repository_observation": observation,
+            "repository": "NathanZK/ChessEcho",
+            "local_commit": observation["head"]["commit"],
+            "local_tree": observation["head"]["tree"],
+            "target_ref": "refs/heads/runtime",
+        }
+        arguments.update(overrides)
+        return adapter.build_source_publication_request(**arguments)
 
     def github_write_request(self, adapter):
         pull = json.loads((FIXTURES / "runtime-github.json").read_text())[
@@ -2412,6 +2432,378 @@ class WorkflowRuntimeTest(unittest.TestCase):
                     )
                 finally:
                     policy_fixture.close()
+
+    def test_unpublished_exact_branch_is_published_once_and_confirmed(self):
+        adapter = self.publication_adapter()
+        request = self.publication_request(adapter)
+        published = False
+        calls = []
+
+        def supervised(command, **options):
+            nonlocal published
+            command = list(command)
+            calls.append((command, options))
+            args = command[1:]
+            if args[:2] == ["-c", "core.fsmonitor=false"]:
+                args = args[2:]
+            if args[:1] == ["push"]:
+                published = True
+                return process_result(command)
+            if command[1:] == [
+                "api",
+                "repos/NathanZK/ChessEcho/git/matching-refs/heads/runtime",
+            ]:
+                rows = (
+                    [{"ref": "refs/heads/runtime", "object": {"type": "commit", "sha": OID}}]
+                    if published
+                    else []
+                )
+                return process_result(command, stdout=json.dumps(rows).encode())
+            return self.fixture.supervise(command, **options)
+
+        with mock.patch.object(
+            runtime.Runtime, "observe_diff", return_value=request["repository_observation"]
+        ), mock.patch.object(
+            runtime.workflow_supervisor, "supervise", side_effect=supervised
+        ):
+            result = adapter.publish_validated_branch(request)
+
+        pushes = [
+            (command, options)
+            for command, options in calls
+            if "push" in command
+        ]
+        self.assertEqual(1, len(pushes))
+        command, options = pushes[0]
+        self.assertEqual(
+            [
+                str(self.fixture.git),
+                "-c",
+                "core.fsmonitor=false",
+                "push",
+                "--porcelain",
+                "--no-progress",
+                "--no-verify",
+                "--recurse-submodules=no",
+                "https://github.com/NathanZK/ChessEcho.git",
+                OID + ":refs/heads/runtime",
+            ],
+            command,
+        )
+        self.assertNotIn("publication-secret", json.dumps(command))
+        self.assertNotIn("publication-secret", json.dumps(result))
+        self.assertEqual("false", options["env"]["GIT_CONFIG_VALUE_3"])
+        self.assertNotIn("GH_TOKEN", options["env"])
+        self.assertEqual(
+            ("confirmed", "published", "attempted", False),
+            (
+                result["outcome"],
+                result["code"],
+                result["mutation"],
+                result["idempotent"],
+            ),
+        )
+        self.assertEqual(OID, result["remote_head"]["sha"])
+        self.assertEqual(request["request_sha256"], result["request_sha256"])
+        unsigned = dict(result)
+        digest = unsigned.pop("result_sha256")
+        self.assertEqual(inspector.sha256(inspector.canonical_bytes(unsigned)), digest)
+        self.assertFalse(
+            any(
+                "pr" in command
+                or "merge" in command
+                or "update-ref" in command
+                or "--force" in command
+                or "--delete" in command
+                for command, _options in calls
+            )
+        )
+
+    def test_exact_remote_branch_is_idempotent_without_mutation(self):
+        adapter = self.publication_adapter()
+        request = self.publication_request(adapter)
+        calls = []
+
+        def supervised(command, **options):
+            command = list(command)
+            calls.append(command)
+            if command[1:] == [
+                "api",
+                "repos/NathanZK/ChessEcho/git/matching-refs/heads/runtime",
+            ]:
+                rows = [{"ref": "refs/heads/runtime", "object": {"type": "commit", "sha": OID}}]
+                return process_result(command, stdout=json.dumps(rows).encode())
+            return self.fixture.supervise(command, **options)
+
+        with mock.patch.object(
+            runtime.Runtime, "observe_diff", return_value=request["repository_observation"]
+        ), mock.patch.object(
+            runtime.workflow_supervisor, "supervise", side_effect=supervised
+        ):
+            result = adapter.publish_validated_branch(request)
+
+        self.assertEqual(("confirmed", "already-published"), (result["outcome"], result["code"]))
+        self.assertTrue(result["idempotent"])
+        self.assertEqual("not-attempted", result["mutation"])
+        self.assertFalse(any("push" in command for command in calls))
+
+    def test_publication_request_rejects_untrusted_identity_and_unsafe_controls(self):
+        adapter = self.publication_adapter()
+        observation = self.repository_before()
+        dirty = copy.deepcopy(observation)
+        dirty["workspace"]["untracked_non_ignored"] = ["agent.txt"]
+        dirty["workspace"]["status_sha256"] = inspector.sha256(
+            inspector.canonical_bytes(
+                {key: value for key, value in dirty["workspace"].items() if key != "status_sha256"}
+            )
+        )
+        unsigned = dict(dirty)
+        unsigned.pop("observation_sha256")
+        dirty["observation_sha256"] = inspector.sha256(inspector.canonical_bytes(unsigned))
+        cases = (
+            ({"repository": "Other/Repo"}, "publication-repository-mismatch"),
+            ({"local_commit": "9" * 40}, "publication-local-identity-mismatch"),
+            ({"local_tree": "9" * 40}, "publication-local-identity-mismatch"),
+            ({"repository_observation": dirty}, "publication-worktree-dirty"),
+            ({"target_ref": "refs/tags/runtime"}, "invalid-publication-target-ref"),
+            ({"target_ref": "refs/heads/*"}, "invalid-publication-target-ref"),
+            ({"target_ref": "refs/heads/runtime:refs/tags/pwn"}, "invalid-publication-target-ref"),
+            ({"target_ref": "https://evil.example/repo"}, "invalid-publication-target-ref"),
+            ({"target_ref": "refs/heads/--force"}, "invalid-publication-target-ref"),
+            ({"target_ref": "refs/heads/runtime\n--upload-pack=evil"}, "invalid-publication-target-ref"),
+        )
+        with mock.patch.object(runtime.workflow_supervisor, "supervise") as supervise:
+            for overrides, expected_code in cases:
+                with self.subTest(overrides=overrides):
+                    with self.assertRaises(runtime.RuntimeFailure) as raised:
+                        self.publication_request(adapter, **overrides)
+                    self.assertEqual(expected_code, raised.exception.code)
+            supervise.assert_not_called()
+
+        request = self.publication_request(adapter)
+        request["url"] = "https://evil.example/repo.git"
+        with mock.patch.object(runtime.workflow_supervisor, "supervise") as supervise:
+            with self.assertRaises(runtime.RuntimeFailure) as raised:
+                adapter.publish_validated_branch(request)
+        self.assertEqual("invalid-source-publication-request-schema", raised.exception.code)
+        supervise.assert_not_called()
+
+    def test_publication_rejects_stale_repository_and_config_without_mutation(self):
+        adapter = self.publication_adapter()
+        request = self.publication_request(adapter)
+        changed = copy.deepcopy(request["repository_observation"])
+        changed["head"]["commit"] = "9" * 40
+        unsigned = dict(changed)
+        unsigned.pop("observation_sha256")
+        changed["observation_sha256"] = inspector.sha256(inspector.canonical_bytes(unsigned))
+        with mock.patch.object(
+            runtime.Runtime, "observe_diff", return_value=changed
+        ), mock.patch.object(
+            runtime.workflow_supervisor, "supervise", side_effect=self.fixture.supervise
+        ) as supervise:
+            result = adapter.publish_validated_branch(request)
+        self.assertEqual(("stale", "publication-repository-moved"), (result["outcome"], result["code"]))
+        self.assertFalse(any("push" in call.args[0] for call in supervise.call_args_list))
+
+        with mock.patch.object(
+            runtime.Runtime,
+            "_ensure_config_current",
+            side_effect=runtime.RuntimeFailure("stale", "head-config-drift", "changed"),
+        ), mock.patch.object(runtime.workflow_supervisor, "supervise") as supervise:
+            result = adapter.publish_validated_branch(request)
+        self.assertEqual(("stale", "head-config-drift"), (result["outcome"], result["code"]))
+        supervise.assert_not_called()
+
+    def test_divergent_remote_ref_conflicts_without_mutation(self):
+        adapter = self.publication_adapter()
+        request = self.publication_request(adapter)
+        calls = []
+
+        def supervised(command, **options):
+            command = list(command)
+            calls.append(command)
+            if command[1:] == [
+                "api",
+                "repos/NathanZK/ChessEcho/git/matching-refs/heads/runtime",
+            ]:
+                rows = [{"ref": "refs/heads/runtime", "object": {"type": "commit", "sha": "9" * 40}}]
+                return process_result(command, stdout=json.dumps(rows).encode())
+            return self.fixture.supervise(command, **options)
+
+        with mock.patch.object(
+            runtime.Runtime, "observe_diff", return_value=request["repository_observation"]
+        ), mock.patch.object(
+            runtime.workflow_supervisor, "supervise", side_effect=supervised
+        ):
+            result = adapter.publish_validated_branch(request)
+        self.assertEqual(("conflict", "publication-remote-ref-conflict"), (result["outcome"], result["code"]))
+        self.assertFalse(any("push" in command for command in calls))
+
+    def test_uncertain_transport_states_reconcile_once_without_retry(self):
+        cases = ("timeout", "cancelled", "signal", "malformed", "exception")
+        for case in cases:
+            with self.subTest(case=case):
+                adapter = self.publication_adapter()
+                request = self.publication_request(adapter)
+                published = False
+                pushes = 0
+
+                def supervised(command, **options):
+                    nonlocal published, pushes
+                    command = list(command)
+                    args = command[1:]
+                    if args[:2] == ["-c", "core.fsmonitor=false"]:
+                        args = args[2:]
+                    if args[:1] == ["push"]:
+                        pushes += 1
+                        published = True
+                        if case == "exception":
+                            raise OSError("transport interrupted")
+                        if case == "malformed":
+                            return {"malformed": True}
+                        if case == "timeout":
+                            return process_result(command, outcome="timeout", reason="execution-timeout")
+                        if case == "cancelled":
+                            return process_result(command, outcome="terminated", reason="cancelled")
+                        result = process_result(command, outcome="signal", reason="process-signaled")
+                        result["terminating_signal"] = 15
+                        return result
+                    if command[1:] == [
+                        "api",
+                        "repos/NathanZK/ChessEcho/git/matching-refs/heads/runtime",
+                    ]:
+                        rows = (
+                            [{"ref": "refs/heads/runtime", "object": {"type": "commit", "sha": OID}}]
+                            if published
+                            else []
+                        )
+                        return process_result(command, stdout=json.dumps(rows).encode())
+                    return self.fixture.supervise(command, **options)
+
+                with mock.patch.object(
+                    runtime.Runtime,
+                    "observe_diff",
+                    return_value=request["repository_observation"],
+                ), mock.patch.object(
+                    runtime.workflow_supervisor, "supervise", side_effect=supervised
+                ):
+                    result = adapter.publish_validated_branch(request)
+                self.assertEqual(1, pushes)
+                self.assertEqual(("confirmed", "published"), (result["outcome"], result["code"]))
+
+    def test_concurrent_remote_race_cannot_confirm_another_sha(self):
+        adapter = self.publication_adapter()
+        request = self.publication_request(adapter)
+        raced = False
+        pushes = 0
+
+        def supervised(command, **options):
+            nonlocal raced, pushes
+            command = list(command)
+            args = command[1:]
+            if args[:2] == ["-c", "core.fsmonitor=false"]:
+                args = args[2:]
+            if args[:1] == ["push"]:
+                pushes += 1
+                raced = True
+                return process_result(command, outcome="timeout", reason="execution-timeout")
+            if command[1:] == [
+                "api",
+                "repos/NathanZK/ChessEcho/git/matching-refs/heads/runtime",
+            ]:
+                rows = (
+                    [{"ref": "refs/heads/runtime", "object": {"type": "commit", "sha": "9" * 40}}]
+                    if raced
+                    else []
+                )
+                return process_result(command, stdout=json.dumps(rows).encode())
+            return self.fixture.supervise(command, **options)
+
+        with mock.patch.object(
+            runtime.Runtime, "observe_diff", return_value=request["repository_observation"]
+        ), mock.patch.object(
+            runtime.workflow_supervisor, "supervise", side_effect=supervised
+        ):
+            result = adapter.publish_validated_branch(request)
+        self.assertEqual(1, pushes)
+        self.assertEqual(("conflict", "publication-remote-ref-conflict"), (result["outcome"], result["code"]))
+        self.assertIsNone(result["remote_head"])
+
+    def test_publication_credential_is_isolated_and_disclosure_is_redacted(self):
+        with self.assertRaises(runtime.RuntimeFailure) as raised:
+            runtime.bootstrap(
+                self.fixture.root,
+                "NathanZK/ChessEcho",
+                self.fixture.git,
+                self.fixture.gh,
+                "same-token",
+                "same-token",
+            )
+        self.assertEqual("publication-credential-not-isolated", raised.exception.code)
+        self.assertNotIn("same-token", str(raised.exception))
+
+        adapter = self.publication_adapter()
+        request = self.publication_request(adapter)
+        published = False
+
+        def supervised(command, **options):
+            nonlocal published
+            command = list(command)
+            args = command[1:]
+            if args[:2] == ["-c", "core.fsmonitor=false"]:
+                args = args[2:]
+            if args[:1] == ["push"]:
+                published = True
+                return process_result(command, stdout=b"publication-secret")
+            if command[1:] == [
+                "api",
+                "repos/NathanZK/ChessEcho/git/matching-refs/heads/runtime",
+            ]:
+                rows = (
+                    [{"ref": "refs/heads/runtime", "object": {"type": "commit", "sha": OID}}]
+                    if published
+                    else []
+                )
+                return process_result(command, stdout=json.dumps(rows).encode())
+            self.assertNotIn("publication-secret", json.dumps(options.get("env", {})))
+            return self.fixture.supervise(command, **options)
+
+        with mock.patch.object(
+            runtime.Runtime, "observe_diff", return_value=request["repository_observation"]
+        ), mock.patch.object(
+            runtime.workflow_supervisor, "supervise", side_effect=supervised
+        ):
+            result = adapter.publish_validated_branch(request)
+        self.assertEqual(("denied", "publication-credential-disclosed"), (result["outcome"], result["code"]))
+        self.assertIsNone(result["process_result"])
+        self.assertEqual(OID, result["remote_head"]["sha"])
+        self.assertNotIn("publication-secret", json.dumps(result))
+
+    def test_precancelled_publication_cannot_start_or_reconcile(self):
+        adapter = self.publication_adapter()
+        request = self.publication_request(adapter)
+        cancel = threading.Event()
+        cancel.set()
+        calls = []
+
+        def supervised(command, **options):
+            calls.append(list(command))
+            self.assertTrue(options["cancel_event"].is_set())
+            return process_result(
+                command,
+                outcome="terminated",
+                reason="cancelled-before-start",
+                containment_kind="none",
+            )
+
+        with mock.patch.object(
+            runtime.workflow_supervisor, "supervise", side_effect=supervised
+        ):
+            result = adapter.publish_validated_branch(request, cancel_event=cancel)
+        self.assertEqual(("denied", "publication-cancelled-before-start"), (result["outcome"], result["code"]))
+        self.assertEqual("not-attempted", result["mutation"])
+        self.assertEqual(1, len(calls))
+        self.assertFalse(any("api" in command for command in calls))
 
 
 if __name__ == "__main__":
