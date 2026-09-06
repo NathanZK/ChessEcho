@@ -7,7 +7,7 @@ try:
     import workflow_inspector as inspector
     import workflow_plan_revision_policy as plan_policy
     import workflow_policy as policy
-    import workflow_runtime as runtime
+    import workflow_runtime as runtime, workflow_issue_source as issue_source
     import workflow_supervision_policy as supervision
     import workflow_work_type_policy as work_type_policy
 except ModuleNotFoundError:  # pragma: no cover - package execution
@@ -16,7 +16,7 @@ except ModuleNotFoundError:  # pragma: no cover - package execution
     from scripts import workflow_inspector as inspector
     from scripts import workflow_plan_revision_policy as plan_policy
     from scripts import workflow_policy as policy
-    from scripts import workflow_runtime as runtime
+    from scripts import workflow_runtime as runtime, workflow_issue_source as issue_source
     from scripts import workflow_supervision_policy as supervision
     from scripts import workflow_work_type_policy as work_type_policy
 VERSION, STATE_FORMAT, NODE_FORMAT = "1.2.0", authority.STATE_FORMAT, "chess-echo-workflow-node-v1"; CHALLENGE_FORMAT, RECOVERY_CHALLENGE_FORMAT, AUTHORIZATION_FORMAT, CANDIDATE_FORMAT, RESULT_FORMAT, FAILURE_FORMAT = supervision.CHALLENGE_FORMAT, "chess-echo-human-challenge-v1", "chess-echo-human-authorization-v1", "chess-echo-orchestrator-agent-candidate-v1", "chess-echo-orchestration-orchestrator-result-v1", "chess-echo-orchestration-orchestrator-failure-v1"
@@ -47,7 +47,7 @@ def _with_digest(value, field):
 def _translate(action, label):
     try: return action()
     except OrchestratorFailure: raise
-    except (authority.AuthorityFailure, evidence.EvidenceFailure, inspector.InspectionFailure, plan_policy.PlanRevisionPolicyFailure, policy.PolicyFailure, runtime.RuntimeFailure, supervision.SupervisionPolicyFailure, work_type_policy.WorkTypePolicyFailure) as error:
+    except (authority.AuthorityFailure, evidence.EvidenceFailure, inspector.InspectionFailure, issue_source.IssueSourceFailure, plan_policy.PlanRevisionPolicyFailure, policy.PolicyFailure, runtime.RuntimeFailure, supervision.SupervisionPolicyFailure, work_type_policy.WorkTypePolicyFailure) as error:
         status = getattr(error, "status", "corrupt")
         _fail(status if status in OUTCOMES else "corrupt", getattr(error, "code", label), getattr(error, "message", str(error)), getattr(error, "subject", None))
     except (OSError, UnicodeError, ValueError) as error:
@@ -243,10 +243,10 @@ class Orchestrator:
         return wrapper, self._publish_policy(result["next_state"], state["policy_state_binding"], state["policy_state_binding"], state["generation"] + 1)
     def initialize(self, request):
         _require(self._status(missing_ok=True) is None, "conflict", "already-initialized", "Issue already has an orchestration pointer")
+        _require(isinstance(request, dict) and isinstance(request.get("trusted_issue_source"), dict), "missing", "trusted-issue-source-required", "Initialization requires a trusted pre-genesis issue source publication")
         adapter = self._runtime(request); bootstrap = _translate(adapter.bootstrap_document, "runtime")
         _require(bootstrap["mode"] == "active", "unsupported", "orchestrator-inactive", "New orchestration is disabled by configuration")
-        issue_document, raw = _translate(lambda: adapter.observe_issue(self.issue), "runtime"); source = issue_document.get("source")
-        _require(isinstance(source, dict), "corrupt", "response-source-invalid", "Issue source is invalid")
+        issue_document, raw = _translate(lambda: adapter.observe_issue(self.issue), "runtime"); source = _translate(lambda: issue_source.validate_for_initialization(request["trusted_issue_source"], bootstrap, issue_document, raw, bootstrap["repository"], self.issue), "issue-source")
         reader = _translate(lambda: inspector.AuthorityReader(inspector.resolve_store(self.root), self.issue), "inspector")
         _require(_translate(lambda: reader.read_bytes(source, source["kind"]), "inspector") == raw, "stale", "response-source-missing", "Live issue source is absent or changed")
         self.family = self._family(bootstrap, source)

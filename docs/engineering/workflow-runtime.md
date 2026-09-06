@@ -143,7 +143,8 @@ The runtime constructs these canonical, exact-key documents without importing
 #116:
 
 - `chess-echo-work-type-issue-snapshot-v1`, returned with the exact bounded raw
-  GitHub bytes referenced by its `source` field so the caller can publish both;
+  GitHub bytes referenced by its `source` field; the runtime rejects mismatched API
+  or HTML identity, pull-request records, malformed labels, and duplicate labels;
 - `chess-echo-work-type-baseline-v1`; and
 - `chess-echo-work-type-diff-observation-v1`.
 
@@ -152,9 +153,10 @@ and family ID. The diff requires the caller's published triage binding. Tests
 publish the runtime bytes through #132 and pass them through #116's public
 `classify` and `assess_completion` APIs.
 
-`observe_issue(issue)` returns `(snapshot_document, raw_source_bytes)`. The
-caller publishes the raw bytes as `issue-snapshot`, publishes the document, and
-passes that published binding to `build_baseline(...)`.
+`observe_issue(issue)` returns `(snapshot_document, raw_source_bytes)`. The trusted
+pre-genesis owner in [`workflow-issue-source.md`](workflow-issue-source.md) is the
+only production entry point that publishes those raw bytes. The orchestrator later
+publishes the snapshot document and passes that binding to `build_baseline(...)`.
 
 Repository observation records base/HEAD commits and trees, ancestry and commit
 count, normalized changes, staged/unstaged/untracked and index flags,

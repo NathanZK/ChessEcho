@@ -20,6 +20,7 @@ the workflow lifecycle or changing its stored formats.
 | Inactive four-gate supervision policy | `workflow_supervision_policy.py` |
 | Inactive orchestration authority pointer | `workflow_authority.py` |
 | Inactive trusted Git/GitHub/process adapter | `workflow_runtime.py` |
+| Trusted pre-genesis issue-source publication | `workflow_issue_source.py` |
 | Inactive lifecycle composition | `workflow_orchestrator.py` |
 | Legacy lifecycle, approvals, reviews, corrections, validation, adoption/migration, and projection-recovery policy | `agent_workflow.py` |
 | Git, GitHub, process execution, command parsing, and human-facing output | `agent_workflow.py` |
@@ -54,9 +55,11 @@ workflow_plan_revision_policy -> workflow_inspector, workflow_evidence
 workflow_supervision_policy -> workflow_inspector
 workflow_authority -> workflow_inspector, workflow_evidence, workflow_cas
 workflow_runtime -> workflow_inspector, workflow_supervisor
+workflow_issue_source -> workflow_inspector, workflow_cas, workflow_runtime
 workflow_orchestrator -> workflow_inspector, workflow_evidence, workflow_authority,
                          workflow_work_type_policy, workflow_plan_revision_policy,
-                         workflow_policy, workflow_supervision_policy, workflow_runtime
+                         workflow_policy, workflow_supervision_policy, workflow_runtime,
+                         workflow_issue_source
 workflow_repair   -> workflow_inspector, workflow_cas
 workflow_cas
 workflow_inspector
@@ -125,6 +128,12 @@ repair, credential/provider, or irreversible authority-transfer operations.
 `workflow_orchestrator.py` composes its decisions while
 `workflow_authority.py` selects state and `workflow_runtime.py` retains the
 external-operation boundary.
+
+`workflow_issue_source.py` is the only production entry point for pre-genesis issue
+bytes. It obtains them through the base-pinned runtime, validates the canonical
+snapshot and GitHub identity, and delegates the one immutable raw-byte write to
+`workflow_cas.py`. It imports no evidence, authority, policy, migration, repair, or
+legacy lifecycle module and cannot create a generic CAS upload.
 
 ## Kernel boundary
 
