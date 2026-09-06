@@ -192,7 +192,8 @@ flowchart TB
 
   subgraph Trusted["IMPLEMENTED - independently callable trusted substrate"]
     Inspector["workflow_inspector.py<br/>read-only verification + checkpoint"]
-    Repair["workflow_repair.py<br/>explicit bundle + journaled repair"]
+    Repair["workflow_repair.py<br/>legacy explicit bundle + journaled repair"]
+    AuthorityRepair["workflow_authority_repair.py<br/>checkpoint-bound pointer restoration"]
     CAS["workflow_cas.py<br/>protocol-immutable publication"]
     Evidence["workflow_evidence.py<br/>manifest + provenance + lineage + binding"]
     Migration["workflow_migration.py<br/>deterministic conversion + publication"]
@@ -257,6 +258,10 @@ flowchart TB
   Repair -->|"checkpoint + exact preconditions"| Inspector
   Repair --> CAS
   Repair -->|"pointer replace is repair commit point"| Durable
+  AuthorityRepair --> Inspector
+  AuthorityRepair --> Authority
+  AuthorityRepair --> CAS
+  AuthorityRepair -->|"same authority lock + exact pointer bytes"| Durable
   Evidence --> CAS
   Evidence -->|"binding published last"| Durable
   Migration --> Inspector

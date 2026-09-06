@@ -19,6 +19,7 @@ the workflow lifecycle or changing its stored formats.
 | Inactive incremental reviewed-plan revision policy | `workflow_plan_revision_policy.py` |
 | Inactive four-gate supervision policy | `workflow_supervision_policy.py` |
 | Inactive orchestration authority pointer | `workflow_authority.py` |
+| Authorized replacement-pointer restoration | `workflow_authority_repair.py` |
 | Inactive trusted Git/GitHub/process and validated-source publication adapter | `workflow_runtime.py` |
 | Trusted pre-genesis issue-source publication | `workflow_issue_source.py` |
 | Inactive lifecycle composition | `workflow_orchestrator.py` |
@@ -54,6 +55,7 @@ workflow_work_type_policy -> workflow_inspector, workflow_evidence, workflow_sup
 workflow_plan_revision_policy -> workflow_inspector, workflow_evidence
 workflow_supervision_policy -> workflow_inspector
 workflow_authority -> workflow_inspector, workflow_evidence, workflow_cas
+workflow_authority_repair -> workflow_inspector, workflow_authority, workflow_cas
 workflow_runtime -> workflow_inspector, workflow_supervisor
 workflow_issue_source -> workflow_inspector, workflow_cas, workflow_runtime
 workflow_orchestrator -> workflow_inspector, workflow_evidence, workflow_authority,
@@ -83,6 +85,9 @@ schemas, lifecycle policy, or projections.
 
 `workflow_inspector.py` remains an independent read-only trusted component.
 `workflow_repair.py` depends on the inspector and CAS leaf.
+`workflow_authority_repair.py` verifies independently captured replacement
+checkpoints through the public authority interface and shares its per-issue
+lock; it does not import orchestration or legacy lifecycle policy.
 `workflow_evidence.py` uses those same lower-level components for canonical
 serialization, independent reads, and immutable publication. None imports the
 legacy workflow CLI or the extracted legacy kernel. This keeps durable

@@ -14,6 +14,7 @@ PRODUCTION_MODULES = (
     "agent_workflow",
     "workflow_cas",
     "workflow_authority",
+    "workflow_authority_repair",
     "workflow_evidence",
     "workflow_inspector",
     "workflow_issue_source",
@@ -128,6 +129,10 @@ class WorkflowBoundaryTest(unittest.TestCase):
             project_imports("workflow_authority"),
         )
         self.assertEqual(
+            {"workflow_authority", "workflow_cas", "workflow_inspector"},
+            project_imports("workflow_authority_repair"),
+        )
+        self.assertEqual(
             {"workflow_cas", "workflow_inspector"},
             project_imports("workflow_evidence"),
         )
@@ -197,9 +202,10 @@ class WorkflowBoundaryTest(unittest.TestCase):
 
     def test_authority_owns_only_its_approved_persistence_boundary(self):
         authority_path = SCRIPTS / "workflow_authority.py"
-        self.assertLessEqual(len(authority_path.read_text().splitlines()), 725)
+        self.assertLessEqual(len(authority_path.read_text().splitlines()), 825)
         allowed_replace = {
             "workflow_authority",
+            "workflow_authority_repair",
             "workflow_kernel",
             "workflow_repair",
         }

@@ -20,8 +20,8 @@ only by:
 2. credential isolation that denies agents both GitHub credentials and the
    authority store;
 3. Slice 4 routing/cutover;
-4. a separately reviewed repair contract for arbitrary corruption of the new
-   authority pointer; and
+4. operator deployment and acceptance of the separately implemented repair
+   contract for arbitrary corruption of the new authority pointer; and
 5. migration and deferred replacement policy work.
 
 `RUNTIME_PROVIDER` and `SANDBOX_PROVIDER` are deliberately unset in production.
