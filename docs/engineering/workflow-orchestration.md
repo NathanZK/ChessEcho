@@ -19,13 +19,10 @@ only by:
 1. a reviewed `external-sandbox-v1` provider;
 2. credential isolation that denies agents both GitHub credentials and the
    authority store;
-3. a trusted pre-genesis owner that publishes the runtime's exact raw GitHub
-   issue response into CAS (the current evidence API requires its subject to
-   pre-exist, and the orchestrator is prohibited from writing CAS directly);
-4. Slice 4 routing/cutover;
-5. a separately reviewed repair contract for arbitrary corruption of the new
+3. Slice 4 routing/cutover;
+4. a separately reviewed repair contract for arbitrary corruption of the new
    authority pointer; and
-6. migration and deferred replacement policy work.
+5. migration and deferred replacement policy work.
 
 `RUNTIME_PROVIDER` and `SANDBOX_PROVIDER` are deliberately unset in production.
 The integration tests inject deterministic seams to exercise the complete
@@ -55,10 +52,13 @@ There is no run-until-done loop or automatic retry.
 
 ## Fresh implementation path
 
-1. `init` re-observes the issue source, validates its externally seeded raw
-   object, derives the family identity, publishes issue/baseline/triage
-   evidence, creates `implementation-a`, initializes policy, and commits the
-   genesis state.
+1. `init` requires the typed publication from
+   [`workflow-issue-source.md`](workflow-issue-source.md), repeats its exact
+   base-pinned bootstrap and issue observation, validates unchanged
+   bootstrap/config/tool/source identity and exact CAS bytes, derives the family
+   identity, publishes issue/baseline/triage evidence, creates `implementation-a`,
+   initializes policy, and commits the genesis state. An edit after intake requires
+   a fresh explicit intake; no source is silently substituted.
 2. The planner's stdout is parsed as a strict candidate, converted to a
    plan snapshot, and passed to `workflow_plan_revision_policy`.
 3. A Reviewer produces a separately validated technical review. A

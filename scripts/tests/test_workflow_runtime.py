@@ -2107,6 +2107,31 @@ class WorkflowRuntimeTest(unittest.TestCase):
         self.assertEqual(("denied", "issue-frozen"), (raised.exception.status, raised.exception.code))
         supervise.assert_not_called()
 
+    def test_issue_observation_rejects_api_identity_pull_requests_and_duplicate_labels(self):
+        adapter = self.fixture.bootstrap()
+        original = json.loads((FIXTURES / "runtime-github.json").read_text())["issue"]
+        cases = (
+            ({**original, "url": "https://api.github.com/repos/other/repo/issues/152"}, "issue-identity-mismatch"),
+            ({**original, "pull_request": {"url": "https://api.github.com/pulls/152"}}, "issue-identity-mismatch"),
+            ({**original, "number": 152.0}, "issue-identity-mismatch"),
+            ({**original, "number": True}, "issue-identity-mismatch"),
+            ({**original, "labels": [{"name": "enhancement"}, {"name": "enhancement"}]}, "invalid-issue-label"),
+            ({**original, "labels": [{"name": {"nested": True}}]}, "invalid-issue-label"),
+        )
+        for value, code in cases:
+            with self.subTest(code=code), mock.patch.object(
+                runtime.workflow_supervisor,
+                "supervise",
+                side_effect=lambda command, **options: (
+                    process_result(command, stdout=json.dumps(value).encode())
+                    if list(command)[1:] == ["api", "repos/NathanZK/ChessEcho/issues/152"]
+                    else self.fixture.supervise(command, **options)
+                ),
+            ):
+                with self.assertRaises(runtime.RuntimeFailure) as raised:
+                    adapter.observe_issue(152)
+            self.assertEqual(code, raised.exception.code)
+
     def test_read_only_github_observation_retries_once_but_authorization_does_not(self):
         adapter = self.fixture.bootstrap()
         for guards, expected_calls, expected_code in (

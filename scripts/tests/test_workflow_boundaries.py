@@ -5,6 +5,7 @@ import importlib
 import pathlib
 import subprocess
 import sys
+import tempfile
 import unittest
 
 
@@ -15,6 +16,7 @@ PRODUCTION_MODULES = (
     "workflow_authority",
     "workflow_evidence",
     "workflow_inspector",
+    "workflow_issue_source",
     "workflow_kernel",
     "workflow_migration",
     "workflow_orchestrator",
@@ -30,6 +32,7 @@ ORCHESTRATOR_IMPORTS = {
     "workflow_authority",
     "workflow_evidence",
     "workflow_inspector",
+    "workflow_issue_source",
     "workflow_policy",
     "workflow_plan_revision_policy",
     "workflow_runtime",
@@ -130,6 +133,10 @@ class WorkflowBoundaryTest(unittest.TestCase):
         )
         self.assertEqual(set(), project_imports("workflow_kernel"))
         self.assertEqual(set(), project_imports("workflow_inspector"))
+        self.assertEqual(
+            {"workflow_cas", "workflow_inspector", "workflow_runtime"},
+            project_imports("workflow_issue_source"),
+        )
         self.assertEqual(
             {
                 "workflow_cas",
@@ -303,6 +310,35 @@ class WorkflowBoundaryTest(unittest.TestCase):
                 )
                 self.assertEqual(0, result.returncode, result.stderr)
 
+    def test_issue_source_cli_supports_script_and_package_execution(self):
+        repository = SCRIPTS.parent
+        path = SCRIPTS / "workflow_issue_source.py"
+        self.assertLessEqual(len(path.read_text().splitlines()), 500)
+        for command in (
+            [sys.executable, str(path), "--help"],
+            [sys.executable, "-m", "scripts.workflow_issue_source", "--help"],
+        ):
+            with self.subTest(command=command):
+                result = subprocess.run(
+                    command, cwd=str(repository), text=True, capture_output=True
+                )
+                self.assertEqual(0, result.returncode, result.stderr)
+
+    def test_issue_source_package_execution_rejects_ambient_module_shadowing(self):
+        repository = SCRIPTS.parent
+        with tempfile.TemporaryDirectory() as directory:
+            pathlib.Path(directory, "workflow_cas.py").write_text(
+                "raise RuntimeError('ambient module executed')\n"
+            )
+            result = subprocess.run(
+                [sys.executable, "-m", "scripts.workflow_issue_source", "--help"],
+                cwd=directory,
+                env={"PYTHONPATH": str(repository)},
+                text=True,
+                capture_output=True,
+            )
+        self.assertEqual(0, result.returncode, result.stderr)
+
     def test_runtime_config_contains_no_test_sandbox_provider(self):
         config = (
             SCRIPTS.parent / ".github" / "agent-workflow.json"
@@ -464,7 +500,7 @@ class WorkflowBoundaryTest(unittest.TestCase):
             and isinstance(node.func.value, ast.Name)
             and node.func.value.id in {
                 "authority", "evidence", "inspector", "plan_policy", "policy",
-                "runtime", "supervision", "work_type_policy",
+                "issue_source", "runtime", "supervision", "work_type_policy",
             }
             and node.func.attr.startswith("_")
         }

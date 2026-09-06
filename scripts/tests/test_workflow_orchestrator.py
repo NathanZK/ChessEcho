@@ -15,6 +15,7 @@ from unittest import mock
 
 from scripts import workflow_authority as authority
 from scripts import workflow_evidence as evidence
+from scripts import workflow_issue_source as issue_source
 from scripts import workflow_inspector as inspector
 from scripts import workflow_orchestrator as orchestrator
 from scripts import workflow_plan_revision_policy as plan_policy
@@ -169,6 +170,7 @@ class OrchestratorFixture:
                 "repos/%s/commits/main" % SLUG: {"sha": self.head},
                 "repos/%s/issues/%d" % (SLUG, ISSUE): {
                     "number": ISSUE, "title": "Add a workflow feature",
+                    "url": "https://api.github.com/repos/%s/issues/%d" % (SLUG, ISSUE),
                     "html_url": "https://github.com/%s/issues/%d" % (SLUG, ISSUE),
                     "body": "Implement the feature.", "labels": [{"name": "enhancement"}],
                     "updated_at": "2026-09-05T00:00:00Z",
@@ -192,24 +194,16 @@ class OrchestratorFixture:
             self.root, "orchestrator-e2e-sandbox", self.agent_sha256)
         return adapter
 
-    def seed_response_source(self):
-        raw = json.dumps(
-            json.loads((self.bin / "gh-responses.json").read_text())["api"][
-                "repos/%s/issues/%d" % (SLUG, ISSUE)
-            ],
-            separators=(",", ":"),
-        ).encode()
-        reference = {"kind": "issue-snapshot", "sha256": inspector.sha256(raw), "size": len(raw)}
-        from scripts import workflow_cas
-        workflow_cas.publish_immutable(
-            inspector.object_path(self.store, reference["sha256"]), raw,
-            lambda _status, code, _message: (_ for _ in ()).throw(AssertionError(code)),
-            temporary_label="e2e",
+    def publish_response_source(self):
+        self.issue_source = issue_source.publish(
+            self.root, SLUG, ISSUE, str(self.git), str(self.gh), TOKEN
         )
+        return self.issue_source
 
     def request(self):
         return {
             "repository": SLUG, "git_executable": str(self.git), "gh_executable": str(self.gh),
+            "trusted_issue_source": copy.deepcopy(getattr(self, "issue_source", None)),
             "classification": {
                 "work_type": "implementation", "basis": "The issue needs code.",
                 "deliverable": {"storage": "git", "kind": "implementation-change", "locations": ["scripts"]},
@@ -277,7 +271,7 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         self.fixture = OrchestratorFixture()
         self.addCleanup(self.fixture.close)
         self.adapter = self.fixture.install_provider(self)
-        self.fixture.seed_response_source()
+        self.fixture.publish_response_source()
         orchestrator.init(self.fixture.root, ISSUE, request=self.fixture.request())
 
     def _agent_pair(self):
@@ -1355,7 +1349,7 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         other = OrchestratorFixture()
         self.addCleanup(other.close)
         other.install_provider(self)
-        other.seed_response_source()
+        other.publish_response_source()
         orchestrator.init(other.root, ISSUE, request=other.request())
         self.fixture = other
         self._to_plan_gate()
@@ -1392,7 +1386,7 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         other = OrchestratorFixture()
         self.addCleanup(other.close)
         other.install_provider(self)
-        other.seed_response_source()
+        other.publish_response_source()
         orchestrator.init(other.root, ISSUE, request=other.request())
         self.fixture = other
         self._to_validation()
@@ -1585,7 +1579,7 @@ class OrchestratorGenesisAndCliTest(unittest.TestCase):
         fixture = OrchestratorFixture()
         self.addCleanup(fixture.close)
         fixture.install_provider(self)
-        fixture.seed_response_source()
+        fixture.publish_response_source()
         initialized = orchestrator.init(fixture.root, ISSUE, request=fixture.request())
         self.assertEqual(("resolved", "initialized"), tuple(initialized["outcome"].values()))
         self.assertEqual("PLANNING", orchestrator.plan_next(fixture.root, ISSUE)["phase"])
@@ -1596,11 +1590,37 @@ class OrchestratorGenesisAndCliTest(unittest.TestCase):
             result = subprocess.run(command, cwd=REPOSITORY, text=True, capture_output=True)
             self.assertEqual(0, result.returncode, result.stderr)
 
+    def test_initialization_requires_published_exact_source_and_rejects_edit(self):
+        fixture = OrchestratorFixture()
+        self.addCleanup(fixture.close)
+        fixture.install_provider(self)
+        with self.assertRaises(orchestrator.OrchestratorFailure) as missing:
+            orchestrator.init(fixture.root, ISSUE, request=fixture.request())
+        self.assertEqual("trusted-issue-source-required", missing.exception.code)
+
+        publication = fixture.publish_response_source()
+        path = inspector.object_path(fixture.store, publication["source"]["sha256"])
+        path.unlink()
+        with self.assertRaises(orchestrator.OrchestratorFailure) as absent:
+            orchestrator.init(fixture.root, ISSUE, request=fixture.request())
+        self.assertEqual("object-missing", absent.exception.code)
+
+        fixture.publish_response_source()
+        responses = json.loads((fixture.bin / "gh-responses.json").read_text())
+        responses["api"]["repos/%s/issues/%d" % (SLUG, ISSUE)]["body"] = "edited"
+        (fixture.bin / "gh-responses.json").write_text(json.dumps(responses, sort_keys=True))
+        with self.assertRaises(orchestrator.OrchestratorFailure) as edited:
+            orchestrator.init(fixture.root, ISSUE, request=fixture.request())
+        self.assertEqual("issue-source-edited", edited.exception.code)
+        with self.assertRaises(authority.AuthorityFailure) as authority_missing:
+            authority.status(fixture.root, ISSUE)
+        self.assertEqual("orchestration-pointer-missing", authority_missing.exception.code)
+
     def test_inactive_and_missing_status_are_typed(self):
         fixture = OrchestratorFixture(mode="inactive")
         self.addCleanup(fixture.close)
         fixture.install_provider(self)
-        fixture.seed_response_source()
+        fixture.publish_response_source()
         with self.assertRaises(orchestrator.OrchestratorFailure) as inactive:
             orchestrator.init(fixture.root, ISSUE, request=fixture.request())
         self.assertEqual("orchestrator-inactive", inactive.exception.code)

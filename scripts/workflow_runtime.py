@@ -600,11 +600,15 @@ class Runtime:
         before = self._repository_guard()
         raw = self._github(['api', 'repos/%s/issues/%d' % (self.repository, issue)])
         value = _parse(raw, 'github-issue')
-        if value.get('number') != issue or value.get('html_url') != 'https://github.com/%s/issues/%d' % (self.repository, issue):
+        if type(value.get('number')) is not int or value.get('number') != issue or value.get('url') != 'https://api.github.com/repos/%s/issues/%d' % (self.repository, issue) or value.get('html_url') != 'https://github.com/%s/issues/%d' % (self.repository, issue) or 'pull_request' in value:
             _fail('stale', 'issue-identity-mismatch', 'GitHub issue identity differs from request')
-        labels = sorted({item.get('name') for item in value.get('labels', []) if isinstance(item, dict)})
-        if any((not isinstance(item, str) or not item for item in labels)):
+        raw_labels = value.get('labels')
+        if not isinstance(raw_labels, list):
             _fail('corrupt', 'invalid-issue-label', 'GitHub issue labels are invalid')
+        labels = [item.get('name') for item in raw_labels if isinstance(item, dict)]
+        if len(labels) != len(raw_labels) or any((not isinstance(item, str) or not item for item in labels)) or len(labels) != len(set(labels)):
+            _fail('corrupt', 'invalid-issue-label', 'GitHub issue labels are invalid')
+        labels.sort()
         source = {'kind': 'issue-snapshot', 'sha256': workflow_inspector.sha256(raw), 'size': len(raw)}
         document = {'format': ISSUE_SNAPSHOT_FORMAT, 'repository': self.repository, 'issue': issue, 'title': _text(value.get('title'), 'issue-title', maximum=1024), 'url': value['html_url'], 'body': _text(value.get('body') or '', 'issue-body', empty=True), 'labels': labels, 'source': source, 'captured_at': _timestamp(observed_at, 'captured-at')}
         document = _with_digest(document, 'snapshot_sha256')
