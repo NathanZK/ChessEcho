@@ -144,66 +144,17 @@ def _publisher_identity():
 
 
 def _bootstrap(value, repository):
-    _exact(
-        value,
-        {
-            "format",
-            "repository",
-            "initial_head",
-            "remote_tip",
-            "target_base",
-            "config",
-            "executables",
-            "validation_executables",
-            "profiles",
-            "mode",
-            "bootstrap_sha256",
-        },
-        "runtime-bootstrap",
-    )
+    try:
+        validated = runtime.validate_bootstrap_document(value)
+    except runtime.RuntimeFailure as error:
+        _fail(error.status, error.code, error.message, error.subject)
     _require(
-        value["format"] == runtime.BOOTSTRAP_FORMAT
-        and value["repository"] == repository,
+        validated["repository"] == repository,
         "stale",
         "runtime-bootstrap-identity",
         "Runtime bootstrap identity differs from the intake request",
     )
-    unsigned = copy.deepcopy(value)
-    digest = unsigned.pop("bootstrap_sha256")
-    _require(
-        isinstance(digest, str)
-        and SHA256_RE.fullmatch(digest) is not None
-        and inspector.sha256(_canonical(unsigned)) == digest,
-        "corrupt",
-        "runtime-bootstrap-digest",
-        "Runtime bootstrap digest is invalid",
-    )
-    _exact(value["config"], {"path", "blob_oid", "content_sha256", "size"}, "bootstrap-config")
-    _require(
-        value["config"]["path"] == ".github/agent-workflow.json"
-        and isinstance(value["config"]["blob_oid"], str)
-        and OID_RE.fullmatch(value["config"]["blob_oid"]) is not None
-        and isinstance(value["config"]["content_sha256"], str)
-        and SHA256_RE.fullmatch(value["config"]["content_sha256"]) is not None
-        and type(value["config"]["size"]) is int
-        and 0 < value["config"]["size"] <= runtime.MAX_CONFIG_BYTES,
-        "corrupt",
-        "runtime-bootstrap-config",
-        "Runtime bootstrap config identity is invalid",
-    )
-    _exact(value["executables"], {"git", "github"}, "bootstrap-executables")
-    for name, executable in value["executables"].items():
-        _exact(executable, {"path", "sha256"}, "%s-executable" % name)
-        _require(
-            isinstance(executable["path"], str)
-            and pathlib.Path(executable["path"]).is_absolute()
-            and isinstance(executable["sha256"], str)
-            and SHA256_RE.fullmatch(executable["sha256"]) is not None,
-            "corrupt",
-            "runtime-bootstrap-executable",
-            "Runtime bootstrap executable identity is invalid",
-        )
-    return copy.deepcopy(value)
+    return validated
 
 
 def _observation(repository, issue, snapshot, raw):

@@ -24,9 +24,10 @@ only by:
    contract for arbitrary corruption of the new authority pointer; and
 5. migration and deferred replacement policy work.
 
-`RUNTIME_PROVIDER` and `SANDBOX_PROVIDER` are deliberately unset in production.
-The integration tests inject deterministic seams to exercise the complete
-composition without claiming that those fixtures provide production containment.
+`RUNTIME_PROVIDER`, `SANDBOX_PROVIDER`, and `PENDING_RESULT_PROVIDER` are
+deliberately unset in production. The integration tests inject deterministic
+seams to exercise the complete composition without claiming that those fixtures
+provide production containment or durable production result discovery.
 
 ## Commands
 
@@ -56,7 +57,8 @@ There is no run-until-done loop or automatic retry.
    [`workflow-issue-source.md`](workflow-issue-source.md), repeats its exact
    base-pinned bootstrap and issue observation, validates unchanged
    bootstrap/config/tool/source identity and exact CAS bytes, derives the family
-   identity, publishes issue/baseline/triage evidence, creates `implementation-a`,
+   identity, publishes issue/baseline/triage plus a credential-free runtime
+   reconstruction pin, creates `implementation-a`,
    initializes policy, and commits the genesis state. An edit after intake requires
    a fresh explicit intake; no source is silently substituted.
 2. The planner's stdout is parsed as a strict candidate, converted to a
@@ -162,6 +164,23 @@ mutation and can never schedule a second create.
 
 Restart reconstruction follows only the selected pointer and immutable
 evidence chain; no PID file, sidecar state, or hidden process table is used.
+Only initialization may use strict live bootstrap. Later commands give the
+reviewed runtime host the exact selected runtime pin, baseline, triage, current
+authority, and phase repository evidence. The returned adapter must attest to
+that byte-identical reconstruction request, and authority is checked again
+after reconstruction.
+
+`status` and `plan-next` expose a
+`chess-echo-pending-result-query-v1` when an executable request is pending. A
+reviewed result-discovery host may answer only that exact query with bounded
+published evidence-binding candidates. Zero candidates is `missing`, multiple
+candidates is `ambiguous`, and a malformed, wrong-kind, wrong-subject,
+wrong-attempt, wrong-family, or stale-authority candidate fails closed. The
+orchestrator verifies the selected object through the existing evidence
+boundary and can deterministically republish its embedded repository-after
+observation before finalization. Discovery never scans CAS, runs the external
+operation, retries a GitHub mutation, or assumes that a child process or escaped
+descendant stopped after caller death.
 
 ## Evidence and trust boundaries
 

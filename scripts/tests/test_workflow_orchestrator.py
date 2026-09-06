@@ -73,6 +73,7 @@ class OrchestratorFixture:
         self._git("update-ref", "refs/remotes/origin/main", self.head)
         self.store = inspector.resolve_store(self.root)
         self.store.store_dir.mkdir(parents=True, exist_ok=True)
+        self.runtime_instances = []
         self._write_gh()
 
     def _skip(self, name):
@@ -166,7 +167,7 @@ class OrchestratorFixture:
     def _write_gh(self, extra=None):
         data = {
             "api": {
-                "repos/%s" % SLUG: {"default_branch": "main"},
+                "repos/%s" % SLUG: {"default_branch": "main", "full_name": SLUG},
                 "repos/%s/commits/main" % SLUG: {"sha": self.head},
                 "repos/%s/issues/%d" % (SLUG, ISSUE): {
                     "number": ISSUE, "title": "Add a workflow feature",
@@ -185,11 +186,27 @@ class OrchestratorFixture:
         return runtime.bootstrap(self.root, SLUG, str(self.git), str(self.gh), TOKEN)
 
     def install_provider(self, test):
-        adapter = self.bootstrap()
-        old_runtime, old_sandbox = orchestrator.RUNTIME_PROVIDER, orchestrator.SANDBOX_PROVIDER
+        def provide(_root, _issue, request):
+            adapter = (
+                runtime.reconstruct(self.root, request, TOKEN)
+                if isinstance(request, dict)
+                and request.get("format") == runtime.RECONSTRUCTION_REQUEST_FORMAT
+                else self.bootstrap()
+            )
+            self.runtime_instances.append(adapter)
+            return adapter
+
+        adapter = provide(self.root, ISSUE, self.request())
+        old_runtime, old_sandbox, old_result = (
+            orchestrator.RUNTIME_PROVIDER,
+            orchestrator.SANDBOX_PROVIDER,
+            orchestrator.PENDING_RESULT_PROVIDER,
+        )
         test.addCleanup(setattr, orchestrator, "RUNTIME_PROVIDER", old_runtime)
         test.addCleanup(setattr, orchestrator, "SANDBOX_PROVIDER", old_sandbox)
-        orchestrator.RUNTIME_PROVIDER = lambda root, issue, request: adapter
+        test.addCleanup(setattr, orchestrator, "PENDING_RESULT_PROVIDER", old_result)
+        orchestrator.RUNTIME_PROVIDER = provide
+        orchestrator.PENDING_RESULT_PROVIDER = None
         orchestrator.SANDBOX_PROVIDER = lambda root, issue, role: TestSandboxProvider(
             self.root, "orchestrator-e2e-sandbox", self.agent_sha256)
         return adapter
@@ -951,15 +968,15 @@ class OrchestratorLifecycleTest(unittest.TestCase):
             self._agent_pair()
         self._agent_pair()
         self.fixture.approve(7003)
+        instance = orchestrator.Orchestrator(self.fixture.root, ISSUE)
+        inspection = instance._status()
+        state = instance._selected_state(inspection)
 
         (self.fixture.root / "scripts" / "post-final-change.py").write_text(
             "CHANGED = True\n"
         )
         self.fixture._git("add", "scripts/post-final-change.py")
         self.fixture._git("commit", "-m", "change after final approval")
-        instance = orchestrator.Orchestrator(self.fixture.root, ISSUE)
-        inspection = instance._status()
-        state = instance._selected_state(inspection)
         observation = self.adapter.observe_diff(
             ISSUE, state["family_run_id"], state["triage_binding"]
         )
@@ -1010,7 +1027,9 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         self._to_pr_preparation()
         self._agent_pair()
         self._agent_pair()
-        state = self.fixture.state()
+        instance = orchestrator.Orchestrator(self.fixture.root, ISSUE)
+        inspection = instance._status()
+        state = instance._selected_state(inspection)
         publication = self.fixture.read(
             next(
                 row["binding"]
@@ -1032,11 +1051,22 @@ class OrchestratorLifecycleTest(unittest.TestCase):
             return result
 
         with mock.patch.object(runtime.Runtime, "observe_pull_request", new=drift):
-            instance = orchestrator.Orchestrator(self.fixture.root, ISSUE)
-            instance.family = state["family_run_id"]
             with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
                 instance._fresh_pr(state, challenge["authority_binding"])
         self.assertEqual("final-repository-mismatch", raised.exception.code)
+
+    def test_pr_read_handoff_cannot_cross_repository_drift(self):
+        self._to_pr_preparation()
+        self._agent_pair()
+        candidate = self.fixture.step()
+        (self.fixture.root / "scripts" / "pr-read-drift.py").write_text("DIRTY = True\n")
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            self.fixture.step(request=candidate["handoff"])
+        self.assertEqual("runtime-worktree-untrusted", raised.exception.code)
+        self.assertEqual(
+            candidate["pointer_sha256"],
+            authority.status(self.fixture.root, ISSUE)["pointer_sha256"],
+        )
 
     def test_automatic_configuration_does_not_bypass_recovery(self):
         requested = {gate: "automatic" for gate in ("final", "plan", "pr-publication", "tests")}
@@ -1243,13 +1273,10 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         (self.fixture.root / "scripts" / "after-plan.py").write_text("DRIFT = True\n")
         self.fixture._git("add", "scripts/after-plan.py")
         self.fixture._git("commit", "-m", "drift after planner")
-        finalized = self.fixture.step(request=candidate["handoff"])
-        self.assertEqual("PLAN_REVIEW", finalized["phase"])
-        tip = self.fixture.tip()
         with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
-            self.fixture.step()
-        self.assertEqual("repository-continuity-stale", raised.exception.code)
-        self.assertEqual(tip, self.fixture.tip())
+            self.fixture.step(request=candidate["handoff"])
+        self.assertEqual("runtime-phase-repository-changed", raised.exception.code)
+        self.assertEqual(candidate["pointer_sha256"], self.fixture.tip())
 
     def test_postapproval_plan_revision_state_pauses_without_reusing_approval(self):
         self._to_plan_gate()
@@ -1294,9 +1321,16 @@ class OrchestratorLifecycleTest(unittest.TestCase):
     def test_validation_cannot_certify_a_dirty_repository(self):
         self._to_validation()
         self.fixture.validation_drifts()
-        paused = self._agent_pair()
-        self.assertEqual(("paused", "unsupported-policy-transition"), tuple(paused["outcome"].values()))
-        self.assertEqual("PAUSED", self.fixture.state()["phase"])
+        candidate = self.fixture.step()
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            self.fixture.step(request=candidate["handoff"], tip=candidate["pointer_sha256"])
+        self.assertEqual(
+            ("stale", "runtime-worktree-untrusted"),
+            (raised.exception.status, raised.exception.code),
+        )
+        current = authority.status(self.fixture.root, ISSUE)
+        self.assertEqual(candidate["pointer_sha256"], current["pointer_sha256"])
+        self.assertEqual("VALIDATION", self.fixture.read(current["authority"])["phase"])
 
     def test_implementation_preserves_approved_test_content(self):
         self._to_test_gate()
@@ -1319,32 +1353,39 @@ class OrchestratorLifecycleTest(unittest.TestCase):
     def test_implementation_cannot_start_from_postapproval_repository_drift(self):
         self._to_test_gate()
         self.fixture.approve(7403)
+        tip = self.fixture.tip()
         (self.fixture.root / "scripts" / "preexisting.py").write_text("UNAPPROVED = True\n")
         self.fixture._git("add", "scripts/preexisting.py")
         self.fixture._git("commit", "--amend", "--no-edit")
-        tip = self.fixture.tip()
         with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
-            self.fixture.step()
-        self.assertEqual("repository-continuity-stale", raised.exception.code)
-        self.assertEqual(tip, self.fixture.tip())
-        self.assertEqual("IMPLEMENTATION", self.fixture.state()["phase"])
+            self.fixture.step(tip=tip)
+        self.assertEqual("runtime-phase-repository-changed", raised.exception.code)
+        current = authority.status(self.fixture.root, ISSUE)
+        self.assertEqual(tip, current["pointer_sha256"])
+        self.assertEqual("IMPLEMENTATION", self.fixture.read(current["authority"])["phase"])
 
     def test_validation_refuses_a_new_head_after_implementation_submission(self):
         self._to_validation()
+        tip = self.fixture.tip()
         (self.fixture.root / "scripts" / "late.py").write_text("LATE = True\n")
         self.fixture._git("add", "scripts/late.py")
         self.fixture._git("commit", "--amend", "--no-edit")
-        tip = self.fixture.tip()
         with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
-            self.fixture.step()
-        self.assertEqual(("stale", "repository-continuity-stale"), (raised.exception.status, raised.exception.code))
-        self.assertEqual(tip, self.fixture.tip())
-        self.assertEqual("VALIDATION", self.fixture.state()["phase"])
+            self.fixture.step(tip=tip)
+        self.assertEqual(
+            ("stale", "runtime-phase-repository-changed"),
+            (raised.exception.status, raised.exception.code),
+        )
+        current = authority.status(self.fixture.root, ISSUE)
+        self.assertEqual(tip, current["pointer_sha256"])
+        self.assertEqual("VALIDATION", self.fixture.read(current["authority"])["phase"])
 
     def test_read_only_agents_and_test_author_fail_closed_on_repository_drift(self):
         self.fixture.mode("read-drift")
-        paused = self._agent_pair()
-        self.assertEqual(("paused", "read-only-agent-repository-drift"), tuple(paused["outcome"].values()))
+        candidate = self.fixture.step()
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            self.fixture.step(request=candidate["handoff"], tip=candidate["pointer_sha256"])
+        self.assertEqual("runtime-worktree-untrusted", raised.exception.code)
 
         other = OrchestratorFixture()
         self.addCleanup(other.close)
@@ -1355,8 +1396,10 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         self._to_plan_gate()
         self.fixture.approve(7401)
         self.fixture.mode("test-drift")
-        paused = self._agent_pair()
-        self.assertEqual(("paused", "test-scope-drift"), tuple(paused["outcome"].values()))
+        candidate = self.fixture.step()
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            self.fixture.step(request=candidate["handoff"], tip=candidate["pointer_sha256"])
+        self.assertEqual("runtime-worktree-untrusted", raised.exception.code)
 
     def test_uncertain_pr_write_is_reconciled_without_a_second_create(self):
         self.fixture.set_uncertain_create()
@@ -1523,6 +1566,170 @@ class OrchestratorLifecycleTest(unittest.TestCase):
             finalized = self.fixture.step(request=candidate["handoff"])
         self.assertEqual("PLAN_REVIEW", finalized["phase"])
 
+    def test_fresh_adapters_reconstruct_across_test_and_implementation_commits(self):
+        result = self._finish()
+        self.assertEqual("COMPLETED", result["phase"])
+        reconstructed = [
+            adapter.reconstruction_document()
+            for adapter in self.fixture.runtime_instances
+            if adapter.reconstruction_document() is not None
+        ]
+        self.assertGreater(len(reconstructed), 10)
+        self.assertEqual(
+            len(self.fixture.runtime_instances),
+            len({id(adapter) for adapter in self.fixture.runtime_instances}),
+        )
+        divergent_heads = {
+            item["repository_expectation"]["observation"]["head"]["commit"]
+            for item in reconstructed
+            if item["repository_expectation"]["mode"] == "exact"
+            and item["repository_expectation"]["observation"]["head"]["commit"]
+            != self.fixture.head
+        }
+        self.assertGreaterEqual(len(divergent_heads), 2)
+        self.assertTrue(
+            all(
+                item["pin"]["bootstrap"]["target_base"]["commit"] == self.fixture.head
+                for item in reconstructed
+            )
+        )
+
+    def test_history_reuses_one_reconstruction_per_command(self):
+        self._to_pr_preparation()
+        with mock.patch.object(runtime, "reconstruct", wraps=runtime.reconstruct) as reconstruct:
+            before = len(self.fixture.calls())
+            orchestrator.status(self.fixture.root, ISSUE)
+            middle = len(self.fixture.calls())
+            orchestrator.status(self.fixture.root, ISSUE)
+        self.assertEqual(2, reconstruct.call_count)
+        calls = self.fixture.calls()
+        for start, end in ((before, middle), (middle, len(calls))):
+            authorization_reads = [
+                call for call in calls[start:end]
+                if "/issues/comments/" in " ".join(call)
+            ]
+            self.assertGreaterEqual(len(authorization_reads), 4)
+
+    def test_claim_execution_and_finalization_reconstruct_separately(self):
+        before = len(self.fixture.runtime_instances)
+        candidate = self.fixture.step()
+        after_claim = len(self.fixture.runtime_instances)
+        self.fixture.step(request=candidate["handoff"])
+        after_finalize = len(self.fixture.runtime_instances)
+        self.assertEqual(2, after_claim - before)
+        self.assertEqual(1, after_finalize - after_claim)
+        selected = self.fixture.runtime_instances[before:after_finalize]
+        self.assertEqual(len(selected), len({id(adapter) for adapter in selected}))
+
+    def test_approval_reconstructs_after_history_validation(self):
+        self._to_test_gate()
+        challenge = self.fixture.challenge()
+        self.fixture.comment(challenge["confirmation"], 7002)
+        tip = self.fixture.tip()
+        before = len(self.fixture.runtime_instances)
+        orchestrator.approve(
+            self.fixture.root, ISSUE, expected_tip=tip,
+            authorization={"kind": "issue-comment", "id": 7002},
+        )
+        selected = self.fixture.runtime_instances[before:]
+        self.assertEqual(2, len(selected))
+        self.assertEqual(2, len({id(adapter) for adapter in selected}))
+
+    def test_published_pending_result_is_discovered_without_rerunning(self):
+        candidate = self.fixture.step()
+        query = orchestrator.plan_next(self.fixture.root, ISSUE)["pending_result_query"]
+        binding = candidate["handoff"]["result_binding"]
+        orchestrator.PENDING_RESULT_PROVIDER = lambda _root, _issue, supplied: {
+            "format": "chess-echo-pending-result-candidates-v1",
+            "query_sha256": supplied["query_sha256"],
+            "candidates": [{"kind": "execution-result", "binding": binding}],
+        }
+        with mock.patch.object(
+            runtime.Runtime, "execute", side_effect=AssertionError("must not rerun")
+        ):
+            finalized = self.fixture.step()
+        self.assertEqual("PLAN_REVIEW", finalized["phase"])
+        self.assertEqual(query["request_binding"], candidate["handoff"]["request_binding"])
+
+    def test_pending_result_discovery_rejects_zero_multiple_malformed_and_wrong_results(self):
+        candidate = self.fixture.step()
+        valid = candidate["handoff"]["result_binding"]
+
+        def response(candidates, query_sha256=None):
+            return lambda _root, _issue, query: {
+                "format": "chess-echo-pending-result-candidates-v1",
+                "query_sha256": query["query_sha256"] if query_sha256 is None else query_sha256,
+                "candidates": candidates,
+            }
+
+        cases = [
+            ([], "pending-result-not-found"),
+            (
+                [
+                    {"kind": "execution-result", "binding": valid},
+                    {"kind": "execution-result", "binding": valid},
+                ],
+                "pending-result-ambiguous",
+            ),
+            ([{"kind": "wrong", "binding": valid}], "pending-result-candidate-invalid"),
+            ([{"kind": "execution-result", "binding": {"sha256": "bad"}}], "pending-result-candidate-invalid"),
+        ]
+        for candidates, code in cases:
+            with self.subTest(code=code):
+                orchestrator.PENDING_RESULT_PROVIDER = response(candidates)
+                with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+                    self.fixture.step()
+                self.assertEqual(code, raised.exception.code)
+
+        runner = orchestrator.Orchestrator(self.fixture.root, ISSUE)
+        inspection = runner._status()
+        state = runner._selected_state(inspection)
+        result = self.fixture.read(valid)
+        wrong_attempt = copy.deepcopy(result)
+        wrong_attempt["attempt_id"] = "f" * 64
+        unsigned = copy.deepcopy(wrong_attempt)
+        unsigned.pop("result_sha256")
+        wrong_attempt["result_sha256"] = inspector.sha256(_canonical(unsigned))
+        wrong_attempt_binding = runner._publish(
+            "execution-result",
+            "attempt-%s" % wrong_attempt["attempt_id"],
+            state["pending"]["request_binding"],
+            [("workflow-orchestration/execution-result.json", wrong_attempt)],
+            state["generation"] + 1,
+        )
+        wrong_subject_binding = runner._publish(
+            "execution-result",
+            "attempt-%s" % result["attempt_id"],
+            state["triage_binding"],
+            [("workflow-orchestration/execution-result.json", result)],
+            state["generation"] + 1,
+        )
+        for binding in (wrong_attempt_binding, wrong_subject_binding):
+            orchestrator.PENDING_RESULT_PROVIDER = response(
+                [{"kind": "execution-result", "binding": binding}]
+            )
+            with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+                self.fixture.step()
+            self.assertEqual("execution-handoff-stale", raised.exception.code)
+
+        def stale(_root, _issue, query):
+            orchestrator.cancel(
+                self.fixture.root,
+                ISSUE,
+                expected_tip=self.fixture.tip(),
+                reason="discovery race",
+            )
+            return {
+                "format": "chess-echo-pending-result-candidates-v1",
+                "query_sha256": query["query_sha256"],
+                "candidates": [{"kind": "execution-result", "binding": valid}],
+            }
+
+        orchestrator.PENDING_RESULT_PROVIDER = stale
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            self.fixture.step()
+        self.assertEqual("attempt-result-stale", raised.exception.code)
+
     def test_idempotent_claim_loser_does_not_execute_the_process(self):
         real_commit = authority.commit
 
@@ -1575,6 +1782,24 @@ class OrchestratorLifecycleTest(unittest.TestCase):
 
 
 class OrchestratorGenesisAndCliTest(unittest.TestCase):
+    def test_failed_history_validation_clears_command_scoped_runtime(self):
+        instance = orchestrator.Orchestrator(REPOSITORY, ISSUE)
+        inspection = {
+            "authority": {"kind": "evidence-binding", "sha256": "0" * 64, "size": 1}
+        }
+        state = {"family_run_id": "issue-144-test-family"}
+        sentinel = object()
+
+        def fail(_state, _authority):
+            instance._history_adapter = sentinel
+            raise RuntimeError("invalid history")
+
+        with mock.patch.object(instance, "_state", return_value=state), \
+             mock.patch.object(instance, "_validate_supervision_history", side_effect=fail), \
+             self.assertRaisesRegex(RuntimeError, "invalid history"):
+            instance._selected_state(inspection)
+        self.assertIsNone(instance._history_adapter)
+
     def test_init_status_and_public_dispatch(self):
         fixture = OrchestratorFixture()
         self.addCleanup(fixture.close)

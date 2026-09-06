@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """One-step, inactive-by-default composition for the replacement workflow."""
-import argparse, base64, copy, fnmatch, json, pathlib, sys, threading
+import argparse, base64, copy, json, pathlib, sys, threading
 try:
     import workflow_authority as authority
     import workflow_evidence as evidence
     import workflow_inspector as inspector
-    import workflow_plan_revision_policy as plan_policy
-    import workflow_policy as policy
+    import workflow_orchestrator_resume as resume
+    import workflow_plan_revision_policy as plan_policy, workflow_policy as policy
     import workflow_runtime as runtime, workflow_issue_source as issue_source
     import workflow_supervision_policy as supervision
     import workflow_work_type_policy as work_type_policy
@@ -14,22 +14,27 @@ except ModuleNotFoundError:  # pragma: no cover - package execution
     from scripts import workflow_authority as authority
     from scripts import workflow_evidence as evidence
     from scripts import workflow_inspector as inspector
-    from scripts import workflow_plan_revision_policy as plan_policy
-    from scripts import workflow_policy as policy
+    from scripts import workflow_orchestrator_resume as resume
+    from scripts import workflow_plan_revision_policy as plan_policy, workflow_policy as policy
     from scripts import workflow_runtime as runtime, workflow_issue_source as issue_source
     from scripts import workflow_supervision_policy as supervision
     from scripts import workflow_work_type_policy as work_type_policy
-VERSION, STATE_FORMAT, NODE_FORMAT = "1.2.0", authority.STATE_FORMAT, "chess-echo-workflow-node-v1"; CHALLENGE_FORMAT, RECOVERY_CHALLENGE_FORMAT, AUTHORIZATION_FORMAT, CANDIDATE_FORMAT, RESULT_FORMAT, FAILURE_FORMAT = supervision.CHALLENGE_FORMAT, "chess-echo-human-challenge-v1", "chess-echo-human-authorization-v1", "chess-echo-orchestrator-agent-candidate-v1", "chess-echo-orchestration-orchestrator-result-v1", "chess-echo-orchestration-orchestrator-failure-v1"
-STATE_PATH, NODE_PATH, POLICY_PATH, SUPERVISION_PATH = "workflow-orchestration/state.json", "workflow-orchestration/node.json", "workflow-policy/state.json", supervision.POLICY_PATH
+VERSION, STATE_FORMAT, NODE_FORMAT = "1.3.0", authority.STATE_FORMAT, "chess-echo-workflow-node-v1"; CHALLENGE_FORMAT, RECOVERY_CHALLENGE_FORMAT, AUTHORIZATION_FORMAT, CANDIDATE_FORMAT, RESULT_FORMAT, FAILURE_FORMAT = supervision.CHALLENGE_FORMAT, "chess-echo-human-challenge-v1", "chess-echo-human-authorization-v1", "chess-echo-orchestrator-agent-candidate-v1", "chess-echo-orchestration-orchestrator-result-v1", "chess-echo-orchestration-orchestrator-failure-v1"
+STATE_PATH, NODE_PATH, POLICY_PATH, SUPERVISION_PATH, RUNTIME_PIN_PATH = "workflow-orchestration/state.json", "workflow-orchestration/node.json", "workflow-policy/state.json", supervision.POLICY_PATH, "workflow-orchestration/runtime-reconstruction.json"
 LIMIT = 2 * 1024 * 1024
 OUTCOMES = {"resolved": 0, "missing": 3, "unsupported": 4, "corrupt": 5, "ambiguous": 6, "stale": 7, "denied": 8, "busy": 9, "conflict": 10, "uncertain": 11, "paused": 12}
 AGENT_PHASES = {"PLANNING": ("planner", "write-plan"), "PLAN_REVIEW": ("reviewer", "review-plan"), "TEST_IMPLEMENTATION": ("implementer", "write-tests"), "TEST_REVIEW": ("reviewer", "review-tests"), "IMPLEMENTATION": ("implementer", "implement"), "FINAL_REVIEW": ("reviewer", "review-final")}
+RESUME_PHASES = ({"validation": "VALIDATION", "github-read": "PR_PREPARATION", "github-write": "PR_PREPARATION"}, {name: phase for phase, (_role, name) in AGENT_PHASES.items()})
 CLAIM_TYPES = {"PLANNING": "plan-request", "PLAN_REVIEW": "plan-review", "TEST_IMPLEMENTATION": "tests-request", "TEST_REVIEW": "tests-review", "IMPLEMENTATION": "implementation-request", "VALIDATION": "validation-request", "FINAL_REVIEW": "final-review", "PR_PREPARATION": "pr-prepare"}
+REQUIRED_NODES = {"TEST_IMPLEMENTATION": ("plan-approval",), "TEST_REVIEW": ("plan-approval", "test-manifest"), "IMPLEMENTATION": ("plan-approval", "test-approval", "test-manifest"), "VALIDATION": ("implementation-submission",), "FINAL_REVIEW": ("plan-approval", "test-approval", "implementation-submission", "validation"), "PR_PREPARATION": ("plan-approval", "test-approval", "implementation-submission", "validation", "final-review")}
+CANDIDATE_ARTIFACTS = {"TEST_IMPLEMENTATION": ("test-report", "workflow-orchestration/test-report.json"), "TEST_REVIEW": ("technical-test-review", "workflow-orchestration/test-review.json"), "IMPLEMENTATION": ("implementation-report", "workflow-orchestration/implementation-report.json"), "FINAL_REVIEW": ("final-review-candidate", "workflow-orchestration/final-review.json")}
 GATES = {"WAITING_FOR_PLAN_APPROVAL": "plan", "WAITING_FOR_TEST_APPROVAL": "tests", "WAITING_FOR_FINAL_APPROVAL": "final", "WAITING_FOR_PR_PUBLICATION_APPROVAL": "pr-publication"}
 GATE_NEXT = {"plan": "TEST_IMPLEMENTATION", "tests": "IMPLEMENTATION", "final": "PR_PREPARATION", "pr-publication": "PR_PREPARATION"}; PHASE_ORIGINS = {"PLANNING": {"PLANNING", "PLAN_REVIEW", "TEST_IMPLEMENTATION", "PAUSED"}, "PLAN_REVIEW": {"PLANNING", "PLAN_REVIEW", "PAUSED"}, "WAITING_FOR_PLAN_APPROVAL": {"PLAN_REVIEW"}, "TEST_IMPLEMENTATION": {"WAITING_FOR_PLAN_APPROVAL", "TEST_IMPLEMENTATION", "PAUSED"}, "TEST_REVIEW": {"TEST_IMPLEMENTATION", "TEST_REVIEW", "PAUSED"}, "WAITING_FOR_TEST_APPROVAL": {"TEST_REVIEW"}, "IMPLEMENTATION": {"WAITING_FOR_TEST_APPROVAL", "IMPLEMENTATION", "PAUSED"}, "VALIDATION": {"IMPLEMENTATION", "VALIDATION", "PAUSED"}, "FINAL_REVIEW": {"VALIDATION", "FINAL_REVIEW", "PAUSED"}, "WAITING_FOR_FINAL_APPROVAL": {"FINAL_REVIEW"}, "PR_PREPARATION": {"WAITING_FOR_FINAL_APPROVAL", "PR_PREPARATION", "WAITING_FOR_PR_PUBLICATION_APPROVAL", "PAUSED"}, "WAITING_FOR_PR_PUBLICATION_APPROVAL": {"PR_PREPARATION"}, "COMPLETED": {"PR_PREPARATION"}}
 FROZEN_ISSUES = frozenset({115})
 RUNTIME_PROVIDER = None
 SANDBOX_PROVIDER = None
+PENDING_RESULT_PROVIDER = None
+_UNSET = object()
 class OrchestratorFailure(Exception):
     def __init__(self, status, code, message, subject=None):
         super().__init__(message); self.status, self.code, self.message, self.subject = status, code, message, subject
@@ -47,7 +52,7 @@ def _with_digest(value, field):
 def _translate(action, label):
     try: return action()
     except OrchestratorFailure: raise
-    except (authority.AuthorityFailure, evidence.EvidenceFailure, inspector.InspectionFailure, issue_source.IssueSourceFailure, plan_policy.PlanRevisionPolicyFailure, policy.PolicyFailure, runtime.RuntimeFailure, supervision.SupervisionPolicyFailure, work_type_policy.WorkTypePolicyFailure) as error:
+    except (authority.AuthorityFailure, evidence.EvidenceFailure, inspector.InspectionFailure, issue_source.IssueSourceFailure, plan_policy.PlanRevisionPolicyFailure, policy.PolicyFailure, resume.ResumeFailure, runtime.RuntimeFailure, supervision.SupervisionPolicyFailure, work_type_policy.WorkTypePolicyFailure) as error:
         status = getattr(error, "status", "corrupt")
         _fail(status if status in OUTCOMES else "corrupt", getattr(error, "code", label), getattr(error, "message", str(error)), getattr(error, "subject", None))
     except (OSError, UnicodeError, ValueError) as error:
@@ -79,10 +84,54 @@ class Orchestrator:
         _require(type(issue) is int and issue > 0, "unsupported", "invalid-issue", "Issue must be a positive integer")
         _require(issue not in FROZEN_ISSUES, "denied", "issue-frozen", "Issue is frozen before any workflow lookup", str(issue))
         self.root, self.issue, self.family = pathlib.Path(root), issue, None
-    def _runtime(self, request):
+        self._selected_inspection, self._selected, self._history_adapter = None, None, None
+    def _runtime_pin(self, state):
+        implementation = self._read(self._active(state, "implementation-a"), NODE_PATH, "implementation root")
+        pins = [row["binding"] for row in implementation["evidence"] if row["role"] == "runtime-reconstruction"]
+        _require(len(pins) == 1, "stale", "runtime-pin-unselected", "Selected implementation root has no unique runtime pin")
+        projection = _translate(lambda: evidence.project(self.root, pins[0]), "evidence")
+        pin = self._read(pins[0], RUNTIME_PIN_PATH, "runtime reconstruction pin")
+        _require(projection["decision"]["type"] == "runtime-reconstruction" and projection["subject"] == state["triage_binding"], "stale", "runtime-pin-unselected", "Runtime reconstruction pin is not selected by triage")
+        return pins[0], pin
+    def _runtime_expectation(self, state):
+        pending = state["pending"]
+        if pending is not None and pending["kind"] not in {"human", "policy"}:
+            return "trusted-current", None
+        expected = self._phase_repository(state, state["phase"])
+        if expected is not None:
+            return "exact", expected
+        return ("clean-base", None) if state["phase"] == "PLANNING" else ("trusted-current", None)
+    def _runtime(self, request, state=None, inspection=None, expected_repository=_UNSET):
         _require(RUNTIME_PROVIDER is not None, "unsupported", "runtime-provider-unavailable", "No reviewed runtime provider is configured")
-        adapter = RUNTIME_PROVIDER(self.root, self.issue, request)
-        _require(adapter is not None, "unsupported", "runtime-unavailable", "Runtime provider returned no adapter"); return adapter
+        state = state or self._selected
+        inspection = inspection or self._selected_inspection
+        if state is None:
+            adapter = _translate(lambda: RUNTIME_PROVIDER(self.root, self.issue, request), "runtime")
+            _require(adapter is not None, "unsupported", "runtime-unavailable", "Runtime provider returned no adapter")
+            return adapter
+        _require(inspection is not None, "corrupt", "runtime-authority-missing", "Runtime reconstruction requires selected authority")
+        triage, baseline, baseline_binding, _config = self._facts(state)
+        pin_binding, pin = self._runtime_pin(state)
+        if expected_repository is _UNSET:
+            repository_mode, expected_repository = self._runtime_expectation(state)
+        else:
+            repository_mode = "exact" if expected_repository is not None else "trusted-current"
+        context = _translate(lambda: runtime.build_reconstruction_request(pin_binding=pin_binding, pin_document=pin, baseline_binding=baseline_binding, baseline_document=baseline, triage_binding=state["triage_binding"], triage_document=triage, authority_binding=inspection["authority"], repository_mode=repository_mode, repository_observation=expected_repository), "runtime")
+        adapter = _translate(lambda: RUNTIME_PROVIDER(self.root, self.issue, context), "runtime")
+        _require(adapter is not None, "unsupported", "runtime-unavailable", "Runtime provider returned no adapter")
+        _require(callable(getattr(adapter, "reconstruction_document", None)), "stale", "runtime-reconstruction-unverified", "Runtime provider did not reconstruct the selected evidence")
+        returned = _translate(adapter.reconstruction_document, "runtime")
+        _translate(lambda: resume.verify_reconstruction_response(returned, context), "resume")
+        current = _translate(lambda: authority.status(self.root, self.issue), "authority")
+        _require(current["pointer_sha256"] == inspection["pointer_sha256"] and current["authority"] == inspection["authority"], "stale", "runtime-authority-changed", "Authority changed during runtime reconstruction")
+        return adapter
+    def _runtime_drift(self, action, drift_code, drift_message, codes, guard=True):
+        try:
+            return action()
+        except OrchestratorFailure as error:
+            if guard and error.code in codes:
+                _fail("stale", drift_code, drift_message)
+            raise
     def _status(self, missing_ok=False):
         legacy = self._legacy_present()
         try: document = _translate(lambda: authority.status(self.root, self.issue), "authority")
@@ -112,8 +161,10 @@ class Orchestrator:
     def _state(self, inspection):
         return self._read(inspection["authority"], STATE_PATH, "orchestration state")
     def _selected_state(self, inspection):
-        state = self._state(inspection); self.family = state["family_run_id"]
-        self._validate_supervision_history(state, inspection["authority"])
+        state = self._state(inspection); self.family = state["family_run_id"]; self._history_adapter = None
+        self._selected_inspection, self._selected = inspection, state
+        try: self._validate_supervision_history(state, inspection["authority"])
+        finally: self._history_adapter = None
         return state
     def _publish(self, decision_type, decision_id, subject, rows, generation, lineage=None, identity=None):
         encoded, entries = [], []
@@ -177,12 +228,12 @@ class Orchestrator:
         _fail("unsupported", "authority-chain-limit", "Orchestration history exceeds its bound")
     def _validate_selected_transition(self, prior_binding, prior, current_binding, current):
         gate = GATES.get(prior["phase"])
-        if gate is not None: _require(current["phase"] == GATE_NEXT[gate] and current["pending"] is None and current["supervision_policy_binding"] == prior["supervision_policy_binding"] and current["transition"] == {"type": {"plan": "plan-approve", "tests": "tests-approve", "final": "final-approve", "pr-publication": "publication-approve"}[gate], "request_binding": None, "result_binding": None, "authorization_binding": None, "repository_observation_binding": None}, "stale", "gate-transition-unselected", "Selected authority history bypasses gate satisfaction"); slot = "%s-gate-satisfaction" % gate; wrapper = self._read(self._active(current, {"plan": "plan-approval", "tests": "test-approval"}[gate]), NODE_PATH) if gate in {"plan", "tests"} else None; matches = [row["binding"] for row in wrapper["evidence"] if row["role"] == "gate-satisfaction"] if wrapper is not None else []; _require(wrapper is None or len(matches) == 1, "stale", "gate-transition-unselected", "Gate approval node does not select one satisfaction"); satisfaction = matches[0] if matches else self._candidate_binding(current, slot); transient = copy.deepcopy(current); transient["candidates"] = _put(transient["candidates"], slot, satisfaction); selected_satisfaction, satisfaction_document, satisfaction_challenge = self._satisfaction_context(transient, {"authority": current_binding}, slot, gate, reobserve_human=True); subjects = {row["slot"]: row["binding"] for row in satisfaction_challenge["subjects"]}; wrapper_evidence = {row["role"]: row["binding"] for row in wrapper["evidence"]} if wrapper is not None else {}; _require(wrapper is None or (wrapper["node"] == {"plan": "plan-approval", "tests": "test-approval"}[gate] and wrapper["subject_binding"] == subjects[{"plan": "plan-snapshot", "tests": "test-manifest"}[gate]] and len(wrapper["evidence"]) == 2 and wrapper_evidence == {"gate-satisfaction": selected_satisfaction, {"plan": "technical-plan-review", "tests": "technical-test-review"}[gate]: subjects[{"plan": "plan-review", "tests": "test-review"}[gate]]} and wrapper["repository_observation_binding"] == satisfaction_document["repository_observation_binding"] and wrapper["authorization_binding"] == satisfaction_document["human_authorization_binding"]), "stale", "gate-approval-wrapper-stale", "Gate approval wrapper differs from the selected satisfaction")
+        if gate is not None: _require(current["phase"] == GATE_NEXT[gate] and current["pending"] is None and current["supervision_policy_binding"] == prior["supervision_policy_binding"] and current["transition"] == {"type": {"plan": "plan-approve", "tests": "tests-approve", "final": "final-approve", "pr-publication": "publication-approve"}[gate], "request_binding": None, "result_binding": None, "authorization_binding": None, "repository_observation_binding": None}, "stale", "gate-transition-unselected", "Selected authority history bypasses gate satisfaction"); slot = "%s-gate-satisfaction" % gate; wrapper = self._read(self._active(current, {"plan": "plan-approval", "tests": "test-approval"}[gate]), NODE_PATH) if gate in {"plan", "tests"} else None; matches = [row["binding"] for row in wrapper["evidence"] if row["role"] == "gate-satisfaction"] if wrapper is not None else []; _require(wrapper is None or len(matches) == 1, "stale", "gate-transition-unselected", "Gate approval node does not select one satisfaction"); satisfaction = matches[0] if matches else self._candidate_binding(current, slot); transient = copy.deepcopy(current); transient["candidates"] = _put(transient["candidates"], slot, satisfaction); selected_satisfaction, satisfaction_document, satisfaction_challenge = self._satisfaction_context(transient, {"authority": current_binding}, slot, gate, reobserve_human=True, historical=True); subjects = {row["slot"]: row["binding"] for row in satisfaction_challenge["subjects"]}; wrapper_evidence = {row["role"]: row["binding"] for row in wrapper["evidence"]} if wrapper is not None else {}; _require(wrapper is None or (wrapper["node"] == {"plan": "plan-approval", "tests": "test-approval"}[gate] and wrapper["subject_binding"] == subjects[{"plan": "plan-snapshot", "tests": "test-manifest"}[gate]] and len(wrapper["evidence"]) == 2 and wrapper_evidence == {"gate-satisfaction": selected_satisfaction, {"plan": "technical-plan-review", "tests": "technical-test-review"}[gate]: subjects[{"plan": "plan-review", "tests": "test-review"}[gate]]} and wrapper["repository_observation_binding"] == satisfaction_document["repository_observation_binding"] and wrapper["authorization_binding"] == satisfaction_document["human_authorization_binding"]), "stale", "gate-approval-wrapper-stale", "Gate approval wrapper differs from the selected satisfaction")
         allowed = PHASE_ORIGINS.get(current["phase"]); _require((allowed is None or prior["phase"] in allowed) and not (current["phase"] == "PLANNING" and prior["phase"] == "TEST_IMPLEMENTATION" and current["transition"]["type"] != "plan-reopen"), "stale", "phase-transition-unselected", "Selected authority history skips a required lifecycle phase")
-        if current["phase"] == "COMPLETED": final_satisfaction, _final_document, _final_challenge = self._satisfaction_context(prior, {"authority": prior_binding}, "final-gate-satisfaction", "final", reobserve_human=True); publication_satisfaction, _publication_document, _publication_challenge = self._satisfaction_context(prior, {"authority": prior_binding}, "pr-publication-gate-satisfaction", "pr-publication", reobserve_human=True); metadata = self._candidate_binding(prior, "pr-metadata"); approval = self._read(self._active(current, "pr-approval"), NODE_PATH, "PR approval node"); approval_evidence = {row["role"]: row["binding"] for row in approval["evidence"]}; write_result, _write_binding = self._prior_pr_result(prior, {"authority": prior_binding}); _require(current["transition"]["type"] == "complete" and current["pending"] is None and metadata == self._active(prior, "pr-metadata") and write_result is not None and write_result.get("reconciliation", {}).get("status") == "confirmed" and approval["subject_binding"] == metadata and len(approval["evidence"]) == 4 and approval_evidence.get("final-gate-satisfaction") == final_satisfaction and approval_evidence.get("pr-publication-gate-satisfaction") == publication_satisfaction and approval_evidence.get("final-review") == self._read(self._active(prior, "final-review"), NODE_PATH)["subject_binding"] and "github-pr-observation" in approval_evidence, "stale", "completion-transition-unselected", "Completion lacks selected publication and reconciled PR evidence")
+        if current["phase"] == "COMPLETED": final_satisfaction, _final_document, _final_challenge = self._satisfaction_context(prior, {"authority": prior_binding}, "final-gate-satisfaction", "final", reobserve_human=True, historical=True); publication_satisfaction, _publication_document, _publication_challenge = self._satisfaction_context(prior, {"authority": prior_binding}, "pr-publication-gate-satisfaction", "pr-publication", reobserve_human=True, historical=True); metadata = self._candidate_binding(prior, "pr-metadata"); approval = self._read(self._active(current, "pr-approval"), NODE_PATH, "PR approval node"); approval_evidence = {row["role"]: row["binding"] for row in approval["evidence"]}; write_result, _write_binding = self._prior_pr_result(prior, {"authority": prior_binding}); _require(current["transition"]["type"] == "complete" and current["pending"] is None and metadata == self._active(prior, "pr-metadata") and write_result is not None and write_result.get("reconciliation", {}).get("status") == "confirmed" and approval["subject_binding"] == metadata and len(approval["evidence"]) == 4 and approval_evidence.get("final-gate-satisfaction") == final_satisfaction and approval_evidence.get("pr-publication-gate-satisfaction") == publication_satisfaction and approval_evidence.get("final-review") == self._read(self._active(prior, "final-review"), NODE_PATH)["subject_binding"] and "github-pr-observation" in approval_evidence, "stale", "completion-transition-unselected", "Completion lacks selected publication and reconciled PR evidence")
         prior_pending = prior["pending"]; recovery_open = current["transition"]["type"] == "recover" and current["phase"] == "PAUSED" and current["pending"] is not None and current["pending"]["kind"] == "human" and not (prior_pending is not None and prior_pending["kind"] == "human"); recovery_close = prior["phase"] == "PAUSED" and prior_pending is not None and prior_pending["kind"] == "human" and current["phase"] != "PAUSED"
         if recovery_open: request_binding, _request, _result = self._recovery_attempt(prior, {"authority": prior_binding}); challenge = self._read(current["pending"]["request_binding"], "workflow-orchestration/human-challenge.json", "recovery challenge"); self._check_recovery_challenge(challenge, current["previous_authority"]); _require(current["transition"]["request_binding"] == current["pending"]["request_binding"] and challenge["subjects"] == [{"slot": "pending-attempt", "binding": request_binding}], "stale", "recovery-transition-unselected", "Recovery request does not select the recorded attempt")
-        if recovery_close: challenge_binding = prior_pending["request_binding"]; challenge = self._read(challenge_binding, "workflow-orchestration/human-challenge.json", "recovery challenge"); self._check_recovery_challenge(challenge, prior["previous_authority"]); authorization = self._candidate_binding(current, "human-authorization"); projection = _translate(lambda: evidence.project(self.root, authorization), "evidence"); document = self._read(authorization, "workflow-orchestration/human-authorization.json", "recovery authorization"); source = {"kind": document["source"]["kind"], "id": document["source"]["id"]}; observed = self._authorization_document(prior, challenge, source, challenge_binding); request = self._read(challenge["subjects"][0]["binding"], label="recovery request"); _require(current["transition"]["type"] == "recover" and current["pending"] is None and current["phase"] == self._resume_phase(request) and projection["decision"]["type"] == "human-authorization" and projection["subject"] == challenge_binding and document == observed, "stale", "recovery-transition-unselected", "Recovery was not selected by exact live human authorization")
+        if recovery_close: challenge_binding = prior_pending["request_binding"]; challenge = self._read(challenge_binding, "workflow-orchestration/human-challenge.json", "recovery challenge"); self._check_recovery_challenge(challenge, prior["previous_authority"]); authorization = self._candidate_binding(current, "human-authorization"); projection = _translate(lambda: evidence.project(self.root, authorization), "evidence"); document = self._read(authorization, "workflow-orchestration/human-authorization.json", "recovery authorization"); source = {"kind": document["source"]["kind"], "id": document["source"]["id"]}; observed = self._authorization_document(prior, challenge, source, challenge_binding, historical=True); request = self._read(challenge["subjects"][0]["binding"], label="recovery request"); _require(current["transition"]["type"] == "recover" and current["pending"] is None and current["phase"] == self._resume_phase(request) and projection["decision"]["type"] == "human-authorization" and projection["subject"] == challenge_binding and document == observed, "stale", "recovery-transition-unselected", "Recovery was not selected by exact live human authorization")
         sensitive = prior["phase"] == "PAUSED" or (prior_pending is not None and prior_pending["status"] == "cancel-requested") or current["transition"]["type"] == "recover"; _require(not sensitive or recovery_open or recovery_close, "stale", "recovery-transition-unselected", "Selected authority history bypasses mandatory human recovery")
     def _validate_supervision_history(self, state, authority_binding):
         history = self._history(state, authority_binding); _genesis_binding, genesis = history[0]
@@ -198,7 +249,7 @@ class Orchestrator:
             challenge_binding = pending["request_binding"]; challenge_projection = _translate(lambda: evidence.project(self.root, challenge_binding), "evidence")
             challenge = self._read(challenge_binding, supervision.CHANGE_PATH, "supervision policy change"); next_document = self._read(current_binding, SUPERVISION_PATH, "revised supervision policy")
             authorization_binding = next_document["authorization_binding"]; authorization_projection = _translate(lambda: evidence.project(self.root, authorization_binding), "evidence")
-            authorization_document = self._read(authorization_binding, "workflow-orchestration/human-authorization.json", "supervision policy authorization"); source = {"kind": authorization_document["source"]["kind"], "id": authorization_document["source"]["id"]}; observed_authorization = self._authorization_document(prior, challenge, source, challenge_binding)
+            authorization_document = self._read(authorization_binding, "workflow-orchestration/human-authorization.json", "supervision policy authorization"); source = {"kind": authorization_document["source"]["kind"], "id": authorization_document["source"]["id"]}; observed_authorization = self._authorization_document(prior, challenge, source, challenge_binding, historical=True)
             _require(observed_authorization == authorization_document, "stale", "supervision-change-authorization-stale", "Supervision policy authorization source changed"); expected = _translate(lambda: supervision.revise(selected, document, challenge_binding, challenge, authorization_binding, authorization_document, prior["previous_authority"], prior["phase"]), "supervision-policy"); projection = _translate(lambda: evidence.project(self.root, current_binding), "evidence")
             _require(challenge_projection["decision"]["type"] == "supervision-policy-change" and challenge_projection["subject"] == prior["previous_authority"] and authorization_projection["decision"]["type"] == "human-authorization" and authorization_projection["subject"] == challenge_binding and next_document == expected and projection["decision"]["type"] == "supervision-policy" and projection["subject"] == selected and projection["lineage"] == {"status": "replacement", "parent_binding": selected}, "stale", "supervision-policy-unselected", "Supervision policy replacement is not exact")
             selected, document = current_binding, next_document
@@ -259,7 +310,9 @@ class Orchestrator:
         triage = _translate(lambda: work_type_policy.classify(self.root, triage_request, issue_binding["sha256"], baseline_binding["sha256"]), "work-type")
         _require(triage["route"]["work_type"] == "implementation", "unsupported", "unsupported-route-not-activated", "Only implementation routing is activated")
         triage_binding = self._publish("work-type-triage", "triage-%s" % triage["result_sha256"], baseline_binding, [("workflow-work-type/triage.json", triage)], 0)
-        implementation, _node = self._node("implementation-a", baseline_binding, [("issue-snapshot", issue_binding), ("triage", triage_binding)], baseline_binding, None, [], 0)
+        runtime_pin = _translate(lambda: adapter.build_reconstruction_pin(self.issue, self.family, baseline_binding, triage_binding), "runtime")
+        runtime_binding = self._publish("runtime-reconstruction", "pin-%s" % runtime_pin["pin_sha256"], triage_binding, [(RUNTIME_PIN_PATH, runtime_pin)], 0)
+        implementation, _node = self._node("implementation-a", baseline_binding, [("issue-snapshot", issue_binding), ("runtime-reconstruction", runtime_binding), ("triage", triage_binding)], baseline_binding, None, [], 0)
         policy_state = _translate(lambda: policy.initialize(self.root, self.issue, self.family, {"binding": implementation, "migration_plan": None}), "policy")
         try: config = json.loads(base64.b64decode(baseline["config"]["bytes_base64"], validate=True))
         except (KeyError, TypeError, ValueError, UnicodeError, json.JSONDecodeError, RecursionError) as error: _fail("corrupt", "baseline-config-invalid", "Baseline configuration cannot be decoded: %s" % error)
@@ -269,18 +322,14 @@ class Orchestrator:
         binding, committed = self._commit(state); return self._result("initialized", state, binding, committed)
     def plan(self):
         inspection = self._status(); state = self._selected_state(inspection)
-        return {"format": "chess-echo-orchestration-plan-v1", "outcome": {"status": "resolved", "code": "planned"}, "issue": self.issue, "generation": state["generation"], "phase": state["phase"], "pointer_sha256": inspection["pointer_sha256"], "pending": state["pending"], "next_action": _next(state)}
-    def _command_source(self, baseline_binding, baseline, config, operation, role=None, profile=None):
-        source = {"config_binding": baseline_binding, "config_content_sha256": baseline["config"]["content_sha256"], "config_blob_oid": baseline["config"]["blob_oid"], "profile": profile, "entry": operation["name"]}
-        if operation["kind"] == "agent":
-            source["entry"], source["profile"] = role, None; row = next((item for item in config["agent_roles"] if item["role"] == role), None)
-            _require(row is not None, "corrupt", "agent-role-missing", "Configured agent role is missing"); limits = {key: row[key] for key in ("timeout_ms", "grace_ms", "output_limit_bytes")}
-        elif operation["kind"] == "validation": limits = dict(runtime.VALIDATION_LIMITS)
-        else: limits = {key: config["github"][key] for key in ("timeout_ms", "grace_ms", "output_limit_bytes")}
-        return source, limits
-    def _inputs(self, state, extra=()):
-        rows = [("policy-state", state["policy_state_binding"]), ("triage", state["triage_binding"])] + list(extra)
-        return [{"role": role, "binding": binding} for role, binding in sorted(rows, key=lambda row: (row[0], row[1]["sha256"]))]
+        return {"format": "chess-echo-orchestration-plan-v1", "outcome": {"status": "resolved", "code": "planned"}, "issue": self.issue, "generation": state["generation"], "phase": state["phase"], "pointer_sha256": inspection["pointer_sha256"], "pending": state["pending"], "pending_result_query": self._pending_result_query(state, inspection), "next_action": _next(state)}
+    def inspect(self):
+        inspection = self._status(); state = self._selected_state(inspection)
+        result = copy.deepcopy(inspection)
+        result["pending_result_query"] = self._pending_result_query(state, inspection)
+        return result
+    def _pending_result_query(self, state, inspection):
+        return resume.pending_result_query(self.issue, self.family, inspection["authority"], state["pending"])
     def _validation_records(self, state, inspection):
         records, seen = [], set()
         for _binding, item in self._history(state, inspection["authority"]):
@@ -304,33 +353,14 @@ class Orchestrator:
         return None
     def _pr_context(self, state, observation):
         final = self._active(state, "final-review"); wrapper = self._read(final, NODE_PATH, "final review node")
-        candidate = self._candidate_schema(self._read(wrapper["subject_binding"], label="final review candidate"), "review"); pr = candidate.get("pr")
-        _require(isinstance(pr, dict) and set(pr) == {"head_ref", "title", "body"}, "corrupt", "pr-metadata-invalid", "Final review did not supply exact draft PR metadata")
-        _require(all(isinstance(pr[key], str) and pr[key] for key in ("head_ref", "title", "body")), "corrupt", "pr-metadata-invalid", "Draft PR metadata is incomplete")
-        _require(self._valid_pr_body(pr["body"]), "denied", "pr-body-headings", "Draft PR body must contain only nonempty What, Why, and Testing sections")
+        candidate = self._candidate_schema(self._read(wrapper["subject_binding"], label="final review candidate"), "review")
+        pr = _translate(lambda: resume.validate_pr_metadata(candidate.get("pr")), "resume")
         _triage, baseline, _baseline_binding, _config = self._facts(state)
         expectation = {"repository": baseline["repository"], "base_ref": baseline["target_base"]["name"], "base_sha": observation["base"]["commit"], "head_ref": pr["head_ref"], "head_sha": observation["head"]["commit"], "title_sha256": inspector.sha256(pr["title"].encode()), "body_sha256": inspector.sha256(pr["body"].encode())}
         return pr, expectation, wrapper
-    def _valid_pr_body(self, body):
-        headings = ("## What", "## Why", "## Testing")
-        lines, positions = body.splitlines(), []
-        for heading in headings:
-            matches = [index for index, line in enumerate(lines) if line == heading]
-            if len(matches) != 1: return False
-            positions.append(matches[0])
-        if positions != sorted(positions) or any(line.startswith("## ") and line not in headings for line in lines): return False
-        bounds = positions[1:] + [len(lines)]
-        return all(any(line.strip() for line in lines[start + 1:end]) for start, end in zip(positions, bounds))
     def _pr_number(self, result, supplied):
-        if isinstance(supplied, dict) and type(supplied.get("pr_number")) is int and supplied["pr_number"] > 0: return supplied["pr_number"]
-        _require(result is not None, "uncertain", "pr-number-unknown", "A cancelled or uncertain PR write requires an explicit pull request number")
-        external = result.get("reconciliation", {}).get("external_identity")
-        try: raw = base64.b64decode(result["process_result"]["stdout"]["base64"]).decode().strip()
-        except (KeyError, TypeError, ValueError, UnicodeError): raw = ""
-        value = external or raw; _require(value.startswith("https://github.com/") and "/pull/" in value, "uncertain", "pr-number-unknown", "PR write needs an exact reconciled pull request number")
-        try: return int(value.rsplit("/", 1)[1])
-        except ValueError: _fail("uncertain", "pr-number-unknown", "PR write returned an invalid pull request URL")
-    def _claim(self, inspection, state, adapter, supplied):
+        return _translate(lambda: resume.resolve_pr_number(result, supplied), "resume")
+    def _claim(self, inspection, state, supplied):
         phase = state["phase"]; triage, baseline, baseline_binding, config = self._facts(state); role = profile = expectation = None
         if phase in AGENT_PHASES:
             role, name = AGENT_PHASES[phase]; operation = {"kind": "agent", "name": name, "role": role}
@@ -346,28 +376,23 @@ class Orchestrator:
             operation = {"kind": "github-write", "name": "create-draft-pr", "role": None} if prior is None and unresolved is None else {"kind": "github-read", "name": "observe-draft-pr-%d" % self._pr_number(prior, supplied), "role": None}
         else: _fail("unsupported", "phase-not-steppable", "Phase has no executable action", phase)
         if operation["kind"] == "github-write": self._satisfaction_context(state, inspection, "final-gate-satisfaction", "final", reobserve_human=True); self._satisfaction_context(state, inspection, "pr-publication-gate-satisfaction", "pr-publication", reobserve_human=True)
-        before = _translate(lambda: adapter.observe_diff(self.issue, self.family, state["triage_binding"]), "runtime")
         expected_repository = self._phase_repository(state, phase)
+        adapter = self._runtime_drift(lambda: self._runtime(supplied, state, inspection), "repository-continuity-stale", "Repository changed after the selected phase evidence; restore it before retrying", {"runtime-worktree-untrusted", "runtime-phase-repository-changed", "runtime-initial-repository-changed"})
+        before = _translate(lambda: adapter.observe_diff(self.issue, self.family, state["triage_binding"]), "runtime")
         if expected_repository is not None:
-            if not (self._same_repository(expected_repository, before) and self._clean_repository(before)):
+            if not (runtime.same_repository(expected_repository, before) and runtime.clean_repository(before)):
                 _fail("stale", "repository-continuity-stale", "Repository changed after the selected phase evidence; restore it before retrying")
         elif phase == "PLANNING":
-            _require(self._clean_repository(before) and before["head"]["commit"] == before["base"]["commit"] and before["ancestry"] == {"base_is_ancestor": True, "commit_count": 0} and not before["changes"], "stale", "repository-continuity-stale", "Initial planning must use the clean bootstrap base")
+            _require(runtime.clean_repository(before) and before["head"]["commit"] == before["base"]["commit"] and before["ancestry"] == {"base_is_ancestor": True, "commit_count": 0} and not before["changes"], "stale", "repository-continuity-stale", "Initial planning must use the clean bootstrap base")
         if operation["kind"] == "github-write": _pr, expectation, _wrapper = self._pr_context(state, before)
         active = {row["node"]: row["binding"] for row in self._read(state["policy_state_binding"], POLICY_PATH, "policy state")["active"]}
-        required = {
-            "TEST_IMPLEMENTATION": ("plan-approval",), "TEST_REVIEW": ("plan-approval", "test-manifest"),
-            "IMPLEMENTATION": ("plan-approval", "test-approval", "test-manifest"),
-            "VALIDATION": ("implementation-submission",),
-            "FINAL_REVIEW": ("plan-approval", "test-approval", "implementation-submission", "validation"),
-            "PR_PREPARATION": ("plan-approval", "test-approval", "implementation-submission", "validation", "final-review"),
-        }.get(phase, ())
+        required = REQUIRED_NODES.get(phase, ())
         extra = [("baseline", baseline_binding)] + [(node, active[node]) for node in required]
         if phase == "PLAN_REVIEW": extra.append(("plan-snapshot", self._candidate_binding(state, "plan-snapshot")))
         if phase == "PLANNING" and self._candidate_binding(state, "plan-snapshot", required=False) is not None:
             extra += [("plan-snapshot", self._candidate_binding(state, "plan-snapshot")),
                       ("plan-review", self._candidate_binding(state, "plan-review"))]
-        source, limits = self._command_source(baseline_binding, baseline, config, operation, role, profile); inputs = self._inputs(state, extra)
+        source, limits = _translate(lambda: runtime.command_source(baseline_binding, baseline, config, operation, role, profile), "runtime"); inputs = runtime.execution_inputs(state, extra)
         attempt = _translate(lambda: runtime.execution_attempt_id(inspection["authority"], operation, source, inputs, before, limits, expectation), "runtime")
         request = _translate(lambda: adapter.build_request(issue=self.issue, family_run_id=self.family, attempt_id=attempt, authority_binding=inspection["authority"], operation=operation, command_source=source, input_bindings=inputs, repository_before=before, limits=limits, reconciliation_expectation=expectation), "runtime")
         request_binding = self._publish("execution-request", "attempt-%s" % attempt, inspection["authority"], [("workflow-orchestration/execution-request.json", request)], state["generation"] + 1)
@@ -376,6 +401,7 @@ class Orchestrator:
         successor = self._successor(state, inspection["authority"], pending=pending, candidates=_put(state["candidates"], "execution-request", request_binding), transition={"type": CLAIM_TYPES[phase], "request_binding": request_binding, "result_binding": None, "authorization_binding": None, "repository_observation_binding": before_binding})
         binding, committed = self._commit(successor); _require(committed["outcome"]["code"] == "committed", "busy", "attempt-in-flight", "Another caller already owns this execution attempt")
         selected = {"authority": binding, "pointer_sha256": committed["pointer_sha256"]}
+        self._selected, self._selected_inspection = successor, selected
         return self._run_pending(selected, successor, supplied)
     def _watch(self, inspection, pending, limits):
         cancelled, stop = threading.Event(), threading.Event()
@@ -402,42 +428,16 @@ class Orchestrator:
         successor = self._successor(state, inspection["authority"], phase="PAUSED", pending=None, candidates=rows, transition={"type": "pause", "request_binding": None, "result_binding": None, "authorization_binding": None, "repository_observation_binding": None})
         binding, committed = self._commit(successor); return self._result(code, successor, binding, committed, "paused")
     def _candidate(self, result, expected):
-        record = result.get("candidate_output")
-        _require(result.get("outcome") == "succeeded" and isinstance(record, dict) and set(record) == {"sha256", "size"}, "corrupt", "candidate-output-invalid", "Agent result has no successful candidate output")
-        try: raw = base64.b64decode(result["process_result"]["stdout"]["base64"], validate=True); value = json.loads(raw.decode(), object_pairs_hook=lambda pairs: self._no_duplicates(pairs))
-        except (KeyError, TypeError, ValueError, UnicodeError, json.JSONDecodeError, RecursionError) as error: _fail("corrupt", "candidate-output-invalid", "Agent output is invalid: %s" % error)
-        _require(record == {"sha256": inspector.sha256(raw), "size": len(raw)} and isinstance(value, dict), "corrupt", "candidate-output-invalid", "Agent output does not match its result record")
-        return self._candidate_schema(value, expected)
+        return _translate(lambda: resume.decode_candidate(result, expected), "resume")
     def _candidate_schema(self, value, expected):
-        _require(value.get("format") == CANDIDATE_FORMAT and value.get("kind") == expected, "corrupt", "candidate-output-invalid", "Agent output has the wrong candidate kind")
-        if expected == "implementer":
-            _require(set(value) == {"format", "kind", "report"} and isinstance(value["report"], str) and value["report"], "corrupt", "candidate-output-invalid", "Implementer candidate is invalid")
-        if expected == "review":
-            _require(set(value) == {"format", "kind", "verdict", "findings", "pr"} and isinstance(value["findings"], list) and isinstance(value["pr"], dict), "corrupt", "candidate-output-invalid", "Review candidate is invalid")
-        return value
+        return _translate(lambda: resume.candidate_schema(value, expected), "resume")
     def _candidate_artifact(self, state, result, candidate):
-        details = {
-            "TEST_IMPLEMENTATION": ("test-report", "workflow-orchestration/test-report.json"),
-            "TEST_REVIEW": ("technical-test-review", "workflow-orchestration/test-review.json"),
-            "IMPLEMENTATION": ("implementation-report", "workflow-orchestration/implementation-report.json"),
-            "FINAL_REVIEW": ("final-review-candidate", "workflow-orchestration/final-review.json"),
-        }.get(state["phase"])
+        details = CANDIDATE_ARTIFACTS.get(state["phase"])
         if details is None: return result
         digest = _digest(candidate)
         return self._publish(details[0], "%s-%s" % (details[0], digest), result, [(details[1], candidate)], state["generation"] + 1)
-    def _no_duplicates(self, pairs):
-        value = {}
-        for key, item in pairs:
-            _require(key not in value, "ambiguous", "candidate-output-invalid", "Agent output repeats a JSON key", key); value[key] = item
-        return value
     def _snapshot(self, state, candidate, predecessor=None):
-        _require(set(candidate) == {"format", "kind", "plan", "units", "revision"}, "corrupt", "candidate-output-invalid", "Plan candidate has an invalid schema")
-        _require(isinstance(candidate["plan"], str) and candidate["plan"].endswith("\n") and not candidate["plan"].endswith("\n\n"), "corrupt", "candidate-output-invalid", "Plan candidate must use one trailing LF")
-        lines, units = candidate["plan"].splitlines(True), []; _require(isinstance(candidate["units"], list) and candidate["units"], "corrupt", "candidate-output-invalid", "Plan candidate has no units")
-        for raw in candidate["units"]:
-            _require(isinstance(raw, dict) and set(raw) == {"id", "title", "start_line", "end_line", "review_class", "dependencies"}, "corrupt", "candidate-output-invalid", "Plan unit schema is invalid")
-            start, end = raw["start_line"], raw["end_line"]; _require(type(start) is int and type(end) is int and 1 <= start <= end <= len(lines), "corrupt", "candidate-output-invalid", "Plan unit range is invalid")
-            unit = copy.deepcopy(raw); unit["content_sha256"] = inspector.sha256("".join(lines[start - 1:end]).encode()); units.append(unit)
+        _lines, units = _translate(lambda: resume.validate_plan_candidate(candidate), "resume")
         triage, _baseline, baseline_binding, _config = self._facts(state)
         document = {"format": plan_policy.SNAPSHOT_FORMAT, "issue": self.issue, "family_run_id": self.family, "revision": 1 if predecessor is None else predecessor["document"]["revision"] + 1, "context": {"issue_snapshot_binding": triage["issue_snapshot_binding"], "baseline_binding": baseline_binding, "triage_binding": state["triage_binding"]}, "predecessor": None if predecessor is None else {"plan_binding": predecessor["binding"], "review_binding": predecessor["review_binding"]}, "plan": {"path": plan_policy.PLAN_PATH, "content_sha256": inspector.sha256(candidate["plan"].encode()), "size": len(candidate["plan"].encode())}, "units": units}
         document = _with_digest(document, "snapshot_sha256")
@@ -451,13 +451,8 @@ class Orchestrator:
         binding = self._publish("plan-revision", "revision-%s" % document["revision_sha256"], review["binding"], [(plan_policy.REVISION_PATH, document), (plan_policy.DIFF_PATH, value["diff"].encode())], state["generation"] + 1)
         return {"binding": binding, "document": document}
     def _review(self, candidate, snapshot, generation, revision=None, prior_review=None):
-        _require(set(candidate) == {"format", "kind", "verdict", "findings", "pr"}, "corrupt", "candidate-output-invalid", "Review candidate has an invalid schema")
-        verdict = candidate["verdict"]; _require(verdict in {"accepted", "needs-revision", "full-review-required"}, "corrupt", "candidate-output-invalid", "Review verdict is invalid")
-        findings = []
-        for raw in candidate["findings"]:
-            _require(isinstance(raw, dict) and set(raw) == {"unit_ids", "category", "detail"}, "corrupt", "candidate-output-invalid", "Review finding schema is invalid")
-            row = {"introduced_plan_binding": snapshot["binding"], **raw}; row["id"] = "finding-" + _digest({"introduced_plan_binding": row["introduced_plan_binding"], "severity": "blocking", "category": row["category"], "unit_ids": row["unit_ids"], "detail": row["detail"]}); row["severity"] = "blocking"; findings.append(row)
-        findings.sort(key=lambda row: row["id"]); units, escalated = snapshot["document"]["units"], verdict == "full-review-required"
+        verdict, findings = _translate(lambda: resume.validate_review_candidate(candidate, snapshot["binding"]), "resume")
+        units, escalated = snapshot["document"]["units"], verdict == "full-review-required"
         coverage = [{"unit_id": unit["id"], "content_sha256": unit["content_sha256"], "method": "incremental" if escalated else "full", "source_review_binding": None} for unit in units]
         outcomes = [] if prior_review is None else [{"finding_id": row["id"], "status": "resolved", "replacement_finding_id": None, "reason": "Addressed by this review."} for row in prior_review["document"]["findings"]]
         document = {"format": plan_policy.REVIEW_FORMAT, "issue": self.issue, "family_run_id": self.family, "plan_binding": snapshot["binding"], "revision_binding": None if revision is None else revision["binding"], "mode": "incremental" if escalated else "full", "reviewer": {"role": "independent-reviewer", "actor": "configured-reviewer"}, "coverage": coverage, "prior_finding_outcomes": outcomes, "findings": findings, "dependency_assessment": {"status": "unbounded" if escalated else "complete", "reviewed_units": [unit["id"] for unit in units], "reason": "A full review is required." if escalated else "All plan units were reviewed."}, "verdict": verdict, "full_review_reason": "Escalated by reviewer." if escalated else None}
@@ -500,24 +495,6 @@ class Orchestrator:
         else: _fail("paused", "plan-policy-unexpected", "Plan policy returned an unsupported technical verdict")
         successor = self._successor(state, inspection["authority"], phase=phase, candidates=rows, pending=pending, transition={"type": "plan-review", "request_binding": None if pending is None else pending["request_binding"], "result_binding": None, "authorization_binding": None, "repository_observation_binding": None})
         binding, committed = self._commit(successor); return self._result("executed", successor, binding, committed)
-    def _repository_key(self, observation):
-        fields = ("repository", "issue", "family_run_id", "triage_binding", "object_format", "base", "head", "ancestry", "changes", "workspace", "git_trust", "head_config", "raw_diff_sha256")
-        return {field: observation[field] for field in fields}
-    def _clean_repository(self, observation):
-        workspace, trust = observation["workspace"], observation["git_trust"]
-        clean = not any(workspace[field] for field in ("staged", "unstaged", "untracked_non_ignored", "assume_unchanged", "skip_worktree"))
-        trusted = trust["no_replace_objects"] is True and not trust["replacement_refs"] and trust["git_replace_ref_base"] is None and trust["git_graft_file"] is None and trust["info_grafts_present"] is False and not trust["environment_redirections"] and not trust["alternate_object_directories"]
-        return clean and trusted
-    def _same_repository(self, before, after):
-        return after is not None and self._repository_key(before) == self._repository_key(after)
-    def _test_scope(self, observation, scope):
-        paths = [change[key] for change in observation["changes"] for key in ("old_path", "new_path") if change[key] is not None]
-        patterns = [item for item in scope if isinstance(item, str)]
-        patterns += [item.replace("**/", "") for item in patterns]
-        return bool(paths) and all(any(fnmatch.fnmatchcase(path, item) for item in patterns) for path in paths)
-    def _test_changes(self, observation, patterns):
-        normalized = list(patterns) + [item.replace("**/", "") for item in patterns]
-        return [change for change in observation["changes"] if any(path is not None and any(fnmatch.fnmatchcase(path, pattern) for pattern in normalized) for path in (change["old_path"], change["new_path"]))]
     def _phase_repository(self, state, phase):
         if phase == "PR_PREPARATION":
             satisfaction = self._candidate_binding(state, "pr-publication-gate-satisfaction", required=False)
@@ -527,6 +504,10 @@ class Orchestrator:
         if phase in {"PLANNING", "PLAN_REVIEW"}:
             result = self._candidate_binding(state, "execution-result", required=False)
             return None if result is None else self._read(result, label="phase execution result")["repository_after"]
+        if phase in GATES and state["pending"] is not None:
+            challenge = self._read(state["pending"]["request_binding"], supervision.CHALLENGE_PATH, "gate challenge")
+            binding = challenge["repository_observation_binding"]
+            return None if binding is None else self._read(binding, label="gate repository observation")
         if phase not in nodes: return None
         wrapper = self._read(self._active(state, nodes[phase]), NODE_PATH, "%s node" % nodes[phase])
         return self._read(wrapper["repository_observation_binding"], label="selected repository observation")
@@ -534,7 +515,7 @@ class Orchestrator:
         _require(after is not None, "stale", "repository-after-missing", "Test attempt lacks a repository observation")
         triage, baseline, _baseline_binding, _config = self._facts(state); profile = next(item for item in baseline["profiles"] if item["id"] == triage["classification"]["validation_profile"])
         observation = self._read(after, label="test observation")
-        if not (self._clean_repository(observation) and self._test_scope(observation, profile["test_paths"])):
+        if not (runtime.clean_repository(observation) and runtime.test_scope(observation, profile["test_paths"])):
             return self._pause(state, inspection, rows, "test-scope-drift")
         _wrapper, policy_binding = self._bind(state, inspection, "test-manifest", report_binding, [("test-diff", after), ("test-report", report_binding)], after)
         successor = self._successor(state, inspection["authority"], phase="TEST_REVIEW", policy_state_binding=policy_binding, candidates=_drop(rows, "test-manifest"), transition={"type": "tests-request", "request_binding": None, "result_binding": None, "authorization_binding": None, "repository_observation_binding": None})
@@ -555,7 +536,7 @@ class Orchestrator:
         manifest = self._read(self._active(state, "test-manifest"), NODE_PATH, "test manifest node")
         approved = self._read(manifest["repository_observation_binding"], label="approved test observation")
         profile = next(item for item in baseline["profiles"] if item["id"] == triage["classification"]["validation_profile"])
-        if self._test_changes(observation, profile["test_paths"]) != approved["changes"]:
+        if runtime.test_changes(observation, profile["test_paths"]) != approved["changes"]:
             return self._pause(state, inspection, rows, "unsupported-policy-transition")
         _wrapper, policy_binding = self._bind(state, inspection, "implementation-submission", report_binding, [("implementation-report", report_binding)], after)
         successor = self._successor(state, inspection["authority"], phase="VALIDATION", policy_state_binding=policy_binding, candidates=_drop(rows, "implementation-report"), transition={"type": "implementation-submit", "request_binding": None, "result_binding": None, "authorization_binding": None, "repository_observation_binding": None})
@@ -568,11 +549,11 @@ class Orchestrator:
         first_before = self._read(records[0][1], label="validation request")["repository_before"]
         implementation_node = self._read(self._active(state, "implementation-submission"), NODE_PATH, "implementation node")
         implementation_observation = self._read(implementation_node["repository_observation_binding"], label="implementation observation")
-        stable = self._clean_repository(first_before) and self._same_repository(implementation_observation, first_before)
+        stable = runtime.clean_repository(first_before) and runtime.same_repository(implementation_observation, first_before)
         for _name, request, result in records:
             request_document = self._read(request, label="validation request")
             result_document = self._read(result, label="validation result")
-            stable = stable and result_document["outcome"] == "succeeded" and self._same_repository(first_before, request_document["repository_before"]) and self._same_repository(first_before, result_document["repository_after"])
+            stable = stable and result_document["outcome"] == "succeeded" and runtime.same_repository(first_before, request_document["repository_before"]) and runtime.same_repository(first_before, result_document["repository_after"])
         if not stable: return self._pause(state, inspection, rows, "unsupported-policy-transition")
         if len(records) < len(expected):
             successor = self._successor(state, inspection["authority"], candidates=rows, transition={"type": "validation-record", "request_binding": None, "result_binding": None, "authorization_binding": None, "repository_observation_binding": None})
@@ -589,7 +570,7 @@ class Orchestrator:
     def _final_submit(self, state, inspection, review_binding, after, rows, candidate):
         pr = candidate.get("pr")
         valid_pr = isinstance(pr, dict) and set(pr) == {"head_ref", "title", "body"} and all(isinstance(pr.get(key), str) and pr[key] for key in ("head_ref", "title", "body"))
-        if not (candidate["verdict"] == "accepted" and valid_pr and self._valid_pr_body(pr["body"])):
+        if not (candidate["verdict"] == "accepted" and valid_pr and resume.valid_pr_body(pr["body"])):
             return self._pause(state, inspection, rows, "unsupported-policy-transition")
         validation_node = self._active(state, "validation"); validation = self._read(validation_node, NODE_PATH, "validation node")
         _wrapper, policy_binding = self._bind(state, inspection, "final-review", review_binding, [("comprehensive-validation", validation["subject_binding"])], validation["repository_observation_binding"])
@@ -619,16 +600,13 @@ class Orchestrator:
         binding = self._publish("human-challenge", "challenge-%s" % digest, authority_binding, [("workflow-orchestration/human-challenge.json", document)], generation)
         return binding, {"attempt_id": _digest({"authority": authority_binding, "kind": "human", "challenge": binding}), "kind": "human", "request_binding": binding, "status": "requested"}
     def _check_recovery_challenge(self, challenge, predecessor):
-        keys = {"format", "issue", "family_run_id", "gate", "decision", "authority_binding", "subjects", "repository_observation_binding", "confirmation", "challenge_sha256"}
-        _require(isinstance(challenge, dict) and set(challenge) == keys and isinstance(challenge["subjects"], list), "corrupt", "challenge-stale", "Recovery challenge has an invalid schema")
-        core = dict(challenge); confirmation, digest = core.pop("confirmation"), core.pop("challenge_sha256")
-        _require(core["format"] == RECOVERY_CHALLENGE_FORMAT and core["issue"] == self.issue and core["family_run_id"] == self.family and core["gate"] == "recovery" and core["decision"] == "approve" and core["authority_binding"] == predecessor and core["repository_observation_binding"] is None and digest == _digest(core) and confirmation == "approve recovery %s" % digest, "stale", "challenge-stale", "Recovery challenge is not exact")
+        _translate(lambda: resume.verify_recovery_challenge(challenge, predecessor, self.issue, self.family), "resume")
     def _run_pr_read(self, state, inspection, pending, request):
         try: number = int(request["operation"]["name"].rsplit("-", 1)[1])
         except (KeyError, TypeError, ValueError): _fail("corrupt", "pr-read-request-invalid", "PR observation request has no valid number")
-        self._unchanged(inspection); adapter = self._runtime(None); observation = _translate(lambda: adapter.observe_pull_request(self.issue, number, pending["request_binding"]), "runtime"); self._unchanged(inspection)
+        self._unchanged(inspection); adapter = self._runtime(None, state, inspection, request["repository_before"]); observation = _translate(lambda: adapter.observe_pull_request(self.issue, number, pending["request_binding"]), "runtime"); self._unchanged(inspection)
         observed = self._publish("github-pr-observation", "pr-%d-%s" % (number, observation["observation_sha256"]), pending["request_binding"], [("workflow-orchestration/github-pr-observation.json", observation)], state["generation"] + 1)
-        handoff = {"format": "chess-echo-execution-handoff-v1", "authority_binding": inspection["authority"], "request_binding": pending["request_binding"], "result_binding": None, "repository_after_binding": None, "pr_observation_binding": observed}
+        handoff = resume.build_handoff(inspection["authority"], pending["request_binding"], pr_observation_binding=observed)
         return self._handoff_result(state, inspection, handoff)
     def _finalize_pr_read(self, state, inspection, request, observed):
         observation = self._read(observed, label="PR observation"); number = observation["number"]
@@ -643,7 +621,7 @@ class Orchestrator:
         _require(pending["kind"] not in {"human", "policy"}, "unsupported", "gate-requires-satisfaction", "Gate challenges require approve or policy evaluation")
         request = self._read(pending["request_binding"], label="execution request")
         if pending["kind"] == "github-read": return self._run_pr_read(state, inspection, pending, request)
-        adapter = self._runtime(supplied); cancel, stop, worker = self._watch(inspection, pending, request["limits"])
+        adapter = self._runtime(supplied, state, inspection, request["repository_before"]); cancel, stop, worker = self._watch(inspection, pending, request["limits"])
         if self._status()["pointer_sha256"] != inspection["pointer_sha256"]: cancel.set()
         try:
             options = {"cancel_event": cancel}
@@ -667,27 +645,46 @@ class Orchestrator:
             stop.set(); worker.join(2)
             _require(not worker.is_alive(), "conflict", "cancel-watcher-stuck", "Cancellation watcher did not stop")
         self._unchanged(inspection); result_binding, after, rows = self._execution_result(state, pending["request_binding"], result)
-        handoff = {"format": "chess-echo-execution-handoff-v1", "authority_binding": inspection["authority"], "request_binding": pending["request_binding"], "result_binding": result_binding, "repository_after_binding": after, "pr_observation_binding": None}
+        handoff = resume.build_handoff(inspection["authority"], pending["request_binding"], result_binding=result_binding, repository_after_binding=after)
         return self._handoff_result(state, inspection, handoff)
+    def _discover_pending(self, state, inspection):
+        _require(PENDING_RESULT_PROVIDER is not None, "busy", "attempt-in-flight", "Pending execution requires its exact result handoff or reviewed result discovery")
+        query = self._pending_result_query(state, inspection)
+        try:
+            discovery = PENDING_RESULT_PROVIDER(self.root, self.issue, copy.deepcopy(query))
+        except OrchestratorFailure:
+            raise
+        except (OSError, TypeError, ValueError) as error:
+            _fail("corrupt", "pending-result-discovery-failed", "Pending result discovery failed closed: %s" % error)
+        kind, binding = _translate(lambda: resume.validate_discovery_response(discovery, query), "resume")
+        self._unchanged(inspection)
+        return resume.build_handoff(inspection["authority"], state["pending"]["request_binding"], result_binding=None if kind == "github-pr-observation" else binding, pr_observation_binding=binding if kind == "github-pr-observation" else None)
     def _verified_handoff(self, state, inspection, supplied):
-        keys = {"format", "authority_binding", "request_binding", "result_binding", "repository_after_binding", "pr_observation_binding"}
-        _require(isinstance(supplied, dict) and set(supplied) == keys and supplied["format"] == "chess-echo-execution-handoff-v1" and supplied["authority_binding"] == inspection["authority"] and supplied["request_binding"] == state["pending"]["request_binding"], "busy", "attempt-in-flight", "Pending execution requires its exact result handoff")
+        _translate(lambda: resume.validate_handoff_shape(supplied, inspection["authority"], state["pending"]["request_binding"]), "resume")
         request = self._read(supplied["request_binding"], label="execution request")
         if state["pending"]["kind"] == "github-read":
             projection = _translate(lambda: evidence.project(self.root, supplied["pr_observation_binding"]), "evidence")
-            _require(supplied["result_binding"] is None and supplied["repository_after_binding"] is None and projection["decision"]["type"] == "github-pr-observation" and projection["subject"] == supplied["request_binding"], "stale", "execution-handoff-stale", "PR observation handoff is stale")
+            identity = projection["identity"]
+            _require(supplied["result_binding"] is None and supplied["repository_after_binding"] is None and identity["issue"] == self.issue and identity["family_run_id"] == self.family and projection["decision"]["type"] == "github-pr-observation" and projection["subject"] == supplied["request_binding"], "stale", "execution-handoff-stale", "PR observation handoff is stale")
             return request, None, None, supplied["pr_observation_binding"]
         projection = _translate(lambda: evidence.project(self.root, supplied["result_binding"]), "evidence")
         result = self._read(supplied["result_binding"], label="execution result")
         unsigned = dict(result); digest = unsigned.pop("result_sha256", None)
-        _require(projection["decision"]["type"] == "execution-result" and projection["subject"] == supplied["request_binding"] and result.get("format") == runtime.RESULT_FORMAT and result.get("request_binding") == supplied["request_binding"] and result.get("attempt_id") == state["pending"]["attempt_id"] and digest == _digest(unsigned), "stale", "execution-handoff-stale", "Execution result handoff is stale")
+        identity = projection["identity"]
+        _require(identity["issue"] == self.issue and identity["family_run_id"] == self.family and projection["decision"]["type"] == "execution-result" and projection["subject"] == supplied["request_binding"] and result.get("format") == runtime.RESULT_FORMAT and result.get("request_binding") == supplied["request_binding"] and result.get("attempt_id") == state["pending"]["attempt_id"] and digest == _digest(unsigned), "stale", "execution-handoff-stale", "Execution result handoff is stale")
         after = supplied["repository_after_binding"]
+        if after is None and result.get("repository_after") is not None:
+            observation = result["repository_after"]
+            after = self._publish("work-type-diff-observation", "observation-%s" % observation["observation_sha256"], state["triage_binding"], [("workflow-work-type/diff-observation.json", observation)], state["generation"] + 1)
         _require((after is None) == (result.get("repository_after") is None), "stale", "execution-handoff-stale", "Repository result handoff is incomplete")
         if after is not None: _require(self._read(after, label="repository observation") == result["repository_after"], "stale", "execution-handoff-stale", "Repository result handoff differs")
         return request, result, after, None
     def _finalize(self, inspection, state, supplied):
         pending = state["pending"]; request, result, after, observed = self._verified_handoff(state, inspection, supplied)
-        if observed is not None: return self._finalize_pr_read(state, inspection, request, observed)
+        if observed is not None:
+            self._runtime(None, state, inspection, request["repository_before"])
+            return self._finalize_pr_read(state, inspection, request, observed)
+        self._runtime(None, state, inspection, result["repository_after"])
         result_binding, rows = supplied["result_binding"], _put(_put(state["candidates"], "execution-request", pending["request_binding"]), "execution-result", supplied["result_binding"])
         if pending["kind"] == "github-write":
             remote = result.get("reconciliation", {}).get("remote_head")
@@ -700,7 +697,7 @@ class Orchestrator:
         if result["outcome"] != "succeeded": return self._pause(state, inspection, rows, "unsupported-policy-transition" if pending["kind"] == "validation" else "attempt-not-successful")
         if pending["kind"] == "validation": return self._validation_submit(state, inspection, pending["request_binding"], result_binding, after, rows)
         if state["phase"] in {"PLANNING", "PLAN_REVIEW", "TEST_REVIEW", "FINAL_REVIEW"}:
-            if not (self._same_repository(request["repository_before"], result["repository_after"]) and self._clean_repository(result["repository_after"])):
+            if not (runtime.same_repository(request["repository_before"], result["repository_after"]) and runtime.clean_repository(result["repository_after"])):
                 return self._pause(state, inspection, rows, "read-only-agent-repository-drift")
         expected = "plan" if state["phase"] == "PLANNING" else "implementer" if state["phase"] in {"TEST_IMPLEMENTATION", "IMPLEMENTATION"} else "review"
         try: candidate = self._candidate(result, expected)
@@ -714,6 +711,8 @@ class Orchestrator:
         if state["pending"] is not None:
             if state["pending"]["kind"] == "policy": return self._automatic(inspection, state)
             _require(state["pending"]["kind"] != "human", "unsupported", "human-gate-requires-approval", "Human gates require approve or recover")
+            if request is None:
+                request = self._discover_pending(state, inspection)
             return self._finalize(inspection, state, request)
         _require(state["phase"] not in GATES, "unsupported", "human-gate-requires-approval", "Human gates require approve")
         _require(state["phase"] not in {"PAUSED", "COMPLETED"}, "unsupported", "phase-not-steppable", "Phase is not executable", state["phase"])
@@ -722,13 +721,15 @@ class Orchestrator:
                 return self._complete_pr_approval(state, inspection)
             if self._candidate_binding(state, "pr-publication-gate-satisfaction", required=False) is None:
                 return self._open_publication_gate(state, inspection)
-        return self._claim(inspection, state, self._runtime(request), request)
-    def _authorization_document(self, state, challenge, supplied, challenge_binding=None):
+        return self._claim(inspection, state, request)
+    def _authorization_document(self, state, challenge, supplied, challenge_binding=None, historical=False):
         source = _source(supplied); target_kind, target_number = "issue", self.issue
         if source["kind"] == "pull-request-review":
             _fail("unsupported", "authorization-target", "Pre-publication gates require an issue comment")
         challenge_binding = challenge_binding or state["pending"]["request_binding"]
-        observed = _translate(lambda: self._runtime(supplied).observe_authorization(workflow_issue=self.issue, target_kind=target_kind, target_number=target_number, source_kind=source["kind"], source_id=source["id"], challenge_binding=challenge_binding, confirmation=challenge["confirmation"], source_request_binding=challenge_binding), "runtime")
+        adapter = self._history_adapter if historical and self._history_adapter is not None else self._runtime_drift(lambda: self._runtime(supplied), "gate-repository-mismatch", "Repository changed after the gate challenge", {"runtime-worktree-untrusted", "runtime-phase-repository-changed"}, guard=self._selected is not None and self._selected["phase"] in GATES)
+        if historical: self._history_adapter = adapter
+        observed = _translate(lambda: adapter.observe_authorization(workflow_issue=self.issue, target_kind=target_kind, target_number=target_number, source_kind=source["kind"], source_id=source["id"], challenge_binding=challenge_binding, confirmation=challenge["confirmation"], source_request_binding=challenge_binding), "runtime")
         return _with_digest({"format": AUTHORIZATION_FORMAT, "challenge_binding": challenge_binding, "decision": "approve", "actor": {"provider": "github", **observed["actor"]}, "source": {"repository": observed["repository"], **observed["source"]}, "confirmation": challenge["confirmation"]}, "authorization_sha256")
     def _authorization(self, state, challenge, supplied):
         document = self._authorization_document(state, challenge, supplied)
@@ -748,26 +749,27 @@ class Orchestrator:
         return [("final-gate-satisfaction", satisfaction), ("final-review", final["subject_binding"]), ("validation", validation)], repository
     def _fresh_local(self, state, expected_binding, subject_binding):
         expected = self._read(expected_binding, label="gate repository observation")
-        local = _translate(lambda: self._runtime(None).observe_diff(self.issue, self.family, state["triage_binding"]), "runtime")
-        _require(self._same_repository(expected, local) and self._clean_repository(local), "stale", "gate-repository-mismatch", "Repository changed after the gate challenge")
+        adapter = self._runtime_drift(lambda: self._runtime(None), "gate-repository-mismatch", "Repository changed after the gate challenge", {"runtime-worktree-untrusted", "runtime-phase-repository-changed"})
+        local = _translate(lambda: adapter.observe_diff(self.issue, self.family, state["triage_binding"]), "runtime")
+        _require(runtime.same_repository(expected, local) and runtime.clean_repository(local), "stale", "gate-repository-mismatch", "Repository changed after the gate challenge")
         return self._publish("work-type-diff-observation", "observation-%s" % local["observation_sha256"], subject_binding, [("workflow-work-type/diff-observation.json", local)], state["generation"] + 1)
     def _fresh_pr(self, state, source_binding):
         metadata = self._read(self._active(state, "pr-metadata"), NODE_PATH, "PR metadata node")
         previous = next(row["binding"] for row in metadata["evidence"] if row["role"] == "github-pr-observation")
         expected = self._read(previous, label="PR observation")
-        adapter = self._runtime(None)
+        adapter = self._runtime_drift(lambda: self._runtime(None), "final-repository-mismatch", "Local repository changed after PR metadata was selected", {"runtime-worktree-untrusted", "runtime-phase-repository-changed"})
         local = _translate(lambda: adapter.observe_diff(self.issue, self.family, state["triage_binding"]), "runtime")
         prior_local = self._read(metadata["repository_observation_binding"], label="PR local observation")
-        _require(self._same_repository(prior_local, local) and self._clean_repository(local) and local["head"]["commit"] == expected["head_sha"] and local["base"]["commit"] == expected["base_sha"], "stale", "final-repository-mismatch", "Local repository changed after PR metadata was selected")
+        _require(runtime.same_repository(prior_local, local) and runtime.clean_repository(local) and local["head"]["commit"] == expected["head_sha"] and local["base"]["commit"] == expected["base_sha"], "stale", "final-repository-mismatch", "Local repository changed after PR metadata was selected")
         current = _translate(lambda: adapter.observe_pull_request(self.issue, expected["number"], source_binding), "runtime")
         fields = ("repository", "number", "url", "state", "draft", "base_ref", "base_sha", "head_ref", "head_sha", "title_sha256", "body_sha256")
         _require(all(current[field] == expected[field] for field in fields) and current["state"] == "OPEN" and current["draft"], "stale", "pr-reconciliation-mismatch", "Draft PR changed before final completion")
         trailing = _translate(lambda: adapter.observe_diff(self.issue, self.family, state["triage_binding"]), "runtime")
-        _require(self._same_repository(local, trailing) and self._clean_repository(trailing) and trailing["head"]["commit"] == current["head_sha"] and trailing["base"]["commit"] == current["base_sha"], "stale", "final-repository-mismatch", "Local repository changed while PR freshness was observed")
+        _require(runtime.same_repository(local, trailing) and runtime.clean_repository(trailing) and trailing["head"]["commit"] == current["head_sha"] and trailing["base"]["commit"] == current["base_sha"], "stale", "final-repository-mismatch", "Local repository changed while PR freshness was observed")
         pr_binding = self._publish("github-pr-observation", "pr-%d-%s" % (current["number"], current["observation_sha256"]), source_binding, [("workflow-orchestration/github-pr-observation.json", current)], state["generation"] + 1)
         local_binding = self._publish("work-type-diff-observation", "observation-%s" % trailing["observation_sha256"], state["triage_binding"], [("workflow-work-type/diff-observation.json", trailing)], state["generation"] + 1)
         return pr_binding, local_binding
-    def _satisfaction_context(self, state, inspection, slot, gate, reobserve_human=False):
+    def _satisfaction_context(self, state, inspection, slot, gate, reobserve_human=False, historical=False):
         binding = self._candidate_binding(state, slot)
         projection = _translate(lambda: evidence.project(self.root, binding), "evidence")
         document = self._read(binding, supervision.SATISFACTION_PATH, "gate satisfaction")
@@ -788,8 +790,8 @@ class Orchestrator:
         if gate in {"final", "pr-publication"}: current_subjects, current_repository = self._gate_inputs(state, gate); current_subjects = [{"slot": name, "binding": reference} for name, reference in sorted(current_subjects, key=lambda row: row[0].encode())]; _require(challenge["subjects"] == current_subjects and challenge["repository_observation_binding"] == current_repository, "stale", "gate-satisfaction-current-context-stale", "Current gate subjects differ from the selected satisfaction")
         challenged_repository = self._read(challenge["repository_observation_binding"], label="challenged repository observation")
         satisfied_repository = self._read(document["repository_observation_binding"], label="satisfied repository observation")
-        _require(self._same_repository(challenged_repository, satisfied_repository) and self._clean_repository(satisfied_repository), "stale", "gate-satisfaction-repository-stale", "Gate satisfaction repository does not match its challenge")
-        if gate == "pr-publication": final_document = self._read(self._candidate_binding(state, "final-gate-satisfaction"), supervision.SATISFACTION_PATH, "final gate satisfaction"); final_repository = self._read(final_document["repository_observation_binding"], label="final satisfaction repository observation"); _require(self._same_repository(final_repository, challenged_repository), "stale", "gate-repository-chain-stale", "Publication repository differs from final approval")
+        _require(runtime.same_repository(challenged_repository, satisfied_repository) and runtime.clean_repository(satisfied_repository), "stale", "gate-satisfaction-repository-stale", "Gate satisfaction repository does not match its challenge")
+        if gate == "pr-publication": final_document = self._read(self._candidate_binding(state, "final-gate-satisfaction"), supervision.SATISFACTION_PATH, "final gate satisfaction"); final_repository = self._read(final_document["repository_observation_binding"], label="final satisfaction repository observation"); _require(runtime.same_repository(final_repository, challenged_repository), "stale", "gate-repository-chain-stale", "Publication repository differs from final approval")
         mechanism = document["human_authorization_binding"] or document["automatic_decision_binding"]
         mechanism_projection = _translate(lambda: evidence.project(self.root, mechanism), "evidence")
         expected_type = "human-authorization" if document["mode"] == "supervised" else "automatic-gate-decision"
@@ -800,7 +802,7 @@ class Orchestrator:
         _require(document["gate"] == gate, "stale", "gate-satisfaction-stale", "Gate satisfaction selects the wrong gate")
         if reobserve_human and document["mode"] == "supervised":
             source = {"kind": mechanism_document["source"]["kind"], "id": mechanism_document["source"]["id"]}
-            observed = self._authorization_document(state, challenge, source, challenge_binding)
+            observed = self._authorization_document(state, challenge, source, challenge_binding, historical=historical)
             _require(observed == mechanism_document, "stale", "authorization-source-stale", "Publication authorization source changed before the write")
         return binding, document, challenge
     def _open_publication_gate(self, state, inspection):
@@ -929,11 +931,9 @@ class Orchestrator:
         _fail("corrupt", "recovery-state-unrecoverable", "Paused state has no recorded safe attempt")
     def _resume_phase(self, request):
         operation = request["operation"]
-        if operation["kind"] == "validation": return "VALIDATION"
-        if operation["kind"] in {"github-read", "github-write"}: return "PR_PREPARATION"
-        names = {name: phase for phase, (_role, name) in AGENT_PHASES.items()}
-        _require(operation["name"] in names, "corrupt", "recovery-state-unrecoverable", "Attempt operation cannot reconstruct a safe phase")
-        return names[operation["name"]]
+        phase = RESUME_PHASES[1].get(operation["name"]) if operation["kind"] == "agent" else RESUME_PHASES[0].get(operation["kind"])
+        _require(phase is not None, "corrupt", "recovery-state-unrecoverable", "Attempt operation cannot reconstruct a safe phase")
+        return phase
     def recover(self, expected_tip, supplied):
         inspection = self._status(); self._expect(inspection, expected_tip); state = self._selected_state(inspection); pending = state["pending"]
         if pending is not None and pending["kind"] == "human":
@@ -950,7 +950,7 @@ class Orchestrator:
         _challenge, human = self._recovery_challenge(inspection["authority"], [("pending-attempt", request_binding)], state["generation"] + 1)
         successor = self._successor(state, inspection["authority"], phase="PAUSED", pending=human, transition={"type": "recover", "request_binding": human["request_binding"], "result_binding": None, "authorization_binding": None, "repository_observation_binding": None})
         binding, committed = self._commit(successor); return self._result("recovery-requested", successor, binding, committed)
-def status(root, issue, **_kwargs): return Orchestrator(root, issue)._status()
+def status(root, issue, **_kwargs): return Orchestrator(root, issue).inspect()
 def plan_next(root, issue, **_kwargs): return Orchestrator(root, issue).plan()
 def init(root, issue, request=None, **_kwargs): return Orchestrator(root, issue).initialize(request or {})
 def step(root, issue, expected_tip=None, request=None, **_kwargs): return Orchestrator(root, issue).advance(expected_tip, request)

@@ -21,10 +21,12 @@ PRODUCTION_MODULES = (
     "workflow_kernel",
     "workflow_migration",
     "workflow_orchestrator",
+    "workflow_orchestrator_resume",
     "workflow_policy",
     "workflow_plan_revision_policy",
     "workflow_repair",
     "workflow_runtime",
+    "workflow_runtime_reconstruction",
     "workflow_supervision_policy",
     "workflow_supervisor",
     "workflow_work_type_policy",
@@ -34,6 +36,7 @@ ORCHESTRATOR_IMPORTS = {
     "workflow_evidence",
     "workflow_inspector",
     "workflow_issue_source",
+    "workflow_orchestrator_resume",
     "workflow_policy",
     "workflow_plan_revision_policy",
     "workflow_runtime",
@@ -165,7 +168,11 @@ class WorkflowBoundaryTest(unittest.TestCase):
         )
         self.assertEqual(set(), project_imports("workflow_supervisor"))
         self.assertEqual(
-            {"workflow_inspector", "workflow_supervisor"},
+            {"workflow_inspector"},
+            project_imports("workflow_runtime_reconstruction"),
+        )
+        self.assertEqual(
+            {"workflow_inspector", "workflow_runtime_reconstruction", "workflow_supervisor"},
             project_imports("workflow_runtime"),
         )
         self.assertEqual(
@@ -187,6 +194,10 @@ class WorkflowBoundaryTest(unittest.TestCase):
         self.assertEqual(
             ORCHESTRATOR_IMPORTS,
             project_imports("workflow_orchestrator"),
+        )
+        self.assertEqual(
+            {"workflow_inspector"},
+            project_imports("workflow_orchestrator_resume"),
         )
 
     def test_dependency_check_recognizes_qualified_and_relative_imports(self):
@@ -296,13 +307,42 @@ class WorkflowBoundaryTest(unittest.TestCase):
             )
         )
         self.assertEqual(
-            {"canonical_bytes", "canonical_document", "resolve_store", "sha256"},
+            {"canonical_document", "resolve_store", "sha256"},
             inspector_calls,
         )
         source = path.read_text()
         self.assertNotIn("AuthorityReader", source)
         self.assertNotIn("inspect_repository", source)
         self.assertNotIn("workflow_inspector.inspect", source)
+
+    def test_reconstruction_module_is_pure_with_no_process_or_network_access(self):
+        path = SCRIPTS / "workflow_runtime_reconstruction.py"
+        self.assertLessEqual(len(path.read_text().splitlines()), 500)
+        tree = syntax_tree("workflow_runtime_reconstruction")
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imported.add((node.module or "").split(".")[0])
+        self.assertTrue(
+            {
+                "subprocess", "socket", "urllib", "http", "requests", "os", "importlib",
+                "workflow_authority", "workflow_cas", "workflow_evidence", "workflow_supervisor",
+            }.isdisjoint(imported)
+        )
+        self.assertEqual({"workflow_inspector"}, project_imports("workflow_runtime_reconstruction"))
+        calls = {
+            (node.func.value.id, node.func.attr)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+        }
+        self.assertTrue({name for name, _ in calls}.isdisjoint({"os", "subprocess", "socket"}))
+        source = path.read_text()
+        for prohibited in ("subprocess.", "socket.", "Popen", "os.system", "os.exec", ".commit(", ".publish("):
+            self.assertNotIn(prohibited, source)
 
     def test_runtime_cli_supports_script_and_package_execution(self):
         repository = SCRIPTS.parent
@@ -457,6 +497,45 @@ class WorkflowBoundaryTest(unittest.TestCase):
         for handler in work_type.COMMAND_HANDLERS.values():
             self.assertIs(handler, getattr(work_type, handler.__name__))
 
+    def test_resume_module_has_no_authority_commit_cas_publish_or_lifecycle_transition(self):
+        path = SCRIPTS / "workflow_orchestrator_resume.py"
+        self.assertLessEqual(len(path.read_text().splitlines()), 500)
+        tree = syntax_tree("workflow_orchestrator_resume")
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imported.add((node.module or "").split(".")[0])
+        self.assertTrue(
+            {
+                "subprocess", "socket", "urllib", "http", "requests", "os", "importlib",
+                "workflow_authority", "workflow_cas", "workflow_evidence",
+                "workflow_supervisor", "workflow_runtime",
+            }.isdisjoint(imported)
+        )
+        self.assertEqual({"workflow_inspector"}, project_imports("workflow_orchestrator_resume"))
+        calls = {
+            (node.func.value.id, node.func.attr)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+        }
+        self.assertTrue(
+            {("authority", "commit"), ("authority", "prepare"), ("evidence", "publish")}.isdisjoint(calls)
+        )
+        self.assertTrue({name for name, _ in calls}.isdisjoint({"os", "subprocess", "socket"}))
+        source = path.read_text()
+        for prohibited in ("subprocess.", "socket.", "os.system", ".commit(", ".publish("):
+            self.assertNotIn(prohibited, source)
+        self.assertNotIn("def resume_phase", source)
+        for phase in (
+            "PLANNING", "PLAN_REVIEW", "TEST_IMPLEMENTATION", "TEST_REVIEW",
+            "IMPLEMENTATION", "VALIDATION", "FINAL_REVIEW", "PR_PREPARATION",
+        ):
+            self.assertNotIn('"%s"' % phase, source)
+
     def test_orchestrator_is_thin_and_composes_only_public_apis(self):
         path = SCRIPTS / "workflow_orchestrator.py"
         self.assertLessEqual(len(path.read_text().splitlines()), 1000)
@@ -506,7 +585,7 @@ class WorkflowBoundaryTest(unittest.TestCase):
             and isinstance(node.func.value, ast.Name)
             and node.func.value.id in {
                 "authority", "evidence", "inspector", "plan_policy", "policy",
-                "issue_source", "runtime", "supervision", "work_type_policy",
+                "issue_source", "resume", "runtime", "supervision", "work_type_policy",
             }
             and node.func.attr.startswith("_")
         }
