@@ -19,7 +19,7 @@ sys.dont_write_bytecode = True
 
 
 NAME = "chess-echo-trusted-local-host"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 CONFIG_FORMAT = "chess-echo-trusted-local-host-config-v1"
 CONTROL_SOURCES = (
     "scripts/workflow_authority.py",
@@ -193,6 +193,7 @@ def _control_identity(control_root, git_executable, agent_executable):
         "python",
         "agent",
         "workspace_branch_prefix",
+        "worker_authentication",
     }
     if not isinstance(local, dict) or set(local) != keys or local["format"] != CONFIG_FORMAT:
         _fail("corrupt", "local-host-config", "Base config has no exact trusted-local host configuration")
@@ -209,7 +210,7 @@ def _control_identity(control_root, git_executable, agent_executable):
     provider_source = _regular(root / local["provider"]["source"], "local-provider-source")
     if local["provider"] != {
         "name": "chess-echo-trusted-local",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "source": "scripts/workflow_local_provider.py",
         "source_sha256": provider_source["sha256"],
     }:
@@ -224,6 +225,16 @@ def _control_identity(control_root, git_executable, agent_executable):
         _fail("denied", "agent-executable-mismatch", "Agent executable differs from base configuration")
     if local["workspace_branch_prefix"] != "chess-echo-agent/issue-":
         _fail("denied", "workspace-branch-prefix", "Workspace branch prefix is not the reviewed value")
+    if local["worker_authentication"] != {
+        "mode": "trusted-local-stdin-v1",
+        "trust": "trusted-local-development-v1",
+        "secret_environment_key": "COPILOT_GITHUB_TOKEN",
+    }:
+        _fail(
+            "denied",
+            "worker-authentication-config",
+            "Worker authentication differs from the reviewed trusted-local mode",
+        )
     sources = []
     for relative in CONTROL_SOURCES:
         current = _regular(root / relative, "control-source")
@@ -338,7 +349,16 @@ def _prepare_workspace(modules, control_root, repository, issue, parent, git_rec
     return _validate_workspace(control_root, workspace, issue, git_record)
 
 
-def _install(modules, args, config_root, identity, git_record, agent_record, token):
+def _install(
+    modules,
+    args,
+    config_root,
+    identity,
+    git_record,
+    agent_record,
+    token,
+    worker_token_reader,
+):
     provider_module = modules["workflow_local_provider"]
     orchestrator = modules["workflow_orchestrator"]
     runtime = modules["workflow_runtime"]
@@ -361,6 +381,7 @@ def _install(modules, args, config_root, identity, git_record, agent_record, tok
         row = next((item for item in roles if item["role"] == role), None)
         if row is None:
             _fail("corrupt", "local-role-missing", "Base config has no requested agent role")
+        worker_token = worker_token_reader() if worker_token_reader else None
         return provider_module.LocalSandboxProvider(
             root=workspace,
             control_root=identity["repository_root"],
@@ -370,6 +391,8 @@ def _install(modules, args, config_root, identity, git_record, agent_record, tok
             git_executable=git_record["path"],
             agent_executable=agent_record["path"],
             agent_home=args.agent_home,
+            trusted_worker_authentication=worker_token_reader is not None,
+            worker_token=worker_token,
         )
 
     orchestrator.RUNTIME_PROVIDER = runtime_provider
@@ -389,6 +412,17 @@ def _load_document(path, label):
     return _parse(data, label)
 
 
+def _read_worker_token(stream):
+    token = stream.readline().rstrip("\n")
+    if not token:
+        _fail(
+            "missing",
+            "worker-authentication-missing",
+            "Trusted-local worker credential must be supplied as the next standard-input line",
+        )
+    return token
+
+
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--control-root", required=True)
@@ -399,6 +433,11 @@ def build_parser():
     parser.add_argument("--agent-home", required=True)
     parser.add_argument("--result-store", required=True)
     parser.add_argument("--github-token-stdin", action="store_true", required=True)
+    parser.add_argument(
+        "--trusted-worker-auth-stdin",
+        action="store_true",
+        help="Trust the local worker and read its credential as the second stdin line",
+    )
     commands = parser.add_subparsers(dest="command", required=True)
     prepare = commands.add_parser("prepare-workspace")
     prepare.add_argument("issue", type=int)
@@ -458,8 +497,18 @@ def main(argv=None):
             token = sys.stdin.readline().rstrip("\n")
             if not token:
                 _fail("missing", "github-token-missing", "GitHub token must be supplied on standard input")
+            worker_token_reader = (
+                lambda: _read_worker_token(sys.stdin)
+            ) if args.trusted_worker_auth_stdin else None
             orchestrator, result_store, workspace = _install(
-                modules, args, config, identity, git_record, agent_record, token
+                modules,
+                args,
+                config,
+                identity,
+                git_record,
+                agent_record,
+                token,
+                worker_token_reader,
             )
             if args.command == "bootstrap":
                 adapter = orchestrator.RUNTIME_PROVIDER(workspace, args.issue, {})

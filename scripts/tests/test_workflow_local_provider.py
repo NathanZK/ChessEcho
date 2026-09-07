@@ -1,4 +1,5 @@
 import base64
+import copy
 import hashlib
 import json
 import os
@@ -34,8 +35,10 @@ class LocalProviderFixture:
         self.home = self.parent / "home"
         for path in (self.control, self.bin, self.home):
             path.mkdir()
+        self.home.chmod(0o700)
         self.git = pathlib.Path(shutil.which("git"))
         self.agent = self.bin / "agent"
+        self.worker_token = "github_pat_REDACTED_TEST_ONLY_1234567890"
         self.agent.write_text(
             "#!/bin/sh\n"
             "printf '%s' '{\"format\":\"chess-echo-orchestrator-agent-candidate-v1\","
@@ -125,7 +128,24 @@ class LocalProviderFixture:
         value["request_sha256"] = inspector.sha256(inspector.canonical_bytes(value))
         return value
 
-    def instance(self, **row_overrides):
+    def environment(self):
+        return {
+            "PATH": "",
+            "HOME": "",
+            "LC_ALL": "C.UTF-8",
+            "LANG": "C.UTF-8",
+            "TZ": "UTC",
+        }
+
+    def instance(
+        self,
+        *,
+        trusted_worker_authentication=True,
+        worker_token=None,
+        **row_overrides,
+    ):
+        if worker_token is None and trusted_worker_authentication:
+            worker_token = self.worker_token
         return provider.LocalSandboxProvider(
             root=self.workspace,
             control_root=self.control,
@@ -135,6 +155,8 @@ class LocalProviderFixture:
             git_executable=self.git,
             agent_executable=self.agent,
             agent_home=self.home,
+            trusted_worker_authentication=trusted_worker_authentication,
+            worker_token=worker_token,
         )
 
 
@@ -148,13 +170,25 @@ class TrustedLocalProviderTest(unittest.TestCase):
         request = self.fixture.request()
         binding = {"kind": "evidence-binding", "sha256": "d" * 64, "size": 1}
         projected = [{"role": "issue-source", "binding": binding, "entries": [{"path": "issue.json", "bytes_base64": "e30=", "sha256": "a" * 64, "size": 2}]}]
-        with mock.patch.object(provider, "_input_projection", return_value=projected):
+        launched = []
+        original_supervise = provider.supervisor.supervise
+
+        def supervise(command, **options):
+            if command[0] == str(self.fixture.agent):
+                launched.append(copy.deepcopy(options["env"]))
+            return original_supervise(command, **options)
+
+        with mock.patch.object(
+            provider, "_input_projection", return_value=projected
+        ), mock.patch.object(
+            provider.supervisor, "supervise", side_effect=supervise
+        ):
             result = instance.execute(
                 request,
                 binding,
                 ["agent"],
                 str(self.fixture.workspace),
-                {"LC_ALL": "C.UTF-8", "LANG": "C.UTF-8", "TZ": "UTC"},
+                self.fixture.environment(),
                 request["limits"],
                 None,
             )
@@ -167,6 +201,41 @@ class TrustedLocalProviderTest(unittest.TestCase):
         self.assertEqual(inspector.sha256(inspector.canonical_bytes(projected)), facts["input_projection_sha256"])
         self.assertIn("exact host-projected immutable inputs", facts["command"]["argv"][-1])
         self.assertIn("read-only: do not change or commit", facts["command"]["argv"][-1])
+        self.assertIn("--disable-builtin-mcps", facts["command"]["argv"])
+        self.assertIn(
+            "--secret-env-vars=COPILOT_GITHUB_TOKEN",
+            facts["command"]["argv"],
+        )
+        self.assertEqual(
+            {
+                "COPILOT_GITHUB_TOKEN",
+                "HOME",
+                "LANG",
+                "LC_ALL",
+                "PATH",
+                "TZ",
+            },
+            set(launched[0]),
+        )
+        self.assertEqual(
+            self.fixture.worker_token, launched[0]["COPILOT_GITHUB_TOKEN"]
+        )
+        self.assertNotIn("GH_TOKEN", launched[0])
+        self.assertNotIn("GITHUB_TOKEN", launched[0])
+        self.assertEqual(
+            ["COPILOT_GITHUB_TOKEN"], facts["environment"]["secret_keys"]
+        )
+        self.assertEqual(
+            instance.authentication, facts["environment"]["authentication"]
+        )
+        self.assertNotIn("values", facts["environment"])
+        self.assertNotIn(self.fixture.worker_token, json.dumps(result))
+        self.assertNotIn(self.fixture.worker_token, json.dumps(facts["command"]))
+        self.assertNotIn(self.fixture.worker_token, repr(instance))
+        self.assertIsNone(instance._worker_token)
+        for path in self.fixture.parent.rglob("*"):
+            if path.is_file():
+                self.assertNotIn(self.fixture.worker_token.encode(), path.read_bytes())
         self.assertEqual("not-isolated-same-uid", facts["isolation"]["filesystem"])
         self.assertEqual(
             facts["result_sha256"],
@@ -191,11 +260,107 @@ class TrustedLocalProviderTest(unittest.TestCase):
                 {"kind": "evidence-binding", "sha256": "d" * 64, "size": 1},
                 ["agent"],
                 str(self.fixture.workspace),
-                {"LC_ALL": "C.UTF-8", "LANG": "C.UTF-8", "TZ": "UTC"},
+                self.fixture.environment(),
                 self.fixture.request()["limits"],
                 None,
             )
         self.assertEqual("local-agent-executable-replaced", raised.exception.code)
+
+    def test_agent_home_must_be_dedicated_empty_and_private(self):
+        (self.fixture.home / ".copilot").mkdir()
+        with self.assertRaises(provider.LocalProviderFailure) as raised:
+            self.fixture.instance()
+        self.assertEqual("agent-home-not-dedicated", raised.exception.code)
+
+        nested = self.fixture.workspace / "agent-home"
+        nested.mkdir(mode=0o700)
+        with self.assertRaises(provider.LocalProviderFailure) as raised:
+            provider.LocalSandboxProvider(
+                root=self.fixture.workspace,
+                control_root=self.fixture.control,
+                issue=175,
+                role="planner",
+                row=self.fixture.row(),
+                git_executable=self.fixture.git,
+                agent_executable=self.fixture.agent,
+                agent_home=nested,
+                trusted_worker_authentication=True,
+                worker_token=self.fixture.worker_token,
+            )
+        self.assertEqual("agent-home-not-dedicated", raised.exception.code)
+
+        (self.fixture.home / ".copilot").rmdir()
+        self.fixture.home.chmod(0o755)
+        with self.assertRaises(provider.LocalProviderFailure) as raised:
+            self.fixture.instance()
+        self.assertEqual("agent-home-not-dedicated", raised.exception.code)
+
+    def test_trusted_worker_authentication_fails_closed_before_worker_launch(self):
+        binding = {"kind": "evidence-binding", "sha256": "d" * 64, "size": 1}
+        request = self.fixture.request()
+        cases = (
+            (
+                self.fixture.instance(trusted_worker_authentication=False),
+                "worker-authentication-not-configured",
+            ),
+            (
+                lambda: self.fixture.instance(worker_token="\n"),
+                "worker-authentication-malformed",
+            ),
+        )
+        original_supervise = provider.supervisor.supervise
+
+        def reject_worker(command, **options):
+            if command[0] == str(self.fixture.agent):
+                raise AssertionError("worker must not launch")
+            return original_supervise(command, **options)
+
+        for supplied, expected in cases:
+            with self.subTest(expected=expected):
+                if callable(supplied):
+                    with self.assertRaises(provider.LocalProviderFailure) as raised:
+                        supplied()
+                else:
+                    with mock.patch.object(
+                        provider, "_input_projection", return_value=[]
+                    ), mock.patch.object(
+                        provider.supervisor,
+                        "supervise",
+                        side_effect=reject_worker,
+                    ):
+                        with self.assertRaises(provider.LocalProviderFailure) as raised:
+                            supplied.execute(
+                                request,
+                                binding,
+                                ["agent"],
+                                str(self.fixture.workspace),
+                                self.fixture.environment(),
+                                request["limits"],
+                                None,
+                            )
+            self.assertEqual(expected, raised.exception.code)
+            self.assertNotIn(self.fixture.worker_token, str(raised.exception))
+
+    def test_worker_secret_disclosure_is_scrubbed_and_never_returned(self):
+        self.fixture.agent.write_text(
+            "#!/bin/sh\nprintf '%s' \"$COPILOT_GITHUB_TOKEN\"\n"
+        )
+        self.fixture.agent.chmod(self.fixture.agent.stat().st_mode | stat.S_IXUSR)
+        instance = self.fixture.instance()
+        with mock.patch.object(provider, "_input_projection", return_value=[]):
+            with self.assertRaises(provider.LocalProviderFailure) as raised:
+                instance.execute(
+                    self.fixture.request(),
+                    {"kind": "evidence-binding", "sha256": "d" * 64, "size": 1},
+                    ["agent"],
+                    str(self.fixture.workspace),
+                    self.fixture.environment(),
+                    self.fixture.request()["limits"],
+                    None,
+                )
+        self.assertEqual("worker-authentication-disclosed", raised.exception.code)
+        self.assertNotIn(self.fixture.worker_token, str(raised.exception))
+        self.assertNotIn(self.fixture.worker_token, repr(raised.exception))
 
     def test_write_phase_requires_a_clean_commit_and_rejects_oversized_prompt(self):
         instance = self.fixture.instance()
@@ -208,11 +373,12 @@ class TrustedLocalProviderTest(unittest.TestCase):
                 {"kind": "evidence-binding", "sha256": "d" * 64, "size": 1},
                 ["agent"],
                 str(self.fixture.workspace),
-                {"LC_ALL": "C.UTF-8", "LANG": "C.UTF-8", "TZ": "UTC"},
+                self.fixture.environment(),
                 request["limits"],
                 None,
             )
         self.assertIn("Commit all intended changes", result["command"][-1])
+        instance = self.fixture.instance()
         with mock.patch.object(
             provider,
             "_input_projection",
@@ -224,7 +390,7 @@ class TrustedLocalProviderTest(unittest.TestCase):
                     {"kind": "evidence-binding", "sha256": "d" * 64, "size": 1},
                     ["agent"],
                     str(self.fixture.workspace),
-                    {"LC_ALL": "C.UTF-8", "LANG": "C.UTF-8", "TZ": "UTC"},
+                    self.fixture.environment(),
                     request["limits"],
                     None,
                 )
@@ -249,7 +415,7 @@ class TrustedLocalProviderTest(unittest.TestCase):
                 binding,
                 ["agent"],
                 str(self.fixture.workspace),
-                {"LC_ALL": "C.UTF-8", "LANG": "C.UTF-8", "TZ": "UTC"},
+                self.fixture.environment(),
                 request["limits"],
                 None,
             )
@@ -303,6 +469,19 @@ class TrustedLocalProviderTest(unittest.TestCase):
 
         replaced = json.loads(json.dumps(facts))
         replaced["command"]["argv"][-1] += "x"
+        with self.assertRaises(runtime.RuntimeFailure) as raised:
+            adapter._validate_sandbox(
+                replaced,
+                request,
+                executed["process_result"],
+                {"sha256": inspector.sha256(candidate), "size": len(candidate)},
+                self.fixture.row(),
+                instance,
+            )
+        self.assertEqual("sandbox-verification-failed", raised.exception.code)
+
+        replaced = json.loads(json.dumps(facts))
+        replaced["environment"]["secret_keys"] = ["GH_TOKEN"]
         with self.assertRaises(runtime.RuntimeFailure) as raised:
             adapter._validate_sandbox(
                 replaced,
@@ -406,6 +585,31 @@ class TrustedLocalProviderTest(unittest.TestCase):
 
 
 class TrustedLocalHostProcessTest(unittest.TestCase):
+    def test_host_exposes_only_explicit_trusted_worker_mode(self):
+        actions = {
+            action.dest: action
+            for action in host.build_parser()._actions
+        }
+        self.assertIn("trusted_worker_auth_stdin", actions)
+        self.assertFalse(actions["trusted_worker_auth_stdin"].default)
+        config = json.loads(
+            (REPOSITORY / ".github" / "agent-workflow.json").read_text()
+        )
+        self.assertEqual(
+            provider.TRUSTED_WORKER_AUTHENTICATION,
+            config["orchestrator"]["local_host"]["worker_authentication"],
+        )
+
+        source = pathlib.Path(provider.__file__).read_text()
+        self.assertNotIn("os.environ", source)
+        self.assertNotIn("~/.copilot", source)
+        self.assertNotIn(".config/gh", source)
+        self.assertNotIn("gh auth", source)
+        self.assertIn(
+            "trusted_worker_authentication=worker_token_reader is not None",
+            pathlib.Path(host.__file__).read_text(),
+        )
+
     def test_isolated_fresh_process_rejects_candidate_import_shadowing(self):
         with tempfile.TemporaryDirectory(dir=str(REPOSITORY)) as temporary:
             root = pathlib.Path(temporary)
@@ -564,7 +768,14 @@ class TrustedLocalHostProcessTest(unittest.TestCase):
             )
             self.assertEqual({"sha": head}, json.loads(direct_gh.stdout), direct_gh.stderr)
             bootstrap = subprocess.run(
-                command[:-4] + ["bootstrap", "176", "--workspace", document["workspace"]],
+                command[:-4]
+                + [
+                    "--trusted-worker-auth-stdin",
+                    "bootstrap",
+                    "176",
+                    "--workspace",
+                    document["workspace"],
+                ],
                 cwd=malicious,
                 env={"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(malicious)},
                 input="token\n",
