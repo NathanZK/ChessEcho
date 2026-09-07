@@ -21,6 +21,8 @@ the workflow lifecycle or changing its stored formats.
 | Inactive orchestration authority pointer | `workflow_authority.py` |
 | Authorized replacement-pointer restoration | `workflow_authority_repair.py` |
 | Inactive trusted Git/GitHub/process and validated-source publication adapter | `workflow_runtime.py` |
+| Reviewed Phase 1 host and deterministic workspace/result bootstrap | `workflow_local_host.py` |
+| Trusted-local agent execution and execution-fact attestation | `workflow_local_provider.py` |
 | Trusted pre-genesis issue-source publication | `workflow_issue_source.py` |
 | Inactive lifecycle composition | `workflow_orchestrator.py` |
 | Legacy lifecycle, approvals, reviews, corrections, validation, adoption/migration, and projection-recovery policy | `agent_workflow.py` |
@@ -57,6 +59,9 @@ workflow_supervision_policy -> workflow_inspector
 workflow_authority -> workflow_inspector, workflow_evidence, workflow_cas
 workflow_authority_repair -> workflow_inspector, workflow_authority, workflow_cas
 workflow_runtime -> workflow_inspector, workflow_supervisor
+workflow_local_provider -> workflow_cas, workflow_evidence, workflow_inspector,
+                           workflow_supervisor
+workflow_local_host -> verified dynamic imports from the reviewed control checkout
 workflow_issue_source -> workflow_inspector, workflow_cas, workflow_runtime
 workflow_orchestrator -> workflow_inspector, workflow_evidence, workflow_authority,
                          workflow_work_type_policy, workflow_plan_revision_policy,
@@ -146,6 +151,14 @@ target, derives the source commit from that observation, executes one fixed
 non-force publication with a publication-only credential, and reconciles the
 exact remote ref. It does not expose generic Git writes or mutate orchestration
 authority.
+
+`workflow_local_host.py` is the Phase 1 activation boundary. It uses isolated
+Python startup, verifies its complete controller source set against a clean
+base checkout before importing it, and installs the three fixed orchestrator
+provider seams. `workflow_local_provider.py` executes agents through
+`workflow_supervisor` in deterministic issue worktrees and records exact
+execution facts. This is a trusted-local control-plane boundary, not hostile
+same-UID, filesystem, credential, network, container, or VM isolation.
 
 ## Kernel boundary
 

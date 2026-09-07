@@ -1,6 +1,6 @@
 # Workflow runtime
 
-`scripts/workflow_runtime.py` is the inactive external boundary for the future
+`scripts/workflow_runtime.py` is the external boundary for the replacement
 orchestrator. It supplies fixed Git and GitHub observations, including trusted
 remote-head observations, baseline-pinned command resolution, bounded execution,
 cancellation pass-through, uncertain GitHub-write reconciliation, and one
@@ -16,16 +16,17 @@ Git common-directory resolution. It intentionally does not use
 #132 references, and dereferencing either would incorrectly give this boundary
 authority-selection responsibility.
 
-## Inactive configuration
+## Provider configuration
 
 `.github/agent-workflow.json` contains one exact-key `orchestrator` object with
 format `chess-echo-orchestrator-config-v1`. It declares:
 
-- `mode`, currently and intentionally `inactive`;
+- `mode`, activated for the reviewed trusted-local host;
 - sorted unique `frozen_issues`;
 - exactly `implementer`, `planner`, and `reviewer` rows in lexical order;
 - each role's fixed command prefix, repository-relative cwd, #131 limits,
-  `external-sandbox-v1` requirement, and provider name/source hash;
+  execution-boundary kind, and exact provider/version/source and agent
+  executable hashes;
 - exact `git` and `gh` command names and limits;
 - an explicit absolute-directory `validation_path`; and
 - an exact structurally validated `supervision` object whose four-gate semantics
@@ -34,10 +35,9 @@ format `chess-echo-orchestrator-config-v1`. It declares:
   author associations.
 
 Unknown, missing, duplicate, noncanonical, shell, dispatch-wrapper, traversal,
-PATH-separator injection, or out-of-range values fail closed. The committed provider identity is an
-inactive activation marker, not a claim that a provider is installed or
-verified. No `runtime-test-*` provider or fixture source hash may appear in the
-committed config.
+PATH-separator injection, or out-of-range values fail closed. No `runtime-test-*` provider or fixture source hash may appear in the committed
+config. The trusted-local host verifies the installed executable and provider
+against this base-pinned configuration before execution.
 
 With `mode=inactive`, bootstrap and read-only observations remain callable.
 Validation, agent execution, and GitHub writes return
@@ -83,7 +83,9 @@ before the comparison. If the reads differ, bootstrap repeats that complete
 comparison once; movement in the second comparison is `stale`.
 
 The bootstrap document also pins the runtime module version and source hash.
-After classification, the orchestrator publishes a
+The Phase 1 activation and operational procedure is documented in
+[`workflow-local-provider.md`](workflow-local-provider.md). After
+classification, the orchestrator publishes a
 `chess-echo-runtime-reconstruction-pin-v1` document bound to the selected
 baseline and triage. That pin contains the exact bootstrap document but no
 credential.
@@ -132,8 +134,9 @@ Commands are derived from the bootstrap bytes, not caller argv:
   `npx`, or `make`-style configured names through `validation_path`, or resolves
   a configured `./gradlew` under its validated cwd; bootstrap records the
   resolved path and SHA-256, and execution rejects replacement;
-- agent execution chooses one configured role and appends only
-  `--request-binding <canonical #132 reference>` to its fixed provider prefix;
+- trusted-local agent execution delegates the exact base-pinned role and
+  executable to the reviewed provider, which constructs one deterministic
+  prompt bound to the canonical request and request binding;
 - source publication derives one exact non-force push from a canonical
   observation-bound request and the bootstrapped repository identity; and
 - the only write operation is `create-draft-pr`, constructed from an exact

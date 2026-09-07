@@ -55,6 +55,24 @@ class TestSandboxProvider:
         return value
 
 
+class TestPendingResultProvider:
+    def __init__(self):
+        self.candidates = {}
+
+    def prepare(self, query, binding, _data):
+        self.candidates[query["query_sha256"]] = {
+            "kind": query["result_kind"],
+            "binding": copy.deepcopy(binding),
+        }
+
+    def __call__(self, _root, _issue, query):
+        return {
+            "format": "chess-echo-pending-result-candidates-v1",
+            "query_sha256": query["query_sha256"],
+            "candidates": [],
+        }
+
+
 class OrchestratorFixture:
     """A real Git/CAS/evidence/policy/runtime fixture with bounded local commands."""
 
@@ -206,7 +224,7 @@ class OrchestratorFixture:
         test.addCleanup(setattr, orchestrator, "SANDBOX_PROVIDER", old_sandbox)
         test.addCleanup(setattr, orchestrator, "PENDING_RESULT_PROVIDER", old_result)
         orchestrator.RUNTIME_PROVIDER = provide
-        orchestrator.PENDING_RESULT_PROVIDER = None
+        orchestrator.PENDING_RESULT_PROVIDER = TestPendingResultProvider()
         orchestrator.SANDBOX_PROVIDER = lambda root, issue, role: TestSandboxProvider(
             self.root, "orchestrator-e2e-sandbox", self.agent_sha256)
         return adapter
@@ -1561,7 +1579,7 @@ class OrchestratorLifecycleTest(unittest.TestCase):
             candidate = self.fixture.step()
             with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
                 self.fixture.step()
-            self.assertEqual(("busy", "attempt-in-flight"), (raised.exception.status, raised.exception.code))
+            self.assertEqual(("missing", "pending-result-not-found"), (raised.exception.status, raised.exception.code))
             self.assertEqual(1, execute.call_count)
             finalized = self.fixture.step(request=candidate["handoff"])
         self.assertEqual("PLAN_REVIEW", finalized["phase"])

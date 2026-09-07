@@ -166,7 +166,7 @@ class Orchestrator:
         try: self._validate_supervision_history(state, inspection["authority"])
         finally: self._history_adapter = None
         return state
-    def _publish(self, decision_type, decision_id, subject, rows, generation, lineage=None, identity=None):
+    def _publish(self, decision_type, decision_id, subject, rows, generation, lineage=None, identity=None, before_binding_reference=None):
         encoded, entries = [], []
         for path, value in rows:
             data = value if isinstance(value, bytes) else _canonical(value)
@@ -177,7 +177,7 @@ class Orchestrator:
         identity = identity or {"issue": self.issue, "run_id": inspector.sha256(b"orchestration-node-v1\0" + blob)[:32], "family_run_id": self.family, "correction": None, "run_generation": generation, "sequence": generation + 1, "event_tip": inspector.sha256(b"orchestration-node-tip-v1\0" + blob)}
         captures = [{"entry_sha256": inspector.sha256(_canonical(entry)), "capture_method": "orchestration-composition", "captured_at": "1970-01-01T00:00:00Z", "source": {"type": "workspace", "path": entry["path"]}, "tool": {"name": "workflow-orchestrator", "version": VERSION}} for entry in entries]
         publication = {"format": evidence.PUBLICATION_FORMAT, "identity": identity, "decision": {"type": decision_type, "id": decision_id}, "subject": subject, "lineage": lineage or {"status": "original", "parent_binding": None}, "migration": None, "entries": entries, "captures": captures, "payloads": [{"sha256": inspector.sha256(data), "size": len(data), "bytes_base64": base64.b64encode(data).decode()} for _path, data in encoded]}
-        return _translate(lambda: evidence.publish(self.root, publication)["binding"], "evidence")
+        return _translate(lambda: evidence.publish(self.root, publication, before_binding_reference=before_binding_reference)["binding"], "evidence")
     def _publish_state(self, state):
         data, generation = _canonical(state), state["generation"]
         identity = {"issue": self.issue, "run_id": inspector.sha256(b"orchestration-state-v1\0" + data)[:32], "family_run_id": self.family, "correction": None, "run_generation": generation, "sequence": generation + 1, "event_tip": inspector.sha256(b"orchestration-tip-v1\0" + data)}
@@ -417,20 +417,18 @@ class Orchestrator:
                 except (OrchestratorFailure, authority.AuthorityFailure, evidence.EvidenceFailure, inspector.InspectionFailure, OSError, KeyError, TypeError):
                     cancelled.set(); return
         worker = threading.Thread(target=watch, name="workflow-cancel-watch", daemon=True); worker.start(); return cancelled, stop, worker
-    def _unchanged(self, inspection):
-        _require(self._status()["pointer_sha256"] == inspection["pointer_sha256"], "stale", "attempt-result-stale", "Authority changed while an attempt executed")
-    def _execution_result(self, state, request_binding, result):
-        result_binding = self._publish("execution-result", "attempt-%s" % result["attempt_id"], request_binding, [("workflow-orchestration/execution-result.json", result)], state["generation"] + 1)
+    def _unchanged(self, inspection): _require(self._status()["pointer_sha256"] == inspection["pointer_sha256"], "stale", "attempt-result-stale", "Authority changed while an attempt executed")
+    def _execution_result(self, state, inspection, request_binding, result):
+        query = self._pending_result_query(state, inspection); recorder = getattr(PENDING_RESULT_PROVIDER, "prepare", None); _require(callable(recorder), "unsupported", "pending-result-provider-unavailable", "Pending-result provider cannot durably index execution results")
+        binding = self._publish("execution-result", "attempt-%s" % result["attempt_id"], request_binding, [("workflow-orchestration/execution-result.json", result)], state["generation"] + 1, before_binding_reference=lambda reference, data: recorder(copy.deepcopy(query), copy.deepcopy(reference), data))
         after = result.get("repository_after")
         after_binding = None if after is None else self._publish("work-type-diff-observation", "observation-%s" % after["observation_sha256"], state["triage_binding"], [("workflow-work-type/diff-observation.json", after)], state["generation"] + 1)
-        return result_binding, after_binding, _put(_put(state["candidates"], "execution-request", request_binding), "execution-result", result_binding)
+        return binding, after_binding, _put(_put(state["candidates"], "execution-request", request_binding), "execution-result", binding)
     def _pause(self, state, inspection, rows, code):
         successor = self._successor(state, inspection["authority"], phase="PAUSED", pending=None, candidates=rows, transition={"type": "pause", "request_binding": None, "result_binding": None, "authorization_binding": None, "repository_observation_binding": None})
         binding, committed = self._commit(successor); return self._result(code, successor, binding, committed, "paused")
-    def _candidate(self, result, expected):
-        return _translate(lambda: resume.decode_candidate(result, expected), "resume")
-    def _candidate_schema(self, value, expected):
-        return _translate(lambda: resume.candidate_schema(value, expected), "resume")
+    def _candidate(self, result, expected): return _translate(lambda: resume.decode_candidate(result, expected), "resume")
+    def _candidate_schema(self, value, expected): return _translate(lambda: resume.candidate_schema(value, expected), "resume")
     def _candidate_artifact(self, state, result, candidate):
         details = CANDIDATE_ARTIFACTS.get(state["phase"])
         if details is None: return result
@@ -599,13 +597,13 @@ class Orchestrator:
         digest = _digest(core); document = dict(core); document.update({"confirmation": "approve recovery %s" % digest, "challenge_sha256": digest})
         binding = self._publish("human-challenge", "challenge-%s" % digest, authority_binding, [("workflow-orchestration/human-challenge.json", document)], generation)
         return binding, {"attempt_id": _digest({"authority": authority_binding, "kind": "human", "challenge": binding}), "kind": "human", "request_binding": binding, "status": "requested"}
-    def _check_recovery_challenge(self, challenge, predecessor):
-        _translate(lambda: resume.verify_recovery_challenge(challenge, predecessor, self.issue, self.family), "resume")
+    def _check_recovery_challenge(self, challenge, predecessor): _translate(lambda: resume.verify_recovery_challenge(challenge, predecessor, self.issue, self.family), "resume")
     def _run_pr_read(self, state, inspection, pending, request):
         try: number = int(request["operation"]["name"].rsplit("-", 1)[1])
         except (KeyError, TypeError, ValueError): _fail("corrupt", "pr-read-request-invalid", "PR observation request has no valid number")
         self._unchanged(inspection); adapter = self._runtime(None, state, inspection, request["repository_before"]); observation = _translate(lambda: adapter.observe_pull_request(self.issue, number, pending["request_binding"]), "runtime"); self._unchanged(inspection)
-        observed = self._publish("github-pr-observation", "pr-%d-%s" % (number, observation["observation_sha256"]), pending["request_binding"], [("workflow-orchestration/github-pr-observation.json", observation)], state["generation"] + 1)
+        query = self._pending_result_query(state, inspection); recorder = getattr(PENDING_RESULT_PROVIDER, "prepare", None); _require(callable(recorder), "unsupported", "pending-result-provider-unavailable", "Pending-result provider cannot durably index PR observations")
+        observed = self._publish("github-pr-observation", "pr-%d-%s" % (number, observation["observation_sha256"]), pending["request_binding"], [("workflow-orchestration/github-pr-observation.json", observation)], state["generation"] + 1, before_binding_reference=lambda reference, data: recorder(copy.deepcopy(query), copy.deepcopy(reference), data))
         handoff = resume.build_handoff(inspection["authority"], pending["request_binding"], pr_observation_binding=observed)
         return self._handoff_result(state, inspection, handoff)
     def _finalize_pr_read(self, state, inspection, request, observed):
@@ -644,7 +642,7 @@ class Orchestrator:
         finally:
             stop.set(); worker.join(2)
             _require(not worker.is_alive(), "conflict", "cancel-watcher-stuck", "Cancellation watcher did not stop")
-        self._unchanged(inspection); result_binding, after, rows = self._execution_result(state, pending["request_binding"], result)
+        self._unchanged(inspection); result_binding, after, rows = self._execution_result(state, inspection, pending["request_binding"], result)
         handoff = resume.build_handoff(inspection["authority"], pending["request_binding"], result_binding=result_binding, repository_after_binding=after)
         return self._handoff_result(state, inspection, handoff)
     def _discover_pending(self, state, inspection):

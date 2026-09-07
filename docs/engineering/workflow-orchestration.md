@@ -1,6 +1,6 @@
 # Workflow orchestration
 
-`scripts/workflow_orchestrator.py` is the inactive-by-default composition layer
+`scripts/workflow_orchestrator.py` is the provider-neutral composition layer
 for issue #144. It selects one next action for one issue; the authority,
 runtime, evidence, work-type, plan-revision, and workflow-policy modules retain
 their respective ownership boundaries.
@@ -11,23 +11,19 @@ publishes through `workflow_evidence.publish`, selects through
 `workflow_authority.prepare`/`commit`, and delegates all external work to
 `workflow_runtime`.
 
-## Activation blockers
+## Phase 1 local activation
 
-The implementation path is complete, but production activation remains blocked
-only by:
+Phase 1 is activated through the reviewed
+[`workflow_local_host.py`](workflow-local-provider.md) entry point.
+`RUNTIME_PROVIDER`, `SANDBOX_PROVIDER`, and `PENDING_RESULT_PROVIDER` remain
+unset when this module is invoked directly, so bypassing the host fails closed.
+The host installs fixed, base-pinned providers without plugin discovery.
 
-1. a reviewed `external-sandbox-v1` provider;
-2. credential isolation that denies agents both GitHub credentials and the
-   authority store;
-3. Slice 4 routing/cutover;
-4. operator deployment and acceptance of the separately implemented repair
-   contract for arbitrary corruption of the new authority pointer; and
-5. migration and deferred replacement policy work.
-
-`RUNTIME_PROVIDER`, `SANDBOX_PROVIDER`, and `PENDING_RESULT_PROVIDER` are
-deliberately unset in production. The integration tests inject deterministic
-seams to exercise the complete composition without claiming that those fixtures
-provide production containment or durable production result discovery.
+Phase 1 deliberately does not claim hostile-process isolation. The trusted
+local operator accepts same-UID filesystem, credential, authority-store, and
+network exposure while agent output remains untrusted and all existing
+evidence, validation, authority, reconstruction, and human gates remain in
+force. Hardened isolation remains issue #160.
 
 ## Commands
 
