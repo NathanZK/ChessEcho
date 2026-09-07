@@ -2,41 +2,50 @@
   "target_base": "main",
   "orchestrator": {
     "format": "chess-echo-orchestrator-config-v1",
-    "mode": "inactive",
+    "mode": "active",
     "frozen_issues": [115],
     "agent_roles": [
       {
         "role": "implementer",
-        "command_prefix": ["chess-echo-agent-sandbox"],
+        "command_prefix": ["copilot"],
         "cwd": ".",
         "timeout_ms": 3600000,
         "grace_ms": 2000,
         "output_limit_bytes": 524288,
-        "containment": "external-sandbox-v1",
-        "provider_name": "external-sandbox-required",
-        "provider_source_sha256": "f1bba91b33ee233390e581a17bf5eba25d7cf47bcacea7a35137818d5140cbf3"
+        "containment": "trusted-local-worktree-v1",
+        "provider_name": "chess-echo-trusted-local",
+        "provider_version": "1.0.0",
+        "provider_source": "scripts/workflow_local_provider.py",
+        "provider_source_sha256": "c5c91c7cc4a87ffaad95abf0c2234030f5a331bea4360a8b4cdd4f17442ac87e",
+        "agent_executable_sha256": "fe779da7dd2342c1d23f0744873fa27d0251eaaee4dc6637fa53093639c0f3c9"
       },
       {
         "role": "planner",
-        "command_prefix": ["chess-echo-agent-sandbox"],
+        "command_prefix": ["copilot"],
         "cwd": ".",
         "timeout_ms": 3600000,
         "grace_ms": 2000,
         "output_limit_bytes": 524288,
-        "containment": "external-sandbox-v1",
-        "provider_name": "external-sandbox-required",
-        "provider_source_sha256": "f1bba91b33ee233390e581a17bf5eba25d7cf47bcacea7a35137818d5140cbf3"
+        "containment": "trusted-local-worktree-v1",
+        "provider_name": "chess-echo-trusted-local",
+        "provider_version": "1.0.0",
+        "provider_source": "scripts/workflow_local_provider.py",
+        "provider_source_sha256": "c5c91c7cc4a87ffaad95abf0c2234030f5a331bea4360a8b4cdd4f17442ac87e",
+        "agent_executable_sha256": "fe779da7dd2342c1d23f0744873fa27d0251eaaee4dc6637fa53093639c0f3c9"
       },
       {
         "role": "reviewer",
-        "command_prefix": ["chess-echo-agent-sandbox"],
+        "command_prefix": ["copilot"],
         "cwd": ".",
         "timeout_ms": 3600000,
         "grace_ms": 2000,
         "output_limit_bytes": 524288,
-        "containment": "external-sandbox-v1",
-        "provider_name": "external-sandbox-required",
-        "provider_source_sha256": "f1bba91b33ee233390e581a17bf5eba25d7cf47bcacea7a35137818d5140cbf3"
+        "containment": "trusted-local-worktree-v1",
+        "provider_name": "chess-echo-trusted-local",
+        "provider_version": "1.0.0",
+        "provider_source": "scripts/workflow_local_provider.py",
+        "provider_source_sha256": "c5c91c7cc4a87ffaad95abf0c2234030f5a331bea4360a8b4cdd4f17442ac87e",
+        "agent_executable_sha256": "fe779da7dd2342c1d23f0744873fa27d0251eaaee4dc6637fa53093639c0f3c9"
       }
     ],
     "git": {
@@ -81,6 +90,28 @@
         }
       ],
       "allowed_associations": ["COLLABORATOR", "MEMBER", "OWNER"]
+    },
+    "local_host": {
+      "format": "chess-echo-trusted-local-host-config-v1",
+      "name": "chess-echo-trusted-local-host",
+      "version": "1.0.0",
+      "source": "scripts/workflow_local_host.py",
+      "source_sha256": "2325639c852230d286ff4b2f65e72786ee6ee2a9bb299a27a15507d646c113fe",
+      "provider": {
+        "name": "chess-echo-trusted-local",
+        "version": "1.0.0",
+        "source": "scripts/workflow_local_provider.py",
+        "source_sha256": "c5c91c7cc4a87ffaad95abf0c2234030f5a331bea4360a8b4cdd4f17442ac87e"
+      },
+      "python": {
+        "path": "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9",
+        "sha256": "5c5950c62eee5fd227a67e4bdfcde81c9add59799bba0949635f3d5ba9661c26"
+      },
+      "agent": {
+        "name": "copilot",
+        "sha256": "fe779da7dd2342c1d23f0744873fa27d0251eaaee4dc6637fa53093639c0f3c9"
+      },
+      "workspace_branch_prefix": "chess-echo-agent/issue-"
     }
   },
   "validation_profiles": {

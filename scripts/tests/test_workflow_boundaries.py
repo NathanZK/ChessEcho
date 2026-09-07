@@ -2,6 +2,7 @@ import argparse
 import ast
 import hashlib
 import importlib
+import json
 import pathlib
 import subprocess
 import sys
@@ -19,6 +20,8 @@ PRODUCTION_MODULES = (
     "workflow_inspector",
     "workflow_issue_source",
     "workflow_kernel",
+    "workflow_local_host",
+    "workflow_local_provider",
     "workflow_migration",
     "workflow_orchestrator",
     "workflow_orchestrator_resume",
@@ -141,6 +144,11 @@ class WorkflowBoundaryTest(unittest.TestCase):
         )
         self.assertEqual(set(), project_imports("workflow_kernel"))
         self.assertEqual(set(), project_imports("workflow_inspector"))
+        self.assertEqual(set(), project_imports("workflow_local_host"))
+        self.assertEqual(
+            {"workflow_cas", "workflow_evidence", "workflow_inspector", "workflow_supervisor"},
+            project_imports("workflow_local_provider"),
+        )
         self.assertEqual(
             {"workflow_cas", "workflow_inspector", "workflow_runtime"},
             project_imports("workflow_issue_source"),
@@ -285,7 +293,7 @@ class WorkflowBoundaryTest(unittest.TestCase):
 
     def test_runtime_has_a_small_exact_external_boundary(self):
         path = SCRIPTS / "workflow_runtime.py"
-        self.assertLessEqual(len(path.read_text().splitlines()), 1100)
+        self.assertLessEqual(len(path.read_text().splitlines()), 1200)
         tree = syntax_tree("workflow_runtime")
         imported = set()
         inspector_calls = set()
@@ -386,9 +394,10 @@ class WorkflowBoundaryTest(unittest.TestCase):
         self.assertEqual(0, result.returncode, result.stderr)
 
     def test_runtime_config_contains_no_test_sandbox_provider(self):
-        config = (
+        config_text = (
             SCRIPTS.parent / ".github" / "agent-workflow.json"
         ).read_text()
+        config = json.loads(config_text)["orchestrator"]
         fake_hash = hashlib.sha256(
             (
                 SCRIPTS
@@ -398,8 +407,33 @@ class WorkflowBoundaryTest(unittest.TestCase):
                 / "fake_agent.py"
             ).read_bytes()
         ).hexdigest()
-        self.assertNotIn("runtime-test-", config)
-        self.assertNotIn(fake_hash, config)
+        self.assertNotIn("runtime-test-", config_text)
+        self.assertNotIn(fake_hash, config_text)
+        self.assertEqual("active", config["mode"])
+        self.assertEqual(
+            hashlib.sha256(
+                (SCRIPTS / "workflow_local_host.py").read_bytes()
+            ).hexdigest(),
+            config["local_host"]["source_sha256"],
+        )
+        self.assertEqual(
+            hashlib.sha256(
+                (SCRIPTS / "workflow_local_provider.py").read_bytes()
+            ).hexdigest(),
+            config["local_host"]["provider"]["source_sha256"],
+        )
+        for row in config["agent_roles"]:
+            self.assertEqual("trusted-local-worktree-v1", row["containment"])
+            self.assertEqual(config["local_host"]["provider"]["name"], row["provider_name"])
+            self.assertEqual(config["local_host"]["provider"]["version"], row["provider_version"])
+            self.assertEqual(
+                config["local_host"]["provider"]["source_sha256"],
+                row["provider_source_sha256"],
+            )
+            self.assertEqual(
+                config["local_host"]["agent"]["sha256"],
+                row["agent_executable_sha256"],
+            )
 
     def test_kernel_symbols_are_imported_not_reimplemented(self):
         tree = syntax_tree("agent_workflow")

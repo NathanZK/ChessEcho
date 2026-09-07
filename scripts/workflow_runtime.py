@@ -139,7 +139,8 @@ def _index_flags(data):
 def _validate_config(config, root):
     if not isinstance(config, dict) or 'orchestrator' not in config: _fail('missing', 'orchestrator-config-missing', 'Base config has no orchestrator block')
     orchestrator = config['orchestrator']
-    _exact(orchestrator, {'format', 'mode', 'frozen_issues', 'agent_roles', 'git', 'github', 'validation_path', 'supervision', 'human_approval'}, 'orchestrator-config')
+    required = {'format', 'mode', 'frozen_issues', 'agent_roles', 'git', 'github', 'validation_path', 'supervision', 'human_approval'}
+    if not isinstance(orchestrator, dict) or set(orchestrator) not in (required, required | {'local_host'}): _fail('corrupt', 'invalid-orchestrator-config-schema', 'Orchestrator config schema is invalid')
     if orchestrator['format'] != 'chess-echo-orchestrator-config-v1': _fail('unsupported', 'orchestrator-config-format', 'Orchestrator config format is unsupported')
     if orchestrator['mode'] not in {'inactive', 'active'}: _fail('unsupported', 'orchestrator-mode', 'Orchestrator mode is unsupported')
     frozen = orchestrator['frozen_issues']
@@ -147,13 +148,35 @@ def _validate_config(config, root):
     roles = orchestrator['agent_roles']
     if not isinstance(roles, list) or [row.get('role') for row in roles if isinstance(row, dict)] != list(ROLES): _fail('corrupt', 'invalid-agent-roles', 'Exactly three canonically ordered roles are required')
     for row in roles:
-        _exact(row, {'role', 'command_prefix', 'cwd', 'timeout_ms', 'grace_ms', 'output_limit_bytes', 'containment', 'provider_name', 'provider_source_sha256'}, 'agent-role')
+        common_keys = {'role', 'command_prefix', 'cwd', 'timeout_ms', 'grace_ms', 'output_limit_bytes', 'containment', 'provider_name', 'provider_source_sha256'}
+        local_keys = common_keys | {'provider_version', 'provider_source', 'agent_executable_sha256'}
+        if not isinstance(row, dict) or frozenset(row) not in {frozenset(common_keys), frozenset(local_keys)}:
+            _fail('corrupt', 'invalid-agent-role-schema', 'Agent role schema is invalid')
         _command(row['command_prefix'], 'agent-command')
         _path(row['cwd'], root, 'agent-cwd')
         _limits({key: row[key] for key in ('timeout_ms', 'grace_ms', 'output_limit_bytes')}, 'agent')
-        if row['containment'] != 'external-sandbox-v1': _fail('denied', 'sandbox-containment-required', 'Agent roles require external-sandbox-v1')
+        if row['containment'] not in {'external-sandbox-v1', 'trusted-local-worktree-v1'}: _fail('denied', 'sandbox-containment-required', 'Agent roles require one reviewed execution boundary')
         _slug(row['provider_name'], 'provider-name')
         _sha(row['provider_source_sha256'], 'provider-source')
+        if row['containment'] == 'trusted-local-worktree-v1':
+            if set(row) != local_keys: _fail('corrupt', 'local-provider-config-incomplete', 'Trusted-local provider configuration is incomplete')
+            _slug(row['provider_version'], 'provider-version')
+            if row['provider_source'] != 'scripts/workflow_local_provider.py': _fail('denied', 'local-provider-source-path', 'Trusted-local provider source path is fixed')
+            _sha(row['agent_executable_sha256'], 'agent-executable')
+    local_rows = [row for row in roles if row['containment'] == 'trusted-local-worktree-v1']
+    if local_rows:
+        local = orchestrator.get('local_host')
+        keys = {'format', 'name', 'version', 'source', 'source_sha256', 'provider', 'python', 'agent', 'workspace_branch_prefix'}
+        _exact(local, keys, 'local-host')
+        if local['format'] != 'chess-echo-trusted-local-host-config-v1' or local['name'] != 'chess-echo-trusted-local-host' or local['source'] != 'scripts/workflow_local_host.py' or local['workspace_branch_prefix'] != 'chess-echo-agent/issue-': _fail('denied', 'local-host-config-mismatch', 'Trusted-local host configuration is not the reviewed shape')
+        _slug(local['version'], 'local-host-version'); _sha(local['source_sha256'], 'local-host-source')
+        _exact(local['provider'], {'name', 'version', 'source', 'source_sha256'}, 'local-provider')
+        _slug(local['provider']['name'], 'local-provider-name'); _slug(local['provider']['version'], 'local-provider-version'); _sha(local['provider']['source_sha256'], 'local-provider-source')
+        if local['provider']['source'] != 'scripts/workflow_local_provider.py': _fail('denied', 'local-provider-source-path', 'Trusted-local provider source path is fixed')
+        for name in ('python', 'agent'):
+            _exact(local[name], {'path', 'sha256'} if name == 'python' else {'name', 'sha256'}, 'local-%s' % name)
+            _sha(local[name]['sha256'], 'local-%s-sha256' % name)
+        if any(row['provider_name'] != local['provider']['name'] or row['provider_version'] != local['provider']['version'] or row['provider_source'] != local['provider']['source'] or row['provider_source_sha256'] != local['provider']['source_sha256'] or row['agent_executable_sha256'] != local['agent']['sha256'] for row in local_rows): _fail('stale', 'local-provider-role-mismatch', 'Agent role and local provider identities differ')
     for (name, expected) in (('git', 'git'), ('github', 'gh')):
         entry = orchestrator[name]
         _exact(entry, {'command', 'timeout_ms', 'grace_ms', 'output_limit_bytes'}, name)
@@ -368,6 +391,8 @@ class Runtime:
             if source['profile'] is not None or source['entry'] != operation['role']:
                 _fail('stale', 'agent-command-source-mismatch', 'Agent command source differs from role')
             command = _command(row['command_prefix'], 'agent-command')
+            if row['containment'] == 'trusted-local-worktree-v1':
+                return (command, _path(row['cwd'], self.root, 'agent-cwd'), _common_env(self._paths()))
             executable = _executable(self._resolve_name(command[0], 'agent'), 'agent')
             if executable['sha256'] != row['provider_source_sha256']: _fail('denied', 'agent-executable-mismatch', 'Agent executable differs from configured provider source')
             command[0] = executable['path']
@@ -430,8 +455,19 @@ class Runtime:
                 preflight_cancelled = True
         process_cancel = cancel_event if not preflight_cancelled else threading.Event(); process_cancel.set() if preflight_cancelled else None
         (command, cwd, environment) = self._resolve_command(request, request_binding, write_payload)
-        process_error = None
-        try: process = _process_document(_run(command, limits=request['limits'], cwd=cwd, environment=environment, cancel_event=process_cancel), command, request['limits'], 'execution')
+        process_error, sandbox = None, None
+        try:
+            if operation['kind'] == 'agent' and provider_row['containment'] == 'trusted-local-worktree-v1':
+                try:
+                    provided = sandbox_provider.execute(copy.deepcopy(request), copy.deepcopy(request_binding), copy.deepcopy(command), str(cwd), copy.deepcopy(environment), copy.deepcopy(request['limits']), process_cancel)
+                except (OSError, TypeError, ValueError) as error:
+                    _fail(getattr(error, 'status', 'corrupt'), getattr(error, 'code', 'local-provider-failed'), getattr(error, 'message', 'Trusted-local provider failed: %s' % error))
+                _exact(provided, {'command', 'process_result', 'provider_result'}, 'local-provider-execution')
+                local_command = _command(provided['command'], 'local-provider-command')
+                process = _process_document(provided['process_result'], local_command, request['limits'], 'execution')
+                sandbox = provided['provider_result']
+            else:
+                process = _process_document(_run(command, limits=request['limits'], cwd=cwd, environment=environment, cancel_event=process_cancel), command, request['limits'], 'execution')
         except BaseException as error:
             if operation['kind'] != 'github-write': raise
             process, process_error = None, error
@@ -453,10 +489,11 @@ class Runtime:
                 if process_error is None: process_error = error
                 reconciliation, outcome = {'status': 'unknown', 'external_identity': None}, 'uncertain'
         if operation['kind'] == 'github-write': reconciliation['remote_head'] = copy.deepcopy(remote_head)
-        candidate_record, sandbox = None, None
+        candidate_record = None
         if operation['kind'] == 'agent':
             candidate_record = {'sha256': workflow_inspector.sha256(candidate), 'size': len(candidate)}
-            sandbox = sandbox_provider.verify(copy.deepcopy(request), copy.deepcopy(process), candidate)
+            if provider_row['containment'] == 'external-sandbox-v1':
+                sandbox = sandbox_provider.verify(copy.deepcopy(request), copy.deepcopy(process), candidate)
             self._validate_sandbox(sandbox, request, process, candidate_record, provider_row, sandbox_provider)
         repository_after, postflight_cancel = None, None if write_may_have_started else process_cancel
         if request['repository_before'] is not None:
@@ -491,9 +528,29 @@ class Runtime:
     def _validate_provider(self, provider, row):
         if provider is None:
             _fail('unsupported', 'sandbox-provider-required', 'Agent execution requires an injected provider')
-        if getattr(provider, 'name', None) != row['provider_name'] or getattr(provider, 'source_sha256', None) != row['provider_source_sha256'] or (not isinstance(getattr(provider, 'version', None), str)) or SLUG_RE.fullmatch(provider.version) is None or (not callable(getattr(provider, 'verify', None))):
+        method = 'execute' if row['containment'] == 'trusted-local-worktree-v1' else 'verify'
+        if getattr(provider, 'name', None) != row['provider_name'] or getattr(provider, 'source_sha256', None) != row['provider_source_sha256'] or (not isinstance(getattr(provider, 'version', None), str)) or SLUG_RE.fullmatch(provider.version) is None or (row.get('provider_version') is not None and provider.version != row['provider_version']) or (not callable(getattr(provider, method, None))):
             _fail('denied', 'sandbox-provider-mismatch', 'Injected provider identity differs from base config')
     def _validate_sandbox(self, value, request, process, candidate, provider, injected):
+        if provider['containment'] == 'trusted-local-worktree-v1':
+            keys = {'format', 'provider', 'request_sha256', 'authority_binding', 'input_projection_sha256', 'command', 'workspace', 'environment', 'process_result_sha256', 'candidate_sha256', 'candidate_size', 'isolation', 'result_sha256'}
+            _exact(value, keys, 'local-provider-result')
+            _exact(value['provider'], {'name', 'version', 'source', 'source_sha256'}, 'local-provider')
+            _exact(value['command'], {'argv', 'argv_sha256', 'executable'}, 'local-command')
+            _exact(value['command']['executable'], {'path', 'sha256'}, 'local-agent-executable')
+            _exact(value['workspace'], {'identity_sha256', 'root', 'cwd', 'git_common_dir', 'branch', 'selected_commit', 'head_before', 'head_after'}, 'local-workspace')
+            _exact(value['environment'], {'keys', 'values', 'sha256'}, 'local-environment')
+            _exact(value['isolation'], {'process', 'filesystem', 'network', 'credentials', 'authority_store'}, 'local-isolation')
+            unsigned = dict(value); digest = unsigned.pop('result_sha256')
+            expected_provider = {'name': provider['provider_name'], 'version': provider['provider_version'], 'source': provider['provider_source'], 'source_sha256': provider['provider_source_sha256']}
+            expected_isolation = {'process': 'bounded-posix-process-group', 'filesystem': 'not-isolated-same-uid', 'network': 'not-isolated', 'credentials': 'not-isolated', 'authority_store': 'not-isolated-same-uid'}
+            workspace = value['workspace']
+            workspace_identity = {'root': workspace['root'], 'git_common_dir': workspace['git_common_dir'], 'branch': workspace['branch']}
+            environment = value['environment']
+            projection_digest = injected.input_projection_sha256(request) if callable(getattr(injected, 'input_projection_sha256', None)) else None
+            if value['format'] != 'chess-echo-trusted-local-execution-result-v1' or value['provider'] != expected_provider or value['request_sha256'] != request['request_sha256'] or value['authority_binding'] != request['authority_binding'] or value['input_projection_sha256'] != projection_digest or _command(value['command']['argv'], 'local-command') != value['command']['argv'] or value['command']['argv_sha256'] != workflow_inspector.sha256(_canonical(value['command']['argv'])) or value['command']['argv_sha256'] != process.get('command_sha256') or value['command']['executable'] != injected.agent_executable or value['process_result_sha256'] != workflow_inspector.sha256(_canonical(process)) or value['candidate_sha256'] != candidate['sha256'] or value['candidate_size'] != candidate['size'] or workspace['root'] != str(self.root) or workspace['cwd'] != str(self.root) or workspace['identity_sha256'] != workflow_inspector.sha256(_canonical(workspace_identity)) or workspace['selected_commit'] != request['repository_before']['head']['commit'] or workspace['head_before'] != workspace['selected_commit'] or workspace['branch'] != 'refs/heads/chess-echo-agent/issue-%d' % request['issue'] or not isinstance(environment['values'], dict) or environment['keys'] != sorted(environment['values']) or environment['sha256'] != workflow_inspector.sha256(_canonical(environment['values'])) or value['isolation'] != expected_isolation or value['result_sha256'] != workflow_inspector.sha256(_canonical(unsigned)):
+                _fail('denied', 'sandbox-verification-failed', 'Trusted-local result does not prove the required execution facts')
+            return
         _exact(value, {'format', 'provider', 'request_sha256', 'command_sha256', 'repository_scope', 'credential_access', 'authority_store_access', 'containment', 'candidate_sha256', 'candidate_size', 'result_sha256'}, 'sandbox-result')
         if value['format'] != SANDBOX_RESULT_FORMAT:
             _fail('unsupported', 'sandbox-result-format', 'Sandbox result format is unsupported')

@@ -867,7 +867,7 @@ def _preflight_external_references(root, decoded):
         )
 
 
-def publish(root, publication, before_binding=None):
+def publish(root, publication, before_binding=None, before_binding_reference=None):
     decoded = _load_publication(publication)
     store = inspector.resolve_store(root)
     _preflight_external_references(root, decoded)
@@ -883,6 +883,8 @@ def publish(root, publication, before_binding=None):
     if before_binding is not None:
         before_binding()
     _value, data, reference = decoded["binding"]
+    if before_binding_reference is not None:
+        before_binding_reference(reference, data)
     _publish(store, reference, data)
     published.append(reference)
     binding_ref = decoded["binding"][2]
