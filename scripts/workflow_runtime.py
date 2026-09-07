@@ -8,7 +8,7 @@ except ImportError:
     import workflow_inspector
     import workflow_runtime_reconstruction as reconstruction
     import workflow_supervisor
-RUNTIME_VERSION = '1.3.0'
+RUNTIME_VERSION = '1.3.1'
 def _runtime_source_sha256():
     sources = {'workflow_runtime.py': workflow_inspector.sha256(pathlib.Path(__file__).read_bytes()), 'workflow_runtime_reconstruction.py': workflow_inspector.sha256(pathlib.Path(reconstruction.__file__).read_bytes())}
     return hashlib.sha256(json.dumps(sources, sort_keys=True, separators=(',', ':')).encode('ascii')).hexdigest()
@@ -22,6 +22,8 @@ def _runtime_source_sha256():
 (MAX_CONFIG_BYTES, MAX_DOCUMENT_BYTES, VALIDATION_LIMITS, SHELLS, WRAPPERS) = (reconstruction.MAX_CONFIG_BYTES, reconstruction.MAX_DOCUMENT_BYTES, reconstruction.VALIDATION_LIMITS, reconstruction.SHELLS, reconstruction.WRAPPERS)
 (SLUG_RE, REPOSITORY_RE, OID_RE, SHA_RE, RUN_RE, RFC3339_RE) = (reconstruction.SLUG_RE, reconstruction.REPOSITORY_RE, reconstruction.OID_RE, reconstruction.SHA_RE, reconstruction.RUN_RE, reconstruction.RFC3339_RE)
 (MAX_OUTPUT_BYTES, MAX_TIMEOUT_MS, MAX_GRACE_MS) = (8 * 1024 * 1024, 3600000, 60000)
+LOCAL_PROVIDER_PROMPT_LIMIT_BYTES = 64 * 1024
+LOCAL_PROVIDER_COMMAND_ARGUMENTS = ('--no-auto-update', '--no-color', '--no-remote', '--no-remote-export', '--no-ask-user', '--no-custom-instructions', '--allow-all-tools', '--silent', '--prompt')
 BOOTSTRAP_LIMITS = {'timeout_ms': 30000, 'grace_ms': 1000, 'output_limit_bytes': MAX_OUTPUT_BYTES}
 OUTCOME_EXIT_CODES = {'missing': 20, 'unsupported': 21, 'corrupt': 22, 'ambiguous': 23, 'stale': 24, 'denied': 25, 'conflict': 26, 'uncertain': 27}
 PROCESS_REASONS = {'success': {'process-exited'}, 'nonzero-exit': {'process-exited'}, 'signal': {'process-signaled'}, 'timeout': {'execution-timeout', 'execution-timeout-before-start'}, 'output-limit': {'per-stream-output-limit'}, 'terminated': {'process-group-remained', 'cancelled', 'external-signal', 'external-signal-before-start', 'cancelled-before-start'}, 'startup-failure': {'process-not-started'}, 'supervisor-failure': {'supervision-setup-error', 'supervision-error'}, 'unsupported': {'process-session-isolation-unavailable', 'process-wide-signal-guard-unavailable'}}
@@ -48,6 +50,15 @@ def _command(value, label):
     for part in value: _text(part, '%s-part' % label, maximum=4096)
     executable = pathlib.PurePosixPath(value[0]).name.lower()
     if executable in SHELLS or executable in WRAPPERS: _fail('denied', '%s-dispatch-prohibited' % label, 'Shells and dispatch wrappers are prohibited')
+    return list(value)
+def _local_provider_command(value, label):
+    expected_size = len(LOCAL_PROVIDER_COMMAND_ARGUMENTS) + 2
+    if not isinstance(value, list) or len(value) != expected_size: _fail('corrupt', 'invalid-%s' % label, '%s must be the exact trusted-local agent argv' % label)
+    for part in value[:-1]: _text(part, '%s-part' % label, maximum=4096)
+    _text(value[-1], '%s-prompt' % label, maximum=LOCAL_PROVIDER_PROMPT_LIMIT_BYTES)
+    executable = pathlib.PurePosixPath(value[0]).name.lower()
+    if executable in SHELLS or executable in WRAPPERS: _fail('denied', '%s-dispatch-prohibited' % label, 'Shells and dispatch wrappers are prohibited')
+    if tuple(value[1:-1]) != LOCAL_PROVIDER_COMMAND_ARGUMENTS: _fail('corrupt', 'invalid-%s-shape' % label, '%s arguments differ from the reviewed provider contract' % label)
     return list(value)
 def _executable(path, label):
     try:
@@ -463,7 +474,7 @@ class Runtime:
                 except (OSError, TypeError, ValueError) as error:
                     _fail(getattr(error, 'status', 'corrupt'), getattr(error, 'code', 'local-provider-failed'), getattr(error, 'message', 'Trusted-local provider failed: %s' % error))
                 _exact(provided, {'command', 'process_result', 'provider_result'}, 'local-provider-execution')
-                local_command = _command(provided['command'], 'local-provider-command')
+                local_command = _local_provider_command(provided['command'], 'local-provider-command')
                 process = _process_document(provided['process_result'], local_command, request['limits'], 'execution')
                 sandbox = provided['provider_result']
             else:
@@ -548,7 +559,7 @@ class Runtime:
             workspace_identity = {'root': workspace['root'], 'git_common_dir': workspace['git_common_dir'], 'branch': workspace['branch']}
             environment = value['environment']
             projection_digest = injected.input_projection_sha256(request) if callable(getattr(injected, 'input_projection_sha256', None)) else None
-            if value['format'] != 'chess-echo-trusted-local-execution-result-v1' or value['provider'] != expected_provider or value['request_sha256'] != request['request_sha256'] or value['authority_binding'] != request['authority_binding'] or value['input_projection_sha256'] != projection_digest or _command(value['command']['argv'], 'local-command') != value['command']['argv'] or value['command']['argv_sha256'] != workflow_inspector.sha256(_canonical(value['command']['argv'])) or value['command']['argv_sha256'] != process.get('command_sha256') or value['command']['executable'] != injected.agent_executable or value['process_result_sha256'] != workflow_inspector.sha256(_canonical(process)) or value['candidate_sha256'] != candidate['sha256'] or value['candidate_size'] != candidate['size'] or workspace['root'] != str(self.root) or workspace['cwd'] != str(self.root) or workspace['identity_sha256'] != workflow_inspector.sha256(_canonical(workspace_identity)) or workspace['selected_commit'] != request['repository_before']['head']['commit'] or workspace['head_before'] != workspace['selected_commit'] or workspace['branch'] != 'refs/heads/chess-echo-agent/issue-%d' % request['issue'] or not isinstance(environment['values'], dict) or environment['keys'] != sorted(environment['values']) or environment['sha256'] != workflow_inspector.sha256(_canonical(environment['values'])) or value['isolation'] != expected_isolation or value['result_sha256'] != workflow_inspector.sha256(_canonical(unsigned)):
+            if value['format'] != 'chess-echo-trusted-local-execution-result-v1' or value['provider'] != expected_provider or value['request_sha256'] != request['request_sha256'] or value['authority_binding'] != request['authority_binding'] or value['input_projection_sha256'] != projection_digest or _local_provider_command(value['command']['argv'], 'local-command') != value['command']['argv'] or value['command']['argv_sha256'] != workflow_inspector.sha256(_canonical(value['command']['argv'])) or value['command']['argv_sha256'] != process.get('command_sha256') or value['command']['executable'] != injected.agent_executable or value['process_result_sha256'] != workflow_inspector.sha256(_canonical(process)) or value['candidate_sha256'] != candidate['sha256'] or value['candidate_size'] != candidate['size'] or workspace['root'] != str(self.root) or workspace['cwd'] != str(self.root) or workspace['identity_sha256'] != workflow_inspector.sha256(_canonical(workspace_identity)) or workspace['selected_commit'] != request['repository_before']['head']['commit'] or workspace['head_before'] != workspace['selected_commit'] or workspace['branch'] != 'refs/heads/chess-echo-agent/issue-%d' % request['issue'] or not isinstance(environment['values'], dict) or environment['keys'] != sorted(environment['values']) or environment['sha256'] != workflow_inspector.sha256(_canonical(environment['values'])) or value['isolation'] != expected_isolation or value['result_sha256'] != workflow_inspector.sha256(_canonical(unsigned)):
                 _fail('denied', 'sandbox-verification-failed', 'Trusted-local result does not prove the required execution facts')
             return
         _exact(value, {'format', 'provider', 'request_sha256', 'command_sha256', 'repository_scope', 'credential_access', 'authority_store_access', 'containment', 'candidate_sha256', 'candidate_size', 'result_sha256'}, 'sandbox-result')

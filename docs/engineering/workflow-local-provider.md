@@ -115,9 +115,12 @@ The host calls `workflow_runtime.bootstrap()` only for trusted intake and
 commands run in the dedicated worktree through `workflow_supervisor`. The host
 projects only the exact request-selected immutable evidence inputs into the
 prompt and binds that projection's digest. The fully encoded prompt is capped
-at 64 KiB so it remains below the supported host argument budget. The execution result also records
-the exact executable, argv, cwd, selected commit, authority binding, controlled
-environment identity, bounded process result, and candidate output identity.
+at 64 KiB so it remains below the supported host argument budget. Runtime
+validation applies that larger bound only to the prompt position in the exact
+trusted-local provider argv shape; configured commands and every other command
+part retain the generic 4 KiB bound. The execution result also records the exact
+executable, argv, cwd, selected commit, authority binding, controlled environment
+identity, bounded process result, and candidate output identity.
 Write phases require the agent to commit all intended changes and leave its
 worktree clean; read-only phases explicitly prohibit candidate changes.
 

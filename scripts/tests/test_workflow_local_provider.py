@@ -234,17 +234,49 @@ class TrustedLocalProviderTest(unittest.TestCase):
         instance = self.fixture.instance()
         request = self.fixture.request()
         binding = {"kind": "evidence-binding", "sha256": "d" * 64, "size": 1}
-        executed = instance.execute(
-            request,
-            binding,
-            ["agent"],
-            str(self.fixture.workspace),
-            {"LC_ALL": "C.UTF-8", "LANG": "C.UTF-8", "TZ": "UTC"},
-            request["limits"],
-            None,
+        read_only_suffix = " This is read-only: do not change or commit the candidate worktree."
+        self.assertEqual(
+            provider.PROMPT_LIMIT_BYTES,
+            runtime.LOCAL_PROVIDER_PROMPT_LIMIT_BYTES,
         )
+        with mock.patch.object(
+            provider,
+            "_agent_prompt",
+            return_value="p" * (22_090 - len(read_only_suffix.encode("utf-8"))),
+        ):
+            executed = instance.execute(
+                request,
+                binding,
+                ["agent"],
+                str(self.fixture.workspace),
+                {"LC_ALL": "C.UTF-8", "LANG": "C.UTF-8", "TZ": "UTC"},
+                request["limits"],
+                None,
+            )
         candidate = base64.b64decode(
             executed["process_result"]["stdout"]["base64"], validate=True
+        )
+        facts = executed["provider_result"]
+        self.assertEqual(22_090, len(executed["command"][-1].encode("utf-8")))
+        self.assertEqual(
+            inspector.sha256(inspector.canonical_bytes(executed["command"])),
+            executed["process_result"]["command_sha256"],
+        )
+        self.assertEqual(
+            executed["process_result"]["command_sha256"],
+            facts["command"]["argv_sha256"],
+        )
+        self.assertEqual(
+            executed["command"],
+            runtime._local_provider_command(
+                executed["command"], "local-provider-command"
+            ),
+        )
+        runtime._process_document(
+            executed["process_result"],
+            executed["command"],
+            request["limits"],
+            "execution",
         )
         adapter = object.__new__(runtime.Runtime)
         adapter.root = self.fixture.workspace
@@ -256,7 +288,7 @@ class TrustedLocalProviderTest(unittest.TestCase):
             self.fixture.row(),
             instance,
         )
-        replaced = json.loads(json.dumps(executed["provider_result"]))
+        replaced = json.loads(json.dumps(facts))
         replaced["command"]["executable"]["sha256"] = "0" * 64
         with self.assertRaises(runtime.RuntimeFailure) as raised:
             adapter._validate_sandbox(
@@ -268,6 +300,30 @@ class TrustedLocalProviderTest(unittest.TestCase):
                 instance,
             )
         self.assertEqual("sandbox-verification-failed", raised.exception.code)
+
+        replaced = json.loads(json.dumps(facts))
+        replaced["command"]["argv"][-1] += "x"
+        with self.assertRaises(runtime.RuntimeFailure) as raised:
+            adapter._validate_sandbox(
+                replaced,
+                request,
+                executed["process_result"],
+                {"sha256": inspector.sha256(candidate), "size": len(candidate)},
+                self.fixture.row(),
+                instance,
+            )
+        self.assertEqual("sandbox-verification-failed", raised.exception.code)
+
+        replaced_process = json.loads(json.dumps(executed["process_result"]))
+        replaced_process["command_sha256"] = "0" * 64
+        with self.assertRaises(runtime.RuntimeFailure) as raised:
+            runtime._process_document(
+                replaced_process,
+                executed["command"],
+                request["limits"],
+                "execution",
+            )
+        self.assertEqual("invalid-process-result", raised.exception.code)
 
     def test_workspace_branch_and_symlink_redirection_fail_closed(self):
         self.fixture._git(self.fixture.workspace, "branch", "-m", "wrong")
