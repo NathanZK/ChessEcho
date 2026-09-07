@@ -2,102 +2,33 @@
 import argparse, base64, binascii, copy, datetime, hashlib, json, os, pathlib, re, stat, sys, tempfile, threading
 try:
     from . import workflow_inspector
+    from . import workflow_runtime_reconstruction as reconstruction
     from . import workflow_supervisor
 except ImportError:
     import workflow_inspector
+    import workflow_runtime_reconstruction as reconstruction
     import workflow_supervisor
-RUNTIME_VERSION = '1.2.0'
-(BOOTSTRAP_FORMAT, REQUEST_FORMAT, RESULT_FORMAT, SOURCE_PUBLICATION_REQUEST_FORMAT, SOURCE_PUBLICATION_RESULT_FORMAT, PR_OBSERVATION_FORMAT, REMOTE_HEAD_OBSERVATION_FORMAT, AUTHORIZATION_OBSERVATION_FORMAT, SANDBOX_RESULT_FORMAT, ISSUE_SNAPSHOT_FORMAT, BASELINE_FORMAT, DIFF_OBSERVATION_FORMAT, FAILURE_FORMAT) = ('chess-echo-runtime-bootstrap-v1', 'chess-echo-execution-request-v1', 'chess-echo-execution-result-v1', 'chess-echo-source-publication-request-v1', 'chess-echo-source-publication-result-v1', 'chess-echo-github-pr-observation-v1', 'chess-echo-github-remote-head-observation-v1', 'chess-echo-github-authorization-observation-v1', 'chess-echo-external-sandbox-result-v1', 'chess-echo-work-type-issue-snapshot-v1', 'chess-echo-work-type-baseline-v1', 'chess-echo-work-type-diff-observation-v1', 'chess-echo-workflow-runtime-failure-v1')
-(MAX_CONFIG_BYTES, MAX_DOCUMENT_BYTES, MAX_OUTPUT_BYTES, MAX_TIMEOUT_MS, MAX_GRACE_MS) = (1024 * 1024, 2 * 1024 * 1024, 8 * 1024 * 1024, 3600000, 60000)
-VALIDATION_LIMITS = {'timeout_ms': 3600000, 'grace_ms': 2000, 'output_limit_bytes': 512 * 1024}
+RUNTIME_VERSION = '1.3.0'
+def _runtime_source_sha256():
+    sources = {'workflow_runtime.py': workflow_inspector.sha256(pathlib.Path(__file__).read_bytes()), 'workflow_runtime_reconstruction.py': workflow_inspector.sha256(pathlib.Path(reconstruction.__file__).read_bytes())}
+    return hashlib.sha256(json.dumps(sources, sort_keys=True, separators=(',', ':')).encode('ascii')).hexdigest()
+(REQUEST_FORMAT, RESULT_FORMAT, SOURCE_PUBLICATION_REQUEST_FORMAT, SOURCE_PUBLICATION_RESULT_FORMAT, PR_OBSERVATION_FORMAT, REMOTE_HEAD_OBSERVATION_FORMAT, AUTHORIZATION_OBSERVATION_FORMAT, SANDBOX_RESULT_FORMAT, ISSUE_SNAPSHOT_FORMAT) = ('chess-echo-execution-request-v1', 'chess-echo-execution-result-v1', 'chess-echo-source-publication-request-v1', 'chess-echo-source-publication-result-v1', 'chess-echo-github-pr-observation-v1', 'chess-echo-github-remote-head-observation-v1', 'chess-echo-github-authorization-observation-v1', 'chess-echo-external-sandbox-result-v1', 'chess-echo-work-type-issue-snapshot-v1')
+# Reconstruction document formats/primitives are owned by workflow_runtime_reconstruction; re-exported here so
+# this module's execution code and external callers (workflow_issue_source, workflow_orchestrator, tests) keep
+# their existing bare-name and `runtime.<name>` access unchanged.
+(RuntimeFailure, _fail, _exact, _uint, _text, _slug, _sha, _oid, _reference, _branch, _timestamp, _canonical, _with_digest, _duplicate_rejector, _parse, _command, _git_blob_oid, _repository_document, _profiles) = (reconstruction.RuntimeFailure, reconstruction._fail, reconstruction._exact, reconstruction._uint, reconstruction._text, reconstruction._slug, reconstruction._sha, reconstruction._oid, reconstruction._reference, reconstruction._branch, reconstruction._timestamp, reconstruction._canonical, reconstruction._with_digest, reconstruction._duplicate_rejector, reconstruction._parse, reconstruction._command, reconstruction._git_blob_oid, reconstruction._repository_document, reconstruction._profiles)
+(_verify_document_digest, _validate_executable_record, validate_bootstrap_document, _validate_runtime_baseline, _validate_runtime_triage, _validate_reconstruction_pin, build_reconstruction_request, _clean_runtime_repository, clean_repository, repository_key, same_repository, test_scope, test_changes) = (reconstruction._verify_document_digest, reconstruction._validate_executable_record, reconstruction.validate_bootstrap_document, reconstruction._validate_runtime_baseline, reconstruction._validate_runtime_triage, reconstruction._validate_reconstruction_pin, reconstruction.build_reconstruction_request, reconstruction._clean_runtime_repository, reconstruction._clean_runtime_repository, reconstruction.repository_key, reconstruction.same_repository, reconstruction.test_scope, reconstruction.test_changes)
+(FAILURE_FORMAT, BOOTSTRAP_FORMAT, RECONSTRUCTION_PIN_FORMAT, RECONSTRUCTION_REQUEST_FORMAT, BASELINE_FORMAT, TRIAGE_FORMAT, DIFF_OBSERVATION_FORMAT) = (reconstruction.FAILURE_FORMAT, reconstruction.BOOTSTRAP_FORMAT, reconstruction.RECONSTRUCTION_PIN_FORMAT, reconstruction.RECONSTRUCTION_REQUEST_FORMAT, reconstruction.BASELINE_FORMAT, reconstruction.TRIAGE_FORMAT, reconstruction.DIFF_OBSERVATION_FORMAT)
+(MAX_CONFIG_BYTES, MAX_DOCUMENT_BYTES, VALIDATION_LIMITS, SHELLS, WRAPPERS) = (reconstruction.MAX_CONFIG_BYTES, reconstruction.MAX_DOCUMENT_BYTES, reconstruction.VALIDATION_LIMITS, reconstruction.SHELLS, reconstruction.WRAPPERS)
+(SLUG_RE, REPOSITORY_RE, OID_RE, SHA_RE, RUN_RE, RFC3339_RE) = (reconstruction.SLUG_RE, reconstruction.REPOSITORY_RE, reconstruction.OID_RE, reconstruction.SHA_RE, reconstruction.RUN_RE, reconstruction.RFC3339_RE)
+(MAX_OUTPUT_BYTES, MAX_TIMEOUT_MS, MAX_GRACE_MS) = (8 * 1024 * 1024, 3600000, 60000)
 BOOTSTRAP_LIMITS = {'timeout_ms': 30000, 'grace_ms': 1000, 'output_limit_bytes': MAX_OUTPUT_BYTES}
 OUTCOME_EXIT_CODES = {'missing': 20, 'unsupported': 21, 'corrupt': 22, 'ambiguous': 23, 'stale': 24, 'denied': 25, 'conflict': 26, 'uncertain': 27}
 PROCESS_REASONS = {'success': {'process-exited'}, 'nonzero-exit': {'process-exited'}, 'signal': {'process-signaled'}, 'timeout': {'execution-timeout', 'execution-timeout-before-start'}, 'output-limit': {'per-stream-output-limit'}, 'terminated': {'process-group-remained', 'cancelled', 'external-signal', 'external-signal-before-start', 'cancelled-before-start'}, 'startup-failure': {'process-not-started'}, 'supervisor-failure': {'supervision-setup-error', 'supervision-error'}, 'unsupported': {'process-session-isolation-unavailable', 'process-wide-signal-guard-unavailable'}}
 ROLES, ASSOCIATIONS = ('implementer', 'planner', 'reviewer'), ('COLLABORATOR', 'MEMBER', 'OWNER')
-SHELLS = frozenset({'ash', 'bash', 'csh', 'dash', 'fish', 'ksh', 'powershell', 'pwsh', 'sh', 'tcsh', 'zsh'})
-WRAPPERS = frozenset({'busybox', 'command', 'env', 'find', 'nohup', 'xargs'})
-(SLUG_RE, REPOSITORY_RE, TARGET_RE, OID_RE, SHA_RE, RUN_RE, RFC3339_RE) = tuple(re.compile(pattern) for pattern in ('[A-Za-z0-9][A-Za-z0-9._:-]{0,127}', '[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', '[A-Za-z0-9][A-Za-z0-9._/-]{0,254}', '(?:[0-9a-f]{40}|[0-9a-f]{64})', '[0-9a-f]{64}', '[0-9a-f]{32}', '\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})'))
-class RuntimeFailure(Exception):
-    def __init__(self, status, code, message, subject=None):
-        super().__init__(message); self.status, self.code, self.message, self.subject = status, code, message, subject
-    def document(self): return {'format': FAILURE_FORMAT, 'outcome': {'status': self.status, 'code': self.code, 'message': self.message, **({'subject': self.subject} if self.subject is not None else {})}}
-def _fail(status, code, message, subject=None): raise RuntimeFailure(status, code, message, subject)
-def _exact(value, keys, label):
-    if not isinstance(value, dict) or set(value) != set(keys): _fail('corrupt', 'invalid-%s-schema' % label, '%s schema is invalid' % label)
-def _uint(value, label, maximum=2 ** 63 - 1, positive=False):
-    if type(value) is not int or value < (1 if positive else 0) or value > maximum: _fail('corrupt', 'invalid-%s' % label, '%s is outside its limits' % label)
-    return value
-def _text(value, label, maximum=1024 * 1024, empty=False):
-    if not isinstance(value, str) or '\x00' in value: _fail('corrupt', 'invalid-%s' % label, '%s must be UTF-8 text' % label)
-    try: size = len(value.encode('utf-8'))
-    except UnicodeError: _fail('corrupt', 'invalid-%s' % label, '%s must be UTF-8 text' % label)
-    if size > maximum or (not empty and (not value)): _fail('corrupt', 'invalid-%s' % label, '%s is outside its limits' % label)
-    return value
-def _slug(value, label):
-    if not isinstance(value, str) or SLUG_RE.fullmatch(value) is None: _fail('corrupt', 'invalid-%s' % label, '%s is not a safe slug' % label)
-    return value
-def _sha(value, label):
-    if not isinstance(value, str) or SHA_RE.fullmatch(value) is None: _fail('corrupt', 'invalid-%s' % label, '%s is not 64 lowercase hex' % label)
-    return value
-def _oid(value, label, length=None):
-    if not isinstance(value, str) or OID_RE.fullmatch(value) is None or (length is not None and len(value) != length): _fail('corrupt', 'invalid-%s' % label, '%s is not a Git object ID' % label)
-    return value
-def _reference(value, label='binding', kind='evidence-binding'):
-    _exact(value, {'kind', 'sha256', 'size'}, label)
-    if value['kind'] != kind: _fail('corrupt', 'invalid-%s-kind' % label, '%s kind is invalid' % label)
-    _sha(value['sha256'], '%s-sha256' % label)
-    _uint(value['size'], '%s-size' % label, positive=True)
-    return copy.deepcopy(value)
-def _repository_document(value, issue, family):
-    if value is None: return None
-    _exact(value, {'format', 'repository', 'issue', 'family_run_id', 'triage_binding', 'observer', 'observed_at', 'object_format', 'base', 'head', 'ancestry', 'changes', 'workspace', 'git_trust', 'head_config', 'raw_diff_sha256', 'observation_sha256'}, 'repository-observation')
-    if value['format'] != DIFF_OBSERVATION_FORMAT or value['issue'] != issue or value['family_run_id'] != family: _fail('stale', 'repository-observation-identity', 'Repository observation identity differs from request')
-    _reference(value['triage_binding'], 'triage-binding')
-    _exact(value['observer'], {'name', 'version', 'source_sha256'}, 'repository-observer'); _slug(value['observer']['name'], 'observer-name'); _slug(value['observer']['version'], 'observer-version'); _sha(value['observer']['source_sha256'], 'observer-source')
-    _timestamp(value['observed_at'], 'observed-at')
-    if value['object_format'] not in {'sha1', 'sha256'}: _fail('unsupported', 'repository-object-format', 'Repository object format is unsupported')
-    oid_length = 40 if value['object_format'] == 'sha1' else 64
-    _exact(value['base'], {'ref', 'commit', 'tree'}, 'repository-base'); _exact(value['head'], {'commit', 'tree'}, 'repository-head')
-    for field in ('commit', 'tree'): _oid(value['base'][field], 'base-%s' % field, oid_length); _oid(value['head'][field], 'head-%s' % field, oid_length)
-    _exact(value['ancestry'], {'base_is_ancestor', 'commit_count'}, 'repository-ancestry')
-    if type(value['ancestry']['base_is_ancestor']) is not bool: _fail('corrupt', 'repository-ancestry-flag', 'Repository ancestry flag is invalid')
-    _uint(value['ancestry']['commit_count'], 'repository-commit-count')
-    if not isinstance(value['changes'], list): _fail('corrupt', 'repository-changes', 'Repository changes must be a list')
-    _exact(value['workspace'], {'staged', 'unstaged', 'untracked_non_ignored', 'assume_unchanged', 'skip_worktree', 'status_sha256'}, 'repository-workspace')
-    if any(not isinstance(value['workspace'][field], list) for field in ('staged', 'unstaged', 'untracked_non_ignored', 'assume_unchanged', 'skip_worktree')): _fail('corrupt', 'repository-workspace-lists', 'Repository workspace lists are invalid')
-    _sha(value['workspace']['status_sha256'], 'workspace-status')
-    _exact(value['git_trust'], {'no_replace_objects', 'replacement_refs', 'git_replace_ref_base', 'git_graft_file', 'info_grafts_present', 'environment_redirections', 'alternate_object_directories'}, 'repository-git-trust')
-    if type(value['git_trust']['no_replace_objects']) is not bool or type(value['git_trust']['info_grafts_present']) is not bool: _fail('corrupt', 'repository-git-trust-flags', 'Repository Git trust flags are invalid')
-    _exact(value['head_config'], {'path', 'blob_oid', 'content_sha256', 'size'}, 'repository-head-config'); _oid(value['head_config']['blob_oid'], 'head-config-blob', oid_length); _sha(value['head_config']['content_sha256'], 'head-config-content'); _uint(value['head_config']['size'], 'head-config-size', MAX_CONFIG_BYTES)
-    _sha(value['raw_diff_sha256'], 'raw-diff-sha256')
-    _verify = dict(value); digest = _verify.pop('observation_sha256', None); _sha(digest, 'observation-sha256')
-    if workflow_inspector.sha256(_canonical(_verify)) != digest: _fail('corrupt', 'observation-digest-mismatch', 'Repository observation digest is stale')
-    return copy.deepcopy(value)
-def _timestamp(value, label):
-    if not isinstance(value, str) or RFC3339_RE.fullmatch(value) is None: _fail('corrupt', 'invalid-%s' % label, '%s is not RFC 3339' % label)
-    return value
+TARGET_RE = re.compile('[A-Za-z0-9][A-Za-z0-9._/-]{0,254}')
 def _now():
     return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
-def _canonical(value):
-    try: data = workflow_inspector.canonical_bytes(value)
-    except (TypeError, ValueError, workflow_inspector.InspectionFailure) as error: _fail('corrupt', 'invalid-canonical-json', str(error))
-    if len(data) > MAX_DOCUMENT_BYTES: _fail('unsupported', 'document-too-large', 'Document exceeds 2 MiB')
-    return data
-def _with_digest(value, field):
-    result = copy.deepcopy(value); result[field] = workflow_inspector.sha256(_canonical(result)); _canonical(result); return result
-def _duplicate_rejector(pairs):
-    result = {}
-    for (key, value) in pairs:
-        if key in result: _fail('ambiguous', 'duplicate-json-key', 'JSON contains duplicate keys', key)
-        result[key] = value
-    return result
-def _parse(data, label, maximum=MAX_DOCUMENT_BYTES, expected=dict):
-    if not isinstance(data, bytes) or len(data) > maximum: _fail('unsupported', '%s-too-large' % label, '%s exceeds its byte limit' % label)
-    try: value = json.loads(data.decode('utf-8'), object_pairs_hook=_duplicate_rejector)
-    except RuntimeFailure: raise
-    except (UnicodeError, json.JSONDecodeError, RecursionError, ValueError) as error: _fail('corrupt', 'invalid-%s-json' % label, '%s is invalid JSON: %s' % (label, error))
-    if not isinstance(value, expected): _fail('corrupt', 'invalid-%s-type' % label, '%s has the wrong JSON type' % label)
-    return value
 def _path(value, root, label, allow_dot=True):
     if allow_dot and value == '.': return root
     _text(value, label, maximum=4096)
@@ -128,9 +59,6 @@ def _executable(path, label):
     except RuntimeFailure: raise
     except (OSError, RuntimeError, ValueError) as error: _fail('missing', '%s-unavailable' % label, '%s is unavailable: %s' % (label, error))
     return {'path': str(resolved), 'sha256': digest}
-def _git_blob_oid(data, length):
-    payload = b'blob ' + str(len(data)).encode('ascii') + b'\x00' + data
-    return (hashlib.sha1 if length == 40 else hashlib.sha256)(payload).hexdigest()
 def _stdout(result, label, stream='stdout'):
     if not isinstance(result, dict) or result.get('format') != 'chess-echo-process-result-v1': _fail('corrupt', 'invalid-process-result', '%s returned an invalid process result' % label)
     record = result.get(stream)
@@ -260,14 +188,39 @@ def _validate_config(config, root):
     return copy.deepcopy(orchestrator)
 def execution_attempt_id(authority_binding, operation, command_source, input_bindings, repository_before, limits, reconciliation_expectation=None):
     return workflow_inspector.sha256(_canonical({'authority_binding': authority_binding, 'operation': operation, 'command_source': command_source, 'input_bindings': input_bindings, 'repository_before': repository_before, 'limits': limits, 'reconciliation_expectation': reconciliation_expectation}))
+def command_source(baseline_binding, baseline, config, operation, role=None, profile=None):
+    """Build the command source and execution limits for a claimed operation from its baseline configuration."""
+    source = {'config_binding': baseline_binding, 'config_content_sha256': baseline['config']['content_sha256'], 'config_blob_oid': baseline['config']['blob_oid'], 'profile': profile, 'entry': operation['name']}
+    if operation['kind'] == 'agent':
+        source['entry'], source['profile'] = role, None
+        row = next((item for item in config['agent_roles'] if item['role'] == role), None)
+        if row is None: _fail('corrupt', 'agent-role-missing', 'Configured agent role is missing')
+        limits = {key: row[key] for key in ('timeout_ms', 'grace_ms', 'output_limit_bytes')}
+    elif operation['kind'] == 'validation':
+        limits = dict(VALIDATION_LIMITS)
+    else:
+        limits = {key: config['github'][key] for key in ('timeout_ms', 'grace_ms', 'output_limit_bytes')}
+    return source, limits
+def execution_inputs(state, extra=()):
+    """Build the sorted input-binding references for a claimed operation's execution request."""
+    rows = [('policy-state', state['policy_state_binding']), ('triage', state['triage_binding'])] + list(extra)
+    return [{'role': role, 'binding': binding} for role, binding in sorted(rows, key=lambda row: (row[0], row[1]['sha256']))]
 class Runtime:
-    __slots__ = ('root', 'repository', '_git_executable', '_gh_executable', '_github_token', '_publication_token', '_config', '_config_bytes', '_bootstrap')
-    def __init__(self, root, repository, git_executable, gh_executable, token, publication_token, config, config_bytes, document):
+    __slots__ = ('root', 'repository', '_git_executable', '_gh_executable', '_github_token', '_publication_token', '_config', '_config_bytes', '_bootstrap', '_reconstruction')
+    def __init__(self, root, repository, git_executable, gh_executable, token, publication_token, config, config_bytes, document, reconstruction=None):
         self.root, self.repository = root, repository
         self._git_executable, self._gh_executable, self._github_token, self._publication_token = git_executable, gh_executable, token, publication_token
-        self._config, self._config_bytes, self._bootstrap = config, config_bytes, document
+        self._config, self._config_bytes, self._bootstrap, self._reconstruction = config, config_bytes, document, reconstruction
     def __repr__(self): return 'Runtime(root=%r, repository=%r, mode=%r)' % (str(self.root), self.repository, self._config['mode'])
     def bootstrap_document(self): return copy.deepcopy(self._bootstrap)
+    def reconstruction_document(self): return copy.deepcopy(self._reconstruction)
+    def build_reconstruction_pin(self, issue, family_run_id, baseline_binding, triage_binding):
+        self._base_config()
+        self._deny_frozen(issue)
+        if not isinstance(family_run_id, str) or RUN_RE.fullmatch(family_run_id) is None:
+            _fail('corrupt', 'invalid-family-run-id', 'Family run ID is invalid')
+        document = {'format': RECONSTRUCTION_PIN_FORMAT, 'repository': self.repository, 'issue': issue, 'family_run_id': family_run_id, 'bootstrap': self.bootstrap_document(), 'baseline_binding': _reference(baseline_binding, 'baseline-binding'), 'triage_binding': _reference(triage_binding, 'triage-binding')}
+        return _with_digest(document, 'pin_sha256')
     def _base_config(self):
         parsed = _parse(self._config_bytes, 'bootstrap-config', MAX_CONFIG_BYTES)
         expected = _validate_config(parsed, self.root)
@@ -943,26 +896,6 @@ def _parse_status(data):
         workspace[field].sort(key=lambda item: (item['path'], item['original_path'] or '', item['code']))
     workspace['untracked_non_ignored'].sort()
     return workspace
-def _profiles(config):
-    profiles = config.get('validation_profiles')
-    expected = ('backend', 'frontend', 'full-stack', 'workflow-tooling')
-    if not isinstance(profiles, dict) or set(profiles) != set(expected): _fail('corrupt', 'invalid-validation-profiles', 'Validation profiles are incomplete')
-    result = []
-    for profile_id in sorted(expected):
-        profile = profiles[profile_id]
-        if not isinstance(profile, dict) or set(profile) != {'checks', 'test_paths'}: _fail('corrupt', 'invalid-validation-profile', 'Validation profile schema is invalid')
-        checks = []
-        names = set()
-        for raw in profile['checks']:
-            if not isinstance(raw, dict) or set(raw) not in ({'name', 'command'}, {'name', 'command', 'cwd'}): _fail('corrupt', 'invalid-validation-check', 'Validation check schema is invalid')
-            name = _slug(raw['name'], 'validation-check-name')
-            if name in names: _fail('ambiguous', 'duplicate-validation-check', 'Validation check is duplicated')
-            names.add(name)
-            checks.append({'name': name, 'command': _command(raw['command'], 'validation-command'), 'cwd': raw.get('cwd', '.')})
-        paths = profile['test_paths']
-        if not isinstance(paths, list) or not paths or any((not isinstance(item, str) or not item for item in paths)): _fail('corrupt', 'invalid-validation-test-paths', 'Validation test paths are invalid')
-        result.append({'id': profile_id, 'checks': checks, 'test_paths': list(paths)})
-    return result
 def _validation_executables(root, config, profiles):
     rows = []
     for profile in profiles:
@@ -975,6 +908,92 @@ def _validation_executables(root, config, profiles):
             record = _executable(candidate, 'validation-executable') if candidate is not None and pathlib.Path(candidate).is_file() else {'path': None, 'sha256': None}
             rows.append({'profile': profile['id'], 'entry': check['name'], **record})
     return sorted(rows, key=lambda row: (row['profile'], row['entry']))
+def reconstruct(root, request_document, github_token, publication_token=None):
+    request = build_reconstruction_request(
+        pin_binding=request_document.get('pin_binding') if isinstance(request_document, dict) else None,
+        pin_document=request_document.get('pin') if isinstance(request_document, dict) else None,
+        baseline_binding=request_document.get('baseline', {}).get('binding') if isinstance(request_document, dict) and isinstance(request_document.get('baseline'), dict) else None,
+        baseline_document=request_document.get('baseline', {}).get('document') if isinstance(request_document, dict) and isinstance(request_document.get('baseline'), dict) else None,
+        triage_binding=request_document.get('triage', {}).get('binding') if isinstance(request_document, dict) and isinstance(request_document.get('triage'), dict) else None,
+        triage_document=request_document.get('triage', {}).get('document') if isinstance(request_document, dict) and isinstance(request_document.get('triage'), dict) else None,
+        authority_binding=request_document.get('authority_binding') if isinstance(request_document, dict) else None,
+        repository_mode=request_document.get('repository_expectation', {}).get('mode') if isinstance(request_document, dict) and isinstance(request_document.get('repository_expectation'), dict) else None,
+        repository_observation=request_document.get('repository_expectation', {}).get('observation') if isinstance(request_document, dict) and isinstance(request_document.get('repository_expectation'), dict) else None,
+    )
+    if request != request_document:
+        _fail('corrupt', 'runtime-reconstruction-request-digest', 'Runtime reconstruction request is not canonical')
+    _text(github_token, 'github-token', maximum=16 * 1024)
+    if publication_token is not None:
+        _text(publication_token, 'publication-token', maximum=16 * 1024)
+        if any(ord(character) < 33 or ord(character) == 127 for character in publication_token):
+            _fail('denied', 'invalid-publication-token', 'Publication credential contains prohibited control characters')
+        if publication_token == github_token:
+            _fail('denied', 'publication-credential-not-isolated', 'Publication credential must be distinct from the general GitHub credential')
+    try: root = pathlib.Path(root).resolve(strict=True)
+    except (OSError, RuntimeError, ValueError) as error: _fail('missing', 'repository-root-unavailable', 'Repository root is unavailable: %s' % error)
+    if not root.is_dir():
+        _fail('corrupt', 'invalid-reconstruction-root', 'Runtime reconstruction root is invalid')
+    pin, baseline = request['pin'], request['baseline']['document']
+    bootstrap_document = pin['bootstrap']
+    config_bytes = base64.b64decode(baseline['config']['bytes_base64'], validate=True)
+    config_root = _parse(config_bytes, 'runtime-baseline-config', MAX_CONFIG_BYTES)
+    config = _validate_config(config_root, root)
+    profiles = _profiles(config_root)
+    if profiles != bootstrap_document['profiles'] or config['mode'] != bootstrap_document['mode']:
+        _fail('stale', 'runtime-reconstruction-config-projection', 'Runtime configuration projection differs from bootstrap')
+    current_runtime = {'name': 'workflow-runtime', 'version': RUNTIME_VERSION, 'source_sha256': _runtime_source_sha256()}
+    if current_runtime != bootstrap_document['runtime']:
+        _fail('stale', 'runtime-implementation-replaced', 'Runtime implementation differs from bootstrap')
+    git = _executable(bootstrap_document['executables']['git']['path'], 'git')
+    gh = _executable(bootstrap_document['executables']['github']['path'], 'github')
+    if git != bootstrap_document['executables']['git']:
+        _fail('stale', 'git-replaced', 'Git executable changed after bootstrap')
+    if gh != bootstrap_document['executables']['github']:
+        _fail('stale', 'github-replaced', 'GitHub executable changed after bootstrap')
+    adapter = Runtime(root, pin['repository'], git, gh, github_token, publication_token, config, config_bytes, bootstrap_document, request)
+    observed_at = request['repository_expectation']['observation']['observed_at'] if request['repository_expectation']['mode'] == 'exact' else _now()
+    def snapshot():
+        repository_data = _parse(adapter._github(['api', 'repos/%s' % pin['repository']]), 'github-repository')
+        if repository_data.get('full_name') != pin['repository']:
+            _fail('stale', 'runtime-repository-identity', 'GitHub repository identity changed')
+        branch = repository_data.get('default_branch')
+        if branch != bootstrap_document['target_base']['name']:
+            _fail('stale', 'runtime-default-branch-changed', 'GitHub default branch changed after bootstrap')
+        remote_tip = _oid(_parse(adapter._github(['api', 'repos/%s/commits/%s' % (pin['repository'], branch)]), 'github-tip').get('sha'), 'remote-tip', len(bootstrap_document['remote_tip']))
+        base_ref = bootstrap_document['target_base']['ref']
+        base_commit = adapter._git(['rev-parse', '--verify', '%s^{commit}' % base_ref]).decode('ascii').strip()
+        base_tree = adapter._git(['rev-parse', '--verify', '%s^{tree}' % base_ref]).decode('ascii').strip()
+        config_blob = adapter._git(['rev-parse', '%s:.github/agent-workflow.json' % base_commit]).decode('ascii').strip()
+        base_config = adapter._git(['show', '%s:.github/agent-workflow.json' % base_commit], limits={'timeout_ms': 30000, 'grace_ms': 1000, 'output_limit_bytes': MAX_CONFIG_BYTES})
+        validation = _validation_executables(root, config, profiles)
+        observation = adapter.observe_diff(pin['issue'], pin['family_run_id'], pin['triage_binding'], observed_at)
+        return {'repository': repository_data['full_name'], 'default_branch': branch, 'remote_tip': remote_tip, 'base_commit': base_commit, 'base_tree': base_tree, 'config_blob': config_blob, 'config_bytes': base_config, 'git': _executable(git['path'], 'git'), 'github': _executable(gh['path'], 'github'), 'validation_executables': validation, 'repository_observation': observation}
+    selected = None
+    for attempt in range(2):
+        before, after = snapshot(), snapshot()
+        if before == after:
+            selected = after
+            break
+        if attempt:
+            _fail('stale', 'runtime-reconstruction-moved', 'Runtime reconstruction facts moved during both observations')
+    if selected['remote_tip'] != bootstrap_document['remote_tip']:
+        _fail('stale', 'runtime-default-tip-changed', 'GitHub default-branch tip changed after bootstrap')
+    target = bootstrap_document['target_base']
+    if selected['base_commit'] != target['commit'] or selected['base_tree'] != target['tree']:
+        _fail('stale', 'runtime-target-base-changed', 'Local target-base identity changed after bootstrap')
+    if selected['config_blob'] != bootstrap_document['config']['blob_oid'] or selected['config_bytes'] != config_bytes:
+        _fail('stale', 'runtime-config-changed', 'Base-pinned configuration changed after bootstrap')
+    if selected['git'] != bootstrap_document['executables']['git'] or selected['github'] != bootstrap_document['executables']['github'] or selected['validation_executables'] != bootstrap_document['validation_executables']:
+        _fail('stale', 'runtime-executable-changed', 'Pinned executable identity changed after bootstrap')
+    observation = selected['repository_observation']
+    if not _clean_runtime_repository(observation):
+        _fail('stale', 'runtime-worktree-untrusted', 'Runtime reconstruction requires a clean trusted worktree')
+    expectation = request['repository_expectation']
+    if expectation['mode'] == 'exact' and observation != expectation['observation']:
+        _fail('stale', 'runtime-phase-repository-changed', 'Current repository differs from phase-selected evidence')
+    if expectation['mode'] == 'clean-base' and (observation['head']['commit'] != target['commit'] or observation['head']['tree'] != target['tree'] or observation['ancestry'] != {'base_is_ancestor': True, 'commit_count': 0} or observation['changes']):
+        _fail('stale', 'runtime-initial-repository-changed', 'Initial runtime reconstruction requires the selected base')
+    return adapter
 def bootstrap(root, repository, git_executable, gh_executable, github_token, publication_token=None):
     try: root = pathlib.Path(root).resolve(strict=True)
     except (OSError, RuntimeError, ValueError) as error: _fail('missing', 'repository-root-unavailable', 'Repository root is unavailable: %s' % error)
@@ -996,6 +1015,8 @@ def bootstrap(root, repository, git_executable, gh_executable, github_token, pub
         return call(git, ['-c', 'core.fsmonitor=false'] + arguments, git_environment, label)
     def snapshot():
         repository_data = _parse(call(gh, ['api', 'repos/%s' % repository], _github_env(paths, github_token), 'github-repository'), 'github-repository')
+        if repository_data.get('full_name') != repository:
+            _fail('stale', 'bootstrap-repository-identity', 'GitHub repository identity differs from the requested repository')
         branch = repository_data.get('default_branch')
         if not isinstance(branch, str) or TARGET_RE.fullmatch(branch) is None or ('..' in branch.split('/')): _fail('corrupt', 'invalid-default-branch', 'GitHub default branch is invalid')
         remote_tip = _oid(_parse(call(gh, ['api', 'repos/%s/commits/%s' % (repository, branch)], _github_env(paths, github_token), 'github-tip'), 'github-tip').get('sha'), 'remote-tip')
@@ -1028,7 +1049,7 @@ def bootstrap(root, repository, git_executable, gh_executable, github_token, pub
     if config_root.get('target_base') != branch:
         _fail('stale', 'bootstrap-target-base-mismatch', 'Base config target differs from GitHub default branch')
     config, profiles, git, gh = selected['config'], selected['profiles'], selected['git'], selected['github']
-    document = {'format': BOOTSTRAP_FORMAT, 'repository': repository, 'initial_head': head, 'remote_tip': remote_tip, 'target_base': {'name': branch, 'ref': ref, 'commit': tracking, 'tree': tree}, 'config': {'path': '.github/agent-workflow.json', 'blob_oid': blob_oid, 'content_sha256': workflow_inspector.sha256(config_bytes), 'size': len(config_bytes)}, 'executables': {'git': git, 'github': gh}, 'validation_executables': selected['validation_executables'], 'profiles': profiles, 'mode': config['mode']}
+    document = {'format': BOOTSTRAP_FORMAT, 'repository': repository, 'initial_head': head, 'remote_tip': remote_tip, 'target_base': {'name': branch, 'ref': ref, 'commit': tracking, 'tree': tree}, 'config': {'path': '.github/agent-workflow.json', 'blob_oid': blob_oid, 'content_sha256': workflow_inspector.sha256(config_bytes), 'size': len(config_bytes)}, 'executables': {'git': git, 'github': gh}, 'validation_executables': selected['validation_executables'], 'profiles': profiles, 'mode': config['mode'], 'runtime': {'name': 'workflow-runtime', 'version': RUNTIME_VERSION, 'source_sha256': _runtime_source_sha256()}}
     document = _with_digest(document, 'bootstrap_sha256')
     return Runtime(root, repository, git, gh, github_token, publication_token, config, config_bytes, document)
 class RuntimeArgumentParser(argparse.ArgumentParser):

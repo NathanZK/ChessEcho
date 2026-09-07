@@ -82,6 +82,42 @@ returned runtime uses the selected stable executable records, not values read
 before the comparison. If the reads differ, bootstrap repeats that complete
 comparison once; movement in the second comparison is `stale`.
 
+The bootstrap document also pins the runtime module version and source hash.
+After classification, the orchestrator publishes a
+`chess-echo-runtime-reconstruction-pin-v1` document bound to the selected
+baseline and triage. That pin contains the exact bootstrap document but no
+credential.
+
+## Reconstruction after intake
+
+`bootstrap()` remains the only new-intake constructor and retains its clean
+`HEAD == tracking ref == live default tip` rule. Every later command obtains a
+new adapter from the reviewed host by passing a canonical
+`chess-echo-runtime-reconstruction-request-v1` to `reconstruct()`. The request
+binds:
+
+- the selected runtime pin, baseline, triage, and current authority references;
+- the exact canonical baseline and triage documents; and
+- either the exact phase-selected repository observation, the clean initial
+  base, or a trusted-current observation for a recovery state that has no safe
+  selected `HEAD`.
+
+Reconstruction decodes the base-pinned config bytes and revalidates their Git
+blob and SHA-256 identities, projected profiles and limits, configured mode,
+runtime source, Git/GitHub and validation executable paths and hashes, GitHub
+repository and default-branch identity, the unchanged live default tip, the
+local target-base commit/tree, and worktree trust controls. It then observes
+the issue repository twice with a stable timestamp and requires the selected
+repository expectation. A later issue commit is accepted only when exact
+selected evidence names it; a moved or rewritten `HEAD`, dirty worktree,
+replacement ref, graft, alternate object directory, changed executable,
+changed config, changed authority, or newer default tip fails closed.
+
+The request and reconstruction document are credential-free. GitHub and source
+publication credentials are supplied only to `reconstruct()` by the reviewed
+host and remain private runtime memory under the same environment restrictions
+as bootstrap.
+
 The direct and package CLIs expose `bootstrap` and `execute`. They require
 absolute Git/GitHub executable paths and read the explicitly selected GitHub
 token from standard input. The CLI has no sandbox-provider option or provider
@@ -144,6 +180,10 @@ They also run before propagating an interruption or malformed supervisor result
 reported after invocation of the write command.
 Runtime does not watch or mutate authority. Agent, validation, mutation,
 authorization, migration, and repair calls are never automatically retried.
+If the caller dies after a child starts, the runtime makes no claim that the
+child or escaped descendants stopped. A later process must not execute the
+pending request again; it may only finalize a separately discovered, exact
+published result or enter the existing cancellation and human-recovery path.
 
 ## Observation documents
 

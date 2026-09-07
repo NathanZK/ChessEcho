@@ -2273,6 +2273,10 @@ class AgentWorkflowTest(unittest.TestCase):
             "reviewer": (
                 "targeted", "evidence-based", "stop", "open finding",
                 "high-risk", "implementation-level testing",
+                "repository-enforced invariants", "exact commands and results",
+                "focused validation", "full-suite validation",
+                "test_workflow_boundaries", "wc -l",
+                "applicable invariant is failing",
             ),
             "implementer": (
                 "test authoring", "approved tests", "routine", "bounded",

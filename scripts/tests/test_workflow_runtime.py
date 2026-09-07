@@ -165,7 +165,7 @@ class BootstrapFixture:
         if args[:2] == ["-c", "core.fsmonitor=false"]:
             args = args[2:]
         if args == ["api", "repos/NathanZK/ChessEcho"]:
-            stdout = b'{"default_branch":"main"}'
+            stdout = b'{"default_branch":"main","full_name":"NathanZK/ChessEcho"}'
         elif args == ["api", "repos/NathanZK/ChessEcho/commits/main"]:
             stdout = ('{"sha":"%s"}' % OID).encode()
         elif args == ["rev-parse", "--verify", "HEAD^{commit}"]:
@@ -463,6 +463,46 @@ class WorkflowRuntimeTest(unittest.TestCase):
         )
         return document
 
+    def reconstruction_request(self, adapter, repository_mode="exact", observation=None):
+        baseline_binding = reference(digest="5" * 64)
+        triage_binding = reference(digest="6" * 64)
+        baseline = adapter.build_baseline(152, FAMILY, reference(digest="4" * 64))
+        triage = {
+            "format": runtime.TRIAGE_FORMAT,
+            "outcome": {"status": "resolved", "code": "classified"},
+            "issue": 152,
+            "family_run_id": FAMILY,
+            "issue_snapshot_binding": baseline["issue_snapshot_binding"],
+            "baseline_binding": baseline_binding,
+            "classification": {"work_type": "implementation"},
+            "route": {"work_type": "implementation"},
+            "activation": {},
+            "request_sha256": "7" * 64,
+        }
+        triage["result_sha256"] = inspector.sha256(inspector.canonical_bytes(triage))
+        pin = adapter.build_reconstruction_pin(
+            152, FAMILY, baseline_binding, triage_binding
+        )
+        if observation is None and repository_mode == "exact":
+            observation = self.repository_before()
+            observation["triage_binding"] = triage_binding
+            unsigned = copy.deepcopy(observation)
+            unsigned.pop("observation_sha256")
+            observation["observation_sha256"] = inspector.sha256(
+                inspector.canonical_bytes(unsigned)
+            )
+        return runtime.build_reconstruction_request(
+            pin_binding=reference(digest="8" * 64),
+            pin_document=pin,
+            baseline_binding=baseline_binding,
+            baseline_document=baseline,
+            triage_binding=triage_binding,
+            triage_document=triage,
+            authority_binding=reference(digest="9" * 64),
+            repository_mode=repository_mode,
+            repository_observation=observation,
+        )
+
     def test_bootstrap_pins_remote_tip_head_config_and_executables(self):
         adapter = self.fixture.bootstrap()
         document = adapter.bootstrap_document()
@@ -472,6 +512,18 @@ class WorkflowRuntimeTest(unittest.TestCase):
         self.assertEqual(TREE, document["target_base"]["tree"])
         self.assertEqual(self.fixture.config_blob, document["config"]["blob_oid"])
         self.assertEqual("inactive", document["mode"])
+        runtime_sources = {
+            "workflow_runtime.py": inspector.sha256(
+                pathlib.Path(runtime.__file__).read_bytes()
+            ),
+            "workflow_runtime_reconstruction.py": inspector.sha256(
+                pathlib.Path(runtime.reconstruction.__file__).read_bytes()
+            ),
+        }
+        expected_runtime_source = hashlib.sha256(
+            json.dumps(runtime_sources, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        self.assertEqual(expected_runtime_source, document["runtime"]["source_sha256"])
         make_record = next(
             row
             for row in document["validation_executables"]
@@ -492,6 +544,144 @@ class WorkflowRuntimeTest(unittest.TestCase):
             sorted(github_calls[0]["env"]),
         )
         self.assertEqual("secret-token", github_calls[0]["env"]["GH_TOKEN"])
+
+    def test_reconstruct_reverifies_pinned_evidence_without_persisting_credentials(self):
+        adapter = self.fixture.bootstrap()
+        request = self.reconstruction_request(adapter)
+        encoded = inspector.canonical_bytes(request)
+        self.assertNotIn(b"secret-token", encoded)
+        with mock.patch.object(
+            runtime.workflow_supervisor, "supervise", side_effect=self.fixture.supervise
+        ):
+            reconstructed = runtime.reconstruct(
+                self.fixture.root, request, "fresh-secret-token"
+            )
+        self.assertEqual(request, reconstructed.reconstruction_document())
+        self.assertEqual(adapter.bootstrap_document(), reconstructed.bootstrap_document())
+        self.assertNotIn("fresh-secret-token", repr(reconstructed))
+
+    def test_reconstruct_rejects_newer_default_tip_dirty_worktree_and_replaced_tools(self):
+        adapter = self.fixture.bootstrap()
+        request = self.reconstruction_request(adapter)
+        original = self.fixture.supervise
+
+        def newer_tip(command, **options):
+            args = list(command)[1:]
+            if args == ["api", "repos/NathanZK/ChessEcho/commits/main"]:
+                return process_result(command, stdout=json.dumps({"sha": "9" * 40}).encode())
+            return original(command, **options)
+
+        with mock.patch.object(runtime.workflow_supervisor, "supervise", side_effect=newer_tip):
+            with self.assertRaises(runtime.RuntimeFailure) as raised:
+                runtime.reconstruct(self.fixture.root, request, "token")
+        self.assertEqual("runtime-default-tip-changed", raised.exception.code)
+
+        def dirty(command, **options):
+            args = list(command)[1:]
+            if args[:2] == ["-c", "core.fsmonitor=false"]:
+                args = args[2:]
+            if args == ["status", "--porcelain=v1", "-z", "--untracked-files=all"]:
+                return process_result(command, stdout=b"?? dirty.txt\0")
+            return original(command, **options)
+
+        with mock.patch.object(runtime.workflow_supervisor, "supervise", side_effect=dirty):
+            with self.assertRaises(runtime.RuntimeFailure) as raised:
+                runtime.reconstruct(self.fixture.root, request, "token")
+        self.assertEqual("runtime-worktree-untrusted", raised.exception.code)
+
+        self.fixture.make.write_bytes(b"#!/bin/sh\nexit 7\n")
+        with mock.patch.object(runtime.workflow_supervisor, "supervise", side_effect=original):
+            with self.assertRaises(runtime.RuntimeFailure) as raised:
+                runtime.reconstruct(self.fixture.root, request, "token")
+        self.assertEqual("runtime-executable-changed", raised.exception.code)
+
+    def test_reconstruct_rejects_changed_config_git_redirection_and_phase_head(self):
+        adapter = self.fixture.bootstrap()
+        request = self.reconstruction_request(adapter)
+        original = self.fixture.supervise
+
+        def changed_config(command, **options):
+            args = list(command)[1:]
+            if args[:2] == ["-c", "core.fsmonitor=false"]:
+                args = args[2:]
+            if args == ["rev-parse", "HEAD:.github/agent-workflow.json"]:
+                return process_result(command, stdout=("9" * 40 + "\n").encode())
+            return original(command, **options)
+
+        with mock.patch.object(runtime.workflow_supervisor, "supervise", side_effect=changed_config):
+            with self.assertRaises(runtime.RuntimeFailure) as raised:
+                runtime.reconstruct(self.fixture.root, request, "token")
+        self.assertEqual("repository-guard-drift", raised.exception.code)
+
+        def replacement(command, **options):
+            args = list(command)[1:]
+            if args[:2] == ["-c", "core.fsmonitor=false"]:
+                args = args[2:]
+            if args[:1] == ["for-each-ref"]:
+                return process_result(
+                    command, stdout=b"refs/replace/111\0" + b"2" * 40 + b"\n"
+                )
+            return original(command, **options)
+
+        with mock.patch.object(runtime.workflow_supervisor, "supervise", side_effect=replacement):
+            with self.assertRaises(runtime.RuntimeFailure) as raised:
+                runtime.reconstruct(self.fixture.root, request, "token")
+        self.assertEqual("runtime-worktree-untrusted", raised.exception.code)
+
+        moved = copy.deepcopy(self.repository_before())
+        moved["triage_binding"] = reference(digest="6" * 64)
+        moved["head"]["commit"] = "8" * 40
+        unsigned = copy.deepcopy(moved)
+        unsigned.pop("observation_sha256")
+        moved["observation_sha256"] = inspector.sha256(inspector.canonical_bytes(unsigned))
+        request = self.reconstruction_request(adapter, observation=moved)
+        with mock.patch.object(runtime.workflow_supervisor, "supervise", side_effect=original):
+            with self.assertRaises(runtime.RuntimeFailure) as raised:
+                runtime.reconstruct(self.fixture.root, request, "token")
+        self.assertEqual("runtime-phase-repository-changed", raised.exception.code)
+
+    def test_reconstruction_evidence_rejects_wrong_repository_family_and_triage(self):
+        adapter = self.fixture.bootstrap()
+        request = self.reconstruction_request(adapter)
+        cases = []
+        wrong_repository = copy.deepcopy(request)
+        wrong_repository["pin"]["repository"] = "Other/Repository"
+        unsigned = copy.deepcopy(wrong_repository["pin"])
+        unsigned.pop("pin_sha256")
+        wrong_repository["pin"]["pin_sha256"] = inspector.sha256(
+            inspector.canonical_bytes(unsigned)
+        )
+        cases.append(wrong_repository)
+        wrong_family = copy.deepcopy(request)
+        wrong_family["triage"]["document"]["family_run_id"] = "f" * 32
+        unsigned = copy.deepcopy(wrong_family["triage"]["document"])
+        unsigned.pop("result_sha256")
+        wrong_family["triage"]["document"]["result_sha256"] = inspector.sha256(
+            inspector.canonical_bytes(unsigned)
+        )
+        cases.append(wrong_family)
+        wrong_triage = copy.deepcopy(request)
+        wrong_triage["triage"]["document"]["route"]["work_type"] = "documentation"
+        unsigned = copy.deepcopy(wrong_triage["triage"]["document"])
+        unsigned.pop("result_sha256")
+        wrong_triage["triage"]["document"]["result_sha256"] = inspector.sha256(
+            inspector.canonical_bytes(unsigned)
+        )
+        cases.append(wrong_triage)
+        for candidate in cases:
+            with self.subTest(candidate=candidate["triage"]["document"]["route"]):
+                with self.assertRaises(runtime.RuntimeFailure):
+                    runtime.build_reconstruction_request(
+                        pin_binding=candidate["pin_binding"],
+                        pin_document=candidate["pin"],
+                        baseline_binding=candidate["baseline"]["binding"],
+                        baseline_document=candidate["baseline"]["document"],
+                        triage_binding=candidate["triage"]["binding"],
+                        triage_document=candidate["triage"]["document"],
+                        authority_binding=candidate["authority_binding"],
+                        repository_mode=candidate["repository_expectation"]["mode"],
+                        repository_observation=candidate["repository_expectation"]["observation"],
+                    )
 
     def test_bootstrap_requires_head_and_tracking_tip_to_match_remote_tip(self):
         original = self.fixture.supervise
@@ -2341,7 +2531,7 @@ class WorkflowRuntimeTest(unittest.TestCase):
             def supervised(command, **options):
                 if pathlib.Path(command[0]) == self.fixture.gh:
                     if command[1:] == ["api", "repos/NathanZK/ChessEcho"]:
-                        data = b'{"default_branch":"main"}'
+                        data = b'{"default_branch":"main","full_name":"NathanZK/ChessEcho"}'
                     elif command[1:] == ["api", "repos/NathanZK/ChessEcho/commits/main"]:
                         data = json.dumps({"sha": base}).encode()
                     elif command[1:] == ["api", "repos/NathanZK/ChessEcho/issues/152"]:
