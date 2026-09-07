@@ -28,11 +28,18 @@ except ImportError:  # pragma: no cover - direct script loading
 
 
 NAME = "chess-echo-trusted-local"
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 RESULT_FORMAT = "chess-echo-trusted-local-execution-result-v1"
 DISCOVERY_FORMAT = "chess-echo-pending-result-candidates-v1"
 HANDOFF_FORMAT = "chess-echo-execution-handoff-v1"
 WORKTREE_BRANCH_PREFIX = "chess-echo-agent/issue-"
+WORKER_TOKEN_ENV = "COPILOT_GITHUB_TOKEN"
+WORKER_TOKEN_MAX_BYTES = 16 * 1024
+TRUSTED_WORKER_AUTHENTICATION = {
+    "mode": "trusted-local-stdin-v1",
+    "trust": "trusted-local-development-v1",
+    "secret_environment_key": WORKER_TOKEN_ENV,
+}
 AUDIT_LIMITS = {
     "timeout_ms": 30_000,
     "grace_ms": 1_000,
@@ -104,6 +111,58 @@ def _process_output(result, label):
     return data
 
 
+def _scrub_process_result(result):
+    if not isinstance(result, dict):
+        return
+    for stream in ("stdout", "stderr"):
+        record = result.get(stream)
+        if isinstance(record, dict):
+            record.clear()
+    result.clear()
+
+
+def _validate_worker_token(value):
+    if not isinstance(value, str):
+        _fail(
+            "corrupt",
+            "worker-authentication-malformed",
+            "Worker authentication credential is malformed",
+        )
+    try:
+        data = value.encode("ascii")
+    except UnicodeError:
+        _fail(
+            "corrupt",
+            "worker-authentication-malformed",
+            "Worker authentication credential is malformed",
+        )
+    if not data or len(data) > WORKER_TOKEN_MAX_BYTES or any(
+        byte < 33 or byte > 126 for byte in data
+    ):
+        _fail(
+            "corrupt",
+            "worker-authentication-malformed",
+            "Worker authentication credential is malformed",
+        )
+    return value
+
+
+def _process_discloses_secret(process, secret):
+    encoded = secret.encode("ascii")
+    encoded_secret = base64.b64encode(encoded)
+    for stream in ("stdout", "stderr"):
+        record = process.get(stream) if isinstance(process, dict) else None
+        if not isinstance(record, dict):
+            continue
+        try:
+            data = base64.b64decode(record.get("base64", ""), validate=True)
+        except (TypeError, ValueError, binascii.Error):
+            continue
+        if encoded in data or encoded_secret in data:
+            return True
+    return secret in json.dumps(process, ensure_ascii=True, sort_keys=True)
+
+
 def _safe_root(path, label):
     try:
         supplied = pathlib.Path(path).absolute()
@@ -113,6 +172,29 @@ def _safe_root(path, label):
     if supplied != resolved or not resolved.is_dir():
         _fail("denied", "%s-redirection" % label, "%s must not use symlink redirection" % label)
     return resolved
+
+
+def _safe_agent_home(path, control_root, workspace_root):
+    root = _safe_root(path, "agent-home")
+    metadata = root.stat()
+    try:
+        populated = any(root.iterdir())
+    except OSError as error:
+        _fail("missing", "agent-home-unavailable", "Agent home is unavailable: %s" % error)
+    if (
+        root in {control_root, workspace_root}
+        or control_root in root.parents
+        or workspace_root in root.parents
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o700
+        or populated
+    ):
+        _fail(
+            "denied",
+            "agent-home-not-dedicated",
+            "Agent home must be a distinct, empty, operator-owned directory with mode 0700",
+        )
+    return root
 
 
 def _git(provider, root, arguments, label):
@@ -239,6 +321,8 @@ class LocalSandboxProvider:
         git_executable,
         agent_executable,
         agent_home,
+        trusted_worker_authentication=False,
+        worker_token=None,
     ):
         self.root = _safe_root(root, "candidate-workspace")
         self.control_root = _safe_root(control_root, "control-root")
@@ -276,7 +360,32 @@ class LocalSandboxProvider:
                 "local-agent-executable-mismatch",
                 "Agent executable differs from the base-pinned identity",
             )
-        self.agent_home = _safe_root(agent_home, "agent-home")
+        self.agent_home = _safe_agent_home(
+            agent_home, self.control_root, self.root
+        )
+        if type(trusted_worker_authentication) is not bool:
+            _fail(
+                "corrupt",
+                "worker-authentication-mode",
+                "Worker authentication mode must be explicitly enabled or disabled",
+            )
+        self.authentication = None
+        self._worker_token = None
+        if trusted_worker_authentication:
+            if worker_token is None:
+                _fail(
+                    "missing",
+                    "worker-authentication-missing",
+                    "Trusted-local worker authentication credential is missing",
+                )
+            self._worker_token = _validate_worker_token(worker_token)
+            self.authentication = copy.deepcopy(TRUSTED_WORKER_AUTHENTICATION)
+        elif worker_token is not None:
+            _fail(
+                "denied",
+                "worker-authentication-not-enabled",
+                "Worker authentication credential requires explicit trusted-local mode",
+            )
         self.audit_environment = {
             "PATH": os.pathsep.join(
                 dict.fromkeys(
@@ -311,6 +420,12 @@ class LocalSandboxProvider:
             _fail("stale", "local-provider-git-replaced", "Git executable changed before execution")
         if _file_identity(self.agent_executable["path"], "local-provider-agent") != self.agent_executable:
             _fail("stale", "local-agent-executable-replaced", "Agent executable changed before execution")
+        if self.authentication is None or self._worker_token is None:
+            _fail(
+                "missing",
+                "worker-authentication-not-configured",
+                "Trusted-local worker authentication was not explicitly enabled",
+            )
         before = _worktree_identity(self)
         expected = request.get("repository_before", {}).get("head", {}).get("commit")
         if before != self.before or before["head"] != expected:
@@ -326,6 +441,18 @@ class LocalSandboxProvider:
                 "denied",
                 "local-agent-command-mismatch",
                 "Agent command must be the exact base-pinned local provider entry",
+            )
+        if (
+            not isinstance(environment, dict)
+            or set(environment) != {"PATH", "HOME", "LC_ALL", "LANG", "TZ"}
+            or environment["LC_ALL"] != "C.UTF-8"
+            or environment["LANG"] != "C.UTF-8"
+            or environment["TZ"] != "UTC"
+        ):
+            _fail(
+                "denied",
+                "local-agent-environment-mismatch",
+                "Agent environment must match the exact reviewed non-secret schema",
             )
         inputs = _input_projection(self.root, self.issue, request)
         prompt = _agent_prompt(self.issue, self.role, request, request_binding, inputs)
@@ -343,12 +470,16 @@ class LocalSandboxProvider:
             "--no-remote-export",
             "--no-ask-user",
             "--no-custom-instructions",
+            "--disable-builtin-mcps",
+            "--secret-env-vars=" + WORKER_TOKEN_ENV,
+            "--log-level",
+            "none",
             "--allow-all-tools",
             "--silent",
             "--prompt",
             prompt,
         ]
-        controlled_environment = {
+        non_secret_environment = {
             "PATH": os.pathsep.join(
                 dict.fromkeys(
                     (
@@ -364,17 +495,39 @@ class LocalSandboxProvider:
             "LANG": environment["LANG"],
             "TZ": environment["TZ"],
         }
-        process = supervisor.supervise(
-            command,
-            timeout_ms=limits["timeout_ms"],
-            grace_ms=limits["grace_ms"],
-            output_limit_bytes=limits["output_limit_bytes"],
-            cwd=str(self.root),
-            env=controlled_environment,
-            cancel_event=cancel_event,
-        )
-        candidate = _process_bytes(process)
+        token = self._worker_token
+        controlled_environment = dict(non_secret_environment)
+        controlled_environment[WORKER_TOKEN_ENV] = token
+        try:
+            process = supervisor.supervise(
+                command,
+                timeout_ms=limits["timeout_ms"],
+                grace_ms=limits["grace_ms"],
+                output_limit_bytes=limits["output_limit_bytes"],
+                cwd=str(self.root),
+                env=controlled_environment,
+                cancel_event=cancel_event,
+            )
+            if _process_discloses_secret(process, token):
+                _scrub_process_result(process)
+                _fail(
+                    "denied",
+                    "worker-authentication-disclosed",
+                    "Worker process disclosed its designated authentication credential",
+                )
+            candidate = _process_bytes(process)
+        finally:
+            controlled_environment.pop(WORKER_TOKEN_ENV, None)
+            self._worker_token = None
+            token = None
         after = _worktree_identity(self)
+        environment_identity = {
+            "keys": sorted([*non_secret_environment, WORKER_TOKEN_ENV]),
+            "non_secret_values": non_secret_environment,
+            "secret_keys": [WORKER_TOKEN_ENV],
+            "authentication": copy.deepcopy(self.authentication),
+        }
+        environment_identity["sha256"] = _sha(_canonical(environment_identity))
         facts = {
             "format": RESULT_FORMAT,
             "provider": {
@@ -401,11 +554,7 @@ class LocalSandboxProvider:
                 "head_before": before["head"],
                 "head_after": after["head"],
             },
-            "environment": {
-                "keys": sorted(controlled_environment),
-                "values": controlled_environment,
-                "sha256": _sha(_canonical(controlled_environment)),
-            },
+            "environment": environment_identity,
             "process_result_sha256": _sha(_canonical(process)),
             "candidate_sha256": _sha(candidate),
             "candidate_size": len(candidate),

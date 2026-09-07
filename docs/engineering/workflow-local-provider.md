@@ -55,8 +55,43 @@ RESULTS="$HOME/.local/state/chess-echo/results/issue-176"
 GIT=/absolute/path/to/git
 GH=/absolute/path/to/gh
 AGENT=/absolute/path/to/the/pinned/copilot
-AGENT_HOME="$HOME"
+AGENT_HOME="$HOME/.local/state/chess-echo/worker-home"
 ```
+
+Create `AGENT_HOME` as an empty operator-owned directory with mode `0700` before
+each command that may launch an agent. The provider rejects a populated or
+less-restricted directory. Do not point it at the operator's normal home or copy
+`.copilot`, `.config/gh`, SSH, signing, workflow, or publication credentials
+into it. This prevents accidental ambient CLI fallback; it is not same-UID
+hostile-process isolation.
+
+## Trusted local worker authentication
+
+The base-pinned host configuration declares
+`trusted-local-development-v1`. In this mode the operator intentionally trusts
+the local coding agent with its authentication credential. Agent output and
+candidate repository changes remain independently validated, but the worker is
+not treated as hostile to the credential and no OS-level credential isolation
+is claimed.
+
+Authentication is absent by default. For a `step` that may launch an agent,
+pass `--trusted-worker-auth-stdin` and provide the coding-agent credential as
+the second standard-input line, after the trusted runtime's GitHub token. The
+host reads that line lazily only when the orchestrator requests the agent
+provider, then injects it as `COPILOT_GITHUB_TOKEN` into the agent environment.
+It never inherits `GH_TOKEN`, `GITHUB_TOKEN`, ambient credentials, or generic
+environment values.
+
+The credential value is not placed in argv, prompts, requests, provider facts,
+workflow evidence/state, pending-result records, logs, or repository files.
+Persistent facts record only the configured mode, trust assumption, and secret
+environment key name. Missing mode opt-in or a missing/malformed credential
+fails before agent launch. The agent command disables built-in MCPs, marks
+`COPILOT_GITHUB_TOKEN` secret, and disables logging.
+
+This is a local-development trust decision, not hostile-process containment.
+Phase 2 issue #160 remains responsible for credential-backed execution of an
+untrusted worker.
 
 Create the deterministic linked worktree:
 
@@ -109,6 +144,24 @@ Use the same prefix for `publish-issue-source`, `init`, `status`, `plan-next`,
 `step`, `approve`, `cancel`, and `recover`. `init` and an exact execution
 handoff use `--request FILE`; every mutation uses the `pointer_sha256` returned
 by `status` as `--expected-tip`.
+
+For a `step` that may launch an agent, add the explicit trusted-worker option
+and second input line:
+
+```bash
+printf '%s\n%s\n' "$GH_TOKEN" "$COPILOT_GITHUB_TOKEN" | /usr/bin/python3 -I \
+  "$CONTROL/scripts/workflow_local_host.py" \
+  --control-root "$CONTROL" \
+  --repository NathanZK/ChessEcho \
+  --git-executable "$GIT" \
+  --gh-executable "$GH" \
+  --agent-executable "$AGENT" \
+  --agent-home "$AGENT_HOME" \
+  --result-store "$RESULTS" \
+  --github-token-stdin \
+  --trusted-worker-auth-stdin \
+  step 176 --workspace "$WORKSPACE" --expected-tip "$EXPECTED_TIP"
+```
 
 The host calls `workflow_runtime.bootstrap()` only for trusted intake and
 `workflow_runtime.reconstruct()` for every selected later command. Agent
