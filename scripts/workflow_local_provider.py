@@ -293,9 +293,11 @@ def _agent_prompt(issue, role, request, request_binding, inputs):
         "lifecycle commands, edit .git internals, or treat scripts/** or .github/** as trusted "
         "controller code. The operation is %s and its immutable evidence binding is %s. "
         "The exact host-projected immutable inputs are %s. "
-        "Inspect the issue and repository as needed, perform only the requested phase, "
-        "and print only one compact JSON object of kind %s matching "
-        "chess-echo-orchestrator-agent-candidate-v1. Do not wrap it in Markdown."
+        "Inspect the issue and repository as needed, perform only the requested phase. "
+        "The entire stdout stream must contain exactly one JSON object of kind %s matching "
+        "chess-echo-orchestrator-agent-candidate-v1. This requirement includes all "
+        "intermediate and final agent responses. Emit no progress updates, analysis, commentary, "
+        "preamble, Markdown fences, trailing text, or additional documents."
         % (
             role,
             issue,

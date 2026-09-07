@@ -165,6 +165,29 @@ class TrustedLocalProviderTest(unittest.TestCase):
         self.fixture = LocalProviderFixture()
         self.addCleanup(self.fixture.close)
 
+    def test_agent_prompt_requires_exactly_one_json_object_across_all_stdout(self):
+        prompt = provider._agent_prompt(
+            175,
+            "planner",
+            self.fixture.request(),
+            {"kind": "evidence-binding", "sha256": "d" * 64, "size": 1},
+            [],
+        )
+
+        self.assertIn(
+            "The entire stdout stream must contain exactly one JSON object",
+            prompt,
+        )
+        self.assertIn(
+            "This requirement includes all intermediate and final agent responses.",
+            prompt,
+        )
+        self.assertIn(
+            "Emit no progress updates, analysis, commentary, preamble, Markdown fences, "
+            "trailing text, or additional documents.",
+            prompt,
+        )
+
     def test_execution_binds_command_workspace_authority_environment_and_result(self):
         instance = self.fixture.instance()
         request = self.fixture.request()

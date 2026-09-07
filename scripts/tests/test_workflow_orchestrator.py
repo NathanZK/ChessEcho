@@ -18,6 +18,7 @@ from scripts import workflow_evidence as evidence
 from scripts import workflow_issue_source as issue_source
 from scripts import workflow_inspector as inspector
 from scripts import workflow_orchestrator as orchestrator
+from scripts import workflow_orchestrator_resume as resume
 from scripts import workflow_plan_revision_policy as plan_policy
 from scripts import workflow_policy as policy
 from scripts import workflow_runtime as runtime
@@ -299,6 +300,52 @@ class OrchestratorFixture:
     def calls(self):
         path = self.bin / "gh-calls.jsonl"
         return [] if not path.exists() else [json.loads(line) for line in path.read_text().splitlines()]
+
+
+class CandidateOutputContractTest(unittest.TestCase):
+    def _result(self, stdout):
+        raw = stdout.encode()
+        return {
+            "outcome": "succeeded",
+            "candidate_output": {
+                "sha256": inspector.sha256(raw),
+                "size": len(raw),
+            },
+            "process_result": {
+                "stdout": {"base64": base64.b64encode(raw).decode("ascii")}
+            },
+        }
+
+    def test_valid_candidate_json_preceded_by_prose_remains_rejected(self):
+        candidate = json.dumps(
+            {
+                "format": resume.CANDIDATE_FORMAT,
+                "kind": "implementer",
+                "report": "Implemented the approved change.",
+            },
+            separators=(",", ":"),
+        )
+
+        with self.assertRaises(resume.ResumeFailure) as raised:
+            resume.decode_candidate(
+                self._result("Working on the requested change.\n" + candidate),
+                "implementer",
+            )
+
+        self.assertEqual("candidate-output-invalid", raised.exception.code)
+
+    def test_exact_valid_candidate_json_remains_accepted(self):
+        candidate = {
+            "format": resume.CANDIDATE_FORMAT,
+            "kind": "implementer",
+            "report": "Implemented the approved change.",
+        }
+        stdout = json.dumps(candidate, separators=(",", ":"))
+
+        self.assertEqual(
+            candidate,
+            resume.decode_candidate(self._result(stdout), "implementer"),
+        )
 
 
 class OrchestratorLifecycleTest(unittest.TestCase):
