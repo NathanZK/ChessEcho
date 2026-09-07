@@ -285,6 +285,49 @@ class WorkflowRuntimeTest(unittest.TestCase):
     def tearDown(self):
         self.fixture.close()
 
+    def test_trusted_local_command_has_operation_specific_prompt_bound(self):
+        prompt = "p" * 22_090
+        command = ["/trusted/agent", *runtime.LOCAL_PROVIDER_COMMAND_ARGUMENTS, prompt]
+        self.assertEqual(
+            command,
+            runtime._local_provider_command(command, "local-provider-command"),
+        )
+
+        with self.assertRaises(runtime.RuntimeFailure) as raised:
+            runtime._local_provider_command(
+                [
+                    "/trusted/agent",
+                    *runtime.LOCAL_PROVIDER_COMMAND_ARGUMENTS,
+                    "p" * (runtime.LOCAL_PROVIDER_PROMPT_LIMIT_BYTES + 1),
+                ],
+                "local-provider-command",
+            )
+        self.assertEqual(
+            "invalid-local-provider-command-prompt", raised.exception.code
+        )
+
+        malformed_commands = (
+            ["/trusted/agent", *runtime.LOCAL_PROVIDER_COMMAND_ARGUMENTS, None],
+            ["/trusted/agent", *runtime.LOCAL_PROVIDER_COMMAND_ARGUMENTS, "bad\0prompt"],
+            [
+                "/trusted/agent",
+                *runtime.LOCAL_PROVIDER_COMMAND_ARGUMENTS[:-2],
+                "--verbose",
+                "--prompt",
+                prompt,
+            ],
+        )
+        for malformed in malformed_commands:
+            with self.subTest(command=malformed):
+                with self.assertRaises(runtime.RuntimeFailure):
+                    runtime._local_provider_command(
+                        malformed, "local-provider-command"
+                    )
+
+        with self.assertRaises(runtime.RuntimeFailure) as raised:
+            runtime._command(["make", "x" * 4097], "validation-command")
+        self.assertEqual("invalid-validation-command-part", raised.exception.code)
+
     def active_adapter(self):
         self.fixture.close()
         self.fixture = BootstrapFixture(mode="active")
