@@ -28,7 +28,7 @@ except ImportError:  # pragma: no cover - direct script loading
 
 
 NAME = "chess-echo-trusted-local"
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 RESULT_FORMAT = "chess-echo-trusted-local-execution-result-v1"
 PROCESS_DIAGNOSTIC_FORMAT = "chess-echo-trusted-local-process-diagnostic-v1"
 DISCOVERY_FORMAT = "chess-echo-pending-result-candidates-v1"
@@ -998,6 +998,8 @@ class LocalSandboxProvider:
             "--output-format",
             "json",
             "--silent",
+            "--stream",
+            "off",
             "--prompt",
             prompt,
         ]
