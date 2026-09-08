@@ -72,6 +72,16 @@ class WorkflowSupervisorTest(unittest.TestCase):
         self.assertEqual(0, result["exit_code"])
         self.assertEqual(b"out", decoded(result, "stdout"))
         self.assertEqual(b"err", decoded(result, "stderr"))
+        self.assertEqual(supervisor.RESULT_FORMAT, result["format"])
+        self.assertEqual(
+            {
+                "timeout_ms": 2000,
+                "grace_ms": 100,
+                "stdout_bytes": 4096,
+                "stderr_bytes": 4096,
+            },
+            result["limits"],
+        )
         self.assertTrue(result["cleanup_verified"])
         self.assertFalse(
             result["containment"]["descendant_cleanup_verified"]
@@ -251,6 +261,69 @@ class WorkflowSupervisorTest(unittest.TestCase):
             for result in outcomes
         }
         self.assertEqual({(b"o" * 128, b"e" * 128)}, retained)
+
+    def test_asymmetric_stdout_and_stderr_limits_are_independent(self):
+        cases = (
+            (
+                "import sys,time; "
+                "sys.stderr.buffer.write(b'e'*64); sys.stderr.flush(); "
+                "sys.stdout.buffer.write(b'o'*129); sys.stdout.flush(); "
+                "time.sleep(60)",
+                b"o" * 128,
+                b"e" * 64,
+            ),
+            (
+                "import sys,time; "
+                "sys.stdout.buffer.write(b'o'*128); sys.stdout.flush(); "
+                "sys.stderr.buffer.write(b'e'*65); sys.stderr.flush(); "
+                "time.sleep(60)",
+                b"o" * 128,
+                b"e" * 64,
+            ),
+        )
+        for source, expected_stdout, expected_stderr in cases:
+            with self.subTest(source=source):
+                result = self.run_supervised(
+                    python_command(source),
+                    output_limit_bytes=128,
+                    stderr_limit_bytes=64,
+                )
+                self.assertEqual("output-limit", result["outcome"])
+                self.assertEqual(expected_stdout, decoded(result, "stdout"))
+                self.assertEqual(expected_stderr, decoded(result, "stderr"))
+                self.assertEqual(128, result["limits"]["stdout_bytes"])
+                self.assertEqual(64, result["limits"]["stderr_bytes"])
+
+    def test_default_stderr_limit_remains_equal_to_stdout_limit(self):
+        result = self.run_supervised(
+            python_command(
+                "import sys,time; "
+                "sys.stdout.buffer.write(b'o'*129); sys.stdout.flush(); "
+                "sys.stderr.buffer.write(b'e'*129); sys.stderr.flush(); "
+                "time.sleep(60)"
+            ),
+            output_limit_bytes=128,
+        )
+
+        self.assertEqual("output-limit", result["outcome"])
+        self.assertEqual(b"o" * 128, decoded(result, "stdout"))
+        self.assertEqual(b"e" * 128, decoded(result, "stderr"))
+        self.assertEqual(
+            {"timeout_ms": 2000, "grace_ms": 100, "stdout_bytes": 128, "stderr_bytes": 128},
+            result["limits"],
+        )
+
+    def test_invalid_stderr_limit_is_rejected_before_start(self):
+        for value in (0, -1, False, "64"):
+            with self.subTest(value=value), mock.patch.object(
+                supervisor.subprocess, "Popen"
+            ) as popen:
+                with self.assertRaises(ValueError):
+                    self.run_supervised(
+                        python_command("raise SystemExit(99)"),
+                        stderr_limit_bytes=value,
+                    )
+                popen.assert_not_called()
 
     def test_timeout_cleans_multiple_children_and_grandchild(self):
         with tempfile.TemporaryDirectory() as directory:

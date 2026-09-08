@@ -13,6 +13,7 @@ result = supervise(
     timeout_ms=30_000,
     grace_ms=1_000,
     output_limit_bytes=1_048_576,
+    stderr_limit_bytes=65_536,
     cwd=None,
     env=None,
     cancel_event=None,
@@ -27,10 +28,13 @@ portable way to preempt the process-creation syscall before it returns a PID;
 the deadline is enforced immediately when that syscall returns. Limits are
 positive exact integers except `grace_ms`, which may be zero. Invalid API
 arguments raise `ValueError`; process startup failures are structured results.
+`stderr_limit_bytes` is additive and optional. Omitting it preserves the original
+API behavior by using `output_limit_bytes` for both streams.
 
-The result format is `chess-echo-process-result-v1`. It contains:
+The result format is `chess-echo-process-result-v2`. It contains:
 
-- SHA-256 identity of the canonical command vector and the configured limits;
+- SHA-256 identity of the canonical command vector and the configured timeout,
+  grace, stdout, and stderr limits;
 - `outcome` and stable semantic `reason`;
 - exit code or terminating signal when available;
 - whether forceful termination was required and cleanup of the identified
@@ -87,12 +91,13 @@ descendant remains in their process group; that group is terminated and the
 outcome is `terminated`.
 
 stdout and stderr are read incrementally without reader threads.
-`output_limit_bytes` is an independent budget for each stream, so readiness
-ordering cannot transfer capacity from one stream to the other. Each retained
-stream is at most that size. Either stream crossing its budget terminates the
-group and returns `output-limit`; truncation is never reported as success.
-Capture freezes when termination begins; bytes emitted during the grace period
-are drained only to prevent pipe blockage and are not retained.
+`output_limit_bytes` bounds stdout, while `stderr_limit_bytes` bounds stderr.
+The budgets are independent, so readiness ordering cannot transfer capacity
+from one stream to the other. Omitting the stderr limit gives both streams the
+stdout limit for backwards compatibility. Either stream crossing its budget
+terminates the group and returns `output-limit`; truncation is never reported
+as success. Capture freezes when termination begins; bytes emitted during the
+grace period are drained only to prevent pipe blockage and are not retained.
 
 ## Platform boundary
 

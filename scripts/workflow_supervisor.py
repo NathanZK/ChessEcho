@@ -13,7 +13,7 @@ import time
 from contextlib import contextmanager
 
 
-RESULT_FORMAT = "chess-echo-process-result-v1"
+RESULT_FORMAT = "chess-echo-process-result-v2"
 READ_SIZE = 64 * 1024
 POLL_INTERVAL_SECONDS = 0.01
 
@@ -36,6 +36,7 @@ def _result(
     timeout_ms,
     grace_ms,
     output_limit_bytes,
+    stderr_limit_bytes,
     outcome,
     reason,
     stdout=b"",
@@ -68,7 +69,8 @@ def _result(
         "limits": {
             "timeout_ms": timeout_ms,
             "grace_ms": grace_ms,
-            "output_bytes_per_stream": output_limit_bytes,
+            "stdout_bytes": output_limit_bytes,
+            "stderr_bytes": stderr_limit_bytes,
         },
         "containment": containment,
         "outcome": outcome,
@@ -90,7 +92,13 @@ def _result(
     return result
 
 
-def _validate(command, timeout_ms, grace_ms, output_limit_bytes):
+def _validate(
+    command,
+    timeout_ms,
+    grace_ms,
+    output_limit_bytes,
+    stderr_limit_bytes,
+):
     if (
         not isinstance(command, (list, tuple))
         or not command
@@ -104,6 +112,10 @@ def _validate(command, timeout_ms, grace_ms, output_limit_bytes):
     ):
         if type(value) is not int or value < (0 if allow_zero else 1):
             raise ValueError("%s is outside its supported range" % name)
+    if stderr_limit_bytes is not None and (
+        type(stderr_limit_bytes) is not int or stderr_limit_bytes < 1
+    ):
+        raise ValueError("stderr_limit_bytes is outside its supported range")
 
 
 def _group_exists(process_group):
@@ -138,7 +150,7 @@ def _signal_group_with_retries(ownership, signal_number, deadline):
     return "failed"
 
 
-def _read_ready(selector, streams, output_limit_bytes):
+def _read_ready(selector, streams, stream_limits):
     exceeded = False
     for key, _ in selector.select(timeout=0):
         try:
@@ -149,7 +161,7 @@ def _read_ready(selector, streams, output_limit_bytes):
             selector.unregister(key.fileobj)
             key.fileobj.close()
             continue
-        available = max(0, output_limit_bytes - len(streams[key.data]))
+        available = max(0, stream_limits[key.data] - len(streams[key.data]))
         streams[key.data].extend(chunk[:available])
         if len(chunk) > available:
             exceeded = True
@@ -360,6 +372,7 @@ def _supervise_posix(
     timeout_ms,
     grace_ms,
     output_limit_bytes,
+    stderr_limit_bytes,
     cwd=None,
     env=None,
     cancel_event=None,
@@ -372,6 +385,7 @@ def _supervise_posix(
             timeout_ms,
             grace_ms,
             output_limit_bytes,
+            stderr_limit_bytes,
             "terminated",
             "external-signal-before-start",
             containment_kind="none",
@@ -382,6 +396,7 @@ def _supervise_posix(
             timeout_ms,
             grace_ms,
             output_limit_bytes,
+            stderr_limit_bytes,
             "terminated",
             "cancelled-before-start",
             containment_kind="none",
@@ -392,6 +407,7 @@ def _supervise_posix(
             timeout_ms,
             grace_ms,
             output_limit_bytes,
+            stderr_limit_bytes,
             "timeout",
             "execution-timeout-before-start",
             containment_kind="none",
@@ -412,6 +428,7 @@ def _supervise_posix(
             timeout_ms,
             grace_ms,
             output_limit_bytes,
+            stderr_limit_bytes,
             "startup-failure",
             "process-not-started",
             supervisor_error=type(error).__name__,
@@ -459,6 +476,7 @@ def _supervise_posix(
             timeout_ms,
             grace_ms,
             output_limit_bytes,
+            stderr_limit_bytes,
             "supervisor-failure",
             "supervision-setup-error",
             forced_termination=forced,
@@ -475,6 +493,7 @@ def _supervise_posix(
             timeout_ms,
             grace_ms,
             output_limit_bytes,
+            stderr_limit_bytes,
             "terminated",
             "external-signal",
             forced_termination=forced,
@@ -490,6 +509,7 @@ def _supervise_posix(
             timeout_ms,
             grace_ms,
             output_limit_bytes,
+            stderr_limit_bytes,
             "timeout",
             "execution-timeout",
             exit_code=(
@@ -506,6 +526,10 @@ def _supervise_posix(
             cleanup_verified=cleanup_verified,
         )
     stop_reason = None
+    stream_limits = {
+        "stdout": output_limit_bytes,
+        "stderr": stderr_limit_bytes,
+    }
     forced = False
     cleanup_verified = True
     supervisor_error = None
@@ -534,7 +558,7 @@ def _supervise_posix(
                     key.fileobj.close()
                     continue
                 available = max(
-                    0, output_limit_bytes - len(streams[key.data])
+                    0, stream_limits[key.data] - len(streams[key.data])
                 )
                 streams[key.data].extend(chunk[:available])
                 if len(chunk) > available:
@@ -603,6 +627,7 @@ def _supervise_posix(
         timeout_ms,
         grace_ms,
         output_limit_bytes,
+        stderr_limit_bytes,
         outcome,
         reason,
         stdout=stdout,
@@ -621,12 +646,21 @@ def supervise(
     timeout_ms,
     grace_ms,
     output_limit_bytes,
+    stderr_limit_bytes=None,
     cwd=None,
     env=None,
     cancel_event=None,
 ):
     """Execute one command in an isolated session and return a structured result."""
-    _validate(command, timeout_ms, grace_ms, output_limit_bytes)
+    _validate(
+        command,
+        timeout_ms,
+        grace_ms,
+        output_limit_bytes,
+        stderr_limit_bytes,
+    )
+    if stderr_limit_bytes is None:
+        stderr_limit_bytes = output_limit_bytes
     command = list(command)
     deadline = time.monotonic() + (timeout_ms / 1000)
     if os.name != "posix" or not hasattr(os, "killpg"):
@@ -635,6 +669,7 @@ def supervise(
             timeout_ms,
             grace_ms,
             output_limit_bytes,
+            stderr_limit_bytes,
             "unsupported",
             "process-session-isolation-unavailable",
             containment_kind="none",
@@ -645,6 +680,7 @@ def supervise(
             timeout_ms,
             grace_ms,
             output_limit_bytes,
+            stderr_limit_bytes,
             "unsupported",
             "process-wide-signal-guard-unavailable",
             containment_kind="none",
@@ -658,6 +694,7 @@ def supervise(
             timeout_ms=timeout_ms,
             grace_ms=grace_ms,
             output_limit_bytes=output_limit_bytes,
+            stderr_limit_bytes=stderr_limit_bytes,
             cwd=cwd,
             env=env,
             cancel_event=cancel_event,

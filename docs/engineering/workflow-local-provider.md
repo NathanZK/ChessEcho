@@ -128,6 +128,20 @@ not emitted and is not required. Startup parent records may be absent from
 stdout, and ephemeral siblings may share a persisted parent, so validation
 checks the observed causal graph rather than imposing a physical-line chain.
 
+The bounded issue-176 run exposed additional exact pinned-CLI shapes that had
+previously been masked by transport truncation. The three ordered startup
+records are ephemeral and carry exactly `servers`, `skills`, and `model`
+payloads; their nonempty parent IDs are distinct and remain unresolved in the
+emitted stream. Each observed ephemeral `model.call_start` immediately follows
+its active turn start and binds that parent and turn ID. Ephemeral
+`assistant.reasoning_delta` records form one contiguous, turn-bound reasoning
+group between a model call and tool-call delta. An ephemeral
+`assistant.reasoning` summary has exactly `content`, `reasoningId`, and
+`rte: true`, immediately follows its tool-bearing assistant message, binds that
+message as parent and a prior delta group, and immediately precedes tool
+execution. These records are validated as exact reviewed schemas and causal
+relationships; unknown reasoning records are not ignored.
+
 The provider reads the complete stdout bytes once, secret-scans those unchanged
 bytes, and then strictly validates bounded UTF-8 JSONL. It independently
 secret-scans the extracted candidate before returning it. It rejects missing
@@ -178,23 +192,26 @@ escaped and the surrounding JSON quotes add two bytes.
 
 The preflight charges four terms independently: the actual canonical
 repository-before observation, 131,074 bytes for the maximum serialized
-prompt, three exact Base64 expansions of the configured per-stream limit, and
-64 KiB for the remaining fixed result structure.
+prompt, exact Base64 expansions for raw JSONL, candidate, and stderr, and 64 KiB
+for the remaining fixed result structure.
 
 A controlled planning run on 2026-09-08 then reached the 384 KiB stdout limit
 exactly and failed as `output-limit` / `per-stream-output-limit`, with strict
-JSONL parsing independently reporting a truncated final record. The limit is
-therefore 448 KiB: 64 KiB of deterministic transport headroom over the observed
-failure, while remaining inside the same three-output persistence proof. Each
-maximal stream expands to 611,672 Base64 bytes, so all three consume 1,835,016
-bytes. After the 131,074-byte serialized-prompt reservation and 64 KiB fixed
+JSONL parsing independently reporting a truncated final record. A later
+immutable run reached the 448 KiB stdout cap exactly with no stderr or candidate
+bytes and again ended in a truncated parser record. The correction therefore
+redistributes the identical persistence budget asymmetrically: raw JSONL/stdout
+is 832 KiB, extracted candidate output remains 448 KiB, and stderr is 64 KiB.
+Their exact Base64 charges are respectively 1,135,960, 611,672, and 87,384
+bytes, totaling 1,835,016 bytes, exactly the former three times 611,672. After
+the unchanged 131,074-byte serialized-prompt reservation and 64 KiB fixed
 headroom, the preflight still admits a 65,526-byte canonical repository
-observation. Focused tests accept a valid JSONL transport at exactly the new
-bound, reject the next byte, serialize the actual result envelope with all
-three maximal blobs, a maximum-length quote/backslash/newline-heavy prompt, and
-the maximal admitted observation through the production canonicalizer, and
-reject either the next Base64 expansion or an additional
-repository-observation byte.
+observation. JSONL accepts at most 8,192 records. Focused tests accept JSONL,
+event count, and candidate bytes exactly at their respective bounds, reject
+each next unit, serialize all three maximum blobs with a maximum-length
+quote/backslash/newline-heavy prompt and the maximal admitted observation, and
+reject either the next Base64 expansion or an additional repository-observation
+byte. No admitted stream or candidate is filtered, dropped, or truncated.
 
 Repository-after is observed only after the agent runs and can legitimately be
 larger than repository-before, so preflight does not claim to bound that future
