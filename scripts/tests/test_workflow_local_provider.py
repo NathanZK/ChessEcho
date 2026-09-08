@@ -160,6 +160,48 @@ def _encode_events(events):
     )
 
 
+def _process_result(
+    command,
+    *,
+    stdout=b"",
+    stderr=b"",
+    outcome="success",
+    reason="process-exited",
+    exit_code=0,
+    terminating_signal=None,
+):
+    return {
+        "format": "chess-echo-process-result-v1",
+        "command_sha256": inspector.sha256(inspector.canonical_bytes(command)),
+        "limits": {
+            "timeout_ms": 5_000,
+            "grace_ms": 100,
+            "output_bytes_per_stream": 16_384,
+        },
+        "containment": {
+            "kind": "posix-process-group",
+            "cleanup_scope": "original-process-group",
+            "escaped_descendants": "not-observable",
+            "descendant_cleanup_verified": False,
+        },
+        "outcome": outcome,
+        "reason": reason,
+        "exit_code": exit_code,
+        "terminating_signal": terminating_signal,
+        "forced_termination": outcome in {"output-limit", "terminated"},
+        "cleanup_verified": True,
+        "stdout": {
+            "bytes": len(stdout),
+            "base64": base64.b64encode(stdout).decode("ascii"),
+        },
+        "stderr": {
+            "bytes": len(stderr),
+            "base64": base64.b64encode(stderr).decode("ascii"),
+        },
+        "supervisor_error": None,
+    }
+
+
 class LocalProviderFixture:
     def __init__(self):
         self.temporary = tempfile.TemporaryDirectory(dir=str(REPOSITORY))
@@ -299,6 +341,7 @@ class TrustedLocalProviderTest(unittest.TestCase):
         candidate=CANDIDATE,
         prompt_bytes=None,
         repository_after=None,
+        supervise=None,
     ):
         self.fixture.agent.write_bytes(
             b"#!/bin/sh\ncat <<'JSONL'\n"
@@ -343,6 +386,20 @@ class TrustedLocalProviderTest(unittest.TestCase):
             if prompt_bytes is not None
             else contextlib.nullcontext()
         )
+        original_supervise = provider.supervisor.supervise
+
+        def selected_supervise(command, **options):
+            if command[0] == str(self.fixture.agent):
+                return supervise(command, **options)
+            return original_supervise(command, **options)
+
+        supervise_context = (
+            mock.patch.object(
+                provider.supervisor, "supervise", side_effect=selected_supervise
+            )
+            if supervise is not None
+            else contextlib.nullcontext()
+        )
         with mock.patch.object(
             runtime.Runtime, "_base_config", return_value={"mode": "active"}
         ), mock.patch.object(
@@ -366,7 +423,7 @@ class TrustedLocalProviderTest(unittest.TestCase):
             ),
         ), mock.patch.object(
             provider, "_input_projection", return_value=[]
-        ), prompt_context:
+        ), prompt_context, supervise_context:
             return adapter.execute(
                 request,
                 binding,
@@ -817,7 +874,7 @@ class TrustedLocalProviderTest(unittest.TestCase):
 
     def test_worker_secret_disclosure_is_scrubbed_and_never_returned(self):
         self.fixture.agent.write_text(
-            "#!/bin/sh\nprintf '%s' \"$COPILOT_GITHUB_TOKEN\"\n"
+            "#!/bin/sh\nprintf '%s' \"$COPILOT_GITHUB_TOKEN\"\nexit 7\n"
         )
         self.fixture.agent.chmod(self.fixture.agent.stat().st_mode | stat.S_IXUSR)
         instance = self.fixture.instance()
@@ -860,23 +917,122 @@ class TrustedLocalProviderTest(unittest.TestCase):
         self.assertEqual("worker-authentication-disclosed", raised.exception.code)
 
     def test_nonzero_process_without_candidate_disclosure_remains_process_failure(self):
-        self.fixture.agent.write_bytes(
-            b"#!/bin/sh\ncat <<'JSONL'\n" + _jsonl() + b"JSONL\nexit 7\n"
+        stderr = b"non-secret diagnostic stderr"
+
+        def failed(command, **_options):
+            return _process_result(
+                command,
+                stdout=_jsonl(),
+                stderr=stderr,
+                outcome="nonzero-exit",
+                reason="process-exited",
+                exit_code=7,
+            )
+
+        result = self._execute_through_runtime(supervise=failed)
+        diagnostic = result["sandbox"]["process_diagnostic"]
+        self.assertEqual("failed", result["outcome"])
+        self.assertEqual(
+            {"status": "missing", "code": "local-agent-process-failed"},
+            diagnostic["provider_failure"],
         )
-        self.fixture.agent.chmod(self.fixture.agent.stat().st_mode | stat.S_IXUSR)
-        instance = self.fixture.instance()
-        with mock.patch.object(provider, "_input_projection", return_value=[]):
-            with self.assertRaises(provider.LocalProviderFailure) as raised:
-                instance.execute(
-                    self.fixture.request(),
-                    {"kind": "evidence-binding", "sha256": "d" * 64, "size": 1},
-                    ["agent"],
-                    str(self.fixture.workspace),
-                    self.fixture.environment(),
-                    self.fixture.request()["limits"],
-                    None,
-                )
-        self.assertEqual("local-agent-process-failed", raised.exception.code)
+        self.assertEqual(7, diagnostic["exit_code"])
+        self.assertIsNone(diagnostic["terminating_signal"])
+        self.assertIsNone(diagnostic["parser_failure"])
+
+    def test_failed_process_diagnostics_bind_supervisor_reason_and_stream_identities(self):
+        transport = _jsonl()[:-1]
+        stderr = b"bounded stderr"
+
+        def output_limited(command, **_options):
+            return _process_result(
+                command,
+                stdout=transport,
+                stderr=stderr,
+                outcome="output-limit",
+                reason="per-stream-output-limit",
+                exit_code=None,
+                terminating_signal=15,
+            )
+
+        result = self._execute_through_runtime(supervise=output_limited)
+        diagnostic = result["sandbox"]["process_diagnostic"]
+        self.assertEqual("failed", result["outcome"])
+        self.assertEqual("output-limit", diagnostic["outcome"])
+        self.assertEqual("per-stream-output-limit", diagnostic["reason"])
+        self.assertEqual(15, diagnostic["terminating_signal"])
+        self.assertEqual(
+            {"bytes": len(transport), "sha256": inspector.sha256(transport)},
+            diagnostic["stdout"],
+        )
+        self.assertEqual(
+            {"bytes": len(stderr), "sha256": inspector.sha256(stderr)},
+            diagnostic["stderr"],
+        )
+        self.assertEqual(
+            {"status": "corrupt", "code": "local-agent-jsonl-truncated"},
+            diagnostic["parser_failure"],
+        )
+        encoded = inspector.canonical_bytes(diagnostic)
+        self.assertNotIn(transport, encoded)
+        self.assertNotIn(stderr, encoded)
+        self.assertNotIn(b"base64", encoded)
+
+    def test_failed_process_diagnostics_distinguish_supervisor_conditions(self):
+        transport = _jsonl()[:-1]
+
+        def cancelled(command, **_options):
+            return _process_result(
+                command,
+                stdout=transport,
+                outcome="terminated",
+                reason="cancelled",
+                exit_code=None,
+                terminating_signal=15,
+            )
+
+        diagnostic = self._execute_through_runtime(
+            supervise=cancelled
+        )["sandbox"]["process_diagnostic"]
+        self.assertEqual("terminated", diagnostic["outcome"])
+        self.assertEqual("cancelled", diagnostic["reason"])
+        self.assertEqual(15, diagnostic["terminating_signal"])
+
+    def test_malformed_process_diagnostic_status_fails_closed(self):
+        process = _process_result(
+            ["agent"],
+            stdout=b"truncated",
+            outcome="output-limit",
+            reason="per-stream-output-limit",
+            exit_code=None,
+            terminating_signal=15,
+        )
+        diagnostic = provider._process_diagnostic(
+            process,
+            provider.LocalProviderFailure(
+                "corrupt", "local-agent-jsonl-truncated", "truncated"
+            ),
+        )
+        diagnostic["parser_failure"]["status"] = ["corrupt"]
+
+        with self.assertRaises(runtime.RuntimeFailure) as raised:
+            runtime._process_diagnostic(diagnostic, process, b"truncated")
+        self.assertEqual("sandbox-verification-failed", raised.exception.code)
+
+    def test_successful_jsonl_execution_has_no_failure_diagnostic(self):
+        result = self._execute_through_runtime()
+        self.assertEqual("succeeded", result["outcome"])
+        self.assertIsNone(result["sandbox"]["process_diagnostic"])
+
+    def test_successful_process_with_truncated_jsonl_remains_transport_failure(self):
+        transport = _jsonl()[:-1]
+
+        def truncated(command, **_options):
+            return _process_result(command, stdout=transport)
+
+        with self.assertRaises(runtime.RuntimeFailure) as raised:
+            self._execute_through_runtime(supervise=truncated)
+        self.assertEqual("local-agent-jsonl-truncated", raised.exception.code)
 
     def test_write_phase_requires_a_clean_commit_and_rejects_oversized_prompt(self):
         instance = self.fixture.instance()

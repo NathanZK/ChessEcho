@@ -157,6 +157,14 @@ SHA-256 digest. No parsed or normalized transcript participates in that
 identity. Authentication remains unchanged and lazy: only
 `COPILOT_GITHUB_TOKEN` is injected when the provider executes.
 
+Failed supervised executions use the same immutable execution-result binding.
+`sandbox.process_diagnostic` records the supervisor outcome and reason, exit
+code or terminating signal, byte count and SHA-256 identity of each stream, the
+fixed provider failure classification, and any typed JSONL parser failure.
+The diagnostic contains no raw stream bytes or Base64 payloads. Raw and
+candidate credential scans still run before this record can be constructed; a
+disclosure is scrubbed and rejected instead of persisted.
+
 Persisting the raw transport added a third independently bounded Base64 output
 to each trusted-local execution result: adapted candidate stdout, stderr, and
 `sandbox.transport_output`. The original preflight budget covered only stdout
