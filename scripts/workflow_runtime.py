@@ -23,7 +23,8 @@ def _runtime_source_sha256():
 (SLUG_RE, REPOSITORY_RE, OID_RE, SHA_RE, RUN_RE, RFC3339_RE) = (reconstruction.SLUG_RE, reconstruction.REPOSITORY_RE, reconstruction.OID_RE, reconstruction.SHA_RE, reconstruction.RUN_RE, reconstruction.RFC3339_RE)
 (MAX_OUTPUT_BYTES, MAX_TIMEOUT_MS, MAX_GRACE_MS) = (8 * 1024 * 1024, 3600000, 60000)
 LOCAL_PROVIDER_PROMPT_LIMIT_BYTES = 64 * 1024
-LOCAL_PROVIDER_COMMAND_ARGUMENTS = ('--no-auto-update', '--no-color', '--no-remote', '--no-remote-export', '--no-ask-user', '--no-custom-instructions', '--disable-builtin-mcps', '--secret-env-vars=COPILOT_GITHUB_TOKEN', '--log-level', 'none', '--allow-all-tools', '--silent', '--prompt')
+EXECUTION_RESULT_HEADROOM_BYTES = 64 * 1024
+LOCAL_PROVIDER_COMMAND_ARGUMENTS = ('--no-auto-update', '--no-color', '--no-remote', '--no-remote-export', '--no-ask-user', '--no-custom-instructions', '--disable-builtin-mcps', '--secret-env-vars=COPILOT_GITHUB_TOKEN', '--log-level', 'none', '--allow-all-tools', '--output-format', 'json', '--silent', '--prompt')
 BOOTSTRAP_LIMITS = {'timeout_ms': 30000, 'grace_ms': 1000, 'output_limit_bytes': MAX_OUTPUT_BYTES}
 OUTCOME_EXIT_CODES = {'missing': 20, 'unsupported': 21, 'corrupt': 22, 'ambiguous': 23, 'stale': 24, 'denied': 25, 'conflict': 26, 'uncertain': 27}
 PROCESS_REASONS = {'success': {'process-exited'}, 'nonzero-exit': {'process-exited'}, 'signal': {'process-signaled'}, 'timeout': {'execution-timeout', 'execution-timeout-before-start'}, 'output-limit': {'per-stream-output-limit'}, 'terminated': {'process-group-remained', 'cancelled', 'external-signal', 'external-signal-before-start', 'cancelled-before-start'}, 'startup-failure': {'process-not-started'}, 'supervisor-failure': {'supervision-setup-error', 'supervision-error'}, 'unsupported': {'process-session-isolation-unavailable', 'process-wide-signal-guard-unavailable'}}
@@ -306,7 +307,13 @@ class Runtime:
         limits = _limits(limits, 'request-limits')
         if limits != self._expected_limits(operation, source):
             _fail('stale', 'request-limits-mismatch', 'Request limits differ from base configuration')
-        if repository_before is not None and len(_canonical(repository_before)) + 8 * ((limits['output_limit_bytes'] + 2) // 3) + 65536 > MAX_DOCUMENT_BYTES: _fail('denied', 'execution-result-budget', 'Request cannot fit its worst-case execution result')
+        result_output_count = 2
+        if operation['kind'] == 'agent':
+            role = next(item for item in self._config['agent_roles'] if item['role'] == operation['role'])
+            if role['containment'] == 'trusted-local-worktree-v1': result_output_count = 3
+        encoded_output_budget = result_output_count * 4 * ((limits['output_limit_bytes'] + 2) // 3)
+        prompt_budget = 2 * LOCAL_PROVIDER_PROMPT_LIMIT_BYTES + 2 if result_output_count == 3 else 0
+        if repository_before is not None and len(_canonical(repository_before)) + prompt_budget + encoded_output_budget + EXECUTION_RESULT_HEADROOM_BYTES > MAX_DOCUMENT_BYTES: _fail('denied', 'execution-result-budget', 'Request cannot fit its bounded execution-result inputs')
         expected = execution_attempt_id(authority_binding, operation, source, inputs, repository_before, limits, reconciliation_expectation)
         if attempt_id != expected:
             _fail('corrupt', 'attempt-id-mismatch', 'Attempt ID does not bind the exact request')
@@ -467,16 +474,21 @@ class Runtime:
                 preflight_cancelled = True
         process_cancel = cancel_event if not preflight_cancelled else threading.Event(); process_cancel.set() if preflight_cancelled else None
         (command, cwd, environment) = self._resolve_command(request, request_binding, write_payload)
-        process_error, sandbox = None, None
+        process_error, sandbox, local_candidate_output = None, None, None
         try:
             if operation['kind'] == 'agent' and provider_row['containment'] == 'trusted-local-worktree-v1':
                 try:
                     provided = sandbox_provider.execute(copy.deepcopy(request), copy.deepcopy(request_binding), copy.deepcopy(command), str(cwd), copy.deepcopy(environment), copy.deepcopy(request['limits']), process_cancel)
                 except (OSError, TypeError, ValueError) as error:
                     _fail(getattr(error, 'status', 'corrupt'), getattr(error, 'code', 'local-provider-failed'), getattr(error, 'message', 'Trusted-local provider failed: %s' % error))
-                _exact(provided, {'command', 'process_result', 'provider_result'}, 'local-provider-execution')
+                _exact(provided, {'command', 'process_result', 'candidate_output', 'provider_result'}, 'local-provider-execution')
                 local_command = _local_provider_command(provided['command'], 'local-provider-command')
                 process = _process_document(provided['process_result'], local_command, request['limits'], 'execution')
+                local_candidate_output = provided['candidate_output']
+                if not isinstance(local_candidate_output, dict) or set(local_candidate_output) != {'bytes', 'base64'}: _fail('corrupt', 'local-provider-candidate-invalid', 'Trusted-local provider candidate output is malformed')
+                try: local_candidate = base64.b64decode(local_candidate_output['base64'], validate=True)
+                except (TypeError, ValueError, binascii.Error): _fail('corrupt', 'local-provider-candidate-invalid', 'Trusted-local provider candidate output is not strict base64')
+                if type(local_candidate_output['bytes']) is not int or local_candidate_output['bytes'] != len(local_candidate): _fail('corrupt', 'local-provider-candidate-invalid', 'Trusted-local provider candidate output size is inconsistent')
                 sandbox = provided['provider_result']
             else:
                 process = _process_document(_run(command, limits=request['limits'], cwd=cwd, environment=environment, cancel_event=process_cancel), command, request['limits'], 'execution')
@@ -487,7 +499,7 @@ class Runtime:
         if operation['kind'] == 'github-write' and process_error is None:
             try: self._token_safe(process); candidate = _stdout(process, 'execution')
             except RuntimeFailure as failure: write_failure, candidate = failure, b''
-        else: candidate = b'' if process_error is not None else _stdout(process, 'execution')
+        else: candidate = b'' if process_error is not None else local_candidate if local_candidate_output is not None else _stdout(process, 'execution')
         process_ok = process is not None and process['outcome'] == 'success'; write_may_have_started = operation['kind'] == 'github-write' and (process is None or process['reason'] != 'cancelled-before-start')
         reconciliation = {'status': 'not-required', 'external_identity': None}
         outcome = 'succeeded' if process_ok else 'failed'
@@ -507,6 +519,9 @@ class Runtime:
             if provider_row['containment'] == 'external-sandbox-v1':
                 sandbox = sandbox_provider.verify(copy.deepcopy(request), copy.deepcopy(process), candidate)
             self._validate_sandbox(sandbox, request, process, candidate_record, provider_row, sandbox_provider)
+            if local_candidate_output is not None:
+                process = copy.deepcopy(process)
+                process['stdout'] = copy.deepcopy(local_candidate_output)
         repository_after, postflight_cancel = None, None if write_may_have_started else process_cancel
         if request['repository_before'] is not None:
             if postflight_cancel is not None and postflight_cancel.is_set(): outcome = 'cancelled'
@@ -527,11 +542,7 @@ class Runtime:
         if process_error is not None: raise process_error
         if write_failure is not None: _fail(write_failure.status, write_failure.code, write_failure.message, write_failure.subject or 'reconciliation:%s' % reconciliation['status'])
         result = {'format': RESULT_FORMAT, 'request_binding': request_binding, 'attempt_id': request['attempt_id'], 'process_result': copy.deepcopy(process), 'candidate_output': candidate_record, 'repository_after': repository_after, 'reconciliation': reconciliation, 'sandbox': copy.deepcopy(sandbox), 'outcome': outcome}
-        try: return _with_digest(result, 'result_sha256')
-        except RuntimeFailure as failure:
-            if failure.code != 'document-too-large': raise
-            result['repository_after'], result['outcome'] = None, 'failed'
-            return _with_digest(result, 'result_sha256')
+        return _with_digest(result, 'result_sha256')
     def _ensure_config_current(self, cancel_event=None):
         blob = self._git(['rev-parse', 'HEAD:.github/agent-workflow.json'], cancel_event=cancel_event).decode('ascii').strip()
         data = self._git(['show', 'HEAD:.github/agent-workflow.json'], limits={'timeout_ms': 30000, 'grace_ms': 1000, 'output_limit_bytes': MAX_CONFIG_BYTES}, cancel_event=cancel_event)
@@ -545,7 +556,7 @@ class Runtime:
             _fail('denied', 'sandbox-provider-mismatch', 'Injected provider identity differs from base config')
     def _validate_sandbox(self, value, request, process, candidate, provider, injected):
         if provider['containment'] == 'trusted-local-worktree-v1':
-            keys = {'format', 'provider', 'request_sha256', 'authority_binding', 'input_projection_sha256', 'command', 'workspace', 'environment', 'process_result_sha256', 'candidate_sha256', 'candidate_size', 'isolation', 'result_sha256'}
+            keys = {'format', 'provider', 'request_sha256', 'authority_binding', 'input_projection_sha256', 'command', 'workspace', 'environment', 'process_result_sha256', 'transport_output', 'transport_sha256', 'transport_size', 'candidate_sha256', 'candidate_size', 'isolation', 'result_sha256'}
             _exact(value, keys, 'local-provider-result')
             _exact(value['provider'], {'name', 'version', 'source', 'source_sha256'}, 'local-provider')
             _exact(value['command'], {'argv', 'argv_sha256', 'executable'}, 'local-command')
@@ -563,7 +574,12 @@ class Runtime:
             expected_environment = {'keys': sorted([*non_secret_environment, 'COPILOT_GITHUB_TOKEN']), 'non_secret_values': non_secret_environment, 'secret_keys': ['COPILOT_GITHUB_TOKEN'], 'authentication': getattr(injected, 'authentication', None)}
             expected_environment['sha256'] = workflow_inspector.sha256(_canonical(expected_environment))
             projection_digest = injected.input_projection_sha256(request) if callable(getattr(injected, 'input_projection_sha256', None)) else None
-            if value['format'] != 'chess-echo-trusted-local-execution-result-v1' or value['provider'] != expected_provider or value['request_sha256'] != request['request_sha256'] or value['authority_binding'] != request['authority_binding'] or value['input_projection_sha256'] != projection_digest or _local_provider_command(value['command']['argv'], 'local-command') != value['command']['argv'] or value['command']['argv_sha256'] != workflow_inspector.sha256(_canonical(value['command']['argv'])) or value['command']['argv_sha256'] != process.get('command_sha256') or value['command']['executable'] != injected.agent_executable or value['process_result_sha256'] != workflow_inspector.sha256(_canonical(process)) or value['candidate_sha256'] != candidate['sha256'] or value['candidate_size'] != candidate['size'] or workspace['root'] != str(self.root) or workspace['cwd'] != str(self.root) or workspace['identity_sha256'] != workflow_inspector.sha256(_canonical(workspace_identity)) or workspace['selected_commit'] != request['repository_before']['head']['commit'] or workspace['head_before'] != workspace['selected_commit'] or workspace['branch'] != 'refs/heads/chess-echo-agent/issue-%d' % request['issue'] or environment != expected_environment or value['isolation'] != expected_isolation or value['result_sha256'] != workflow_inspector.sha256(_canonical(unsigned)):
+            transport = _stdout(process, 'execution')
+            _exact(value['transport_output'], {'bytes', 'base64'}, 'local-provider-transport-output')
+            try: recorded_transport = base64.b64decode(value['transport_output']['base64'], validate=True)
+            except (TypeError, ValueError, binascii.Error): _fail('corrupt', 'local-provider-transport-invalid', 'Trusted-local provider transport output is not strict base64')
+            if type(value['transport_output']['bytes']) is not int or value['transport_output']['bytes'] != len(recorded_transport): _fail('corrupt', 'local-provider-transport-invalid', 'Trusted-local provider transport output size is inconsistent')
+            if value['format'] != 'chess-echo-trusted-local-execution-result-v1' or value['provider'] != expected_provider or value['request_sha256'] != request['request_sha256'] or value['authority_binding'] != request['authority_binding'] or value['input_projection_sha256'] != projection_digest or _local_provider_command(value['command']['argv'], 'local-command') != value['command']['argv'] or value['command']['argv_sha256'] != workflow_inspector.sha256(_canonical(value['command']['argv'])) or value['command']['argv_sha256'] != process.get('command_sha256') or value['command']['executable'] != injected.agent_executable or value['process_result_sha256'] != workflow_inspector.sha256(_canonical(process)) or recorded_transport != transport or value['transport_sha256'] != workflow_inspector.sha256(transport) or value['transport_size'] != len(transport) or value['candidate_sha256'] != candidate['sha256'] or value['candidate_size'] != candidate['size'] or workspace['root'] != str(self.root) or workspace['cwd'] != str(self.root) or workspace['identity_sha256'] != workflow_inspector.sha256(_canonical(workspace_identity)) or workspace['selected_commit'] != request['repository_before']['head']['commit'] or workspace['head_before'] != workspace['selected_commit'] or workspace['branch'] != 'refs/heads/chess-echo-agent/issue-%d' % request['issue'] or environment != expected_environment or value['isolation'] != expected_isolation or value['result_sha256'] != workflow_inspector.sha256(_canonical(unsigned)):
                 _fail('denied', 'sandbox-verification-failed', 'Trusted-local result does not prove the required execution facts')
             return
         _exact(value, {'format', 'provider', 'request_sha256', 'command_sha256', 'repository_scope', 'credential_access', 'authority_store_access', 'containment', 'candidate_sha256', 'candidate_size', 'result_sha256'}, 'sandbox-result')

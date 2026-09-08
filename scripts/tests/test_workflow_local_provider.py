@@ -1,4 +1,5 @@
 import base64
+import contextlib
 import copy
 import hashlib
 import json
@@ -15,14 +16,148 @@ from unittest import mock
 from scripts import workflow_inspector as inspector
 from scripts import workflow_local_host as host
 from scripts import workflow_local_provider as provider
+from scripts import workflow_orchestrator_resume as resume
 from scripts import workflow_runtime as runtime
 
 
 REPOSITORY = pathlib.Path(__file__).parents[2]
+CANDIDATE = (
+    '{"format":"chess-echo-orchestrator-agent-candidate-v1",'
+    '"kind":"plan","plan":"Canary.\\n","units":[{"id":"canary",'
+    '"title":"Canary","start_line":1,"end_line":1,"review_class":'
+    '"ordinary","dependencies":[]}],"revision":null}'
+)
 
 
 def _sha(path):
     return hashlib.sha256(pathlib.Path(path).read_bytes()).hexdigest()
+
+
+def _event(event_type, event_id, parent_id, data, ephemeral=False):
+    value = {
+        "type": event_type,
+        "timestamp": "2026-01-01T00:00:00Z",
+        "id": event_id,
+        "parentId": parent_id,
+        "data": data,
+    }
+    if ephemeral:
+        value["ephemeral"] = True
+    return value
+
+
+def _jsonl(candidate=CANDIDATE, include_tool=True):
+    events = [
+        _event("session.mcp_servers_loaded", "s1", "external-1", {}),
+        _event("session.skills_loaded", "s2", "external-2", {}),
+        _event("session.tools_updated", "s3", "external-3", {}),
+        _event("user.message", "u1", "external-4", {"content": "prompt", "interactionId": "i1"}),
+    ]
+    parent = "u1"
+    if include_tool:
+        events.extend(
+            [
+                _event("assistant.turn_start", "t1s", parent, {"turnId": "1", "interactionId": "i1"}),
+                _event("model.call_start", "m1", "t1s", {"turnId": "1", "interactionId": "i1"}),
+                _event("assistant.tool_call_delta", "d1", "m1", {"toolCallId": "tool-1", "inputDelta": "{}"}, True),
+                _event(
+                    "assistant.message",
+                    "a1",
+                    "m1",
+                    {
+                        "content": "I will inspect the repository.",
+                        "messageId": "message-1",
+                        "turnId": "1",
+                        "interactionId": "i1",
+                        "toolRequests": [{"toolCallId": "tool-1", "name": "view", "type": "function", "arguments": {}}],
+                    },
+                ),
+                _event(
+                    "tool.execution_start",
+                    "x1",
+                    "a1",
+                    {
+                        "arguments": {},
+                        "model": "test-model",
+                        "rte": False,
+                        "shellToolInfo": {},
+                        "toolCallId": "tool-1",
+                        "toolName": "view",
+                        "turnId": "1",
+                    },
+                ),
+                _event("session.background_tasks_changed", "b1", "x1", {}, True),
+                _event("tool.execution_partial_result", "p1", "x1", {"toolCallId": "tool-1", "partialOutput": "working"}, True),
+                _event(
+                    "tool.execution_complete",
+                    "x2",
+                    "x1",
+                    {
+                        "interactionId": "i1",
+                        "model": "test-model",
+                        "result": {"content": "done"},
+                        "rte": False,
+                        "success": True,
+                        "toolCallId": "tool-1",
+                        "toolTelemetry": {},
+                        "turnId": "1",
+                    },
+                ),
+                _event("assistant.turn_end", "t1e", "x2", {"turnId": "1"}),
+            ]
+        )
+        parent = "t1e"
+    events.extend(
+        [
+            _event("assistant.turn_start", "t2s", parent, {"turnId": "2", "interactionId": "i2"}),
+            _event("model.call_start", "m2", "t2s", {"turnId": "2", "interactionId": "i2"}),
+            _event("assistant.message_start", "ms2", "m2", {"messageId": "message-2"}, True),
+            _event("assistant.message_delta", "md2", "m2", {"messageId": "message-2", "deltaContent": candidate}, True),
+            _event(
+                "assistant.message",
+                "a2",
+                "m2",
+                {
+                    "content": candidate,
+                    "messageId": "message-2",
+                    "turnId": "2",
+                    "interactionId": "i2",
+                    "toolRequests": [],
+                },
+            ),
+            _event("assistant.turn_end", "t2e", "a2", {"turnId": "2"}),
+            _event("session.usage_checkpoint", "usage", "t2e", {}),
+            _event("assistant.idle", "idle", "usage", {}, True),
+            _event("session.background_tasks_changed", "b2", "usage", {}, True),
+            {
+                "type": "result",
+                "timestamp": "2026-01-01T00:00:01Z",
+                "sessionId": "session-1",
+                "exitCode": 0,
+                "usage": {
+                    "premiumRequests": 1,
+                    "totalApiDurationMs": 1,
+                    "sessionDurationMs": 2,
+                    "codeChanges": {"filesModified": [], "linesAdded": 0, "linesRemoved": 0},
+                },
+            },
+        ]
+    )
+    return b"".join(
+        json.dumps(event, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
+        for event in events
+    )
+
+
+def _jsonl_events(data):
+    return [json.loads(line) for line in data.decode("utf-8").splitlines()]
+
+
+def _encode_events(events):
+    return b"".join(
+        json.dumps(event, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
+        for event in events
+    )
 
 
 class LocalProviderFixture:
@@ -39,13 +174,7 @@ class LocalProviderFixture:
         self.git = pathlib.Path(shutil.which("git"))
         self.agent = self.bin / "agent"
         self.worker_token = "github_pat_REDACTED_TEST_ONLY_1234567890"
-        self.agent.write_text(
-            "#!/bin/sh\n"
-            "printf '%s' '{\"format\":\"chess-echo-orchestrator-agent-candidate-v1\","
-            "\"kind\":\"plan\",\"plan\":\"Canary.\\n\",\"units\":[{\"id\":\"canary\","
-            "\"title\":\"Canary\",\"start_line\":1,\"end_line\":1,\"review_class\":"
-            "\"ordinary\",\"dependencies\":[]}],\"revision\":null}'\n"
-        )
+        self.agent.write_bytes(b"#!/bin/sh\ncat <<'JSONL'\n" + _jsonl() + b"JSONL\n")
         self.agent.chmod(self.agent.stat().st_mode | stat.S_IXUSR)
         self._git(self.control, "init", "-q")
         (self.control / "README").write_text("control\n")
@@ -165,7 +294,86 @@ class TrustedLocalProviderTest(unittest.TestCase):
         self.fixture = LocalProviderFixture()
         self.addCleanup(self.fixture.close)
 
-    def test_agent_prompt_requires_exactly_one_json_object_across_all_stdout(self):
+    def _execute_through_runtime(
+        self,
+        candidate=CANDIDATE,
+        prompt_bytes=None,
+        repository_after=None,
+    ):
+        self.fixture.agent.write_bytes(
+            b"#!/bin/sh\ncat <<'JSONL'\n"
+            + _jsonl(candidate=candidate)
+            + b"JSONL\n"
+        )
+        self.fixture.agent.chmod(self.fixture.agent.stat().st_mode | stat.S_IXUSR)
+        sandbox_provider = self.fixture.instance()
+        request = self.fixture.request()
+        request["repository_before"].update(
+            {
+                "triage_binding": {
+                    "kind": "evidence-binding",
+                    "sha256": "e" * 64,
+                    "size": 1,
+                },
+                "observed_at": "2026-01-01T00:00:00Z",
+            }
+        )
+        request.pop("request_sha256")
+        request["request_sha256"] = inspector.sha256(
+            inspector.canonical_bytes(request)
+        )
+        binding = {"kind": "evidence-binding", "sha256": "d" * 64, "size": 1}
+        adapter = object.__new__(runtime.Runtime)
+        adapter.root = self.fixture.workspace
+        adapter._config = {"agent_roles": [self.fixture.row()]}
+        suffix = " This is read-only: do not change or commit the candidate worktree."
+        prompt_capacity = None if prompt_bytes is None else prompt_bytes - len(
+            suffix.encode("utf-8")
+        )
+        escaped_pattern = '"\\\n'
+        prompt_context = (
+            mock.patch.object(
+                provider,
+                "_agent_prompt",
+                return_value=(
+                    escaped_pattern * (prompt_capacity // len(escaped_pattern))
+                    + escaped_pattern[: prompt_capacity % len(escaped_pattern)]
+                ),
+            )
+            if prompt_bytes is not None
+            else contextlib.nullcontext()
+        )
+        with mock.patch.object(
+            runtime.Runtime, "_base_config", return_value={"mode": "active"}
+        ), mock.patch.object(
+            runtime.Runtime, "_validate_request", return_value=request
+        ), mock.patch.object(
+            runtime.Runtime, "_ensure_config_current"
+        ), mock.patch.object(
+            runtime.Runtime,
+            "_resolve_command",
+            return_value=(
+                ["agent"],
+                self.fixture.workspace,
+                self.fixture.environment(),
+            ),
+        ), mock.patch.object(
+            runtime.Runtime,
+            "observe_diff",
+            side_effect=(
+                request["repository_before"],
+                repository_after or request["repository_before"],
+            ),
+        ), mock.patch.object(
+            provider, "_input_projection", return_value=[]
+        ), prompt_context:
+            return adapter.execute(
+                request,
+                binding,
+                sandbox_provider=sandbox_provider,
+            )
+
+    def test_agent_prompt_requires_exact_candidate_in_final_response(self):
         prompt = provider._agent_prompt(
             175,
             "planner",
@@ -175,18 +383,253 @@ class TrustedLocalProviderTest(unittest.TestCase):
         )
 
         self.assertIn(
-            "The entire stdout stream must contain exactly one JSON object",
+            "The final assistant response content must be exactly one JSON object",
             prompt,
         )
         self.assertIn(
-            "This requirement includes all intermediate and final agent responses.",
+            "Emit no prose, Markdown fences, or other content in that final response.",
             prompt,
         )
-        self.assertIn(
-            "Emit no progress updates, analysis, commentary, preamble, Markdown fences, "
-            "trailing text, or additional documents.",
-            prompt,
+
+    def test_jsonl_tool_flow_extracts_exact_candidate_and_ignores_intermediate_prose(self):
+        raw = _jsonl()
+        candidate = provider._extract_candidate_from_jsonl(raw)
+
+        self.assertEqual(CANDIDATE.encode("utf-8"), candidate)
+        self.assertNotEqual(inspector.sha256(raw), inspector.sha256(candidate))
+        self.assertNotEqual(len(raw), len(candidate))
+        result = {
+            "outcome": "succeeded",
+            "candidate_output": {
+                "sha256": inspector.sha256(candidate),
+                "size": len(candidate),
+            },
+            "process_result": {
+                "stdout": {
+                    "bytes": len(candidate),
+                    "base64": base64.b64encode(candidate).decode("ascii"),
+                }
+            },
+        }
+        self.assertEqual(
+            json.loads(CANDIDATE),
+            resume.decode_candidate(result, "plan"),
         )
+
+    def test_jsonl_rejects_candidate_in_tool_request_turn(self):
+        events = _jsonl_events(_jsonl())
+        events = [
+            event
+            for event in events
+            if event.get("id") not in {"t1e", "t2s", "m2", "ms2", "md2"}
+        ]
+        final_message = next(event for event in events if event.get("id") == "a2")
+        final_message["parentId"] = "x2"
+        final_message["data"]["turnId"] = "1"
+        final_message["data"]["interactionId"] = "i1"
+        final_turn_end = next(event for event in events if event.get("id") == "t2e")
+        final_turn_end["data"]["turnId"] = "1"
+
+        with self.assertRaises(provider.LocalProviderFailure) as raised:
+            provider._extract_candidate_from_jsonl(_encode_events(events))
+        self.assertEqual("local-agent-jsonl-candidate", raised.exception.code)
+
+    def test_jsonl_silent_semantics_do_not_require_tool_delta_count(self):
+        events = _jsonl_events(_jsonl())
+        delta = next(event for event in events if event["type"] == "assistant.tool_call_delta")
+        events.insert(events.index(delta), {**copy.deepcopy(delta), "id": "d0"})
+
+        self.assertEqual(
+            CANDIDATE.encode("utf-8"),
+            provider._extract_candidate_from_jsonl(_encode_events(events)),
+        )
+
+    def test_jsonl_startup_and_progress_records_are_optional(self):
+        events = [
+            event
+            for event in _jsonl_events(_jsonl())
+            if event["type"]
+            not in {
+                "session.mcp_servers_loaded",
+                "session.skills_loaded",
+                "session.tools_updated",
+                "assistant.tool_call_delta",
+                "session.background_tasks_changed",
+                "tool.execution_partial_result",
+                "assistant.message_start",
+                "assistant.message_delta",
+                "session.usage_checkpoint",
+            }
+        ]
+        exact = " \n" + CANDIDATE + "\n "
+        next(
+            event
+            for event in events
+            if event["type"] == "assistant.message" and event["data"]["messageId"] == "message-2"
+        )["data"]["content"] = exact
+        for event in events:
+            if event.get("parentId") == "usage":
+                event["parentId"] = "t2e"
+
+        self.assertEqual(
+            exact.encode("utf-8"),
+            provider._extract_candidate_from_jsonl(_encode_events(events)),
+        )
+
+    def test_final_prose_is_extracted_unchanged_and_rejected_by_existing_decoder(self):
+        candidate = provider._extract_candidate_from_jsonl(_jsonl(candidate="not JSON"))
+        result = {
+            "outcome": "succeeded",
+            "candidate_output": {
+                "sha256": inspector.sha256(candidate),
+                "size": len(candidate),
+            },
+            "process_result": {
+                "stdout": {
+                    "bytes": len(candidate),
+                    "base64": base64.b64encode(candidate).decode("ascii"),
+                }
+            },
+        }
+
+        self.assertEqual(b"not JSON", candidate)
+        with self.assertRaises(resume.ResumeFailure):
+            resume.decode_candidate(result, "plan")
+
+    def test_jsonl_framing_and_json_fail_closed(self):
+        valid = _jsonl()
+        malformed_cases = {
+            "blank-line": valid.replace(b"\n", b"\n\n", 1),
+            "malformed-json": b"{]\n",
+            "duplicate-key": b'{"type":"x","type":"y"}\n',
+            "non-object": b"[]\n",
+            "invalid-utf8": b"\xff\n",
+            "missing-lf": valid[:-1],
+            "truncated-record": valid + b'{"type":\n',
+        }
+        for name, raw in malformed_cases.items():
+            with self.subTest(name=name):
+                with self.assertRaises(provider.LocalProviderFailure):
+                    provider._extract_candidate_from_jsonl(raw)
+
+    def test_jsonl_lone_surrogate_is_a_typed_provider_failure(self):
+        raw = _jsonl(candidate="SURROGATE").replace(
+            b'"content":"SURROGATE"',
+            b'"content":"\\ud800"',
+        )
+
+        with self.assertRaises(provider.LocalProviderFailure) as raised:
+            provider._extract_candidate_from_jsonl(raw)
+        self.assertEqual("corrupt", raised.exception.status)
+        self.assertEqual("local-agent-jsonl-invalid", raised.exception.code)
+        self.assertIsInstance(raised.exception.__cause__, UnicodeEncodeError)
+
+    def test_jsonl_explicit_transport_bounds_fail_closed(self):
+        raw = _jsonl()
+        first_line_size = len(raw.split(b"\n", 1)[0]) + 1
+        bounds = (
+            ("total-bytes", "JSONL_MAX_BYTES", len(raw) - 1),
+            ("event-count", "JSONL_MAX_EVENTS", 1),
+            ("event-bytes", "JSONL_MAX_EVENT_BYTES", first_line_size - 1),
+        )
+        for name, setting, value in bounds:
+            with self.subTest(name=name), mock.patch.object(provider, setting, value):
+                with self.assertRaises(provider.LocalProviderFailure):
+                    provider._extract_candidate_from_jsonl(raw)
+
+    def test_jsonl_protocol_relationships_fail_closed(self):
+        def changed(mutator):
+            events = _jsonl_events(_jsonl())
+            mutator(events)
+            return _encode_events(events)
+
+        cases = {
+            "unknown-event": changed(lambda events: events.__setitem__(5, {**events[5], "type": "session.error"})),
+            "duplicate-event-id": changed(lambda events: events[6].__setitem__("id", events[5]["id"])),
+            "duplicate-user": changed(lambda events: events.insert(4, {**copy.deepcopy(events[3]), "id": "u2"})),
+            "broken-parent": changed(lambda events: events[12].__setitem__("parentId", "missing")),
+            "broken-interaction": changed(
+                lambda events: next(
+                    event for event in events if event["type"] == "tool.execution_complete"
+                )["data"].__setitem__("interactionId", "wrong")
+            ),
+            "missing-interaction": changed(
+                lambda events: next(
+                    event for event in events if event["type"] == "assistant.message"
+                )["data"].pop("interactionId")
+            ),
+            "unmatched-tool-call": changed(
+                lambda events: (
+                    events.pop(next(index for index, event in enumerate(events) if event["type"] == "tool.execution_complete")),
+                    next(event for event in events if event["type"] == "assistant.turn_end").__setitem__("parentId", "x1"),
+                )
+            ),
+            "final-message-with-tools": changed(
+                lambda events: next(
+                    event
+                    for event in events
+                    if event["type"] == "assistant.message" and event["data"]["messageId"] == "message-2"
+                )["data"].__setitem__(
+                    "toolRequests",
+                    [{"toolCallId": "late", "name": "view", "type": "function", "arguments": {}}],
+                )
+            ),
+            "candidate-like-nonfinal": changed(
+                lambda events: next(
+                    event
+                    for event in events
+                    if event["type"] == "assistant.message" and event["data"]["messageId"] == "message-1"
+                )["data"].__setitem__("content", CANDIDATE)
+            ),
+            "escaped-candidate-like-nonfinal": changed(
+                lambda events: next(
+                    event
+                    for event in events
+                    if event["type"] == "assistant.message" and event["data"]["messageId"] == "message-1"
+                )["data"].__setitem__(
+                    "content",
+                    CANDIDATE.replace("candidate-v1", "candidate-\\u00761"),
+                )
+            ),
+            "nonzero-result": changed(lambda events: events[-1].__setitem__("exitCode", 1)),
+            "noninteger-result": changed(lambda events: events[-1].__setitem__("exitCode", False)),
+            "malformed-result": changed(lambda events: events[-1].pop("usage")),
+        }
+        for name, raw in cases.items():
+            with self.subTest(name=name):
+                with self.assertRaises(provider.LocalProviderFailure):
+                    provider._extract_candidate_from_jsonl(raw)
+
+    def test_jsonl_final_boundary_failures_are_rejected(self):
+        def without(event_type):
+            return _encode_events(
+                event for event in _jsonl_events(_jsonl()) if event["type"] != event_type
+            )
+
+        events = _jsonl_events(_jsonl())
+        trailing = copy.deepcopy(events[-2])
+        trailing["id"] = "trailing"
+        multiple = _jsonl_events(_jsonl())
+        final_index = next(
+            index
+            for index, event in enumerate(multiple)
+            if event["type"] == "assistant.message" and event["data"]["messageId"] == "message-2"
+        )
+        second = copy.deepcopy(multiple[final_index])
+        second["id"], second["parentId"], second["data"]["messageId"] = "a3", "a2", "message-3"
+        multiple[final_index + 1]["parentId"] = "a3"
+        multiple.insert(final_index + 1, second)
+        cases = {
+            "missing-turn-end": without("assistant.turn_end"),
+            "missing-idle": without("assistant.idle"),
+            "missing-result": _encode_events(_jsonl_events(_jsonl())[:-1]),
+            "trailing-record": _jsonl() + _encode_events([trailing]),
+            "multiple-finals": _encode_events(multiple),
+        }
+        for name, raw in cases.items():
+            with self.subTest(name=name):
+                with self.assertRaises(provider.LocalProviderFailure):
+                    provider._extract_candidate_from_jsonl(raw)
 
     def test_execution_binds_command_workspace_authority_environment_and_result(self):
         instance = self.fixture.instance()
@@ -225,6 +668,14 @@ class TrustedLocalProviderTest(unittest.TestCase):
         self.assertIn("exact host-projected immutable inputs", facts["command"]["argv"][-1])
         self.assertIn("read-only: do not change or commit", facts["command"]["argv"][-1])
         self.assertIn("--disable-builtin-mcps", facts["command"]["argv"])
+        self.assertEqual(
+            ["--output-format", "json"],
+            facts["command"]["argv"][
+                facts["command"]["argv"].index("--output-format") :
+                facts["command"]["argv"].index("--output-format") + 2
+            ],
+        )
+        self.assertIn("--silent", facts["command"]["argv"])
         self.assertIn(
             "--secret-env-vars=COPILOT_GITHUB_TOKEN",
             facts["command"]["argv"],
@@ -385,6 +836,48 @@ class TrustedLocalProviderTest(unittest.TestCase):
         self.assertNotIn(self.fixture.worker_token, str(raised.exception))
         self.assertNotIn(self.fixture.worker_token, repr(raised.exception))
 
+    def test_candidate_secret_disclosure_is_scanned_independently(self):
+        self.fixture.agent.write_bytes(
+            b"#!/bin/sh\ncat <<'JSONL'\n"
+            + _jsonl(candidate=self.fixture.worker_token)
+            + b"JSONL\nexit 7\n"
+        )
+        self.fixture.agent.chmod(self.fixture.agent.stat().st_mode | stat.S_IXUSR)
+        instance = self.fixture.instance()
+        with mock.patch.object(provider, "_input_projection", return_value=[]), mock.patch.object(
+            provider, "_process_discloses_secret", return_value=False
+        ):
+            with self.assertRaises(provider.LocalProviderFailure) as raised:
+                instance.execute(
+                    self.fixture.request(),
+                    {"kind": "evidence-binding", "sha256": "d" * 64, "size": 1},
+                    ["agent"],
+                    str(self.fixture.workspace),
+                    self.fixture.environment(),
+                    self.fixture.request()["limits"],
+                    None,
+                )
+        self.assertEqual("worker-authentication-disclosed", raised.exception.code)
+
+    def test_nonzero_process_without_candidate_disclosure_remains_process_failure(self):
+        self.fixture.agent.write_bytes(
+            b"#!/bin/sh\ncat <<'JSONL'\n" + _jsonl() + b"JSONL\nexit 7\n"
+        )
+        self.fixture.agent.chmod(self.fixture.agent.stat().st_mode | stat.S_IXUSR)
+        instance = self.fixture.instance()
+        with mock.patch.object(provider, "_input_projection", return_value=[]):
+            with self.assertRaises(provider.LocalProviderFailure) as raised:
+                instance.execute(
+                    self.fixture.request(),
+                    {"kind": "evidence-binding", "sha256": "d" * 64, "size": 1},
+                    ["agent"],
+                    str(self.fixture.workspace),
+                    self.fixture.environment(),
+                    self.fixture.request()["limits"],
+                    None,
+                )
+        self.assertEqual("local-agent-process-failed", raised.exception.code)
+
     def test_write_phase_requires_a_clean_commit_and_rejects_oversized_prompt(self):
         instance = self.fixture.instance()
         request = self.fixture.request()
@@ -442,8 +935,11 @@ class TrustedLocalProviderTest(unittest.TestCase):
                 request["limits"],
                 None,
             )
-        candidate = base64.b64decode(
+        transport = base64.b64decode(
             executed["process_result"]["stdout"]["base64"], validate=True
+        )
+        candidate = base64.b64decode(
+            executed["candidate_output"]["base64"], validate=True
         )
         facts = executed["provider_result"]
         self.assertEqual(22_090, len(executed["command"][-1].encode("utf-8")))
@@ -455,6 +951,14 @@ class TrustedLocalProviderTest(unittest.TestCase):
             executed["process_result"]["command_sha256"],
             facts["command"]["argv_sha256"],
         )
+        self.assertEqual(inspector.sha256(transport), facts["transport_sha256"])
+        self.assertEqual(len(transport), facts["transport_size"])
+        self.assertEqual(
+            transport,
+            base64.b64decode(facts["transport_output"]["base64"], validate=True),
+        )
+        self.assertEqual(len(transport), facts["transport_output"]["bytes"])
+        self.assertNotEqual(facts["transport_sha256"], facts["candidate_sha256"])
         self.assertEqual(
             executed["command"],
             runtime._local_provider_command(
@@ -479,6 +983,25 @@ class TrustedLocalProviderTest(unittest.TestCase):
         )
         replaced = json.loads(json.dumps(facts))
         replaced["command"]["executable"]["sha256"] = "0" * 64
+        with self.assertRaises(runtime.RuntimeFailure) as raised:
+            adapter._validate_sandbox(
+                replaced,
+                request,
+                executed["process_result"],
+                {"sha256": inspector.sha256(candidate), "size": len(candidate)},
+                self.fixture.row(),
+                instance,
+            )
+        self.assertEqual("sandbox-verification-failed", raised.exception.code)
+
+        replaced = json.loads(json.dumps(facts))
+        replaced["transport_output"]["base64"] = base64.b64encode(b"{}\n").decode("ascii")
+        replaced["transport_output"]["bytes"] = 3
+        replaced["result_sha256"] = inspector.sha256(
+            inspector.canonical_bytes(
+                {key: value for key, value in replaced.items() if key != "result_sha256"}
+            )
+        )
         with self.assertRaises(runtime.RuntimeFailure) as raised:
             adapter._validate_sandbox(
                 replaced,
@@ -526,6 +1049,287 @@ class TrustedLocalProviderTest(unittest.TestCase):
                 "execution",
             )
         self.assertEqual("invalid-process-result", raised.exception.code)
+
+    def test_runtime_execute_adapts_candidate_and_preserves_reconstructable_transport(self):
+        result = self._execute_through_runtime()
+        candidate = CANDIDATE.encode("utf-8")
+        transport = base64.b64decode(
+            result["sandbox"]["transport_output"]["base64"],
+            validate=True,
+        )
+        persisted_candidate = base64.b64decode(
+            result["process_result"]["stdout"]["base64"],
+            validate=True,
+        )
+        reconstructed_process = copy.deepcopy(result["process_result"])
+        reconstructed_process["stdout"] = copy.deepcopy(
+            result["sandbox"]["transport_output"]
+        )
+
+        self.assertEqual(candidate, persisted_candidate)
+        self.assertEqual(
+            {"sha256": inspector.sha256(candidate), "size": len(candidate)},
+            result["candidate_output"],
+        )
+        self.assertEqual(
+            inspector.sha256(transport),
+            result["sandbox"]["transport_sha256"],
+        )
+        self.assertEqual(
+            result["sandbox"]["process_result_sha256"],
+            inspector.sha256(inspector.canonical_bytes(reconstructed_process)),
+        )
+        self.assertEqual(
+            json.loads(CANDIDATE),
+            resume.decode_candidate(result, "plan"),
+        )
+
+    def test_runtime_execute_leaves_invalid_candidate_for_strict_decoder_rejection(self):
+        result = self._execute_through_runtime(candidate="not JSON")
+
+        self.assertEqual(
+            b"not JSON",
+            base64.b64decode(
+                result["process_result"]["stdout"]["base64"],
+                validate=True,
+            ),
+        )
+        with self.assertRaises(resume.ResumeFailure) as raised:
+            resume.decode_candidate(result, "plan")
+        self.assertEqual("candidate-output-invalid", raised.exception.code)
+
+    def test_trusted_local_maximum_output_fits_persisted_result_budget(self):
+        config = json.loads(
+            (REPOSITORY / ".github" / "agent-workflow.json").read_text()
+        )["orchestrator"]
+        limits = {
+            key: config["agent_roles"][0][key]
+            for key in ("timeout_ms", "grace_ms", "output_limit_bytes")
+        }
+        self.assertEqual(384 * 1024, limits["output_limit_bytes"])
+        self.assertEqual(limits["output_limit_bytes"], provider.JSONL_MAX_BYTES)
+        self.assertTrue(
+            all(
+                row["output_limit_bytes"] == limits["output_limit_bytes"]
+                for row in config["agent_roles"]
+            )
+        )
+
+        family = "a" * 32
+
+        def repository_observation(target_size):
+            workspace = {
+                "staged": [],
+                "unstaged": [],
+                "untracked_non_ignored": [],
+                "assume_unchanged": [],
+                "skip_worktree": [],
+            }
+            workspace["status_sha256"] = inspector.sha256(
+                inspector.canonical_bytes(workspace)
+            )
+            change = {
+                "status": "A",
+                "old_mode": "000000",
+                "new_mode": "100644",
+                "old_oid": "0" * 40,
+                "new_oid": "1" * 40,
+                "old_path": None,
+                "new_path": "",
+            }
+            document = {
+                "format": "chess-echo-work-type-diff-observation-v1",
+                "repository": "NathanZK/ChessEcho",
+                "issue": 183,
+                "family_run_id": family,
+                "triage_binding": {
+                    "kind": "evidence-binding",
+                    "sha256": "a" * 64,
+                    "size": 1,
+                },
+                "observer": {
+                    "name": "workflow-runtime",
+                    "version": runtime.RUNTIME_VERSION,
+                    "source_sha256": inspector.sha256(
+                        pathlib.Path(runtime.__file__).read_bytes()
+                    ),
+                },
+                "observed_at": "2026-01-01T00:00:00Z",
+                "object_format": "sha1",
+                "base": {
+                    "ref": "refs/remotes/origin/main",
+                    "commit": self.fixture.head,
+                    "tree": self.fixture.head,
+                },
+                "head": {
+                    "commit": self.fixture.head,
+                    "tree": self.fixture.head,
+                },
+                "ancestry": {"base_is_ancestor": True, "commit_count": 1},
+                "changes": [change],
+                "workspace": workspace,
+                "git_trust": {
+                    "no_replace_objects": True,
+                    "replacement_refs": [],
+                    "git_replace_ref_base": None,
+                    "git_graft_file": None,
+                    "info_grafts_present": False,
+                    "environment_redirections": [],
+                    "alternate_object_directories": [],
+                },
+                "head_config": {
+                    "path": ".github/agent-workflow.json",
+                    "blob_oid": "2" * 40,
+                    "content_sha256": "3" * 64,
+                    "size": 1,
+                },
+                "raw_diff_sha256": "4" * 64,
+            }
+            document["observation_sha256"] = "5" * 64
+            base_size = len(inspector.canonical_bytes(document))
+            self.assertGreaterEqual(target_size, base_size)
+            change["new_path"] = "x" * (target_size - base_size)
+            unsigned = dict(document)
+            unsigned.pop("observation_sha256")
+            document["observation_sha256"] = inspector.sha256(
+                inspector.canonical_bytes(unsigned)
+            )
+            self.assertEqual(target_size, len(inspector.canonical_bytes(document)))
+            return runtime._repository_document(document, 183, family)
+
+        encoded_size = 4 * ((limits["output_limit_bytes"] + 2) // 3)
+        maximum_repository_size = (
+            runtime.MAX_DOCUMENT_BYTES
+            - 3 * encoded_size
+            - (2 * provider.PROMPT_LIMIT_BYTES + 2)
+            - runtime.EXECUTION_RESULT_HEADROOM_BYTES
+        )
+        self.assertEqual(327_678, maximum_repository_size)
+        maximum_repository = repository_observation(maximum_repository_size)
+
+        result = self._execute_through_runtime(
+            prompt_bytes=provider.PROMPT_LIMIT_BYTES
+        )
+        self.assertEqual(
+            provider.PROMPT_LIMIT_BYTES,
+            len(result["sandbox"]["command"]["argv"][-1].encode("utf-8")),
+        )
+        serialized_prompt_size = len(
+            inspector.canonical_bytes(result["sandbox"]["command"]["argv"][-1])
+        )
+        self.assertIn('"\\\n', result["sandbox"]["command"]["argv"][-1])
+        self.assertGreaterEqual(
+            serialized_prompt_size,
+            2 * provider.PROMPT_LIMIT_BYTES - 128,
+        )
+        self.assertLessEqual(
+            serialized_prompt_size,
+            2 * provider.PROMPT_LIMIT_BYTES + 2,
+        )
+        encoded = base64.b64encode(b"x" * limits["output_limit_bytes"]).decode(
+            "ascii"
+        )
+        maximum = copy.deepcopy(result)
+        maximum["repository_after"] = maximum_repository
+        maximum["process_result"]["stdout"] = {
+            "bytes": limits["output_limit_bytes"],
+            "base64": encoded,
+        }
+        maximum["process_result"]["stderr"] = {
+            "bytes": limits["output_limit_bytes"],
+            "base64": encoded,
+        }
+        maximum["sandbox"]["transport_output"] = {
+            "bytes": limits["output_limit_bytes"],
+            "base64": encoded,
+        }
+        maximum["sandbox"]["transport_size"] = limits["output_limit_bytes"]
+        maximum["sandbox"]["candidate_size"] = limits["output_limit_bytes"]
+        maximum["candidate_output"]["size"] = limits["output_limit_bytes"]
+        maximum.pop("result_sha256")
+        maximum = runtime._with_digest(maximum, "result_sha256")
+        self.assertLessEqual(
+            len(inspector.canonical_bytes(maximum)),
+            runtime.MAX_DOCUMENT_BYTES,
+        )
+
+        adapter = object.__new__(runtime.Runtime)
+        adapter.repository = "NathanZK/ChessEcho"
+        adapter._config = {
+            "frozen_issues": [],
+            "agent_roles": [
+                {
+                    "role": "planner",
+                    "containment": "trusted-local-worktree-v1",
+                }
+            ],
+        }
+        repository_before = maximum_repository
+        operation = {"kind": "agent", "name": "write-plan", "role": "planner"}
+        source = {"entry": "planner", "profile": None}
+        inputs = []
+        authority = {
+            "kind": "evidence-binding",
+            "sha256": "c" * 64,
+            "size": 1,
+        }
+
+        def build_with_limits(selected_limits):
+            attempt_id = runtime.execution_attempt_id(
+                authority,
+                operation,
+                source,
+                inputs,
+                repository_before,
+                selected_limits,
+                None,
+            )
+            with mock.patch.object(
+                runtime.Runtime, "_base_config", return_value={"mode": "active"}
+            ), mock.patch.object(
+                runtime.Runtime, "_validate_command_source", return_value=source
+            ), mock.patch.object(
+                runtime.Runtime, "_validate_inputs", return_value=inputs
+            ), mock.patch.object(
+                runtime.Runtime, "_expected_limits", return_value=selected_limits
+            ):
+                return adapter.build_request(
+                    issue=183,
+                    family_run_id="a" * 32,
+                    attempt_id=attempt_id,
+                    authority_binding=authority,
+                    operation=operation,
+                    command_source=source,
+                    input_bindings=inputs,
+                    repository_before=repository_before,
+                    limits=selected_limits,
+                )
+
+        self.assertEqual(limits, build_with_limits(limits)["limits"])
+        oversized_repository = repository_observation(
+            maximum_repository_size + 1
+        )
+        repository_before = oversized_repository
+        with self.assertRaises(runtime.RuntimeFailure) as raised:
+            build_with_limits(limits)
+        self.assertEqual("execution-result-budget", raised.exception.code)
+        repository_before = maximum_repository
+        oversized_limits = {
+            **limits,
+            "output_limit_bytes": limits["output_limit_bytes"] + 1,
+        }
+        with self.assertRaises(runtime.RuntimeFailure) as raised:
+            build_with_limits(oversized_limits)
+        self.assertEqual("execution-result-budget", raised.exception.code)
+
+        oversized_repository_after = repository_observation(
+            runtime.MAX_DOCUMENT_BYTES - 1024
+        )
+        with self.assertRaises(runtime.RuntimeFailure) as raised:
+            self._execute_through_runtime(
+                repository_after=oversized_repository_after
+            )
+        self.assertEqual("document-too-large", raised.exception.code)
 
     def test_workspace_branch_and_symlink_redirection_fail_closed(self):
         self.fixture._git(self.fixture.workspace, "branch", "-m", "wrong")
@@ -679,6 +1483,7 @@ class TrustedLocalHostProcessTest(unittest.TestCase):
             )
             for row in config["orchestrator"]["agent_roles"]:
                 row["command_prefix"] = ["agent"]
+                row["provider_version"] = provider.VERSION
                 row["provider_source_sha256"] = _sha(provider_source)
                 row["agent_executable_sha256"] = _sha(agent)
             (control / ".github" / "agent-workflow.json").write_text(
