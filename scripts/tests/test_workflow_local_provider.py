@@ -984,10 +984,12 @@ class TrustedLocalProviderTest(unittest.TestCase):
         binding = {"kind": "evidence-binding", "sha256": "d" * 64, "size": 1}
         projected = [{"role": "issue-source", "binding": binding, "entries": [{"path": "issue.json", "bytes_base64": "e30=", "sha256": "a" * 64, "size": 2}]}]
         launched = []
+        launched_commands = []
         original_supervise = provider.supervisor.supervise
 
         def supervise(command, **options):
             if command[0] == str(self.fixture.agent):
+                launched_commands.append(copy.deepcopy(command))
                 launched.append(copy.deepcopy(options))
             return original_supervise(command, **options)
 
@@ -1023,6 +1025,12 @@ class TrustedLocalProviderTest(unittest.TestCase):
             ],
         )
         self.assertIn("--silent", facts["command"]["argv"])
+        self.assertEqual(facts["command"]["argv"], launched_commands[0])
+        self.assertEqual(1, launched_commands[0].count("--stream"))
+        self.assertEqual(
+            ["--stream", "off", "--prompt"],
+            launched_commands[0][-4:-1],
+        )
         self.assertIn(
             "--secret-env-vars=COPILOT_GITHUB_TOKEN",
             facts["command"]["argv"],

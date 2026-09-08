@@ -113,6 +113,11 @@ With `--output-format json`, the pinned executable emitted LF-terminated JSONL.
 `--silent` retained the relevant structured records; it changed only the
 number of streaming delta records in the observed runs.
 
+The trusted-local provider version 1.4.1 fixes the supervised argv to include
+exactly one ordered `--stream off` immediately before `--prompt`. This keeps the
+JSONL transport and all existing validation and security controls while
+instructing the pinned CLI not to emit streaming delta output.
+
 The provider distinguishes documented framing from observed schema. JSONL is
 the documented transport format. The accepted event allowlist, fields,
 relationships, and terminal sequence are empirical behavior of the pinned

@@ -293,6 +293,8 @@ class WorkflowRuntimeTest(unittest.TestCase):
             command,
             runtime._local_provider_command(command, "local-provider-command"),
         )
+        self.assertEqual(1, command.count("--stream"))
+        self.assertEqual(["--stream", "off", "--prompt"], command[-4:-1])
 
         with self.assertRaises(runtime.RuntimeFailure) as raised:
             runtime._local_provider_command(
