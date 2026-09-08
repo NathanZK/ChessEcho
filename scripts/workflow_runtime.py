@@ -8,7 +8,7 @@ except ImportError:
     import workflow_inspector
     import workflow_runtime_reconstruction as reconstruction
     import workflow_supervisor
-RUNTIME_VERSION = '1.3.1'
+RUNTIME_VERSION = '1.4.0'
 def _runtime_source_sha256():
     sources = {'workflow_runtime.py': workflow_inspector.sha256(pathlib.Path(__file__).read_bytes()), 'workflow_runtime_reconstruction.py': workflow_inspector.sha256(pathlib.Path(reconstruction.__file__).read_bytes())}
     return hashlib.sha256(json.dumps(sources, sort_keys=True, separators=(',', ':')).encode('ascii')).hexdigest()
@@ -22,7 +22,7 @@ def _runtime_source_sha256():
 (MAX_CONFIG_BYTES, MAX_DOCUMENT_BYTES, VALIDATION_LIMITS, SHELLS, WRAPPERS) = (reconstruction.MAX_CONFIG_BYTES, reconstruction.MAX_DOCUMENT_BYTES, reconstruction.VALIDATION_LIMITS, reconstruction.SHELLS, reconstruction.WRAPPERS)
 (SLUG_RE, REPOSITORY_RE, OID_RE, SHA_RE, RUN_RE, RFC3339_RE) = (reconstruction.SLUG_RE, reconstruction.REPOSITORY_RE, reconstruction.OID_RE, reconstruction.SHA_RE, reconstruction.RUN_RE, reconstruction.RFC3339_RE)
 (MAX_OUTPUT_BYTES, MAX_TIMEOUT_MS, MAX_GRACE_MS) = (8 * 1024 * 1024, 3600000, 60000)
-LOCAL_PROVIDER_PROMPT_LIMIT_BYTES = 64 * 1024
+(LOCAL_PROVIDER_PROMPT_LIMIT_BYTES, LOCAL_PROVIDER_STDOUT_LIMIT_BYTES, LOCAL_PROVIDER_CANDIDATE_LIMIT_BYTES, LOCAL_PROVIDER_STDERR_LIMIT_BYTES) = (64 * 1024, 832 * 1024, 448 * 1024, 64 * 1024)
 EXECUTION_RESULT_HEADROOM_BYTES = 64 * 1024
 LOCAL_PROVIDER_COMMAND_ARGUMENTS = ('--no-auto-update', '--no-color', '--no-remote', '--no-remote-export', '--no-ask-user', '--no-custom-instructions', '--disable-builtin-mcps', '--secret-env-vars=COPILOT_GITHUB_TOKEN', '--log-level', 'none', '--allow-all-tools', '--output-format', 'json', '--silent', '--prompt')
 BOOTSTRAP_LIMITS = {'timeout_ms': 30000, 'grace_ms': 1000, 'output_limit_bytes': MAX_OUTPUT_BYTES}
@@ -41,10 +41,10 @@ def _path(value, root, label, allow_dot=True):
     except ValueError: _fail('denied', '%s-escape' % label, '%s escapes the repository' % label)
     return resolved
 def _limits(value, label):
-    _exact(value, {'timeout_ms', 'grace_ms', 'output_limit_bytes'}, label)
+    if not isinstance(value, dict) or set(value) not in ({'timeout_ms', 'grace_ms', 'output_limit_bytes'}, {'timeout_ms', 'grace_ms', 'output_limit_bytes', 'stderr_limit_bytes'}): _fail('corrupt', 'invalid-%s-schema' % label, '%s schema is invalid' % label)
     _uint(value['timeout_ms'], '%s-timeout' % label, MAX_TIMEOUT_MS, positive=True)
     _uint(value['grace_ms'], '%s-grace' % label, MAX_GRACE_MS)
-    _uint(value['output_limit_bytes'], '%s-output-limit' % label, MAX_OUTPUT_BYTES, positive=True)
+    _uint(value['output_limit_bytes'], '%s-output-limit' % label, MAX_OUTPUT_BYTES, positive=True); 'stderr_limit_bytes' not in value or _uint(value['stderr_limit_bytes'], '%s-stderr-limit' % label, MAX_OUTPUT_BYTES, positive=True)
     return copy.deepcopy(value)
 def _command(value, label):
     if not isinstance(value, list) or not 1 <= len(value) <= 128: _fail('corrupt', 'invalid-%s' % label, '%s must be a bounded argv' % label)
@@ -72,7 +72,7 @@ def _executable(path, label):
     except (OSError, RuntimeError, ValueError) as error: _fail('missing', '%s-unavailable' % label, '%s is unavailable: %s' % (label, error))
     return {'path': str(resolved), 'sha256': digest}
 def _stdout(result, label, stream='stdout'):
-    if not isinstance(result, dict) or result.get('format') != 'chess-echo-process-result-v1': _fail('corrupt', 'invalid-process-result', '%s returned an invalid process result' % label)
+    if not isinstance(result, dict) or result.get('format') != workflow_supervisor.RESULT_FORMAT: _fail('corrupt', 'invalid-process-result', '%s returned an invalid process result' % label)
     record = result.get(stream)
     if not isinstance(record, dict) or set(record) != {'bytes', 'base64'}: _fail('corrupt', 'invalid-process-output', '%s output is malformed' % label)
     try: data = base64.b64decode(record['base64'], validate=True)
@@ -82,12 +82,12 @@ def _stdout(result, label, stream='stdout'):
 def _process_document(value, command, limits, label):
     keys = {'format', 'command_sha256', 'limits', 'containment', 'outcome', 'reason', 'exit_code', 'terminating_signal', 'forced_termination', 'cleanup_verified', 'stdout', 'stderr', 'supervisor_error'}
     _exact(value, keys, '%s-process-result' % label)
-    expected_limits = {'timeout_ms': limits['timeout_ms'], 'grace_ms': limits['grace_ms'], 'output_bytes_per_stream': limits['output_limit_bytes']}
-    if value['format'] != 'chess-echo-process-result-v1' or value['command_sha256'] != workflow_inspector.sha256(_canonical(command)) or value['limits'] != expected_limits: _fail('corrupt', 'invalid-process-result', '%s process identity is malformed' % label)
+    expected_limits = {'timeout_ms': limits['timeout_ms'], 'grace_ms': limits['grace_ms'], 'stdout_bytes': limits['output_limit_bytes'], 'stderr_bytes': limits.get('stderr_limit_bytes', limits['output_limit_bytes'])}
+    if value['format'] != workflow_supervisor.RESULT_FORMAT or value['command_sha256'] != workflow_inspector.sha256(_canonical(command)) or value['limits'] != expected_limits: _fail('corrupt', 'invalid-process-result', '%s process identity is malformed' % label)
     outcome, reason = value['outcome'], value['reason']
     if not isinstance(outcome, str) or not isinstance(reason, str) or outcome not in PROCESS_REASONS or reason not in PROCESS_REASONS[outcome] or type(value['forced_termination']) is not bool or type(value['cleanup_verified']) is not bool or value['exit_code'] is not None and (type(value['exit_code']) is not int or value['exit_code'] < 0) or value['terminating_signal'] is not None and (type(value['terminating_signal']) is not int or value['terminating_signal'] < 1): _fail('corrupt', 'invalid-process-result', '%s process outcome is malformed' % label)
     stdout, stderr = _stdout(value, label), _stdout(value, label, 'stderr')
-    if len(stdout) > limits['output_limit_bytes'] or len(stderr) > limits['output_limit_bytes']: _fail('corrupt', 'invalid-process-result', '%s process output exceeds its limit' % label)
+    if len(stdout) > limits['output_limit_bytes'] or len(stderr) > limits.get('stderr_limit_bytes', limits['output_limit_bytes']): _fail('corrupt', 'invalid-process-result', '%s process output exceeds its limit' % label)
     before_start = reason in {'execution-timeout-before-start', 'external-signal-before-start', 'cancelled-before-start', 'process-not-started', 'process-session-isolation-unavailable', 'process-wide-signal-guard-unavailable'}
     containment = {'kind': 'none', 'cleanup_scope': 'none', 'escaped_descendants': 'not-applicable', 'descendant_cleanup_verified': False} if before_start else {'kind': 'posix-process-group', 'cleanup_scope': 'original-process-group', 'escaped_descendants': 'not-observable', 'descendant_cleanup_verified': False}
     if value['containment'] != containment or outcome == 'success' and (value['exit_code'] != 0 or value['terminating_signal'] is not None or value['forced_termination'] or not value['cleanup_verified']) or outcome == 'nonzero-exit' and (not value['exit_code'] or value['terminating_signal'] is not None or not value['cleanup_verified']) or outcome == 'signal' and (value['exit_code'] is not None or value['terminating_signal'] is None or not value['cleanup_verified']) or before_start and (stdout or stderr or value['exit_code'] is not None or value['terminating_signal'] is not None or value['forced_termination'] or not value['cleanup_verified']): _fail('corrupt', 'invalid-process-result', '%s process state is inconsistent' % label)
@@ -119,7 +119,7 @@ def _run(command, *, limits, cwd, environment, cancel_event=None):
     with tempfile.TemporaryDirectory(prefix='chess-echo-runtime-') as home:
         env = dict(environment)
         env['HOME'] = home
-        return workflow_supervisor.supervise(command, timeout_ms=limits['timeout_ms'], grace_ms=limits['grace_ms'], output_limit_bytes=limits['output_limit_bytes'], cwd=str(cwd), env=env, cancel_event=cancel_event)
+        return workflow_supervisor.supervise(command, timeout_ms=limits['timeout_ms'], grace_ms=limits['grace_ms'], output_limit_bytes=limits['output_limit_bytes'], stderr_limit_bytes=limits.get('stderr_limit_bytes'), cwd=str(cwd), env=env, cancel_event=cancel_event)
 def _git_env(paths):
     env = _common_env(paths)
     env.update({'GIT_OPTIONAL_LOCKS': '0', 'GIT_NO_LAZY_FETCH': '1', 'GIT_NO_REPLACE_OBJECTS': '1', 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_TERMINAL_PROMPT': '0', 'GIT_ASKPASS': ''})
@@ -174,16 +174,16 @@ def _validate_config(config, root):
     for row in roles:
         common_keys = {'role', 'command_prefix', 'cwd', 'timeout_ms', 'grace_ms', 'output_limit_bytes', 'containment', 'provider_name', 'provider_source_sha256'}
         local_keys = common_keys | {'provider_version', 'provider_source', 'agent_executable_sha256'}
-        if not isinstance(row, dict) or frozenset(row) not in {frozenset(common_keys), frozenset(local_keys)}:
+        if not isinstance(row, dict) or frozenset(row) not in {frozenset(common_keys), frozenset(common_keys | {'stderr_limit_bytes'}), frozenset(local_keys), frozenset(local_keys | {'stderr_limit_bytes'})}:
             _fail('corrupt', 'invalid-agent-role-schema', 'Agent role schema is invalid')
         _command(row['command_prefix'], 'agent-command')
         _path(row['cwd'], root, 'agent-cwd')
-        _limits({key: row[key] for key in ('timeout_ms', 'grace_ms', 'output_limit_bytes')}, 'agent')
+        _limits({key: row[key] for key in ('timeout_ms', 'grace_ms', 'output_limit_bytes', 'stderr_limit_bytes') if key in row}, 'agent')
         if row['containment'] not in {'external-sandbox-v1', 'trusted-local-worktree-v1'}: _fail('denied', 'sandbox-containment-required', 'Agent roles require one reviewed execution boundary')
         _slug(row['provider_name'], 'provider-name')
         _sha(row['provider_source_sha256'], 'provider-source')
         if row['containment'] == 'trusted-local-worktree-v1':
-            if set(row) != local_keys: _fail('corrupt', 'local-provider-config-incomplete', 'Trusted-local provider configuration is incomplete')
+            set(row) == local_keys | {'stderr_limit_bytes'} or _fail('corrupt', 'local-provider-config-incomplete', 'Trusted-local provider configuration is incomplete'); row['output_limit_bytes'] == LOCAL_PROVIDER_STDOUT_LIMIT_BYTES and row['stderr_limit_bytes'] == LOCAL_PROVIDER_STDERR_LIMIT_BYTES or _fail('denied', 'local-provider-output-limits', 'Trusted-local provider output limits differ from the reviewed contract')
             _slug(row['provider_version'], 'provider-version')
             if row['provider_source'] != 'scripts/workflow_local_provider.py': _fail('denied', 'local-provider-source-path', 'Trusted-local provider source path is fixed')
             _sha(row['agent_executable_sha256'], 'agent-executable')
@@ -243,7 +243,7 @@ def command_source(baseline_binding, baseline, config, operation, role=None, pro
         source['entry'], source['profile'] = role, None
         row = next((item for item in config['agent_roles'] if item['role'] == role), None)
         if row is None: _fail('corrupt', 'agent-role-missing', 'Configured agent role is missing')
-        limits = {key: row[key] for key in ('timeout_ms', 'grace_ms', 'output_limit_bytes')}
+        limits = {key: row[key] for key in ('timeout_ms', 'grace_ms', 'output_limit_bytes', 'stderr_limit_bytes') if key in row}
     elif operation['kind'] == 'validation':
         limits = dict(VALIDATION_LIMITS)
     else:
@@ -323,7 +323,7 @@ class Runtime:
         if operation['kind'] == 'agent':
             role = next(item for item in self._config['agent_roles'] if item['role'] == operation['role'])
             if role['containment'] == 'trusted-local-worktree-v1': result_output_count = 3
-        encoded_output_budget = result_output_count * 4 * ((limits['output_limit_bytes'] + 2) // 3)
+        encoded_output_budget = 4 * ((limits['output_limit_bytes'] + 2) // 3) + 4 * ((LOCAL_PROVIDER_CANDIDATE_LIMIT_BYTES + 2) // 3) + 4 * ((limits.get('stderr_limit_bytes', limits['output_limit_bytes']) + 2) // 3) if result_output_count == 3 else 4 * ((limits['output_limit_bytes'] + 2) // 3) + 4 * ((limits.get('stderr_limit_bytes', limits['output_limit_bytes']) + 2) // 3)
         prompt_budget = 2 * LOCAL_PROVIDER_PROMPT_LIMIT_BYTES + 2 if result_output_count == 3 else 0
         if repository_before is not None and len(_canonical(repository_before)) + prompt_budget + encoded_output_budget + EXECUTION_RESULT_HEADROOM_BYTES > MAX_DOCUMENT_BYTES: _fail('denied', 'execution-result-budget', 'Request cannot fit its bounded execution-result inputs')
         expected = execution_attempt_id(authority_binding, operation, source, inputs, repository_before, limits, reconciliation_expectation)
@@ -372,7 +372,7 @@ class Runtime:
             return dict(VALIDATION_LIMITS)
         if operation['kind'] == 'agent':
             row = next((item for item in self._config['agent_roles'] if item['role'] == operation['role']))
-            return {key: row[key] for key in ('timeout_ms', 'grace_ms', 'output_limit_bytes')}
+            return {key: row[key] for key in ('timeout_ms', 'grace_ms', 'output_limit_bytes', 'stderr_limit_bytes') if key in row}
         if operation['kind'] == 'git-read':
             entry = self._config['git']
         else:
@@ -501,6 +501,7 @@ class Runtime:
                 try: local_candidate = base64.b64decode(local_candidate_output['base64'], validate=True)
                 except (TypeError, ValueError, binascii.Error): _fail('corrupt', 'local-provider-candidate-invalid', 'Trusted-local provider candidate output is not strict base64')
                 if type(local_candidate_output['bytes']) is not int or local_candidate_output['bytes'] != len(local_candidate): _fail('corrupt', 'local-provider-candidate-invalid', 'Trusted-local provider candidate output size is inconsistent')
+                if len(local_candidate) > LOCAL_PROVIDER_CANDIDATE_LIMIT_BYTES: _fail('denied', 'local-provider-candidate-too-large', 'Trusted-local provider candidate output exceeds its reviewed limit')
                 sandbox = provided['provider_result']
             else:
                 process = _process_document(_run(command, limits=request['limits'], cwd=cwd, environment=environment, cancel_event=process_cancel), command, request['limits'], 'execution')
@@ -585,7 +586,7 @@ class Runtime:
             non_secret_environment = {'PATH': os.pathsep.join(dict.fromkeys((str(pathlib.Path(injected.agent_executable['path']).parent), str(pathlib.Path(injected.git_executable['path']).parent), '/usr/bin', '/bin'))), 'HOME': str(injected.agent_home), 'LC_ALL': 'C.UTF-8', 'LANG': 'C.UTF-8', 'TZ': 'UTC'}
             expected_environment = {'keys': sorted([*non_secret_environment, 'COPILOT_GITHUB_TOKEN']), 'non_secret_values': non_secret_environment, 'secret_keys': ['COPILOT_GITHUB_TOKEN'], 'authentication': getattr(injected, 'authentication', None)}
             expected_environment['sha256'] = workflow_inspector.sha256(_canonical(expected_environment))
-            projection_digest = injected.input_projection_sha256(request) if callable(getattr(injected, 'input_projection_sha256', None)) else None
+            projection_digest = injected.input_projection_sha256(request) if callable(getattr(injected, 'input_projection_sha256', None)) else None; candidate['size'] <= LOCAL_PROVIDER_CANDIDATE_LIMIT_BYTES or _fail('denied', 'local-provider-candidate-too-large', 'Trusted-local provider candidate output exceeds its reviewed limit')
             transport = _stdout(process, 'execution')
             _exact(value['transport_output'], {'bytes', 'base64'}, 'local-provider-transport-output')
             try: recorded_transport = base64.b64decode(value['transport_output']['base64'], validate=True)

@@ -21,6 +21,12 @@ from scripts import workflow_runtime as runtime
 
 
 REPOSITORY = pathlib.Path(__file__).parents[2]
+PINNED_CLI_FIXTURE = (
+    pathlib.Path(__file__).parent
+    / "fixtures"
+    / "workflow-local-provider"
+    / "pinned-cli-reasoning.jsonl"
+)
 CANDIDATE = (
     '{"format":"chess-echo-orchestrator-agent-candidate-v1",'
     '"kind":"plan","plan":"Canary.\\n","units":[{"id":"canary",'
@@ -48,9 +54,9 @@ def _event(event_type, event_id, parent_id, data, ephemeral=False):
 
 def _jsonl(candidate=CANDIDATE, include_tool=True):
     events = [
-        _event("session.mcp_servers_loaded", "s1", "external-1", {}),
-        _event("session.skills_loaded", "s2", "external-2", {}),
-        _event("session.tools_updated", "s3", "external-3", {}),
+        _event("session.mcp_servers_loaded", "s1", "external-1", {"servers": []}, True),
+        _event("session.skills_loaded", "s2", "external-2", {"skills": []}, True),
+        _event("session.tools_updated", "s3", "external-3", {"model": "test-model"}, True),
         _event("user.message", "u1", "external-4", {"content": "prompt", "interactionId": "i1"}),
     ]
     parent = "u1"
@@ -58,12 +64,12 @@ def _jsonl(candidate=CANDIDATE, include_tool=True):
         events.extend(
             [
                 _event("assistant.turn_start", "t1s", parent, {"turnId": "1", "interactionId": "i1"}),
-                _event("model.call_start", "m1", "t1s", {"turnId": "1", "interactionId": "i1"}),
-                _event("assistant.tool_call_delta", "d1", "m1", {"toolCallId": "tool-1", "inputDelta": "{}"}, True),
+                _event("model.call_start", "m1", "t1s", {"model": "test-model", "turnId": "1"}, True),
+                _event("assistant.tool_call_delta", "d1", "t1s", {"toolCallId": "tool-1", "inputDelta": "{}"}, True),
                 _event(
                     "assistant.message",
                     "a1",
-                    "m1",
+                    "t1s",
                     {
                         "content": "I will inspect the repository.",
                         "messageId": "message-1",
@@ -110,13 +116,13 @@ def _jsonl(candidate=CANDIDATE, include_tool=True):
     events.extend(
         [
             _event("assistant.turn_start", "t2s", parent, {"turnId": "2", "interactionId": "i2"}),
-            _event("model.call_start", "m2", "t2s", {"turnId": "2", "interactionId": "i2"}),
-            _event("assistant.message_start", "ms2", "m2", {"messageId": "message-2"}, True),
-            _event("assistant.message_delta", "md2", "m2", {"messageId": "message-2", "deltaContent": candidate}, True),
+            _event("model.call_start", "m2", "t2s", {"model": "test-model", "turnId": "2"}, True),
+            _event("assistant.message_start", "ms2", "t2s", {"messageId": "message-2"}, True),
+            _event("assistant.message_delta", "md2", "t2s", {"messageId": "message-2", "deltaContent": candidate}, True),
             _event(
                 "assistant.message",
                 "a2",
-                "m2",
+                "t2s",
                 {
                     "content": candidate,
                     "messageId": "message-2",
@@ -169,14 +175,17 @@ def _process_result(
     reason="process-exited",
     exit_code=0,
     terminating_signal=None,
+    output_limit_bytes=832 * 1024,
+    stderr_limit_bytes=64 * 1024,
 ):
     return {
-        "format": "chess-echo-process-result-v1",
+        "format": provider.supervisor.RESULT_FORMAT,
         "command_sha256": inspector.sha256(inspector.canonical_bytes(command)),
         "limits": {
             "timeout_ms": 5_000,
             "grace_ms": 100,
-            "output_bytes_per_stream": 16_384,
+            "stdout_bytes": output_limit_bytes,
+            "stderr_bytes": stderr_limit_bytes,
         },
         "containment": {
             "kind": "posix-process-group",
@@ -262,7 +271,8 @@ class LocalProviderFixture:
             "cwd": ".",
             "timeout_ms": 5_000,
             "grace_ms": 100,
-            "output_limit_bytes": 16_384,
+            "output_limit_bytes": runtime.LOCAL_PROVIDER_STDOUT_LIMIT_BYTES,
+            "stderr_limit_bytes": runtime.LOCAL_PROVIDER_STDERR_LIMIT_BYTES,
             "containment": "trusted-local-worktree-v1",
             "provider_name": provider.NAME,
             "provider_version": provider.VERSION,
@@ -293,7 +303,8 @@ class LocalProviderFixture:
             "limits": {
                 "timeout_ms": 5_000,
                 "grace_ms": 100,
-                "output_limit_bytes": 16_384,
+                "output_limit_bytes": runtime.LOCAL_PROVIDER_STDOUT_LIMIT_BYTES,
+                "stderr_limit_bytes": runtime.LOCAL_PROVIDER_STDERR_LIMIT_BYTES,
             },
         }
         value["request_sha256"] = inspector.sha256(inspector.canonical_bytes(value))
@@ -473,6 +484,40 @@ class TrustedLocalProviderTest(unittest.TestCase):
             resume.decode_candidate(result, "plan"),
         )
 
+    def test_observed_pinned_cli_ephemeral_reasoning_fixture_is_accepted(self):
+        raw = PINNED_CLI_FIXTURE.read_bytes()
+        events = _jsonl_events(raw)
+        expected = next(
+            event["data"]["content"]
+            for event in events
+            if event.get("type") == "assistant.message"
+            and event["data"]["toolRequests"] == []
+        ).encode("utf-8")
+
+        self.assertEqual(expected, provider._extract_candidate_from_jsonl(raw))
+        self.assertEqual(
+            [
+                "session.mcp_servers_loaded",
+                "session.skills_loaded",
+                "session.tools_updated",
+                "user.message",
+            ],
+            [event["type"] for event in events[:4]],
+        )
+        self.assertTrue(
+            all(
+                event.get("ephemeral") is True
+                for event in events
+                if event["type"]
+                in {
+                    *provider.JSONL_STARTUP_TYPES,
+                    "model.call_start",
+                    "assistant.reasoning_delta",
+                    "assistant.reasoning",
+                }
+            )
+        )
+
     def test_jsonl_rejects_candidate_in_tool_request_turn(self):
         events = _jsonl_events(_jsonl())
         events = [
@@ -595,6 +640,7 @@ class TrustedLocalProviderTest(unittest.TestCase):
                     provider._extract_candidate_from_jsonl(raw)
 
     def test_jsonl_accepts_exact_configured_transport_bound_only(self):
+        self.assertEqual(851_968, provider.JSONL_MAX_BYTES)
         events = _jsonl_events(_jsonl())
         partial = next(
             event
@@ -615,6 +661,81 @@ class TrustedLocalProviderTest(unittest.TestCase):
             provider._extract_candidate_from_jsonl(bounded + b" ")
         self.assertEqual("local-agent-jsonl-invalid", raised.exception.code)
 
+    def test_jsonl_accepts_exact_event_count_bound_only(self):
+        self.assertEqual(8_192, provider.JSONL_MAX_EVENTS)
+        events = _jsonl_events(_jsonl())
+        insertion = next(
+            index
+            for index, event in enumerate(events)
+            if event["type"] == "tool.execution_partial_result"
+        )
+        additions = [
+            _event(
+                "session.background_tasks_changed",
+                "count-%d" % index,
+                "x1",
+                {},
+                True,
+            )
+            for index in range(provider.JSONL_MAX_EVENTS - len(events))
+        ]
+        bounded = _encode_events(events[:insertion] + additions + events[insertion:])
+        over = _encode_events(
+            events[:insertion]
+            + additions
+            + [
+                _event(
+                    "session.background_tasks_changed",
+                    "count-over",
+                    "x1",
+                    {},
+                    True,
+                )
+            ]
+            + events[insertion:]
+        )
+
+        self.assertEqual(
+            provider.JSONL_MAX_EVENTS,
+            len(_jsonl_events(bounded)),
+        )
+        with mock.patch.object(provider, "JSONL_MAX_BYTES", len(over)):
+            self.assertEqual(
+                CANDIDATE.encode("utf-8"),
+                provider._extract_candidate_from_jsonl(bounded),
+            )
+            with self.assertRaises(provider.LocalProviderFailure) as raised:
+                provider._extract_candidate_from_jsonl(over)
+        self.assertEqual("local-agent-jsonl-invalid", raised.exception.code)
+
+    def test_jsonl_accepts_exact_candidate_bound_only(self):
+        self.assertEqual(458_752, provider.CANDIDATE_MAX_BYTES)
+        events = [
+            event
+            for event in _jsonl_events(_jsonl())
+            if event["type"]
+            not in {"assistant.message_start", "assistant.message_delta"}
+        ]
+        final = next(
+            event
+            for event in events
+            if event["type"] == "assistant.message"
+            and event["data"]["toolRequests"] == []
+        )
+        final["data"]["content"] = "x" * provider.CANDIDATE_MAX_BYTES
+        bounded = _encode_events(events)
+        self.assertLessEqual(len(bounded), provider.JSONL_MAX_BYTES)
+        self.assertEqual(
+            b"x" * provider.CANDIDATE_MAX_BYTES,
+            provider._extract_candidate_from_jsonl(bounded),
+        )
+
+        final["data"]["content"] += "x"
+        with self.assertRaises(provider.LocalProviderFailure) as raised:
+            provider._extract_candidate_from_jsonl(_encode_events(events))
+        self.assertEqual("unsupported", raised.exception.status)
+        self.assertEqual("local-agent-candidate-too-large", raised.exception.code)
+
     def test_jsonl_protocol_relationships_fail_closed(self):
         def changed(mutator):
             events = _jsonl_events(_jsonl())
@@ -623,6 +744,7 @@ class TrustedLocalProviderTest(unittest.TestCase):
 
         cases = {
             "unknown-event": changed(lambda events: events.__setitem__(5, {**events[5], "type": "session.error"})),
+            "abort-event": changed(lambda events: events.__setitem__(5, {**events[5], "type": "assistant.abort"})),
             "duplicate-event-id": changed(lambda events: events[6].__setitem__("id", events[5]["id"])),
             "duplicate-user": changed(lambda events: events.insert(4, {**copy.deepcopy(events[3]), "id": "u2"})),
             "broken-parent": changed(lambda events: events[12].__setitem__("parentId", "missing")),
@@ -678,6 +800,153 @@ class TrustedLocalProviderTest(unittest.TestCase):
                 with self.assertRaises(provider.LocalProviderFailure):
                     provider._extract_candidate_from_jsonl(raw)
 
+    def test_observed_ephemeral_reasoning_shapes_fail_closed(self):
+        def changed(mutator):
+            events = _jsonl_events(PINNED_CLI_FIXTURE.read_bytes())
+            mutator(events)
+            return _encode_events(events)
+
+        def event(events, event_id):
+            return next(item for item in events if item.get("id") == event_id)
+
+        def insert_before(events, event_id, item):
+            events.insert(
+                next(
+                    index
+                    for index, value in enumerate(events)
+                    if value.get("id") == event_id
+                ),
+                item,
+            )
+
+        cases = {
+            "startup-persistence": changed(
+                lambda events: event(events, "startup-mcp").pop("ephemeral")
+            ),
+            "startup-schema": changed(
+                lambda events: event(events, "startup-skills")["data"].update(
+                    {"extra": []}
+                )
+            ),
+            "startup-type": changed(
+                lambda events: event(events, "startup-tools")["data"].__setitem__(
+                    "model", []
+                )
+            ),
+            "startup-parent-resolves": changed(
+                lambda events: event(events, "startup-mcp").__setitem__(
+                    "parentId", "user-message"
+                )
+            ),
+            "startup-parent-repeats": changed(
+                lambda events: event(events, "startup-skills").__setitem__(
+                    "parentId", "external-startup-a"
+                )
+            ),
+            "model-persistence": changed(
+                lambda events: event(events, "model-call-1").pop("ephemeral")
+            ),
+            "model-schema": changed(
+                lambda events: event(events, "model-call-1")["data"].update(
+                    {"interactionId": "interaction-1"}
+                )
+            ),
+            "model-parent": changed(
+                lambda events: event(events, "model-call-1").__setitem__(
+                    "parentId", "user-message"
+                )
+            ),
+            "reasoning-delta-persistence": changed(
+                lambda events: event(events, "reasoning-delta-1").pop("ephemeral")
+            ),
+            "reasoning-delta-schema": changed(
+                lambda events: event(events, "reasoning-delta-1")["data"].update(
+                    {"extra": ""}
+                )
+            ),
+            "reasoning-delta-parent": changed(
+                lambda events: event(events, "reasoning-delta-1").__setitem__(
+                    "parentId", "model-call-1"
+                )
+            ),
+            "reasoning-delta-group": changed(
+                lambda events: event(events, "reasoning-delta-2")["data"].__setitem__(
+                    "reasoningId", "other-reasoning"
+                )
+            ),
+            "reasoning-delta-sequence": changed(
+                lambda events: insert_before(
+                    events,
+                    "reasoning-delta-1",
+                    _event(
+                        "session.background_tasks_changed",
+                        "between-model-and-reasoning",
+                        "turn-start-1",
+                        {},
+                        True,
+                    ),
+                )
+            ),
+            "reasoning-persistence": changed(
+                lambda events: event(events, "reasoning-summary-1").pop("ephemeral")
+            ),
+            "reasoning-schema": changed(
+                lambda events: event(events, "reasoning-summary-1")["data"].update(
+                    {"extra": True}
+                )
+            ),
+            "reasoning-rte": changed(
+                lambda events: event(events, "reasoning-summary-1")["data"].__setitem__(
+                    "rte", False
+                )
+            ),
+            "reasoning-parent": changed(
+                lambda events: event(events, "reasoning-summary-1").__setitem__(
+                    "parentId", "turn-start-1"
+                )
+            ),
+            "reasoning-id": changed(
+                lambda events: event(events, "reasoning-summary-1")["data"].__setitem__(
+                    "reasoningId", "other-reasoning"
+                )
+            ),
+            "reasoning-cannot-be-final": changed(
+                lambda events: event(events, "assistant-message-1")[
+                    "data"
+                ].__setitem__("toolRequests", [])
+            ),
+            "reasoning-summary-sequence": changed(
+                lambda events: insert_before(
+                    events,
+                    "reasoning-summary-1",
+                    _event(
+                        "session.background_tasks_changed",
+                        "before-reasoning-summary",
+                        "assistant-message-1",
+                        {},
+                        True,
+                    ),
+                )
+            ),
+            "reasoning-tool-sequence": changed(
+                lambda events: insert_before(
+                    events,
+                    "tool-start-1",
+                    _event(
+                        "session.background_tasks_changed",
+                        "after-reasoning-summary",
+                        "assistant-message-1",
+                        {},
+                        True,
+                    ),
+                )
+            ),
+        }
+        for name, raw in cases.items():
+            with self.subTest(name=name):
+                with self.assertRaises(provider.LocalProviderFailure):
+                    provider._extract_candidate_from_jsonl(raw)
+
     def test_jsonl_final_boundary_failures_are_rejected(self):
         def without(event_type):
             return _encode_events(
@@ -719,7 +988,7 @@ class TrustedLocalProviderTest(unittest.TestCase):
 
         def supervise(command, **options):
             if command[0] == str(self.fixture.agent):
-                launched.append(copy.deepcopy(options["env"]))
+                launched.append(copy.deepcopy(options))
             return original_supervise(command, **options)
 
         with mock.patch.object(
@@ -767,13 +1036,22 @@ class TrustedLocalProviderTest(unittest.TestCase):
                 "PATH",
                 "TZ",
             },
-            set(launched[0]),
+            set(launched[0]["env"]),
         )
         self.assertEqual(
-            self.fixture.worker_token, launched[0]["COPILOT_GITHUB_TOKEN"]
+            self.fixture.worker_token,
+            launched[0]["env"]["COPILOT_GITHUB_TOKEN"],
         )
-        self.assertNotIn("GH_TOKEN", launched[0])
-        self.assertNotIn("GITHUB_TOKEN", launched[0])
+        self.assertNotIn("GH_TOKEN", launched[0]["env"])
+        self.assertNotIn("GITHUB_TOKEN", launched[0]["env"])
+        self.assertEqual(
+            runtime.LOCAL_PROVIDER_STDOUT_LIMIT_BYTES,
+            launched[0]["output_limit_bytes"],
+        )
+        self.assertEqual(
+            runtime.LOCAL_PROVIDER_STDERR_LIMIT_BYTES,
+            launched[0]["stderr_limit_bytes"],
+        )
         self.assertEqual(
             ["COPILOT_GITHUB_TOKEN"], facts["environment"]["secret_keys"]
         )
@@ -1227,6 +1505,41 @@ class TrustedLocalProviderTest(unittest.TestCase):
             )
         self.assertEqual("invalid-process-result", raised.exception.code)
 
+        for field, value in (
+            ("format", "chess-echo-process-result-v1"),
+            ("stdout_bytes", request["limits"]["output_limit_bytes"] - 1),
+            ("stderr_bytes", request["limits"]["stderr_limit_bytes"] + 1),
+        ):
+            replaced_process = copy.deepcopy(executed["process_result"])
+            if field == "format":
+                replaced_process[field] = value
+            else:
+                replaced_process["limits"][field] = value
+            with self.subTest(field=field), self.assertRaises(
+                runtime.RuntimeFailure
+            ) as raised:
+                runtime._process_document(
+                    replaced_process,
+                    executed["command"],
+                    request["limits"],
+                    "execution",
+                )
+            self.assertEqual("invalid-process-result", raised.exception.code)
+
+        with self.assertRaises(runtime.RuntimeFailure) as raised:
+            adapter._validate_sandbox(
+                executed["provider_result"],
+                request,
+                executed["process_result"],
+                {
+                    "sha256": inspector.sha256(candidate),
+                    "size": provider.CANDIDATE_MAX_BYTES + 1,
+                },
+                self.fixture.row(),
+                instance,
+            )
+        self.assertEqual("local-provider-candidate-too-large", raised.exception.code)
+
     def test_runtime_execute_adapts_candidate_and_preserves_reconstructable_transport(self):
         result = self._execute_through_runtime()
         candidate = CANDIDATE.encode("utf-8")
@@ -1261,6 +1574,37 @@ class TrustedLocalProviderTest(unittest.TestCase):
             resume.decode_candidate(result, "plan"),
         )
 
+    def test_runtime_preserves_raw_transport_candidate_and_stderr_blobs(self):
+        transport = _jsonl()
+        stderr = b"synthetic bounded stderr"
+
+        def captured(command, **_options):
+            return _process_result(command, stdout=transport, stderr=stderr)
+
+        result = self._execute_through_runtime(supervise=captured)
+
+        self.assertEqual(
+            transport,
+            base64.b64decode(
+                result["sandbox"]["transport_output"]["base64"],
+                validate=True,
+            ),
+        )
+        self.assertEqual(
+            CANDIDATE.encode("utf-8"),
+            base64.b64decode(
+                result["process_result"]["stdout"]["base64"],
+                validate=True,
+            ),
+        )
+        self.assertEqual(
+            stderr,
+            base64.b64decode(
+                result["process_result"]["stderr"]["base64"],
+                validate=True,
+            ),
+        )
+
     def test_runtime_execute_leaves_invalid_candidate_for_strict_decoder_rejection(self):
         result = self._execute_through_runtime(candidate="not JSON")
 
@@ -1281,13 +1625,25 @@ class TrustedLocalProviderTest(unittest.TestCase):
         )["orchestrator"]
         limits = {
             key: config["agent_roles"][0][key]
-            for key in ("timeout_ms", "grace_ms", "output_limit_bytes")
+            for key in (
+                "timeout_ms",
+                "grace_ms",
+                "output_limit_bytes",
+                "stderr_limit_bytes",
+            )
         }
-        self.assertEqual(448 * 1024, limits["output_limit_bytes"])
+        self.assertEqual(832 * 1024, limits["output_limit_bytes"])
+        self.assertEqual(448 * 1024, provider.CANDIDATE_MAX_BYTES)
+        self.assertEqual(64 * 1024, limits["stderr_limit_bytes"])
         self.assertEqual(limits["output_limit_bytes"], provider.JSONL_MAX_BYTES)
+        self.assertEqual(
+            runtime.LOCAL_PROVIDER_CANDIDATE_LIMIT_BYTES,
+            provider.CANDIDATE_MAX_BYTES,
+        )
         self.assertTrue(
             all(
                 row["output_limit_bytes"] == limits["output_limit_bytes"]
+                and row["stderr_limit_bytes"] == limits["stderr_limit_bytes"]
                 for row in config["agent_roles"]
             )
         )
@@ -1374,11 +1730,31 @@ class TrustedLocalProviderTest(unittest.TestCase):
             self.assertEqual(target_size, len(inspector.canonical_bytes(document)))
             return runtime._repository_document(document, 183, family)
 
-        encoded_size = 4 * ((limits["output_limit_bytes"] + 2) // 3)
+        stdout_charge = len(
+            base64.b64encode(b"x" * limits["output_limit_bytes"])
+        )
+        candidate_charge = len(
+            base64.b64encode(b"x" * provider.CANDIDATE_MAX_BYTES)
+        )
+        stderr_charge = len(
+            base64.b64encode(b"x" * limits["stderr_limit_bytes"])
+        )
+        self.assertEqual(1_135_960, stdout_charge)
+        self.assertEqual(611_672, candidate_charge)
+        self.assertEqual(87_384, stderr_charge)
+        self.assertEqual(
+            1_835_016,
+            stdout_charge + candidate_charge + stderr_charge,
+        )
+        self.assertEqual(3 * 611_672, 1_835_016)
+        prompt_charge = 2 * provider.PROMPT_LIMIT_BYTES + 2
+        self.assertEqual(131_074, prompt_charge)
         maximum_repository_size = (
             runtime.MAX_DOCUMENT_BYTES
-            - 3 * encoded_size
-            - (2 * provider.PROMPT_LIMIT_BYTES + 2)
+            - stdout_charge
+            - candidate_charge
+            - stderr_charge
+            - prompt_charge
             - runtime.EXECUTION_RESULT_HEADROOM_BYTES
         )
         self.assertEqual(65_526, maximum_repository_size)
@@ -1403,26 +1779,32 @@ class TrustedLocalProviderTest(unittest.TestCase):
             serialized_prompt_size,
             2 * provider.PROMPT_LIMIT_BYTES + 2,
         )
-        encoded = base64.b64encode(b"x" * limits["output_limit_bytes"]).decode(
-            "ascii"
-        )
+        stdout_encoded = base64.b64encode(
+            b"x" * limits["output_limit_bytes"]
+        ).decode("ascii")
+        candidate_encoded = base64.b64encode(
+            b"x" * provider.CANDIDATE_MAX_BYTES
+        ).decode("ascii")
+        stderr_encoded = base64.b64encode(
+            b"x" * limits["stderr_limit_bytes"]
+        ).decode("ascii")
         maximum = copy.deepcopy(result)
         maximum["repository_after"] = maximum_repository
         maximum["process_result"]["stdout"] = {
-            "bytes": limits["output_limit_bytes"],
-            "base64": encoded,
+            "bytes": provider.CANDIDATE_MAX_BYTES,
+            "base64": candidate_encoded,
         }
         maximum["process_result"]["stderr"] = {
-            "bytes": limits["output_limit_bytes"],
-            "base64": encoded,
+            "bytes": limits["stderr_limit_bytes"],
+            "base64": stderr_encoded,
         }
         maximum["sandbox"]["transport_output"] = {
             "bytes": limits["output_limit_bytes"],
-            "base64": encoded,
+            "base64": stdout_encoded,
         }
         maximum["sandbox"]["transport_size"] = limits["output_limit_bytes"]
-        maximum["sandbox"]["candidate_size"] = limits["output_limit_bytes"]
-        maximum["candidate_output"]["size"] = limits["output_limit_bytes"]
+        maximum["sandbox"]["candidate_size"] = provider.CANDIDATE_MAX_BYTES
+        maximum["candidate_output"]["size"] = provider.CANDIDATE_MAX_BYTES
         maximum.pop("result_sha256")
         maximum = runtime._with_digest(maximum, "result_sha256")
         self.assertLessEqual(
@@ -1491,13 +1873,16 @@ class TrustedLocalProviderTest(unittest.TestCase):
             build_with_limits(limits)
         self.assertEqual("execution-result-budget", raised.exception.code)
         repository_before = maximum_repository
-        oversized_limits = {
-            **limits,
-            "output_limit_bytes": limits["output_limit_bytes"] + 3,
-        }
-        with self.assertRaises(runtime.RuntimeFailure) as raised:
-            build_with_limits(oversized_limits)
-        self.assertEqual("execution-result-budget", raised.exception.code)
+        for field in ("output_limit_bytes", "stderr_limit_bytes"):
+            oversized_limits = {
+                **limits,
+                field: limits[field] + 3,
+            }
+            with self.subTest(field=field), self.assertRaises(
+                runtime.RuntimeFailure
+            ) as raised:
+                build_with_limits(oversized_limits)
+            self.assertEqual("execution-result-budget", raised.exception.code)
 
         oversized_repository_after = repository_observation(
             runtime.MAX_DOCUMENT_BYTES - 1024

@@ -28,7 +28,7 @@ except ImportError:  # pragma: no cover - direct script loading
 
 
 NAME = "chess-echo-trusted-local"
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 RESULT_FORMAT = "chess-echo-trusted-local-execution-result-v1"
 PROCESS_DIAGNOSTIC_FORMAT = "chess-echo-trusted-local-process-diagnostic-v1"
 DISCOVERY_FORMAT = "chess-echo-pending-result-candidates-v1"
@@ -47,9 +47,10 @@ AUDIT_LIMITS = {
     "output_limit_bytes": 1024 * 1024,
 }
 PROMPT_LIMIT_BYTES = 64 * 1024
-JSONL_MAX_BYTES = 448 * 1024
-JSONL_MAX_EVENTS = 2048
+JSONL_MAX_BYTES = 832 * 1024
+JSONL_MAX_EVENTS = 8192
 JSONL_MAX_EVENT_BYTES = JSONL_MAX_BYTES
+CANDIDATE_MAX_BYTES = 448 * 1024
 JSONL_STARTUP_TYPES = (
     "session.mcp_servers_loaded",
     "session.skills_loaded",
@@ -61,8 +62,10 @@ JSONL_EVENT_TYPES = frozenset(
         "user.message",
         "assistant.turn_start",
         "model.call_start",
+        "assistant.reasoning_delta",
         "assistant.tool_call_delta",
         "assistant.message",
+        "assistant.reasoning",
         "tool.execution_start",
         "session.background_tasks_changed",
         "tool.execution_partial_result",
@@ -75,8 +78,12 @@ JSONL_EVENT_TYPES = frozenset(
     )
 )
 JSONL_EPHEMERAL_TYPES = frozenset(
-    (
+    JSONL_STARTUP_TYPES
+    + (
+        "model.call_start",
+        "assistant.reasoning_delta",
         "assistant.tool_call_delta",
+        "assistant.reasoning",
         "session.background_tasks_changed",
         "tool.execution_partial_result",
         "assistant.message_start",
@@ -326,13 +333,17 @@ def _validate_result_event(event):
 def _extract_candidate_from_jsonl(raw):
     events = _parse_jsonl(raw)
     startup_index = 0
+    startup_parents = set()
     seen_ids, seen_turns, seen_messages = set(), set(), set()
-    active_turn = active_interaction = user_interaction = None
+    active_turn = active_turn_start = active_interaction = user_interaction = None
     active_turn_had_tools = False
+    model_call_seen = False
     last_persisted = None
     user_seen = False
     tool_deltas, requested_tools, started_tools, completed_tools = set(), set(), set(), set()
     streamed_messages = set()
+    reasoning_groups, summarized_reasoning = {}, set()
+    turn_reasoning_id = pending_reasoning_summary = None
     candidate = None
     final_ended = idle_seen = result_seen = False
 
@@ -346,6 +357,17 @@ def _extract_candidate_from_jsonl(raw):
             continue
         if event_type not in JSONL_EVENT_TYPES:
             _fail("unsupported", "local-agent-jsonl-event", "Copilot JSONL contains an unreviewed event type")
+        previous = events[index - 1] if index else None
+        previous_type = previous.get("type") if isinstance(previous, dict) else None
+        if pending_reasoning_summary is not None and event_type != "assistant.reasoning":
+            _fail("corrupt", "local-agent-jsonl-sequence", "Copilot reasoning summary is missing after its tool request")
+        if previous_type == "assistant.reasoning" and event_type != "tool.execution_start":
+            _fail("corrupt", "local-agent-jsonl-sequence", "Copilot reasoning summary is not followed by tool execution")
+        if previous_type == "assistant.reasoning_delta" and event_type not in {
+            "assistant.reasoning_delta",
+            "assistant.tool_call_delta",
+        }:
+            _fail("corrupt", "local-agent-jsonl-sequence", "Copilot reasoning deltas do not end at a tool call")
         allowed_outer = {"type", "timestamp", "id", "parentId", "data", "ephemeral", "agentId"}
         if set(event) - allowed_outer or not {"type", "timestamp", "id", "parentId", "data"} <= set(event):
             _fail("corrupt", "local-agent-jsonl-invalid", "Copilot event envelope has an invalid schema")
@@ -404,7 +426,22 @@ def _extract_candidate_from_jsonl(raw):
         seen_ids.add(event_id)
 
         if event_type in JSONL_STARTUP_TYPES or event_type == "user.message":
-            if event_type == "user.message":
+            if event_type in JSONL_STARTUP_TYPES:
+                field = {
+                    "session.mcp_servers_loaded": "servers",
+                    "session.skills_loaded": "skills",
+                    "session.tools_updated": "model",
+                }[event_type]
+                _event_data_keys(data, {field}, event_type)
+                if field == "model":
+                    _event_text(data[field], "startup model")
+                elif not isinstance(data[field], list):
+                    _fail("corrupt", "local-agent-jsonl-invalid", "Copilot startup payload is malformed")
+                startup_parent = _event_text(parent_id, "startup parentId")
+                if startup_parent in startup_parents or startup_parent in seen_ids:
+                    _fail("corrupt", "local-agent-jsonl-parent", "Copilot startup parentId must be distinct and unresolved")
+                startup_parents.add(startup_parent)
+            else:
                 user_interaction = _event_text(data.get("interactionId"), "interactionId")
             continue
         if event_type == "assistant.turn_start":
@@ -417,14 +454,39 @@ def _extract_candidate_from_jsonl(raw):
             if not seen_turns and active_interaction != user_interaction:
                 _fail("corrupt", "local-agent-jsonl-invalid", "Initial Copilot turn does not match the user interaction")
             seen_turns.add(active_turn)
+            active_turn_start = event_id
             tool_deltas = set()
             active_turn_had_tools = False
+            model_call_seen = False
+            turn_reasoning_id = None
             continue
         if event_type == "model.call_start":
-            if active_turn is None:
+            if (
+                active_turn is None
+                or model_call_seen
+                or previous_type != "assistant.turn_start"
+                or parent_id != active_turn_start
+            ):
                 _fail("corrupt", "local-agent-jsonl-sequence", "Copilot model call is outside an assistant turn")
-            _event_field_matches(data, "turnId", active_turn)
-            _event_field_matches(data, "interactionId", active_interaction)
+            _event_data_keys(data, {"model", "turnId"}, "model call")
+            _event_text(data.get("model"), "model")
+            _event_field_matches(data, "turnId", active_turn, required=True)
+            model_call_seen = True
+            continue
+        if event_type == "assistant.reasoning_delta":
+            _event_data_keys(data, {"deltaContent", "reasoningId"}, "reasoning delta")
+            if not isinstance(data.get("deltaContent"), str):
+                _fail("corrupt", "local-agent-jsonl-invalid", "Copilot reasoning delta content is malformed")
+            reasoning_id = _event_text(data.get("reasoningId"), "reasoningId")
+            if active_turn is None or parent_id != active_turn_start:
+                _fail("corrupt", "local-agent-jsonl-parent", "Copilot reasoning delta does not match its active turn")
+            if previous_type == "model.call_start":
+                if turn_reasoning_id is not None or reasoning_id in reasoning_groups:
+                    _fail("ambiguous", "local-agent-jsonl-duplicate-id", "Copilot JSONL repeats a reasoning id")
+                reasoning_groups[reasoning_id] = active_turn_start
+                turn_reasoning_id = reasoning_id
+            elif previous_type != "assistant.reasoning_delta" or reasoning_id != turn_reasoning_id:
+                _fail("corrupt", "local-agent-jsonl-sequence", "Copilot reasoning delta group is malformed")
             continue
         if event_type == "assistant.tool_call_delta":
             if active_turn is None or final_ended:
@@ -483,8 +545,16 @@ def _extract_candidate_from_jsonl(raw):
                 active_turn_had_tools = True
                 if tool_deltas and tool_deltas != {item["toolCallId"] for item in requests}:
                     _fail("corrupt", "local-agent-jsonl-tool", "Copilot tool requests do not match streamed tool calls")
+                if turn_reasoning_id is not None:
+                    pending_reasoning_summary = (turn_reasoning_id, event_id)
             elif content:
-                if candidate is not None or active_turn_had_tools or requested_tools - completed_tools:
+                if (
+                    candidate is not None
+                    or active_turn_had_tools
+                    or tool_deltas
+                    or turn_reasoning_id is not None
+                    or requested_tools - completed_tools
+                ):
                     _fail("ambiguous", "local-agent-jsonl-candidate", "Copilot JSONL contains multiple or premature final candidates")
                 try:
                     candidate = content.encode("utf-8")
@@ -494,8 +564,32 @@ def _extract_candidate_from_jsonl(raw):
                         "local-agent-jsonl-invalid",
                         "Copilot final assistant content is not valid UTF-8",
                     ) from error
+                if len(candidate) > CANDIDATE_MAX_BYTES:
+                    _fail(
+                        "unsupported",
+                        "local-agent-candidate-too-large",
+                        "Copilot final assistant content exceeds the candidate byte limit",
+                    )
             else:
                 _fail("corrupt", "local-agent-jsonl-candidate", "Copilot assistant message has neither tools nor candidate content")
+            continue
+        if event_type == "assistant.reasoning":
+            _event_data_keys(data, {"content", "reasoningId", "rte"}, "reasoning")
+            reasoning_id = _event_text(data.get("reasoningId"), "reasoningId")
+            expected_reasoning = pending_reasoning_summary
+            if (
+                not isinstance(data.get("content"), str)
+                or data.get("rte") is not True
+                or expected_reasoning is None
+                or previous_type != "assistant.message"
+                or parent_id != expected_reasoning[1]
+                or reasoning_id != expected_reasoning[0]
+                or reasoning_groups.get(reasoning_id) != active_turn_start
+                or reasoning_id in summarized_reasoning
+            ):
+                _fail("corrupt", "local-agent-jsonl-sequence", "Copilot reasoning summary is malformed or misplaced")
+            summarized_reasoning.add(reasoning_id)
+            pending_reasoning_summary = None
             continue
         if event_type == "tool.execution_start":
             _event_data_keys(
@@ -559,7 +653,9 @@ def _extract_candidate_from_jsonl(raw):
                 final_ended = True
             elif not active_turn_had_tools or requested_tools - completed_tools:
                 _fail("corrupt", "local-agent-jsonl-turn", "Copilot nonfinal turn has no completed tool request")
-            active_turn = active_interaction = None
+            active_turn = active_turn_start = active_interaction = None
+            model_call_seen = False
+            turn_reasoning_id = None
             continue
         if event_type == "assistant.idle":
             if not final_ended or idle_seen or event.get("ephemeral") is not True or data:
@@ -577,6 +673,8 @@ def _extract_candidate_from_jsonl(raw):
 
     if not user_seen or active_turn is not None:
         _fail("corrupt", "local-agent-jsonl-sequence", "Copilot JSONL ended before its event sequence completed")
+    if startup_parents & seen_ids:
+        _fail("corrupt", "local-agent-jsonl-parent", "Copilot startup parentId unexpectedly resolves within the emitted stream")
     if requested_tools != started_tools or started_tools != completed_tools:
         _fail("corrupt", "local-agent-jsonl-tool", "Copilot JSONL has unresolved tool calls")
     if candidate is None or not final_ended or not idle_seen or not result_seen:
@@ -928,6 +1026,7 @@ class LocalSandboxProvider:
                 timeout_ms=limits["timeout_ms"],
                 grace_ms=limits["grace_ms"],
                 output_limit_bytes=limits["output_limit_bytes"],
+                stderr_limit_bytes=limits["stderr_limit_bytes"],
                 cwd=str(self.root),
                 env=controlled_environment,
                 cancel_event=cancel_event,

@@ -58,14 +58,15 @@ def process_result(
         "descendant_cleanup_verified": False,
     }
     return {
-        "format": "chess-echo-process-result-v1",
+        "format": runtime.workflow_supervisor.RESULT_FORMAT,
         "command_sha256": hashlib.sha256(
             json.dumps(command, ensure_ascii=True, separators=(",", ":")).encode()
         ).hexdigest(),
         "limits": {
             "timeout_ms": limits[0],
             "grace_ms": limits[1],
-            "output_bytes_per_stream": limits[2],
+            "stdout_bytes": limits[2],
+            "stderr_bytes": limits[2],
         },
         "containment": containment,
         "outcome": outcome,

@@ -881,14 +881,13 @@ class WorkflowWorkTypePolicyTest(unittest.TestCase):
         }
         request = self.fixture.targeted_request(triage, selection)
         process_result = {
-            "format": "chess-echo-process-result-v1",
+            "format": policy.supervisor.RESULT_FORMAT,
             "command_sha256": "a" * 64,
             "limits": {
                 "timeout_ms": policy.PROFILE_LIMITS["timeout_ms"],
                 "grace_ms": policy.PROFILE_LIMITS["grace_ms"],
-                "output_bytes_per_stream": policy.PROFILE_LIMITS[
-                    "output_limit_bytes"
-                ],
+                "stdout_bytes": policy.PROFILE_LIMITS["output_limit_bytes"],
+                "stderr_bytes": policy.PROFILE_LIMITS["output_limit_bytes"],
             },
             "containment": {
                 "kind": "posix-process-group",
@@ -946,12 +945,13 @@ class WorkflowWorkTypePolicyTest(unittest.TestCase):
         }
         request = self.fixture.targeted_request(triage, selection)
         fake = {
-            "format": "chess-echo-process-result-v1",
+            "format": policy.supervisor.RESULT_FORMAT,
             "command_sha256": "b" * 64,
             "limits": {
                 "timeout_ms": 5000,
                 "grace_ms": 100,
-                "output_bytes_per_stream": 4096,
+                "stdout_bytes": 4096,
+                "stderr_bytes": 4096,
             },
             "containment": {
                 "kind": "posix-process-group",

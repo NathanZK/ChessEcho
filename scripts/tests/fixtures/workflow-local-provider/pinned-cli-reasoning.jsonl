@@ -1,0 +1,24 @@
+{"type":"session.mcp_servers_loaded","timestamp":"2026-01-01T00:00:00Z","id":"startup-mcp","parentId":"external-startup-a","data":{"servers":[]},"ephemeral":true}
+{"type":"session.skills_loaded","timestamp":"2026-01-01T00:00:00Z","id":"startup-skills","parentId":"external-startup-b","data":{"skills":[]},"ephemeral":true}
+{"type":"session.tools_updated","timestamp":"2026-01-01T00:00:00Z","id":"startup-tools","parentId":"external-startup-c","data":{"model":"synthetic-model"},"ephemeral":true}
+{"type":"user.message","timestamp":"2026-01-01T00:00:00Z","id":"user-message","parentId":"external-user","data":{"content":"synthetic prompt","interactionId":"interaction-1"}}
+{"type":"assistant.turn_start","timestamp":"2026-01-01T00:00:00Z","id":"turn-start-1","parentId":"user-message","data":{"turnId":"turn-1","interactionId":"interaction-1"}}
+{"type":"model.call_start","timestamp":"2026-01-01T00:00:00Z","id":"model-call-1","parentId":"turn-start-1","data":{"model":"synthetic-model","turnId":"turn-1"},"ephemeral":true}
+{"type":"assistant.reasoning_delta","timestamp":"2026-01-01T00:00:00Z","id":"reasoning-delta-1","parentId":"turn-start-1","data":{"deltaContent":"synthetic ","reasoningId":"reasoning-1"},"ephemeral":true}
+{"type":"assistant.reasoning_delta","timestamp":"2026-01-01T00:00:00Z","id":"reasoning-delta-2","parentId":"turn-start-1","data":{"deltaContent":"trace","reasoningId":"reasoning-1"},"ephemeral":true}
+{"type":"assistant.tool_call_delta","timestamp":"2026-01-01T00:00:00Z","id":"tool-delta-1","parentId":"turn-start-1","data":{"toolCallId":"tool-1","inputDelta":"{}"},"ephemeral":true}
+{"type":"assistant.message","timestamp":"2026-01-01T00:00:00Z","id":"assistant-message-1","parentId":"turn-start-1","data":{"content":"Synthetic intermediate message.","messageId":"message-1","turnId":"turn-1","interactionId":"interaction-1","toolRequests":[{"toolCallId":"tool-1","name":"view","type":"function","arguments":{}}]}}
+{"type":"assistant.reasoning","timestamp":"2026-01-01T00:00:00Z","id":"reasoning-summary-1","parentId":"assistant-message-1","data":{"content":"Synthetic reasoning summary.","reasoningId":"reasoning-1","rte":true},"ephemeral":true}
+{"type":"tool.execution_start","timestamp":"2026-01-01T00:00:00Z","id":"tool-start-1","parentId":"assistant-message-1","data":{"arguments":{},"model":"synthetic-model","rte":false,"shellToolInfo":{},"toolCallId":"tool-1","toolName":"view","turnId":"turn-1"}}
+{"type":"tool.execution_partial_result","timestamp":"2026-01-01T00:00:00Z","id":"tool-partial-1","parentId":"tool-start-1","data":{"toolCallId":"tool-1","partialOutput":"synthetic"},"ephemeral":true}
+{"type":"tool.execution_complete","timestamp":"2026-01-01T00:00:00Z","id":"tool-complete-1","parentId":"tool-start-1","data":{"interactionId":"interaction-1","model":"synthetic-model","result":{"content":"synthetic result"},"rte":false,"success":true,"toolCallId":"tool-1","toolTelemetry":{},"turnId":"turn-1"}}
+{"type":"assistant.turn_end","timestamp":"2026-01-01T00:00:00Z","id":"turn-end-1","parentId":"tool-complete-1","data":{"turnId":"turn-1"}}
+{"type":"assistant.turn_start","timestamp":"2026-01-01T00:00:00Z","id":"turn-start-2","parentId":"turn-end-1","data":{"turnId":"turn-2","interactionId":"interaction-2"}}
+{"type":"model.call_start","timestamp":"2026-01-01T00:00:00Z","id":"model-call-2","parentId":"turn-start-2","data":{"model":"synthetic-model","turnId":"turn-2"},"ephemeral":true}
+{"type":"assistant.message_start","timestamp":"2026-01-01T00:00:00Z","id":"message-start-2","parentId":"turn-start-2","data":{"messageId":"message-2"},"ephemeral":true}
+{"type":"assistant.message_delta","timestamp":"2026-01-01T00:00:00Z","id":"message-delta-2","parentId":"turn-start-2","data":{"messageId":"message-2","deltaContent":"synthetic candidate"},"ephemeral":true}
+{"type":"assistant.message","timestamp":"2026-01-01T00:00:00Z","id":"assistant-message-2","parentId":"turn-start-2","data":{"content":"{\"format\":\"chess-echo-orchestrator-agent-candidate-v1\",\"kind\":\"plan\",\"plan\":\"Synthetic.\\n\",\"units\":[{\"id\":\"synthetic\",\"title\":\"Synthetic\",\"start_line\":1,\"end_line\":1,\"review_class\":\"ordinary\",\"dependencies\":[]}],\"revision\":null}","messageId":"message-2","turnId":"turn-2","interactionId":"interaction-2","toolRequests":[]}}
+{"type":"assistant.turn_end","timestamp":"2026-01-01T00:00:00Z","id":"turn-end-2","parentId":"assistant-message-2","data":{"turnId":"turn-2"}}
+{"type":"session.usage_checkpoint","timestamp":"2026-01-01T00:00:00Z","id":"usage-checkpoint","parentId":"turn-end-2","data":{}}
+{"type":"assistant.idle","timestamp":"2026-01-01T00:00:00Z","id":"assistant-idle","parentId":"usage-checkpoint","data":{},"ephemeral":true}
+{"type":"result","timestamp":"2026-01-01T00:00:01Z","sessionId":"synthetic-session","exitCode":0,"usage":{"premiumRequests":1,"totalApiDurationMs":1,"sessionDurationMs":2,"codeChanges":{"filesModified":[],"linesAdded":0,"linesRemoved":0}}}

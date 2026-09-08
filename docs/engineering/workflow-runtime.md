@@ -24,7 +24,8 @@ format `chess-echo-orchestrator-config-v1`. It declares:
 - `mode`, activated for the reviewed trusted-local host;
 - sorted unique `frozen_issues`;
 - exactly `implementer`, `planner`, and `reviewer` rows in lexical order;
-- each role's fixed command prefix, repository-relative cwd, #131 limits,
+- each role's fixed command prefix, repository-relative cwd, #131 stdout and
+  optional independent stderr limits,
   execution-boundary kind, and exact provider/version/source and agent
   executable hashes;
 - exact `git` and `gh` command names and limits;
@@ -168,6 +169,8 @@ Execution and security-sensitive read results are checked against the exact
 command hash, configured limits, containment shape, outcome/reason pairing, and
 stream schema before their state can authorize a decision. Only a complete
 canonical `cancelled-before-start` result proves that a write did not begin.
+Process-result v2 records the stdout and stderr limits independently; callers
+that omit the additive stderr field retain equal per-stream behavior.
 
 The optional caller-owned `cancel_event` is passed to #131 unchanged while
 preflight remains eligible. If it is already set or becomes set during a
@@ -344,6 +347,17 @@ Before execution, runtime also rejects any repository-observation/output budget
 whose worst-case encoded result would exceed that limit. If an unexpectedly
 larger post-observation would still overflow, runtime returns a failed result
 without a success-shaped repository observation.
+
+Trusted-local execution fixes raw JSONL/stdout at 851,968 bytes, extracted
+candidate output at 458,752 bytes, and stderr at 65,536 bytes. The runtime
+charges their exact Base64 maxima independently: 1,135,960 + 611,672 + 87,384 =
+1,835,016 bytes, identical to the earlier three-output persistence charge.
+Together with the unchanged 131,074-byte prompt reservation and 65,536-byte
+fixed headroom, this continues to admit a maximum 65,526-byte canonical
+repository-before observation under the unchanged 2 MiB result envelope.
+Repository-after remains an indivisible post-execution fact: if it makes the
+finished record too large, canonicalization rejects the whole result rather
+than dropping or truncating evidence.
 
 ## GitHub write uncertainty
 
