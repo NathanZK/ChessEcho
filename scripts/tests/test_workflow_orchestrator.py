@@ -571,6 +571,191 @@ class OrchestratorLifecycleTest(unittest.TestCase):
             )
         self.assertEqual("supervision-change-phase", raised.exception.code)
 
+    def test_multi_entry_execution_evidence_stays_readable_across_phases(self):
+        payload = b'{"type":"user.message"}\n{"type":"result"}\n'
+        attachment = {
+            "path": "workflow-orchestration/copilot-transport.jsonl",
+            "sha256": inspector.sha256(payload),
+            "size": len(payload),
+            "bytes": payload,
+        }
+        original = runtime.Runtime.execute_bundle
+
+        def with_attachment(adapter, *args, **kwargs):
+            bundle = original(adapter, *args, **kwargs)
+            if bundle.document.get("sandbox") is None:
+                return bundle
+            return runtime.ExecutionBundle(bundle.document, (dict(attachment),))
+
+        with mock.patch.object(
+            runtime.Runtime, "execute_bundle", new=with_attachment
+        ):
+            self._agent_pair()
+            self.assertEqual("PLAN_REVIEW", self.fixture.state()["phase"])
+            self._agent_pair()
+
+        binding = next(
+            row["binding"]
+            for row in self.fixture.state()["candidates"]
+            if row["slot"] == "execution-result"
+        )
+        projection = evidence.project(self.fixture.root, binding)
+        self.assertEqual(
+            sorted([attachment["path"], orchestrator.RESULT_PATH]),
+            sorted(entry["path"] for entry in projection["entries"]),
+        )
+        self.assertEqual(
+            "WAITING_FOR_PLAN_APPROVAL", self.fixture.state()["phase"]
+        )
+
+    def _sidecar_publication(self, payload, path="workflow-orchestration/copilot-transport.jsonl"):
+        instance = orchestrator.Orchestrator(self.fixture.root, ISSUE)
+        inspection = instance._status()
+        state = instance._selected_state(inspection)
+        document = {"format": "chess-echo-sidecar-probe-v1", "issue": ISSUE}
+        attachment = {
+            "path": path,
+            "sha256": inspector.sha256(payload),
+            "size": len(payload),
+            "bytes": payload,
+        }
+        binding = instance._publish(
+            "execution-result",
+            "attempt-%s" % ("a" * 64),
+            inspection["authority"],
+            [(orchestrator.RESULT_PATH, document)],
+            state["generation"] + 1,
+            attachments=[attachment],
+        )
+        return instance, binding, attachment
+
+    def test_execution_evidence_publishes_the_document_and_sidecar_in_one_manifest(self):
+        payload = b'{"type":"user.message"}\n{"type":"result"}\n'
+        _instance, binding, attachment = self._sidecar_publication(payload)
+        projection = evidence.project(self.fixture.root, binding)
+        paths = sorted(entry["path"] for entry in projection["entries"])
+        reader = inspector.AuthorityReader(self.fixture.store, ISSUE)
+        entry = next(
+            item
+            for item in projection["entries"]
+            if item["path"] == attachment["path"]
+        )
+
+        self.assertEqual(
+            [attachment["path"], orchestrator.RESULT_PATH], paths
+        )
+        self.assertEqual(payload, reader.read_bytes(entry["payload"], "evidence-payload"))
+        self.assertEqual(attachment["sha256"], entry["content_sha256"])
+        self.assertEqual(len(payload), entry["size"])
+        self.assertEqual(
+            {"kind": "evidence-payload", "sha256": attachment["sha256"], "size": len(payload)},
+            entry["payload"],
+        )
+        runtime.verify_result_attachments(
+            projection,
+            {
+                "sandbox": {
+                    "transport_reference": {
+                        "path": attachment["path"],
+                        "sha256": attachment["sha256"],
+                        "size": len(payload),
+                    }
+                }
+            },
+        )
+
+    def test_transport_reference_must_resolve_within_its_own_manifest(self):
+        payload = b'{"type":"result"}\n'
+        _instance, binding, attachment = self._sidecar_publication(payload)
+        projection = evidence.project(self.fixture.root, binding)
+        mutations = {
+            "path": {"path": "workflow-orchestration/other.jsonl"},
+            "sha256": {"sha256": "0" * 64},
+            "size": {"size": len(payload) + 1},
+        }
+        for name, change in mutations.items():
+            with self.subTest(name=name):
+                reference = {
+                    "path": attachment["path"],
+                    "sha256": attachment["sha256"],
+                    "size": len(payload),
+                }
+                reference.update(change)
+                with self.assertRaises(runtime.RuntimeFailure) as raised:
+                    runtime.verify_result_attachments(
+                        projection, {"sandbox": {"transport_reference": reference}}
+                    )
+                self.assertEqual("transport-evidence-unbound", raised.exception.code)
+
+    def test_publication_rejects_unbound_and_oversized_evidence_attachments(self):
+        instance = orchestrator.Orchestrator(self.fixture.root, ISSUE)
+        inspection = instance._status()
+        state = instance._selected_state(inspection)
+        payload = b"raw\n"
+        cases = {
+            "digest": (
+                {"path": "workflow-orchestration/t.jsonl", "sha256": "0" * 64, "size": len(payload), "bytes": payload},
+                "invalid-evidence-attachment",
+            ),
+            "size": (
+                {"path": "workflow-orchestration/t.jsonl", "sha256": inspector.sha256(payload), "size": len(payload) + 1, "bytes": payload},
+                "invalid-evidence-attachment",
+            ),
+            "duplicate-path": (
+                {"path": orchestrator.RESULT_PATH, "sha256": inspector.sha256(payload), "size": len(payload), "bytes": payload},
+                "invalid-evidence-attachment",
+            ),
+            "too-large": (
+                {
+                    "path": "workflow-orchestration/t.jsonl",
+                    "sha256": inspector.sha256(b"x" * (orchestrator.ATTACHMENT_LIMIT + 1)),
+                    "size": orchestrator.ATTACHMENT_LIMIT + 1,
+                    "bytes": b"x" * (orchestrator.ATTACHMENT_LIMIT + 1),
+                },
+                "attachment-too-large",
+            ),
+        }
+        for name, (attachment, code) in cases.items():
+            with self.subTest(name=name):
+                with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+                    instance._publish(
+                        "execution-result",
+                        "attempt-%s" % ("b" * 64),
+                        inspection["authority"],
+                        [(orchestrator.RESULT_PATH, {"format": "x", "issue": ISSUE})],
+                        state["generation"] + 1,
+                        attachments=[attachment],
+                    )
+                self.assertEqual(code, raised.exception.code)
+
+    def test_unwritable_store_publishes_no_sidecar_binding(self):
+        instance = orchestrator.Orchestrator(self.fixture.root, ISSUE)
+        inspection = instance._status()
+        state = instance._selected_state(inspection)
+        payload = b"raw transport\n"
+        attachment = {
+            "path": "workflow-orchestration/copilot-transport.jsonl",
+            "sha256": inspector.sha256(payload),
+            "size": len(payload),
+            "bytes": payload,
+        }
+        pointer = orchestrator.status(self.fixture.root, ISSUE)["pointer_sha256"]
+        with mock.patch.object(
+            orchestrator.evidence, "publish", side_effect=OSError("store is unwritable")
+        ):
+            with self.assertRaises(Exception):
+                instance._publish(
+                    "execution-result",
+                    "attempt-%s" % ("c" * 64),
+                    inspection["authority"],
+                    [(orchestrator.RESULT_PATH, {"format": "x", "issue": ISSUE})],
+                    state["generation"] + 1,
+                    attachments=[attachment],
+                )
+        self.assertEqual(
+            pointer, orchestrator.status(self.fixture.root, ISSUE)["pointer_sha256"]
+        )
+
     def test_forged_publication_phase_policy_change_cannot_be_consumed_or_replayed(self):
         self._to_pr_preparation()
         instance = orchestrator.Orchestrator(self.fixture.root, ISSUE)
@@ -1185,7 +1370,7 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         )
         instance._commit(successor)
 
-        with mock.patch.object(runtime.Runtime, "execute") as execute:
+        with mock.patch.object(runtime.Runtime, "execute_bundle") as execute:
             with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
                 self.fixture.step()
         self.assertEqual("gate-transition-unselected", raised.exception.code)
@@ -1262,7 +1447,7 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         )
         instance._commit(successor)
 
-        with mock.patch.object(runtime.Runtime, "execute") as execute:
+        with mock.patch.object(runtime.Runtime, "execute_bundle") as execute:
             with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
                 self.fixture.step()
         self.assertEqual("recovery-transition-unselected", raised.exception.code)
@@ -1369,13 +1554,13 @@ class OrchestratorLifecycleTest(unittest.TestCase):
     def test_validation_runs_each_check_in_a_separate_step_and_failure_pauses(self):
         self._to_validation()
         calls = []
-        original = runtime.Runtime.execute
+        original = runtime.Runtime.execute_bundle
 
         def counted(adapter, *args, **kwargs):
             calls.append(args[0]["operation"]["kind"])
             return original(adapter, *args, **kwargs)
 
-        with mock.patch.object(runtime.Runtime, "execute", new=counted):
+        with mock.patch.object(runtime.Runtime, "execute_bundle", new=counted):
             self._agent_pair()
             self.fixture.validation_fails()
             failed = self._agent_pair()
@@ -1622,7 +1807,7 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         self.assertEqual("attempt-in-flight", raised.exception.code)
 
     def test_current_tip_without_exact_handoff_cannot_duplicate_execution(self):
-        with mock.patch.object(runtime.Runtime, "execute", wraps=self.adapter.execute) as execute:
+        with mock.patch.object(runtime.Runtime, "execute_bundle", wraps=self.adapter.execute_bundle) as execute:
             candidate = self.fixture.step()
             with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
                 self.fixture.step()
@@ -1804,7 +1989,7 @@ class OrchestratorLifecycleTest(unittest.TestCase):
             return result
 
         with mock.patch.object(authority, "commit", side_effect=lose), \
-             mock.patch.object(runtime.Runtime, "execute", wraps=self.adapter.execute) as execute:
+             mock.patch.object(runtime.Runtime, "execute_bundle", wraps=self.adapter.execute_bundle) as execute:
             with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
                 self.fixture.step()
         self.assertEqual(("busy", "attempt-in-flight"), (raised.exception.status, raised.exception.code))

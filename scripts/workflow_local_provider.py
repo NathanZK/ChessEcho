@@ -28,7 +28,7 @@ except ImportError:  # pragma: no cover - direct script loading
 
 
 NAME = "chess-echo-trusted-local"
-VERSION = "1.4.1"
+VERSION = "1.5.0"
 RESULT_FORMAT = "chess-echo-trusted-local-execution-result-v1"
 PROCESS_DIAGNOSTIC_FORMAT = "chess-echo-trusted-local-process-diagnostic-v1"
 DISCOVERY_FORMAT = "chess-echo-pending-result-candidates-v1"
@@ -47,10 +47,19 @@ AUDIT_LIMITS = {
     "output_limit_bytes": 1024 * 1024,
 }
 PROMPT_LIMIT_BYTES = 64 * 1024
-JSONL_MAX_BYTES = 832 * 1024
-JSONL_MAX_EVENTS = 8192
-JSONL_MAX_EVENT_BYTES = JSONL_MAX_BYTES
+# Bounded transport resources, each justified independently of the others.
+# JSONL_MAX_EVENT_BYTES bounds the pending physical line held while framing.
+# JSONL_MAX_EVENTS bounds the decoder identity sets: worst case about two
+# entries per event, so 32768 events is roughly 8 MiB of retained identities.
+# TRANSPORT_MAX_BYTES bounds the exact raw transport retained for evidence. It
+# matches the reviewed 8 MiB ceiling any supervised stream limit may declare and
+# stays far below the 64 MiB evidence payload limit. At the observed average of
+# about 545 bytes per event it carries roughly 15000 events.
+JSONL_MAX_EVENT_BYTES = 832 * 1024
+JSONL_MAX_EVENTS = 32_768
+TRANSPORT_MAX_BYTES = 8 * 1024 * 1024
 CANDIDATE_MAX_BYTES = 448 * 1024
+TRANSPORT_ATTACHMENT_PATH = "workflow-orchestration/copilot-transport.jsonl"
 JSONL_STARTUP_TYPES = (
     "session.mcp_servers_loaded",
     "session.skills_loaded",
@@ -137,6 +146,9 @@ def source_identity():
     return _file_identity(pathlib.Path(__file__).absolute(), "local-provider-source")
 
 
+STREAM_RECORD_KEYS = {"bytes", "base64", "observed_bytes", "observed_sha256"}
+
+
 def _process_output(result, label):
     if (
         not isinstance(result, dict)
@@ -151,7 +163,7 @@ def _process_output(result, label):
         data = base64.b64decode(record["base64"], validate=True)
     except (KeyError, TypeError, ValueError, binascii.Error):
         _fail("corrupt", "%s-output" % label, "%s output is malformed" % label)
-    if set(record) != {"bytes", "base64"} or record["bytes"] != len(data):
+    if set(record) != STREAM_RECORD_KEYS or record["bytes"] != len(data):
         _fail("corrupt", "%s-output" % label, "%s output identity is malformed" % label)
     return data
 
@@ -261,36 +273,26 @@ def _candidate_like(content):
     return isinstance(value, dict) and value.get("format") == "chess-echo-orchestrator-agent-candidate-v1"
 
 
-def _parse_jsonl(data):
-    if not isinstance(data, bytes) or not data or len(data) > JSONL_MAX_BYTES:
-        _fail("corrupt", "local-agent-jsonl-invalid", "Copilot JSONL has an invalid total byte size")
-    if not data.endswith(b"\n"):
-        _fail("corrupt", "local-agent-jsonl-truncated", "Copilot JSONL must end with LF")
+def _decode_jsonl_line(encoded):
+    if not encoded or len(encoded) + 1 > JSONL_MAX_EVENT_BYTES:
+        _fail("corrupt", "local-agent-jsonl-invalid", "Copilot JSONL contains an invalid physical line")
+    if encoded.endswith(b"\r"):
+        _fail("corrupt", "local-agent-jsonl-invalid", "Copilot JSONL framing must use LF")
     try:
-        data.decode("utf-8")
+        text = encoded.decode("utf-8")
     except UnicodeDecodeError as error:
         _fail("corrupt", "local-agent-jsonl-invalid", "Copilot JSONL is not valid UTF-8: %s" % error)
-    lines = data[:-1].split(b"\n")
-    if not lines or len(lines) > JSONL_MAX_EVENTS:
-        _fail("corrupt", "local-agent-jsonl-invalid", "Copilot JSONL has an invalid event count")
-    events = []
-    for encoded in lines:
-        if not encoded or len(encoded) + 1 > JSONL_MAX_EVENT_BYTES:
-            _fail("corrupt", "local-agent-jsonl-invalid", "Copilot JSONL contains an invalid physical line")
-        if encoded.endswith(b"\r"):
-            _fail("corrupt", "local-agent-jsonl-invalid", "Copilot JSONL framing must use LF")
-        try:
-            event = json.loads(
-                encoded.decode("utf-8"),
-                object_pairs_hook=_duplicate_rejector,
-                parse_constant=_json_constant,
-            )
-        except (json.JSONDecodeError, RecursionError) as error:
-            _fail("corrupt", "local-agent-jsonl-invalid", "Copilot JSONL is malformed: %s" % error)
-        if not isinstance(event, dict):
-            _fail("corrupt", "local-agent-jsonl-invalid", "Each Copilot JSONL line must be one object")
-        events.append(event)
-    return events
+    try:
+        event = json.loads(
+            text,
+            object_pairs_hook=_duplicate_rejector,
+            parse_constant=_json_constant,
+        )
+    except (json.JSONDecodeError, RecursionError) as error:
+        _fail("corrupt", "local-agent-jsonl-invalid", "Copilot JSONL is malformed: %s" % error)
+    if not isinstance(event, dict):
+        _fail("corrupt", "local-agent-jsonl-invalid", "Each Copilot JSONL line must be one object")
+    return event
 
 
 def _validate_result_event(event):
@@ -330,36 +332,69 @@ def _validate_result_event(event):
         _fail("corrupt", "local-agent-result-invalid", "Copilot terminal modified files are invalid")
 
 
-def _extract_candidate_from_jsonl(raw):
-    events = _parse_jsonl(raw)
-    startup_index = 0
-    startup_parents = set()
-    seen_ids, seen_turns, seen_messages = set(), set(), set()
-    active_turn = active_turn_start = active_interaction = user_interaction = None
-    active_turn_had_tools = False
-    model_call_seen = False
-    last_persisted = None
-    user_seen = False
-    tool_deltas, requested_tools, started_tools, completed_tools = set(), set(), set(), set()
-    streamed_messages = set()
-    reasoning_groups, summarized_reasoning = {}, set()
-    turn_reasoning_id = pending_reasoning_summary = None
-    candidate = None
-    final_ended = idle_seen = result_seen = False
+class _JsonlCandidateDecoder:
+    """Strict incremental decoder for one Copilot JSONL stdout stream.
 
-    for index, event in enumerate(events):
+    Events are validated one physical line at a time, in arrival order, with
+    exactly the relationships, boundaries and failure codes the whole-buffer
+    decoder enforced. Only the terminal candidate boundary produces a
+    candidate; nothing is reconstructed from deltas or trailing objects.
+    """
+
+    def __init__(self):
+        self.pending = b""
+        self.events = 0
+        self.previous_type = None
+        self.startup_index = 0
+        self.startup_parents = set()
+        self.seen_ids, self.seen_turns, self.seen_messages = set(), set(), set()
+        self.active_turn = self.active_turn_start = self.active_interaction = self.user_interaction = None
+        self.active_turn_had_tools = False
+        self.model_call_seen = False
+        self.last_persisted = None
+        self.user_seen = False
+        self.tool_deltas, self.requested_tools, self.started_tools, self.completed_tools = set(), set(), set(), set()
+        self.streamed_messages = set()
+        self.reasoning_groups, self.summarized_reasoning = {}, set()
+        self.turn_reasoning_id = self.pending_reasoning_summary = None
+        self.candidate = None
+        self.final_ended = self.idle_seen = self.result_seen = False
+
+    def feed(self, chunk):
+        data = self.pending + chunk
+        start = 0
+        while True:
+            index = data.find(b"\n", start)
+            if index < 0:
+                break
+            self._line(data[start:index])
+            start = index + 1
+        self.pending = data[start:]
+        if len(self.pending) + 1 > JSONL_MAX_EVENT_BYTES:
+            _fail("corrupt", "local-agent-jsonl-invalid", "Copilot JSONL contains an invalid physical line")
+
+    def _line(self, encoded):
+        self.events += 1
+        if self.events > JSONL_MAX_EVENTS:
+            _fail("corrupt", "local-agent-jsonl-invalid", "Copilot JSONL has an invalid event count")
+        event = _decode_jsonl_line(encoded)
+        self._event(event)
+        self.previous_type = event.get("type")
+
+    def _event(self, event):
+        if self.result_seen:
+            _fail("corrupt", "local-agent-jsonl-sequence", "Copilot result must be the final record after assistant.idle")
         event_type = event.get("type")
         if event_type == "result":
-            if index != len(events) - 1 or not idle_seen or result_seen:
+            if not self.idle_seen:
                 _fail("corrupt", "local-agent-jsonl-sequence", "Copilot result must be the final record after assistant.idle")
             _validate_result_event(event)
-            result_seen = True
-            continue
+            self.result_seen = True
+            return
         if event_type not in JSONL_EVENT_TYPES:
             _fail("unsupported", "local-agent-jsonl-event", "Copilot JSONL contains an unreviewed event type")
-        previous = events[index - 1] if index else None
-        previous_type = previous.get("type") if isinstance(previous, dict) else None
-        if pending_reasoning_summary is not None and event_type != "assistant.reasoning":
+        previous_type = self.previous_type
+        if self.pending_reasoning_summary is not None and event_type != "assistant.reasoning":
             _fail("corrupt", "local-agent-jsonl-sequence", "Copilot reasoning summary is missing after its tool request")
         if previous_type == "assistant.reasoning" and event_type != "tool.execution_start":
             _fail("corrupt", "local-agent-jsonl-sequence", "Copilot reasoning summary is not followed by tool execution")
@@ -375,7 +410,7 @@ def _extract_candidate_from_jsonl(raw):
             _fail("unsupported", "local-agent-jsonl-event", "Copilot subagent events are outside the reviewed transport")
         event_id = _event_text(event["id"], "event id")
         _event_text(event["timestamp"], "event timestamp")
-        if event_id in seen_ids:
+        if event_id in self.seen_ids:
             _fail("ambiguous", "local-agent-jsonl-duplicate-id", "Copilot JSONL repeats an event id")
         parent_id = event["parentId"]
         if parent_id is not None and (not isinstance(parent_id, str) or parent_id == event_id):
@@ -391,39 +426,39 @@ def _extract_candidate_from_jsonl(raw):
         ):
             _fail("corrupt", "local-agent-jsonl-invalid", "Copilot event persistence shape is invalid")
         data = _event_data(event)
-        if candidate is not None and not final_ended and event_type != "assistant.turn_end":
+        if self.candidate is not None and not self.final_ended and event_type != "assistant.turn_end":
             _fail("corrupt", "local-agent-jsonl-sequence", "Copilot record appeared between the final message and turn end")
-        if final_ended and not idle_seen and event_type not in {
+        if self.final_ended and not self.idle_seen and event_type not in {
             "session.usage_checkpoint",
             "session.background_tasks_changed",
             "assistant.idle",
         }:
             _fail("corrupt", "local-agent-jsonl-sequence", "Copilot record appeared outside the final completion boundary")
-        if idle_seen and event_type != "session.background_tasks_changed":
+        if self.idle_seen and event_type != "session.background_tasks_changed":
             _fail("corrupt", "local-agent-jsonl-sequence", "Copilot record appeared after assistant.idle")
 
-        if not user_seen:
+        if not self.user_seen:
             if event_type in JSONL_STARTUP_TYPES:
                 position = JSONL_STARTUP_TYPES.index(event_type)
-                if position < startup_index:
+                if position < self.startup_index:
                     _fail("corrupt", "local-agent-jsonl-sequence", "Copilot startup records are duplicated or reordered")
-                startup_index = position + 1
+                self.startup_index = position + 1
             elif event_type == "user.message":
-                user_seen = True
+                self.user_seen = True
             else:
                 _fail("corrupt", "local-agent-jsonl-sequence", "Copilot JSONL is missing the root user message")
         elif event_type in JSONL_STARTUP_TYPES:
             _fail("corrupt", "local-agent-jsonl-sequence", "Copilot startup record appeared after the user message")
         elif event_type == "user.message":
             _fail("ambiguous", "local-agent-jsonl-sequence", "Copilot JSONL contains multiple user messages")
-        elif parent_id not in seen_ids:
+        elif parent_id not in self.seen_ids:
             _fail("corrupt", "local-agent-jsonl-parent", "Copilot event parentId does not resolve within the observed turn")
-        if user_seen and not ephemeral and event_type != "user.message":
-            if parent_id != last_persisted:
+        if self.user_seen and not ephemeral and event_type != "user.message":
+            if parent_id != self.last_persisted:
                 _fail("corrupt", "local-agent-jsonl-parent", "Copilot persisted event chain is broken")
         if not ephemeral:
-            last_persisted = event_id
-        seen_ids.add(event_id)
+            self.last_persisted = event_id
+        self.seen_ids.add(event_id)
 
         if event_type in JSONL_STARTUP_TYPES or event_type == "user.message":
             if event_type in JSONL_STARTUP_TYPES:
@@ -438,94 +473,94 @@ def _extract_candidate_from_jsonl(raw):
                 elif not isinstance(data[field], list):
                     _fail("corrupt", "local-agent-jsonl-invalid", "Copilot startup payload is malformed")
                 startup_parent = _event_text(parent_id, "startup parentId")
-                if startup_parent in startup_parents or startup_parent in seen_ids:
+                if startup_parent in self.startup_parents or startup_parent in self.seen_ids:
                     _fail("corrupt", "local-agent-jsonl-parent", "Copilot startup parentId must be distinct and unresolved")
-                startup_parents.add(startup_parent)
+                self.startup_parents.add(startup_parent)
             else:
-                user_interaction = _event_text(data.get("interactionId"), "interactionId")
-            continue
+                self.user_interaction = _event_text(data.get("interactionId"), "interactionId")
+            return
         if event_type == "assistant.turn_start":
-            if final_ended or idle_seen or active_turn is not None:
+            if self.final_ended or self.idle_seen or self.active_turn is not None:
                 _fail("corrupt", "local-agent-jsonl-sequence", "Copilot assistant turn starts at an invalid boundary")
-            active_turn = _event_text(data.get("turnId"), "turnId")
-            if active_turn in seen_turns:
+            self.active_turn = _event_text(data.get("turnId"), "turnId")
+            if self.active_turn in self.seen_turns:
                 _fail("ambiguous", "local-agent-jsonl-duplicate-id", "Copilot JSONL repeats a turn id")
-            active_interaction = _event_text(data.get("interactionId"), "interactionId")
-            if not seen_turns and active_interaction != user_interaction:
+            self.active_interaction = _event_text(data.get("interactionId"), "interactionId")
+            if not self.seen_turns and self.active_interaction != self.user_interaction:
                 _fail("corrupt", "local-agent-jsonl-invalid", "Initial Copilot turn does not match the user interaction")
-            seen_turns.add(active_turn)
-            active_turn_start = event_id
-            tool_deltas = set()
-            active_turn_had_tools = False
-            model_call_seen = False
-            turn_reasoning_id = None
-            continue
+            self.seen_turns.add(self.active_turn)
+            self.active_turn_start = event_id
+            self.tool_deltas = set()
+            self.active_turn_had_tools = False
+            self.model_call_seen = False
+            self.turn_reasoning_id = None
+            return
         if event_type == "model.call_start":
             if (
-                active_turn is None
-                or model_call_seen
+                self.active_turn is None
+                or self.model_call_seen
                 or previous_type != "assistant.turn_start"
-                or parent_id != active_turn_start
+                or parent_id != self.active_turn_start
             ):
                 _fail("corrupt", "local-agent-jsonl-sequence", "Copilot model call is outside an assistant turn")
             _event_data_keys(data, {"model", "turnId"}, "model call")
             _event_text(data.get("model"), "model")
-            _event_field_matches(data, "turnId", active_turn, required=True)
-            model_call_seen = True
-            continue
+            _event_field_matches(data, "turnId", self.active_turn, required=True)
+            self.model_call_seen = True
+            return
         if event_type == "assistant.reasoning_delta":
             _event_data_keys(data, {"deltaContent", "reasoningId"}, "reasoning delta")
             if not isinstance(data.get("deltaContent"), str):
                 _fail("corrupt", "local-agent-jsonl-invalid", "Copilot reasoning delta content is malformed")
             reasoning_id = _event_text(data.get("reasoningId"), "reasoningId")
-            if active_turn is None or parent_id != active_turn_start:
+            if self.active_turn is None or parent_id != self.active_turn_start:
                 _fail("corrupt", "local-agent-jsonl-parent", "Copilot reasoning delta does not match its active turn")
             if previous_type == "model.call_start":
-                if turn_reasoning_id is not None or reasoning_id in reasoning_groups:
+                if self.turn_reasoning_id is not None or reasoning_id in self.reasoning_groups:
                     _fail("ambiguous", "local-agent-jsonl-duplicate-id", "Copilot JSONL repeats a reasoning id")
-                reasoning_groups[reasoning_id] = active_turn_start
-                turn_reasoning_id = reasoning_id
-            elif previous_type != "assistant.reasoning_delta" or reasoning_id != turn_reasoning_id:
+                self.reasoning_groups[reasoning_id] = self.active_turn_start
+                self.turn_reasoning_id = reasoning_id
+            elif previous_type != "assistant.reasoning_delta" or reasoning_id != self.turn_reasoning_id:
                 _fail("corrupt", "local-agent-jsonl-sequence", "Copilot reasoning delta group is malformed")
-            continue
+            return
         if event_type == "assistant.tool_call_delta":
-            if active_turn is None or final_ended:
+            if self.active_turn is None or self.final_ended:
                 _fail("corrupt", "local-agent-jsonl-sequence", "Copilot tool delta is outside an active turn")
-            tool_deltas.add(_event_text(data.get("toolCallId"), "toolCallId"))
-            continue
+            self.tool_deltas.add(_event_text(data.get("toolCallId"), "toolCallId"))
+            return
         if event_type == "assistant.message_start":
-            if active_turn is None or final_ended or event.get("ephemeral") is not True:
+            if self.active_turn is None or self.final_ended or event.get("ephemeral") is not True:
                 _fail("corrupt", "local-agent-jsonl-sequence", "Copilot message start is outside the final active turn")
             message_id = _event_text(data.get("messageId"), "messageId")
-            if message_id in streamed_messages:
+            if message_id in self.streamed_messages:
                 _fail("ambiguous", "local-agent-jsonl-duplicate-id", "Copilot JSONL repeats a streamed message id")
-            streamed_messages.add(message_id)
-            continue
+            self.streamed_messages.add(message_id)
+            return
         if event_type == "assistant.message_delta":
-            if active_turn is None or event.get("ephemeral") is not True:
+            if self.active_turn is None or event.get("ephemeral") is not True:
                 _fail("corrupt", "local-agent-jsonl-sequence", "Copilot message delta is outside an active turn")
-            if _event_text(data.get("messageId"), "messageId") not in streamed_messages:
+            if _event_text(data.get("messageId"), "messageId") not in self.streamed_messages:
                 _fail("corrupt", "local-agent-jsonl-parent", "Copilot message delta has no matching message start")
-            continue
+            return
         if event_type == "assistant.message":
-            if active_turn is None or final_ended:
+            if self.active_turn is None or self.final_ended:
                 _fail("corrupt", "local-agent-jsonl-sequence", "Copilot assistant message is outside an active turn")
             message_id = _event_text(data.get("messageId"), "messageId")
-            if message_id in seen_messages:
+            if message_id in self.seen_messages:
                 _fail("ambiguous", "local-agent-jsonl-duplicate-id", "Copilot JSONL repeats a message id")
-            seen_messages.add(message_id)
+            self.seen_messages.add(message_id)
             _event_data_keys(
                 data,
                 {"content", "messageId", "turnId", "interactionId", "toolRequests"},
                 "assistant message",
             )
-            _event_field_matches(data, "turnId", active_turn, required=True)
-            _event_field_matches(data, "interactionId", active_interaction, required=True)
+            _event_field_matches(data, "turnId", self.active_turn, required=True)
+            _event_field_matches(data, "interactionId", self.active_interaction, required=True)
             content, requests = data.get("content"), data.get("toolRequests")
             if not isinstance(content, str) or not isinstance(requests, list):
                 _fail("corrupt", "local-agent-jsonl-invalid", "Copilot assistant message payload is malformed")
             if requests:
-                if candidate is not None or _candidate_like(content):
+                if self.candidate is not None or _candidate_like(content):
                     _fail("ambiguous", "local-agent-jsonl-candidate", "Candidate content appeared in a nonfinal assistant message")
                 for request in requests:
                     if not isinstance(request, dict) or set(request) != {
@@ -539,32 +574,32 @@ def _extract_candidate_from_jsonl(raw):
                     _event_text(request.get("name"), "tool name")
                     if request["type"] != "function":
                         _fail("unsupported", "local-agent-jsonl-tool", "Copilot tool request type is unreviewed")
-                    if tool_call_id in requested_tools:
+                    if tool_call_id in self.requested_tools:
                         _fail("ambiguous", "local-agent-jsonl-duplicate-id", "Copilot JSONL repeats a tool call id")
-                    requested_tools.add(tool_call_id)
-                active_turn_had_tools = True
-                if tool_deltas and tool_deltas != {item["toolCallId"] for item in requests}:
+                    self.requested_tools.add(tool_call_id)
+                self.active_turn_had_tools = True
+                if self.tool_deltas and self.tool_deltas != {item["toolCallId"] for item in requests}:
                     _fail("corrupt", "local-agent-jsonl-tool", "Copilot tool requests do not match streamed tool calls")
-                if turn_reasoning_id is not None:
-                    pending_reasoning_summary = (turn_reasoning_id, event_id)
+                if self.turn_reasoning_id is not None:
+                    self.pending_reasoning_summary = (self.turn_reasoning_id, event_id)
             elif content:
                 if (
-                    candidate is not None
-                    or active_turn_had_tools
-                    or tool_deltas
-                    or turn_reasoning_id is not None
-                    or requested_tools - completed_tools
+                    self.candidate is not None
+                    or self.active_turn_had_tools
+                    or self.tool_deltas
+                    or self.turn_reasoning_id is not None
+                    or self.requested_tools - self.completed_tools
                 ):
                     _fail("ambiguous", "local-agent-jsonl-candidate", "Copilot JSONL contains multiple or premature final candidates")
                 try:
-                    candidate = content.encode("utf-8")
+                    self.candidate = content.encode("utf-8")
                 except UnicodeEncodeError as error:
                     raise LocalProviderFailure(
                         "corrupt",
                         "local-agent-jsonl-invalid",
                         "Copilot final assistant content is not valid UTF-8",
                     ) from error
-                if len(candidate) > CANDIDATE_MAX_BYTES:
+                if len(self.candidate) > CANDIDATE_MAX_BYTES:
                     _fail(
                         "unsupported",
                         "local-agent-candidate-too-large",
@@ -572,11 +607,11 @@ def _extract_candidate_from_jsonl(raw):
                     )
             else:
                 _fail("corrupt", "local-agent-jsonl-candidate", "Copilot assistant message has neither tools nor candidate content")
-            continue
+            return
         if event_type == "assistant.reasoning":
             _event_data_keys(data, {"content", "reasoningId", "rte"}, "reasoning")
             reasoning_id = _event_text(data.get("reasoningId"), "reasoningId")
-            expected_reasoning = pending_reasoning_summary
+            expected_reasoning = self.pending_reasoning_summary
             if (
                 not isinstance(data.get("content"), str)
                 or data.get("rte") is not True
@@ -584,13 +619,13 @@ def _extract_candidate_from_jsonl(raw):
                 or previous_type != "assistant.message"
                 or parent_id != expected_reasoning[1]
                 or reasoning_id != expected_reasoning[0]
-                or reasoning_groups.get(reasoning_id) != active_turn_start
-                or reasoning_id in summarized_reasoning
+                or self.reasoning_groups.get(reasoning_id) != self.active_turn_start
+                or reasoning_id in self.summarized_reasoning
             ):
                 _fail("corrupt", "local-agent-jsonl-sequence", "Copilot reasoning summary is malformed or misplaced")
-            summarized_reasoning.add(reasoning_id)
-            pending_reasoning_summary = None
-            continue
+            self.summarized_reasoning.add(reasoning_id)
+            self.pending_reasoning_summary = None
+            return
         if event_type == "tool.execution_start":
             _event_data_keys(
                 data,
@@ -602,15 +637,15 @@ def _extract_candidate_from_jsonl(raw):
             _event_text(data.get("model"), "tool model")
             if type(data.get("rte")) is not bool or not isinstance(data.get("shellToolInfo"), dict):
                 _fail("corrupt", "local-agent-jsonl-invalid", "Copilot tool start metadata is malformed")
-            _event_field_matches(data, "turnId", active_turn, required=True)
-            if active_turn is None or tool_call_id not in requested_tools or tool_call_id in started_tools:
+            _event_field_matches(data, "turnId", self.active_turn, required=True)
+            if self.active_turn is None or tool_call_id not in self.requested_tools or tool_call_id in self.started_tools:
                 _fail("corrupt", "local-agent-jsonl-tool", "Copilot tool start does not match one pending request")
-            started_tools.add(tool_call_id)
-            continue
+            self.started_tools.add(tool_call_id)
+            return
         if event_type == "tool.execution_partial_result":
-            if _event_text(data.get("toolCallId"), "toolCallId") not in started_tools:
+            if _event_text(data.get("toolCallId"), "toolCallId") not in self.started_tools:
                 _fail("corrupt", "local-agent-jsonl-tool", "Copilot partial tool result has no matching start")
-            continue
+            return
         if event_type == "tool.execution_complete":
             _event_data_keys(
                 data,
@@ -634,52 +669,129 @@ def _extract_candidate_from_jsonl(raw):
                 or not isinstance(data.get("toolTelemetry"), dict)
             ):
                 _fail("corrupt", "local-agent-jsonl-invalid", "Copilot tool completion metadata is malformed")
-            _event_field_matches(data, "turnId", active_turn, required=True)
-            _event_field_matches(data, "interactionId", active_interaction, required=True)
+            _event_field_matches(data, "turnId", self.active_turn, required=True)
+            _event_field_matches(data, "interactionId", self.active_interaction, required=True)
             if (
-                active_turn is None
+                self.active_turn is None
                 or data.get("success") is not True
-                or tool_call_id not in started_tools
-                or tool_call_id in completed_tools
+                or tool_call_id not in self.started_tools
+                or tool_call_id in self.completed_tools
             ):
                 _fail("corrupt", "local-agent-jsonl-tool", "Copilot tool completion does not match one successful start")
-            completed_tools.add(tool_call_id)
-            continue
+            self.completed_tools.add(tool_call_id)
+            return
         if event_type == "assistant.turn_end":
             turn_id = _event_text(data.get("turnId"), "turnId")
-            if active_turn is None or turn_id != active_turn or started_tools - completed_tools:
+            if self.active_turn is None or turn_id != self.active_turn or self.started_tools - self.completed_tools:
                 _fail("corrupt", "local-agent-jsonl-turn", "Copilot turn end does not complete the active turn")
-            if candidate is not None:
-                final_ended = True
-            elif not active_turn_had_tools or requested_tools - completed_tools:
+            if self.candidate is not None:
+                self.final_ended = True
+            elif not self.active_turn_had_tools or self.requested_tools - self.completed_tools:
                 _fail("corrupt", "local-agent-jsonl-turn", "Copilot nonfinal turn has no completed tool request")
-            active_turn = active_turn_start = active_interaction = None
-            model_call_seen = False
-            turn_reasoning_id = None
-            continue
+            self.active_turn = self.active_turn_start = self.active_interaction = None
+            self.model_call_seen = False
+            self.turn_reasoning_id = None
+            return
         if event_type == "assistant.idle":
-            if not final_ended or idle_seen or event.get("ephemeral") is not True or data:
+            if not self.final_ended or self.idle_seen or event.get("ephemeral") is not True or data:
                 _fail("corrupt", "local-agent-jsonl-sequence", "Copilot assistant.idle is malformed or misplaced")
-            idle_seen = True
-            continue
+            self.idle_seen = True
+            return
         if event_type == "session.usage_checkpoint":
-            if not final_ended or idle_seen:
+            if not self.final_ended or self.idle_seen:
                 _fail("corrupt", "local-agent-jsonl-sequence", "Copilot usage checkpoint is outside the final boundary")
-            continue
+            return
         if event_type == "session.background_tasks_changed":
-            if active_turn is None and not final_ended:
+            if self.active_turn is None and not self.final_ended:
                 _fail("corrupt", "local-agent-jsonl-sequence", "Copilot background task event is outside an observed boundary")
-            continue
+            return
 
-    if not user_seen or active_turn is not None:
-        _fail("corrupt", "local-agent-jsonl-sequence", "Copilot JSONL ended before its event sequence completed")
-    if startup_parents & seen_ids:
-        _fail("corrupt", "local-agent-jsonl-parent", "Copilot startup parentId unexpectedly resolves within the emitted stream")
-    if requested_tools != started_tools or started_tools != completed_tools:
-        _fail("corrupt", "local-agent-jsonl-tool", "Copilot JSONL has unresolved tool calls")
-    if candidate is None or not final_ended or not idle_seen or not result_seen:
-        _fail("missing", "local-agent-jsonl-incomplete", "Copilot JSONL is missing its final candidate boundary")
-    return candidate
+
+    def finish(self):
+        if self.pending:
+            _fail("corrupt", "local-agent-jsonl-truncated", "Copilot JSONL must end with LF")
+        if not self.events:
+            _fail("corrupt", "local-agent-jsonl-invalid", "Copilot JSONL has an invalid total byte size")
+        if not self.user_seen or self.active_turn is not None:
+            _fail("corrupt", "local-agent-jsonl-sequence", "Copilot JSONL ended before its event sequence completed")
+        if self.startup_parents & self.seen_ids:
+            _fail("corrupt", "local-agent-jsonl-parent", "Copilot startup parentId unexpectedly resolves within the emitted stream")
+        if self.requested_tools != self.started_tools or self.started_tools != self.completed_tools:
+            _fail("corrupt", "local-agent-jsonl-tool", "Copilot JSONL has unresolved tool calls")
+        if self.candidate is None or not self.final_ended or not self.idle_seen or not self.result_seen:
+            _fail("missing", "local-agent-jsonl-incomplete", "Copilot JSONL is missing its final candidate boundary")
+        return self.candidate
+
+
+def _extract_candidate_from_jsonl(raw):
+    if not isinstance(raw, bytes):
+        _fail("corrupt", "local-agent-jsonl-invalid", "Copilot JSONL has an invalid total byte size")
+    decoder = _JsonlCandidateDecoder()
+    decoder.feed(raw)
+    return decoder.finish()
+
+
+class _TransportSink:
+    """Consumes one Copilot stdout stream: scan, retain, then decode.
+
+    Scanning runs first and across chunk boundaries so no credential-bearing
+    byte can ever reach the retained buffer that later becomes publishable
+    evidence. Retention keeps the exact unfiltered bytes in memory only, so
+    nothing touches the filesystem before the disclosure verdict is final.
+    Retention and decoding are independent: a decode failure still preserves the
+    raw transport, and retention overflow still lets decoding run to the end so
+    the recorded diagnostic stays accurate. The sink never stops the process.
+    """
+
+    def __init__(self, secret):
+        self._secret = secret.encode("ascii")
+        self._encoded = base64.b64encode(self._secret)
+        self._window = max(1, max(len(self._secret), len(self._encoded)) - 1)
+        self._carry = b""
+        self._raw = bytearray()
+        self._decoder = _JsonlCandidateDecoder()
+        self.disclosed = False
+        self.overflow = False
+        self.failure = None
+        self.candidate = None
+
+    def __call__(self, chunk):
+        if self.disclosed:
+            return
+        scanned = self._carry + chunk
+        if self._secret in scanned or self._encoded in scanned:
+            self.disclosed = True
+            self.release()
+            return
+        self._carry = scanned[-self._window:]
+        if not self.overflow:
+            if len(self._raw) + len(chunk) > TRANSPORT_MAX_BYTES:
+                self.overflow = True
+                self._raw = bytearray()
+            else:
+                self._raw.extend(chunk)
+        if self._decoder is not None and self.failure is None:
+            try:
+                self._decoder.feed(chunk)
+            except LocalProviderFailure as error:
+                self.failure = error
+
+    def finish(self):
+        if self.disclosed or self._decoder is None or self.failure is not None:
+            return
+        try:
+            self.candidate = self._decoder.finish()
+        except LocalProviderFailure as error:
+            self.failure = error
+
+    def release(self):
+        self._carry = b""
+        self._raw = bytearray()
+        self._decoder = None
+        self.candidate = None
+
+    def transport(self):
+        return bytes(self._raw)
 
 
 def _safe_root(path, label):
@@ -1022,6 +1134,7 @@ class LocalSandboxProvider:
         token = self._worker_token
         controlled_environment = dict(non_secret_environment)
         controlled_environment[WORKER_TOKEN_ENV] = token
+        sink = _TransportSink(token)
         try:
             process = supervisor.supervise(
                 command,
@@ -1032,24 +1145,36 @@ class LocalSandboxProvider:
                 cwd=str(self.root),
                 env=controlled_environment,
                 cancel_event=cancel_event,
+                stdout_sink=sink,
             )
-            if _process_discloses_secret(process, token):
+            sink.finish()
+            if sink.disclosed or _process_discloses_secret(process, token):
+                sink.release()
                 _scrub_process_result(process)
                 _fail(
                     "denied",
                     "worker-authentication-disclosed",
                     "Worker process disclosed its designated authentication credential",
                 )
-            transport = _process_bytes(process)
-            parser_failure = None
-            try:
-                candidate = _extract_candidate_from_jsonl(transport)
-            except LocalProviderFailure as error:
-                if _process_succeeded(process):
-                    raise
-                parser_failure = error
-                candidate = b""
+            if sink.overflow:
+                sink.release()
+                _fail(
+                    "unsupported",
+                    "local-agent-transport-too-large",
+                    "Copilot transport exceeds the reviewed raw evidence byte limit",
+                )
+            transport = sink.transport()
+            transport_size, transport_sha256 = _process_observed(process, "stdout")
+            if len(transport) != transport_size or _sha(transport) != transport_sha256:
+                _fail(
+                    "corrupt",
+                    "local-agent-transport-inconsistent",
+                    "Copilot transport evidence differs from the supervised stream",
+                )
+            parser_failure = sink.failure
+            candidate = b"" if parser_failure is not None else sink.candidate
             if parser_failure is None and _bytes_disclose_secret(candidate, token):
+                sink.release()
                 _scrub_process_result(process)
                 _fail(
                     "denied",
@@ -1098,12 +1223,13 @@ class LocalSandboxProvider:
             "environment": environment_identity,
             "process_result_sha256": _sha(_canonical(process)),
             "process_diagnostic": process_diagnostic,
-            "transport_output": {
-                "bytes": len(transport),
-                "base64": base64.b64encode(transport).decode("ascii"),
+            "transport_reference": {
+                "path": TRANSPORT_ATTACHMENT_PATH,
+                "sha256": transport_sha256,
+                "size": transport_size,
             },
-            "transport_sha256": _sha(transport),
-            "transport_size": len(transport),
+            "transport_sha256": transport_sha256,
+            "transport_size": transport_size,
             "candidate_sha256": _sha(candidate),
             "candidate_size": len(candidate),
             "isolation": {
@@ -1123,14 +1249,18 @@ class LocalSandboxProvider:
                 "base64": base64.b64encode(candidate).decode("ascii"),
             },
             "provider_result": facts,
+            "evidence_attachments": [
+                {
+                    "path": TRANSPORT_ATTACHMENT_PATH,
+                    "sha256": transport_sha256,
+                    "size": transport_size,
+                    "bytes": transport,
+                }
+            ],
         }
 
     def input_projection_sha256(self, request):
         return _sha(_canonical(_input_projection(self.root, self.issue, request)))
-
-
-def _process_bytes(process):
-    return _process_stream_bytes(process, "stdout")
 
 
 def _process_succeeded(process):
@@ -1143,25 +1273,27 @@ def _process_succeeded(process):
 
 
 def _process_diagnostic(process, parser_failure=None):
-    if _process_succeeded(process):
+    if _process_succeeded(process) and parser_failure is None:
         return None
     stderr = _process_stream_bytes(process, "stderr")
-    stdout = _process_bytes(process)
+    observed = _process_observed(process, "stdout")
     parser = None
     if parser_failure is not None:
         parser = {"status": parser_failure.status, "code": parser_failure.code}
+    provider_failure = (
+        dict(parser)
+        if _process_succeeded(process)
+        else {"status": "missing", "code": "local-agent-process-failed"}
+    )
     return {
         "format": PROCESS_DIAGNOSTIC_FORMAT,
         "outcome": process.get("outcome"),
         "reason": process.get("reason"),
         "exit_code": process.get("exit_code"),
         "terminating_signal": process.get("terminating_signal"),
-        "stdout": {"bytes": len(stdout), "sha256": _sha(stdout)},
+        "stdout": {"bytes": observed[0], "sha256": observed[1]},
         "stderr": {"bytes": len(stderr), "sha256": _sha(stderr)},
-        "provider_failure": {
-            "status": "missing",
-            "code": "local-agent-process-failed",
-        },
+        "provider_failure": provider_failure,
         "parser_failure": parser,
     }
 
@@ -1177,9 +1309,32 @@ def _process_stream_bytes(process, stream):
         data = base64.b64decode(record["base64"], validate=True)
     except (KeyError, TypeError, ValueError, binascii.Error):
         _fail("corrupt", "local-agent-output-invalid", "Agent process output is malformed")
-    if set(record) != {"bytes", "base64"} or record["bytes"] != len(data):
+    if set(record) != STREAM_RECORD_KEYS or record["bytes"] != len(data):
         _fail("corrupt", "local-agent-output-invalid", "Agent output identity is malformed")
     return data
+
+
+def _process_observed(process, stream):
+    """Return the supervised whole-stream identity: (observed bytes, SHA-256)."""
+    if (
+        not isinstance(process, dict)
+        or process.get("format") != supervisor.RESULT_FORMAT
+    ):
+        _fail("corrupt", "local-agent-output-invalid", "Agent process result is malformed")
+    record = process.get(stream)
+    if not isinstance(record, dict) or set(record) != STREAM_RECORD_KEYS:
+        _fail("corrupt", "local-agent-output-invalid", "Agent output identity is malformed")
+    size, digest = record["observed_bytes"], record["observed_sha256"]
+    if (
+        type(size) is not int
+        or size < 0
+        or size < record["bytes"]
+        or not isinstance(digest, str)
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+    ):
+        _fail("corrupt", "local-agent-output-invalid", "Agent observed stream identity is malformed")
+    return size, digest
 
 
 class PendingResultStore:

@@ -20,8 +20,8 @@ except ModuleNotFoundError:  # pragma: no cover - package execution
     from scripts import workflow_supervision_policy as supervision
     from scripts import workflow_work_type_policy as work_type_policy
 VERSION, STATE_FORMAT, NODE_FORMAT = "1.3.0", authority.STATE_FORMAT, "chess-echo-workflow-node-v1"; CHALLENGE_FORMAT, RECOVERY_CHALLENGE_FORMAT, AUTHORIZATION_FORMAT, CANDIDATE_FORMAT, RESULT_FORMAT, FAILURE_FORMAT = supervision.CHALLENGE_FORMAT, "chess-echo-human-challenge-v1", "chess-echo-human-authorization-v1", "chess-echo-orchestrator-agent-candidate-v1", "chess-echo-orchestration-orchestrator-result-v1", "chess-echo-orchestration-orchestrator-failure-v1"
-STATE_PATH, NODE_PATH, POLICY_PATH, SUPERVISION_PATH, RUNTIME_PIN_PATH = "workflow-orchestration/state.json", "workflow-orchestration/node.json", "workflow-policy/state.json", supervision.POLICY_PATH, "workflow-orchestration/runtime-reconstruction.json"
-LIMIT = 2 * 1024 * 1024
+STATE_PATH, NODE_PATH, POLICY_PATH, SUPERVISION_PATH, RUNTIME_PIN_PATH, RESULT_PATH = "workflow-orchestration/state.json", "workflow-orchestration/node.json", "workflow-policy/state.json", supervision.POLICY_PATH, "workflow-orchestration/runtime-reconstruction.json", runtime.EXECUTION_RESULT_PATH
+LIMIT, ATTACHMENT_LIMIT = 2 * 1024 * 1024, runtime.ATTACHMENT_LIMIT_BYTES
 OUTCOMES = {"resolved": 0, "missing": 3, "unsupported": 4, "corrupt": 5, "ambiguous": 6, "stale": 7, "denied": 8, "busy": 9, "conflict": 10, "uncertain": 11, "paused": 12}
 AGENT_PHASES = {"PLANNING": ("planner", "write-plan"), "PLAN_REVIEW": ("reviewer", "review-plan"), "TEST_IMPLEMENTATION": ("implementer", "write-tests"), "TEST_REVIEW": ("reviewer", "review-tests"), "IMPLEMENTATION": ("implementer", "implement"), "FINAL_REVIEW": ("reviewer", "review-final")}
 RESUME_PHASES = ({"validation": "VALIDATION", "github-read": "PR_PREPARATION", "github-write": "PR_PREPARATION"}, {name: phase for phase, (_role, name) in AGENT_PHASES.items()})
@@ -166,13 +166,18 @@ class Orchestrator:
         try: self._validate_supervision_history(state, inspection["authority"])
         finally: self._history_adapter = None
         return state
-    def _publish(self, decision_type, decision_id, subject, rows, generation, lineage=None, identity=None, before_binding_reference=None):
+    def _publish(self, decision_type, decision_id, subject, rows, generation, lineage=None, identity=None, before_binding_reference=None, attachments=()):
         encoded, entries = [], []
         for path, value in rows:
             data = value if isinstance(value, bytes) else _canonical(value)
             _require(isinstance(data, bytes) and len(data) <= LIMIT, "unsupported", "document-too-large", "Orchestration evidence exceeds 2 MiB")
             reference = {"kind": "evidence-payload", "sha256": inspector.sha256(data), "size": len(data)}
             encoded.append((path, data)); entries.append({"path": path, "kind": "regular", "mode": "100644", "content_sha256": reference["sha256"], "size": reference["size"], "payload": reference})
+        for item in attachments:
+            (data, path) = (item["bytes"], item["path"])
+            _require(isinstance(data, bytes) and len(data) <= ATTACHMENT_LIMIT, "unsupported", "attachment-too-large", "Orchestration evidence attachment exceeds its reviewed limit")
+            _require(isinstance(path, str) and path not in [entry["path"] for entry in entries] and inspector.sha256(data) == item["sha256"] and len(data) == item["size"], "corrupt", "invalid-evidence-attachment", "Orchestration evidence attachment does not bind its exact bytes")
+            encoded.append((path, data)); entries.append({"path": path, "kind": "regular", "mode": "100644", "content_sha256": item["sha256"], "size": item["size"], "payload": {"kind": "evidence-payload", "sha256": item["sha256"], "size": item["size"]}})
         entries.sort(key=lambda entry: entry["path"].encode()); blob = b"\0".join(data for _path, data in encoded)
         identity = identity or {"issue": self.issue, "run_id": inspector.sha256(b"orchestration-node-v1\0" + blob)[:32], "family_run_id": self.family, "correction": None, "run_generation": generation, "sequence": generation + 1, "event_tip": inspector.sha256(b"orchestration-node-tip-v1\0" + blob)}
         captures = [{"entry_sha256": inspector.sha256(_canonical(entry)), "capture_method": "orchestration-composition", "captured_at": "1970-01-01T00:00:00Z", "source": {"type": "workspace", "path": entry["path"]}, "tool": {"name": "workflow-orchestrator", "version": VERSION}} for entry in entries]
@@ -335,7 +340,7 @@ class Orchestrator:
         for _binding, item in self._history(state, inspection["authority"]):
             result_binding = self._candidate_binding(item, "execution-result", required=False)
             if result_binding is None or result_binding["sha256"] in seen: continue
-            result = self._read(result_binding, label="execution result"); request = self._read(result["request_binding"], label="execution request")
+            result = self._read(result_binding, RESULT_PATH, "execution result"); request = self._read(result["request_binding"], label="execution request")
             if request["operation"]["kind"] == "validation":
                 records.append((request["operation"]["name"], result["request_binding"], result_binding)); seen.add(result_binding["sha256"])
         return records
@@ -343,7 +348,7 @@ class Orchestrator:
         for _binding, item in reversed(self._history(state, inspection["authority"])):
             result_binding = self._candidate_binding(item, "execution-result", required=False)
             if result_binding is None: continue
-            result = self._read(result_binding, label="execution result"); request = self._read(result["request_binding"], label="execution request")
+            result = self._read(result_binding, RESULT_PATH, "execution result"); request = self._read(result["request_binding"], label="execution request")
             if request["operation"]["kind"] == "github-write": return result, result_binding
         return None, None
     def _unresolved_pr_request(self, state, inspection):
@@ -418,9 +423,10 @@ class Orchestrator:
                     cancelled.set(); return
         worker = threading.Thread(target=watch, name="workflow-cancel-watch", daemon=True); worker.start(); return cancelled, stop, worker
     def _unchanged(self, inspection): _require(self._status()["pointer_sha256"] == inspection["pointer_sha256"], "stale", "attempt-result-stale", "Authority changed while an attempt executed")
-    def _execution_result(self, state, inspection, request_binding, result):
+    def _execution_result(self, state, inspection, request_binding, result, attachments=()):
         query = self._pending_result_query(state, inspection); recorder = getattr(PENDING_RESULT_PROVIDER, "prepare", None); _require(callable(recorder), "unsupported", "pending-result-provider-unavailable", "Pending-result provider cannot durably index execution results")
-        binding = self._publish("execution-result", "attempt-%s" % result["attempt_id"], request_binding, [("workflow-orchestration/execution-result.json", result)], state["generation"] + 1, before_binding_reference=lambda reference, data: recorder(copy.deepcopy(query), copy.deepcopy(reference), data))
+        binding = self._publish("execution-result", "attempt-%s" % result["attempt_id"], request_binding, [(RESULT_PATH, result)], state["generation"] + 1, before_binding_reference=lambda reference, data: recorder(copy.deepcopy(query), copy.deepcopy(reference), data), attachments=attachments)
+        if attachments: _translate(lambda: runtime.verify_result_attachments(_translate(lambda: evidence.project(self.root, binding), "evidence"), result), "runtime")
         after = result.get("repository_after")
         after_binding = None if after is None else self._publish("work-type-diff-observation", "observation-%s" % after["observation_sha256"], state["triage_binding"], [("workflow-work-type/diff-observation.json", after)], state["generation"] + 1)
         return binding, after_binding, _put(_put(state["candidates"], "execution-request", request_binding), "execution-result", binding)
@@ -501,7 +507,7 @@ class Orchestrator:
         nodes = {"TEST_IMPLEMENTATION": "plan-approval", "TEST_REVIEW": "test-manifest", "IMPLEMENTATION": "test-approval", "VALIDATION": "implementation-submission", "FINAL_REVIEW": "validation", "PR_PREPARATION": "final-review"}
         if phase in {"PLANNING", "PLAN_REVIEW"}:
             result = self._candidate_binding(state, "execution-result", required=False)
-            return None if result is None else self._read(result, label="phase execution result")["repository_after"]
+            return None if result is None else self._read(result, RESULT_PATH, "phase execution result")["repository_after"]
         if phase in GATES and state["pending"] is not None:
             challenge = self._read(state["pending"]["request_binding"], supervision.CHALLENGE_PATH, "gate challenge")
             binding = challenge["repository_observation_binding"]
@@ -550,7 +556,7 @@ class Orchestrator:
         stable = runtime.clean_repository(first_before) and runtime.same_repository(implementation_observation, first_before)
         for _name, request, result in records:
             request_document = self._read(request, label="validation request")
-            result_document = self._read(result, label="validation result")
+            result_document = self._read(result, RESULT_PATH, "validation result")
             stable = stable and result_document["outcome"] == "succeeded" and runtime.same_repository(first_before, request_document["repository_before"]) and runtime.same_repository(first_before, result_document["repository_after"])
         if not stable: return self._pause(state, inspection, rows, "unsupported-policy-transition")
         if len(records) < len(expected):
@@ -634,7 +640,7 @@ class Orchestrator:
                     self._unchanged(inspection)
                     return True
                 options.update({"reconciliation_expectation": expectation, "write_payload": {"repository": expectation["repository"], "base_ref": expectation["base_ref"], "head_ref": payload["head_ref"], "title": payload["title"], "body": payload["body"]}, "pre_write_check": pre_write_check})
-            try: result = _translate(lambda: adapter.execute(request, pending["request_binding"], **options), "runtime")
+            try: bundle = _translate(lambda: adapter.execute_bundle(request, pending["request_binding"], **options), "runtime")
             except OrchestratorFailure:
                 self._unchanged(inspection)
                 if cancel.is_set(): _fail("stale", "attempt-result-stale", "Cancelled attempt cannot become authoritative")
@@ -642,7 +648,7 @@ class Orchestrator:
         finally:
             stop.set(); worker.join(2)
             _require(not worker.is_alive(), "conflict", "cancel-watcher-stuck", "Cancellation watcher did not stop")
-        self._unchanged(inspection); result_binding, after, rows = self._execution_result(state, inspection, pending["request_binding"], result)
+        result = bundle.document; self._unchanged(inspection); result_binding, after, rows = self._execution_result(state, inspection, pending["request_binding"], result, bundle.attachments)
         handoff = resume.build_handoff(inspection["authority"], pending["request_binding"], result_binding=result_binding, repository_after_binding=after)
         return self._handoff_result(state, inspection, handoff)
     def _discover_pending(self, state, inspection):
@@ -666,10 +672,11 @@ class Orchestrator:
             _require(supplied["result_binding"] is None and supplied["repository_after_binding"] is None and identity["issue"] == self.issue and identity["family_run_id"] == self.family and projection["decision"]["type"] == "github-pr-observation" and projection["subject"] == supplied["request_binding"], "stale", "execution-handoff-stale", "PR observation handoff is stale")
             return request, None, None, supplied["pr_observation_binding"]
         projection = _translate(lambda: evidence.project(self.root, supplied["result_binding"]), "evidence")
-        result = self._read(supplied["result_binding"], label="execution result")
+        result = self._read(supplied["result_binding"], RESULT_PATH, "execution result")
         unsigned = dict(result); digest = unsigned.pop("result_sha256", None)
         identity = projection["identity"]
         _require(identity["issue"] == self.issue and identity["family_run_id"] == self.family and projection["decision"]["type"] == "execution-result" and projection["subject"] == supplied["request_binding"] and result.get("format") == runtime.RESULT_FORMAT and result.get("request_binding") == supplied["request_binding"] and result.get("attempt_id") == state["pending"]["attempt_id"] and digest == _digest(unsigned), "stale", "execution-handoff-stale", "Execution result handoff is stale")
+        _translate(lambda: runtime.verify_result_attachments(projection, result), "runtime")
         after = supplied["repository_after_binding"]
         if after is None and result.get("repository_after") is not None:
             observation = result["repository_after"]
@@ -925,7 +932,7 @@ class Orchestrator:
         for _binding, item in reversed(self._history(state, inspection["authority"])):
             result_binding = self._candidate_binding(item, "execution-result", required=False)
             if result_binding is not None:
-                result = self._read(result_binding, label="execution result"); return result["request_binding"], self._read(result["request_binding"], label="execution request"), result
+                result = self._read(result_binding, RESULT_PATH, "execution result"); return result["request_binding"], self._read(result["request_binding"], label="execution request"), result
         _fail("corrupt", "recovery-state-unrecoverable", "Paused state has no recorded safe attempt")
     def _resume_phase(self, request):
         operation = request["operation"]

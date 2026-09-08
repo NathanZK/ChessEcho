@@ -308,6 +308,38 @@ published request. Runtime embeds it byte-for-byte in
 `chess-echo-execution-result-v1`; it never computes an evidence-binding hash.
 The result `attempt_id` is byte-identical to the request `attempt_id`.
 
+## Execution evidence attachments
+
+`execute` returns only the result document. A caller that must publish the
+execution evidence attachments alongside that document calls `execute_bundle`,
+which returns an explicit one-use `ExecutionBundle(document, attachments)`.
+Ownership is therefore explicit and cannot be cross-wired between executions;
+there is no mutable last-call slot.
+
+An attachment is generic: `path`, `sha256`, `size`, and `bytes`. Runtime
+verifies that each one binds its own exact bytes, that paths are distinct and
+never the execution-result path, and that no attachment exceeds
+`ATTACHMENT_LIMIT_BYTES` (8 MiB). Only the trusted-local boundary produces
+attachments; any other boundary that supplies them fails closed. Runtime never
+interprets attachment bytes.
+
+For a trusted-local agent result, `sandbox.transport_sha256` and
+`sandbox.transport_size` must equal the supervisor's own whole-stream
+`observed_sha256` and `observed_bytes`, so the provider cannot assert a
+transport identity the core did not observe, and `sandbox.transport_reference`
+must name exactly one supplied attachment with the identical digest and size.
+`verify_result_attachments(projection, result)` then proves, against a published
+binding's projection, that the reference resolves to exactly one manifest entry
+of that same binding with matching path, size, content digest, and payload
+reference. The orchestrator applies it after publishing an execution result that
+carries attachments, and again on the recovery handoff path using the projection
+it already reads, so a previously published result re-proves its sidecar link
+rather than being trusted.
+
+The 2 MiB execution-result preflight budget is unchanged. Raw transport is no
+longer Base64-inlined into the document, so the budget is now a conservative
+over-reservation rather than a binding constraint.
+
 The caller supplies `attempt_id`, but it must equal:
 
 ```text

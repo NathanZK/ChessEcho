@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 import os
 import pathlib
@@ -214,6 +215,76 @@ class WorkflowSupervisorTest(unittest.TestCase):
             self.assertTrue(result["forced_termination"])
             self.assertTrue(result["cleanup_verified"])
             self.assert_process_gone(child_pid)
+
+    def test_stdout_sink_consumes_the_whole_stream_without_terminating(self):
+        payload = b"y" * 8192
+        chunks = []
+        source = (
+            "import sys; "
+            "sys.stdout.buffer.write(b'y'*8192); sys.stdout.flush()"
+        )
+        result = self.run_supervised(
+            python_command(source),
+            output_limit_bytes=128,
+            stdout_sink=chunks.append,
+        )
+
+        self.assertEqual("success", result["outcome"])
+        self.assertEqual("process-exited", result["reason"])
+        self.assertEqual(0, result["exit_code"])
+        self.assertFalse(result["forced_termination"])
+        self.assertEqual(payload, b"".join(chunks))
+        self.assertEqual(0, result["stdout"]["bytes"])
+        self.assertEqual("", result["stdout"]["base64"])
+        self.assertEqual(len(payload), result["stdout"]["observed_bytes"])
+        self.assertEqual(
+            hashlib.sha256(payload).hexdigest(),
+            result["stdout"]["observed_sha256"],
+        )
+
+    def test_stderr_limit_still_terminates_while_a_stdout_sink_is_active(self):
+        source = (
+            "import sys, time; "
+            "sys.stderr.buffer.write(b'e'*8192); sys.stderr.flush(); "
+            "time.sleep(60)"
+        )
+        result = self.run_supervised(
+            python_command(source),
+            output_limit_bytes=1024,
+            stderr_limit_bytes=128,
+            grace_ms=30,
+            stdout_sink=lambda _chunk: None,
+        )
+
+        self.assertEqual("output-limit", result["outcome"])
+        self.assertEqual("per-stream-output-limit", result["reason"])
+        self.assertEqual(128, result["stderr"]["bytes"])
+        self.assertGreater(result["stderr"]["observed_bytes"], 128)
+
+    def test_observed_identity_matches_retained_bytes_without_a_sink(self):
+        payload = b"observed"
+        source = "import sys; sys.stdout.buffer.write(b'observed')"
+        result = self.run_supervised(python_command(source), output_limit_bytes=1024)
+
+        self.assertEqual(payload, decoded(result, "stdout"))
+        self.assertEqual(len(payload), result["stdout"]["observed_bytes"])
+        self.assertEqual(
+            hashlib.sha256(payload).hexdigest(),
+            result["stdout"]["observed_sha256"],
+        )
+        self.assertEqual(
+            hashlib.sha256(b"").hexdigest(), result["stderr"]["observed_sha256"]
+        )
+
+    def test_noncallable_stdout_sink_is_rejected_before_start(self):
+        with self.assertRaises(ValueError):
+            supervisor.supervise(
+                python_command("pass"),
+                timeout_ms=1000,
+                grace_ms=10,
+                output_limit_bytes=1024,
+                stdout_sink="not callable",
+            )
 
     def test_concurrent_stream_overflow_has_independent_deterministic_budgets(self):
         outcomes = []

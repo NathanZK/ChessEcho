@@ -113,10 +113,17 @@ With `--output-format json`, the pinned executable emitted LF-terminated JSONL.
 `--silent` retained the relevant structured records; it changed only the
 number of streaming delta records in the observed runs.
 
-The trusted-local provider version 1.4.1 fixes the supervised argv to include
-exactly one ordered `--stream off` immediately before `--prompt`. This keeps the
-JSONL transport and all existing validation and security controls while
-instructing the pinned CLI not to emit streaming delta output.
+The trusted-local provider version 1.4.1 fixed the supervised argv to include
+exactly one ordered `--stream off` immediately before `--prompt`. The immutable
+issue-176 run then proved that flag insufficient in JSON mode. Its preserved
+851,968-byte transport contains zero `assistant.message_start` and zero
+`assistant.message_delta` records, but still 1,076 `assistant.tool_call_delta`
+(304,883 bytes), 103 `assistant.reasoning_delta`, 204
+`session.background_tasks_changed`, and 33 `tool.execution_partial_result`
+records. Transient `ephemeral: true` records account for 1,455 events and
+510,590 bytes, 59.9 percent of the stream. `copilot --help` for the pinned
+1.0.80 executable documents no flag that suppresses those records, so transport
+volume cannot be controlled at the argv boundary. The argv is unchanged.
 
 The provider distinguishes documented framing from observed schema. JSONL is
 the documented transport format. The accepted event allowlist, fields,
@@ -147,8 +154,61 @@ message as parent and a prior delta group, and immediately precedes tool
 execution. These records are validated as exact reviewed schemas and causal
 relationships; unknown reasoning records are not ignored.
 
-The provider reads the complete stdout bytes once, secret-scans those unchanged
-bytes, and then strictly validates bounded UTF-8 JSONL. It independently
+## Incremental consumption and the raw transport sidecar
+
+Provider version 1.5.0 corrects how that stream is consumed. Previously the
+supervisor accumulated the whole transport into one bounded buffer and the
+provider decoded it after exit, which made retention, consumption, and process
+lifetime the same quantity: exceeding the retained-byte budget terminated a
+working agent. The immutable issue-176 run shows exactly that. Copilot exited
+zero and its own durable session log ends with `abort {"reason":
+"user_initiated"}` and `session.shutdown {"shutdownType": "routine"}` after 22
+turn starts and only 21 turn ends, because the supervisor stopped reading and
+closed the pipe. The retained prefix ended in a partial
+`assistant.tool_call_delta`, so no terminal record and no candidate existed.
+
+That budget was not free to raise: the whole raw transport was Base64-inlined
+into the 2 MiB execution result, leaving roughly 45 KiB of slack. The
+correction removes raw transport from the result document entirely.
+
+The provider now passes a transport sink to the supervisor. Per chunk, in this
+exact order, the sink secret-scans, retains the exact unfiltered bytes, and
+feeds the strict incremental decoder. Scanning first is what makes complete
+cross-chunk credential detection happen before any byte can become publishable;
+the scan carries over `max(len(token), len(base64(token))) - 1` bytes so a
+credential split across chunk boundaries is still caught, and it now covers the
+whole stream rather than a retained prefix. Retention is memory-resident and
+bounded, so no spool file, spool lifecycle, or new filesystem permission
+surface is introduced, and nothing is written anywhere until the disclosure
+verdict is final. Retention and decoding are independent: a decode failure
+still preserves the raw transport, and retention overflow still lets decoding
+run to the end so the recorded diagnostic stays accurate. The sink never
+terminates the process.
+
+Three bounds are now named separately instead of being derived from one
+document-size figure. `JSONL_MAX_EVENT_BYTES` is 832 KiB and bounds one
+physical line and therefore the pending-line buffer. `JSONL_MAX_EVENTS` is
+32,768 and bounds the decoder identity sets, at worst about two entries per
+event and roughly 8 MiB. `TRANSPORT_MAX_BYTES` is 8 MiB, equal to the reviewed
+`MAX_OUTPUT_BYTES` ceiling any supervised limit may declare and eight times
+below the 64 MiB evidence payload limit; at the observed average of 545 bytes
+per event it carries about 15,000 events. Provider peak memory is therefore
+bounded near 17 MiB and disk cost at one object of at most 8 MiB per attempt.
+Exceeding `TRANSPORT_MAX_BYTES` fails the attempt closed with
+`local-agent-transport-too-large`; a truncated sidecar is never published, and
+the process is still not terminated for volume.
+
+The strict decoder is unchanged in substance. It became an incremental
+`feed`/`finish` state machine carrying the same state, checks, and check order,
+and `_extract_candidate_from_jsonl` remains as a whole-buffer wrapper over it so
+the original decoder tests still apply verbatim. Only three constructs are
+restated: the previous event type is tracked instead of indexed, any event fed
+after the terminal `result` fails instead of an end-of-list index check, and an
+unterminated residue at `finish` reports the same truncation failure that the
+missing terminal LF reported.
+
+The provider reads the transport once through that sink, secret-scans those
+unchanged bytes, and strictly validates bounded UTF-8 JSONL. It independently
 secret-scans the extracted candidate before returning it. It rejects missing
 terminal LF, blank or oversized lines, excess records or bytes, duplicate JSON
 keys, malformed JSON, non-object lines, unknown/error/abort/truncation events,
@@ -163,26 +223,45 @@ authenticated event and turn boundaries.
 Only the exact UTF-8 encoding of the final message's `data.content` is passed to
 the existing strict candidate decoder and schema validation. Final prose is
 therefore still rejected downstream. Execution evidence keeps independent
-identities for the complete raw transport and extracted candidate: the raw
-process-result digest plus transport byte count/SHA-256 attest the JSONL input,
-while candidate byte count/SHA-256 attest the decoder input. Persistent
-evidence retains the exact raw JSONL bytes in `sandbox.transport_output`. The
-persisted `process_result.stdout` contains the extracted candidate so the
-unchanged candidate decoder remains byte-exact. To reproduce
-`sandbox.process_result_sha256`, copy the persisted `process_result`, replace
-its `stdout` value with `sandbox.transport_output`, serialize that reconstructed
-process result with the existing canonical JSON encoding, and calculate its
-SHA-256 digest. No parsed or normalized transcript participates in that
-identity. Authentication remains unchanged and lazy: only
-`COPILOT_GITHUB_TOKEN` is injected when the provider executes.
+identities for the complete raw transport and extracted candidate.
+`sandbox.transport_size` and `sandbox.transport_sha256` are the supervisor's
+own whole-stream `observed_bytes` and `observed_sha256`, so the provider cannot
+assert a transport identity the core did not observe, while candidate byte
+count and SHA-256 attest the decoder input.
+
+The complete unfiltered raw JSONL is published as a sidecar payload at
+`workflow-orchestration/copilot-transport.jsonl` inside the same atomic
+execution-result evidence binding and manifest as
+`workflow-orchestration/execution-result.json`. `sandbox.transport_reference`
+names that path with the identical size and digest, and
+`runtime.verify_result_attachments` proves the reference resolves to exactly one
+manifest entry of that same binding, with matching path, size, content digest,
+and payload reference. There is no second binding, no second authority, and no
+separate state machine. Because the raw transport is no longer Base64-inlined,
+`sandbox.transport_output` no longer exists; nothing in the result document is a
+prefix presented as complete evidence. The persisted `process_result.stdout`
+still contains the extracted candidate so the unchanged candidate decoder
+remains byte-exact, and its `observed_*` fields describe that same candidate
+record rather than the raw stream. `sandbox.process_result_sha256` identifies
+the supervised process result before that candidate adaptation, whose stdout
+retains zero bytes and carries the raw stream's observed identity.
+Authentication remains unchanged and lazy: only `COPILOT_GITHUB_TOKEN` is
+injected when the provider executes.
 
 Failed supervised executions use the same immutable execution-result binding.
-`sandbox.process_diagnostic` records the supervisor outcome and reason, exit
-code or terminating signal, byte count and SHA-256 identity of each stream, the
-fixed provider failure classification, and any typed JSONL parser failure.
-The diagnostic contains no raw stream bytes or Base64 payloads. Raw and
-candidate credential scans still run before this record can be constructed; a
-disclosure is scrubbed and rejected instead of persisted.
+So do successful processes whose transport fails strict decoding: a malformed,
+unknown, truncated, or relationship-violating stream now produces an
+authoritative failed execution result carrying the typed parser failure, no
+candidate, and the exact same-manifest raw sidecar, instead of losing the raw
+evidence through an exception-only host failure. In that case
+`provider_failure` is the parser failure itself rather than the fixed
+process-failure classification. `sandbox.process_diagnostic` records the
+supervisor outcome and reason, exit code or terminating signal, byte count and
+SHA-256 identity of each stream, the provider failure classification, and any
+typed JSONL parser failure. The diagnostic contains no raw stream bytes or
+Base64 payloads. Raw and candidate credential scans still run before this record
+can be constructed; a disclosure is scrubbed and rejected instead of persisted,
+and no sidecar is published. Transport overflow likewise publishes nothing.
 
 Persisting the raw transport added a third independently bounded Base64 output
 to each trusted-local execution result: adapted candidate stdout, stderr, and
@@ -211,12 +290,21 @@ Their exact Base64 charges are respectively 1,135,960, 611,672, and 87,384
 bytes, totaling 1,835,016 bytes, exactly the former three times 611,672. After
 the unchanged 131,074-byte serialized-prompt reservation and 64 KiB fixed
 headroom, the preflight still admits a 65,526-byte canonical repository
-observation. JSONL accepts at most 8,192 records. Focused tests accept JSONL,
-event count, and candidate bytes exactly at their respective bounds, reject
-each next unit, serialize all three maximum blobs with a maximum-length
-quote/backslash/newline-heavy prompt and the maximal admitted observation, and
-reject either the next Base64 expansion or an additional repository-observation
-byte. No admitted stream or candidate is filtered, dropped, or truncated.
+observation. That preflight arithmetic is deliberately unchanged by the sidecar
+correction even though the result document no longer carries raw transport: it
+is now a conservative over-reservation rather than a binding constraint, and no
+limit semantics move in this correction. `output_limit_bytes` remains 851,968
+and is now a retention bound the sink makes inert for stdout, not a kill switch.
+Focused tests accept per-event, event-count, and candidate bytes exactly at
+their respective bounds, reject each next unit, serialize the maximum blobs with
+a maximum-length quote/backslash/newline-heavy prompt and the maximal admitted
+observation, and reject either the next Base64 expansion or an additional
+repository-observation byte. Further focused tests prove that intermediate delta
+traffic far beyond `output_limit_bytes` still yields the exact candidate and a
+byte-for-byte sidecar, that incremental decoding matches whole-buffer decoding
+for arbitrary chunk widths, and that no publishable raw artifact survives a
+credential disclosure. No admitted stream or candidate is filtered, dropped, or
+truncated.
 
 Repository-after is observed only after the agent runs and can legitimately be
 larger than repository-before, so preflight does not claim to bound that future

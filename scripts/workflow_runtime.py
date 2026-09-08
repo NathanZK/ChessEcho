@@ -1,5 +1,5 @@
 """Inactive supervised boundary for fixed workflow Git, GitHub, and agent I/O."""
-import argparse, base64, binascii, copy, datetime, hashlib, json, os, pathlib, re, stat, sys, tempfile, threading
+import argparse, base64, binascii, collections, copy, datetime, hashlib, json, os, pathlib, re, stat, sys, tempfile, threading
 try:
     from . import workflow_inspector
     from . import workflow_runtime_reconstruction as reconstruction
@@ -24,6 +24,10 @@ def _runtime_source_sha256():
 (MAX_OUTPUT_BYTES, MAX_TIMEOUT_MS, MAX_GRACE_MS) = (8 * 1024 * 1024, 3600000, 60000)
 (LOCAL_PROVIDER_PROMPT_LIMIT_BYTES, LOCAL_PROVIDER_STDOUT_LIMIT_BYTES, LOCAL_PROVIDER_CANDIDATE_LIMIT_BYTES, LOCAL_PROVIDER_STDERR_LIMIT_BYTES) = (64 * 1024, 832 * 1024, 448 * 1024, 64 * 1024)
 EXECUTION_RESULT_HEADROOM_BYTES = 64 * 1024
+STREAM_RECORD_KEYS = {'bytes', 'base64', 'observed_bytes', 'observed_sha256'}
+EXECUTION_RESULT_PATH = 'workflow-orchestration/execution-result.json'
+ATTACHMENT_LIMIT_BYTES = 8 * 1024 * 1024
+ExecutionBundle = collections.namedtuple('ExecutionBundle', ('document', 'attachments'))
 LOCAL_PROVIDER_COMMAND_ARGUMENTS = ('--no-auto-update', '--no-color', '--no-remote', '--no-remote-export', '--no-ask-user', '--no-custom-instructions', '--disable-builtin-mcps', '--secret-env-vars=COPILOT_GITHUB_TOKEN', '--log-level', 'none', '--allow-all-tools', '--output-format', 'json', '--silent', '--stream', 'off', '--prompt')
 BOOTSTRAP_LIMITS = {'timeout_ms': 30000, 'grace_ms': 1000, 'output_limit_bytes': MAX_OUTPUT_BYTES}
 OUTCOME_EXIT_CODES = {'missing': 20, 'unsupported': 21, 'corrupt': 22, 'ambiguous': 23, 'stale': 24, 'denied': 25, 'conflict': 26, 'uncertain': 27}
@@ -74,11 +78,16 @@ def _executable(path, label):
 def _stdout(result, label, stream='stdout'):
     if not isinstance(result, dict) or result.get('format') != workflow_supervisor.RESULT_FORMAT: _fail('corrupt', 'invalid-process-result', '%s returned an invalid process result' % label)
     record = result.get(stream)
-    if not isinstance(record, dict) or set(record) != {'bytes', 'base64'}: _fail('corrupt', 'invalid-process-output', '%s output is malformed' % label)
+    if not isinstance(record, dict) or set(record) != STREAM_RECORD_KEYS: _fail('corrupt', 'invalid-process-output', '%s output is malformed' % label)
     try: data = base64.b64decode(record['base64'], validate=True)
     except (TypeError, ValueError, binascii.Error): _fail('corrupt', 'invalid-process-output', '%s output is not strict base64' % label)
     if type(record['bytes']) is not int or record['bytes'] != len(data): _fail('corrupt', 'invalid-process-output-size', '%s output size is inconsistent' % label)
     return data
+def _observed(result, label, stream='stdout'):
+    """Whole-stream identity the supervisor observed, independent of retention."""
+    (retained, record) = (_stdout(result, label, stream), result[stream]); (size, digest) = (record['observed_bytes'], record['observed_sha256'])
+    if type(size) is not int or size < len(retained) or not isinstance(digest, str) or SHA_RE.fullmatch(digest) is None or (size == len(retained) and digest != workflow_inspector.sha256(retained)): _fail('corrupt', 'invalid-process-output-size', '%s observed output identity is inconsistent' % label)
+    return size, digest
 def _process_document(value, command, limits, label):
     keys = {'format', 'command_sha256', 'limits', 'containment', 'outcome', 'reason', 'exit_code', 'terminating_signal', 'forced_termination', 'cleanup_verified', 'stdout', 'stderr', 'supervisor_error'}
     _exact(value, keys, '%s-process-result' % label)
@@ -87,10 +96,11 @@ def _process_document(value, command, limits, label):
     outcome, reason = value['outcome'], value['reason']
     if not isinstance(outcome, str) or not isinstance(reason, str) or outcome not in PROCESS_REASONS or reason not in PROCESS_REASONS[outcome] or type(value['forced_termination']) is not bool or type(value['cleanup_verified']) is not bool or value['exit_code'] is not None and (type(value['exit_code']) is not int or value['exit_code'] < 0) or value['terminating_signal'] is not None and (type(value['terminating_signal']) is not int or value['terminating_signal'] < 1): _fail('corrupt', 'invalid-process-result', '%s process outcome is malformed' % label)
     stdout, stderr = _stdout(value, label), _stdout(value, label, 'stderr')
+    observed_stdout = _observed(value, label)[0]; observed_stderr = _observed(value, label, 'stderr')[0]
     if len(stdout) > limits['output_limit_bytes'] or len(stderr) > limits.get('stderr_limit_bytes', limits['output_limit_bytes']): _fail('corrupt', 'invalid-process-result', '%s process output exceeds its limit' % label)
     before_start = reason in {'execution-timeout-before-start', 'external-signal-before-start', 'cancelled-before-start', 'process-not-started', 'process-session-isolation-unavailable', 'process-wide-signal-guard-unavailable'}
     containment = {'kind': 'none', 'cleanup_scope': 'none', 'escaped_descendants': 'not-applicable', 'descendant_cleanup_verified': False} if before_start else {'kind': 'posix-process-group', 'cleanup_scope': 'original-process-group', 'escaped_descendants': 'not-observable', 'descendant_cleanup_verified': False}
-    if value['containment'] != containment or outcome == 'success' and (value['exit_code'] != 0 or value['terminating_signal'] is not None or value['forced_termination'] or not value['cleanup_verified']) or outcome == 'nonzero-exit' and (not value['exit_code'] or value['terminating_signal'] is not None or not value['cleanup_verified']) or outcome == 'signal' and (value['exit_code'] is not None or value['terminating_signal'] is None or not value['cleanup_verified']) or before_start and (stdout or stderr or value['exit_code'] is not None or value['terminating_signal'] is not None or value['forced_termination'] or not value['cleanup_verified']): _fail('corrupt', 'invalid-process-result', '%s process state is inconsistent' % label)
+    if value['containment'] != containment or outcome == 'success' and (value['exit_code'] != 0 or value['terminating_signal'] is not None or value['forced_termination'] or not value['cleanup_verified']) or outcome == 'nonzero-exit' and (not value['exit_code'] or value['terminating_signal'] is not None or not value['cleanup_verified']) or outcome == 'signal' and (value['exit_code'] is not None or value['terminating_signal'] is None or not value['cleanup_verified']) or before_start and (stdout or stderr or observed_stdout or observed_stderr or value['exit_code'] is not None or value['terminating_signal'] is not None or value['forced_termination'] or not value['cleanup_verified']): _fail('corrupt', 'invalid-process-result', '%s process state is inconsistent' % label)
     if outcome in {'startup-failure', 'supervisor-failure'} and (not isinstance(value['supervisor_error'], str) or not value['supervisor_error']): _fail('corrupt', 'invalid-process-result', '%s supervisor error is inconsistent' % label)
     if outcome not in {'startup-failure', 'supervisor-failure'} and value['supervisor_error'] is not None: _fail('corrupt', 'invalid-process-result', '%s supervisor error is inconsistent' % label)
     return value
@@ -101,18 +111,43 @@ def _require_success(result, label):
         status = 'uncertain' if outcome in {'terminated', 'supervisor-failure'} else 'missing'
         _fail(status, '%s-failed' % label, '%s did not complete successfully' % label)
     return data
-def _process_diagnostic(value, process, transport):
+def _process_diagnostic(value, process, transport_size, transport_sha256):
     successful = process['outcome'] == 'success' and process['exit_code'] == 0 and process['cleanup_verified'] is True
-    if successful:
-        if value is not None: _fail('denied', 'sandbox-verification-failed', 'Successful process has a failure diagnostic')
+    if value is None:
+        successful or _fail('denied', 'sandbox-verification-failed', 'Failed process has no failure diagnostic')
         return
     _exact(value, {'format', 'outcome', 'reason', 'exit_code', 'terminating_signal', 'stdout', 'stderr', 'provider_failure', 'parser_failure'}, 'local-process-diagnostic')
     for stream in ('stdout', 'stderr'): _exact(value[stream], {'bytes', 'sha256'}, 'local-process-diagnostic-%s' % stream)
     parser = value['parser_failure']
     if parser is not None: _exact(parser, {'status', 'code'}, 'local-process-parser-failure')
-    stderr = _stdout(process, 'execution', 'stderr')
-    expected = {'format': 'chess-echo-trusted-local-process-diagnostic-v1', 'outcome': process['outcome'], 'reason': process['reason'], 'exit_code': process['exit_code'], 'terminating_signal': process['terminating_signal'], 'stdout': {'bytes': len(transport), 'sha256': workflow_inspector.sha256(transport)}, 'stderr': {'bytes': len(stderr), 'sha256': workflow_inspector.sha256(stderr)}, 'provider_failure': {'status': 'missing', 'code': 'local-agent-process-failed'}}
+    elif successful: _fail('denied', 'sandbox-verification-failed', 'Successful process has a failure diagnostic without a parser failure')
+    (stderr, provider_failure) = (_stdout(process, 'execution', 'stderr'), copy.deepcopy(parser) if successful else {'status': 'missing', 'code': 'local-agent-process-failed'})
+    expected = {'format': 'chess-echo-trusted-local-process-diagnostic-v1', 'outcome': process['outcome'], 'reason': process['reason'], 'exit_code': process['exit_code'], 'terminating_signal': process['terminating_signal'], 'stdout': {'bytes': transport_size, 'sha256': transport_sha256}, 'stderr': {'bytes': len(stderr), 'sha256': workflow_inspector.sha256(stderr)}, 'provider_failure': provider_failure}
     if any(value[key] != item for key, item in expected.items()) or parser is not None and (not isinstance(parser.get('status'), str) or parser['status'] not in OUTCOME_EXIT_CODES or not isinstance(parser.get('code'), str) or SLUG_RE.fullmatch(parser['code']) is None): _fail('denied', 'sandbox-verification-failed', 'Process diagnostic differs from the supervised execution')
+def _evidence_attachments(value):
+    """Generic bounded evidence attachments; core never interprets their bytes."""
+    if not isinstance(value, list) or len(value) > 8: _fail('corrupt', 'invalid-evidence-attachments', 'Evidence attachments must be a bounded list')
+    seen = set()
+    for item in value:
+        _exact(item, {'path', 'sha256', 'size', 'bytes'}, 'evidence-attachment')
+        (path, digest, size, data) = (item['path'], item['sha256'], item['size'], item['bytes'])
+        if not isinstance(data, bytes) or not isinstance(path, str) or not path or path in seen or path == EXECUTION_RESULT_PATH: _fail('corrupt', 'invalid-evidence-attachments', 'Evidence attachment identity is malformed')
+        if type(size) is not int or size != len(data) or not isinstance(digest, str) or SHA_RE.fullmatch(digest) is None or digest != workflow_inspector.sha256(data): _fail('corrupt', 'invalid-evidence-attachments', 'Evidence attachment does not bind its exact bytes')
+        if size > ATTACHMENT_LIMIT_BYTES: _fail('denied', 'evidence-attachment-too-large', 'Evidence attachment exceeds its reviewed limit')
+        seen.add(path)
+    return [{'path': item['path'], 'sha256': item['sha256'], 'size': item['size'], 'bytes': item['bytes']} for item in value]
+def verify_result_attachments(projection, result):
+    """Prove a published result's transport reference is in its own manifest."""
+    sandbox = result.get('sandbox') if isinstance(result, dict) else None
+    reference = sandbox.get('transport_reference') if isinstance(sandbox, dict) else None
+    if reference is None: return
+    _exact(reference, {'path', 'sha256', 'size'}, 'transport-reference')
+    entries = projection.get('entries') if isinstance(projection, dict) else None
+    if not isinstance(entries, list): _fail('corrupt', 'transport-evidence-unbound', 'Execution evidence projection has no manifest entries')
+    matches = [entry for entry in entries if isinstance(entry, dict) and entry.get('path') == reference['path']]
+    if len(matches) != 1: _fail('corrupt', 'transport-evidence-unbound', 'Execution evidence does not carry exactly one raw transport entry')
+    (entry, payload) = (matches[0], matches[0].get('payload'))
+    if entry.get('content_sha256') != reference['sha256'] or entry.get('size') != reference['size'] or not isinstance(payload, dict) or payload.get('sha256') != reference['sha256'] or payload.get('size') != reference['size']: _fail('corrupt', 'transport-evidence-unbound', 'Raw transport entry differs from the result transport reference')
 def _common_env(paths):
     return {'PATH': os.pathsep.join(paths), 'HOME': '', 'LC_ALL': 'C.UTF-8', 'LANG': 'C.UTF-8', 'TZ': 'UTC'}
 def _run(command, *, limits, cwd, environment, cancel_event=None):
@@ -457,7 +492,10 @@ class Runtime:
         if repository_before is None or value['head_sha'] != repository_before['head']['commit']:
             _fail('stale', 'github-write-validated-head-mismatch', 'GitHub write head SHA differs from the validated local HEAD')
         return copy.deepcopy(value)
-    def execute(self, request_document, request_binding, reconciliation_expectation=None, cancel_event=None, sandbox_provider=None, write_payload=None, pre_write_check=None):
+    def execute(self, request_document, request_binding, **options):
+        """Return only the result document; execute_bundle also owns its attachments."""
+        return self.execute_bundle(request_document, request_binding, **options).document
+    def execute_bundle(self, request_document, request_binding, reconciliation_expectation=None, cancel_event=None, sandbox_provider=None, write_payload=None, pre_write_check=None):
         reconciliation_expectation, write_payload = copy.deepcopy((reconciliation_expectation, write_payload)); config = self._base_config()
         request = self._validate_request(request_document, reconciliation_expectation)
         request_binding = _reference(request_binding, 'request-binding')
@@ -486,14 +524,15 @@ class Runtime:
                 preflight_cancelled = True
         process_cancel = cancel_event if not preflight_cancelled else threading.Event(); process_cancel.set() if preflight_cancelled else None
         (command, cwd, environment) = self._resolve_command(request, request_binding, write_payload)
-        process_error, sandbox, local_candidate_output = None, None, None
+        process_error, sandbox, local_candidate_output, attachments = None, None, None, []
         try:
             if operation['kind'] == 'agent' and provider_row['containment'] == 'trusted-local-worktree-v1':
                 try:
                     provided = sandbox_provider.execute(copy.deepcopy(request), copy.deepcopy(request_binding), copy.deepcopy(command), str(cwd), copy.deepcopy(environment), copy.deepcopy(request['limits']), process_cancel)
                 except (OSError, TypeError, ValueError) as error:
                     _fail(getattr(error, 'status', 'corrupt'), getattr(error, 'code', 'local-provider-failed'), getattr(error, 'message', 'Trusted-local provider failed: %s' % error))
-                _exact(provided, {'command', 'process_result', 'candidate_output', 'provider_result'}, 'local-provider-execution')
+                _exact(provided, {'command', 'process_result', 'candidate_output', 'provider_result', 'evidence_attachments'}, 'local-provider-execution')
+                attachments = _evidence_attachments(provided['evidence_attachments'])
                 local_command = _local_provider_command(provided['command'], 'local-provider-command')
                 process = _process_document(provided['process_result'], local_command, request['limits'], 'execution')
                 local_candidate_output = provided['candidate_output']
@@ -513,7 +552,7 @@ class Runtime:
             try: self._token_safe(process); candidate = _stdout(process, 'execution')
             except RuntimeFailure as failure: write_failure, candidate = failure, b''
         else: candidate = b'' if process_error is not None else local_candidate if local_candidate_output is not None else _stdout(process, 'execution')
-        process_ok = process is not None and process['outcome'] == 'success'; write_may_have_started = operation['kind'] == 'github-write' and (process is None or process['reason'] != 'cancelled-before-start')
+        process_ok = process is not None and process['outcome'] == 'success' and (local_candidate_output is None or not isinstance(sandbox, dict) or sandbox.get('process_diagnostic') is None); write_may_have_started = operation['kind'] == 'github-write' and (process is None or process['reason'] != 'cancelled-before-start')
         reconciliation = {'status': 'not-required', 'external_identity': None}
         outcome = 'succeeded' if process_ok else 'failed'
         if isinstance(process, dict) and process.get('reason') in {'cancelled', 'cancelled-before-start'}: outcome = 'cancelled'
@@ -531,10 +570,10 @@ class Runtime:
             candidate_record = {'sha256': workflow_inspector.sha256(candidate), 'size': len(candidate)}
             if provider_row['containment'] == 'external-sandbox-v1':
                 sandbox = sandbox_provider.verify(copy.deepcopy(request), copy.deepcopy(process), candidate)
-            self._validate_sandbox(sandbox, request, process, candidate_record, provider_row, sandbox_provider)
+            self._validate_sandbox(sandbox, request, process, candidate_record, provider_row, sandbox_provider, attachments)
             if local_candidate_output is not None:
                 process = copy.deepcopy(process)
-                process['stdout'] = copy.deepcopy(local_candidate_output)
+                process['stdout'] = dict(local_candidate_output, observed_bytes=local_candidate_output['bytes'], observed_sha256=candidate_record['sha256'])
         repository_after, postflight_cancel = None, None if write_may_have_started else process_cancel
         if request['repository_before'] is not None:
             if postflight_cancel is not None and postflight_cancel.is_set(): outcome = 'cancelled'
@@ -555,7 +594,7 @@ class Runtime:
         if process_error is not None: raise process_error
         if write_failure is not None: _fail(write_failure.status, write_failure.code, write_failure.message, write_failure.subject or 'reconciliation:%s' % reconciliation['status'])
         result = {'format': RESULT_FORMAT, 'request_binding': request_binding, 'attempt_id': request['attempt_id'], 'process_result': copy.deepcopy(process), 'candidate_output': candidate_record, 'repository_after': repository_after, 'reconciliation': reconciliation, 'sandbox': copy.deepcopy(sandbox), 'outcome': outcome}
-        return _with_digest(result, 'result_sha256')
+        return ExecutionBundle(_with_digest(result, 'result_sha256'), tuple(attachments))
     def _ensure_config_current(self, cancel_event=None):
         blob = self._git(['rev-parse', 'HEAD:.github/agent-workflow.json'], cancel_event=cancel_event).decode('ascii').strip()
         data = self._git(['show', 'HEAD:.github/agent-workflow.json'], limits={'timeout_ms': 30000, 'grace_ms': 1000, 'output_limit_bytes': MAX_CONFIG_BYTES}, cancel_event=cancel_event)
@@ -567,9 +606,9 @@ class Runtime:
         method = 'execute' if row['containment'] == 'trusted-local-worktree-v1' else 'verify'
         if getattr(provider, 'name', None) != row['provider_name'] or getattr(provider, 'source_sha256', None) != row['provider_source_sha256'] or (not isinstance(getattr(provider, 'version', None), str)) or SLUG_RE.fullmatch(provider.version) is None or (row.get('provider_version') is not None and provider.version != row['provider_version']) or (not callable(getattr(provider, method, None))):
             _fail('denied', 'sandbox-provider-mismatch', 'Injected provider identity differs from base config')
-    def _validate_sandbox(self, value, request, process, candidate, provider, injected):
+    def _validate_sandbox(self, value, request, process, candidate, provider, injected, attachments=()):
         if provider['containment'] == 'trusted-local-worktree-v1':
-            keys = {'format', 'provider', 'request_sha256', 'authority_binding', 'input_projection_sha256', 'command', 'workspace', 'environment', 'process_result_sha256', 'process_diagnostic', 'transport_output', 'transport_sha256', 'transport_size', 'candidate_sha256', 'candidate_size', 'isolation', 'result_sha256'}
+            keys = {'format', 'provider', 'request_sha256', 'authority_binding', 'input_projection_sha256', 'command', 'workspace', 'environment', 'process_result_sha256', 'process_diagnostic', 'transport_reference', 'transport_sha256', 'transport_size', 'candidate_sha256', 'candidate_size', 'isolation', 'result_sha256'}
             _exact(value, keys, 'local-provider-result')
             _exact(value['provider'], {'name', 'version', 'source', 'source_sha256'}, 'local-provider')
             _exact(value['command'], {'argv', 'argv_sha256', 'executable'}, 'local-command')
@@ -587,15 +626,16 @@ class Runtime:
             expected_environment = {'keys': sorted([*non_secret_environment, 'COPILOT_GITHUB_TOKEN']), 'non_secret_values': non_secret_environment, 'secret_keys': ['COPILOT_GITHUB_TOKEN'], 'authentication': getattr(injected, 'authentication', None)}
             expected_environment['sha256'] = workflow_inspector.sha256(_canonical(expected_environment))
             projection_digest = injected.input_projection_sha256(request) if callable(getattr(injected, 'input_projection_sha256', None)) else None; candidate['size'] <= LOCAL_PROVIDER_CANDIDATE_LIMIT_BYTES or _fail('denied', 'local-provider-candidate-too-large', 'Trusted-local provider candidate output exceeds its reviewed limit')
-            transport = _stdout(process, 'execution')
-            _exact(value['transport_output'], {'bytes', 'base64'}, 'local-provider-transport-output')
-            try: recorded_transport = base64.b64decode(value['transport_output']['base64'], validate=True)
-            except (TypeError, ValueError, binascii.Error): _fail('corrupt', 'local-provider-transport-invalid', 'Trusted-local provider transport output is not strict base64')
-            if type(value['transport_output']['bytes']) is not int or value['transport_output']['bytes'] != len(recorded_transport): _fail('corrupt', 'local-provider-transport-invalid', 'Trusted-local provider transport output size is inconsistent')
-            _process_diagnostic(value['process_diagnostic'], process, transport)
-            if value['format'] != 'chess-echo-trusted-local-execution-result-v1' or value['provider'] != expected_provider or value['request_sha256'] != request['request_sha256'] or value['authority_binding'] != request['authority_binding'] or value['input_projection_sha256'] != projection_digest or _local_provider_command(value['command']['argv'], 'local-command') != value['command']['argv'] or value['command']['argv_sha256'] != workflow_inspector.sha256(_canonical(value['command']['argv'])) or value['command']['argv_sha256'] != process.get('command_sha256') or value['command']['executable'] != injected.agent_executable or value['process_result_sha256'] != workflow_inspector.sha256(_canonical(process)) or recorded_transport != transport or value['transport_sha256'] != workflow_inspector.sha256(transport) or value['transport_size'] != len(transport) or value['candidate_sha256'] != candidate['sha256'] or value['candidate_size'] != candidate['size'] or workspace['root'] != str(self.root) or workspace['cwd'] != str(self.root) or workspace['identity_sha256'] != workflow_inspector.sha256(_canonical(workspace_identity)) or workspace['selected_commit'] != request['repository_before']['head']['commit'] or workspace['head_before'] != workspace['selected_commit'] or workspace['branch'] != 'refs/heads/chess-echo-agent/issue-%d' % request['issue'] or environment != expected_environment or value['isolation'] != expected_isolation or value['result_sha256'] != workflow_inspector.sha256(_canonical(unsigned)):
+            transport_size, transport_sha256 = _observed(process, 'execution')
+            _exact(value['transport_reference'], {'path', 'sha256', 'size'}, 'local-provider-transport-reference')
+            expected_transport = {'path': value['transport_reference'].get('path'), 'sha256': transport_sha256, 'size': transport_size}
+            recorded = [item for item in attachments if item['path'] == expected_transport['path']]
+            if len(attachments) != 1 or len(recorded) != 1 or recorded[0]['sha256'] != transport_sha256 or recorded[0]['size'] != transport_size: _fail('corrupt', 'local-provider-transport-invalid', 'Trusted-local raw transport attachment does not match the supervised stream')
+            _process_diagnostic(value['process_diagnostic'], process, transport_size, transport_sha256)
+            if value['format'] != 'chess-echo-trusted-local-execution-result-v1' or value['provider'] != expected_provider or value['request_sha256'] != request['request_sha256'] or value['authority_binding'] != request['authority_binding'] or value['input_projection_sha256'] != projection_digest or _local_provider_command(value['command']['argv'], 'local-command') != value['command']['argv'] or value['command']['argv_sha256'] != workflow_inspector.sha256(_canonical(value['command']['argv'])) or value['command']['argv_sha256'] != process.get('command_sha256') or value['command']['executable'] != injected.agent_executable or value['process_result_sha256'] != workflow_inspector.sha256(_canonical(process)) or value['transport_reference'] != expected_transport or value['transport_sha256'] != transport_sha256 or value['transport_size'] != transport_size or value['candidate_sha256'] != candidate['sha256'] or value['candidate_size'] != candidate['size'] or workspace['root'] != str(self.root) or workspace['cwd'] != str(self.root) or workspace['identity_sha256'] != workflow_inspector.sha256(_canonical(workspace_identity)) or workspace['selected_commit'] != request['repository_before']['head']['commit'] or workspace['head_before'] != workspace['selected_commit'] or workspace['branch'] != 'refs/heads/chess-echo-agent/issue-%d' % request['issue'] or environment != expected_environment or value['isolation'] != expected_isolation or value['result_sha256'] != workflow_inspector.sha256(_canonical(unsigned)):
                 _fail('denied', 'sandbox-verification-failed', 'Trusted-local result does not prove the required execution facts')
             return
+        if attachments: _fail('corrupt', 'invalid-evidence-attachments', 'Only the trusted-local boundary produces execution evidence attachments')
         _exact(value, {'format', 'provider', 'request_sha256', 'command_sha256', 'repository_scope', 'credential_access', 'authority_store_access', 'containment', 'candidate_sha256', 'candidate_size', 'result_sha256'}, 'sandbox-result')
         if value['format'] != SANDBOX_RESULT_FORMAT:
             _fail('unsupported', 'sandbox-result-format', 'Sandbox result format is unsupported')
