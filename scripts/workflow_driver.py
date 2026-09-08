@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import stat
 import subprocess
 import sys
@@ -16,10 +17,27 @@ VERSION = "1.0.0"
 PLAN_FORMAT = "chess-echo-orchestration-plan-v1"
 RESULT_FORMAT = "chess-echo-orchestration-orchestrator-result-v1"
 JOURNAL_FORMAT = "chess-echo-workflow-driver-event-v1"
+HOST_FAILURE_FORMAT = "chess-echo-trusted-local-host-failure-v1"
 MAX_DOCUMENT_BYTES = 2 * 1024 * 1024
 DEFAULT_MAX_STEPS = 64
 DEFAULT_DEADLINE_SECONDS = 14_400
 DEFAULT_MAX_NO_PROGRESS = 2
+HOST_FAILURE_RETURNCODE = 2
+HOST_FAILURE_STATUSES = frozenset(
+    {
+        "ambiguous",
+        "busy",
+        "conflict",
+        "corrupt",
+        "denied",
+        "missing",
+        "paused",
+        "stale",
+        "uncertain",
+        "unsupported",
+    }
+)
+SAFE_CODE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 FROZEN_ISSUES = frozenset({115, 174})
 PHASES = frozenset(
     {
@@ -96,9 +114,20 @@ EXIT_BUSY = 5
 
 
 class DriverFailure(Exception):
-    def __init__(self, outcome, code, message):
+    def __init__(
+        self,
+        outcome,
+        code,
+        message,
+        host_returncode=None,
+        host_status=None,
+        host_code=None,
+    ):
         super().__init__(message)
         self.outcome, self.code, self.message = outcome, code, message
+        self.host_returncode = host_returncode
+        self.host_status = host_status
+        self.host_code = host_code
 
 
 def _fail(outcome, code, message):
@@ -154,6 +183,40 @@ def _strict_object(data, label):
     if not isinstance(value, dict) or data != canonical:
         _fail("failed", "%s-canonical" % label, "%s is not one canonical JSON document" % label)
     return value
+
+
+def _validate_host_failure(data, returncode):
+    if returncode != HOST_FAILURE_RETURNCODE:
+        _fail(
+            "failed",
+            "host-failure-returncode",
+            "Reviewed local host used an unsupported failure return code",
+        )
+    if not isinstance(data, bytes):
+        _fail("failed", "host-failure-type", "Reviewed local host failure output is not bytes")
+    if not data:
+        _fail("failed", "host-failure-missing", "Reviewed local host failure output is missing")
+    if len(data) > MAX_DOCUMENT_BYTES:
+        _fail("failed", "host-failure-size", "Reviewed local host failure output is too large")
+    value = _strict_object(data, "host-failure")
+    outcome = value.get("outcome")
+    if (
+        set(value) != {"format", "outcome"}
+        or value["format"] != HOST_FAILURE_FORMAT
+        or not isinstance(outcome, dict)
+        or set(outcome) != {"status", "code", "message"}
+        or not isinstance(outcome["status"], str)
+        or outcome["status"] not in HOST_FAILURE_STATUSES
+        or not isinstance(outcome["code"], str)
+        or SAFE_CODE_RE.fullmatch(outcome["code"]) is None
+        or not isinstance(outcome["message"], str)
+    ):
+        _fail(
+            "failed",
+            "host-failure-schema",
+            "Reviewed local host failure output has an unsupported schema",
+        )
+    return {"status": outcome["status"], "code": outcome["code"]}
 
 
 def _binding(value):
@@ -445,7 +508,9 @@ class Journal:
             "action",
             "code",
             "generation",
+            "host_code",
             "host_returncode",
+            "host_status",
             "no_progress",
             "phase",
             "pointer_sha256",
@@ -558,6 +623,37 @@ class Driver:
             return completed, None
         return completed, _strict_object(completed.stdout, command)
 
+    @staticmethod
+    def _raise_host_failure(journal, command, completed, steps, action=None):
+        details = {"host_returncode": completed.returncode, "steps": steps}
+        if action is not None:
+            details["action"] = action
+        try:
+            failure = _validate_host_failure(completed.stdout, completed.returncode)
+        except DriverFailure as error:
+            journal.record("host-failed", **details)
+            raise DriverFailure(
+                error.outcome,
+                error.code,
+                error.message,
+                host_returncode=completed.returncode,
+            ) from None
+        details.update(
+            {
+                "host_status": failure["status"],
+                "host_code": failure["code"],
+            }
+        )
+        journal.record("host-failed", **details)
+        raise DriverFailure(
+            "failed",
+            "%s-failed" % command,
+            "Reviewed local host rejected %s" % command,
+            host_returncode=completed.returncode,
+            host_status=failure["status"],
+            host_code=failure["code"],
+        )
+
     def run(self, journal):
         steps = 0
         previous = None
@@ -568,8 +664,7 @@ class Driver:
                 _fail("bounded", "deadline-reached", "Driver dispatch deadline was reached")
             completed, raw_plan = self._invoke("plan-next")
             if completed.returncode != 0:
-                journal.record("host-failed", host_returncode=completed.returncode, steps=steps)
-                _fail("failed", "plan-next-failed", "Reviewed local host rejected plan-next")
+                self._raise_host_failure(journal, "plan-next", completed, steps)
             plan = validate_plan(raw_plan, self.args.issue)
             action = plan["next_action"]
             fingerprint = _sha(
@@ -633,13 +728,13 @@ class Driver:
             completed, raw_result = self._invoke("step", plan["pointer_sha256"])
             steps += 1
             if completed.returncode != 0:
-                journal.record(
-                    "host-failed",
+                self._raise_host_failure(
+                    journal,
+                    "step",
+                    completed,
+                    steps,
                     action=action["action"],
-                    host_returncode=completed.returncode,
-                    steps=steps,
                 )
-                _fail("failed", "step-failed", "Reviewed local host rejected step")
             result = validate_step_result(raw_result, self.args.issue)
             journal.record(
                 "step-returned",
@@ -719,7 +814,17 @@ def main(argv=None, stdin=None):
                 journal.record("terminated", code=error.code, reason=error.outcome)
             except DriverFailure:
                 pass
-        sys.stdout.buffer.write(_canonical(_result(error.outcome, error.code, error.message)) + b"\n")
+        result = _result(
+            error.outcome,
+            error.code,
+            None if error.host_returncode is not None else error.message,
+        )
+        if error.host_returncode is not None:
+            result["host_returncode"] = error.host_returncode
+        if error.host_status is not None:
+            result["host_status"] = error.host_status
+            result["host_code"] = error.host_code
+        sys.stdout.buffer.write(_canonical(result) + b"\n")
         return {
             "busy": EXIT_BUSY,
             "bounded": EXIT_BOUNDED,

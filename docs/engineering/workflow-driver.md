@@ -50,6 +50,15 @@ Recovery and cancelled-attempt actions stop with exit 3. Exhausted bounds stop
 with exit 4. A present issue lock stops with exit 5. Malformed, noncanonical,
 inconclusive, stale, busy, or otherwise failed host output stops with exit 1.
 
+On a nonzero host return, the driver accepts only the host's exact canonical
+`chess-echo-trusted-local-host-failure-v1` document and required exit code 2.
+The failure status must be a reviewed host outcome and its code must be a
+bounded safe slug. The driver records those typed fields and the numeric host
+return code, but discards the host message and both process streams. Missing,
+oversized, malformed, noncanonical, incorrectly typed, or return-code-
+inconsistent failure output stops with a distinct driver protocol code and no
+untrusted text.
+
 Success (exit 0) requires both exact terminal signals in the same `plan-next`
 document: `phase: COMPLETED` and the complete `none-completed` read-only action.
 Neither signal alone is accepted.
@@ -69,4 +78,6 @@ operation. Records contain only bounded control metadata such as phase,
 action, generation, pointer digest, result code, and counters. Commands,
 standard input, host output, handoffs, tokens, prompts, and environment values
 are excluded. The journal is audit evidence only and cannot authorize or
-resume workflow work.
+resume workflow work. A final driver failure caused by the host similarly
+contains only the driver outcome/code plus the bounded host status/code and
+host return code; it never copies the host message or raw output.

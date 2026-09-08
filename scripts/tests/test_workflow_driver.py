@@ -19,6 +19,13 @@ def canonical(value):
     return driver._canonical(value) + b"\n"
 
 
+def host_failure(status="corrupt", code="local-agent-result-invalid", message="redacted"):
+    return {
+        "format": driver.HOST_FAILURE_FORMAT,
+        "outcome": {"status": status, "code": code, "message": message},
+    }
+
+
 def binding(character):
     return {"kind": "evidence-binding", "sha256": character * 64, "size": 1}
 
@@ -277,22 +284,178 @@ class DriverTest(unittest.TestCase):
                 finally:
                     journal.close()
 
-    def test_host_failure_busy_and_stale_fail_closed(self):
-        for code in ("attempt-in-flight", "runtime-authority-changed"):
-            with self.subTest(code=code):
-                failure = canonical(
-                    {
-                        "format": "chess-echo-trusted-local-host-failure-v1",
-                        "outcome": {"status": "busy", "code": code, "message": "redacted"},
-                    }
+    def test_plan_next_failure_preserves_only_typed_host_diagnostics(self):
+        for status, code in (
+            ("busy", "attempt-in-flight"),
+            ("stale", "runtime-authority-changed"),
+        ):
+            with self.subTest(status=status, code=code):
+                secret = "message-secret-%s" % status
+                runner = FakeRunner(
+                    [(driver.HOST_FAILURE_RETURNCODE, canonical(host_failure(status, code, secret)), b"stderr-secret")]
                 )
-                runner = FakeRunner([(9, failure, b"sensitive stderr")])
                 journal = driver.Journal(self.state, ISSUE)
                 try:
-                    with self.assertRaisesRegex(driver.DriverFailure, "plan-next"):
+                    with self.assertRaisesRegex(driver.DriverFailure, "plan-next") as raised:
                         driver.Driver(self.args, "token", runner=runner).run(journal)
                 finally:
                     journal.close()
+                self.assertEqual(status, raised.exception.host_status)
+                self.assertEqual(code, raised.exception.host_code)
+                self.assertEqual(driver.HOST_FAILURE_RETURNCODE, raised.exception.host_returncode)
+                persisted = (self.state / ("driver-issue-%d.jsonl" % ISSUE)).read_bytes()
+                self.assertNotIn(secret.encode(), persisted)
+                self.assertNotIn(b"stderr-secret", persisted)
+                record = json.loads(persisted.splitlines()[-1])
+                self.assertEqual(
+                    {
+                        "host_code": code,
+                        "host_returncode": driver.HOST_FAILURE_RETURNCODE,
+                        "host_status": status,
+                        "steps": 0,
+                    },
+                    record["details"],
+                )
+
+    def test_step_failure_preserves_typed_host_diagnostics(self):
+        runner = FakeRunner(
+            [
+                plan(action("request-planner")),
+                (
+                    driver.HOST_FAILURE_RETURNCODE,
+                    canonical(host_failure("missing", "local-agent-result-failed")),
+                    b"",
+                ),
+            ]
+        )
+        journal = driver.Journal(self.state, ISSUE)
+        try:
+            with self.assertRaisesRegex(driver.DriverFailure, "step") as raised:
+                driver.Driver(self.args, "token", runner=runner).run(journal)
+        finally:
+            journal.close()
+        self.assertEqual("missing", raised.exception.host_status)
+        self.assertEqual("local-agent-result-failed", raised.exception.host_code)
+        record = json.loads(
+            (self.state / ("driver-issue-%d.jsonl" % ISSUE)).read_bytes().splitlines()[-1]
+        )
+        self.assertEqual(
+            {
+                "action": "request-planner",
+                "host_code": "local-agent-result-failed",
+                "host_returncode": driver.HOST_FAILURE_RETURNCODE,
+                "host_status": "missing",
+                "steps": 1,
+            },
+            record["details"],
+        )
+
+    def test_host_failure_output_must_be_present_bounded_strict_and_canonical(self):
+        cases = (
+            ("host-failure-missing", b""),
+            ("host-failure-size", b"x" * (driver.MAX_DOCUMENT_BYTES + 1)),
+            ("host-failure-json", b"not-json\n"),
+            (
+                "host-failure-canonical",
+                json.dumps(host_failure(), sort_keys=False).encode() + b"\n",
+            ),
+            (
+                "host-failure-json",
+                canonical(host_failure()).replace(b'"message":"redacted"', b'"message":NaN'),
+            ),
+            (
+                "host-failure-schema",
+                canonical(
+                    {
+                        "format": driver.HOST_FAILURE_FORMAT,
+                        "outcome": {
+                            "status": "resolved",
+                            "code": "not-a-failure",
+                            "message": "secret",
+                        },
+                    }
+                ),
+            ),
+            (
+                "host-failure-schema",
+                canonical(host_failure(code="x" * 129)),
+            ),
+        )
+        for expected_code, output in cases:
+            with self.subTest(expected_code=expected_code):
+                runner = FakeRunner([(driver.HOST_FAILURE_RETURNCODE, output, b"stderr-secret")])
+                journal = driver.Journal(self.state, ISSUE)
+                try:
+                    with self.assertRaises(driver.DriverFailure) as raised:
+                        driver.Driver(self.args, "token", runner=runner).run(journal)
+                finally:
+                    journal.close()
+                self.assertEqual(expected_code, raised.exception.code)
+                self.assertIsNone(raised.exception.host_status)
+                persisted = (self.state / ("driver-issue-%d.jsonl" % ISSUE)).read_bytes()
+                self.assertNotIn(b"secret", persisted)
+                self.assertNotIn(b"not-json", persisted)
+
+    def test_host_failure_returncode_must_match_host_contract(self):
+        runner = FakeRunner([(9, canonical(host_failure("busy", "attempt-in-flight")), b"")])
+        journal = driver.Journal(self.state, ISSUE)
+        try:
+            with self.assertRaises(driver.DriverFailure) as raised:
+                driver.Driver(self.args, "token", runner=runner).run(journal)
+        finally:
+            journal.close()
+        self.assertEqual("host-failure-returncode", raised.exception.code)
+        self.assertEqual(9, raised.exception.host_returncode)
+        self.assertIsNone(raised.exception.host_status)
+
+    def test_final_failure_document_excludes_host_message_and_streams(self):
+        secret = "host-message-secret"
+        response = subprocess.CompletedProcess(
+            [],
+            driver.HOST_FAILURE_RETURNCODE,
+            canonical(host_failure("corrupt", "local-agent-result-invalid", secret)),
+            b"stderr-secret",
+        )
+        output = io.BytesIO()
+        stdout = io.TextIOWrapper(output)
+        common = [
+            "run", str(ISSUE),
+            "--control-root", "/control",
+            "--repository", "NathanZK/ChessEcho",
+            "--git-executable", "/git",
+            "--gh-executable", "/gh",
+            "--agent-executable", "/agent",
+            "--agent-home", "/agent-home",
+            "--result-store", "/results",
+            "--workspace", "/workspace",
+            "--driver-state", str(self.state),
+            "--github-token-stdin",
+        ]
+        with mock.patch.object(driver.Driver, "_run_process", return_value=response), mock.patch.object(
+            driver.sys, "stdout", stdout
+        ):
+            self.assertEqual(
+                driver.EXIT_FAILED,
+                driver.main(common, stdin=io.StringIO("github-secret\n")),
+            )
+            stdout.flush()
+        document = json.loads(output.getvalue())
+        self.assertEqual(
+            {
+                "outcome": "failed",
+                "code": "plan-next-failed",
+                "host_returncode": driver.HOST_FAILURE_RETURNCODE,
+                "host_status": "corrupt",
+                "host_code": "local-agent-result-invalid",
+            },
+            document,
+        )
+        persisted = (
+            output.getvalue()
+            + (self.state / ("driver-issue-%d.jsonl" % ISSUE)).read_bytes()
+        )
+        for excluded in (secret, "stderr-secret", "github-secret"):
+            self.assertNotIn(excluded.encode(), persisted)
 
     def test_paused_step_result_is_followed_by_fresh_recovery_plan(self):
         outcome, runner = self.run_driver(
