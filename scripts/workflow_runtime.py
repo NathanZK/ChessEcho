@@ -101,6 +101,18 @@ def _require_success(result, label):
         status = 'uncertain' if outcome in {'terminated', 'supervisor-failure'} else 'missing'
         _fail(status, '%s-failed' % label, '%s did not complete successfully' % label)
     return data
+def _process_diagnostic(value, process, transport):
+    successful = process['outcome'] == 'success' and process['exit_code'] == 0 and process['cleanup_verified'] is True
+    if successful:
+        if value is not None: _fail('denied', 'sandbox-verification-failed', 'Successful process has a failure diagnostic')
+        return
+    _exact(value, {'format', 'outcome', 'reason', 'exit_code', 'terminating_signal', 'stdout', 'stderr', 'provider_failure', 'parser_failure'}, 'local-process-diagnostic')
+    for stream in ('stdout', 'stderr'): _exact(value[stream], {'bytes', 'sha256'}, 'local-process-diagnostic-%s' % stream)
+    parser = value['parser_failure']
+    if parser is not None: _exact(parser, {'status', 'code'}, 'local-process-parser-failure')
+    stderr = _stdout(process, 'execution', 'stderr')
+    expected = {'format': 'chess-echo-trusted-local-process-diagnostic-v1', 'outcome': process['outcome'], 'reason': process['reason'], 'exit_code': process['exit_code'], 'terminating_signal': process['terminating_signal'], 'stdout': {'bytes': len(transport), 'sha256': workflow_inspector.sha256(transport)}, 'stderr': {'bytes': len(stderr), 'sha256': workflow_inspector.sha256(stderr)}, 'provider_failure': {'status': 'missing', 'code': 'local-agent-process-failed'}}
+    if any(value[key] != item for key, item in expected.items()) or parser is not None and (not isinstance(parser.get('status'), str) or parser['status'] not in OUTCOME_EXIT_CODES or not isinstance(parser.get('code'), str) or SLUG_RE.fullmatch(parser['code']) is None): _fail('denied', 'sandbox-verification-failed', 'Process diagnostic differs from the supervised execution')
 def _common_env(paths):
     return {'PATH': os.pathsep.join(paths), 'HOME': '', 'LC_ALL': 'C.UTF-8', 'LANG': 'C.UTF-8', 'TZ': 'UTC'}
 def _run(command, *, limits, cwd, environment, cancel_event=None):
@@ -556,7 +568,7 @@ class Runtime:
             _fail('denied', 'sandbox-provider-mismatch', 'Injected provider identity differs from base config')
     def _validate_sandbox(self, value, request, process, candidate, provider, injected):
         if provider['containment'] == 'trusted-local-worktree-v1':
-            keys = {'format', 'provider', 'request_sha256', 'authority_binding', 'input_projection_sha256', 'command', 'workspace', 'environment', 'process_result_sha256', 'transport_output', 'transport_sha256', 'transport_size', 'candidate_sha256', 'candidate_size', 'isolation', 'result_sha256'}
+            keys = {'format', 'provider', 'request_sha256', 'authority_binding', 'input_projection_sha256', 'command', 'workspace', 'environment', 'process_result_sha256', 'process_diagnostic', 'transport_output', 'transport_sha256', 'transport_size', 'candidate_sha256', 'candidate_size', 'isolation', 'result_sha256'}
             _exact(value, keys, 'local-provider-result')
             _exact(value['provider'], {'name', 'version', 'source', 'source_sha256'}, 'local-provider')
             _exact(value['command'], {'argv', 'argv_sha256', 'executable'}, 'local-command')
@@ -579,6 +591,7 @@ class Runtime:
             try: recorded_transport = base64.b64decode(value['transport_output']['base64'], validate=True)
             except (TypeError, ValueError, binascii.Error): _fail('corrupt', 'local-provider-transport-invalid', 'Trusted-local provider transport output is not strict base64')
             if type(value['transport_output']['bytes']) is not int or value['transport_output']['bytes'] != len(recorded_transport): _fail('corrupt', 'local-provider-transport-invalid', 'Trusted-local provider transport output size is inconsistent')
+            _process_diagnostic(value['process_diagnostic'], process, transport)
             if value['format'] != 'chess-echo-trusted-local-execution-result-v1' or value['provider'] != expected_provider or value['request_sha256'] != request['request_sha256'] or value['authority_binding'] != request['authority_binding'] or value['input_projection_sha256'] != projection_digest or _local_provider_command(value['command']['argv'], 'local-command') != value['command']['argv'] or value['command']['argv_sha256'] != workflow_inspector.sha256(_canonical(value['command']['argv'])) or value['command']['argv_sha256'] != process.get('command_sha256') or value['command']['executable'] != injected.agent_executable or value['process_result_sha256'] != workflow_inspector.sha256(_canonical(process)) or recorded_transport != transport or value['transport_sha256'] != workflow_inspector.sha256(transport) or value['transport_size'] != len(transport) or value['candidate_sha256'] != candidate['sha256'] or value['candidate_size'] != candidate['size'] or workspace['root'] != str(self.root) or workspace['cwd'] != str(self.root) or workspace['identity_sha256'] != workflow_inspector.sha256(_canonical(workspace_identity)) or workspace['selected_commit'] != request['repository_before']['head']['commit'] or workspace['head_before'] != workspace['selected_commit'] or workspace['branch'] != 'refs/heads/chess-echo-agent/issue-%d' % request['issue'] or environment != expected_environment or value['isolation'] != expected_isolation or value['result_sha256'] != workflow_inspector.sha256(_canonical(unsigned)):
                 _fail('denied', 'sandbox-verification-failed', 'Trusted-local result does not prove the required execution facts')
             return

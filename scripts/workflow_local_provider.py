@@ -30,6 +30,7 @@ except ImportError:  # pragma: no cover - direct script loading
 NAME = "chess-echo-trusted-local"
 VERSION = "1.2.0"
 RESULT_FORMAT = "chess-echo-trusted-local-execution-result-v1"
+PROCESS_DIAGNOSTIC_FORMAT = "chess-echo-trusted-local-process-diagnostic-v1"
 DISCOVERY_FORMAT = "chess-echo-pending-result-candidates-v1"
 HANDOFF_FORMAT = "chess-echo-execution-handoff-v1"
 WORKTREE_BRANCH_PREFIX = "chess-echo-agent/issue-"
@@ -939,19 +940,22 @@ class LocalSandboxProvider:
                     "Worker process disclosed its designated authentication credential",
                 )
             transport = _process_bytes(process)
+            parser_failure = None
             try:
                 candidate = _extract_candidate_from_jsonl(transport)
-            except LocalProviderFailure:
-                _require_process_success(process)
-                raise
-            if _bytes_disclose_secret(candidate, token):
+            except LocalProviderFailure as error:
+                if _process_succeeded(process):
+                    raise
+                parser_failure = error
+                candidate = b""
+            if parser_failure is None and _bytes_disclose_secret(candidate, token):
                 _scrub_process_result(process)
                 _fail(
                     "denied",
                     "worker-authentication-disclosed",
                     "Worker candidate disclosed its designated authentication credential",
                 )
-            _require_process_success(process)
+            process_diagnostic = _process_diagnostic(process, parser_failure)
         finally:
             controlled_environment.pop(WORKER_TOKEN_ENV, None)
             self._worker_token = None
@@ -992,6 +996,7 @@ class LocalSandboxProvider:
             },
             "environment": environment_identity,
             "process_result_sha256": _sha(_canonical(process)),
+            "process_diagnostic": process_diagnostic,
             "transport_output": {
                 "bytes": len(transport),
                 "base64": base64.b64encode(transport).decode("ascii"),
@@ -1024,28 +1029,56 @@ class LocalSandboxProvider:
 
 
 def _process_bytes(process):
+    return _process_stream_bytes(process, "stdout")
+
+
+def _process_succeeded(process):
+    return (
+        isinstance(process, dict)
+        and process.get("outcome") == "success"
+        and process.get("exit_code") == 0
+        and process.get("cleanup_verified") is True
+    )
+
+
+def _process_diagnostic(process, parser_failure=None):
+    if _process_succeeded(process):
+        return None
+    stderr = _process_stream_bytes(process, "stderr")
+    stdout = _process_bytes(process)
+    parser = None
+    if parser_failure is not None:
+        parser = {"status": parser_failure.status, "code": parser_failure.code}
+    return {
+        "format": PROCESS_DIAGNOSTIC_FORMAT,
+        "outcome": process.get("outcome"),
+        "reason": process.get("reason"),
+        "exit_code": process.get("exit_code"),
+        "terminating_signal": process.get("terminating_signal"),
+        "stdout": {"bytes": len(stdout), "sha256": _sha(stdout)},
+        "stderr": {"bytes": len(stderr), "sha256": _sha(stderr)},
+        "provider_failure": {
+            "status": "missing",
+            "code": "local-agent-process-failed",
+        },
+        "parser_failure": parser,
+    }
+
+
+def _process_stream_bytes(process, stream):
     if (
         not isinstance(process, dict)
         or process.get("format") != supervisor.RESULT_FORMAT
     ):
         _fail("corrupt", "local-agent-output-invalid", "Agent process result is malformed")
     try:
-        record = process["stdout"]
-        candidate = base64.b64decode(record["base64"], validate=True)
+        record = process[stream]
+        data = base64.b64decode(record["base64"], validate=True)
     except (KeyError, TypeError, ValueError, binascii.Error):
         _fail("corrupt", "local-agent-output-invalid", "Agent process output is malformed")
-    if set(record) != {"bytes", "base64"} or record["bytes"] != len(candidate):
+    if set(record) != {"bytes", "base64"} or record["bytes"] != len(data):
         _fail("corrupt", "local-agent-output-invalid", "Agent output identity is malformed")
-    return candidate
-
-
-def _require_process_success(process):
-    if (
-        process.get("outcome") != "success"
-        or process.get("exit_code") != 0
-        or process.get("cleanup_verified") is not True
-    ):
-        _fail("missing", "local-agent-process-failed", "Copilot process did not complete successfully")
+    return data
 
 
 class PendingResultStore:
