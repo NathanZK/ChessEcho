@@ -594,6 +594,27 @@ class TrustedLocalProviderTest(unittest.TestCase):
                 with self.assertRaises(provider.LocalProviderFailure):
                     provider._extract_candidate_from_jsonl(raw)
 
+    def test_jsonl_accepts_exact_configured_transport_bound_only(self):
+        events = _jsonl_events(_jsonl())
+        partial = next(
+            event
+            for event in events
+            if event["type"] == "tool.execution_partial_result"
+        )
+        partial["data"]["partialOutput"] = ""
+        base = _encode_events(events)
+        partial["data"]["partialOutput"] = "x" * (provider.JSONL_MAX_BYTES - len(base))
+        bounded = _encode_events(events)
+
+        self.assertEqual(provider.JSONL_MAX_BYTES, len(bounded))
+        self.assertEqual(
+            CANDIDATE.encode("utf-8"),
+            provider._extract_candidate_from_jsonl(bounded),
+        )
+        with self.assertRaises(provider.LocalProviderFailure) as raised:
+            provider._extract_candidate_from_jsonl(bounded + b" ")
+        self.assertEqual("local-agent-jsonl-invalid", raised.exception.code)
+
     def test_jsonl_protocol_relationships_fail_closed(self):
         def changed(mutator):
             events = _jsonl_events(_jsonl())
@@ -1262,7 +1283,7 @@ class TrustedLocalProviderTest(unittest.TestCase):
             key: config["agent_roles"][0][key]
             for key in ("timeout_ms", "grace_ms", "output_limit_bytes")
         }
-        self.assertEqual(384 * 1024, limits["output_limit_bytes"])
+        self.assertEqual(448 * 1024, limits["output_limit_bytes"])
         self.assertEqual(limits["output_limit_bytes"], provider.JSONL_MAX_BYTES)
         self.assertTrue(
             all(
@@ -1360,7 +1381,7 @@ class TrustedLocalProviderTest(unittest.TestCase):
             - (2 * provider.PROMPT_LIMIT_BYTES + 2)
             - runtime.EXECUTION_RESULT_HEADROOM_BYTES
         )
-        self.assertEqual(327_678, maximum_repository_size)
+        self.assertEqual(65_526, maximum_repository_size)
         maximum_repository = repository_observation(maximum_repository_size)
 
         result = self._execute_through_runtime(
@@ -1472,7 +1493,7 @@ class TrustedLocalProviderTest(unittest.TestCase):
         repository_before = maximum_repository
         oversized_limits = {
             **limits,
-            "output_limit_bytes": limits["output_limit_bytes"] + 1,
+            "output_limit_bytes": limits["output_limit_bytes"] + 3,
         }
         with self.assertRaises(runtime.RuntimeFailure) as raised:
             build_with_limits(oversized_limits)

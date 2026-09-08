@@ -28,7 +28,7 @@ except ImportError:  # pragma: no cover - direct script loading
 
 
 NAME = "chess-echo-trusted-local"
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 RESULT_FORMAT = "chess-echo-trusted-local-execution-result-v1"
 PROCESS_DIAGNOSTIC_FORMAT = "chess-echo-trusted-local-process-diagnostic-v1"
 DISCOVERY_FORMAT = "chess-echo-pending-result-candidates-v1"
@@ -47,7 +47,7 @@ AUDIT_LIMITS = {
     "output_limit_bytes": 1024 * 1024,
 }
 PROMPT_LIMIT_BYTES = 64 * 1024
-JSONL_MAX_BYTES = 384 * 1024
+JSONL_MAX_BYTES = 448 * 1024
 JSONL_MAX_EVENTS = 2048
 JSONL_MAX_EVENT_BYTES = JSONL_MAX_BYTES
 JSONL_STARTUP_TYPES = (
