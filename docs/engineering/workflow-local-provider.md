@@ -170,22 +170,31 @@ to each trusted-local execution result: adapted candidate stdout, stderr, and
 `sandbox.transport_output`. The original preflight budget covered only stdout
 and stderr, so the former 512 KiB per-stream limit could exceed the unchanged
 2 MiB document limit before metadata. The first correction reduced the raw
-limit to 384 KiB, but incorrectly treated 64 KiB as generic headroom even
-though the complete generated prompt is itself persisted in
+limit to 384 KiB and corrected the preflight to account separately for the
+complete generated prompt persisted in
 `sandbox.command.argv`. Its 64 KiB raw UTF-8 limit can occupy up to 131,074
 bytes as a canonical JSON string because quotes, backslashes, and newlines are
 escaped and the surrounding JSON quotes add two bytes.
 
-The corrected preflight charges four terms independently: the actual canonical
+The preflight charges four terms independently: the actual canonical
 repository-before observation, 131,074 bytes for the maximum serialized
 prompt, three exact Base64 expansions of the configured per-stream limit, and
-64 KiB for the remaining fixed result structure. A 384 KiB raw output expands
-to exactly 512 KiB, so the three outputs consume 1.5 MiB. The remaining bytes
-admit at most a 327,678-byte canonical repository observation after reserving
-the serialized prompt and fixed metadata. Focused tests serialize the actual
-result envelope with all three maximal blobs, a maximum-length
-quote/backslash/newline-heavy prompt, and the maximal admitted observation
-through the production canonicalizer.
+64 KiB for the remaining fixed result structure.
+
+A controlled planning run on 2026-09-08 then reached the 384 KiB stdout limit
+exactly and failed as `output-limit` / `per-stream-output-limit`, with strict
+JSONL parsing independently reporting a truncated final record. The limit is
+therefore 448 KiB: 64 KiB of deterministic transport headroom over the observed
+failure, while remaining inside the same three-output persistence proof. Each
+maximal stream expands to 611,672 Base64 bytes, so all three consume 1,835,016
+bytes. After the 131,074-byte serialized-prompt reservation and 64 KiB fixed
+headroom, the preflight still admits a 65,526-byte canonical repository
+observation. Focused tests accept a valid JSONL transport at exactly the new
+bound, reject the next byte, serialize the actual result envelope with all
+three maximal blobs, a maximum-length quote/backslash/newline-heavy prompt, and
+the maximal admitted observation through the production canonicalizer, and
+reject either the next Base64 expansion or an additional
+repository-observation byte.
 
 Repository-after is observed only after the agent runs and can legitimately be
 larger than repository-before, so preflight does not claim to bound that future
