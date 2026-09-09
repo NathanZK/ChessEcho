@@ -13,7 +13,7 @@ import time
 from contextlib import contextmanager
 
 
-RESULT_FORMAT = "chess-echo-process-result-v2"
+RESULT_FORMAT = "chess-echo-process-result-v3"
 READ_SIZE = 64 * 1024
 POLL_INTERVAL_SECONDS = 0.01
 
@@ -31,6 +31,51 @@ def _command_sha256(command):
     return hashlib.sha256(data).hexdigest()
 
 
+def _stream_record(data=b"", observed_bytes=None, observed_sha256=None):
+    return {
+        "bytes": len(data),
+        "base64": base64.b64encode(data).decode("ascii"),
+        "observed_bytes": len(data) if observed_bytes is None else observed_bytes,
+        "observed_sha256": (
+            hashlib.sha256(data).hexdigest()
+            if observed_sha256 is None
+            else observed_sha256
+        ),
+    }
+
+
+class _Stream:
+    """One output stream: bounded retention plus exact whole-stream accounting.
+
+    Without a sink the retention limit also stops the read loop, which is the
+    long-standing behaviour for every command whose entire output is the result.
+    With a sink the caller owns retention, so nothing is retained here, the limit
+    never stops the loop, and the stream is consumed to EOF.
+    """
+
+    def __init__(self, retention_limit, sink=None):
+        self.retention_limit = retention_limit
+        self.sink = sink
+        self.retained = bytearray()
+        self.observed_bytes = 0
+        self.digest = hashlib.sha256()
+
+    def consume(self, chunk):
+        self.observed_bytes += len(chunk)
+        self.digest.update(chunk)
+        if self.sink is not None:
+            self.sink(chunk)
+            return False
+        available = max(0, self.retention_limit - len(self.retained))
+        self.retained.extend(chunk[:available])
+        return len(chunk) > available
+
+    def record(self):
+        return _stream_record(
+            bytes(self.retained), self.observed_bytes, self.digest.hexdigest()
+        )
+
+
 def _result(
     command,
     timeout_ms,
@@ -39,8 +84,8 @@ def _result(
     stderr_limit_bytes,
     outcome,
     reason,
-    stdout=b"",
-    stderr=b"",
+    stdout=None,
+    stderr=None,
     exit_code=None,
     terminating_signal=None,
     forced_termination=False,
@@ -79,14 +124,8 @@ def _result(
         "terminating_signal": terminating_signal,
         "forced_termination": forced_termination,
         "cleanup_verified": cleanup_verified,
-        "stdout": {
-            "bytes": len(stdout),
-            "base64": base64.b64encode(stdout).decode("ascii"),
-        },
-        "stderr": {
-            "bytes": len(stderr),
-            "base64": base64.b64encode(stderr).decode("ascii"),
-        },
+        "stdout": _stream_record() if stdout is None else stdout,
+        "stderr": _stream_record() if stderr is None else stderr,
         "supervisor_error": supervisor_error,
     }
     return result
@@ -150,8 +189,7 @@ def _signal_group_with_retries(ownership, signal_number, deadline):
     return "failed"
 
 
-def _read_ready(selector, streams, stream_limits):
-    exceeded = False
+def _drain_ready(selector, streams=None):
     for key, _ in selector.select(timeout=0):
         try:
             chunk = os.read(key.fd, READ_SIZE)
@@ -161,22 +199,8 @@ def _read_ready(selector, streams, stream_limits):
             selector.unregister(key.fileobj)
             key.fileobj.close()
             continue
-        available = max(0, stream_limits[key.data] - len(streams[key.data]))
-        streams[key.data].extend(chunk[:available])
-        if len(chunk) > available:
-            exceeded = True
-    return exceeded
-
-
-def _drain_ready(selector):
-    for key, _ in selector.select(timeout=0):
-        try:
-            chunk = os.read(key.fd, READ_SIZE)
-        except BlockingIOError:
-            continue
-        if not chunk:
-            selector.unregister(key.fileobj)
-            key.fileobj.close()
+        if streams is not None:
+            streams[key.data].consume(chunk)
 
 
 @contextmanager
@@ -200,7 +224,7 @@ def _defer_cleanup_signals():
         signal.pthread_sigmask(signal.SIG_SETMASK, previous)
 
 
-def _wait_for_group_exit(process, ownership, selector, deadline):
+def _wait_for_group_exit(process, ownership, selector, deadline, streams=None):
     if ownership.released:
         return True
     while time.monotonic() < deadline:
@@ -212,7 +236,7 @@ def _wait_for_group_exit(process, ownership, selector, deadline):
             continue
         try:
             if selector is not None:
-                _drain_ready(selector)
+                _drain_ready(selector, streams)
         except BaseException:
             pass
         try:
@@ -253,7 +277,7 @@ def _terminate(
             else:
                 graceful_deadline = time.monotonic() + (grace_ms / 1000)
                 cleanup_verified = _wait_for_group_exit(
-                    process, ownership, selector, graceful_deadline
+                    process, ownership, selector, graceful_deadline, streams
                 )
             if not ownership.released:
                 kill_deadline = time.monotonic() + max(
@@ -267,7 +291,7 @@ def _terminate(
                     cleanup_verified = True
                 else:
                     cleanup_verified = _wait_for_group_exit(
-                        process, ownership, selector, kill_deadline
+                        process, ownership, selector, kill_deadline, streams
                     )
             try:
                 process.wait(
@@ -376,6 +400,7 @@ def _supervise_posix(
     cwd=None,
     env=None,
     cancel_event=None,
+    stdout_sink=None,
     deadline,
     external_signals,
 ):
@@ -436,7 +461,10 @@ def _supervise_posix(
         )
 
     ownership = _ProcessGroupOwnership(process.pid)
-    streams = {"stdout": bytearray(), "stderr": bytearray()}
+    streams = {
+        "stdout": _Stream(output_limit_bytes, stdout_sink),
+        "stderr": _Stream(stderr_limit_bytes),
+    }
     selector = None
     setup_timed_out = False
     setup_interrupted = bool(external_signals)
@@ -479,6 +507,8 @@ def _supervise_posix(
             stderr_limit_bytes,
             "supervisor-failure",
             "supervision-setup-error",
+            stdout=streams["stdout"].record(),
+            stderr=streams["stderr"].record(),
             forced_termination=forced,
             cleanup_verified=cleanup_verified,
             supervisor_error=type(error).__name__,
@@ -496,6 +526,8 @@ def _supervise_posix(
             stderr_limit_bytes,
             "terminated",
             "external-signal",
+            stdout=streams["stdout"].record(),
+            stderr=streams["stderr"].record(),
             forced_termination=forced,
             cleanup_verified=cleanup_verified,
         )
@@ -512,6 +544,8 @@ def _supervise_posix(
             stderr_limit_bytes,
             "timeout",
             "execution-timeout",
+            stdout=streams["stdout"].record(),
+            stderr=streams["stderr"].record(),
             exit_code=(
                 process.returncode
                 if process.returncode is not None and process.returncode >= 0
@@ -526,10 +560,6 @@ def _supervise_posix(
             cleanup_verified=cleanup_verified,
         )
     stop_reason = None
-    stream_limits = {
-        "stdout": output_limit_bytes,
-        "stderr": stderr_limit_bytes,
-    }
     forced = False
     cleanup_verified = True
     supervisor_error = None
@@ -557,11 +587,7 @@ def _supervise_posix(
                     selector.unregister(key.fileobj)
                     key.fileobj.close()
                     continue
-                available = max(
-                    0, stream_limits[key.data] - len(streams[key.data])
-                )
-                streams[key.data].extend(chunk[:available])
-                if len(chunk) > available:
+                if streams[key.data].consume(chunk):
                     stop_reason = "output-limit"
             if stop_reason is not None:
                 break
@@ -601,8 +627,6 @@ def _supervise_posix(
     finally:
         _close_streams(selector, process)
 
-    stdout = bytes(streams["stdout"])
-    stderr = bytes(streams["stderr"])
     return_code = process.poll()
     if stop_reason == "timeout":
         outcome, reason = "timeout", "execution-timeout"
@@ -630,8 +654,8 @@ def _supervise_posix(
         stderr_limit_bytes,
         outcome,
         reason,
-        stdout=stdout,
-        stderr=stderr,
+        stdout=streams["stdout"].record(),
+        stderr=streams["stderr"].record(),
         exit_code=return_code if return_code is not None and return_code >= 0 else None,
         terminating_signal=-return_code if return_code is not None and return_code < 0 else None,
         forced_termination=forced,
@@ -650,8 +674,19 @@ def supervise(
     cwd=None,
     env=None,
     cancel_event=None,
+    stdout_sink=None,
 ):
-    """Execute one command in an isolated session and return a structured result."""
+    """Execute one command in an isolated session and return a structured result.
+
+    ``stdout_sink`` is an optional callable receiving every stdout chunk in
+    arrival order. It transfers stdout retention to the caller: nothing is
+    retained here, ``output_limit_bytes`` no longer stops the read loop, and the
+    stream is consumed to EOF under the existing timeout, cancellation and
+    signal bounds. A sink must not raise; an exception from it is reported as a
+    supervisor failure. It can never terminate the supervised process. Without a
+    sink every existing behaviour, including stopping at ``output_limit_bytes``,
+    is unchanged. ``stderr`` is never sinked and always stops at its own limit.
+    """
     _validate(
         command,
         timeout_ms,
@@ -659,6 +694,8 @@ def supervise(
         output_limit_bytes,
         stderr_limit_bytes,
     )
+    if stdout_sink is not None and not callable(stdout_sink):
+        raise ValueError("stdout_sink must be callable")
     if stderr_limit_bytes is None:
         stderr_limit_bytes = output_limit_bytes
     command = list(command)
@@ -698,6 +735,7 @@ def supervise(
             cwd=cwd,
             env=env,
             cancel_event=cancel_event,
+            stdout_sink=stdout_sink,
             deadline=deadline,
             external_signals=received,
         )

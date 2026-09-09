@@ -31,7 +31,27 @@ arguments raise `ValueError`; process startup failures are structured results.
 `stderr_limit_bytes` is additive and optional. Omitting it preserves the original
 API behavior by using `output_limit_bytes` for both streams.
 
-The result format is `chess-echo-process-result-v2`. It contains:
+## Retention, consumption, and process lifetime
+
+Without a sink these three are the same quantity: stdout is accumulated into a
+bounded buffer, and the first chunk that exceeds `output_limit_bytes` stops the
+read loop and terminates the process group. That is correct for commands whose
+entire output is the result, and it is unchanged.
+
+It is wrong for a streamed protocol whose authoritative record arrives last,
+because unbounded intermediate traffic then evicts the answer and kills a
+healthy process. `supervise` therefore accepts an optional `stdout_sink`
+callable that receives every stdout chunk in arrival order. With a sink the
+caller owns retention: nothing is retained here, `output_limit_bytes` no longer
+stops the read loop, and stdout is consumed to EOF under the existing timeout,
+cancellation, and signal bounds. A sink can never terminate the supervised
+process; it must not raise, and an exception from it surfaces as a supervisor
+failure. `stderr` is never sinked and always stops at its own limit.
+
+Every stream is accounted exactly regardless of retention, including bytes read
+while a process group is being torn down.
+
+The result format is `chess-echo-process-result-v3`. It contains:
 
 - SHA-256 identity of the canonical command vector and the configured timeout,
   grace, stdout, and stderr limits;
@@ -39,8 +59,13 @@ The result format is `chess-echo-process-result-v2`. It contains:
 - exit code or terminating signal when available;
 - whether forceful termination was required and cleanup of the identified
   process group was verified;
-- byte counts and base64 for bounded stdout and stderr;
+- byte counts and base64 for bounded stdout and stderr, plus `observed_bytes`
+  and `observed_sha256` for the complete stream each one was read from;
 - a stable exception class for startup or supervisor failures.
+
+`observed_bytes` is never smaller than the retained byte count, and the two are
+equal exactly when retention was complete, in which case `observed_sha256` is
+the digest of the retained bytes.
 
 It contains no PID, absolute path, timestamp, wall-clock duration, retry
 decision, or workflow state. Repeating a command with the same behavior and
@@ -54,7 +79,7 @@ output produces the same result.
 | `nonzero-exit` | Process exited with a non-zero code |
 | `signal` | Process exited because of a signal |
 | `timeout` | The execution deadline expired |
-| `output-limit` | stdout or stderr exceeded its independent byte limit |
+| `output-limit` | A retained stream exceeded its independent byte limit; a sinked stdout stream cannot produce this outcome |
 | `terminated` | Cancellation occurred or the original process group remained after the parent exited |
 | `startup-failure` | The process could not be started |
 | `supervisor-failure` | Supervision failed after cleanup was attempted |

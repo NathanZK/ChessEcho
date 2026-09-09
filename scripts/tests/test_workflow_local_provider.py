@@ -166,6 +166,15 @@ def _encode_events(events):
     )
 
 
+def _stream_record(retained, observed):
+    return {
+        "bytes": len(retained),
+        "base64": base64.b64encode(retained).decode("ascii"),
+        "observed_bytes": len(observed),
+        "observed_sha256": inspector.sha256(observed),
+    }
+
+
 def _process_result(
     command,
     *,
@@ -177,7 +186,13 @@ def _process_result(
     terminating_signal=None,
     output_limit_bytes=832 * 1024,
     stderr_limit_bytes=64 * 1024,
+    stdout_sink=None,
 ):
+    if stdout_sink is not None:
+        stdout_sink(stdout)
+        retained = b""
+    else:
+        retained = stdout[:output_limit_bytes]
     return {
         "format": provider.supervisor.RESULT_FORMAT,
         "command_sha256": inspector.sha256(inspector.canonical_bytes(command)),
@@ -199,14 +214,8 @@ def _process_result(
         "terminating_signal": terminating_signal,
         "forced_termination": outcome in {"output-limit", "terminated"},
         "cleanup_verified": True,
-        "stdout": {
-            "bytes": len(stdout),
-            "base64": base64.b64encode(stdout).decode("ascii"),
-        },
-        "stderr": {
-            "bytes": len(stderr),
-            "base64": base64.b64encode(stderr).decode("ascii"),
-        },
+        "stdout": _stream_record(retained, stdout),
+        "stderr": _stream_record(stderr[:stderr_limit_bytes], stderr),
         "supervisor_error": None,
     }
 
@@ -353,10 +362,12 @@ class TrustedLocalProviderTest(unittest.TestCase):
         prompt_bytes=None,
         repository_after=None,
         supervise=None,
+        bundle=False,
+        transport=None,
     ):
         self.fixture.agent.write_bytes(
             b"#!/bin/sh\ncat <<'JSONL'\n"
-            + _jsonl(candidate=candidate)
+            + (_jsonl(candidate=candidate) if transport is None else transport)
             + b"JSONL\n"
         )
         self.fixture.agent.chmod(self.fixture.agent.stat().st_mode | stat.S_IXUSR)
@@ -435,11 +446,12 @@ class TrustedLocalProviderTest(unittest.TestCase):
         ), mock.patch.object(
             provider, "_input_projection", return_value=[]
         ), prompt_context, supervise_context:
-            return adapter.execute(
+            executed = adapter.execute_bundle(
                 request,
                 binding,
                 sandbox_provider=sandbox_provider,
             )
+            return executed if bundle else executed.document
 
     def test_agent_prompt_requires_exact_candidate_in_final_response(self):
         prompt = provider._agent_prompt(
@@ -630,7 +642,6 @@ class TrustedLocalProviderTest(unittest.TestCase):
         raw = _jsonl()
         first_line_size = len(raw.split(b"\n", 1)[0]) + 1
         bounds = (
-            ("total-bytes", "JSONL_MAX_BYTES", len(raw) - 1),
             ("event-count", "JSONL_MAX_EVENTS", 1),
             ("event-bytes", "JSONL_MAX_EVENT_BYTES", first_line_size - 1),
         )
@@ -639,8 +650,8 @@ class TrustedLocalProviderTest(unittest.TestCase):
                 with self.assertRaises(provider.LocalProviderFailure):
                     provider._extract_candidate_from_jsonl(raw)
 
-    def test_jsonl_accepts_exact_configured_transport_bound_only(self):
-        self.assertEqual(851_968, provider.JSONL_MAX_BYTES)
+    def test_jsonl_accepts_exact_configured_event_byte_bound_only(self):
+        self.assertEqual(851_968, provider.JSONL_MAX_EVENT_BYTES)
         events = _jsonl_events(_jsonl())
         partial = next(
             event
@@ -648,21 +659,27 @@ class TrustedLocalProviderTest(unittest.TestCase):
             if event["type"] == "tool.execution_partial_result"
         )
         partial["data"]["partialOutput"] = ""
-        base = _encode_events(events)
-        partial["data"]["partialOutput"] = "x" * (provider.JSONL_MAX_BYTES - len(base))
+        base = len(_encode_events([partial]))
+        partial["data"]["partialOutput"] = "x" * (
+            provider.JSONL_MAX_EVENT_BYTES - base
+        )
         bounded = _encode_events(events)
 
-        self.assertEqual(provider.JSONL_MAX_BYTES, len(bounded))
+        self.assertEqual(
+            provider.JSONL_MAX_EVENT_BYTES,
+            len(_encode_events([partial])),
+        )
         self.assertEqual(
             CANDIDATE.encode("utf-8"),
             provider._extract_candidate_from_jsonl(bounded),
         )
+        partial["data"]["partialOutput"] += "x"
         with self.assertRaises(provider.LocalProviderFailure) as raised:
-            provider._extract_candidate_from_jsonl(bounded + b" ")
+            provider._extract_candidate_from_jsonl(_encode_events(events))
         self.assertEqual("local-agent-jsonl-invalid", raised.exception.code)
 
     def test_jsonl_accepts_exact_event_count_bound_only(self):
-        self.assertEqual(8_192, provider.JSONL_MAX_EVENTS)
+        self.assertEqual(32_768, provider.JSONL_MAX_EVENTS)
         events = _jsonl_events(_jsonl())
         insertion = next(
             index
@@ -699,13 +716,12 @@ class TrustedLocalProviderTest(unittest.TestCase):
             provider.JSONL_MAX_EVENTS,
             len(_jsonl_events(bounded)),
         )
-        with mock.patch.object(provider, "JSONL_MAX_BYTES", len(over)):
-            self.assertEqual(
-                CANDIDATE.encode("utf-8"),
-                provider._extract_candidate_from_jsonl(bounded),
-            )
-            with self.assertRaises(provider.LocalProviderFailure) as raised:
-                provider._extract_candidate_from_jsonl(over)
+        self.assertEqual(
+            CANDIDATE.encode("utf-8"),
+            provider._extract_candidate_from_jsonl(bounded),
+        )
+        with self.assertRaises(provider.LocalProviderFailure) as raised:
+            provider._extract_candidate_from_jsonl(over)
         self.assertEqual("local-agent-jsonl-invalid", raised.exception.code)
 
     def test_jsonl_accepts_exact_candidate_bound_only(self):
@@ -724,7 +740,7 @@ class TrustedLocalProviderTest(unittest.TestCase):
         )
         final["data"]["content"] = "x" * provider.CANDIDATE_MAX_BYTES
         bounded = _encode_events(events)
-        self.assertLessEqual(len(bounded), provider.JSONL_MAX_BYTES)
+        self.assertLessEqual(len(bounded), provider.TRANSPORT_MAX_BYTES)
         self.assertEqual(
             b"x" * provider.CANDIDATE_MAX_BYTES,
             provider._extract_candidate_from_jsonl(bounded),
@@ -1067,7 +1083,7 @@ class TrustedLocalProviderTest(unittest.TestCase):
             instance.authentication, facts["environment"]["authentication"]
         )
         self.assertNotIn("values", facts["environment"])
-        self.assertNotIn(self.fixture.worker_token, json.dumps(result))
+        self.assertNotIn(self.fixture.worker_token, repr(result))
         self.assertNotIn(self.fixture.worker_token, json.dumps(facts["command"]))
         self.assertNotIn(self.fixture.worker_token, repr(instance))
         self.assertIsNone(instance._worker_token)
@@ -1226,9 +1242,10 @@ class TrustedLocalProviderTest(unittest.TestCase):
     def test_nonzero_process_without_candidate_disclosure_remains_process_failure(self):
         stderr = b"non-secret diagnostic stderr"
 
-        def failed(command, **_options):
+        def failed(command, **options):
             return _process_result(
                 command,
+                stdout_sink=options.get("stdout_sink"),
                 stdout=_jsonl(),
                 stderr=stderr,
                 outcome="nonzero-exit",
@@ -1251,9 +1268,10 @@ class TrustedLocalProviderTest(unittest.TestCase):
         transport = _jsonl()[:-1]
         stderr = b"bounded stderr"
 
-        def output_limited(command, **_options):
+        def output_limited(command, **options):
             return _process_result(
                 command,
+                stdout_sink=options.get("stdout_sink"),
                 stdout=transport,
                 stderr=stderr,
                 outcome="output-limit",
@@ -1288,9 +1306,10 @@ class TrustedLocalProviderTest(unittest.TestCase):
     def test_failed_process_diagnostics_distinguish_supervisor_conditions(self):
         transport = _jsonl()[:-1]
 
-        def cancelled(command, **_options):
+        def cancelled(command, **options):
             return _process_result(
                 command,
+                stdout_sink=options.get("stdout_sink"),
                 stdout=transport,
                 outcome="terminated",
                 reason="cancelled",
@@ -1323,7 +1342,12 @@ class TrustedLocalProviderTest(unittest.TestCase):
         diagnostic["parser_failure"]["status"] = ["corrupt"]
 
         with self.assertRaises(runtime.RuntimeFailure) as raised:
-            runtime._process_diagnostic(diagnostic, process, b"truncated")
+            runtime._process_diagnostic(
+                diagnostic,
+                process,
+                len(b"truncated"),
+                inspector.sha256(b"truncated"),
+            )
         self.assertEqual("sandbox-verification-failed", raised.exception.code)
 
     def test_successful_jsonl_execution_has_no_failure_diagnostic(self):
@@ -1334,12 +1358,201 @@ class TrustedLocalProviderTest(unittest.TestCase):
     def test_successful_process_with_truncated_jsonl_remains_transport_failure(self):
         transport = _jsonl()[:-1]
 
-        def truncated(command, **_options):
-            return _process_result(command, stdout=transport)
+        def truncated(command, **options):
+            return _process_result(command, stdout=transport, stdout_sink=options.get("stdout_sink"))
+
+        bundle = self._execute_through_runtime(supervise=truncated, bundle=True)
+        result = bundle.document
+        diagnostic = result["sandbox"]["process_diagnostic"]
+
+        self.assertEqual("failed", result["outcome"])
+        self.assertEqual("success", diagnostic["outcome"])
+        self.assertEqual(
+            {"status": "corrupt", "code": "local-agent-jsonl-truncated"},
+            diagnostic["parser_failure"],
+        )
+        self.assertEqual(diagnostic["parser_failure"], diagnostic["provider_failure"])
+        self.assertEqual(0, result["candidate_output"]["size"])
+        self.assertEqual(
+            [(provider.TRANSPORT_ATTACHMENT_PATH, transport)],
+            [(item["path"], item["bytes"]) for item in bundle.attachments],
+        )
+
+    def test_successful_process_with_unreviewed_event_preserves_the_raw_sidecar(self):
+        events = _jsonl_events(_jsonl())
+        events[-2]["type"] = "session.title_changed"
+        transport = _encode_events(events[:-1]) + _encode_events(events[-1:])
+
+        def unknown(command, **options):
+            return _process_result(
+                command, stdout=transport, stdout_sink=options.get("stdout_sink")
+            )
+
+        bundle = self._execute_through_runtime(supervise=unknown, bundle=True)
+        result = bundle.document
+        diagnostic = result["sandbox"]["process_diagnostic"]
+
+        self.assertEqual("failed", result["outcome"])
+        self.assertEqual("unsupported", diagnostic["parser_failure"]["status"])
+        self.assertEqual(
+            "local-agent-jsonl-event", diagnostic["parser_failure"]["code"]
+        )
+        self.assertEqual(0, result["candidate_output"]["size"])
+        self.assertEqual(transport, bundle.attachments[0]["bytes"])
+        self.assertEqual(
+            inspector.sha256(transport),
+            result["sandbox"]["transport_reference"]["sha256"],
+        )
+
+    def test_successful_process_with_malformed_jsonl_preserves_the_raw_sidecar(self):
+        transport = _jsonl() + b'{"type":\n'
+
+        def malformed(command, **options):
+            return _process_result(
+                command, stdout=transport, stdout_sink=options.get("stdout_sink")
+            )
+
+        bundle = self._execute_through_runtime(supervise=malformed, bundle=True)
+        result = bundle.document
+
+        self.assertEqual("failed", result["outcome"])
+        self.assertEqual(
+            "local-agent-jsonl-invalid",
+            result["sandbox"]["process_diagnostic"]["parser_failure"]["code"],
+        )
+        self.assertEqual(0, result["candidate_output"]["size"])
+        self.assertEqual(transport, bundle.attachments[0]["bytes"])
+
+    def test_large_delta_traffic_beyond_the_output_limit_still_yields_the_candidate(self):
+        events = _jsonl_events(_jsonl())
+        insertion = next(
+            index
+            for index, event in enumerate(events)
+            if event["type"] == "assistant.tool_call_delta"
+        )
+        filler = "z" * 4096
+        noise = [
+            _event(
+                "assistant.tool_call_delta",
+                "delta-%d" % index,
+                "t1s",
+                {"toolCallId": "tool-1", "inputDelta": filler},
+                True,
+            )
+            for index in range(260)
+        ]
+        transport = _encode_events(
+            events[:insertion] + noise + events[insertion:]
+        )
+        limit = runtime.LOCAL_PROVIDER_STDOUT_LIMIT_BYTES
+        self.assertGreater(len(transport), limit)
+
+        bundle = self._execute_through_runtime(transport=transport, bundle=True)
+        result = bundle.document
+
+        self.assertEqual("succeeded", result["outcome"])
+        self.assertIsNone(result["sandbox"]["process_diagnostic"])
+        self.assertEqual(
+            CANDIDATE.encode("utf-8"),
+            base64.b64decode(
+                result["process_result"]["stdout"]["base64"], validate=True
+            ),
+        )
+        self.assertEqual(len(transport), result["sandbox"]["transport_size"])
+        self.assertGreater(result["sandbox"]["transport_size"], limit)
+        self.assertEqual(transport, bundle.attachments[0]["bytes"])
+        self.assertEqual(
+            len(CANDIDATE.encode("utf-8")),
+            result["process_result"]["stdout"]["observed_bytes"],
+        )
+
+    def test_transport_beyond_the_sidecar_bound_fails_closed_without_a_sidecar(self):
+        transport = _jsonl()
+        with mock.patch.object(
+            provider, "TRANSPORT_MAX_BYTES", len(transport) - 1
+        ):
+            with self.assertRaises(runtime.RuntimeFailure) as raised:
+                self._execute_through_runtime(transport=transport)
+        self.assertEqual("unsupported", raised.exception.status)
+        self.assertEqual("local-agent-transport-too-large", raised.exception.code)
+
+    def test_transport_exactly_at_the_sidecar_bound_is_preserved(self):
+        transport = _jsonl()
+        with mock.patch.object(provider, "TRANSPORT_MAX_BYTES", len(transport)):
+            bundle = self._execute_through_runtime(transport=transport, bundle=True)
+        self.assertEqual(transport, bundle.attachments[0]["bytes"])
+
+    def test_credential_disclosed_late_in_the_stream_is_denied_without_a_sidecar(self):
+        events = _jsonl_events(_jsonl())
+        final = next(
+            event
+            for event in events
+            if event["type"] == "tool.execution_complete"
+        )
+        final["data"]["result"] = {"content": self.fixture.worker_token}
+        transport = _encode_events(events)
 
         with self.assertRaises(runtime.RuntimeFailure) as raised:
-            self._execute_through_runtime(supervise=truncated)
-        self.assertEqual("local-agent-jsonl-truncated", raised.exception.code)
+            self._execute_through_runtime(transport=transport)
+        self.assertEqual("denied", raised.exception.status)
+        self.assertEqual("worker-authentication-disclosed", raised.exception.code)
+
+    def test_transport_sink_detects_credentials_split_across_chunk_boundaries(self):
+        token = self.fixture.worker_token
+        payload = b"prefix " + token.encode("ascii") + b" suffix\n"
+        for width in (1, 3, 7, 11):
+            with self.subTest(width=width):
+                sink = provider._TransportSink(token)
+                for start in range(0, len(payload), width):
+                    sink(payload[start : start + width])
+                sink.finish()
+                self.assertTrue(sink.disclosed)
+                self.assertEqual(b"", sink.transport())
+                self.assertIsNone(sink.candidate)
+
+    def test_transport_sink_detects_base64_encoded_credentials(self):
+        token = self.fixture.worker_token
+        payload = base64.b64encode(token.encode("ascii"))
+        sink = provider._TransportSink(token)
+        sink(payload)
+        self.assertTrue(sink.disclosed)
+        self.assertEqual(b"", sink.transport())
+
+    def test_incremental_decoding_matches_whole_buffer_decoding(self):
+        cases = {
+            "valid": (_jsonl(), None),
+            "truncated": (_jsonl()[:-1], "local-agent-jsonl-truncated"),
+            "malformed": (_jsonl() + b'{"type":\n', "local-agent-jsonl-invalid"),
+            "blank-line": (_jsonl().replace(b"\n", b"\n\n", 1), "local-agent-jsonl-invalid"),
+            "missing-idle": (
+                _encode_events(
+                    [
+                        event
+                        for event in _jsonl_events(_jsonl())
+                        if event["type"] != "assistant.idle"
+                    ]
+                ),
+                "local-agent-jsonl-sequence",
+            ),
+        }
+        for name, (raw, code) in cases.items():
+            for width in (1, 7, 4096, len(raw)):
+                with self.subTest(name=name, width=width):
+                    decoder = provider._JsonlCandidateDecoder()
+
+                    def run():
+                        for start in range(0, len(raw), width):
+                            decoder.feed(raw[start : start + width])
+                        return decoder.finish()
+
+                    if code is None:
+                        self.assertEqual(CANDIDATE.encode("utf-8"), run())
+                    else:
+                        with self.assertRaises(
+                            provider.LocalProviderFailure
+                        ) as raised:
+                            run()
+                        self.assertEqual(code, raised.exception.code)
 
     def test_write_phase_requires_a_clean_commit_and_rejects_oversized_prompt(self):
         instance = self.fixture.instance()
@@ -1398,9 +1611,8 @@ class TrustedLocalProviderTest(unittest.TestCase):
                 request["limits"],
                 None,
             )
-        transport = base64.b64decode(
-            executed["process_result"]["stdout"]["base64"], validate=True
-        )
+        attachments = executed["evidence_attachments"]
+        transport = attachments[0]["bytes"]
         candidate = base64.b64decode(
             executed["candidate_output"]["base64"], validate=True
         )
@@ -1417,10 +1629,19 @@ class TrustedLocalProviderTest(unittest.TestCase):
         self.assertEqual(inspector.sha256(transport), facts["transport_sha256"])
         self.assertEqual(len(transport), facts["transport_size"])
         self.assertEqual(
-            transport,
-            base64.b64decode(facts["transport_output"]["base64"], validate=True),
+            {
+                "path": provider.TRANSPORT_ATTACHMENT_PATH,
+                "sha256": inspector.sha256(transport),
+                "size": len(transport),
+            },
+            facts["transport_reference"],
         )
-        self.assertEqual(len(transport), facts["transport_output"]["bytes"])
+        self.assertEqual(0, executed["process_result"]["stdout"]["bytes"])
+        self.assertEqual(
+            len(transport),
+            executed["process_result"]["stdout"]["observed_bytes"],
+        )
+        self.assertNotIn("transport_output", facts)
         self.assertNotEqual(facts["transport_sha256"], facts["candidate_sha256"])
         self.assertEqual(
             executed["command"],
@@ -1443,6 +1664,7 @@ class TrustedLocalProviderTest(unittest.TestCase):
             {"sha256": inspector.sha256(candidate), "size": len(candidate)},
             self.fixture.row(),
             instance,
+            attachments,
         )
         replaced = json.loads(json.dumps(facts))
         replaced["command"]["executable"]["sha256"] = "0" * 64
@@ -1454,12 +1676,12 @@ class TrustedLocalProviderTest(unittest.TestCase):
                 {"sha256": inspector.sha256(candidate), "size": len(candidate)},
                 self.fixture.row(),
                 instance,
+                attachments,
             )
         self.assertEqual("sandbox-verification-failed", raised.exception.code)
 
         replaced = json.loads(json.dumps(facts))
-        replaced["transport_output"]["base64"] = base64.b64encode(b"{}\n").decode("ascii")
-        replaced["transport_output"]["bytes"] = 3
+        replaced["transport_reference"]["sha256"] = "0" * 64
         replaced["result_sha256"] = inspector.sha256(
             inspector.canonical_bytes(
                 {key: value for key, value in replaced.items() if key != "result_sha256"}
@@ -1473,6 +1695,7 @@ class TrustedLocalProviderTest(unittest.TestCase):
                 {"sha256": inspector.sha256(candidate), "size": len(candidate)},
                 self.fixture.row(),
                 instance,
+                attachments,
             )
         self.assertEqual("sandbox-verification-failed", raised.exception.code)
 
@@ -1486,6 +1709,7 @@ class TrustedLocalProviderTest(unittest.TestCase):
                 {"sha256": inspector.sha256(candidate), "size": len(candidate)},
                 self.fixture.row(),
                 instance,
+                attachments,
             )
         self.assertEqual("sandbox-verification-failed", raised.exception.code)
 
@@ -1499,6 +1723,7 @@ class TrustedLocalProviderTest(unittest.TestCase):
                 {"sha256": inspector.sha256(candidate), "size": len(candidate)},
                 self.fixture.row(),
                 instance,
+                attachments,
             )
         self.assertEqual("sandbox-verification-failed", raised.exception.code)
 
@@ -1545,24 +1770,26 @@ class TrustedLocalProviderTest(unittest.TestCase):
                 },
                 self.fixture.row(),
                 instance,
+                attachments,
             )
         self.assertEqual("local-provider-candidate-too-large", raised.exception.code)
 
-    def test_runtime_execute_adapts_candidate_and_preserves_reconstructable_transport(self):
-        result = self._execute_through_runtime()
+    def test_runtime_execute_adapts_candidate_and_binds_the_raw_transport_sidecar(self):
+        bundle = self._execute_through_runtime(bundle=True)
+        result = bundle.document
         candidate = CANDIDATE.encode("utf-8")
-        transport = base64.b64decode(
-            result["sandbox"]["transport_output"]["base64"],
-            validate=True,
-        )
+        transport = _jsonl()
         persisted_candidate = base64.b64decode(
             result["process_result"]["stdout"]["base64"],
             validate=True,
         )
         reconstructed_process = copy.deepcopy(result["process_result"])
-        reconstructed_process["stdout"] = copy.deepcopy(
-            result["sandbox"]["transport_output"]
-        )
+        reconstructed_process["stdout"] = {
+            "bytes": 0,
+            "base64": "",
+            "observed_bytes": len(transport),
+            "observed_sha256": inspector.sha256(transport),
+        }
 
         self.assertEqual(candidate, persisted_candidate)
         self.assertEqual(
@@ -1573,9 +1800,21 @@ class TrustedLocalProviderTest(unittest.TestCase):
             inspector.sha256(transport),
             result["sandbox"]["transport_sha256"],
         )
+        self.assertEqual(len(transport), result["sandbox"]["transport_size"])
         self.assertEqual(
             result["sandbox"]["process_result_sha256"],
             inspector.sha256(inspector.canonical_bytes(reconstructed_process)),
+        )
+        self.assertEqual(
+            [
+                {
+                    "path": provider.TRANSPORT_ATTACHMENT_PATH,
+                    "sha256": inspector.sha256(transport),
+                    "size": len(transport),
+                    "bytes": transport,
+                }
+            ],
+            list(bundle.attachments),
         )
         self.assertEqual(
             json.loads(CANDIDATE),
@@ -1586,17 +1825,18 @@ class TrustedLocalProviderTest(unittest.TestCase):
         transport = _jsonl()
         stderr = b"synthetic bounded stderr"
 
-        def captured(command, **_options):
-            return _process_result(command, stdout=transport, stderr=stderr)
+        def captured(command, **options):
+            return _process_result(command, stdout=transport, stderr=stderr, stdout_sink=options.get("stdout_sink"))
 
-        result = self._execute_through_runtime(supervise=captured)
+        bundle = self._execute_through_runtime(supervise=captured, bundle=True)
+        result = bundle.document
 
+        self.assertEqual(transport, bundle.attachments[0]["bytes"])
         self.assertEqual(
-            transport,
-            base64.b64decode(
-                result["sandbox"]["transport_output"]["base64"],
-                validate=True,
-            ),
+            provider.TRANSPORT_ATTACHMENT_PATH, bundle.attachments[0]["path"]
+        )
+        self.assertEqual(
+            inspector.sha256(transport), result["sandbox"]["transport_sha256"]
         )
         self.assertEqual(
             CANDIDATE.encode("utf-8"),
@@ -1643,7 +1883,13 @@ class TrustedLocalProviderTest(unittest.TestCase):
         self.assertEqual(832 * 1024, limits["output_limit_bytes"])
         self.assertEqual(448 * 1024, provider.CANDIDATE_MAX_BYTES)
         self.assertEqual(64 * 1024, limits["stderr_limit_bytes"])
-        self.assertEqual(limits["output_limit_bytes"], provider.JSONL_MAX_BYTES)
+        self.assertEqual(
+            limits["output_limit_bytes"], provider.JSONL_MAX_EVENT_BYTES
+        )
+        self.assertEqual(8 * 1024 * 1024, provider.TRANSPORT_MAX_BYTES)
+        self.assertEqual(
+            provider.TRANSPORT_MAX_BYTES, runtime.ATTACHMENT_LIMIT_BYTES
+        )
         self.assertEqual(
             runtime.LOCAL_PROVIDER_CANDIDATE_LIMIT_BYTES,
             provider.CANDIDATE_MAX_BYTES,

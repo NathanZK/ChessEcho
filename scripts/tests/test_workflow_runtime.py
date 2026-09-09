@@ -78,8 +78,15 @@ def process_result(
         "stdout": {
             "bytes": len(stdout),
             "base64": base64.b64encode(stdout).decode("ascii"),
+            "observed_bytes": len(stdout),
+            "observed_sha256": hashlib.sha256(stdout).hexdigest(),
         },
-        "stderr": {"bytes": 0, "base64": ""},
+        "stderr": {
+            "bytes": 0,
+            "base64": "",
+            "observed_bytes": 0,
+            "observed_sha256": hashlib.sha256(b"").hexdigest(),
+        },
         "supervisor_error": None,
     }
 
@@ -735,9 +742,12 @@ class WorkflowRuntimeTest(unittest.TestCase):
         def moved(command, **options):
             result = original(command, **options)
             if list(command)[-3:] == ["rev-parse", "--verify", "HEAD^{commit}"]:
+                moved_stdout = ("9" * 40 + "\n").encode()
                 result["stdout"] = {
-                    "bytes": 41,
-                    "base64": base64.b64encode(("9" * 40 + "\n").encode()).decode(),
+                    "bytes": len(moved_stdout),
+                    "base64": base64.b64encode(moved_stdout).decode(),
+                    "observed_bytes": len(moved_stdout),
+                    "observed_sha256": hashlib.sha256(moved_stdout).hexdigest(),
                 }
             return result
 
@@ -1860,6 +1870,8 @@ class WorkflowRuntimeTest(unittest.TestCase):
                             result["stdout"] = {
                                 "bytes": len(data),
                                 "base64": base64.b64encode(data).decode(),
+                                "observed_bytes": len(data),
+                                "observed_sha256": hashlib.sha256(data).hexdigest(),
                             }
                         return result
                     if args[:3] == ["api", "--paginate", "--slurp"]:
