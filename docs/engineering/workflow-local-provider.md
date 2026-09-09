@@ -139,6 +139,16 @@ root final `assistant.message`. That final message must have nonempty
 not emitted and is not required. Startup parent records may be absent from
 stdout, and ephemeral siblings may share a persisted parent, so validation
 checks the observed causal graph rather than imposing a physical-line chain.
+The decoder treats the consumed `assistant.message.data` fields (`content`,
+`messageId`, `turnId`, `interactionId`, and `toolRequests`) as required and
+continues to validate their types, identities, and relationships. Additional
+provider metadata fields in that object are tolerated because they do not
+affect candidate selection or protocol state. The same rule applies to
+unconsumed metadata on individual tool-request objects, while `toolCallId`,
+`name`, `type`, and `arguments` remain required and retain their existing
+validation. The unconsumed `tool.execution_start.data.shellToolInfo` metadata
+is optional but must remain an object when present. Event envelopes and other
+event types remain closed; validation of all other event payloads is unchanged.
 
 The bounded issue-176 run exposed additional exact pinned-CLI shapes that had
 previously been masked by transport truncation. The three ordered startup

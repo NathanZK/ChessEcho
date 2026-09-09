@@ -1,0 +1,11 @@
+{
+  "apiCallId": "msg_observed",
+  "clientRequestId": "00000-observed-client-request",
+  "model": "claude-sonnet-5",
+  "outputTokens": 1057,
+  "reasoningOpaque": "observed-opaque-provider-metadata",
+  "reasoningText": "Observed provider reasoning metadata.",
+  "requestId": "observed-request",
+  "rte": true,
+  "serviceRequestId": "observed-service-request"
+}

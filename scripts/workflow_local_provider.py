@@ -28,7 +28,7 @@ except ImportError:  # pragma: no cover - direct script loading
 
 
 NAME = "chess-echo-trusted-local"
-VERSION = "1.5.0"
+VERSION = "1.5.1"
 RESULT_FORMAT = "chess-echo-trusted-local-execution-result-v1"
 PROCESS_DIAGNOSTIC_FORMAT = "chess-echo-trusted-local-process-diagnostic-v1"
 DISCOVERY_FORMAT = "chess-echo-pending-result-candidates-v1"
@@ -251,6 +251,11 @@ def _event_data(event):
 
 def _event_data_keys(data, keys, label):
     if set(data) != set(keys):
+        _fail("corrupt", "local-agent-jsonl-invalid", "Copilot %s payload has an invalid schema" % label)
+
+
+def _event_data_required_keys(data, keys, label):
+    if not set(keys) <= set(data):
         _fail("corrupt", "local-agent-jsonl-invalid", "Copilot %s payload has an invalid schema" % label)
 
 
@@ -549,7 +554,7 @@ class _JsonlCandidateDecoder:
             if message_id in self.seen_messages:
                 _fail("ambiguous", "local-agent-jsonl-duplicate-id", "Copilot JSONL repeats a message id")
             self.seen_messages.add(message_id)
-            _event_data_keys(
+            _event_data_required_keys(
                 data,
                 {"content", "messageId", "turnId", "interactionId", "toolRequests"},
                 "assistant message",
@@ -563,15 +568,21 @@ class _JsonlCandidateDecoder:
                 if self.candidate is not None or _candidate_like(content):
                     _fail("ambiguous", "local-agent-jsonl-candidate", "Candidate content appeared in a nonfinal assistant message")
                 for request in requests:
-                    if not isinstance(request, dict) or set(request) != {
+                    if not isinstance(request, dict) or not {
                         "toolCallId",
                         "name",
                         "type",
                         "arguments",
-                    }:
+                    } <= set(request):
                         _fail("corrupt", "local-agent-jsonl-invalid", "Copilot tool request is malformed")
                     tool_call_id = _event_text(request.get("toolCallId"), "toolCallId")
                     _event_text(request.get("name"), "tool name")
+                    if not isinstance(request["arguments"], dict):
+                        _fail(
+                            "corrupt",
+                            "local-agent-jsonl-invalid",
+                            "Copilot tool request arguments are malformed",
+                        )
                     if request["type"] != "function":
                         _fail("unsupported", "local-agent-jsonl-tool", "Copilot tool request type is unreviewed")
                     if tool_call_id in self.requested_tools:
@@ -627,15 +638,31 @@ class _JsonlCandidateDecoder:
             self.pending_reasoning_summary = None
             return
         if event_type == "tool.execution_start":
-            _event_data_keys(
-                data,
-                {"arguments", "model", "rte", "shellToolInfo", "toolCallId", "toolName", "turnId"},
-                "tool start",
-            )
+            tool_start_keys = {
+                "arguments",
+                "model",
+                "rte",
+                "toolCallId",
+                "toolName",
+                "turnId",
+            }
+            if set(data) not in {
+                frozenset(tool_start_keys),
+                frozenset(tool_start_keys | {"shellToolInfo"}),
+            }:
+                _fail(
+                    "corrupt",
+                    "local-agent-jsonl-invalid",
+                    "Copilot tool start payload has an invalid schema",
+                )
             tool_call_id = _event_text(data.get("toolCallId"), "toolCallId")
             _event_text(data.get("toolName"), "tool name")
             _event_text(data.get("model"), "tool model")
-            if type(data.get("rte")) is not bool or not isinstance(data.get("shellToolInfo"), dict):
+            if (
+                type(data.get("rte")) is not bool
+                or "shellToolInfo" in data
+                and not isinstance(data["shellToolInfo"], dict)
+            ):
                 _fail("corrupt", "local-agent-jsonl-invalid", "Copilot tool start metadata is malformed")
             _event_field_matches(data, "turnId", self.active_turn, required=True)
             if self.active_turn is None or tool_call_id not in self.requested_tools or tool_call_id in self.started_tools:
