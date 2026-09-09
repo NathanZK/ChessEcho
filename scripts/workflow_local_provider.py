@@ -28,7 +28,7 @@ except ImportError:  # pragma: no cover - direct script loading
 
 
 NAME = "chess-echo-trusted-local"
-VERSION = "1.5.2"
+VERSION = "1.5.3"
 RESULT_FORMAT = "chess-echo-trusted-local-execution-result-v1"
 PROCESS_DIAGNOSTIC_FORMAT = "chess-echo-trusted-local-process-diagnostic-v1"
 DISCOVERY_FORMAT = "chess-echo-pending-result-candidates-v1"
@@ -60,6 +60,8 @@ JSONL_MAX_EVENTS = 32_768
 TRANSPORT_MAX_BYTES = 8 * 1024 * 1024
 CANDIDATE_MAX_BYTES = 448 * 1024
 TRANSPORT_ATTACHMENT_PATH = "workflow-orchestration/copilot-transport.jsonl"
+DENIED_TOOL_MESSAGE = "Permission denied and could not request permission from user"
+DENIED_TOOL_CATEGORY = "permission_denied"
 JSONL_STARTUP_TYPES = (
     "session.mcp_servers_loaded",
     "session.skills_loaded",
@@ -364,6 +366,11 @@ class _JsonlCandidateDecoder:
         self.turn_reasoning_id = self.pending_reasoning_summary = None
         self.reasoning_message_id = None
         self.reasoning_message_delta_seen = False
+        self.previous_id = None
+        self.tool_start_events = {}
+        self.denial_background_tool = None
+        self.pending_denial = None
+        self.opaque_denial_parents = set()
         self.candidate = None
         self.final_ended = self.idle_seen = self.result_seen = False
 
@@ -387,6 +394,7 @@ class _JsonlCandidateDecoder:
         event = _decode_jsonl_line(encoded)
         self._event(event)
         self.previous_type = event.get("type")
+        self.previous_id = event.get("id")
 
     def _event(self, event):
         if self.result_seen:
@@ -443,6 +451,42 @@ class _JsonlCandidateDecoder:
         ):
             _fail("corrupt", "local-agent-jsonl-invalid", "Copilot event persistence shape is invalid")
         data = _event_data(event)
+        if self.pending_denial is not None:
+            if event_type != "tool.execution_complete":
+                _fail(
+                    "corrupt",
+                    "local-agent-jsonl-sequence",
+                    "Copilot opaque denied-tool parent has an invalid successor",
+                )
+            if parent_id != self.pending_denial["parent_id"]:
+                _fail(
+                    "corrupt",
+                    "local-agent-jsonl-parent",
+                    "Copilot denied tool completion does not match its opaque parent",
+                )
+        pending_denial_completion = self.pending_denial is not None
+        open_tools = self.started_tools - self.completed_tools
+        open_tool_call_id = next(iter(open_tools)) if len(open_tools) == 1 else None
+        opaque_denial_start = (
+            self.user_seen
+            and event_type == "session.background_tasks_changed"
+            and isinstance(parent_id, str)
+            and bool(parent_id)
+            and parent_id not in self.seen_ids
+            and parent_id not in self.startup_parents
+            and event.get("ephemeral") is True
+            and data == {}
+            and self.active_turn is not None
+            and self.pending_denial is None
+            and open_tool_call_id is not None
+            and (
+                self.previous_type == "tool.execution_start"
+                and self.previous_id == self.tool_start_events[open_tool_call_id]
+                or self.previous_type == "session.background_tasks_changed"
+                and self.denial_background_tool == open_tool_call_id
+            )
+            and parent_id not in self.opaque_denial_parents
+        )
         if (
             self.candidate is not None
             and not self.final_ended
@@ -472,11 +516,21 @@ class _JsonlCandidateDecoder:
             _fail("corrupt", "local-agent-jsonl-sequence", "Copilot startup record appeared after the user message")
         elif event_type == "user.message":
             _fail("ambiguous", "local-agent-jsonl-sequence", "Copilot JSONL contains multiple user messages")
-        elif parent_id not in self.seen_ids:
+        elif (
+            parent_id not in self.seen_ids
+            and not opaque_denial_start
+            and not pending_denial_completion
+        ):
             _fail("corrupt", "local-agent-jsonl-parent", "Copilot event parentId does not resolve within the observed turn")
         if self.user_seen and not ephemeral and event_type != "user.message":
-            if parent_id != self.last_persisted:
+            if parent_id != self.last_persisted and not pending_denial_completion:
                 _fail("corrupt", "local-agent-jsonl-parent", "Copilot persisted event chain is broken")
+        if event_id in self.opaque_denial_parents:
+            _fail(
+                "corrupt",
+                "local-agent-jsonl-parent",
+                "Copilot opaque denied-tool parent was later emitted",
+            )
         if not ephemeral:
             self.last_persisted = event_id
         self.seen_ids.add(event_id)
@@ -517,6 +571,7 @@ class _JsonlCandidateDecoder:
             self.turn_reasoning_id = None
             self.reasoning_message_id = None
             self.reasoning_message_delta_seen = False
+            self.denial_background_tool = None
             return
         if event_type == "model.call_start":
             if (
@@ -712,12 +767,76 @@ class _JsonlCandidateDecoder:
             if self.active_turn is None or tool_call_id not in self.requested_tools or tool_call_id in self.started_tools:
                 _fail("corrupt", "local-agent-jsonl-tool", "Copilot tool start does not match one pending request")
             self.started_tools.add(tool_call_id)
+            self.tool_start_events[tool_call_id] = event_id
+            self.denial_background_tool = tool_call_id
             return
         if event_type == "tool.execution_partial_result":
             if _event_text(data.get("toolCallId"), "toolCallId") not in self.started_tools:
                 _fail("corrupt", "local-agent-jsonl-tool", "Copilot partial tool result has no matching start")
             return
         if event_type == "tool.execution_complete":
+            if pending_denial_completion:
+                _event_data_keys(
+                    data,
+                    {
+                        "error",
+                        "interactionId",
+                        "model",
+                        "rte",
+                        "success",
+                        "toolCallId",
+                        "toolTelemetry",
+                        "turnId",
+                    },
+                    "denied tool completion",
+                )
+                tool_call_id = _event_text(data.get("toolCallId"), "toolCallId")
+                _event_text(data.get("model"), "tool model")
+                error = data.get("error")
+                telemetry = data.get("toolTelemetry")
+                properties = telemetry.get("properties") if isinstance(telemetry, dict) else None
+                if (
+                    type(data.get("rte")) is not bool
+                    or data.get("success") is not False
+                    or error != {
+                        "code": "denied",
+                        "message": DENIED_TOOL_MESSAGE,
+                    }
+                    or not isinstance(properties, dict)
+                    or properties.get("shell_error_category") != DENIED_TOOL_CATEGORY
+                ):
+                    _fail(
+                        "corrupt",
+                        "local-agent-jsonl-tool",
+                        "Copilot denied tool completion has an invalid classification",
+                    )
+                _event_field_matches(
+                    data,
+                    "turnId",
+                    self.pending_denial["turn_id"],
+                    required=True,
+                )
+                _event_field_matches(
+                    data,
+                    "interactionId",
+                    self.pending_denial["interaction_id"],
+                    required=True,
+                )
+                if (
+                    self.active_turn is None
+                    or tool_call_id != self.pending_denial["tool_call_id"]
+                    or tool_call_id not in self.started_tools
+                    or tool_call_id in self.completed_tools
+                ):
+                    _fail(
+                        "corrupt",
+                        "local-agent-jsonl-tool",
+                        "Copilot denied tool completion does not match one active start",
+                    )
+                self.completed_tools.add(tool_call_id)
+                self.pending_denial = None
+                self.denial_background_tool = None
+                return
             _event_data_keys(
                 data,
                 {
@@ -750,6 +869,7 @@ class _JsonlCandidateDecoder:
             ):
                 _fail("corrupt", "local-agent-jsonl-tool", "Copilot tool completion does not match one successful start")
             self.completed_tools.add(tool_call_id)
+            self.denial_background_tool = None
             return
         if event_type == "assistant.turn_end":
             turn_id = _event_text(data.get("turnId"), "turnId")
@@ -764,6 +884,7 @@ class _JsonlCandidateDecoder:
             self.turn_reasoning_id = None
             self.reasoning_message_id = None
             self.reasoning_message_delta_seen = False
+            self.denial_background_tool = None
             return
         if event_type == "assistant.idle":
             if not self.final_ended or self.idle_seen or event.get("ephemeral") is not True or data:
@@ -777,6 +898,29 @@ class _JsonlCandidateDecoder:
         if event_type == "session.background_tasks_changed":
             if self.active_turn is None and not self.final_ended:
                 _fail("corrupt", "local-agent-jsonl-sequence", "Copilot background task event is outside an observed boundary")
+            if opaque_denial_start:
+                _event_text(parent_id, "opaque denied-tool parentId")
+                tool_call_id = open_tool_call_id
+                self.opaque_denial_parents.add(parent_id)
+                self.pending_denial = {
+                    "interaction_id": self.active_interaction,
+                    "parent_id": parent_id,
+                    "tool_call_id": tool_call_id,
+                    "turn_id": self.active_turn,
+                }
+                self.denial_background_tool = None
+            elif self.active_turn is not None and len(open_tools) == 1:
+                tool_call_id = next(iter(open_tools))
+                start_id = self.tool_start_events[tool_call_id]
+                if parent_id == start_id and (
+                    self.previous_type == "tool.execution_start"
+                    and self.previous_id == start_id
+                    or self.previous_type == "session.background_tasks_changed"
+                    and self.denial_background_tool == tool_call_id
+                ):
+                    self.denial_background_tool = tool_call_id
+                else:
+                    self.denial_background_tool = None
             return
 
 
@@ -789,7 +933,11 @@ class _JsonlCandidateDecoder:
             _fail("corrupt", "local-agent-jsonl-sequence", "Copilot JSONL ended before its event sequence completed")
         if self.startup_parents & self.seen_ids:
             _fail("corrupt", "local-agent-jsonl-parent", "Copilot startup parentId unexpectedly resolves within the emitted stream")
-        if self.requested_tools != self.started_tools or self.started_tools != self.completed_tools:
+        if (
+            self.pending_denial is not None
+            or self.requested_tools != self.started_tools
+            or self.started_tools != self.completed_tools
+        ):
             _fail("corrupt", "local-agent-jsonl-tool", "Copilot JSONL has unresolved tool calls")
         if self.candidate is None or not self.final_ended or not self.idle_seen or not self.result_seen:
             _fail("missing", "local-agent-jsonl-incomplete", "Copilot JSONL is missing its final candidate boundary")

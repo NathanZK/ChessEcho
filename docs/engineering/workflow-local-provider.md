@@ -273,7 +273,7 @@ one observed reasoning outcome--a tool-call path--as the only valid outcome.
 transition with an exhaustive protocol rule. **Decision:** Add only the
 reasoning-linked streamed-message path, with explicit message identity, parent,
 delta, summary, and turn-end constraints; do not make ordering generally
-permissive. **Actual fix:** The current provider 1.5.2 change adds that strict
+permissive. **Actual fix:** Provider 1.5.2 added that strict
 substate while preserving the reasoning-to-tool path and every final-boundary
 check. **Validation:** Focused fixtures accept both valid reasoning outcomes,
 reject missing, mismatched, or intervening message events, and replay the
@@ -307,6 +307,88 @@ continue to reject populated, nested, or non-private homes. This correction is
 not yet proven end-to-end. **Lesson:** Provider isolation requirements apply to
 each automatic execution independently; a controlled E2E run is an
 orchestration scope, not a reusable worker-home scope.
+
+### 10. Unresolved parent on a denied tool execution
+
+**Problem:** Copilot CLI 1.0.83-5 emitted a background-task event whose
+`parentId` did not identify any event in the complete structured transport.
+**Evidence:** In run
+`issue-176-20260909T222717Z-791e7076-c09e-4167-a31f-7f4a8665183d`,
+JSONL line 1,414 is `session.background_tasks_changed` with parent
+`50fdf231-32df-4041-8b17-287f7918534e`. That ID never appears as an emitted
+event. Line 1,415 uses the same unresolved parent for
+`tool.execution_complete`, whose payload reports `success: false` and a denied
+tool execution. The transport is complete: 2,442 records, 1,169,097 bytes,
+SHA-256
+`89fca8937350f6cbdcc3a542201818ffe23fd7d23fa8dafe18bcf5afc282db73`,
+20 balanced turns, `assistant.idle`, and a terminal `result` with exit code 0.
+**Root cause:** The CLI emitted an event relationship whose parent is absent
+from its own complete JSONL output. The immutable stream does not establish
+what the missing node represents; interpreting it as a permission-decision
+node would be speculation. **Why the existing design failed:** The external
+event stream did not satisfy the adapter's reviewed causal-closure contract.
+This was not transport truncation, supervisor output loss, or an adapter
+reconstruction failure. **Decision:** Classify the stream as a genuine protocol
+violation at the current adapter boundary and as unsupported Copilot event
+behavior. Preserve the unresolved-parent invariant; do not exempt, normalize,
+synthesize, rewrite, or infer the missing parent. Even if line 1,414 were
+exempted, the denied completion at line 1,415 independently fails the accepted
+successful tool-execution contract. **Actual fix:** None. The evidence is
+insufficient to justify an adapter compatibility change. **Validation:** The
+immutable sidecar was searched across all event IDs and parent references,
+replayed through the strict decoder, and checked for terminal LF, balanced
+turns, idle, and terminal result. The rejection remained
+`corrupt / local-agent-jsonl-parent` at line 1,414, and the sidecar retained its
+record count, byte count, and digest. **Lesson:** An adapter must not
+manufacture causal history merely to accommodate an undocumented external
+protocol pattern.
+
+### 11. Opaque denied-tool transition established by black-box probes
+
+**Problem:** A second fresh E2E reproduced the unresolved-parent sequence twice,
+but the two workflow runs alone could not establish whether it was a stable
+Copilot denial protocol or coincidental malformed output. **Evidence:** Run
+`issue-176-20260909T224355Z-beabbd89-3670-4b3a-8b10-5be6c18ffd87`
+contained the same sequence at records 1,253-1,254 and 1,306-1,307. Two
+independent authenticated black-box probes,
+`copilot-denied-tool-probe-20260909T230006Z-d14da919-d9c4-41e9-bc61-03b27c6d20f6`
+and
+`copilot-denied-tool-probe-20260909T230034Z-df0052a0-9635-425e-aebf-17741fe512a4`,
+then asked the pinned Copilot CLI 1.0.83-5 to execute the same bounded Bash
+command against filesystem root under the production `--no-ask-user` JSONL
+flags. Both probes emitted a known `tool.execution_start`, zero or more
+normally parented background events, one
+`session.background_tasks_changed` with a fresh un-emitted parent, and an
+immediately following `tool.execution_complete` with that same parent,
+`success: false`, `error.code: denied`, the message `Permission denied and
+could not request permission from user`, and
+`shell_error_category: permission_denied`. Both complete transports continued
+through balanced turns, `assistant.idle`, and terminal `result` with exit 0.
+Across both probes and both E2Es, the behavior reproduced in all five observed
+denials. **Root cause:** Copilot 1.0.83-5 exposes a stable denied-tool boundary
+whose correlation parent is not part of the emitted JSONL event set. The
+parent's internal meaning remains unknown. **Why the existing design failed:**
+The adapter correctly rejected unresolved causality before independent traffic
+established that this exact two-event denial boundary was systematic, so it
+could not distinguish that bounded provider behavior from an arbitrary missing
+parent or unsuccessful tool. **Decision:** Recognize only the observed
+opaque-parent background event followed immediately by its matching denied
+tool completion while one known tool execution is active. Keep the UUID as an
+opaque correlation token: never add it to emitted IDs, synthesize an event, or
+name its semantics. Continue rejecting every other unresolved parent and
+unsuccessful completion. **Actual fix:** Provider 1.5.3 adds a bounded pending
+denial state that binds the opaque parent, active tool call, turn, and
+interaction. The next event must be the matching completion with the exact
+denial and permission classification; normal causal validation resumes from
+that completion's real emitted ID. **Validation:** Exact event subsequences
+from both immutable probes pass the decoder, strict mutations of the parent,
+tool call, ordering, success value, error, telemetry, active-tool context, and
+reuse remain rejected, and both immutable E2E transports replay through this
+specific boundary without weakening candidate or terminal validation. This is
+not proof that the complete #176 workflow succeeds; a fresh authenticated E2E
+after review and merge must establish that separately. **Lesson:** Repeated
+black-box observations can justify an explicit compatibility state without
+manufacturing the provider's omitted causal event.
 
 The durable architectural lesson is that the provider adapter is an explicit
 protocol boundary whose assumptions must be validated against real provider
@@ -388,6 +470,17 @@ summary must immediately precede tool execution; a final candidate message's
 summary must immediately precede its matching turn end. These records are
 validated as exact reviewed schemas and causal relationships; unknown
 reasoning records are not ignored.
+
+Copilot 1.0.83-5 also has one explicitly modeled denied-tool transition. While
+one known tool execution is active, an empty ephemeral
+`session.background_tasks_changed` may introduce a fresh opaque parent that has
+not been emitted, but only when the immediately following event is the matching
+`tool.execution_complete` with `success: false`, `error.code: denied`, and the
+reviewed permission-denied classification. The adapter binds that pair to the
+active tool, turn, and interaction, never inserts the opaque parent into the
+emitted identity set, and resumes normal causality from the completion's actual
+event ID. Every other unresolved parent, failed completion, mismatch, reorder,
+or reuse remains invalid.
 
 ## Incremental consumption and the raw transport sidecar
 

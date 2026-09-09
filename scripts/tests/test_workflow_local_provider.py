@@ -33,6 +33,13 @@ FINAL_REASONING_FIXTURE = (
     / "workflow-local-provider"
     / "pinned-cli-final-reasoning.jsonl"
 )
+DENIED_TOOL_FIXTURES = tuple(
+    pathlib.Path(__file__).parent
+    / "fixtures"
+    / "workflow-local-provider"
+    / ("copilot-denied-tool-probe-%d.jsonl" % index)
+    for index in (1, 2)
+)
 ASSISTANT_MESSAGE_METADATA_FIXTURE = (
     pathlib.Path(__file__).parent
     / "fixtures"
@@ -572,6 +579,184 @@ class TrustedLocalProviderTest(unittest.TestCase):
                     "assistant.turn_end",
                 }
             ],
+        )
+
+    def test_observed_denied_tool_probe_fixtures_are_accepted(self):
+        for fixture in DENIED_TOOL_FIXTURES:
+            with self.subTest(fixture=fixture.name):
+                self.assertEqual(
+                    b"PROBE_COMPLETE",
+                    provider._extract_candidate_from_jsonl(fixture.read_bytes()),
+                )
+
+    def test_opaque_denied_tool_transition_accepts_no_normal_background_events(self):
+        events = _jsonl_events(DENIED_TOOL_FIXTURES[0].read_bytes())
+        ids = {event.get("id") for event in events}
+        opaque = next(
+            event
+            for event in events
+            if event["type"] == "session.background_tasks_changed"
+            and event["parentId"] not in ids
+        )
+        completion = events[events.index(opaque) + 1]
+        start = next(
+            event
+            for event in events
+            if event["type"] == "tool.execution_start"
+            and event["data"]["toolCallId"] == completion["data"]["toolCallId"]
+        )
+        events = [
+            event
+            for event in events
+            if not (
+                event["type"] == "session.background_tasks_changed"
+                and event["parentId"] == start["id"]
+            )
+        ]
+
+        self.assertEqual(
+            b"PROBE_COMPLETE",
+            provider._extract_candidate_from_jsonl(_encode_events(events)),
+        )
+
+    def test_opaque_denied_tool_transition_rejects_near_misses(self):
+        def changed(mutator):
+            events = _jsonl_events(DENIED_TOOL_FIXTURES[0].read_bytes())
+            ids = {event.get("id") for event in events}
+            opaque = next(
+                event
+                for event in events
+                if event["type"] == "session.background_tasks_changed"
+                and event["parentId"] not in ids
+                and events.index(event) > 3
+            )
+            completion = events[events.index(opaque) + 1]
+            start = next(
+                event
+                for event in events
+                if event["type"] == "tool.execution_start"
+                and event["data"]["toolCallId"] == completion["data"]["toolCallId"]
+            )
+            mutator(events, opaque, completion, start)
+            return _encode_events(events)
+
+        def add_second_active_tool(events, _opaque, completion, start):
+            message = next(
+                event
+                for event in events
+                if event["type"] == "assistant.message"
+                and event["data"]["toolRequests"]
+            )
+            request = copy.deepcopy(message["data"]["toolRequests"][0])
+            request["toolCallId"] = "second-tool-call"
+            message["data"]["toolRequests"].append(request)
+            delta = next(
+                event
+                for event in events
+                if event["type"] == "assistant.tool_call_delta"
+            )
+            second_delta = copy.deepcopy(delta)
+            second_delta["id"] = "second-tool-delta"
+            second_delta["data"]["toolCallId"] = "second-tool-call"
+            events.insert(events.index(message), second_delta)
+            second_start = copy.deepcopy(start)
+            second_start["id"] = "second-tool-start"
+            second_start["parentId"] = start["id"]
+            second_start["data"]["toolCallId"] = "second-tool-call"
+            events.insert(events.index(start) + 1, second_start)
+
+        cases = {
+            "without-active-tool": changed(
+                lambda _events, _opaque, _completion, start: start.update(
+                    {
+                        "type": "session.background_tasks_changed",
+                        "data": {},
+                        "ephemeral": True,
+                    }
+                )
+            ),
+            "wrong-successor": changed(
+                lambda _events, opaque, completion, _start: completion.update(
+                    {
+                        "type": "session.background_tasks_changed",
+                        "parentId": opaque["parentId"],
+                        "data": {},
+                        "ephemeral": True,
+                    }
+                )
+            ),
+            "different-parent": changed(
+                lambda _events, _opaque, completion, _start: completion.__setitem__(
+                    "parentId", "different-opaque-parent"
+                )
+            ),
+            "resolved-parent": changed(
+                lambda _events, opaque, completion, start: (
+                    opaque.__setitem__("parentId", start["id"]),
+                    completion.__setitem__("parentId", start["id"]),
+                )
+            ),
+            "different-tool-call": changed(
+                lambda _events, _opaque, completion, _start: completion["data"].__setitem__(
+                    "toolCallId", "different-tool-call"
+                )
+            ),
+            "successful-completion": changed(
+                lambda _events, _opaque, completion, _start: completion["data"].__setitem__(
+                    "success", True
+                )
+            ),
+            "different-error": changed(
+                lambda _events, _opaque, completion, _start: completion["data"][
+                    "error"
+                ].__setitem__("code", "failed")
+            ),
+            "different-message": changed(
+                lambda _events, _opaque, completion, _start: completion["data"][
+                    "error"
+                ].__setitem__("message", "Permission denied")
+            ),
+            "different-telemetry": changed(
+                lambda _events, _opaque, completion, _start: completion["data"][
+                    "toolTelemetry"
+                ]["properties"].__setitem__(
+                    "shell_error_category", "execution_failed"
+                )
+            ),
+            "completion-without-transition": changed(
+                lambda events, opaque, _completion, _start: events.remove(opaque)
+            ),
+            "arbitrary-unresolved-parent": changed(
+                lambda events, _opaque, _completion, start: next(
+                    event
+                    for event in events
+                    if event["type"] == "session.background_tasks_changed"
+                    and event["parentId"] == start["id"]
+                ).__setitem__("parentId", "arbitrary-unresolved-parent")
+            ),
+            "reused-opaque-parent": changed(
+                lambda events, opaque, completion, _start: events.insert(
+                    events.index(completion) + 1,
+                    _event(
+                        "session.background_tasks_changed",
+                        "reused-opaque-parent-event",
+                        opaque["parentId"],
+                        {},
+                        True,
+                    ),
+                )
+            ),
+            "multiple-active-tools": changed(add_second_active_tool),
+        }
+        for name, raw in cases.items():
+            with self.subTest(name=name):
+                with self.assertRaises(provider.LocalProviderFailure):
+                    provider._extract_candidate_from_jsonl(raw)
+
+    def test_successful_tool_execution_remains_accepted(self):
+        self.assertEqual(
+            CANDIDATE.encode("utf-8"),
+            provider._extract_candidate_from_jsonl(_jsonl()),
         )
 
     def test_reasoning_to_message_path_rejects_invalid_transitions(self):
