@@ -27,6 +27,12 @@ PINNED_CLI_FIXTURE = (
     / "workflow-local-provider"
     / "pinned-cli-reasoning.jsonl"
 )
+ASSISTANT_MESSAGE_METADATA_FIXTURE = (
+    pathlib.Path(__file__).parent
+    / "fixtures"
+    / "workflow-local-provider"
+    / "assistant-message-metadata.json"
+)
 CANDIDATE = (
     '{"format":"chess-echo-orchestrator-agent-candidate-v1",'
     '"kind":"plan","plan":"Canary.\\n","units":[{"id":"canary",'
@@ -529,6 +535,129 @@ class TrustedLocalProviderTest(unittest.TestCase):
                 }
             )
         )
+
+    def test_observed_assistant_message_metadata_is_accepted_without_changing_candidate(self):
+        events = _jsonl_events(_jsonl())
+        metadata = json.loads(ASSISTANT_MESSAGE_METADATA_FIXTURE.read_text())
+        for event in events:
+            if event["type"] == "assistant.message":
+                event["data"].update(copy.deepcopy(metadata))
+                for request in event["data"]["toolRequests"]:
+                    request["intentionSummary"] = "Inspect repository state"
+                    request["toolTitle"] = "Inspect"
+
+        self.assertEqual(
+            CANDIDATE.encode("utf-8"),
+            provider._extract_candidate_from_jsonl(_encode_events(events)),
+        )
+
+    def test_assistant_message_required_fields_remain_required_and_typed(self):
+        def changed(mutator):
+            events = _jsonl_events(_jsonl())
+            message = next(
+                event
+                for event in events
+                if event["type"] == "assistant.message"
+                and event["data"]["toolRequests"] == []
+            )
+            message["data"].update(
+                json.loads(ASSISTANT_MESSAGE_METADATA_FIXTURE.read_text())
+            )
+            mutator(message["data"])
+            return _encode_events(events)
+
+        cases = {
+            "missing-content": changed(lambda data: data.pop("content")),
+            "missing-message-id": changed(lambda data: data.pop("messageId")),
+            "missing-turn-id": changed(lambda data: data.pop("turnId")),
+            "missing-interaction-id": changed(lambda data: data.pop("interactionId")),
+            "missing-tool-requests": changed(lambda data: data.pop("toolRequests")),
+            "malformed-content": changed(lambda data: data.__setitem__("content", {})),
+            "malformed-message-id": changed(lambda data: data.__setitem__("messageId", "")),
+            "malformed-turn-id": changed(lambda data: data.__setitem__("turnId", 2)),
+            "malformed-interaction-id": changed(
+                lambda data: data.__setitem__("interactionId", None)
+            ),
+            "malformed-tool-requests": changed(
+                lambda data: data.__setitem__("toolRequests", {})
+            ),
+        }
+        for name, raw in cases.items():
+            with self.subTest(name=name):
+                with self.assertRaises(provider.LocalProviderFailure) as raised:
+                    provider._extract_candidate_from_jsonl(raw)
+                self.assertEqual("local-agent-jsonl-invalid", raised.exception.code)
+
+    def test_assistant_message_outer_envelope_remains_closed(self):
+        events = _jsonl_events(_jsonl())
+        message = next(
+            event for event in events if event["type"] == "assistant.message"
+        )
+        message["untrusted"] = True
+
+        with self.assertRaises(provider.LocalProviderFailure) as raised:
+            provider._extract_candidate_from_jsonl(_encode_events(events))
+        self.assertEqual("local-agent-jsonl-invalid", raised.exception.code)
+
+    def test_tool_request_consumed_fields_remain_required_and_typed(self):
+        def changed(mutator):
+            events = _jsonl_events(_jsonl())
+            request = next(
+                event
+                for event in events
+                if event["type"] == "assistant.message"
+                and event["data"]["toolRequests"]
+            )["data"]["toolRequests"][0]
+            request["intentionSummary"] = "Inspect repository state"
+            mutator(request)
+            return _encode_events(events)
+
+        cases = {
+            "missing-tool-call-id": changed(
+                lambda request: request.pop("toolCallId")
+            ),
+            "missing-name": changed(lambda request: request.pop("name")),
+            "missing-type": changed(lambda request: request.pop("type")),
+            "missing-arguments": changed(lambda request: request.pop("arguments")),
+            "malformed-tool-call-id": changed(
+                lambda request: request.__setitem__("toolCallId", "")
+            ),
+            "malformed-name": changed(
+                lambda request: request.__setitem__("name", "")
+            ),
+            "malformed-arguments": changed(
+                lambda request: request.__setitem__("arguments", "invalid")
+            ),
+            "unreviewed-type": changed(
+                lambda request: request.__setitem__("type", "unknown")
+            ),
+        }
+        for name, raw in cases.items():
+            with self.subTest(name=name):
+                with self.assertRaises(provider.LocalProviderFailure):
+                    provider._extract_candidate_from_jsonl(raw)
+
+    def test_unconsumed_tool_start_metadata_is_optional_but_typed_when_present(self):
+        events = _jsonl_events(_jsonl())
+        tool_start = next(
+            event for event in events if event["type"] == "tool.execution_start"
+        )
+        tool_start["data"].pop("shellToolInfo")
+        self.assertEqual(
+            CANDIDATE.encode("utf-8"),
+            provider._extract_candidate_from_jsonl(_encode_events(events)),
+        )
+
+        tool_start["data"]["shellToolInfo"] = "invalid"
+        with self.assertRaises(provider.LocalProviderFailure) as raised:
+            provider._extract_candidate_from_jsonl(_encode_events(events))
+        self.assertEqual("local-agent-jsonl-invalid", raised.exception.code)
+
+        tool_start["data"]["shellToolInfo"] = {}
+        tool_start["data"]["unexpected"] = True
+        with self.assertRaises(provider.LocalProviderFailure) as raised:
+            provider._extract_candidate_from_jsonl(_encode_events(events))
+        self.assertEqual("local-agent-jsonl-invalid", raised.exception.code)
 
     def test_jsonl_rejects_candidate_in_tool_request_turn(self):
         events = _jsonl_events(_jsonl())
