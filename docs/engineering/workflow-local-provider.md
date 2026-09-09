@@ -93,6 +93,201 @@ This is a local-development trust decision, not hostile-process containment.
 Phase 2 issue #160 remains responsible for credential-backed execution of an
 untrusted worker.
 
+## #176 controlled E2E protocol discovery
+
+The following incidents are chronological results from fresh, controlled
+issue-176 E2E runs against the real Copilot CLI. The first runs established the
+argument and authentication boundaries; later runs used the resulting explicit
+trusted-worker authentication path. These are not hypothetical protocol
+assumptions derived only from fixtures or SDK types. Where an early run stopped
+before immutable transport publication, the durable identifier is the merged
+correction or observed commit rather than an invented run ID. No credential
+values or machine-local evidence paths are recorded here.
+
+### 1. Generic argument limit versus the operation-specific prompt bound
+
+**Problem:** The first planner claim after PR #177 launched with a generated
+prompt larger than the generic 4 KiB command-part limit. **Evidence:** The fresh
+run against merged `main` at `615b1f6917be9205f27124c4dae5ad928fa8d72d`
+failed during runtime result validation after provider execution; the provider
+allowed its prompt while the runtime rejected the same argv element.
+**Root cause:** Two validators applied different limits to the provider-owned
+prompt. **Why the existing design failed:** It treated a generated operation
+payload like an arbitrary configured command argument even though the provider
+had already defined a separate bounded prompt contract. **Decision:** Keep the
+generic 4 KiB limit for every other command part and add a shape- and
+position-specific 64 KiB allowance only for the trusted-local `--prompt`
+argument. **Actual fix:** PR #179 aligned provider production and runtime
+revalidation around that operation-specific bound without weakening executable,
+argv-shape, or source-identity checks. **Validation:** Focused tests exercised
+an exact 22,090-byte planner prompt, the 64 KiB ceiling, and continued rejection
+of oversized generic arguments; the next fresh run passed this boundary.
+**Lesson:** A generated operation payload needs one explicit contract that is
+revalidated consistently at every boundary.
+
+### 2. Trusted-local worker authentication boundary
+
+**Problem:** The next fresh planner run reached the pinned Copilot process, which
+exited 1 because its deliberately controlled environment contained no
+authentication credential. **Evidence:** The post-PR-#179 run produced no
+candidate and was correctly recorded as `attempt-not-successful`; it did not
+fall back to ambient `gh`, shell, or user-home credentials. **Root cause:** The
+provider's environment isolation was working, but Phase 1 had no explicit,
+reviewed path for granting the trusted local worker its Copilot credential.
+**Why the existing design failed:** It conflated denying ambient credentials
+with supplying the one credential required by an explicitly trusted worker.
+**Decision:** Make authentication an operator opt-in trust boundary, separate
+from GitHub runtime credentials and candidate trust. **Actual fix:** The host
+accepts `--trusted-worker-auth-stdin`, reads the credential lazily, injects only
+`COPILOT_GITHUB_TOKEN` into the worker, and persists only redacted mode and key
+metadata. **Validation:** Later controlled runs authenticated successfully while
+missing, malformed, or disclosed credentials remained fail-closed. **Lesson:**
+Process isolation and credential provisioning are distinct contracts; neither
+implies the other.
+
+### 3. `--silent` was not a candidate-output contract
+
+**Problem:** An authenticated run emitted two prose progress messages before an
+otherwise valid JSON plan, although the CLI was invoked with `--silent`.
+**Evidence:** The strict candidate decoder rejected the whole stdout stream;
+strengthening the prompt to prohibit progress output did not prevent the same
+shape in a fresh authenticated run. **Root cause:** `--silent` changes
+presentation behavior but does not guarantee that process stdout is exactly one
+candidate document. **Why the existing design failed:** It treated a CLI
+presentation option and prompt instruction as an enforceable byte-level output
+contract. **Decision:** Preserve strict candidate decoding and stop using
+human-readable stdout as the candidate protocol. **Actual fix:** The temporary
+prompt hardening made the desired behavior explicit, but the durable correction
+was to move the provider boundary to structured JSONL rather than strip prose or
+select the last JSON object. **Validation:** Focused tests retained rejection of
+prose-prefixed candidates, and later real-CLI runs exercised the structured
+path. **Lesson:** Candidate validity must come from a validated protocol
+boundary, not a quiet-mode flag or model compliance.
+
+### 4. Strict JSONL transport
+
+**Problem:** The provider needed to distinguish intermediate messages, tools,
+and lifecycle records from the authoritative final candidate without heuristic
+recovery. **Evidence:** An authenticated disposable probe of the pinned CLI
+showed LF-terminated JSONL with separate message/tool events, a root final
+`assistant.message`, matching `assistant.turn_end`, ephemeral
+`assistant.idle`, and terminal `result` with `exitCode: 0`; `session.idle` was
+not present or required. **Root cause:** Raw process output carried a protocol,
+while the adapter treated it as an undifferentiated candidate byte string.
+**Why the existing design failed:** “Last JSON” extraction or prose filtering
+would have detached candidate selection from authenticated turn and terminal
+boundaries. **Decision:** Adopt an explicit, bounded, fail-closed JSONL decoder
+for the empirically observed pinned-CLI protocol and keep the downstream
+candidate decoder unchanged. **Actual fix:** The adapter validates framing,
+event schemas, identities, tool lifecycles, final boundaries, idle, and result,
+then passes only the exact final `data.content` bytes downstream. **Validation:**
+Malformed, unknown, truncated, causally invalid, unresolved-tool, and nonzero
+result fixtures remain rejected; subsequent authenticated runs progressed to
+more specific protocol mismatches instead of bypassing them. **Lesson:**
+Transport decoding and candidate schema validation are separate strict stages.
+
+### 5. Stdout retention, output limits, and the sidecar architecture
+
+**Problem:** Complete successful work could exceed the supervisor's retained
+stdout budget, causing the reader to close the pipe and convert volume into
+process termination and truncated evidence. **Evidence:** Controlled planning
+runs on 2026-09-08 reached the exact 384 KiB and then 448 KiB caps and ended with
+truncated JSONL. A later run reached 851,968 bytes; Copilot's durable lifecycle
+showed 22 turn starts but only 21 turn ends after the pipe was closed. **Root
+cause:** Process lifetime, parser input, retained transport, and the 2 MiB
+execution-result document budget were represented by one buffer. **Why the
+existing design failed:** Raising a single limit merely moved the failure and
+Base64-inlining complete raw stdout could exhaust the result document.
+**Decision:** Stream supervision output through independent secret scanning,
+bounded raw retention, and incremental decoding, then publish complete raw
+transport as a same-manifest sidecar. **Actual fix:** Provider 1.5.0 introduced
+the transport sink, independent event/transport/candidate bounds, typed parser
+failure evidence, and
+`workflow-orchestration/copilot-transport.jsonl` without inlining raw bytes in
+the result document. **Validation:** Run
+`issue-176-20260909T174914Z-460f8d22-ed07-46bc-8b00-85f0f77e05f5`
+completed with exit 0 and preserved a complete 584,784-byte, 1,366-record
+sidecar with SHA-256
+`9b2230c90889bb9b58e74e2c090b6bd0fad87cd54018cb850f69e56cae84988e`.
+**Lesson:** Observation, retention, decoding, process supervision, and evidence
+publication need independent limits and identities.
+
+### 6. `--stream off` did not suppress every delta or partial event
+
+**Problem:** Disabling streaming did not make JSONL small or remove all
+incremental event classes. **Evidence:** The bounded real-CLI run retained zero
+`assistant.message_start` and `assistant.message_delta` records but still
+contained 1,076 `assistant.tool_call_delta` records (304,883 bytes), 103
+`assistant.reasoning_delta` records, 204
+`session.background_tasks_changed` records, and 33
+`tool.execution_partial_result` records; transient records accounted for
+510,590 bytes. **Root cause:** For the pinned CLI, `--stream off` controls
+message streaming rather than the complete structured event stream.
+**Why the existing design failed:** It assumed an argv flag could enforce the
+adapter's transport-volume and event-class contract. **Decision:** Keep the
+single reviewed `--stream off` argv position, but accept and strictly validate
+the observed bounded event classes instead of relying on the flag for
+suppression. **Actual fix:** The JSONL FSM models those classes and the sidecar
+architecture carries their complete bytes without making retention a process
+kill switch. **Validation:** Focused large-stream tests and the complete
+584,784-byte authenticated transport show that transport correctness no longer
+depends on all deltas disappearing. **Lesson:** CLI flags must be validated by
+observed traffic; their names are not protocol guarantees.
+
+### 7. Forward-compatible `assistant.message.data` metadata
+
+**Problem:** Provider 1.5.0 rejected an otherwise valid
+`assistant.message.data` object because the real CLI added metadata fields the
+adapter did not consume. **Evidence:** Run
+`issue-176-20260909T174914Z-460f8d22-ed07-46bc-8b00-85f0f77e05f5`
+failed at JSONL record 153 with
+`local-agent-jsonl-invalid`; observed additions included `apiCallId`,
+`clientRequestId`, `model`, `outputTokens`, `reasoningOpaque`,
+`reasoningText`, `requestId`, `rte`, and `serviceRequestId`. **Root cause:** The
+decoder modeled the nested message data as an exhaustive schema rather than a
+strict schema for consumed fields. **Why the existing design failed:** It made
+uninterpreted provider metadata part of the adapter's compatibility surface.
+**Decision:** Require and type-check every consumed message field and identity,
+while tolerating additional unconsumed metadata in that nested object.
+**Actual fix:** Provider 1.5.1 retained strict `content`, `messageId`, `turnId`,
+`interactionId`, and `toolRequests` validation and the unchanged final-candidate
+contract while allowing extra metadata. **Validation:** PR #192 replayed the
+immutable capture and focused negative fixtures; a fresh merged-main run passed
+the former record-153 failure. **Lesson:** Strictness belongs on interpreted
+semantics and trust boundaries, not on harmless evolution of opaque metadata.
+
+### 8. Valid `assistant.reasoning_delta` to `assistant.message_start`
+
+**Problem:** The next merged-main run rejected
+`assistant.reasoning_delta` followed by `assistant.message_start`, insisting
+that reasoning deltas end at a tool call. **Evidence:** Run
+`issue-176-20260909T200342Z-a5f06116-47c9-4235-9b3e-01e31b384aee`
+failed at record 5,117 with `local-agent-jsonl-sequence`; the complete
+1,764,601-byte, 5,254-record transport had exit 0, a terminal result, and all
+22 turn starts matched by turn ends. The observed path was
+`assistant.reasoning_delta` -> `assistant.message_start` ->
+`assistant.message_delta` -> `assistant.message` ->
+`assistant.reasoning` -> `assistant.turn_end`. **Root cause:** The FSM encoded
+one observed reasoning outcome--a tool-call path--as the only valid outcome.
+**Why the existing design failed:** It confused a previously observed event
+transition with an exhaustive protocol rule. **Decision:** Add only the
+reasoning-linked streamed-message path, with explicit message identity, parent,
+delta, summary, and turn-end constraints; do not make ordering generally
+permissive. **Actual fix:** The current provider 1.5.2 change adds that strict
+substate while preserving the reasoning-to-tool path and every final-boundary
+check. **Validation:** Focused fixtures accept both valid reasoning outcomes,
+reject missing, mismatched, or intervening message events, and replay the
+immutable transport to extract the exact candidate bytes. This implementation
+is **not yet proven end-to-end**; a fresh authenticated E2E after merge must
+establish that. **Lesson:** Empirical FSMs should evolve by adding narrowly
+bound observed paths, never by weakening ordering globally.
+
+The durable architectural lesson is that the provider adapter is an explicit
+protocol boundary whose assumptions must be validated against real provider
+traffic. Transport framing, event sequencing, candidate extraction, process
+supervision, authentication, and evidence publication are separate contracts
+and must not be conflated.
+
 ## Copilot JSONL transport decision
 
 Issue #176 exposed two independent Phase 1 transport failures. The initial
@@ -157,12 +352,16 @@ payloads; their nonempty parent IDs are distinct and remain unresolved in the
 emitted stream. Each observed ephemeral `model.call_start` immediately follows
 its active turn start and binds that parent and turn ID. Ephemeral
 `assistant.reasoning_delta` records form one contiguous, turn-bound reasoning
-group between a model call and tool-call delta. An ephemeral
+group after a model call. They may lead either to a tool-call delta or to the
+normal streamed final-message sequence (`assistant.message_start`, one or more
+`assistant.message_delta` records, and `assistant.message`). An ephemeral
 `assistant.reasoning` summary has exactly `content`, `reasoningId`, and
-`rte: true`, immediately follows its tool-bearing assistant message, binds that
-message as parent and a prior delta group, and immediately precedes tool
-execution. These records are validated as exact reviewed schemas and causal
-relationships; unknown reasoning records are not ignored.
+`rte: true`, immediately follows the corresponding assistant message and binds
+that message as parent and a prior delta group. A tool-bearing message's
+summary must immediately precede tool execution; a final candidate message's
+summary must immediately precede its matching turn end. These records are
+validated as exact reviewed schemas and causal relationships; unknown
+reasoning records are not ignored.
 
 ## Incremental consumption and the raw transport sidecar
 

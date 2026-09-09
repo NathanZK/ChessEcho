@@ -28,7 +28,7 @@ except ImportError:  # pragma: no cover - direct script loading
 
 
 NAME = "chess-echo-trusted-local"
-VERSION = "1.5.1"
+VERSION = "1.5.2"
 RESULT_FORMAT = "chess-echo-trusted-local-execution-result-v1"
 PROCESS_DIAGNOSTIC_FORMAT = "chess-echo-trusted-local-process-diagnostic-v1"
 DISCOVERY_FORMAT = "chess-echo-pending-result-candidates-v1"
@@ -362,6 +362,8 @@ class _JsonlCandidateDecoder:
         self.streamed_messages = set()
         self.reasoning_groups, self.summarized_reasoning = {}, set()
         self.turn_reasoning_id = self.pending_reasoning_summary = None
+        self.reasoning_message_id = None
+        self.reasoning_message_delta_seen = False
         self.candidate = None
         self.final_ended = self.idle_seen = self.result_seen = False
 
@@ -400,14 +402,24 @@ class _JsonlCandidateDecoder:
             _fail("unsupported", "local-agent-jsonl-event", "Copilot JSONL contains an unreviewed event type")
         previous_type = self.previous_type
         if self.pending_reasoning_summary is not None and event_type != "assistant.reasoning":
-            _fail("corrupt", "local-agent-jsonl-sequence", "Copilot reasoning summary is missing after its tool request")
-        if previous_type == "assistant.reasoning" and event_type != "tool.execution_start":
-            _fail("corrupt", "local-agent-jsonl-sequence", "Copilot reasoning summary is not followed by tool execution")
+            _fail("corrupt", "local-agent-jsonl-sequence", "Copilot reasoning summary is missing after its assistant message")
+        if previous_type == "assistant.reasoning":
+            expected = "assistant.turn_end" if self.candidate is not None else "tool.execution_start"
+            if event_type != expected:
+                _fail("corrupt", "local-agent-jsonl-sequence", "Copilot reasoning summary has an invalid successor")
         if previous_type == "assistant.reasoning_delta" and event_type not in {
             "assistant.reasoning_delta",
             "assistant.tool_call_delta",
+            "assistant.message_start",
         }:
-            _fail("corrupt", "local-agent-jsonl-sequence", "Copilot reasoning deltas do not end at a tool call")
+            _fail("corrupt", "local-agent-jsonl-sequence", "Copilot reasoning deltas have an invalid successor")
+        if (
+            self.reasoning_message_id is not None
+            and self.candidate is None
+            and previous_type in {"assistant.message_start", "assistant.message_delta"}
+            and event_type not in {"assistant.message_delta", "assistant.message"}
+        ):
+            _fail("corrupt", "local-agent-jsonl-sequence", "Copilot reasoning message stream has an invalid successor")
         allowed_outer = {"type", "timestamp", "id", "parentId", "data", "ephemeral", "agentId"}
         if set(event) - allowed_outer or not {"type", "timestamp", "id", "parentId", "data"} <= set(event):
             _fail("corrupt", "local-agent-jsonl-invalid", "Copilot event envelope has an invalid schema")
@@ -431,7 +443,11 @@ class _JsonlCandidateDecoder:
         ):
             _fail("corrupt", "local-agent-jsonl-invalid", "Copilot event persistence shape is invalid")
         data = _event_data(event)
-        if self.candidate is not None and not self.final_ended and event_type != "assistant.turn_end":
+        if (
+            self.candidate is not None
+            and not self.final_ended
+            and event_type not in {"assistant.reasoning", "assistant.turn_end"}
+        ):
             _fail("corrupt", "local-agent-jsonl-sequence", "Copilot record appeared between the final message and turn end")
         if self.final_ended and not self.idle_seen and event_type not in {
             "session.usage_checkpoint",
@@ -499,6 +515,8 @@ class _JsonlCandidateDecoder:
             self.active_turn_had_tools = False
             self.model_call_seen = False
             self.turn_reasoning_id = None
+            self.reasoning_message_id = None
+            self.reasoning_message_delta_seen = False
             return
         if event_type == "model.call_start":
             if (
@@ -539,6 +557,11 @@ class _JsonlCandidateDecoder:
             message_id = _event_text(data.get("messageId"), "messageId")
             if message_id in self.streamed_messages:
                 _fail("ambiguous", "local-agent-jsonl-duplicate-id", "Copilot JSONL repeats a streamed message id")
+            if previous_type == "assistant.reasoning_delta":
+                if parent_id != self.active_turn_start or self.turn_reasoning_id is None:
+                    _fail("corrupt", "local-agent-jsonl-sequence", "Copilot reasoning message start does not match its active turn")
+                self.reasoning_message_id = message_id
+                self.reasoning_message_delta_seen = False
             self.streamed_messages.add(message_id)
             return
         if event_type == "assistant.message_delta":
@@ -546,6 +569,13 @@ class _JsonlCandidateDecoder:
                 _fail("corrupt", "local-agent-jsonl-sequence", "Copilot message delta is outside an active turn")
             if _event_text(data.get("messageId"), "messageId") not in self.streamed_messages:
                 _fail("corrupt", "local-agent-jsonl-parent", "Copilot message delta has no matching message start")
+            if self.reasoning_message_id is not None:
+                if (
+                    data["messageId"] != self.reasoning_message_id
+                    or parent_id != self.active_turn_start
+                ):
+                    _fail("corrupt", "local-agent-jsonl-sequence", "Copilot reasoning message delta does not match its stream")
+                self.reasoning_message_delta_seen = True
             return
         if event_type == "assistant.message":
             if self.active_turn is None or self.final_ended:
@@ -554,6 +584,11 @@ class _JsonlCandidateDecoder:
             if message_id in self.seen_messages:
                 _fail("ambiguous", "local-agent-jsonl-duplicate-id", "Copilot JSONL repeats a message id")
             self.seen_messages.add(message_id)
+            if self.reasoning_message_id is not None and (
+                message_id != self.reasoning_message_id
+                or not self.reasoning_message_delta_seen
+            ):
+                _fail("corrupt", "local-agent-jsonl-sequence", "Copilot reasoning message stream is incomplete")
             _event_data_required_keys(
                 data,
                 {"content", "messageId", "turnId", "interactionId", "toolRequests"},
@@ -565,6 +600,8 @@ class _JsonlCandidateDecoder:
             if not isinstance(content, str) or not isinstance(requests, list):
                 _fail("corrupt", "local-agent-jsonl-invalid", "Copilot assistant message payload is malformed")
             if requests:
+                if self.reasoning_message_id is not None:
+                    _fail("corrupt", "local-agent-jsonl-sequence", "Copilot reasoning message unexpectedly requested tools")
                 if self.candidate is not None or _candidate_like(content):
                     _fail("ambiguous", "local-agent-jsonl-candidate", "Candidate content appeared in a nonfinal assistant message")
                 for request in requests:
@@ -594,11 +631,16 @@ class _JsonlCandidateDecoder:
                 if self.turn_reasoning_id is not None:
                     self.pending_reasoning_summary = (self.turn_reasoning_id, event_id)
             elif content:
+                reasoning_candidate = (
+                    self.turn_reasoning_id is not None
+                    and self.reasoning_message_id == message_id
+                )
                 if (
                     self.candidate is not None
                     or self.active_turn_had_tools
                     or self.tool_deltas
                     or self.turn_reasoning_id is not None
+                    and not reasoning_candidate
                     or self.requested_tools - self.completed_tools
                 ):
                     _fail("ambiguous", "local-agent-jsonl-candidate", "Copilot JSONL contains multiple or premature final candidates")
@@ -616,6 +658,8 @@ class _JsonlCandidateDecoder:
                         "local-agent-candidate-too-large",
                         "Copilot final assistant content exceeds the candidate byte limit",
                     )
+                if reasoning_candidate:
+                    self.pending_reasoning_summary = (self.turn_reasoning_id, event_id)
             else:
                 _fail("corrupt", "local-agent-jsonl-candidate", "Copilot assistant message has neither tools nor candidate content")
             return
@@ -718,6 +762,8 @@ class _JsonlCandidateDecoder:
             self.active_turn = self.active_turn_start = self.active_interaction = None
             self.model_call_seen = False
             self.turn_reasoning_id = None
+            self.reasoning_message_id = None
+            self.reasoning_message_delta_seen = False
             return
         if event_type == "assistant.idle":
             if not self.final_ended or self.idle_seen or event.get("ephemeral") is not True or data:
