@@ -10,10 +10,11 @@ import re
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 PLAN_FORMAT = "chess-echo-orchestration-plan-v1"
 RESULT_FORMAT = "chess-echo-orchestration-orchestrator-result-v1"
 JOURNAL_FORMAT = "chess-echo-workflow-driver-event-v1"
@@ -72,6 +73,11 @@ IDLE_STEP_ACTIONS = {
     "VALIDATION": "run-validation",
     "FINAL_REVIEW": "review-final",
 }
+AGENT_STEP_ACTIONS = frozenset(
+    action
+    for phase, action in IDLE_STEP_ACTIONS.items()
+    if phase != "VALIDATION"
+)
 PR_STEP_ACTIONS = frozenset(
     {"open-pr-publication-gate", "prepare-draft-pr", "complete-pr-approval"}
 )
@@ -486,6 +492,59 @@ def _secure_directory(path):
     return directory
 
 
+def _agent_home_root(path, control_root, workspace_root):
+    supplied = pathlib.Path(path).absolute()
+    try:
+        root = supplied.resolve(strict=True)
+        control = pathlib.Path(control_root).absolute().resolve(strict=True)
+        workspace = pathlib.Path(workspace_root).absolute().resolve(strict=True)
+        metadata = root.lstat()
+        entries = list(root.iterdir())
+    except (OSError, RuntimeError, ValueError):
+        _fail(
+            "failed",
+            "agent-home-root-unavailable",
+            "Agent home allocation root is unavailable",
+        )
+    if (
+        supplied != root
+        or root.is_symlink()
+        or not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_uid != os.getuid()
+        or stat.S_IMODE(metadata.st_mode) != 0o700
+        or root in {control, workspace}
+        or control in root.parents
+        or workspace in root.parents
+    ):
+        _fail(
+            "failed",
+            "agent-home-root-unsafe",
+            "Agent home allocation root must be a private real directory outside the control and candidate worktrees",
+        )
+    for entry in entries:
+        try:
+            entry_metadata = entry.lstat()
+        except OSError:
+            _fail(
+                "failed",
+                "agent-home-root-unsafe",
+                "Agent home allocation root contains an unsafe entry",
+            )
+        if (
+            not entry.name.startswith("execution-")
+            or entry.is_symlink()
+            or not stat.S_ISDIR(entry_metadata.st_mode)
+            or entry_metadata.st_uid != os.getuid()
+            or stat.S_IMODE(entry_metadata.st_mode) != 0o700
+        ):
+            _fail(
+                "failed",
+                "agent-home-root-unsafe",
+                "Agent home allocation root contains an entry not created for an isolated execution",
+            )
+    return root
+
+
 class Journal:
     def __init__(self, directory, issue):
         self.issue = issue
@@ -572,6 +631,12 @@ class Driver:
         self.runner = runner or self._run_process
         self.clock = clock or time.monotonic
         self.started = self.clock()
+        self.agent_home_root = _agent_home_root(
+            args.agent_home,
+            args.control_root,
+            args.workspace,
+        )
+        self.agent_homes = set()
         self.prefix = [
             "/usr/bin/python3",
             "-I",
@@ -586,8 +651,8 @@ class Driver:
             args.gh_executable,
             "--agent-executable",
             args.agent_executable,
-            "--agent-home",
-            args.agent_home,
+        ]
+        self.suffix = [
             "--result-store",
             args.result_store,
             "--github-token-stdin",
@@ -606,8 +671,59 @@ class Driver:
     def _expired(self):
         return self.clock() - self.started >= self.args.deadline_seconds
 
-    def _invoke(self, command, expected_tip=None):
-        argv = list(self.prefix)
+    def _fresh_agent_home(self):
+        try:
+            created = pathlib.Path(
+                tempfile.mkdtemp(
+                    prefix="execution-%04d-" % (len(self.agent_homes) + 1),
+                    dir=str(self.agent_home_root),
+                )
+            )
+            created.chmod(0o700)
+            resolved = created.resolve(strict=True)
+            metadata = resolved.lstat()
+            empty = not any(resolved.iterdir())
+        except (OSError, RuntimeError, ValueError):
+            _fail(
+                "failed",
+                "agent-home-allocation-failed",
+                "Fresh agent home could not be allocated",
+            )
+        if (
+            created != resolved
+            or created.is_symlink()
+            or not stat.S_ISDIR(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or stat.S_IMODE(metadata.st_mode) != 0o700
+            or not empty
+            or resolved.parent != self.agent_home_root
+            or any(
+                previous == resolved
+                or previous in resolved.parents
+                or resolved in previous.parents
+                for previous in self.agent_homes
+            )
+        ):
+            _fail(
+                "failed",
+                "agent-home-allocation-unsafe",
+                "Fresh agent home does not satisfy the per-execution isolation contract",
+            )
+        self.agent_homes.add(resolved)
+        return resolved
+
+    def _invoke(self, command, expected_tip=None, agent_execution=False):
+        agent_home = (
+            self._fresh_agent_home()
+            if agent_execution
+            else self.agent_home_root
+        )
+        argv = [
+            *self.prefix,
+            "--agent-home",
+            str(agent_home),
+            *self.suffix,
+        ]
         secret_input = self.github_token + "\n"
         if command == "step" and self.worker_token is not None:
             argv.append("--trusted-worker-auth-stdin")
@@ -725,7 +841,11 @@ class Driver:
                 pointer_sha256=plan["pointer_sha256"],
                 steps=steps,
             )
-            completed, raw_result = self._invoke("step", plan["pointer_sha256"])
+            completed, raw_result = self._invoke(
+                "step",
+                plan["pointer_sha256"],
+                agent_execution=action["action"] in AGENT_STEP_ACTIONS,
+            )
             steps += 1
             if completed.returncode != 0:
                 self._raise_host_failure(

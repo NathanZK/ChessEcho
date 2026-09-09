@@ -28,7 +28,7 @@ printf '%s\n%s\n' "$GH_TOKEN" "$COPILOT_GITHUB_TOKEN" |
     --git-executable "$GIT" \
     --gh-executable "$GH" \
     --agent-executable "$AGENT" \
-    --agent-home "$AGENT_HOME" \
+    --agent-home "$AGENT_HOME_ROOT" \
     --result-store "$RESULTS" \
     --workspace "$WORKSPACE" \
     --driver-state "$DRIVER_STATE" \
@@ -41,6 +41,20 @@ printf '%s\n%s\n' "$GH_TOKEN" "$COPILOT_GITHUB_TOKEN" |
 The deadline is checked before every host invocation. An already-dispatched
 reviewed host operation is allowed to reach its own bounded result rather than
 being interrupted outside the existing supervisor and recovery contracts.
+
+`--agent-home` names a dedicated allocation root, not a worker home passed to
+Copilot. It must be a real operator-owned directory with mode `0700`, outside
+the control and candidate worktrees. For every automatic agent-producing step,
+the driver atomically creates a new empty `0700` child and passes only that
+child to the trusted-local host. Planner, reviewer, test author, implementer,
+and final reviewer executions therefore never share a home. Requestless result
+discovery, validation, policy, and publication steps do not allocate a worker
+home because they cannot launch an agent.
+
+Allocated homes are siblings rather than nested homes. They are retained after
+their operation so provider/session diagnostics are not silently deleted, but
+the driver never selects them again. A later operation receives another
+atomically unique child even when an earlier home has been populated.
 
 ## Stops and outcomes
 

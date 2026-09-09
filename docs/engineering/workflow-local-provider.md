@@ -282,6 +282,32 @@ is **not yet proven end-to-end**; a fresh authenticated E2E after merge must
 establish that. **Lesson:** Empirical FSMs should evolve by adding narrowly
 bound observed paths, never by weakening ordering globally.
 
+### 9. Worker home is per execution, not per controlled run
+
+**Problem:** The first authenticated run after PR #193 completed planning but
+the plan reviewer could not launch because the driver passed the planner's
+populated worker home to a second agent operation. **Evidence:** Run
+`issue-176-20260909T213027Z-33e62687-488c-4654-8cef-7bac8fba0207`
+advanced from `PLANNING` to `PLAN_REVIEW`; the planner exited 0 with complete
+transport and an accepted candidate, then reviewer launch failed as
+`denied / agent-home-not-dedicated`. **Root cause:** The bounded driver baked
+one `--agent-home` value into its shared host command prefix for the entire
+run. **Why the existing design failed:** The run-level directory lifetime was
+mistaken for the provider's execution-level isolation boundary, even though
+Copilot legitimately populates its home during a successful operation.
+**Decision:** Preserve the provider's strict guard and allocate a new worker
+home for every automatic agent-producing step. **Actual fix:** The driver's
+`--agent-home` now identifies a private allocation root; planner, reviewer,
+test-author, implementer, and final-review steps each receive an atomically
+unique empty `0700` child outside both worktrees. Prior homes remain preserved
+but are never reused. **Validation:** Focused driver tests exercise consecutive
+planner and reviewer operations, repeated allocation after a prior home is
+populated, uniqueness, emptiness, ownership, and permissions; provider tests
+continue to reject populated, nested, or non-private homes. This correction is
+not yet proven end-to-end. **Lesson:** Provider isolation requirements apply to
+each automatic execution independently; a controlled E2E run is an
+orchestration scope, not a reusable worker-home scope.
+
 The durable architectural lesson is that the provider adapter is an explicit
 protocol boundary whose assumptions must be validated against real provider
 traffic. Transport framing, event sequencing, candidate extraction, process
