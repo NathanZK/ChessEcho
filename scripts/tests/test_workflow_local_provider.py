@@ -27,6 +27,12 @@ PINNED_CLI_FIXTURE = (
     / "workflow-local-provider"
     / "pinned-cli-reasoning.jsonl"
 )
+FINAL_REASONING_FIXTURE = (
+    pathlib.Path(__file__).parent
+    / "fixtures"
+    / "workflow-local-provider"
+    / "pinned-cli-final-reasoning.jsonl"
+)
 ASSISTANT_MESSAGE_METADATA_FIXTURE = (
     pathlib.Path(__file__).parent
     / "fixtures"
@@ -535,6 +541,115 @@ class TrustedLocalProviderTest(unittest.TestCase):
                 }
             )
         )
+
+    def test_observed_reasoning_to_final_message_fixture_is_accepted(self):
+        raw = FINAL_REASONING_FIXTURE.read_bytes()
+
+        self.assertEqual(
+            CANDIDATE.encode("utf-8"),
+            provider._extract_candidate_from_jsonl(raw),
+        )
+        self.assertEqual(
+            [
+                "assistant.reasoning_delta",
+                "assistant.reasoning_delta",
+                "assistant.message_start",
+                "assistant.message_delta",
+                "assistant.message",
+                "assistant.reasoning",
+                "assistant.turn_end",
+            ],
+            [
+                event["type"]
+                for event in _jsonl_events(raw)
+                if event["type"]
+                in {
+                    "assistant.reasoning_delta",
+                    "assistant.message_start",
+                    "assistant.message_delta",
+                    "assistant.message",
+                    "assistant.reasoning",
+                    "assistant.turn_end",
+                }
+            ],
+        )
+
+    def test_reasoning_to_message_path_rejects_invalid_transitions(self):
+        def changed(mutator):
+            events = _jsonl_events(FINAL_REASONING_FIXTURE.read_bytes())
+            mutator(events)
+            return _encode_events(events)
+
+        def event(events, event_id):
+            return next(item for item in events if item.get("id") == event_id)
+
+        cases = {
+            "reasoning-skips-message-start": changed(
+                lambda events: events.remove(event(events, "message-start"))
+            ),
+            "reasoning-skips-message-delta": changed(
+                lambda events: events.remove(event(events, "message-delta"))
+            ),
+            "reasoning-message-parent": changed(
+                lambda events: event(events, "message-start").__setitem__(
+                    "parentId", "user-message"
+                )
+            ),
+            "reasoning-delta-parent": changed(
+                lambda events: event(events, "message-delta").__setitem__(
+                    "parentId", "user-message"
+                )
+            ),
+            "reasoning-delta-message-id": changed(
+                lambda events: event(events, "message-delta")["data"].__setitem__(
+                    "messageId", "other-message"
+                )
+            ),
+            "reasoning-message-interruption": changed(
+                lambda events: events.insert(
+                    next(
+                        index
+                        for index, item in enumerate(events)
+                        if item.get("id") == "message-delta"
+                    ),
+                    _event(
+                        "session.background_tasks_changed",
+                        "message-interruption",
+                        "turn-start",
+                        {},
+                        True,
+                    ),
+                )
+            ),
+            "reasoning-message-id": changed(
+                lambda events: event(events, "assistant-message")["data"].__setitem__(
+                    "messageId", "other-message"
+                )
+            ),
+            "reasoning-summary-missing": changed(
+                lambda events: events.remove(event(events, "reasoning-summary"))
+            ),
+            "reasoning-summary-successor": changed(
+                lambda events: events.insert(
+                    next(
+                        index
+                        for index, item in enumerate(events)
+                        if item.get("id") == "turn-end"
+                    ),
+                    _event(
+                        "session.background_tasks_changed",
+                        "invalid-successor",
+                        "assistant-message",
+                        {},
+                        True,
+                    ),
+                )
+            ),
+        }
+        for name, raw in cases.items():
+            with self.subTest(name=name):
+                with self.assertRaises(provider.LocalProviderFailure):
+                    provider._extract_candidate_from_jsonl(raw)
 
     def test_observed_assistant_message_metadata_is_accepted_without_changing_candidate(self):
         events = _jsonl_events(_jsonl())
