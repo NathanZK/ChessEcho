@@ -1,7 +1,9 @@
 import argparse
 import io
 import json
+import os
 import pathlib
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -118,9 +120,20 @@ class FakeRunner:
     def __init__(self, responses):
         self.responses = list(responses)
         self.calls = []
+        self.home_observations = []
 
     def __call__(self, command, input_bytes):
         self.calls.append((command, input_bytes))
+        home = pathlib.Path(command[command.index("--agent-home") + 1])
+        metadata = home.stat()
+        self.home_observations.append(
+            {
+                "path": home,
+                "empty": not any(home.iterdir()),
+                "mode": stat.S_IMODE(metadata.st_mode),
+                "uid": metadata.st_uid,
+            }
+        )
         response = self.responses.pop(0)
         if isinstance(response, tuple):
             return subprocess.CompletedProcess(command, response[0], response[1], response[2])
@@ -130,17 +143,22 @@ class FakeRunner:
 class DriverTest(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
-        self.state = pathlib.Path(self.temporary.name)
+        self.state = pathlib.Path(self.temporary.name).resolve()
+        self.control = self.state / "control"
+        self.workspace = self.state / "workspace"
+        self.agent_home = self.state / "agent-homes"
+        for path in (self.control, self.workspace, self.agent_home):
+            path.mkdir(mode=0o700)
         self.args = argparse.Namespace(
             issue=ISSUE,
-            control_root="/control",
+            control_root=str(self.control),
             repository="NathanZK/ChessEcho",
             git_executable="/usr/bin/git",
             gh_executable="/usr/bin/gh",
             agent_executable="/usr/bin/copilot",
-            agent_home="/agent-home",
+            agent_home=str(self.agent_home),
             result_store="/results",
-            workspace="/workspace",
+            workspace=str(self.workspace),
             driver_state=str(self.state),
             max_steps=64,
             deadline_seconds=14_400,
@@ -201,6 +219,61 @@ class DriverTest(unittest.TestCase):
                 self.assertNotIn("--request", step_command)
                 self.assertEqual(POINTER_A, step_command[step_command.index("--expected-tip") + 1])
                 self.assertEqual(b"github-secret\nworker-secret\n", step_input)
+
+    def test_agent_operations_receive_distinct_empty_private_homes(self):
+        human = action("await-human-approval", "approve", "plan")
+        outcome, runner = self.run_driver(
+            [
+                plan(action("request-planner"), generation=0),
+                step_result(action("review-plan"), generation=2),
+                plan(
+                    action("review-plan"),
+                    phase="PLAN_REVIEW",
+                    pointer=POINTER_B,
+                    generation=2,
+                ),
+                step_result(
+                    human,
+                    pointer=POINTER_A,
+                    generation=3,
+                    phase="WAITING_FOR_PLAN_APPROVAL",
+                ),
+                plan(
+                    human,
+                    phase="WAITING_FOR_PLAN_APPROVAL",
+                    pointer=POINTER_A,
+                    generation=3,
+                ),
+            ]
+        )
+        self.assertEqual("human", outcome["outcome"])
+        planner = runner.home_observations[1]
+        reviewer = runner.home_observations[3]
+        self.assertNotEqual(planner["path"], reviewer["path"])
+        self.assertEqual(self.agent_home, planner["path"].parent)
+        self.assertEqual(self.agent_home, reviewer["path"].parent)
+        for observation in (planner, reviewer):
+            self.assertTrue(observation["empty"])
+            self.assertEqual(0o700, observation["mode"])
+            self.assertEqual(os.getuid(), observation["uid"])
+
+    def test_populated_prior_home_is_preserved_and_never_reused(self):
+        instance = driver.Driver(
+            self.args,
+            "github-secret",
+            "worker-secret",
+            runner=FakeRunner([]),
+        )
+        first = instance._fresh_agent_home()
+        (first / ".copilot").mkdir()
+        second = instance._fresh_agent_home()
+        third = instance._fresh_agent_home()
+        self.assertEqual(3, len({first, second, third}))
+        self.assertTrue((first / ".copilot").is_dir())
+        for path in (second, third):
+            self.assertEqual([], list(path.iterdir()))
+            self.assertEqual(0o700, stat.S_IMODE(path.stat().st_mode))
+            self.assertEqual(os.getuid(), path.stat().st_uid)
 
     def test_human_actions_stop_without_dispatch(self):
         cases = (
@@ -420,14 +493,14 @@ class DriverTest(unittest.TestCase):
         stdout = io.TextIOWrapper(output)
         common = [
             "run", str(ISSUE),
-            "--control-root", "/control",
+            "--control-root", str(self.control),
             "--repository", "NathanZK/ChessEcho",
             "--git-executable", "/git",
             "--gh-executable", "/gh",
             "--agent-executable", "/agent",
-            "--agent-home", "/agent-home",
+            "--agent-home", str(self.agent_home),
             "--result-store", "/results",
-            "--workspace", "/workspace",
+            "--workspace", str(self.workspace),
             "--driver-state", str(self.state),
             "--github-token-stdin",
         ]
