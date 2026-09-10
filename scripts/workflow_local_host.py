@@ -210,7 +210,7 @@ def _control_identity(control_root, git_executable, agent_executable):
     provider_source = _regular(root / local["provider"]["source"], "local-provider-source")
     if local["provider"] != {
         "name": "chess-echo-trusted-local",
-        "version": "1.5.3",
+        "version": "1.5.4",
         "source": "scripts/workflow_local_provider.py",
         "source_sha256": provider_source["sha256"],
     }:

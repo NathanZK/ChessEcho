@@ -28,11 +28,12 @@ except ImportError:  # pragma: no cover - direct script loading
 
 
 NAME = "chess-echo-trusted-local"
-VERSION = "1.5.3"
+VERSION = "1.5.4"
 RESULT_FORMAT = "chess-echo-trusted-local-execution-result-v1"
 PROCESS_DIAGNOSTIC_FORMAT = "chess-echo-trusted-local-process-diagnostic-v1"
 DISCOVERY_FORMAT = "chess-echo-pending-result-candidates-v1"
 HANDOFF_FORMAT = "chess-echo-execution-handoff-v1"
+CANDIDATE_FORMAT = "chess-echo-orchestrator-agent-candidate-v1"
 WORKTREE_BRANCH_PREFIX = "chess-echo-agent/issue-"
 WORKER_TOKEN_ENV = "COPILOT_GITHUB_TOKEN"
 WORKER_TOKEN_MAX_BYTES = 16 * 1024
@@ -1130,13 +1131,111 @@ def _input_projection(root, issue, request):
     return rows
 
 
+def _review_candidate_contract(operation):
+    finding = {
+        "additionalProperties": False,
+        "properties": {
+            "unit_ids": {
+                "description": "Nonempty, UTF-8 sorted unique plan-unit IDs.",
+                "items": {"type": "string"},
+                "minItems": 1,
+                "type": "array",
+                "uniqueItems": True,
+            },
+            "category": {
+                "description": "A nonempty safe slug.",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                "type": "string",
+            },
+            "detail": {"minLength": 1, "type": "string"},
+        },
+        "required": ["unit_ids", "category", "detail"],
+        "type": "object",
+    }
+    if operation == "review-final":
+        pr = {
+            "additionalProperties": False,
+            "properties": {
+                "head_ref": {"minLength": 1, "type": "string"},
+                "title": {"minLength": 1, "type": "string"},
+                "body": {
+                    "description": (
+                        "Nonempty Markdown containing exactly the nonempty sections "
+                        "## What, ## Why, and ## Testing in that order."
+                    ),
+                    "minLength": 1,
+                    "type": "string",
+                },
+            },
+            "required": ["head_ref", "title", "body"],
+            "type": "object",
+        }
+    elif operation in {"review-plan", "review-tests"}:
+        pr = {
+            "description": (
+                "Required object; it may be empty because PR metadata is not validated "
+                "or consumed by this operation."
+            ),
+            "type": "object",
+        }
+    else:
+        _fail(
+            "unsupported",
+            "local-agent-operation-unsupported",
+            "Reviewer operation has no candidate contract",
+        )
+    return {
+        "additionalProperties": False,
+        "properties": {
+            "format": {"const": CANDIDATE_FORMAT},
+            "kind": {"const": "review"},
+            "verdict": {
+                "enum": [
+                    "accepted",
+                    "needs-revision",
+                    "full-review-required",
+                ]
+            },
+            "findings": {
+                "description": (
+                    "May be empty. Each entry is a blocking finding with exactly the "
+                    "declared keys."
+                ),
+                "items": finding,
+                "type": "array",
+            },
+            "pr": pr,
+        },
+        "required": ["format", "kind", "verdict", "findings", "pr"],
+        "type": "object",
+    }
+
+
 def _agent_prompt(issue, role, request, request_binding, inputs):
+    operation = request["operation"]["name"]
     expected = (
         "plan"
-        if request["operation"]["name"] == "write-plan"
+        if operation == "write-plan"
         else "implementer"
         if role == "implementer"
         else "review"
+    )
+    contract = (
+        " The authoritative review candidate contract for operation %s is this exact "
+        "JSON Schema: %s Additional outer keys are forbidden. For review-tests and "
+        "review-final, only accepted advances the current workflow; another allowed "
+        "verdict records non-acceptance under the existing gate policy."
+        % (
+            operation,
+            json.dumps(
+                _review_candidate_contract(operation),
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        )
+        if operation in {"review-plan", "review-tests", "review-final"}
+        else ""
     )
     return (
         "Execute exactly one ChessEcho replacement-workflow agent request as role %s for "
@@ -1148,14 +1247,15 @@ def _agent_prompt(issue, role, request, request_binding, inputs):
         "Inspect the issue and repository as needed, perform only the requested phase. "
         "The final assistant response content must be exactly one JSON object of kind %s matching "
         "chess-echo-orchestrator-agent-candidate-v1. Emit no prose, Markdown fences, or other "
-        "content in that final response."
+        "content in that final response.%s"
         % (
             role,
             issue,
-            request["operation"]["name"],
+            operation,
             json.dumps(request_binding, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
             json.dumps(inputs, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
             expected,
+            contract,
         )
     )
 

@@ -396,6 +396,57 @@ traffic. Transport framing, event sequencing, candidate extraction, process
 supervision, authentication, and evidence publication are separate contracts
 and must not be conflated.
 
+### 12. A named schema is not a communicated schema
+
+**Problem:** The first controlled implementation workload reached
+`PLAN_REVIEW`, completed the Copilot process and JSONL transport normally, and
+extracted and bound the final candidate, but the orchestrator rejected that
+candidate as `candidate-output-invalid`.
+
+**Evidence:** The immutable candidate used the correct format and review kind
+but supplied `verdict: "approve"`, omitted the required `pr` object, and added
+workflow metadata that the exact decoder does not permit. The provider prompt
+required a candidate matching `chess-echo-orchestrator-agent-candidate-v1` but
+did not state its fields, verdict vocabulary, finding shape, or operation-level
+PR requirements. A prior reviewer happened to emit the accepted five-key shape
+under the same incomplete prompt; that successful guess did not establish a
+communicated contract.
+
+**Root cause:** The strict schema existed only at the downstream authority
+boundary and in deterministic fixtures. The live agent received the schema
+name, not the schema.
+
+**Why the existing design failed:** Transport authentication and candidate
+extraction correctly preserved exactly what Copilot emitted, and the strict
+decoder correctly rejected it. The missing upstream contract made valid output
+dependent on the model independently guessing private decoder requirements.
+
+**Decision:** Keep exact-key, verdict, finding, PR, duplicate-key, byte/digest,
+and fail-closed validation unchanged. Provider 1.5.4 adds the exact review
+candidate JSON Schema to prompts for `review-plan`, `review-tests`, and
+`review-final`. All three require exactly `format`, `kind`, `verdict`,
+`findings`, and `pr`, forbid additional outer keys, and name the three allowed
+verdicts and exact finding shape. Plan and test review identify `pr` as a
+required object that may be empty because those operations do not consume its
+metadata. Final review requires exactly nonempty `head_ref`, `title`, and
+`body`, with the body limited to nonempty `What`, `Why`, and `Testing`
+sections.
+
+**Actual fix:** The provider constructs the operation-specific contract and
+embeds its canonical JSON representation in the live prompt. Focused tests
+inspect each review operation's contract and prove that a prompted candidate
+shape is accepted by the unchanged decoder.
+
+**Validation:** The focused provider prompt and candidate-contract tests, the
+orchestrator review-candidate tests, and the workflow tooling checks cover the
+boundary.
+
+**Lesson:** A named schema is not a communicated schema. A strict decoder
+cannot safely expect an agent to satisfy constraints that the agent was never
+actually given. Strict gates remain necessary because model output is
+untrusted; the correction makes the upstream contract explicit rather than
+weakening the downstream boundary.
+
 ## Copilot JSONL transport decision
 
 Issue #176 exposed two independent Phase 1 transport failures. The initial
