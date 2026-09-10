@@ -490,6 +490,117 @@ class TrustedLocalProviderTest(unittest.TestCase):
             prompt,
         )
 
+    def test_reviewer_prompts_communicate_exact_candidate_contract(self):
+        expected_outer_keys = ["format", "kind", "verdict", "findings", "pr"]
+        for operation in ("review-plan", "review-tests", "review-final"):
+            with self.subTest(operation=operation):
+                request = self.fixture.request()
+                request["operation"] = {
+                    "kind": "agent",
+                    "name": operation,
+                    "role": "reviewer",
+                }
+                contract = provider._review_candidate_contract(operation)
+                prompt = provider._agent_prompt(
+                    175,
+                    "reviewer",
+                    request,
+                    {"kind": "evidence-binding", "sha256": "d" * 64, "size": 1},
+                    [],
+                )
+
+                self.assertEqual(expected_outer_keys, contract["required"])
+                self.assertFalse(contract["additionalProperties"])
+                self.assertEqual(
+                    provider.CANDIDATE_FORMAT,
+                    contract["properties"]["format"]["const"],
+                )
+                self.assertEqual("review", contract["properties"]["kind"]["const"])
+                self.assertEqual(
+                    ["accepted", "needs-revision", "full-review-required"],
+                    contract["properties"]["verdict"]["enum"],
+                )
+                finding = contract["properties"]["findings"]["items"]
+                self.assertEqual(
+                    ["unit_ids", "category", "detail"],
+                    finding["required"],
+                )
+                self.assertFalse(finding["additionalProperties"])
+                self.assertIn(
+                    json.dumps(
+                        contract,
+                        ensure_ascii=True,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    prompt,
+                )
+                self.assertIn("Additional outer keys are forbidden.", prompt)
+                self.assertIn(
+                    "The final assistant response content must be exactly one JSON object",
+                    prompt,
+                )
+                self.assertIn(
+                    "Emit no prose, Markdown fences, or other content in that final response.",
+                    prompt,
+                )
+
+                pr = contract["properties"]["pr"]
+                if operation == "review-final":
+                    self.assertEqual(["head_ref", "title", "body"], pr["required"])
+                    self.assertFalse(pr["additionalProperties"])
+                    self.assertTrue(
+                        all(pr["properties"][key]["minLength"] == 1 for key in pr["required"])
+                    )
+                else:
+                    self.assertIn("may be empty", pr["description"])
+
+    def test_prompted_review_candidate_shape_matches_strict_decoder(self):
+        self.assertEqual(resume.CANDIDATE_FORMAT, provider.CANDIDATE_FORMAT)
+        for operation in ("review-plan", "review-tests", "review-final"):
+            with self.subTest(operation=operation):
+                candidate = {
+                    "format": provider.CANDIDATE_FORMAT,
+                    "kind": "review",
+                    "verdict": "accepted",
+                    "findings": [],
+                    "pr": (
+                        {
+                            "head_ref": "issue-198",
+                            "title": "Report the STANDARD time-control alias",
+                            "body": (
+                                "## What\nReport STANDARD.\n\n"
+                                "## Why\nMatch the accepted alias.\n\n"
+                                "## Testing\nRun the backend checks.\n"
+                            ),
+                        }
+                        if operation == "review-final"
+                        else {}
+                    ),
+                }
+
+                self.assertEqual(
+                    candidate,
+                    resume.candidate_schema(candidate, "review"),
+                )
+                if operation == "review-plan":
+                    self.assertEqual(
+                        ("accepted", []),
+                        resume.validate_review_candidate(
+                            candidate,
+                            {
+                                "kind": "evidence-binding",
+                                "sha256": "d" * 64,
+                                "size": 1,
+                            },
+                        ),
+                    )
+                if operation == "review-final":
+                    self.assertEqual(
+                        candidate["pr"],
+                        resume.validate_pr_metadata(candidate["pr"]),
+                    )
+
     def test_jsonl_tool_flow_extracts_exact_candidate_and_ignores_intermediate_prose(self):
         raw = _jsonl()
         candidate = provider._extract_candidate_from_jsonl(raw)
