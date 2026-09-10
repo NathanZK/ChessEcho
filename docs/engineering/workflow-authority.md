@@ -1,15 +1,15 @@
 # Workflow Authority
 
-`scripts/workflow_authority.py` is the inactive expected-tip selector for the
-future orchestration path tracked by issue #144. It selects one verified
+`scripts/workflow_authority.py` is the active replacement workflow's
+expected-tip selector. It selects one verified
 `orchestration-state` evidence binding as current for an issue. It does not
 interpret lifecycle policy, construct policy state, invoke agents or processes,
 access Git or GitHub, publish evidence, migrate or repair legacy state, retry an
 operation, or perform convergence.
 
-The legacy workflow remains active. Publishing an evidence binding does not make
-it current; only a successful authority pointer commit selects it. Migrated-v4
-cutover is not activated by this slice.
+Publishing an evidence binding does not make it current; only a successful
+authority pointer commit selects it. The legacy workflow remains a separate
+compatibility path, and migrated-v4 cutover is not activated.
 
 ## Commands
 
@@ -140,8 +140,9 @@ pending request selects a `human-challenge`, `gate-challenge`, or
 `supervision-policy-change`; an automatic gate selects `gate-challenge`; every
 process pending request selects `execution-request`. Authority validates these
 identity links, not challenge, command, phase-transition, or policy semantics.
-The orchestrator therefore replays selected history before dispatch and validates
-the configurable-gate and mandatory-recovery semantics at that composition layer.
+The replacement orchestrator therefore revalidates selected history before
+dispatch and validates the configurable-gate and mandatory-recovery semantics
+at that composition layer.
 
 Every evidence graph is checked through public `workflow_evidence.verify`, and
 binding identity, decision, subject, lineage, and manifest facts come from

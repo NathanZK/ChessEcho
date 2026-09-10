@@ -2,14 +2,53 @@
 
 ChessEcho uses a repository-scoped, resumable workflow for taking a GitHub issue
 through planning, tests, implementation, validation, and a draft pull request.
-The currently active lifecycle is still the legacy
-`scripts/agent_workflow.py` path. New trusted primitives and policy evaluators
-exist beside it, but they are not a replacement lifecycle and are not activated
-by the legacy CLI.
+The active replacement path composes immutable evidence, expected-tip authority,
+deterministic policy, fresh runtime reconstruction, bounded process supervision,
+a reviewed provider adapter, and explicit human gates. It is entered through
+`scripts/workflow_local_host.py`; `scripts/workflow_driver.py` may continue
+automatic steps but cannot approve, recover, merge, or create its own lifecycle.
 
-This guide is the canonical end-to-end orientation and operating procedure.
+The older `scripts/agent_workflow.py` lifecycle remains in the repository for
+legacy runs and compatibility. It is not the architecture described as current
+below. Its operating reference is retained later in this document and is
+explicitly labeled [Legacy lifecycle reference](#legacy-lifecycle-reference).
+This is more than import isolation: replacement initialization refuses an issue
+already owned by legacy authority, and every replacement status read fails with
+`dual-authority-detected` if both authority models exist. Two state machines
+must never be simultaneously authoritative for one issue.
+
+The repository-level `AGENTS.md` “Issue workflow” instructions still describe
+the explicitly requested legacy `scripts/agent_workflow.py` lifecycle. They are
+not the replacement host's runbook and must not be used to infer replacement
+commands or capabilities. Updating that agent-control surface is outside this
+documentation-only change.
+
+This guide is the canonical architecture orientation and reference.
 Focused engineering documents remain the detailed contracts for individual
-trusted mechanisms and policies.
+trusted mechanisms and policies. Current commands and operator preconditions
+are in [Workflow orchestration](workflow-orchestration.md#commands),
+[Trusted-local workflow provider](workflow-local-provider.md#activation-and-operation),
+and [Bounded workflow driver](workflow-driver.md#invocation). No definitive
+operator runbook exists yet; it is tracked by open
+[issue #197](https://github.com/NathanZK/ChessEcho/issues/197).
+
+### Suggested reading paths
+
+- **New to the architecture:** read [Why the architecture exists](#why-the-architecture-exists),
+  [Five questions to keep separate](#five-questions-to-keep-separate),
+  [A simple mental model](#a-simple-mental-model), and
+  [What runs today](#what-runs-today).
+- **Building or integrating a component:** continue through the
+  [current responsibility map](#current-responsibility-and-dependency-map),
+  [composition model](#current-composition-without-collapsed-ownership), and
+  [module boundaries](workflow-boundaries.md).
+- **Reviewing security or correctness:** focus on
+  [authority and trust](#authority-trust-and-guarantee-boundaries),
+  [provider protocols](#provider-and-candidate-protocol-boundaries), and
+  [current non-guarantees](#current-guarantees-non-guarantees-and-unfinished-work).
+- **Operating the current path:** use the focused command documents linked
+  above; the later [legacy reference](#legacy-lifecycle-reference) applies only
+  to `scripts/agent_workflow.py`.
 
 ## Why the architecture exists
 
@@ -36,79 +75,250 @@ state-machine script are insufficient because none independently proves that the
 observed bytes, repository revision, review, approval, and intended transition
 still belong together. ChessEcho therefore separates:
 
-1. the active legacy lifecycle and its human gates;
-2. narrow trusted primitives for inspection, repair, canonical evidence,
-   migration, and process supervision;
-3. deterministic but inactive policy evaluators; and
-4. a future thin composition/activation responsibility owned by
-   [issue #144](https://github.com/NathanZK/ChessEcho/issues/144).
+1. **evidence**, which records exact observed bytes and facts;
+2. **authority**, which selects the one permitted lifecycle state;
+3. **policy**, which evaluates what may follow from selected evidence;
+4. **runtime and supervision**, which reconstruct fresh external facts and bound
+   process execution;
+5. **provider and host adapters**, which translate one external agent protocol
+   into ChessEcho's narrow candidate contract; and
+6. **human authorization**, which remains separate from technical review and
+   automatic policy satisfaction.
+
+The workflow is not primarily a task runner. It is an authorization and
+evidence system for autonomous work. Agent output is a proposal until
+independent observation, validation, policy, and authority connect it to an
+allowed transition.
+
+### Five questions to keep separate
+
+If the terminology is unfamiliar, start with five ordinary questions:
+
+| Plain-English question | Technical term | ChessEcho answer |
+|---|---|---|
+| What proves what actually happened? | **Evidence** | Exact plan, review, process, repository, validation, and GitHub-observation bytes are preserved and linked. |
+| Where did this artifact come from? | **Provenance and lineage** | Separate records name how evidence was captured and whether it is original, inherited, or replaces earlier evidence. |
+| Which one of many valid records is official now? | **Authority** | One expected-tip pointer selects one immutable orchestration-state binding. |
+| Where do we stop trusting input automatically? | **Trust boundary** | Agent output, provider traffic, external state, and human-source claims are independently checked by their owning adapters or policies. |
+| What happens when required proof is missing? | **Fail-closed behavior** | The workflow refuses or pauses instead of guessing, silently defaulting, or manufacturing success. |
+
+A content-addressed store (**CAS**) gives bytes an identity derived from their
+contents: change one byte and the identity changes. That makes later
+substitution detectable, but it does not say who produced the bytes or whether
+they are approved. **Process supervision** means the workflow launches an
+external command with explicit time, output, and process-group limits and
+records how it ended; exit zero still does not prove the candidate is valid.
+These distinctions explain why ChessEcho needs several mechanisms rather than
+one “agent succeeded” flag.
 
 ## A simple mental model
 
-The system is easier to understand as four layers:
+The current system is easiest to understand as one control plane around an
+untrusted worker:
 
-1. **What runs today:** one legacy command-line workflow owns lifecycle state,
-   invokes the agent roles, enforces human gates, runs validation, and creates a
-   draft pull request.
-2. **Trusted callable components:** smaller tools can independently inspect,
-   repair, store verified evidence, migrate supported records, or supervise a
-   process. The active workflow does not call them yet.
-3. **Inactive policy evaluators:** deterministic modules can classify work,
-   scope plan review, invalidate dependent evidence, and bound retries. They
-   return results but cannot change lifecycle state.
-4. **Future composition:** a future thin orchestrator, tracked in
-   [issue #144](https://github.com/NathanZK/ChessEcho/issues/144), must connect
-   these pieces and retire the legacy authority without running both as active
-   state machines.
+1. The **replacement orchestrator** chooses at most one next action from
+   selected authority.
+2. **Policy modules** validate route, plan/review, dependency, convergence, and
+   gate semantics. They return deterministic results; they do not select
+   authority themselves.
+3. The **authority pointer** selects one immutable orchestration-state binding
+   by expected tip.
+4. The **runtime** reconstructs base-pinned Git, GitHub, executable,
+   configuration, authority, and repository facts for each public command.
+5. The **supervisor** bounds one process group and records complete typed
+   process facts.
+6. The **trusted-local host and provider** validate Copilot JSONL and extract
+   candidate bytes while preserving the complete raw transport as bound
+   evidence; the workflow core decides whether those bytes are a valid
+   phase-specific candidate.
+7. The **driver** repeats only policy-selected automatic steps and stops at
+   human, recovery, and terminal boundaries.
 
 ```mermaid
 flowchart LR
-  Agents["Agents propose plans,<br/>tests, code, and reviews"] --> Today["ACTIVE TODAY<br/>legacy gated workflow"]
-  Human{{"Human approves<br/>plan, tests, and draft PR"}} ==> Today
-  Today --> External["Git, GitHub,<br/>and local validation"]
+  Human{{"Human<br/>authorization"}} --> Host["Reviewed local host"]
+  Driver["Bounded driver"] --> Host
+  Host --> Orchestrator["Replacement orchestrator"]
+  Orchestrator --> Policy["Deterministic policy"]
+  Orchestrator --> Authority["Expected-tip authority"]
+  Orchestrator --> Runtime["Fresh runtime reconstruction"]
+  Runtime --> Provider["Copilot provider adapter"]
+  Provider --> Supervisor["Process supervisor"]
+  Supervisor --> Agent["Untrusted agent"]
+  Provider --> Evidence[("Candidate + raw transport<br/>immutable evidence")]
+  Orchestrator --> Evidence
+  Authority --> Evidence
+  Runtime --> External["Git / GitHub / validation"]
 
-  Tools["CALLABLE TOOLS<br/>inspect, repair, store evidence,<br/>migrate, supervise"]
-  Policy["INACTIVE POLICY<br/>classify, scope review,<br/>invalidate, bound retries"]
-  Future["FUTURE COMPOSITION<br/>not implemented"]
-
-  Tools -.->|"future integration only"| Future
-  Policy -.->|"future integration only"| Future
-  Today -.->|"future cutover"| Future
-
-  classDef active fill:#fee2e2,stroke:#991b1b,color:#111827,stroke-width:2px;
-  classDef trusted fill:#dbeafe,stroke:#1d4ed8,color:#111827;
-  classDef inactive fill:#fef3c7,stroke:#92400e,color:#111827,stroke-dasharray:5 5;
-  classDef future fill:#ffedd5,stroke:#c2410c,color:#111827,stroke-dasharray:8 4;
   classDef human fill:#ede9fe,stroke:#6d28d9,color:#111827,stroke-width:2px;
-  class Today,External active;
-  class Tools trusted;
-  class Policy inactive;
-  class Future future;
+  classDef control fill:#dbeafe,stroke:#1d4ed8,color:#111827;
+  classDef store fill:#dcfce7,stroke:#166534,color:#111827;
+  classDef untrusted fill:#fee2e2,stroke:#991b1b,color:#111827,stroke-width:2px;
   class Human human;
+  class Host,Driver,Orchestrator,Policy,Authority,Runtime,Supervisor,Provider control;
+  class Evidence store;
+  class Agent untrusted;
 ```
 
 ## What runs today
 
-For a normal implementation issue, the active workflow is:
+For an implementation issue, the active replacement workflow is:
 
 ```text
-issue
-  -> plan -> independent review -> human plan approval
-  -> tests -> independent review -> human test approval
-  -> implementation -> local validation -> final review
-  -> draft pull request -> human PR approval record
+trusted issue intake and clean base
+  -> plan -> independent technical review -> plan gate
+  -> tests-only change -> independent technical review -> test gate
+  -> implementation -> comprehensive validation -> final technical review
+  -> final gate -> publication gate -> draft pull request
+  -> fresh PR/repository observation -> completed authority
 ```
 
-The Orchestrator drives `scripts/agent_workflow.py`; the Planner writes the plan;
-the Implementer first acts as Test Author and later writes production code; the
-Reviewer independently reviews each stage; and a human authorizes the three
-gates. The CLI persists local run state, binds validation and review to exact Git
-revisions, and reconciles the draft PR. It records final PR approval but does not
-merge or mark the PR ready.
+The committed supervision configuration uses four supervised gates: `plan`,
+`tests`, `final`, and `pr-publication`. Reviewer acceptance is technical
+evidence, never authorization. The final and publication gates are distinct so
+approval of implementation evidence cannot silently authorize a later GitHub
+mutation. Completion records an authority transition; it does not merge, mark
+the draft ready, deploy, or close the issue.
 
-Today, `agent_workflow.py` imports only `workflow_kernel.py`. It does **not**
-activate the newer evidence, migration, repair, work-type, plan-review, or
-dependency-policy components described later.
+Each gate supports `supervised` or `automatic` mode. In supervised mode, only a
+fresh exact GitHub authorization observation can satisfy the challenge. In
+automatic mode, deterministic `configured-automatic-v1` policy evidence
+satisfies it with no actor, reviewer, agent, or discretionary decision; the
+bounded driver may dispatch that policy step. Automatic therefore means
+pre-authorized deterministic policy, not inferred human consent or agent
+self-approval. All four modes committed in `.github/agent-workflow.json` are
+`supervised`. Changing the map requires a separate human-authorized supervision
+change. The core orchestrator defines `set-supervision`, but the reviewed
+Phase 1 local host does not expose it, so runtime mode changes are not currently
+an operable host procedure. Automatic mode has not been exercised by the
+authenticated E2Es documented here.
+
+One cross-policy limitation matters: the older #116 implementation-route
+requirements still use names such as `explicit-human-plan-approval`,
+`explicit-human-test-approval`, and `explicit-human-pr-approval`. The
+replacement supervision policy can technically satisfy those gates
+automatically, but it does not rewrite that vocabulary. The committed
+all-supervised configuration is consistent with both contracts. Until #116's
+requirements are versioned or made mechanism-neutral, automatic mode is a
+component capability—not a demonstrated end-to-end guarantee that every
+implementation-route requirement has coherent semantics.
+
+The active route currently accepts only `implementation`. Design, research, and
+documentation classifications exist in the work-type policy but their lifecycle
+routes are not activated. **Phase 1** is the implemented trusted-local boundary:
+the local operator and reviewed host are trusted, the authorized coding agent
+may execute locally, and all agent-produced content remains untrusted.
+Phase 1 does not claim hostile same-UID process, filesystem, credential,
+authority-store, network, or escaped-descendant isolation. **Phase 2** is the
+unimplemented hostile-worker model requiring stronger OS/process, credential,
+network, and authority-store containment; it remains
+[issue #160](https://github.com/NathanZK/ChessEcho/issues/160).
+
+### Current state machine
+
+The replacement state names encode where new authority may be selected, not
+whether an agent process happens to be running:
+
+```mermaid
+stateDiagram-v2
+  [*] --> PLANNING
+  PLANNING --> PLAN_REVIEW: accepted plan candidate
+  PLAN_REVIEW --> PLANNING: needs revision
+  PLAN_REVIEW --> PLAN_REVIEW: full review escalation
+  PLAN_REVIEW --> WAITING_FOR_PLAN_APPROVAL: technical acceptance
+  WAITING_FOR_PLAN_APPROVAL --> TEST_IMPLEMENTATION: gate satisfaction
+  TEST_IMPLEMENTATION --> TEST_REVIEW: scoped tests candidate
+  TEST_REVIEW --> WAITING_FOR_TEST_APPROVAL: technical acceptance
+  TEST_REVIEW --> PAUSED: needs revision
+  WAITING_FOR_TEST_APPROVAL --> IMPLEMENTATION: gate satisfaction
+  IMPLEMENTATION --> VALIDATION: accepted implementation
+  VALIDATION --> FINAL_REVIEW: all checks accepted
+  FINAL_REVIEW --> WAITING_FOR_FINAL_APPROVAL: technical acceptance
+  FINAL_REVIEW --> PAUSED: needs revision
+  WAITING_FOR_FINAL_APPROVAL --> PR_PREPARATION: gate satisfaction
+  PR_PREPARATION --> WAITING_FOR_PR_PUBLICATION_APPROVAL: fresh clean publication observation
+  WAITING_FOR_PR_PUBLICATION_APPROVAL --> PR_PREPARATION: gate satisfaction
+  PR_PREPARATION --> COMPLETED: draft reconciled and freshly observed
+  PLANNING --> PAUSED: unsupported or failed transition
+  PLAN_REVIEW --> PAUSED
+  TEST_IMPLEMENTATION --> PAUSED
+  IMPLEMENTATION --> PAUSED
+  VALIDATION --> PAUSED
+  PR_PREPARATION --> PAUSED
+  PAUSED --> PLANNING: authorized recovery of planner attempt
+  PAUSED --> PLAN_REVIEW: authorized recovery of plan review
+  PAUSED --> TEST_IMPLEMENTATION: authorized recovery of test author
+  PAUSED --> TEST_REVIEW: authorized recovery of test review
+  PAUSED --> IMPLEMENTATION: authorized recovery of implementation
+  PAUSED --> VALIDATION: authorized recovery of validation
+  PAUSED --> FINAL_REVIEW: authorized recovery of final review
+  PAUSED --> PR_PREPARATION: authorized recovery of GitHub attempt
+```
+
+Each executable operation is first claimed in authority and later finalized
+from an exact immutable result. `PAUSED` and a pending request are not generic
+retry states. Cancellation retains the request identity, and recovery requires
+a separate mandatory-human challenge. The workflow never interprets a missing
+result or operator restart as permission to execute again.
+
+Plan review may return directly to planning or remain in plan review because
+the plan-revision policy defines those bounded technical outcomes. A rejected
+test or final review instead pauses because no active replacement transition
+interprets that rejection as permission to alter already selected downstream
+evidence. Recovery first opens a mandatory-human challenge and then returns
+only to the safe phase derived from the exact recorded operation.
+
+### Why the stages are separate
+
+| Boundary | Failure class it prevents |
+|---|---|
+| Issue intake and triage | Acting on mutable, wrong-repository, pull-request, frozen, or ambiguously classified input |
+| Plan then technical review | Coding from an unexamined design or from invented source/API assumptions |
+| Plan gate | Treating reviewer readiness or agent confidence as human authorization |
+| Tests before production | Making behavior changes without first fixing the observable contract and scope |
+| Test review and test gate | Letting the implementation author silently weaken or self-approve the test contract |
+| Implementation scope check | Accepting a clean-looking candidate whose independent repository observation has no required executable change or includes out-of-scope paths |
+| Comprehensive validation | Equating process success, candidate validity, or targeted checks with repository correctness |
+| Final technical review | Letting the implementation author certify the same evidence it produced |
+| Final gate | Carrying technical review forward as authorization for the final repository/config snapshot |
+| Publication gate | Treating approval of code as permission for a later external GitHub mutation |
+| Fresh PR/repository observation | Completing on a moved head, edited draft, wrong base, stale authorization, or uncertain write |
+
+The ceremony is deliberately proportional to consequential autonomous changes.
+It adds latency, code, evidence volume, and operator work and is not a template
+for every ordinary local task. But removing a gate without naming the failure
+it prevents makes the trust model implicit. A useful maintenance test is:
+**if a future engineer cannot explain what failure a gate prevents, either the
+gate is unnecessary or its rationale is undocumented.**
+
+### Gate anatomy
+
+All gates bind one immutable challenge to exact subjects and a repository
+observation. The selected satisfaction is then revalidated during later history
+revalidation; prior-stage prose is never enough.
+
+| Gate | Artifact and bound evidence | Satisfied by | Enables | Failure prevented |
+|---|---|---|---|---|
+| `plan` | Exact plan snapshot, technical plan review, and plan-review repository observation | Fresh GitHub authorization in `supervised` mode or deterministic automatic decision in `automatic` mode | A `plan-approval` node and `TEST_IMPLEMENTATION` | Coding against an unreviewed, changed, or merely agent-endorsed plan |
+| `tests` | Exact test manifest, technical test review, and test-manifest repository observation | Selected supervised or automatic gate satisfaction | A `test-approval` node and `IMPLEMENTATION` | Production work against tests that changed, escaped scope, or were self-approved |
+| `final` | Exact final review, comprehensive validation, and validated repository observation | Selected supervised or automatic gate satisfaction, with fresh local re-observation | `PR_PREPARATION` and retained final-gate satisfaction | Treating process success or reviewer acceptance as authorization of a stale final revision |
+| `pr-publication` | Final-gate satisfaction, final review, validation, and a fresh clean publication observation | Selected supervised or automatic gate satisfaction, rechecked before the write | One exact draft-PR claim; after reconciliation, completion | Letting code approval silently authorize a later or changed GitHub mutation |
+
+The active replacement CLI has no gate-reject or approval-revocation command.
+At a waiting gate, a human who declines approval leaves the challenge waiting;
+silence is not converted into a transition. `cancel` applies only to a pending
+executable attempt, not to human or automatic gate challenges. There is no
+public reopen operation in the active path. A failed supported transition may
+enter `PAUSED`, from which two-step human-authorized recovery can resume only
+the recorded operation's safe phase. The broader transition vocabulary accepted
+by the authority schema does not make every named transition publicly
+executable.
+
+Cancellation has a separate edge not expanded in the diagram: an executable
+claim may become `cancel-requested`, and authorized recovery may resume its safe
+phase without first creating a `PAUSED` successor. The exact pending request
+remains selected throughout; cancellation never creates permission to execute
+it again.
 
 ## Core terms
 
@@ -117,14 +327,14 @@ These definitions are the minimum needed to read the detailed architecture. The
 
 | Term | Meaning |
 |---|---|
-| **Active lifecycle** | The supported state transitions and human gates executed by `agent_workflow.py` and persisted with `workflow_kernel.py`. |
-| **Implemented and independently callable** | A landed primitive or CLI can be invoked directly, but is not integrated into the active legacy lifecycle. |
-| **Inactive policy** | A landed, directly invocable evaluator can verify inputs and emit a derived result, but cannot publish or activate lifecycle authority. |
+| **Active replacement lifecycle** | The transitions composed by `workflow_orchestrator.py`, selected by `workflow_authority.py`, and activated through the reviewed local host. |
+| **Legacy lifecycle** | The older `agent_workflow.py`/`workflow_kernel.py` path retained for legacy compatibility; it is not imported by the replacement orchestrator. |
+| **Policy evaluator** | A deterministic module that validates and derives a result. The orchestrator may publish and compose that result, but the policy module cannot select authority itself. |
 | **Trusted primitive** | A narrow implementation is trusted only for its documented mechanism. This does not authenticate its caller or make caller-selected input authoritative. |
 | **Untrusted candidate** | Agent output, inline documents, process output, or a caller-designated digest before the owning verifier establishes its exact contract. |
 | **Trusted/designated digest** | An expected byte identity supplied out of band. The receiving component proves equality, not who selected it, whether it is latest, or whether it has been revoked. |
 | **Authority** | Exact state selected by the active authority mechanism. A digest, fingerprint, checkpoint, review, or process result alone is never authority. |
-| **Activation boundary** | The point where a separately authorized operation would make verified evidence or a policy result affect lifecycle authority. None of the inactive policies can cross it. |
+| **Activation boundary** | The authority commit that makes verified evidence or a policy result affect the selected lifecycle. Only the orchestrator composes this; policy and evidence modules cannot cross it alone. |
 | **Evidence** | Exact bytes and structured records used to support a workflow decision, such as a plan, review, test report, validation result, or repository observation. |
 | **Content-addressed storage (CAS)** | Storage whose object name is derived from a digest of its bytes. Identical bytes share an identity; the digest does not identify an approved producer. |
 | **Manifest** | Canonical list of evidence paths, file kinds, modes, sizes, and payload references. It answers “what bytes make up this evidence?” |
@@ -136,17 +346,23 @@ These definitions are the minimum needed to read the detailed architecture. The
 | **Trust anchor** | An expected current identity obtained independently of the data being evaluated. A policy can verify equality to it but cannot choose it for itself. |
 | **Invalidation** | Removing evidence from the active dependency set because something it depends on changed, while retaining the old immutable record for audit. |
 | **Convergence** | Bounded progression from identifying a cause through applying and verifying a fix; retry exhaustion escalates instead of looping forever. |
-| **Run formats v1-v4** | Successive stored formats of the legacy local workflow. Version 4 is the current legacy format and adds the committed state/history integrity envelope; these are not versions of the newer trusted components. |
+| **Run formats v1-v4** | Successive stored formats of the legacy local workflow. Version 4 is the legacy terminus and adds the committed state/history integrity envelope; these are not replacement-orchestrator versions. |
 | **Protocol immutability** | Public CAS writers never overwrite conflicting bytes and readers recheck object identity. It is not tamper-proof storage against an actor with filesystem write access. |
 | **Historical evidence** | Public issues, PRs, commits, historical source, and postmortem observations used to explain evolution. They do not govern a current run. |
 
-## Architecture
+## Historical pre-activation component map (superseded)
 
-### End-to-end view
+### Historical component map
 
-Use this diagram as a reference: trace the thick red path for today's lifecycle,
-solid arrows into blue boxes for implemented component calls, dotted arrows for
-inactive derived policy, and open-circle arrows only for future composition.
+The following diagram is preserved as the architecture snapshot immediately
+before replacement activation. Its `ACTIVE TODAY`, `INACTIVE`, and `FUTURE`
+labels describe that historical point, not current status. It explains the
+cutover problem the replacement had to solve without pretending the legacy and
+replacement paths were one state machine. Use the current diagram in
+[A simple mental model](#a-simple-mental-model) for present-day flow.
+
+<details>
+<summary>Expand the historical pre-activation component map</summary>
 
 ```mermaid
 flowchart TB
@@ -320,7 +536,7 @@ flowchart TB
   class LegacyFiles,Durable store;
 ```
 
-### What the arrows mean
+### What the historical arrows meant
 
 | Flow | Meaning and limit |
 |---|---|
@@ -336,34 +552,55 @@ flowchart TB
 | Dotted policy edges | Dependency/convergence evaluation and the work-type-triage/plan-context relationship are derived checks only. The plan policy validates the triage binding's generic identity/subject links and leaves work-type semantics to future composition. |
 | Open-circle edges to/from the future orchestrator | Future handoff obligations only: consume policy results, call narrow trusted interfaces, bind human authorization, and cut over without simultaneous authorities. They are not current calls. |
 
-### Responsibility and dependency map
+</details>
+
+## Current responsibility and dependency map
 
 | Area | Owner and current status | Owns | Deliberately does not own |
 |---|---|---|---|
-| Active legacy lifecycle | `scripts/agent_workflow.py`; active | Lifecycle states/events, agent role gates, explicit approvals, correction runs, configured local validation, Git/GitHub reconciliation, legacy adoption and projection recovery policy | New durable policy composition, bounded supervisor execution, authenticated actor identity |
+| Replacement composition | [`workflow_orchestrator.py`](workflow-orchestration.md); active through reviewed host | One-step lifecycle composition, policy/result publication, exact gate transitions, pending-operation claims and finalization | Primitive evidence verification, pointer mechanics, provider transport, candidate-schema ownership, direct process/Git/GitHub access |
+| Candidate resume boundary | [`workflow_orchestrator_resume.py`](workflow-orchestration.md#candidate-contract); active through orchestrator and verified by host | Exact candidate decoding and phase-specific schemas, plan/review/implementer field validation, final PR-body contract, pending-result reconstruction helpers | Copilot transport/FSM compatibility, lifecycle selection, authority commit |
+| Legacy lifecycle | `scripts/agent_workflow.py`; retained compatibility path | Legacy v1-v4 states/events, approvals, corrections, validation, adoption, and projection recovery | Replacement authority, policy composition, runtime reconstruction, provider transport |
 | Legacy kernel | [`workflow_kernel.py`](workflow-boundaries.md); active through legacy CLI | Legacy v4 paths, canonical projection bytes, envelope/transaction checks, per-run advisory lock, per-file replacement, envelope-last publication | Lifecycle semantics, Git/GitHub, process execution, durable-store authority |
-| Inspector/checkpoint | [`workflow_inspector.py`](workflow-inspector.md); independently callable, read-only | Pointer/index/run verification, supported object graph, repeated minimal repository observations, canonical checkpoint | Migration, repair, policy replay, approval, permanent freshness |
+| Inspector/checkpoint | [`workflow_inspector.py`](workflow-inspector.md); independently callable, read-only | Pointer/index/run verification, supported object graph, repeated minimal repository observations, canonical checkpoint | Migration, repair, lifecycle-history revalidation, approval, permanent freshness |
 | Repair | [`workflow_repair.py`](workflow-repair.md); independently callable; mutation only through explicit operations | Canonical repair bundles, exact operation allowlist, journal, pointer commit, immutable audit receipt, recovery | Lifecycle transition, hidden recovery, lock-free CAS, automatic conflict resolution |
-| Process supervisor | [`workflow_supervisor.py`](workflow-supervisor.md); callable; used by the inactive work-type policy | One bounded process group, deadline, per-stream output limits, TERM/KILL sequence, typed cleanup facts | Retry or acceptance policy, escaped descendants, CPU/memory/network quotas, scheduling |
+| Process supervisor | [`workflow_supervisor.py`](workflow-supervisor.md); active through runtime/provider | One bounded process group, deadline, independent stream limits, optional sink, observed byte/digest accounting, TERM/KILL sequence | Retry or acceptance policy, escaped descendants, CPU/memory/network quotas, scheduling |
 | Content-addressed storage | `workflow_cas.py`; used by repair/evidence/migration | Create-exclusive temporary writes, fsync ordering, hard-link publication, collision verification, concurrent identical idempotence | Binding semantics, pointers, lifecycle, tamper-proof storage, multi-object transactions |
 | Evidence | [`workflow_evidence.py`](workflow-evidence.md); independently callable and consumed by other new layers | Semantic manifest, separate provenance, lineage, binding, verified derived projection | Trust-anchor selection, actor authentication, invalidation/revocation, lifecycle acceptance |
 | Migration | [`workflow_migration.py`](workflow-migration.md); independently callable | Exact supported-source conversion, canonical plan, durable precondition recheck, immutable publication, binding-last commit | Source guessing, pointer/projection mutation, implicit repair, activation |
-| Dependency and convergence policy | [`workflow_policy.py`](workflow-policy.md), issue #134; directly callable but inactive/read-only | Fixed evidence dependency graph, minimal invalidation, correction roots, two root-changing reopen/correction cycles, three retries per convergence stage, deterministic escalation | Trusted-tip acquisition, publication/application, lifecycle transition |
-| Work-type policy | [`workflow_work_type_policy.py`](workflow-work-type-policy.md), issue #116; directly callable but inactive | Four work types/routes, frozen profiles/limits, supervised advisory targeted checks, structural completion assessment | Initialization, authoritative recording, comprehensive final validation, freshness, lifecycle completion |
-| Plan-revision policy | [`workflow_plan_revision_policy.py`](workflow-plan-revisions.md), issue #125; directly callable but inactive/read-only | Exact plan/diff/review evidence, full versus incremental review, bounded coverage preservation, finding dispositions | Human approval inheritance, latest revision, revocation, dependency-policy mutation, lifecycle activation |
-| Future thin orchestration | [Issue #144](https://github.com/NathanZK/ChessEcho/issues/144); not implemented | Future design/implementation owner for composition and activation after separate review | Must not duplicate any trusted primitive or create a second simultaneous workflow authority |
+| Dependency and convergence policy | [`workflow_policy.py`](workflow-policy.md), issue #134; active through orchestrator | Fixed evidence dependency graph, minimal invalidation, correction roots, bounded convergence and deterministic escalation | Trusted-tip acquisition, publication/application, lifecycle transition |
+| Work-type policy | [`workflow_work_type_policy.py`](workflow-work-type-policy.md), issue #116; implementation route active | Four classifications, frozen profiles/limits, supervised targeted checks, structural completion assessment | Authority selection, comprehensive final validation, freshness; non-implementation routes remain unactivated |
+| Plan-revision policy | [`workflow_plan_revision_policy.py`](workflow-plan-revisions.md), issue #125; active through orchestrator | Exact plan/diff/review evidence, full versus incremental review, bounded coverage preservation, finding dispositions | Human approval inheritance, latest-tip selection, authority mutation |
+| Supervision policy | [`workflow_supervision_policy.py`](workflow-supervision-policy.md), issue #165; active through orchestrator | Four configurable gate modes and exact satisfaction semantics | Human authentication, evidence publication, authority selection, mandatory-human operation configuration |
+| Authority selector | [`workflow_authority.py`](workflow-authority.md); active | Expected-tip pointer, complete predecessor verification, one selected immutable orchestration state | Lifecycle semantics, policy evaluation, process execution |
+| Runtime and reconstruction | [`workflow_runtime.py`](workflow-runtime.md) and `workflow_runtime_reconstruction.py`; active | Fresh base-pinned external observations, request/result boundary, validation, source/PR operations, reconstruction attestation | Lifecycle selection, evidence publication, retry policy |
+| Trusted-local host/provider | [`workflow_local_host.py` and `workflow_local_provider.py`](workflow-local-provider.md); active Phase 1 adapter | Reviewed control checkout, source/executable pins, installation of runtime/provider/pending-result seams, per-execution worktrees/homes, Copilot JSONL decoding, candidate-byte extraction, raw sidecar | Candidate-schema semantics, hostile same-UID isolation, lifecycle policy, human authorization |
+| Bounded driver | [`workflow_driver.py`](workflow-driver.md); active optional continuation loop; refuses frozen issues #115 and #174 | Fresh `plan-next`, automatic allowlist, bounds, secret-free journal | Approval, recovery, initialization, merge, independent authority |
 
 The mechanically enforced import direction is documented in
-[Workflow Module Boundaries](workflow-boundaries.md). In particular,
-`agent_workflow.py` imports only the legacy kernel. Its continued existence does
-not mean the trusted substrate or inactive policy results are integrated.
+[Workflow Module Boundaries](workflow-boundaries.md). The legacy CLI still
+imports only its kernel, while the replacement orchestrator composes the trusted
+substrate through public module interfaces. Neither imports the other.
+
+The host is an activation boundary, not a convenience wrapper. Direct
+`workflow_orchestrator.py` execution starts with its runtime, sandbox/provider,
+and pending-result seams unset and fails closed when an operation needs them.
+`workflow_local_host.py` verifies the reviewed control-source set, including
+`workflow_orchestrator_resume.py`, then installs those seams. Consequently the
+provider cannot become active merely because its module is importable, and a
+direct orchestrator invocation cannot silently inherit ambient execution
+capabilities.
 
 ## Authority, trust, and guarantee boundaries
 
 ### What is trusted, and for what
 
-- The **active legacy lifecycle** is the current supported authority for its
-  state transitions and approvals.
+- The **replacement authority pointer** selects the current immutable
+  orchestration-state binding. The orchestrator must revalidate selected
+  policy and gate history before acting; structural pointer validity alone is
+  insufficient.
+- The **legacy lifecycle** remains authoritative only for runs that still use
+  its separate v1-v4 projection model. Its files are not replacement authority.
 - The **durable inspector** is trusted only to verify the supported durable
   object graph and observed repository facts.
 - A verified **repair bundle** and exact source/target preconditions define one
@@ -374,29 +611,79 @@ not mean the trusted substrate or inactive policy results are integrated.
 - An **evidence binding** is a structurally verified immutable record. The caller
   still must establish why that exact binding is trusted and current.
 - A **policy result** is derived review evidence. Exit zero means the evaluator
-  produced a valid result, not that a plan, test, implementation, or transition
-  was approved.
-- **Actor strings** record attribution. Any process with the same repository/OS
-  write access can supply them; they are not authentication.
+  produced a valid result. Only selection in a valid orchestrator successor can
+  make it part of active authority.
+- Generic **actor strings** in legacy records or evidence provenance record
+  attribution only. Replacement human gates instead re-observe the exact
+  GitHub source, numeric account, configured association, and unedited body;
+  that still depends on the configured GitHub and local credential boundary.
 
 Plan, snapshot, diff, artifact, workspace, test, and PR fingerprints are
 ordinary byte identity. They may detect change and bind evidence, but never
 create approval, lifecycle authority, freshness, revocation, or activation.
 
+### One authority and one expected tip
+
+The replacement and legacy stores solve different authority problems and must
+never own the same issue at once. On initialization, the replacement
+orchestrator rejects legacy-owned state as `legacy-authority-owned`. On every
+status read, coexistence of a replacement pointer and legacy state is
+`dual-authority-detected`. Import separation prevents hidden code reuse; these
+runtime guards prevent two independently writable control planes from both
+appearing legitimate.
+
+Within replacement authority, every mutation supplies the SHA-256 digest of the
+pointer observed by the caller as an **expected tip**. The authority bundle
+binds the exact source pointer bytes; the authority module locks, re-reads those
+bytes, verifies their digest against the caller's expectation, and compares the
+exact source before replacing the pointer with a successor that names the
+previous authority and increments generation exactly once. This prevents a
+cooperating stale writer from overwriting intervening progress—the same problem
+addressed by version preconditions such as HTTP `If-Match`. A blind
+last-writer-wins pointer would be simpler but could erase an approval, pending
+claim, or recovery step; an append-only log without a selected tip would
+preserve history but leave current authority ambiguous. Expected-tip selection
+is not distributed consensus, actor authentication, or protection from a
+process that bypasses the authority API and writes its files directly.
+
+Here “expected tip” means the SHA-256 of the compact **authority pointer**, not
+whatever commit a Git branch happens to name. Repository commits have a
+separate freshness contract: bootstrap pins the selected base and later runtime
+reconstruction re-observes `HEAD`, base ancestry, cleanliness, and relevant
+GitHub state. Conflating those tips would let a fresh branch hide stale workflow
+authority, or fresh workflow authority hide repository drift.
+
+### Trust boundary map
+
+| Boundary | Trusted responsibility | Data treated as untrusted or separately verified |
+|---|---|---|
+| Human | Make consequential authorization decisions after inspecting the exact artifact | Agent/reviewer claims; mutable current state; inferred consent |
+| Replacement orchestrator | Compose one legal successor and revalidate selected policy/gate history | Candidate output, caller-selected tips, runtime results until verified |
+| Authority | Verify and atomically select one expected-tip state binding | Lifecycle meaning and external freshness |
+| Policy | Deterministically evaluate exact evidence and dependencies | Trust-anchor selection, publication, human identity |
+| Evidence/CAS | Preserve and verify exact bytes, manifests, provenance, lineage, and bindings | Producer trust, currentness, approval, retention |
+| Runtime | Reconstruct and observe Git, GitHub, config, executable, and repository facts | Caller assertions and stale prior observations |
+| Supervisor | Bound one process group and report typed process facts | Application semantics and escaped descendants |
+| Local host | Load the reviewed controller and fixed provider seams from a clean base | Mutable controller copies, plugin discovery, ambient credentials |
+| Provider adapter | Validate Copilot transport and produce one strict candidate | Provider-specific metadata/events outside the consumed contract; all candidate content |
+| Candidate worktree/home | Confine intended repository scope and give each execution fresh state | Hostile same-UID containment; Phase 1 does not provide it |
+| Agent | Produce proposed plans, reviews, tests, and implementation | Everything it emits remains untrusted until the owning boundary validates it |
+
 ### Failure guarantees and non-guarantees
 
 | Mechanism | Detects, contains, or recovers | Does not guarantee |
 |---|---|---|
-| Legacy v4 projections | Structural state/history equality, committed envelope hashes, supported transaction recovery, stale evidence invalidation | All projection files changing atomically together; durability beyond filesystem/fsync behavior; protection from a writer bypassing the CLI |
-| Inspector/checkpoint | Missing, unsupported, corrupt, ambiguous, moved HEAD/base/status, and exact object/reference inconsistency | Full lifecycle replay, producer authentication, remote freshness, a checkpoint remaining current after emission |
+| Replacement authority | Exact expected-tip selection, complete predecessor chain, immutable state/evidence identity, stale cooperating-writer detection | Lifecycle correctness without orchestrator history revalidation; distributed consensus; protection from a writer bypassing local filesystem controls |
+| Legacy v4 projections | Structural state/history equality, committed envelope hashes, supported transaction recovery, stale evidence invalidation | Replacement authority; all projection files changing atomically together; protection from a writer bypassing the CLI |
+| Inspector/checkpoint | Missing, unsupported, corrupt, ambiguous, moved HEAD/base/status, and exact object/reference inconsistency | Full lifecycle-history revalidation, producer authentication, remote freshness, a checkpoint remaining current after emission |
 | Repair | Stale source, malformed/unsafe journal, conflicting object/pointer, interruption at tested transaction boundaries, postcommit mismatch | Lock-free compare-and-swap against a writer bypassing the advisory lock; arbitrary repair; hidden automatic recovery |
 | CAS/evidence | Exact hash/size mismatch, noncanonical graph, missing dependency, immutable-name collision, stale expected identity | Mathematical collision impossibility, tamper prevention by filesystem permissions, revocation, latest-tip selection, one multi-object filesystem transaction |
 | Migration | Unsupported source shape, incomplete transaction, changed durable checkpoint, wrong lineage/identity, tampered plan | Semantic guessing, legacy activation, lifecycle conversion, deleting or compacting source data |
 | Supervisor | Startup failure, timeout, per-stream output overflow, original process-group survival, cancellation, signal escalation facts | A graceful reaction to SIGTERM, application-level cleanup after SIGKILL, observation of escaped descendants, CPU/memory/I/O/network quotas |
-| Dependency/convergence policy | Wrong trusted tip input, malformed chain, stale/replayed convergence context, excessive root-changing cycles or stage retries | Acquiring the trusted tip, publishing/applying next authority, lifecycle completion |
-| Work-type policy | Ambiguous classification, unsupported scope, targeted-check bounds, static final-observation inconsistencies | Fresh uncached comprehensive validation, latest tip, revocation, replay prevention, authenticated acceptance, active completion |
-| Plan-revision policy | Stale plan/review/revision binding, invalid diff/unit map, missing dispositions, unsafe preservation, escalation to full review | Semantic understanding, inherited human approval, newest revision, revocation, lifecycle change |
-| Human gates | Explicit confirmation and exact evidence recorded by the active CLI | Cryptographic identity, authorization outside the repository/OS trust boundary, automatic conflict resolution |
+| Dependency/convergence policy | Wrong trusted tip input, malformed chain, stale or reused convergence context, excessive root-changing cycles or stage retries | Acquiring the trusted tip, publishing/applying next authority, lifecycle completion by itself |
+| Work-type policy | Ambiguous classification, unsupported scope, targeted-check bounds, static final-observation inconsistencies | Fresh comprehensive validation, latest tip, authenticated acceptance; non-implementation route activation |
+| Plan-revision policy | Stale plan/review/revision binding, invalid diff/unit map, missing dispositions, unsafe preservation, escalation to full review | Semantic understanding, inherited human approval, newest revision, authority change by itself |
+| Human gates | Exact challenge confirmation and fresh GitHub authorization observation selected by the orchestrator | Cryptographic identity beyond the configured GitHub account/association model, authorization after evidence changes, automatic conflict resolution |
 
 Fail-closed means unsupported, stale, corrupt, missing, denied, or ambiguous
 inputs do not become a success-shaped transition. It does not mean the system
@@ -411,6 +698,7 @@ the design choices without duplicating those contracts.
 | Mechanism | Problem and decision | Alternatives and tradeoff | Guarantee boundary and demonstrating tests |
 |---|---|---|---|
 | Independent inspector/checkpoint | A mutation-capable writer cannot be its own only recovery witness. The independent inspector (issue #128) uses a separate read-only implementation and a compact deterministic checkpoint. | Trusting `agent_workflow.py` would share its failure mode; copying a full workspace would increase authority surface and storage. The compact reader intentionally supports less lifecycle interpretation. | Establishes one verified observation and exact precondition candidates, not continuing freshness. See [`test_workflow_inspector.py`](../../scripts/tests/test_workflow_inspector.py). |
+| Expected-tip authority | Concurrent or stale cooperating callers must not overwrite intervening authority. Each commit compares the exact selected pointer, verifies the complete predecessor chain, records the predecessor and pointer digest, and advances generation once. | Last-writer-wins is smaller but can erase selected progress; an unselected append-only log preserves records but leaves current authority ambiguous; distributed consensus is unnecessary for the reviewed local single-store model. | Detects stale API callers and malformed predecessor chains. It does not authenticate callers, coordinate multiple stores, or prevent direct filesystem tampering. See [`test_workflow_authority.py`](../../scripts/tests/test_workflow_authority.py). |
 | Checkpoint-before-repair and explicit activation | Repair must not guess current state or silently reinterpret authority. The repair component (issue #129) prepares a complete canonical bundle, requires an explicit operation/confirmation, then rechecks immediately before pointer commit. | Arbitrary setters or automatic recovery are simpler to invoke but can synthesize state. Explicit bundles add operator ceremony and fail when evidence is insufficient. | The pointer replacement is the repair authority commit point; advisory locking still requires cooperating writers. See [`test_workflow_repair.py`](../../scripts/tests/test_workflow_repair.py). |
 | Small kernel boundary | The failed #115 attempt showed that storage, integrity, lifecycle, and dispatch in one module made the active implementation ambiguous. The boundary work (issue #130) extracted the legacy low-level primitives and enforces downward imports and unique top-level names. | Keeping one file reduced initial plumbing but allowed silent Python shadowing. Modules add interfaces and compatibility work but make ownership reviewable. | The boundary prevents known definition/import regressions; it does not activate the new architecture. See [`test_workflow_boundaries.py`](../../scripts/tests/test_workflow_boundaries.py). |
 | Process groups and TERM-before-KILL | Parent-only termination can abandon descendants. The supervisor (issue #131) starts a new session, signals its process group, allows a bounded grace period, then escalates. | Immediate KILL is bounded but denies cooperative cleanup; parent-only terminate is weaker. Grace increases completion time and still may be ignored. | Verifies cleanup only for the original process group; escaped descendants remain unobservable. See [`test_workflow_supervisor.py`](../../scripts/tests/test_workflow_supervisor.py). |
@@ -420,11 +708,14 @@ the design choices without duplicating those contracts.
 | Semantic manifest separated from provenance and lineage | The same path/mode/content can be captured from Git, a workspace, or migration at different times. Mixing those facts would make equivalent content have different semantic identity. | One combined object is simpler but couples identity to timestamp/source and duplicates payloads. Separation adds a graph that must be verified. | Manifest identity describes semantic bytes; provenance describes how they were observed; lineage describes parent relationships. None establishes latest-tip or revocation alone. |
 | Dependency-first, binding-last publication | Multiple object writes are not one portable filesystem transaction. Dependencies are published idempotently, durable preconditions are rechecked where required, and the binding is the final success marker. | In-place mutation risks partial graphs; a database transaction would add a new trusted engine and still require external-state preconditions. Binding-last may leave unreachable objects after interruption. | A successful binding has published dependencies; orphan objects are possible and compaction remains separate. |
 | Deterministic migration with optimistic preconditions | Compatibility conversion must not depend on whichever mutable path is read during apply. The migration layer (issue #133) plans exact source bytes/selections and rechecks a durable checkpoint before publishing an evidence binding. | Automatic live migration is convenient but couples reads, writes, and activation; semantic conversion guesses unsupported meaning. Exact plans are reproducible but deliberately reject more inputs. | Migration is input-deterministic and idempotent for identical publication; it does not activate or prove current policy authority. See [`test_workflow_migration.py`](../../scripts/tests/test_workflow_migration.py). |
-| Dependency-aware invalidation | Full reset discards valid sibling evidence, while preservation by prose similarity is unsafe. The dependency policy (issue #134) uses a fixed graph and byte-identical evidence dependencies. | A caller-supplied graph is flexible but weakenable; semantic inference is unbounded. A fixed version-1 graph is rigid but independently testable. | Computes a minimal next state but cannot publish it. See [`test_workflow_policy.py`](../../scripts/tests/test_workflow_policy.py). |
+| Dependency-aware invalidation | Full reset discards valid sibling evidence, while preservation by prose similarity is unsafe. The dependency policy (issue #134) uses a fixed graph and byte-identical evidence dependencies. | A caller-supplied graph is flexible but weakenable; semantic inference is unbounded. A fixed version-1 graph is rigid but independently testable. | Computes a minimal next state; only the orchestrator may publish and select it. See [`test_workflow_policy.py`](../../scripts/tests/test_workflow_policy.py). |
 | Bounded retries and convergence | The failed #115 attempt demonstrated repeated reopen/review loops that did not necessarily remove the structural cause. The dependency/convergence policy shares two root-changing cycles and allows three retries per convergence stage before deterministic escalation. | Unlimited retries may never converge; immediate abort wastes recoverable work. Fixed limits can escalate a difficult but solvable case to human decomposition. | Exhaustion returns a no-change escalation, never bypasses a gate or synthesizes evidence. |
-| Work-type policy | The architecture-only work recorded in issue #79 showed that forcing design, research, or docs through implementation stages creates synthetic evidence. The work-type policy (issue #116) defines four fail-closed routes and verifies final scope. | One universal lifecycle is simpler; automatic semantic classification is convenient but untrustworthy. Explicit intake adds schema/triage overhead and remains inactive until composed. | A conforming structural assessment is not active completion or fresh validation. See [`test_workflow_work_type_policy.py`](../../scripts/tests/test_workflow_work_type_policy.py). |
+| Work-type policy | The architecture-only work recorded in issue #79 showed that forcing design, research, or docs through implementation stages creates synthetic evidence. The work-type policy (issue #116) defines four fail-closed routes and verifies final scope. | One universal lifecycle is simpler; automatic semantic classification is convenient but untrustworthy. Explicit intake adds schema/triage overhead. Only the implementation route is currently composed. | A conforming structural assessment is not active completion or fresh validation. See [`test_workflow_work_type_policy.py`](../../scripts/tests/test_workflow_work_type_policy.py). |
 | Incremental plan review | The plan-revision work (issue #125) recorded costly repeated certification of unchanged plan content. It preserves only anchored coverage for byte-identical units and expands one hop around changed dependencies. | Always-full review is simple but expensive; wholesale review inheritance is unsafe. Strict unit/diff schemas add planner/reviewer work and escalate many changes to full review. | Preserves review coverage, never human approval. See [`test_workflow_plan_revision_policy.py`](../../scripts/tests/test_workflow_plan_revision_policy.py). |
-| Human approval boundaries | Reviewer readiness establishes technical sufficiency, not authorization. Explicit plan, test, and PR commands bind a human decision to exact evidence. | Agent self-approval or inferred consent is faster but collapses independent authority. Human gates add latency and asserted actor names are not authenticated. | The active CLI blocks transitions without explicit confirmation; it does not prove external identity. See [`test_agent_workflow.py`](../../scripts/tests/test_agent_workflow.py). |
+| Human approval boundaries | Reviewer readiness establishes technical sufficiency, not authorization. Exact GitHub authorization observations bind human decisions to gate challenges. | Agent self-approval or inferred consent is faster but collapses independent authority. Human gates add latency and currently expose hash-bearing confirmations to operators. | The orchestrator re-observes an unedited comment from a configured account; the agent cannot manufacture it. Human-facing artifact exposure remains issue #196. |
+| Fresh runtime reconstruction | A long-lived process or mutable checkout can silently outlive the facts that authorized it. Every public command reconstructs the selected runtime from pinned config, executable, authority, baseline, and phase evidence. | Reusing one in-memory adapter is faster but expands the validity domain of stale observations. Global caching would weaken freshness. | Reconstruction proves the requested current boundary, not permanent freshness. Command-scoped reuse avoids selected-history revalidation amplification; broader performance work remains #174. |
+| Provider and host source pins | A readable provider version is insufficient to prove which reviewed code runs. The config binds exact provider, host, and executable source hashes, checked before use and in CI. | Ordinary release labels are easier to maintain but can remain unchanged when trusted bytes change. | Versions such as `1.5.4` are audit labels. Source SHA-256 is the integrity identity, not a signature or deployment version. |
+| Separate transport and candidate protocols | Copilot emits verbose evolving JSONL; ChessEcho needs one small strict candidate. The adapter incrementally validates observed event paths, preserves complete transport as a sidecar, and extracts only the terminal candidate. | Treating stdout as candidate bytes, heuristic JSON extraction, or globally permissive event handling hides ambiguity. | The adapter understands only observed/documented paths. Unknown semantics fail closed until bounded evidence justifies a narrow compatibility rule. |
 
 ## How the architecture evolved
 
@@ -435,58 +726,271 @@ could not contain. It does not make historical state authoritative.
 |---|---|
 | Establish explicit gates | The initial gated workflow ([PR #99](https://github.com/NathanZK/ChessEcho/pull/99)) separated Planner, Reviewer, Implementer, and human authorization, then bound validation and PR creation to repository evidence. It created the safety model that still runs today, but concentrated lifecycle, storage, Git/GitHub, and process execution in one script. |
 | Keep unrelated repository failures out of an issue | A repository-wide lint baseline blocked another issue's validation ([issue #98](https://github.com/NathanZK/ChessEcho/issues/98)). Planning therefore gained issue isolation, explicit analyzer inventory, and source-alignment rules. |
-| Stop treating every deliverable as code | An architecture-only task was pushed through synthetic test and implementation stages ([issue #79](https://github.com/NathanZK/ChessEcho/issues/79)). The later work-type policy ([issue #116](https://github.com/NathanZK/ChessEcho/issues/116)) defined separate implementation, design, research, and documentation routes, but those routes remain inactive. |
+| Stop treating every deliverable as code | An architecture-only task was pushed through synthetic test and implementation stages ([issue #79](https://github.com/NathanZK/ChessEcho/issues/79)). The later work-type policy ([issue #116](https://github.com/NathanZK/ChessEcho/issues/116)) defined separate implementation, design, research, and documentation classifications. The replacement currently activates only implementation; other routes still fail closed. |
 | Correct approved work without restarting everything | A small post-approval API correction could not safely reopen a terminal run ([issue #85](https://github.com/NathanZK/ChessEcho/issues/85)). Linked correction runs ([issue #117](https://github.com/NathanZK/ChessEcho/issues/117), [PR #123](https://github.com/NathanZK/ChessEcho/pull/123)) preserved an immutable parent while invalidating only the affected downstream evidence. |
 | Bound review effort without weakening integrity | Repeated broad validation and direct state-mutation risk motivated bounded validation, v4 integrity envelopes, explicit legacy adoption, and controlled recovery ([issue #120](https://github.com/NathanZK/ChessEcho/issues/120), [PR #124](https://github.com/NathanZK/ChessEcho/pull/124)). These safeguards were useful, but they increased coupling inside the legacy script. |
 | Preserve attempts and attribute drift precisely | The evidence-persistence effort ([issue #115](https://github.com/NathanZK/ChessEcho/issues/115)) correctly identified disposable worktree records and coarse aggregate fingerprints. Its implementation expanded the self-hosting monolith instead of creating boundaries: duplicate active/shadowed definitions made fixes ambiguous, broad evidence capture amplified storage, repeated reopen loops did not converge, and final validation still failed across coupled paths. The public [architectural checkpoint](https://github.com/NathanZK/ChessEcho/issues/115#issuecomment-5516943602) froze the run and called for selective decomposition. |
 | Make critical mechanisms independently reviewable | The [trusted-core roadmap](https://github.com/NathanZK/ChessEcho/issues/136) split read-only inspection, explicit repair, kernel ownership, process supervision, canonical evidence, deterministic migration, and dependency/convergence policy into narrow downward dependencies. Its linked issues and merged PRs preserve the detailed implementation history. |
-| Preserve review effort without inheriting approval | The incremental plan-review policy ([issue #125](https://github.com/NathanZK/ChessEcho/issues/125), [PR #148](https://github.com/NathanZK/ChessEcho/pull/148)) verifies exact diffs, finding dispositions, and narrowly reusable coverage. Like the work-type and dependency policies, it is directly callable but inactive. |
-| Document first, compose later | This issue consolidates the architecture without changing behavior. The future thin-orchestrator issue ([#144](https://github.com/NathanZK/ChessEcho/issues/144)) owns composition, cutover, and activation after separate design, implementation, review, and human authorization. |
+| Preserve review effort without inheriting approval | The incremental plan-review policy ([issue #125](https://github.com/NathanZK/ChessEcho/issues/125), [PR #148](https://github.com/NathanZK/ChessEcho/pull/148)) verifies exact diffs, finding dispositions, and narrowly reusable coverage. The orchestrator composes its technical result but never treats preserved coverage as human approval. |
+| Compose without collapsing boundaries | The work tracked by issue [#144](https://github.com/NathanZK/ChessEcho/issues/144) added the thin orchestrator only after policy genesis, authority selection, runtime supervision, trusted remote-head observation, configurable gates, trusted issue intake, safe branch publication, pointer repair, and pinned reconstruction existed independently. Activation changed composition status, not ownership: each lower module retains its narrow contract. The tracker remains open with unreconciled acceptance items; this guide reports current source behavior rather than inferring implementation status from unchecked issue metadata. |
+| Learn the provider protocol empirically | Controlled #176 runs falsified assumptions about prompts, credentials, stdout, stream suppression, metadata, event order, worker homes, and denied tools. Each accepted change was limited to documented or observed behavior; one unresolved-parent incident deliberately received no fix until independent probes reproduced it. |
 
 The abandoned #115 implementation and its postmortem explain failed approaches;
 they are not a specification for current code. #115 must never be initialized,
 resumed, migrated, repaired, or used as an activation target.
 
-## Inactive policy composition and the future orchestrator
+## Current composition without collapsed ownership
 
-The three policy capabilities deliberately do not import one another as a
-hidden orchestrator:
+The policy capabilities still do not import one another as a hidden
+orchestrator:
 
-- The **work-type policy** (issue #116) verifies intake, scope, routes, advisory
-  targeted checks, and a designated static final observation.
-- The **plan-revision policy** (issue #125) verifies that a plan snapshot's
-  generic evidence context links to the exact work-type triage binding, but does
-  not reinterpret the work-type classification or route.
-- The **dependency/convergence policy** (issue #134) verifies exact evidence
-  dependencies, invalidation, correction roots, and convergence against a
-  caller-supplied trusted policy-state binding.
-- The **supervision policy** (issue #165) verifies the inactive replacement
-  workflow's exact `plan`, `tests`, `final`, and `pr-publication` modes. It
-  produces deterministic gate evidence but never authenticates a human or
-  performs a GitHub write.
+- The **work-type policy** verifies intake, scope, routes, targeted checks, and
+  structural completion. Only its implementation route is active.
+- The **plan-revision policy** verifies plan snapshots, exact diffs, technical
+  reviews, findings, and reusable coverage. It never preserves human approval.
+- The **dependency/convergence policy** verifies exact dependencies,
+  invalidation, correction roots, and bounded convergence.
+- The **supervision policy** defines `plan`, `tests`, `final`, and
+  `pr-publication` satisfaction. It cannot authenticate a human or write GitHub.
+- The **authority module** verifies and commits an expected-tip pointer. It
+  cannot decide whether the selected transition is semantically legal.
 
-[Issue #144](https://github.com/NathanZK/ChessEcho/issues/144) already owns the
-unimplemented gaps:
+`workflow_orchestrator.py` is the only composition owner. For one action it
+revalidates selected history, calls the relevant public policy/runtime/evidence
+interfaces, constructs one successor candidate, and commits at most one
+authority pointer. A process request and its result are deliberately two
+authority steps: one successor claims exact work, external execution publishes
+evidence without moving authority, and a later successor finalizes only that
+exact result. A crash cannot become permission to execute the request twice.
 
-1. acquire trust anchors independently rather than accepting self-selected tips;
-2. establish latest-tip, revocation, replay-prevention, and temporal-freshness
-   rules;
-3. sequence work-type classification, plan-revision review, evidence
-   publication, and dependency/convergence evaluation without duplicating their
-   contracts;
-4. bind comprehensive validation, independent final review, configurable gate
-   satisfaction, and mandatory-human operations to exact current repository and
-   evidence observations;
-5. publish and activate one lifecycle authority with named mutation ownership;
-6. reconcile uncertain Git/GitHub outcomes by exact identity and preconditions;
-7. keep repair and migration explicit rather than lifecycle side effects; and
-8. cut over from `agent_workflow.py` without two simultaneously authoritative
-   state machines, with explicit compatibility and retirement criteria.
+### Authority, evidence, and authorization
 
-These are handoff obligations, not a design or implementation in #126. Until a
-separate reviewed and human-authorized #144 implementation activates them, the
-legacy lifecycle remains active and every work-type, plan-revision, and
-dependency/convergence result remains inactive.
+These answer different questions:
+
+| Record | Question answered | What it cannot answer alone |
+|---|---|---|
+| Evidence binding | What exact bytes and observations exist? | Whether they are current, permitted, or approved |
+| Authority pointer and chain | Which immutable state is selected now? | Whether external facts stayed fresh after observation |
+| Policy result | Does this exact input satisfy a deterministic rule? | Whether the result was selected or human-authorized |
+| Human authorization observation | Did the configured human publish the exact challenge response? | Whether the reviewed artifact remains unchanged |
+| Repository/PR observation | What did Git or GitHub report at this boundary? | Whether a later observation will match |
+
+Hashes establish identity, not permission. A candidate can be canonical,
+content-addressed, and internally valid while still being stale, unselected, or
+unauthorized. Conversely, an authority pointer cannot make missing or malformed
+evidence valid. The orchestrator succeeds only when these independent claims
+join on exact references.
+
+### Reconstruction and freshness
+
+Initialization uses strict bootstrap: clean `HEAD`, the local tracking ref, and
+the live default-branch tip must agree, and configuration is read from that
+reviewed base. Later commands reconstruct from a credential-free pin plus the
+selected baseline, triage, authority, and phase repository evidence. The host
+rechecks source hashes, executables, config bytes, Git/GitHub identity, the live
+default tip, worktree controls, and the expected repository state before
+external work.
+
+This repetition is intentional: safety depends on the validity domain of an
+observation, not merely on whether recomputation is idempotent. It also has real
+cost. During runtime-reconstruction work, full CI increased from about 10.3 to
+47 minutes because selected authorization-history revalidation caused N-by-M
+reconstruction and more than 10,000 supervised subprocesses. Command-scoped
+reuse removed the accidental amplification while retaining fresh reconstruction
+at separate public-command and trust boundaries. Residual cost remains
+[issue #174](https://github.com/NathanZK/ChessEcho/issues/174); a global cache
+or weaker freshness is explicitly not an acceptable shortcut.
+
+## Provider and candidate protocol boundaries
+
+The orchestrator does not speak Copilot JSONL. It requests a role-specific
+operation from the runtime and consumes only ChessEcho's candidate schema. The
+trusted-local provider owns the external protocol:
+
+```mermaid
+flowchart LR
+  Request["Immutable execution request"] --> Prompt["Operation-specific prompt"]
+  Prompt --> Copilot["Pinned Copilot executable"]
+  Copilot --> JSONL["External-provider JSONL"]
+  JSONL --> FSM["Strict incremental adapter"]
+  FSM --> Bytes["Extracted candidate bytes"]
+  JSONL --> Sidecar[("Complete raw transport sidecar")]
+  Bytes --> Bundle[("Same evidence manifest")]
+  Sidecar --> Bundle
+  Bundle --> Candidate["Core phase-specific decoder<br/>workflow_orchestrator_resume.py"]
+  Candidate --> Orchestrator["Policy and lifecycle composition"]
+```
+
+There are three distinct protocols:
+
+1. The **external-provider protocol** is what the pinned Copilot executable
+   actually emits. It is empirically observed and not assumed to be fully
+   specified.
+2. The **adapter protocol** is the smallest observed/documented subset the
+   provider FSM understands and trusts.
+3. The **candidate protocol** is ChessEcho's strict, phase-specific artifact
+   contract, owned by `workflow_orchestrator_resume.py`. The provider extracts
+   terminal candidate bytes but does not decide which plan, review, implementer,
+   or PR fields are legal. A successful process and valid provider stream can
+   still fail the core candidate contract. Provider 1.5.4 also carries a
+   prompt-facing JSON Schema copy for review operations so Copilot is told what
+   review candidate to produce; tests keep that communication schema aligned,
+   but only the core decoder validates and authorizes candidate meaning.
+
+The current provider (`1.5.4`) and reviewed local host (`1.3.0`) have exact
+source identities in `.github/agent-workflow.json` under
+`orchestrator.local_host.provider.source_sha256` and
+`orchestrator.local_host.source_sha256`. Those versions are human-readable
+audit labels. The
+authoritative integrity identities are the configured source SHA-256 values for
+the provider and local host plus the pinned agent executable SHA-256. Changing
+trusted source bytes requires updating the corresponding binding. During the
+[merged PR #199](https://github.com/NathanZK/ChessEcho/pull/199) prompt
+correction, the host bytes changed while its configured hash did not; CI failed
+until the stale hash was corrected. That is intentional integrity enforcement,
+not ordinary release-version management.
+
+This separation follows the same dependency direction as
+[Ports and Adapters](https://alistair.cockburn.us/hexagonal-architecture/):
+provider-specific compatibility remains at an external adapter while core
+policy owns the application contract. ChessEcho's exact modules and trust
+claims come from its source and tests, not from that architectural analogy.
+
+### Observation before formalization
+
+The provider history establishes this engineering sequence:
+
+```text
+authoritative documentation
+        ↓
+bounded black-box observation
+        ↓
+captured immutable evidence
+        ↓
+behavioral model
+        ↓
+minimal adapter contract
+        ↓
+synthetic tests
+        ↓
+implementation
+        ↓
+independent review
+        ↓
+controlled E2E
+```
+
+The methodological failure was treating an empirically unknown external
+protocol as fully specified too early. Synthetic tests then proved that the
+implementation matched its own assumptions, not that those assumptions matched
+Copilot. `--silent` did not create a candidate-only stdout contract;
+`--stream off` did not suppress tool, reasoning, background-task, and partial
+events; harmless nested metadata broke an exhaustive decoder; and valid
+reasoning-to-message order broke an overfitted FSM.
+
+The denied-tool incident shows the corrected discipline. One complete E2E
+contained an unresolved parent ID, but its semantics were unknown, so no code
+changed. Only after the pattern recurred and two standalone authenticated probes
+reproduced all observed denials did the adapter add one exact transition. The
+parent remains an opaque correlation token; the documentation does not invent
+its internal meaning.
+
+**Governance rule:** when implementation materially depends on undocumented
+external behavior, establish that behavior through authoritative documentation
+or a bounded black-box probe before formalizing architecture around it. Stop
+when design requires invented semantics, fixtures describe unobserved behavior,
+failures accumulate increasingly complex exceptions, or evidence cannot
+distinguish an external-system defect from a model defect.
+
+The agent and reviewers should label epistemic status explicitly:
+
+| Status | Meaning | Permitted architectural use |
+|---|---|---|
+| Documented guarantee | An authoritative provider or platform source promises the behavior | May define the adapter contract, with the source and version recorded |
+| Observed fact | Complete bounded evidence shows the behavior under named conditions | May justify the narrowest compatible path covered by that evidence |
+| Assumption | A design convenience not yet grounded in documentation or observation | Must not become a trusted protocol rule |
+| Hypothesis | A possible explanation for observed facts | May guide the next probe, never be recorded as provider semantics |
+
+Repeated failures should trigger evidence gathering before more architectural
+exceptions. Synthetic tests are regression evidence only after the modeled
+behavior is grounded. Human approval is required for consequential architecture
+changes, not merely for the final code. Autonomous retries remain bounded so
+they cannot continually elaborate a wrong model.
+
+## Fail-closed incidents as architectural evidence
+
+A red run is not automatically a workflow defect. The relevant questions are:
+which boundary rejected the input, what exact evidence supports that
+classification, and whether acceptance would have weakened an invariant.
+
+| Incident | Observed boundary | Architectural lesson |
+|---|---|---|
+| #115 evidence-persistence attempt | A self-hosting monolith accumulated duplicate/shadowed definitions, broad evidence amplification, and nonconverging reopen loops. | A mutation-capable workflow cannot be its only recovery witness. Inspection, repair, storage, evidence, policy, and execution must have narrow owners. |
+| #176 prompt and authentication failures | The provider and runtime disagreed on the same prompt bound; then isolated Copilot correctly lacked credentials. | Revalidate one operation-specific contract consistently. Isolation and credential provisioning are separate decisions. |
+| #176 candidate/transport failures | Prose preceded JSON; three finite stdout ceilings were exhausted; `--stream off` still emitted large tool/reasoning/background traffic. | External transport, retained diagnostics, process lifetime, complete raw evidence, and candidate bytes are different quantities. The sidecar architecture separates them. |
+| #176 metadata and ordering failures | Complete successful transports contained new opaque metadata and an unmodeled reasoning-to-message transition. | Be strict about consumed semantics, not harmless metadata; extend an FSM with exact observed paths rather than global permissiveness. |
+| #176 worker-home failure | Planning succeeded, but reviewer launch reused a populated run-level home and was denied. | Execution isolation has execution lifetime. A fresh worker home is allocated for every agent-producing step. |
+| #176 denied-tool parent | One complete run contained an unresolved parent. No fix was made. After recurrence and two independent probes reproduced five denied executions, one exact adapter transition was added. | Unknown behavior remains unknown. Reproduction can justify a bounded compatibility rule without inventing the opaque parent's semantics. |
+| #176 no-op test authoring | Copilot exited zero and returned a valid candidate, but the independent repository observation contained no required test change; policy paused with `test-scope-drift`. | Process success, candidate success, operation success, and workflow success are distinct. A correct refusal may be the desired result. |
+| #198 reviewer candidate | Transport and process succeeded, but the reviewer returned an unsupported verdict and extra fields because the operation prompt did not communicate the core candidate schema. Merged PR #199 corrected the prompt contract without weakening the decoder. | Keep the strict core candidate decoder. Correct the operation-specific prompt contract rather than accepting plausible-but-unauthorized JSON. |
+| #198 source-pin CI failure | Trusted host bytes changed in PR #199 but the configured host SHA remained old; CI failed until the same PR corrected the integrity binding, then merged green. | Readable versions do not establish deployed identity. Source pins must move with every trusted-byte change. |
+| Runtime reconstruction regression | Full CI grew from about 10.3 to 47 minutes because selected-history revalidation multiplied fresh reconstruction calls. | Safe-to-repeat does not mean cheap. Optimize within the observation's validity domain; do not trade freshness for a global cache. |
+
+The full provider chronology, evidence sizes, run identifiers, exact observed
+event paths, and validation status are preserved in
+[Trusted-local workflow provider](workflow-local-provider.md#176-controlled-e2e-protocol-discovery).
+That document intentionally distinguishes fixture/protocol re-execution,
+standalone probes, and later authenticated E2E observations.
+
+The controlled E2Es prove important boundaries, not an end-to-end completion
+claim. #176 exercised authenticated provider work and supervised plan approval,
+then correctly paused at `test-scope-drift` when independent observation found
+no executable test change. #198 reached plan review and correctly rejected an
+invalid reviewer candidate; PR #199 corrected that prompt/schema mismatch and
+merged with focused validation, but no post-merge complete E2E is claimed here.
+No authenticated controlled run documented by this guide has traversed the
+entire replacement lifecycle through `COMPLETED`. Automatic gate satisfaction
+is covered by policy and driver tests, not by those controlled E2Es.
+
+## Current guarantees, non-guarantees, and unfinished work
+
+**Current guarantees** are deliberately narrow:
+
+- selected replacement state is an expected-tip pointer to a completely
+  verified immutable authority/evidence chain;
+- policy, technical review, human authorization, and external observations are
+  separate records joined by exact references;
+- each external operation is bounded, claimed once, and finalized separately;
+- agent output is validated as untrusted candidate data;
+- trusted provider, host, and executable identities are pinned and rechecked;
+- complete Copilot transport is bound beside the execution result without being
+  confused with the candidate;
+- stale, unsupported, corrupt, missing, ambiguous, denied, and uncertain
+  outcomes do not become success-shaped authority transitions; and
+- human gates cannot be inferred from agent or reviewer output.
+
+**Current non-guarantees** are equally important:
+
+- Phase 1 does not contain a hostile same-UID worker or deny it filesystem,
+  credential, authority-store, or network access at the OS level;
+- process groups cannot prove containment of descendants that escape them;
+- local CAS and pointers are protocol-immutable, not physically tamper-proof;
+- SHA-256 identifies bytes but does not authenticate a producer or authorize a
+  transition;
+- GitHub observations and reconstruction establish bounded freshness, not a
+  fact that remains true forever;
+- completion does not merge, mark ready, deploy, or close the issue;
+- the reviewed Phase 1 host cannot currently invoke the core-only
+  `set-supervision` operation; and
+- the current implementation route does not activate design, research, or
+  documentation lifecycles.
+
+**Unfinished architecture** includes hostile-worker containment (#160),
+reconstruction-cost work that preserves freshness (#174), improved worker
+credential storage (#180), usable immutable-plan approval UX (#196), the
+operator runbook and worked traces (#197), and evidence retention/compaction
+(#135). These are future boundaries, not guarantees implied by the current
+code.
 
 ## Distributed-systems mental model
 
@@ -506,7 +1010,7 @@ tool, not a distributed database.
 | SIGTERM / SIGKILL | Graceful request / bounded forced termination | SIGTERM may be ignored; SIGKILL cannot run application cleanup or prove durable consistency. |
 | Repair/recovery | Explicit recovery operation | There is no automatic conflict resolution, global rollback, or arbitrary state repair. |
 | Retry/reopen budgets | Bounded work / backpressure | Fixed counters bound one policy lineage; they do not manage load across a service. |
-| Human approval | External authorization gate | The recorded actor label is attribution, not cryptographic authentication. |
+| Human approval | External authorization gate | The replacement path authenticates the configured GitHub source/account/association, but does not provide a separate cryptographic approval identity beyond that trust boundary. |
 | Deterministic migration | Schema/data compatibility conversion | It publishes a verified mapping; it does not switch lifecycle authority or provide transactional rollback. |
 
 ChessEcho does not implement distributed consensus, a transactional filesystem,
@@ -533,7 +1037,8 @@ The current source and focused contracts support these boundaries:
   migration;
 - no revival, migration, repair, completion, or activation of frozen #115;
 - no #127 risk tiers or execution modes in the current architecture; and
-- no #144 composition or second lifecycle authority disguised as documentation.
+- no activation of unimplemented non-implementation routes or Phase 2
+  containment disguised as documentation.
 
 ## Glossary
 
@@ -557,7 +1062,10 @@ The current source and focused contracts support these boundaries:
 | Reopen | Explicit return to an earlier approved stage with downstream evidence invalidation. |
 | Correction | Linked child run that preserves an immutable parent and inherits/invalidates evidence according to its class. |
 | Convergence | Bounded sequence of cause, fix, verification, and closure evidence evaluated by the dependency/convergence policy. |
-| Replay | Reuse of an earlier observation/result outside exact current preconditions. The inactive layers do not provide complete replay prevention. |
+| Stale reuse | Illegitimate reuse of an earlier observation or result outside exact current preconditions. Content identity alone does not prevent stale reuse; selected authority and phase-specific freshness checks do. |
+| Selected-history revalidation | Recomputing lifecycle, policy, and gate semantics from the immutable authority chain before a current action. This is not stale reuse. |
+| Fixture/protocol re-execution | Feeding preserved protocol bytes through the current decoder to verify compatibility. It is regression evidence, not a new external observation or authenticated E2E. |
+| Historical reproduction | Re-running an earlier scenario or workload to investigate behavior. The new observation has its own provenance and freshness boundary. |
 | Freshness | Evidence that an observation is current for a required time/tip boundary; content identity alone does not establish it. |
 | Revocation | Explicit determination that previously selected authority or approval is no longer acceptable; immutable storage alone does not provide it. |
 | Idempotency | Repeating the same valid operation converges on the same result rather than creating a conflicting duplicate. |
@@ -584,7 +1092,8 @@ implementation; source and tests above establish its actual guarantees.
   records the frozen failed attempt and selective-decomposition decision.
 - [The trusted-core roadmap, #136](https://github.com/NathanZK/ChessEcho/issues/136)
   records dependency order; [#144](https://github.com/NathanZK/ChessEcho/issues/144)
-  owns future orchestration/composition.
+  records the composition and activation of the current replacement
+  orchestrator.
 
 ### Systems concepts
 
@@ -593,12 +1102,28 @@ implementation; source and tests above establish its actual guarantees.
   different from a mutable filename.
 - [Git revisions](https://git-scm.com/docs/gitrevisions) explains the commit and
   object naming used when the workflow pins a base and final `HEAD`.
-- [Clojure data structures](https://clojure.org/reference/data_structures)
-  provide an official example of immutable persistent values. ChessEcho uses
-  immutable records as an analogy, not Clojure's in-memory implementation.
 - [NIST FIPS 180-4](https://csrc.nist.gov/pubs/fips/180-4/upd1/final) specifies
   SHA-256. ChessEcho relies on its collision resistance for practical byte
   identity; it does not use a digest as a signature.
+- [NIST SP 800-160 Vol. 1](https://csrc.nist.gov/pubs/sp/800/160/v1/r1/final)
+  explains trustworthy-system engineering, including explicit trustworthiness
+  objectives and protection across system boundaries. It helps frame why
+  ChessEcho states assumptions and non-guarantees rather than calling the whole
+  workflow “trusted.”
+- [SLSA provenance](https://slsa.dev/spec/v1.2/provenance) explains verifiable
+  statements about where software artifacts came from. ChessEcho uses its own
+  local evidence/provenance schema and does not claim SLSA conformance; the
+  useful shared lesson is that artifact identity and origin are separate facts.
+- [Hexagonal Architecture / Ports and Adapters](https://alistair.cockburn.us/hexagonal-architecture/)
+  is the original description of keeping application rules behind explicit
+  interfaces to external systems. It is the broader pattern behind keeping
+  Copilot compatibility in the provider adapter and candidate policy in the
+  workflow core.
+- [OWASP Agentic AI Threats and Mitigations](https://genai.owasp.org/resource/agentic-ai-threats-and-mitigations/)
+  provides a broader threat-modeling vocabulary for autonomous agents,
+  permissions, tool use, and observability. ChessEcho's observation-before-
+  formalization rule and bounded autonomy are local decisions informed by real
+  incidents, not requirements asserted by OWASP.
 - The POSIX specifications for
   [`kill`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/kill.html)
   and [`setpgid`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/setpgid.html)
@@ -624,14 +1149,15 @@ implementation; source and tests above establish its actual guarantees.
   POSIX [`getrlimit`/`setrlimit`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/getrlimit.html)
   describe stronger resource-control facilities that the process-group
   supervisor does not implement.
-- [Reactive Streams](https://www.reactive-streams.org/) explains bounded demand
-  and backpressure. The dependency/convergence policy's counters are only a
-  limited analogy, not a stream protocol.
-- [PostgreSQL `ALTER TABLE`](https://www.postgresql.org/docs/current/ddl-alter.html)
-  is an example of explicit schema evolution. ChessEcho migration is a
-  deterministic evidence mapping, not a database schema transaction.
 
-## State machine
+## Legacy lifecycle reference
+
+The remainder of this section documents the retained
+`scripts/agent_workflow.py` path. These commands, v4 projections, correction
+runs, and state names remain relevant only to legacy runs. They must not be
+mixed with replacement authority, evidence, approvals, or recovery.
+
+## Legacy state machine
 
 ```text
 PLANNING
@@ -660,7 +1186,7 @@ PLANNING
 
 The CLI rejects any action that is invalid in the current state. Reviewer readiness never records human approval. Validation and final-review data are invalidated when implementation revision resumes.
 
-## Responsibilities
+## Legacy responsibilities
 
 | Role | Responsibility | Prohibited |
 |---|---|---|
@@ -670,7 +1196,7 @@ The CLI rejects any action that is invalid in the current state. Reviewer readin
 | Implementer | Act as Test Author in `TEST_IMPLEMENTATION`, write code only after test approval, and run validation | Self-approval, weakening approved tests, or direct PR creation |
 | Human | Explicitly approve or reject the plan, tests, and draft PR | N/A |
 
-## Bounded, risk-aware validation policy
+## Legacy bounded, risk-aware validation policy
 
 Validation is proportional to risk, but it never weakens a gate.
 
@@ -692,7 +1218,7 @@ Deep validation is mandatory for integrity, approval, or security boundaries; mi
 
 Workflow authority remains controlled regardless of validation depth. Never use direct authority mutation of `state.json`, `history.jsonl`, or approvals. Use only documented commands, including explicit `adopt-legacy-run` and `recover-run` where applicable.
 
-## Mandatory source-alignment and executability gate
+## Legacy mandatory source-alignment and executability gate
 
 Before every plan submission, the Planner must align the proposed work with the repository's actual source. This is a required pre-submission gate, not work delegated to the Reviewer.
 
@@ -747,7 +1273,7 @@ On every plan revision:
 
 The Reviewer must verify complete finding ownership, the absence of stale or contradictory plan sections, source-level correctness of every referenced surface, that each proposed change actually clears its mapped finding, and that optional refactors have not expanded scope. Inventory, source-alignment, or revision-hygiene defects should be classified as `SOURCE_ALIGNMENT_DEFECT` where applicable. Review success is technical readiness, not minimizing the number of legitimate revision loops.
 
-## Git baseline and final-revision invariants
+## Legacy Git baseline and final-revision invariants
 
 Git baseline inspection and finalization are separate. Planning needs an understood, issue-isolated baseline; mechanical final evidence begins only when the implementation is normalized for final validation.
 
@@ -771,7 +1297,7 @@ After implementation is complete but before submitting it for the validation tha
 1. Fetch the configured target base. This latest-remote step is agent guidance, not a claim made by the CLI.
 2. Reconcile with the fetched target base if needed.
 3. Verify no unrelated work is mixed into the branch.
-4. Normalize the current issue to exactly one commit relative to the configured local tracking ref (for example, `origin/main`). Inside a correction run the anchor is the source run's validated `HEAD` instead of the tracking ref, so exactly one *correction* commit is required on top of it (see [Corrections](#corrections)).
+4. Normalize the current issue to exactly one commit relative to the configured local tracking ref (for example, `origin/main`). Inside a correction run the anchor is the source run's validated `HEAD` instead of the tracking ref, so exactly one *correction* commit is required on top of it (see [Legacy corrections](#legacy-corrections)).
 5. Stop and require explicit separation if unrelated commits or changes are present. Never silently drop them.
 6. Record the resulting final `HEAD` SHA in the implementation report.
 
@@ -794,7 +1320,7 @@ The Orchestrator may write a human-readable validation summary, but it is guidan
 
 Do not rewrite history after final validation. If the workspace or `HEAD` changes after validation, the Reviewer records `NEEDS_REVISION`; that auditable event returns to `IMPLEMENTATION` and clears stale validation and final-review evidence. Resubmit, rerun validation, and repeat final review before creating the draft PR. Reviewer `READY_FOR_HUMAN_APPROVAL` remains prohibited for changed evidence.
 
-## Starting from a GitHub issue
+## Starting a legacy run from a GitHub issue
 
 Select the `chess-echo-orchestrator` custom agent and ask it to run the workflow for an issue. The exact initialization command is:
 
@@ -816,7 +1342,7 @@ Inspect resumable status at any time:
 python3 scripts/agent_workflow.py status ISSUE
 ```
 
-## Agent and human events
+## Legacy agent and human events
 
 Agents write artifacts inside `.agent-workflow/runs/issue-<number>/artifacts/`, then record them:
 
@@ -871,7 +1397,7 @@ If later work reveals a material design problem, the human can reopen the plan g
 python3 scripts/agent_workflow.py reopen-plan ISSUE --by GITHUB_LOGIN --reason "Implementation exposed a material design gap"
 ```
 
-## Tests before implementation
+## Legacy tests before implementation
 
 After plan approval, the Implementer writes tests only and submits a report:
 
@@ -883,7 +1409,7 @@ python3 scripts/agent_workflow.py submit-tests ISSUE \
 
 The Reviewer records `NEEDS_REVISION` or `READY_FOR_HUMAN_APPROVAL` with `review-tests`. Production implementation remains impossible until explicit test approval.
 
-## Validation and final review
+## Legacy validation and final review
 
 After implementation submission, run:
 
@@ -904,7 +1430,7 @@ The `workflow-tooling` scope is for issues that change only the workflow tooling
 
 A failure returns the workflow to `IMPLEMENTATION`. A pass moves it to `FINAL_REVIEW`, where the Reviewer records its verdict with `review-final`.
 
-## Draft pull request gate
+## Legacy draft pull request gate
 
 Prepare a concise PR body that explains the actual change and reasoning rather than reproducing the plan or implementation report. It must begin with and contain exactly these rendered level-2 headings in this order, with visible non-empty content in every section and no additional level-2 headings. Content before `## What` is prohibited; level-3 subsections and visible content following the final heading belong to their enclosing required section. Headings or content hidden in comments or fenced code do not satisfy the contract.
 
@@ -934,7 +1460,7 @@ The command validates the body and refuses to call GitHub unless all configured 
 
 At that state, do not merge, mark ready, deploy, close the issue, or continue implementation. `approve-pr` records the final human decision; it does not merge or mark the PR ready.
 
-## Audit and recovery
+## Legacy audit and recovery
 
 Version 4 runs have three projections: canonical `state.json`, canonical append-only `history.jsonl`, and an `integrity.json` committed envelope containing their hashes, sequence, identity, and complete recoverable snapshot. A guarded writer appends one event, replaces the state and history files individually through atomic same-filesystem replacement, and writes the envelope last as the commit marker. The three files do not change as one filesystem transaction. Initial root and correction creation first records an exact-identity bootstrap transaction containing the intended canonical bytes; the exact creation command can reconcile an interruption, while conflicting or malformed partial creation fails closed. Every normal transition, status, correction summary, and correction-source/latest/sibling read verifies object structure, root-or-correction identity, version, contiguous sequence, embedded/JSONL equality, latest state, committed sequence, and both hashes before using authority. Reads never repair, migrate, synchronize, or write.
 
@@ -950,7 +1476,7 @@ Active legacy adoption verifies exact state/history agreement, supported lifecyc
 
 `PR_APPROVED` legacy projections remain permanently byte-immutable. An adopted legacy run at `WAITING_FOR_PR_HUMAN_APPROVAL` still supports the existing approve, reject, and metadata-revision commands. Immediately before one of those transitions, the CLI uses the same interruption guard to commit the audited v4 adoption event; conversion is refused if an existing correction names that run as its exact source, so correction parent hashes and every settled ancestor remain unchanged. Status, correction reads, and other ordinary commands never trigger conversion.
 
-If active v4 projections differ after an interruption, the Orchestrator may run `recover-run ISSUE [--correction N]`. Recovery independently validates the last committed envelope, restores only its snapshot, and appends `RUN_INTEGRITY_RECOVERED` with fixed `chess-echo-orchestrator` attribution and observed hashes. Approve, reject, and metadata-revision transitions from `WAITING_FOR_PR_HUMAN_APPROVAL` first record their source and intended bytes in a transaction. If interrupted before the envelope-last commit, recovery validates that transaction and restores the exact committed waiting bytes without an event, lifecycle change, or approval change; if the intended envelope committed, recovery only removes its completed marker after byte-exact verification. It does not replay the rejected action, grant or revoke approval, or infer tool success; the original action must be rerun deliberately. Missing, malformed, stale, wrong-identity, ambiguous, legacy, already-matching, adoption-in-progress, and arbitrary settled recovery attempts fail closed. `PR_APPROVED` remains byte-immutable.
+If active v4 projections differ after an interruption, the legacy Orchestrator role may run `recover-run ISSUE [--correction N]`. Recovery independently validates the last committed envelope, restores only its snapshot, and appends `RUN_INTEGRITY_RECOVERED` with fixed `chess-echo-orchestrator` attribution and observed hashes. Approve, reject, and metadata-revision transitions from `WAITING_FOR_PR_HUMAN_APPROVAL` first record their source and intended bytes in a transaction. If interrupted before the envelope-last commit, recovery validates that transaction and restores the exact committed waiting bytes without an event, lifecycle change, or approval change; if the intended envelope committed, recovery only removes its completed marker after byte-exact verification. It does not re-execute the rejected action, grant or revoke approval, or infer tool success; the original action must be rerun deliberately. Missing, malformed, stale, wrong-identity, ambiguous, legacy, already-matching, adoption-in-progress, and arbitrary settled recovery attempts fail closed. `PR_APPROVED` remains byte-immutable.
 
 Plan and test approvals verify that the human is seeing the exact artifacts and tests the Reviewer marked ready. Approved plan/review and test/review artifacts are rechecked at every downstream gate. Plan approval freezes a fingerprint of every non-test file through the test-review gate, preventing production implementation before test approval. Test approval records a fingerprint of the test files, and implementation submission refuses changed approved tests. Fingerprints include file type and permissions and cover Git-tracked plus non-ignored untracked files. Successful validation records workspace, `HEAD`, and the frozen base revision; final review records workspace and reviewed `HEAD`. Draft-PR creation requires all evidence to match, frozen-base ancestry and one-commit history to remain valid, all non-run changes to be committed, and no Git `assume-unchanged` or `skip-worktree` flags. If GitHub creates the PR but the local process stops before recording it, rerunning `create-draft-pr` reconciles only an open draft with the expected base, reviewed head, title, and body instead of creating another. After an implementation-level PR rejection completes a new validated/reviewed cycle, changed title/body metadata on the existing draft requires the explicit human-authorized `revise-pr-metadata` path.
 
@@ -958,7 +1484,7 @@ Final PR approval verifies that the workspace, Git revision, base branch, draft 
 
 Do not manually edit state, history, integrity, or approvals. Actor strings and filesystem locks coordinate cooperating processes but do not authenticate callers sharing an OS account; external signing and credentials are outside this local-file authority model.
 
-## Corrections
+## Legacy corrections
 
 A run at a PR gate is never reopened or mutated **to perform a bounded correction**; normal `approve-pr`, `reject-pr`, and `revise-pr-metadata` gate behavior remains as described above. A bounded post-approval fix instead forks an immutable, linked correction run:
 
@@ -1013,7 +1539,7 @@ The draft PR follows existing behaviour. A code-changing correction starts with 
 
 The source run's `issue.md` remains the authoritative issue snapshot for its corrections; child runs do not copy it.
 
-## Limitations
+## Legacy limitations
 
 - Agent invocation is coordinated by Copilot rather than a continuously running service.
 - Human identity and the exact stage confirmation are recorded, but a local process with repository write access remains a trust boundary and can impersonate `--by`.
@@ -1023,7 +1549,10 @@ The source run's `issue.md` remains the authoritative issue snapshot for its cor
 - A correction that is in flight blocks starting another correction for the same issue; drive it back to its PR gate first. Nothing is permanently marked, so completing it unblocks the issue.
 - Validation subprocess output is captured in memory before it is written to logs; output is not currently size-bounded.
 
-## Appendix: architecture audit record
+## Appendix: historical #126 architecture audit record
+
+This appendix preserves the pre-activation audit that originally produced this
+guide. Status statements in the main body supersede its historical findings.
 
 ### Evidence examined
 
@@ -1055,7 +1584,7 @@ not use its runtime state as current authority.
 
 | Finding | Classification | Disposition |
 |---|---|---|
-| The former canonical introduction described only the legacy CLI/kernel and omitted the landed trusted/inactive layers. | Documentation work | Corrected in this guide. |
+| The former canonical introduction described only the legacy CLI/kernel and omitted the landed trusted/inactive layers. | Historical documentation work | Corrected by #126; the current guide now also records later replacement activation. |
 | "Test Author" is a phase responsibility, not a fifth custom-agent profile. | Documentation work | The diagrams and role table name the Implementer as Test Author during `TEST_IMPLEMENTATION`. |
 | The repair guide said repair imported only the inspector, while source also imports the content-addressed storage leaf. | Documentation work | Corrected in [Workflow Repair](workflow-repair.md). |
 | The boundary table ambiguously assigned unqualified migration/recovery policy to the legacy CLI beside trusted migration/repair modules. | Documentation work | Qualified as legacy adoption/projection recovery in [Workflow Module Boundaries](workflow-boundaries.md). |
@@ -1063,9 +1592,9 @@ not use its runtime state as current authority.
 | Atomicity claims needed named scope: per-file legacy replacement, pointer commit for repair, binding commit for evidence/migration. | Documentation work | Corrected in the diagrams, arrow explanation, and guarantee table. |
 | Issue dependency/status prose lagged merged work; the canonical evidence and migration issues remain open although their implementations landed. | Audit finding | This guide describes exact implementation status; no issue metadata is changed here. |
 | Historical #115 coupled policy/storage/recovery, shadowed definitions, amplified evidence, and did not converge through repeated lifecycle retries. | Audit finding | Preserved as historical rationale; selected responses are verified against landed source rather than assumed from the postmortem. |
-| Active legacy validation still uses unbounded `subprocess.run` capture and does not use the supervisor. | Follow-up implementation work | Already within the future orchestrator's external-execution composition/cutover contract; no legacy patch in #126. |
-| Repair requires non-cooperating lifecycle writers to be quiescent; its pointer replacement is not lock-free compare-and-swap against them. | Follow-up implementation work | Future cutover must prevent dual writers; the current non-guarantee remains explicit. |
-| Work-type, plan-revision, and dependency/convergence policy are implemented but not composed; trust-anchor, freshness, revocation, and activation are absent. | Follow-up implementation work | Explicitly owned by [issue #144](https://github.com/NathanZK/ChessEcho/issues/144). |
+| Legacy validation uses unbounded `subprocess.run` capture and does not use the supervisor. | Historical follow-up | The replacement runtime uses bounded supervision; the legacy limitation remains confined to legacy runs. |
+| Repair requires non-cooperating lifecycle writers to be quiescent; its pointer replacement is not lock-free compare-and-swap against them. | Current non-guarantee | Replacement activation did not expand repair's narrow contract. |
+| Work-type, plan-revision, dependency/convergence, supervision, authority, and runtime components were not yet composed. | Historical follow-up | Issue #144 later composed them for the active implementation route. |
 | Historic evidence amplification has no active compaction/deletion mechanism. | Follow-up implementation work | Deferred, destructive retention work remains [issue #135](https://github.com/NathanZK/ChessEcho/issues/135), not this documentation issue. |
 | Risk tiers and execution modes are not implemented. | Follow-up implementation work | Evidence-driven future policy remains [issue #127](https://github.com/NathanZK/ChessEcho/issues/127). |
 | Workflow-doc changes run the Python workflow suite, but no Markdown link/anchor/Mermaid checker exists. | Audit finding | Manual rendering/link/reference review is required; automation is optional future tooling, not a defect silently fixed here. |
@@ -1075,5 +1604,5 @@ included here. For a new finding, record the exact baseline, owner, violated
 invariant, reproduction or missing-test evidence, impact, and whether an
 existing issue already owns it. File one narrowly scoped follow-up only after
 human confirmation, link it from this table, and leave production behavior
-unchanged. Speculative gaps and obligations already owned by the risk-tier,
-retention, or future-orchestrator tracks do not justify duplicate issues.
+unchanged. Speculative gaps and obligations already owned by the risk-tier, retention, or
+replacement-orchestrator follow-up tracks do not justify duplicate issues.

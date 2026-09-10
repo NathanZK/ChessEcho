@@ -1,7 +1,7 @@
 # Orchestration Authority Repair
 
 `scripts/workflow_authority_repair.py` is the independently callable repair
-boundary for the inactive replacement orchestration pointer. It does not repair
+boundary for the replacement orchestration pointer. It does not repair
 legacy durable-v4 authority and does not run or advance the orchestrator.
 
 ## Commands

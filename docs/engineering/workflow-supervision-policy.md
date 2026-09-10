@@ -1,7 +1,8 @@
 # Workflow supervision policy
 
-`scripts/workflow_supervision_policy.py` is the inactive, deterministic policy
-owner for configurable approval gates in the replacement workflow. It has no
+`scripts/workflow_supervision_policy.py` is the deterministic policy owner for
+the active replacement workflow's configurable approval gates. The orchestrator
+composes its results, but the module itself has no
 filesystem, process, Git, GitHub, evidence-publication, authority-selection,
 migration, repair, or legacy-lifecycle capability. It imports only
 `workflow_inspector` for canonical JSON, digests, and binding validation.
@@ -34,8 +35,9 @@ Initialization converts the base-pinned configuration into a canonical
 challenge binds that exact policy revision, authority predecessor, gate, mode,
 subjects, and repository observation.
 
-Before any orchestration action, the selected authority history is replayed from
-genesis. Revision zero must equal the trusted baseline configuration. Every
+Before any orchestration action, the replacement orchestrator revalidates the
+selected authority history from genesis. Revision zero must equal the trusted
+baseline configuration. Every
 replacement must be the exact successor of a selected
 `supervision-policy-change` challenge and its exact human authorization; a
 self-consistent replacement policy cannot select itself.
@@ -52,14 +54,16 @@ Consumers also reconstruct authority history and require the named challenge to
 have been the selected pending request and the satisfaction to have been selected
 by its immediate gate successor. A self-consistent but orphaned challenge,
 decision, or satisfaction cannot authorize later work. Every selected transition
-out of a waiting gate is replayed against that exact satisfaction, including live
-human-source re-observation; a structurally valid successor cannot skip a gate.
+out of a waiting gate is recomputed against that exact satisfaction, including
+live human-source re-observation; a structurally valid successor cannot skip a
+gate.
 
 The orchestrator retains plan and test satisfaction in the existing
 `plan-approval` and `test-approval` nodes. `final` and `pr-publication`
 satisfaction remain standalone until deterministic post-write completion binds
 them into the existing `pr-approval` node. The #134 node graph and evidence
-formats are unchanged. History replay requires each approval wrapper to select
+formats are unchanged. Selected-history revalidation requires each approval
+wrapper to select
 the exact challenged subject, technical review, repository observation, and
 authorization mechanism; completion requires both gate satisfactions and the
 reconciled `pr-metadata`/`pr-approval` evidence.
@@ -77,7 +81,7 @@ Only exact authorization publishes revision `N+1`.
 Each challenge permanently retains the policy revision that created it.
 Revisions affect future challenges only; they do not reinterpret historical
 challenges or satisfaction evidence. Stale tips, changed phase, changed policy,
-substituted challenge, edited authorization, and replay fail closed.
+substituted challenge, edited authorization, and stale reuse fail closed.
 
 ## Publication ordering
 

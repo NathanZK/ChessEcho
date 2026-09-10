@@ -124,7 +124,7 @@ only the candidate state document; it does not publish or activate it.
 convergence, parent, bound-node, bound-dependency, replacement,
 authority-chain, or operation evidence reference. Recorded transition inputs,
 including historical binds and correction authorizations, remain required for
-deterministic replay:
+deterministic state-history recomputation:
 
 ```json
 {
@@ -143,7 +143,7 @@ the supplied reference. A plan on a non-migrated binding is ambiguous.
 `policy-state:generation-N`, contains exactly one regular
 `workflow-policy/state.json` manifest entry whose payload is the canonical
 state, and links to the prior state binding through #132 replacement lineage.
-The evaluator replays every recorded transition from the immutable genesis and
+The evaluator recomputes every recorded transition from the immutable genesis and
 requires the supplied current state to equal the chain tip. A newly calculated
 state is not authoritative until an external, separately authorized publisher
 binds it and extends this chain.
@@ -209,7 +209,7 @@ no-change escalation.
 Generation zero has a null transition and zero budgets. Every later state
 records the exact normalized operation that produced it. Its binding must use
 replacement lineage to the prior state binding, its transition hash must
-recompute from the prior state, and replay must reproduce the complete next
+recompute from the prior state, and recomputation must reproduce the complete next
 state. Budget counters are therefore derived from an immutable transition
 chain; changing and rehashing a counter, or publishing a reset child state,
 fails closed.
@@ -375,7 +375,7 @@ episode-<N>-tip-<TIP|genesis>-active-<SHA256>
 ```
 
 Convergence history retains that context across reopen episodes. Evidence from
-an earlier episode, tip, or active dependency set cannot be replayed after
+an earlier episode, tip, or active dependency set cannot be reused after
 invalidation.
 
 ## Limits and escalation
@@ -420,13 +420,12 @@ type-checked before lookup. Malformed JSON values produce canonical typed
 failures rather than Python exceptions. This includes noncanonical numbers or
 values discovered while comparing current or recorded authoritative state.
 
-## Rollout and non-goals
+## Composition and non-goals
 
-V1 ships inactive. New canonical evidence and exact migrated evidence can be
-initialized or evaluated, but no output is applied automatically. A separate
-reviewed issue must define durable policy-state publication, expected-tip CAS,
-authorization, recovery, and lifecycle integration.
+V1 remains a read-only evaluator: no output is applied automatically by this
+module. The active replacement orchestrator publishes and selects verified
+policy-state candidates through the separate evidence and authority contracts.
 
 #134 does not implement risk tiers (#127), work-type triage (#116), incremental
 review (#125), evidence compaction (#135), storage redesign, automatic
-approvals, policy activation, or `agent_workflow.py` integration.
+approvals, authority selection, or `agent_workflow.py` integration.
