@@ -832,12 +832,13 @@ There are three distinct protocols:
    contract, owned by `workflow_orchestrator_resume.py`. The provider extracts
    terminal candidate bytes but does not decide which plan, review, implementer,
    or PR fields are legal. A successful process and valid provider stream can
-   still fail the core candidate contract. Provider 1.5.4 also carries a
-   prompt-facing JSON Schema copy for review operations so Copilot is told what
-   review candidate to produce; tests keep that communication schema aligned,
-   but only the core decoder validates and authorizes candidate meaning.
+   still fail the core candidate contract. Provider 1.5.5 also carries
+   prompt-facing JSON Schema copies for `write-plan` and review operations so
+   Copilot is told what candidate to produce; tests keep those communication
+   schemas aligned, but only the core decoder validates and authorizes candidate
+   meaning.
 
-The current provider (`1.5.4`) and reviewed local host (`1.3.0`) have exact
+The current provider (`1.5.5`) and reviewed local host (`1.3.0`) have exact
 source identities in `.github/agent-workflow.json` under
 `orchestrator.local_host.provider.source_sha256` and
 `orchestrator.local_host.source_sha256`. Those versions are human-readable
@@ -933,6 +934,7 @@ classification, and whether acceptance would have weakened an invariant.
 | #176 denied-tool parent | One complete run contained an unresolved parent. No fix was made. After recurrence and two independent probes reproduced five denied executions, one exact adapter transition was added. | Unknown behavior remains unknown. Reproduction can justify a bounded compatibility rule without inventing the opaque parent's semantics. |
 | #176 no-op test authoring | Copilot exited zero and returned a valid candidate, but the independent repository observation contained no required test change; policy paused with `test-scope-drift`. | Process success, candidate success, operation success, and workflow success are distinct. A correct refusal may be the desired result. |
 | #198 reviewer candidate | Transport and process succeeded, but the reviewer returned an unsupported verdict and extra fields because the operation prompt did not communicate the core candidate schema. Merged PR #199 corrected the prompt contract without weakening the decoder. | Keep the strict core candidate decoder. Correct the operation-specific prompt contract rather than accepting plausible-but-unauthorized JSON. |
+| #198 planner candidate | An isolated authenticated run preserved a terminal planner message containing prose before JSON and paused at strict decoding; the planner prompt named but did not enumerate its exact schema. | Structured transport selects the candidate boundary but does not make candidate content valid. Communicate the plan contract explicitly and keep whole-message decoding strict. |
 | #198 source-pin CI failure | Trusted host bytes changed in PR #199 but the configured host SHA remained old; CI failed until the same PR corrected the integrity binding, then merged green. | Readable versions do not establish deployed identity. Source pins must move with every trusted-byte change. |
 | Runtime reconstruction regression | Full CI grew from about 10.3 to 47 minutes because selected-history revalidation multiplied fresh reconstruction calls. | Safe-to-repeat does not mean cheap. Optimize within the observation's validity domain; do not trade freshness for a global cache. |
 
@@ -946,8 +948,11 @@ The controlled E2Es prove important boundaries, not an end-to-end completion
 claim. #176 exercised authenticated provider work and supervised plan approval,
 then correctly paused at `test-scope-drift` when independent observation found
 no executable test change. #198 reached plan review and correctly rejected an
-invalid reviewer candidate; PR #199 corrected that prompt/schema mismatch and
-merged with focused validation, but no post-merge complete E2E is claimed here.
+invalid reviewer candidate; PR #199 corrected that prompt/schema mismatch.
+A later isolated-clone #198 run correctly rejected a prose-prefixed planner
+candidate before plan review. Provider 1.5.5 communicates the plan schema, but
+no post-correction complete E2E is claimed here and the paused families are not
+resumed across changed trusted-source/base identities.
 No authenticated controlled run documented by this guide has traversed the
 entire replacement lifecycle through `COMPLETED`. Automatic gate satisfaction
 is covered by policy and driver tests, not by those controlled E2Es.

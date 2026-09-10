@@ -28,7 +28,7 @@ except ImportError:  # pragma: no cover - direct script loading
 
 
 NAME = "chess-echo-trusted-local"
-VERSION = "1.5.4"
+VERSION = "1.5.5"
 RESULT_FORMAT = "chess-echo-trusted-local-execution-result-v1"
 PROCESS_DIAGNOSTIC_FORMAT = "chess-echo-trusted-local-process-diagnostic-v1"
 DISCOVERY_FORMAT = "chess-echo-pending-result-candidates-v1"
@@ -1211,6 +1211,169 @@ def _review_candidate_contract(operation):
     }
 
 
+def _plan_candidate_contract(inputs):
+    roles = {
+        item.get("role")
+        for item in inputs
+        if isinstance(item, dict) and isinstance(item.get("role"), str)
+    }
+    revision_roles = roles & {"plan-snapshot", "plan-review"}
+    if revision_roles not in (set(), {"plan-snapshot", "plan-review"}):
+        _fail(
+            "corrupt",
+            "local-agent-plan-inputs-invalid",
+            "Planner revision inputs are incomplete",
+        )
+    unit = {
+        "additionalProperties": False,
+        "properties": {
+            "id": {
+                "description": "Unique safe slug, at most 128 characters.",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                "type": "string",
+            },
+            "title": {
+                "description": "Nonempty trimmed UTF-8 text, at most 4096 bytes.",
+                "minLength": 1,
+                "type": "string",
+            },
+            "start_line": {"maximum": 5000, "minimum": 1, "type": "integer"},
+            "end_line": {"maximum": 5000, "minimum": 1, "type": "integer"},
+            "review_class": {
+                "enum": [
+                    "ordinary",
+                    "scope",
+                    "acceptance-criteria",
+                    "architecture",
+                    "source-baseline",
+                ]
+            },
+            "dependencies": {
+                "description": (
+                    "UTF-8 sorted unique known unit IDs, at most 10 entries, "
+                    "excluding the unit itself; the complete dependency graph must be acyclic."
+                ),
+                "items": {
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                    "type": "string",
+                },
+                "maxItems": 10,
+                "type": "array",
+                "uniqueItems": True,
+            },
+        },
+        "required": [
+            "id",
+            "title",
+            "start_line",
+            "end_line",
+            "review_class",
+            "dependencies",
+        ],
+        "type": "object",
+    }
+    if not revision_roles:
+        revision = {
+            "description": (
+                "Must be null for an initial plan because no plan-snapshot and "
+                "plan-review input roles are present."
+            ),
+            "type": "null",
+        }
+    else:
+        change = {
+            "additionalProperties": False,
+            "properties": {
+                "unit_id": {
+                    "description": "A unit ID from the prior or current plan.",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                    "type": "string",
+                },
+                "impact": {
+                    "description": (
+                        "full-review-required forces a full review; local permits "
+                        "bounded preservation when every other policy condition holds."
+                    ),
+                    "enum": ["local", "full-review-required"],
+                },
+                "reason": {
+                    "description": "Nonempty trimmed UTF-8 text, at most 65536 bytes.",
+                    "minLength": 1,
+                    "type": "string",
+                },
+            },
+            "required": ["unit_id", "impact", "reason"],
+            "type": "object",
+        }
+        revision = {
+            "additionalProperties": False,
+            "description": (
+                "Required because plan-snapshot and plan-review input roles are present. "
+                "The revised plan bytes must differ from the prior plan. Reuse stable unit "
+                "IDs for retained units. changes must be UTF-8 sorted and unique by unit_id "
+                "and exactly cover the union of added or removed units, retained units whose "
+                "content changed, and units owning non-equal SequenceMatcher opcode ranges "
+                "on either side; three lines included only as diff context are not touched. "
+                "Before diffing, sum old_count[line] * new_count[line] for every shared line; "
+                "the total must not exceed 5000000. "
+                "Generate diff programmatically from prior and current LF-preserving line "
+                "arrays with difflib.SequenceMatcher(None, old_lines, new_lines, "
+                "autojunk=False).get_grouped_opcodes(3). Prefix it with exactly "
+                "'--- a/plan.md\\n+++ b/plan.md\\n'. For each group emit "
+                "'@@ -s,l +s,l @@\\n', where s is start+1 for a nonempty range and start "
+                "for an empty range, and l is end-start; always emit the count. Prefix "
+                "equal, delete, insert, and replace lines with space, '-', '+', and "
+                "delete-then-insert respectively, preserving each line's trailing LF."
+            ),
+            "properties": {
+                "diff": {
+                    "description": (
+                        "The exact deterministic unified diff described above, at most "
+                        "4194304 UTF-8 bytes."
+                    ),
+                    "type": "string",
+                },
+                "changes": {
+                    "items": change,
+                    "maxItems": 1000,
+                    "type": "array",
+                },
+            },
+            "required": ["diff", "changes"],
+            "type": "object",
+        }
+    return {
+        "additionalProperties": False,
+        "properties": {
+            "format": {"const": CANDIDATE_FORMAT},
+            "kind": {"const": "plan"},
+            "plan": {
+                "description": (
+                    "UTF-8 text using LF as its only line separator, containing no NUL or "
+                    "CR, at most 1048576 bytes and 5000 lines, and ending in exactly one LF."
+                ),
+                "type": "string",
+            },
+            "units": {
+                "description": (
+                    "Nonempty array, at most 1000 entries, in ascending line-range order. "
+                    "Ranges must be nonoverlapping and exhaustively tile every plan line "
+                    "without gaps: the first starts at 1, each later start is the prior end "
+                    "plus 1, and the final end equals the plan line count. Do not provide "
+                    "content_sha256; the host computes it from the covered plan bytes."
+                ),
+                "items": unit,
+                "maxItems": 1000,
+                "minItems": 1,
+                "type": "array",
+            },
+            "revision": revision,
+        },
+        "required": ["format", "kind", "plan", "units", "revision"],
+        "type": "object",
+    }
+
+
 def _agent_prompt(issue, role, request, request_binding, inputs):
     operation = request["operation"]["name"]
     expected = (
@@ -1220,7 +1383,7 @@ def _agent_prompt(issue, role, request, request_binding, inputs):
         if role == "implementer"
         else "review"
     )
-    contract = (
+    review_contract = (
         " The authoritative review candidate contract for operation %s is this exact "
         "JSON Schema: %s Additional outer keys are forbidden. For review-tests and "
         "review-final, only accepted advances the current workflow; another allowed "
@@ -1237,6 +1400,18 @@ def _agent_prompt(issue, role, request, request_binding, inputs):
         if operation in {"review-plan", "review-tests", "review-final"}
         else ""
     )
+    plan_contract = (
+        " The authoritative plan candidate contract for operation write-plan is this exact "
+        "JSON Schema: %s Additional outer and nested keys are forbidden."
+        % json.dumps(
+            _plan_candidate_contract(inputs),
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        if operation == "write-plan"
+        else ""
+    )
     return (
         "Execute exactly one ChessEcho replacement-workflow agent request as role %s for "
         "issue #%d. Work only in the current dedicated candidate worktree. Treat workflow "
@@ -1247,7 +1422,7 @@ def _agent_prompt(issue, role, request, request_binding, inputs):
         "Inspect the issue and repository as needed, perform only the requested phase. "
         "The final assistant response content must be exactly one JSON object of kind %s matching "
         "chess-echo-orchestrator-agent-candidate-v1. Emit no prose, Markdown fences, or other "
-        "content in that final response.%s"
+        "content in that final response.%s%s"
         % (
             role,
             issue,
@@ -1255,7 +1430,8 @@ def _agent_prompt(issue, role, request, request_binding, inputs):
             json.dumps(request_binding, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
             json.dumps(inputs, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
             expected,
-            contract,
+            plan_contract,
+            review_contract,
         )
     )
 
