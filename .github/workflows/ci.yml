@@ -62,7 +62,9 @@ jobs:
               - 'docs/engineering/workflow-authority-repair.md'
               - 'docs/engineering/workflow-orchestration.md'
               - 'docs/engineering/workflow-driver.md'
+              - 'docs/engineering/ci-runtime-optimization-plan.md'
               - 'scripts/agent_workflow.py'
+              - 'scripts/run_workflow_test_shard.py'
               - 'scripts/workflow_cas.py'
               - 'scripts/workflow_evidence.py'
               - 'scripts/workflow_inspector.py'
@@ -114,13 +116,47 @@ jobs:
       - run: npx vitest run
       - run: npm run build
 
-  agent-workflow:
+  agent-workflow-shard:
     needs: changes
     if: ${{ needs.changes.outputs.agents == 'true' }}
+    name: agent-workflow shard ${{ matrix.shard }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.9'
-      - run: make agent-workflow-test
+      - run: make agent-workflow-test-shard SHARD_INDEX=${{ matrix.shard }} SHARD_COUNT=4
+
+  agent-workflow:
+    needs:
+      - changes
+      - agent-workflow-shard
+    if: >-
+      ${{
+        always()
+        && (
+          needs.changes.result != 'success'
+          || needs.changes.outputs.agents == 'true'
+        )
+      }}
+    name: agent-workflow
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every workflow test shard
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          SHARD_RESULT: ${{ needs.agent-workflow-shard.result }}
+        run: |
+          if [ "$CHANGES_RESULT" != "success" ]; then
+            echo "::error::Change detection finished with: $CHANGES_RESULT"
+            exit 1
+          fi
+          if [ "$SHARD_RESULT" != "success" ]; then
+            echo "::error::Workflow test shards finished with: $SHARD_RESULT"
+            exit 1
+          fi
