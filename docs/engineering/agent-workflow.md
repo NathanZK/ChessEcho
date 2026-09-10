@@ -832,13 +832,13 @@ There are three distinct protocols:
    contract, owned by `workflow_orchestrator_resume.py`. The provider extracts
    terminal candidate bytes but does not decide which plan, review, implementer,
    or PR fields are legal. A successful process and valid provider stream can
-   still fail the core candidate contract. Provider 1.5.5 also carries
+   still fail the core candidate contract. Provider 1.5.6 also carries
    prompt-facing JSON Schema copies for `write-plan` and review operations so
    Copilot is told what candidate to produce; tests keep those communication
    schemas aligned, but only the core decoder validates and authorizes candidate
    meaning.
 
-The current provider (`1.5.5`) and reviewed local host (`1.3.0`) have exact
+The current provider (`1.5.6`) and reviewed local host (`1.3.1`) have exact
 source identities in `.github/agent-workflow.json` under
 `orchestrator.local_host.provider.source_sha256` and
 `orchestrator.local_host.source_sha256`. Those versions are human-readable
@@ -950,7 +950,9 @@ then correctly paused at `test-scope-drift` when independent observation found
 no executable test change. #198 reached plan review and correctly rejected an
 invalid reviewer candidate; PR #199 corrected that prompt/schema mismatch.
 A later isolated-clone #198 run correctly rejected a prose-prefixed planner
-candidate before plan review. Provider 1.5.5 communicates the plan schema, but
+candidate before plan review. Provider 1.5.6 communicates the plan schema and
+strictly recognizes the observed ephemeral `file_created` information event
+without treating it as tool completion, but
 no post-correction complete E2E is claimed here and the paused families are not
 resumed across changed trusted-source/base identities.
 No authenticated controlled run documented by this guide has traversed the

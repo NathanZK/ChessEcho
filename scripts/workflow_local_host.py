@@ -19,7 +19,7 @@ sys.dont_write_bytecode = True
 
 
 NAME = "chess-echo-trusted-local-host"
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 CONFIG_FORMAT = "chess-echo-trusted-local-host-config-v1"
 CONTROL_SOURCES = (
     "scripts/workflow_authority.py",
@@ -210,7 +210,7 @@ def _control_identity(control_root, git_executable, agent_executable):
     provider_source = _regular(root / local["provider"]["source"], "local-provider-source")
     if local["provider"] != {
         "name": "chess-echo-trusted-local",
-        "version": "1.5.5",
+        "version": "1.5.6",
         "source": "scripts/workflow_local_provider.py",
         "source_sha256": provider_source["sha256"],
     }:
