@@ -398,7 +398,7 @@ and must not be conflated.
 
 ### 12. A named schema is not a communicated schema
 
-**Problem:** The first controlled implementation workload reached
+**Problem:** The first controlled #198 implementation workload reached
 `PLAN_REVIEW`, completed the Copilot process and JSONL transport normally, and
 extracted and bound the final candidate, but the orchestrator rejected that
 candidate as `candidate-output-invalid`.
@@ -432,10 +432,12 @@ metadata. Final review requires exactly nonempty `head_ref`, `title`, and
 `body`, with the body limited to nonempty `What`, `Why`, and `Testing`
 sections.
 
-**Actual fix:** The provider constructs the operation-specific contract and
-embeds its canonical JSON representation in the live prompt. Focused tests
-inspect each review operation's contract and prove that a prompted candidate
-shape is accepted by the unchanged decoder.
+**Actual fix:** Merged
+[PR #199](https://github.com/NathanZK/ChessEcho/pull/199) makes the provider
+construct the operation-specific contract and embed its canonical JSON
+representation in the live prompt. Focused tests inspect each review
+operation's contract and prove that a prompted candidate shape is accepted by
+the unchanged decoder.
 
 **Validation:** The focused provider prompt and candidate-contract tests, the
 orchestrator review-candidate tests, and the workflow tooling checks cover the
@@ -744,8 +746,10 @@ printf '%s\n' "$GH_TOKEN" | /usr/bin/python3 -I \
 
 Use the same prefix for `publish-issue-source`, `init`, `status`, `plan-next`,
 `step`, `approve`, `cancel`, and `recover`. `init` and an exact execution
-handoff use `--request FILE`; every mutation uses the `pointer_sha256` returned
-by `status` as `--expected-tip`.
+handoff use `--request FILE`; every post-genesis orchestration mutation
+(`step`, `approve`, `cancel`, and `recover`) uses the `pointer_sha256` returned
+by `status` as `--expected-tip`. `bootstrap`, `publish-issue-source`, and
+genesis `init` do not have an existing replacement pointer to supply.
 
 For a `step` that may launch an agent, add the explicit trusted-worker option
 and second input line:

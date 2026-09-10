@@ -264,7 +264,7 @@ without the caller cancellation event. A match returns `confirmed`; otherwise
 the canonical result is `uncertain`, `ambiguous`, `stale`, `denied`, or
 `conflict`. A concurrent different ref can never become confirmed. Publication
 does not select or consume authority, create a pull request, merge, mark ready,
-or deploy; a future orchestrator must separately consume a confirmed result
+or deploy; the orchestrator must separately consume a confirmed result
 under its expected-tip rules.
 
 The CLI exposes `publish-branch`. Its standard input contains the general
@@ -281,7 +281,7 @@ must have equal creation/update timestamps and exact API-target and HTML-anchor
 identities. Pull-request reviews are
 cross-checked between REST and GraphQL and require `lastEditedAt=null`; their
 creation and submission timestamps are recorded. This is an
-observation, not consumed authority or replay protection.
+observation, not consumed authority or stale-reuse protection.
 
 Frozen issue #115 is denied immediately after config validation and before any
 issue-specific GitHub or artifact lookup.
@@ -441,8 +441,9 @@ including nonzero exit, timeout, signal, output overflow, and cancellation.
 The attested provider name, version, and source hash must byte-equal the
 injected object's validated identity rather than values chosen by its result.
 `workflow_supervisor` alone cannot observe escaped descendants, so
-`external-sandbox-v1` remains a genuine activation requirement. Until an
-independently reviewed provider proves repository write scope, process
-containment, credential denial, authority-store denial, immutable
-request-binding input, and bounded canonical output, the committed runtime must
-remain inactive. A test fake is not an activation substitute.
+`external-sandbox-v1` remains the Phase 2 requirement for hostile-worker
+isolation. Phase 1 instead activates the separately documented trusted-local
+provider boundary: the operator and host are trusted, agent-produced content is
+untrusted, and same-UID filesystem, credential, authority-store, network, and
+escaped-descendant isolation are not claimed. A test fake is not an activation
+substitute for either boundary.

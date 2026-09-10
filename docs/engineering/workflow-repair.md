@@ -5,8 +5,8 @@ durable workflow authority. It depends only on `workflow_inspector.py` and the
 `workflow_cas.py` publication leaf; it never imports the lifecycle
 implementation, invokes workflow commands, evaluates policy, or writes worktree
 projections. See the canonical [architecture and status
-map](agent-workflow.md#architecture) for how this independently callable tool
-relates to the active legacy lifecycle.
+map](agent-workflow.md#current-responsibility-and-dependency-map) for how this independently callable tool
+relates to replacement authority and the separate legacy lifecycle.
 
 ## Commands and trust boundary
 

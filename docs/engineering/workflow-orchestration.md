@@ -1,9 +1,11 @@
 # Workflow orchestration
 
 `scripts/workflow_orchestrator.py` is the provider-neutral composition layer
-for issue #144. It selects one next action for one issue; the authority,
-runtime, evidence, work-type, plan-revision, and workflow-policy modules retain
-their respective ownership boundaries.
+delivered under issue #144. That tracker remains open with unreconciled
+acceptance items; current source and tests, not checkbox state, establish the
+behavior documented here. The orchestrator selects one next action for one
+issue; the authority, runtime, evidence, work-type, plan-revision, and
+workflow-policy modules retain their respective ownership boundaries.
 
 The orchestrator never writes CAS or pointers, invokes Git/GitHub/processes
 directly, imports the legacy lifecycle, or computes policy state itself. It
@@ -16,8 +18,11 @@ publishes through `workflow_evidence.publish`, selects through
 Phase 1 is activated through the reviewed
 [`workflow_local_host.py`](workflow-local-provider.md) entry point.
 `RUNTIME_PROVIDER`, `SANDBOX_PROVIDER`, and `PENDING_RESULT_PROVIDER` remain
-unset when this module is invoked directly, so bypassing the host fails closed.
-The host installs fixed, base-pinned providers without plugin discovery.
+unset when this module is invoked directly, so an action that needs runtime,
+provider, or pending-result capability fails closed. Core-only actions that do
+not need those seams can still change authority; direct invocation is therefore
+not a universal no-mutation boundary. The host installs fixed, base-pinned
+providers without plugin discovery.
 
 Phase 1 deliberately does not claim hostile-process isolation. The trusted
 local operator accepts same-UID filesystem, credential, authority-store, and
@@ -39,13 +44,22 @@ python3 scripts/workflow_orchestrator.py recover ISSUE --root ROOT --expected-ti
 ```
 
 `status` and `plan-next` are read-only. Each mutating command performs at most
-one authority commit. The first `step` atomically claims and executes exactly
-one bounded runtime operation, publishes its result without changing authority,
-and returns an immutable evidence handoff. While that request remains pending,
-every caller is `busy` except a later `step` presenting that exact verified
-handoff, which performs the sole result transition without executing another
-process. A crash requires explicit recovery rather than another execution.
-There is no run-until-done loop or automatic retry.
+one authority commit. The first `step` atomically claims exactly one bounded
+runtime operation and then executes it externally; the claim exists before the
+process starts. Execution publishes its result without changing authority and
+returns an immutable evidence handoff. While that request remains pending, a
+competing execution/finalization cannot take ownership; read-only status and
+planning remain available, cancellation may mark an executable claim, and a
+later `step` presenting the exact verified handoff performs the sole result
+transition without executing another process. A crash requires explicit
+recovery rather than another execution. The orchestrator itself has no
+run-until-done loop or automatic retry; `workflow_driver.py` provides a
+separate bounded continuation loop over fresh `plan-next` results.
+
+`set-supervision` is a core orchestrator API but is not exposed by the current
+reviewed Phase 1 local host. The documented host path can operate configured
+gates but cannot change their mode. Treat runtime gate-mode revision as an
+activation gap, not as an available local-host operator procedure.
 
 ## Fresh implementation path
 
@@ -125,9 +139,36 @@ authorization remain outside that configuration.
 Every mutating public command reconstructs the selected supervision-policy
 history. Genesis must equal the base-pinned configuration, and each replacement
 must be the exact human-authorized successor selected by authority.
-The same replay validates lifecycle phase origins, every configurable-gate
+The same selected-history revalidation validates lifecycle phase origins, every configurable-gate
 successor, and both sides of mandatory-human recovery. Structural authority
 selection alone cannot skip an approval or resume a paused/cancelled attempt.
+
+## Candidate contract
+
+The provider is allowed to speak its own external protocol, but it does not get
+to define what the workflow considers valid work.
+`workflow_local_provider.py` validates Copilot JSONL, identifies the terminal
+candidate boundary, extracts exact candidate bytes, and preserves the raw
+transport. `workflow_orchestrator_resume.py` then verifies that those bytes
+match the execution-result digest, decodes duplicate-free UTF-8 JSON, and owns
+the strict phase-specific contract:
+
+- plan candidates contain exact plan text, line-bounded units, dependencies,
+  review classes, and revision metadata;
+- review candidates use only `accepted`, `needs-revision`, or
+  `full-review-required`, with exact finding fields;
+- implementer candidates contain one nonempty report; and
+- final-review PR metadata has exact `head_ref`, `title`, and `body` fields,
+  with nonempty `## What`, `## Why`, and `## Testing` sections.
+
+Provider 1.5.4 carries an operation-specific JSON Schema copy solely to
+communicate the **review-candidate portion** of this contract in `review-plan`,
+`review-tests`, and `review-final` prompts. Focused tests keep that prompt
+schema and the core decoder aligned. Plan and implementer prompts do not embed
+that JSON Schema copy. The provider cannot normalize an unsupported verdict or
+extra field into acceptance; #198 demonstrated this when transport and process
+execution succeeded but the core rejected the reviewer candidate. Merged
+PR #199 corrected the prompt contract instead of weakening validation.
 
 ## Human authority and recovery
 

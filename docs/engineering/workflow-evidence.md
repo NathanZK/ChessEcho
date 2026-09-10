@@ -3,10 +3,11 @@
 Issue #132 defines immutable semantic evidence independently of the legacy
 workflow orchestrator. `scripts/workflow_evidence.py` uses the existing durable
 content-addressed storage (CAS) below the Git common directory and never writes
-`.agent-workflow/**`. See
-the canonical [architecture and status map](agent-workflow.md#architecture) for
-the distinction between independently callable evidence mechanisms, inactive
-policy, and the active legacy lifecycle.
+`.agent-workflow/**`. See the canonical
+[current responsibility and dependency map](agent-workflow.md#current-responsibility-and-dependency-map)
+for
+the distinction between immutable evidence, deterministic policy, selected
+replacement authority, and the separate legacy lifecycle.
 
 ## Commands
 

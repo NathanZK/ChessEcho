@@ -1,6 +1,6 @@
 # Reviewed plan revisions
 
-Issue #125 provides an **inactive, read-only** policy evaluator over native
+Issue #125 provides a **read-only** policy evaluator over native
 #132 evidence for plan snapshots, technical reviews, and revisions.
 `scripts/workflow_plan_revision_policy.py` verifies canonical plan units, a
 deterministic unified diff, finding/disposition schemas, and evidence
@@ -8,9 +8,9 @@ binding/subject links, then deterministically selects the minimum permitted
 review mode (`full` or `incremental`) and emits one derived result document. It
 never publishes evidence, selects a trust anchor, authenticates an actor,
 preserves human approval, mutates #134 state, transitions a lifecycle, or
-activates any behavior. #125 imports only `workflow_evidence` and
-`workflow_inspector`; future #144 is the only planned composition/activation
-owner.
+activates any behavior by itself. #125 imports only `workflow_evidence` and
+`workflow_inspector`; the replacement orchestrator is the sole composition and
+activation owner.
 
 ## Commands and API
 
@@ -92,8 +92,8 @@ A snapshot's `context` names the #116 issue-snapshot → baseline → triage
 chain; #125 verifies the generic #132 identity/decision/subject links between
 those three bindings (and that the snapshot's own subject equals the exact
 triage binding) without importing #116 or interpreting its classification,
-scope, or route. A changed context binding forces full review; #144 owns
-verifying the #116 document semantics behind it.
+scope, or route. A changed context binding forces full review; the orchestrator
+owns verifying the #116 document semantics behind it.
 
 Revision 1 has `predecessor: null`; revision N>1 requires the exact prior
 plan/review pair as `predecessor`, and the prior snapshot's own revision must
@@ -247,31 +247,34 @@ fixed constant tuple. `authority` is always the literal
 | Actor authentication | No |
 | Human approval | No |
 | Latest-revision authority | No |
-| Freshness / revocation / replay prevention | No |
+| Freshness / revocation / stale-reuse prevention (emitted as `replay-prevention`) | No |
 | Lifecycle state | No |
 
 Reviewer/Planner actor strings are attribution only. No #125 document or
 result is a `plan-approval` binding, and #125 never changes #134's fixed DAG.
 
-## #116 and #134 composition, and the #144 boundary
+## #116 and #134 composition boundary
 
 #125 verifies only the generic #132 subject chain behind a snapshot's
 `context`; it never re-validates #116's classification, scope, or route, and
 #116 targeted checks are never accepted as #125 review evidence. #125 never
 imports `workflow_policy` (#134) and never emits or requires a
-`plan-approval` binding. Future #144 must, in order: acquire trusted #116/#134
-tips; ensure any existing approval is explicitly revoked before revision
-work; designate the exact prior/current plan-review-revision inputs; invoke
-#125 and arrange the required review; obtain explicit human approval bound to
-the technically accepted plan; publish a new `plan-approval` binding through
-#132; invoke #134 with that replacement root; and publish/apply the resulting
-authority. Until #144 exists, every #125 result is inactive and cannot affect
-#134 state.
+`plan-approval` binding. In the active replacement lifecycle, the orchestrator
+acquires the trusted #116/#134 tips, designates exact
+prior/current-plan/review/revision inputs, invokes #125, arranges the required
+technical review, and only then opens the plan gate. Exact human approval
+selects the technically accepted plan in a new `plan-approval` binding before
+#134 composition continues. This all occurs before the plan is approved: there
+is no active post-approval reopen or approval-revocation operation. A future
+composition that allowed post-approval revision would first need explicit
+revocation, but this document's general invalidation model must not be read as
+that public lifecycle capability. A #125 result cannot affect #134 state except
+through selected composition.
 
 ## Non-goals
 
 No lifecycle states, transitions, approval gates, or orchestration; no actor
-authentication, latest-tip selection, revocation, freshness, or replay
+authentication, latest-tip selection, revocation, freshness, or stale-reuse
 prevention; no alternate CAS/canonicalizer/hashing scheme; no changes to #116
 classification or #134 DAG/invalidation/budgets; no automatic semantic
 understanding of plan text; no incremental review for

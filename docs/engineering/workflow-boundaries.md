@@ -1,11 +1,13 @@
 # Workflow Module Boundaries
 
-Issue #130 establishes a first explicit dependency boundary without redesigning
-the workflow lifecycle or changing its stored formats.
+Issue #130 established the first explicit dependency boundary without
+redesigning the workflow lifecycle or changing its stored formats. This current
+map extends that original boundary through the later replacement-orchestrator,
+runtime, provider, and driver work.
 
 ## Current responsibility map
 
-| Area | Owner after #130 |
+| Area | Current owner |
 |---|---|
 | Legacy v4 projection paths and canonical serialization | `workflow_kernel.py` |
 | Legacy v4 envelope and transaction-snapshot integrity checks | `workflow_kernel.py` |
@@ -15,25 +17,28 @@ the workflow lifecycle or changing its stored formats.
 | Canonical evidence manifests, provenance, bindings, and derived views | `workflow_evidence.py` |
 | Deterministic legacy/durable compatibility planning and immutable publication | `workflow_migration.py` |
 | Dependency invalidation and convergence policy evaluation | `workflow_policy.py` |
-| Inactive work-type intake, route, advisory targeted-check, and structural completion policy | `workflow_work_type_policy.py` |
-| Inactive incremental reviewed-plan revision policy | `workflow_plan_revision_policy.py` |
-| Inactive four-gate supervision policy | `workflow_supervision_policy.py` |
-| Inactive orchestration authority pointer | `workflow_authority.py` |
+| Work-type intake, route, advisory targeted-check, and structural completion policy | `workflow_work_type_policy.py` |
+| Incremental reviewed-plan revision policy | `workflow_plan_revision_policy.py` |
+| Four-gate supervision policy | `workflow_supervision_policy.py` |
+| Replacement orchestration authority pointer | `workflow_authority.py` |
 | Authorized replacement-pointer restoration | `workflow_authority_repair.py` |
-| Inactive trusted Git/GitHub/process and validated-source publication adapter | `workflow_runtime.py` |
+| Active trusted Git/GitHub/process and validated-source publication adapter | `workflow_runtime.py` |
+| Pure runtime reconstruction schemas and comparison logic | `workflow_runtime_reconstruction.py` |
 | Reviewed Phase 1 host and deterministic workspace/result bootstrap | `workflow_local_host.py` |
 | Trusted-local agent execution and execution-fact attestation | `workflow_local_provider.py` |
 | Trusted pre-genesis issue-source publication | `workflow_issue_source.py` |
-| Inactive lifecycle composition | `workflow_orchestrator.py` |
+| Active replacement lifecycle composition | `workflow_orchestrator.py` |
+| Exact candidate decoding, phase-specific candidate schemas, and pending-result resume helpers | `workflow_orchestrator_resume.py` |
+| Bounded automatic continuation over fresh host plans | `workflow_driver.py` |
 | Legacy lifecycle, approvals, reviews, corrections, validation, adoption/migration, and projection-recovery policy | `agent_workflow.py` |
 | Git, GitHub, process execution, command parsing, and human-facing output | `agent_workflow.py` |
 | Durable-store inspection and checkpoints | `workflow_inspector.py` |
 | Durable-store repair bundles and recovery | `workflow_repair.py` |
 
 The canonical [architecture and status
-map](agent-workflow.md#architecture) distinguishes the active legacy lifecycle,
-independently callable trusted mechanisms, inactive policy evaluators, and
-future #144 composition. In this table, legacy adoption/migration and
+map](agent-workflow.md#current-responsibility-and-dependency-map) distinguishes selected replacement
+authority, composed policy, independently callable trusted mechanisms, and the
+separate legacy lifecycle. In this table, legacy adoption/migration and
 projection recovery are intentionally separate from the durable evidence
 migration and durable-store repair owners.
 
@@ -58,7 +63,8 @@ workflow_plan_revision_policy -> workflow_inspector, workflow_evidence
 workflow_supervision_policy -> workflow_inspector
 workflow_authority -> workflow_inspector, workflow_evidence, workflow_cas
 workflow_authority_repair -> workflow_inspector, workflow_authority, workflow_cas
-workflow_runtime -> workflow_inspector, workflow_supervisor
+workflow_runtime -> workflow_inspector, workflow_supervisor, workflow_runtime_reconstruction
+workflow_runtime_reconstruction -> workflow_inspector
 workflow_local_provider -> workflow_cas, workflow_evidence, workflow_inspector,
                            workflow_supervisor
 workflow_local_host -> verified dynamic imports from the reviewed control checkout
@@ -66,7 +72,9 @@ workflow_issue_source -> workflow_inspector, workflow_cas, workflow_runtime
 workflow_orchestrator -> workflow_inspector, workflow_evidence, workflow_authority,
                          workflow_work_type_policy, workflow_plan_revision_policy,
                          workflow_policy, workflow_supervision_policy, workflow_runtime,
-                         workflow_issue_source
+                         workflow_issue_source, workflow_orchestrator_resume
+workflow_orchestrator_resume -> workflow_inspector
+workflow_driver
 workflow_repair   -> workflow_inspector, workflow_cas
 workflow_cas
 workflow_inspector
@@ -81,6 +89,12 @@ may use kernel primitives, but the kernel cannot call upward into policy.
 `workflow_supervisor.py` is another standard-library-only leaf. It owns bounded
 process execution but no lifecycle, retry, validation, or agent-selection
 policy. #131 does not migrate legacy callers to it.
+
+`workflow_driver.py` is also standard-library-only. It launches the reviewed
+host as an external subprocess, obtains a fresh `plan-next` before every
+automatic step, and enforces step/deadline/no-progress bounds. It has no Python
+import edge to the host or orchestrator and cannot approve, recover, initialize,
+merge, or select authority independently.
 
 `workflow_cas.py` is a standard-library-only leaf extracted from the reviewed
 #129 immutable publication path. It owns create-exclusive temporary writes,
@@ -105,14 +119,14 @@ on the lifecycle CLI or repair. It consumes self-contained exact projection
 bytes or a complete inspector checkpoint with explicit reachable selections.
 It cannot mutate a pointer, projection, transaction, or lifecycle state.
 
-`workflow_policy.py` is the inactive #134 policy evaluator. It verifies #132
+`workflow_policy.py` is the read-only #134 policy evaluator. It verifies #132
 bindings and #133 migration plans, computes a fixed dependency closure, and
 applies bounded convergence rules to a self-contained canonical state. It
 cannot publish or apply the result, read `.agent-workflow/**`, execute a
 process, or import the legacy CLI, kernel, repair tool, supervisor, or CAS
 publisher.
 
-`workflow_work_type_policy.py` is the inactive #116 policy surface. It verifies
+`workflow_work_type_policy.py` is the #116 policy surface. It verifies
 explicit #132-bound intake, baseline, diff, artifact, review, and acceptance
 documents; returns deterministic work-type routes and scope assessments; and
 may invoke only policy-selected targeted checks directly through
@@ -120,17 +134,25 @@ may invoke only policy-selected targeted checks directly through
 Those process results are advisory because #131 explicitly cannot observe
 escaped descendants. The module does not import the legacy lifecycle or #134,
 publish evidence, acquire trust anchors, execute comprehensive validation,
-authenticate actors, or transition authority. Future #144 orchestration owns
+authenticate actors, or transition authority. The replacement orchestrator owns
 activation and composition of the separate #116 and #134 policy results.
 
-`workflow_plan_revision_policy.py` is the inactive #125 read-only evaluator.
+`workflow_orchestrator_resume.py` owns the replacement core's strict candidate
+schemas and exact pending-result reconstruction helpers. The provider may
+validate Copilot transport and extract candidate bytes, but it cannot normalize
+those bytes into a weaker phase contract. The orchestrator imports the resume
+module; the resume module does not import the orchestrator, runtime, provider,
+or host.
+
+`workflow_plan_revision_policy.py` is the #125 read-only evaluator.
 It validates native evidence-backed plan snapshots, exact diffs, dispositions,
 and technical-review coverage, then derives an incremental or full review
 requirement. It cannot publish evidence, mutate lifecycle state, authenticate
-actors, preserve approval, or establish freshness. Future #144 is the sole
-owner of composing #116, #125, and #134 results and activating their effects.
+actors, preserve approval, or establish freshness. The replacement orchestrator
+is the sole owner of composing #116, #125, and #134 results and activating their
+effects.
 
-`workflow_supervision_policy.py` is the inactive deterministic owner of the
+`workflow_supervision_policy.py` is the deterministic owner of the
 four configurable gates (`plan`, `tests`, `final`, and `pr-publication`). It
 cannot authenticate humans, publish evidence, select authority, perform a
 GitHub mutation, or configure mandatory-human activation, cutover, recovery,
@@ -217,10 +239,12 @@ publication. It does not move migration into `agent_workflow.py`, invoke
 #115 authority.
 
 #134 adds only deterministic dependency invalidation and convergence
-evaluation. It does not activate that policy, mutate workflow authority, or
-change legacy reopen/correction behavior.
+evaluation. The replacement orchestrator may compose its result, but the module
+does not activate policy, mutate workflow authority, or change legacy
+reopen/correction behavior by itself.
 
-#116 adds complete but inactive work-type policy contracts. It does not alter
-legacy initialization or completion, treat #134's invalidation DAG as a
-lifecycle, make targeted checks authoritative, or claim latest-tip,
-revocation, replay prevention, temporal freshness, or authenticated approval.
+#116 adds complete work-type policy contracts. The replacement activates its
+implementation route; the module does not alter legacy initialization or
+completion, treat #134's invalidation DAG as a lifecycle, make targeted checks
+authoritative, or claim latest-tip, revocation, stale-reuse prevention, temporal
+freshness, or authenticated approval by itself.

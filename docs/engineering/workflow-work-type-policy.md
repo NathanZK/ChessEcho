@@ -1,14 +1,16 @@
-# Inactive Work-Type Policy
+# Work-Type Policy
 
-Issue #116 adds `scripts/workflow_work_type_policy.py`, an inactive policy
+Issue #116 adds `scripts/workflow_work_type_policy.py`, a deterministic policy
 surface above the independent evidence reader and process supervisor. It
 classifies explicit intake, describes the required route, runs bounded advisory
 targeted checks, verifies a designated final diff structurally, and assesses
 non-implementation artifact/review/acceptance evidence.
 
-It does not integrate with `agent_workflow.py`, persist or publish authority,
+The replacement orchestrator composes the implementation route. Design,
+research, and documentation routes remain unactivated. The module does not
+integrate with `agent_workflow.py`, persist or publish authority,
 acquire trust anchors, authenticate actors, run comprehensive validation, call
-#134, or transition a lifecycle. #144 owns those activation concerns.
+#134, or transition a lifecycle by itself.
 
 ## Commands
 
@@ -164,7 +166,7 @@ matching profile. CAS-only design/research has empty Git scope. Documentation
 is Git-backed.
 
 The result is `chess-echo-work-type-triage-result-v1`. It freezes the normalized
-classification and returns fixed inactive requirements:
+classification and returns fixed route requirements:
 
 - **implementation:** source-aligned plan, independent plan review, explicit
   plan approval, tests before production, independent test review, explicit
@@ -178,6 +180,14 @@ classification and returns fixed inactive requirements:
 The result always states `operationally_active: false` and lists initialization
 integration, authoritative recording, latest-tip/revocation, temporal final
 validation, and lifecycle completion as unsatisfied.
+
+The three implementation-route requirement identifiers deliberately retain
+their shipped `explicit-human-*` names. The later supervision policy can
+technically configure the corresponding replacement gates as `automatic`, but
+#116 does not reinterpret or version these identifiers. All committed gate
+defaults are supervised, which is coherent with this route contract. Automatic
+mode must not be presented as end-to-end satisfaction of #116's explicit-human
+requirements until composition resolves that vocabulary mismatch.
 
 ## Advisory targeted checks
 
@@ -249,7 +259,7 @@ normalized `changes` array. Contradictory commit/tree/count/change facts or an
 unrelated diff digest are corrupt.
 
 This is a static integrity and policy check. A #132 binding cannot prove that
-the observation is live when replayed, is the latest tip, or has not been
+the observation is live when reused, is the latest tip, or has not been
 revoked.
 
 ## Surface and scope policy
@@ -315,23 +325,22 @@ reviewer actor strings are attribution only.
 ## Freshness and activation boundary
 
 #132 content identity and provenance do not prove current time, latest tip,
-revocation absence, unique attempts, non-replay, immediate observation,
+revocation absence, unique attempts, stale-reuse prevention, immediate observation,
 newly-executed validation, or tool-cache bypass.
 
 #116 accepts no comprehensive-validation binding and never attests one. The
-unchanged active legacy implementation path still performs its own final
-validation. #144 must define trust-anchor acquisition, latest-tip and
-revocation checks, unique attempt identity, temporal binding to final review
-and approval, replay prevention, authoritative publication, and lifecycle
-activation.
+replacement orchestrator owns comprehensive validation, trust-anchor
+acquisition, expected-tip selection, authorization, publication, and lifecycle
+activation for the implementation route. Non-implementation routes remain
+unactivated.
 
 ## Non-goals
 
 - No modification or revival of frozen #115.
 - No legacy workflow or #128–#134 changes.
-- No lifecycle integration, authority publication, authentication, agent
-  invocation, GitHub access, or new trusted-core mechanism.
+- No lifecycle transition, authority publication, authentication, agent
+  invocation, GitHub access, or new trusted-core mechanism inside this module.
 - No automatic semantic classification.
 - No authoritative use of supervisor output.
-- No freshness, uncached, latest-tip, revocation, replay-prevention, approval,
+- No freshness, uncached, latest-tip, revocation, stale-reuse prevention, approval,
   readiness, or completion claim.
