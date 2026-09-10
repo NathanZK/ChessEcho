@@ -161,14 +161,17 @@ the strict phase-specific contract:
 - final-review PR metadata has exact `head_ref`, `title`, and `body` fields,
   with nonempty `## What`, `## Why`, and `## Testing` sections.
 
-Provider 1.5.4 carries an operation-specific JSON Schema copy solely to
-communicate the **review-candidate portion** of this contract in `review-plan`,
-`review-tests`, and `review-final` prompts. Focused tests keep that prompt
-schema and the core decoder aligned. Plan and implementer prompts do not embed
-that JSON Schema copy. The provider cannot normalize an unsupported verdict or
-extra field into acceptance; #198 demonstrated this when transport and process
-execution succeeded but the core rejected the reviewer candidate. Merged
-PR #199 corrected the prompt contract instead of weakening validation.
+Provider 1.5.5 carries operation-specific JSON Schema copies to communicate the
+plan candidate contract in `write-plan` and the review candidate contract in
+`review-plan`, `review-tests`, and `review-final`. The plan schema has distinct
+initial and revision variants selected from the exact projected input roles
+and describes the existing unit-map and deterministic-diff constraints.
+Focused tests keep these prompt schemas aligned with the unchanged core
+validators. Implementer prompts do not embed a JSON Schema copy. The provider
+cannot normalize an unsupported shape, verdict, extra field, or prose-prefixed
+object into acceptance. #198 demonstrated both an invalid reviewer candidate
+and, in a later isolated run, a planner candidate containing prose before JSON;
+the prompt corrections leave strict decoding unchanged.
 
 ## Human authority and recovery
 

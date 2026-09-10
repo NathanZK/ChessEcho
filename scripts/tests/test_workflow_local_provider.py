@@ -17,6 +17,7 @@ from scripts import workflow_inspector as inspector
 from scripts import workflow_local_host as host
 from scripts import workflow_local_provider as provider
 from scripts import workflow_orchestrator_resume as resume
+from scripts import workflow_plan_revision_policy as plan_policy
 from scripts import workflow_runtime as runtime
 
 
@@ -489,6 +490,136 @@ class TrustedLocalProviderTest(unittest.TestCase):
             "Emit no prose, Markdown fences, or other content in that final response.",
             prompt,
         )
+
+    def test_planner_prompt_communicates_exact_initial_candidate_contract(self):
+        contract = provider._plan_candidate_contract([])
+        prompt = provider._agent_prompt(
+            175,
+            "planner",
+            self.fixture.request(),
+            {"kind": "evidence-binding", "sha256": "d" * 64, "size": 1},
+            [],
+        )
+
+        self.assertEqual(
+            ["format", "kind", "plan", "units", "revision"],
+            contract["required"],
+        )
+        self.assertFalse(contract["additionalProperties"])
+        self.assertEqual(
+            provider.CANDIDATE_FORMAT,
+            contract["properties"]["format"]["const"],
+        )
+        self.assertEqual("plan", contract["properties"]["kind"]["const"])
+        self.assertEqual("null", contract["properties"]["revision"]["type"])
+        unit = contract["properties"]["units"]["items"]
+        self.assertEqual(
+            [
+                "id",
+                "title",
+                "start_line",
+                "end_line",
+                "review_class",
+                "dependencies",
+            ],
+            unit["required"],
+        )
+        self.assertFalse(unit["additionalProperties"])
+        self.assertEqual(list(plan_policy.REVIEW_CLASSES), unit["properties"]["review_class"]["enum"])
+        self.assertEqual(plan_policy.MAX_UNITS, contract["properties"]["units"]["maxItems"])
+        self.assertEqual(
+            plan_policy.MAX_DEPENDENCIES,
+            unit["properties"]["dependencies"]["maxItems"],
+        )
+        self.assertIn("exhaustively tile every plan line", contract["properties"]["units"]["description"])
+        self.assertIn(
+            json.dumps(contract, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
+            prompt,
+        )
+        self.assertLess(len(prompt.encode("utf-8")), provider.PROMPT_LIMIT_BYTES)
+
+        candidate = json.loads(CANDIDATE)
+        self.assertEqual(candidate, resume.candidate_schema(candidate, "plan"))
+        lines, units = resume.validate_plan_candidate(candidate)
+        self.assertEqual(["Canary.\n"], lines)
+        policy_units = [
+            {
+                **unit_row,
+                "content_sha256": inspector.sha256(
+                    "".join(
+                        lines[unit_row["start_line"] - 1 : unit_row["end_line"]]
+                    ).encode("utf-8")
+                ),
+            }
+            for unit_row in units
+        ]
+        parsed, ids, last_line = plan_policy._validate_units_schema(policy_units)
+        plan_policy._verify_units_against_plan(parsed, last_line, lines)
+        self.assertEqual(["canary"], ids)
+
+    def test_planner_prompt_communicates_exact_revision_candidate_contract(self):
+        inputs = [
+            {"role": "plan-snapshot", "binding": {}, "entries": []},
+            {"role": "plan-review", "binding": {}, "entries": []},
+        ]
+        contract = provider._plan_candidate_contract(inputs)
+        revision = contract["properties"]["revision"]
+        change = revision["properties"]["changes"]["items"]
+
+        self.assertEqual(["diff", "changes"], revision["required"])
+        self.assertFalse(revision["additionalProperties"])
+        self.assertEqual(["unit_id", "impact", "reason"], change["required"])
+        self.assertFalse(change["additionalProperties"])
+        self.assertEqual(list(plan_policy.IMPACTS), change["properties"]["impact"]["enum"])
+        self.assertIn("exactly cover the union", revision["description"])
+        self.assertIn(
+            "must not exceed %d" % plan_policy.MAX_DIFF_COST,
+            revision["description"],
+        )
+        self.assertIn("get_grouped_opcodes(3)", revision["description"])
+        self.assertIn("three lines included only as diff context are not touched", revision["description"])
+
+        prompt = provider._agent_prompt(
+            175,
+            "planner",
+            self.fixture.request(),
+            {"kind": "evidence-binding", "sha256": "d" * 64, "size": 1},
+            inputs,
+        )
+        encoded = json.dumps(
+            contract, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+        )
+        self.assertIn(encoded, prompt)
+        self.assertLess(len(encoded.encode("utf-8")), 6 * 1024)
+        self.assertLess(len(prompt.encode("utf-8")), provider.PROMPT_LIMIT_BYTES)
+
+        candidate = json.loads(CANDIDATE)
+        candidate["revision"] = {
+            "diff": plan_policy._unified_diff(
+                ["Prior.\n"], ["Canary.\n"]
+            ).decode("utf-8"),
+            "changes": [
+                {
+                    "unit_id": "canary",
+                    "impact": "local",
+                    "reason": "Replace the prior plan unit.",
+                }
+            ],
+        }
+        self.assertEqual(candidate, resume.candidate_schema(candidate, "plan"))
+        resume.validate_plan_candidate(candidate)
+        self.assertEqual({"diff", "changes"}, set(candidate["revision"]))
+        self.assertEqual(
+            {"unit_id", "impact", "reason"},
+            set(candidate["revision"]["changes"][0]),
+        )
+
+    def test_planner_contract_rejects_incomplete_revision_inputs(self):
+        for role in ("plan-snapshot", "plan-review"):
+            with self.subTest(role=role):
+                with self.assertRaises(provider.LocalProviderFailure) as raised:
+                    provider._plan_candidate_contract([{"role": role}])
+                self.assertEqual("local-agent-plan-inputs-invalid", raised.exception.code)
 
     def test_reviewer_prompts_communicate_exact_candidate_contract(self):
         expected_outer_keys = ["format", "kind", "verdict", "findings", "pr"]
@@ -1131,7 +1262,8 @@ class TrustedLocalProviderTest(unittest.TestCase):
         )
 
     def test_final_prose_is_extracted_unchanged_and_rejected_by_existing_decoder(self):
-        candidate = provider._extract_candidate_from_jsonl(_jsonl(candidate="not JSON"))
+        exact = "Explanation before the candidate.\n\n" + CANDIDATE
+        candidate = provider._extract_candidate_from_jsonl(_jsonl(candidate=exact))
         result = {
             "outcome": "succeeded",
             "candidate_output": {
@@ -1146,9 +1278,10 @@ class TrustedLocalProviderTest(unittest.TestCase):
             },
         }
 
-        self.assertEqual(b"not JSON", candidate)
-        with self.assertRaises(resume.ResumeFailure):
+        self.assertEqual(exact.encode("utf-8"), candidate)
+        with self.assertRaises(resume.ResumeFailure) as raised:
             resume.decode_candidate(result, "plan")
+        self.assertEqual("candidate-output-invalid", raised.exception.code)
 
     def test_jsonl_framing_and_json_fail_closed(self):
         valid = _jsonl()
