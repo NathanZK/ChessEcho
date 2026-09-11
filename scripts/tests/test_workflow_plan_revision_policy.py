@@ -18,6 +18,26 @@ from scripts import workflow_plan_revision_policy as policy
 
 
 REPOSITORY = pathlib.Path(__file__).parents[2]
+ISSUE_198_ACCEPTANCE_FACTS = [
+    {
+        "id": "invalid-time-control-message",
+        "assertion": "equals",
+        "value": (
+            "Invalid timeControl 'unsupported'. Supported timeControls: "
+            "RAPID, BLITZ, BULLET, CLASSICAL, STANDARD."
+        ),
+    },
+    {
+        "id": "standard-alias",
+        "assertion": "contains",
+        "value": "STANDARD",
+    },
+    {
+        "id": "supported-time-controls",
+        "assertion": "contains",
+        "value": "RAPID, BLITZ, BULLET, CLASSICAL, STANDARD",
+    },
+]
 
 
 class RevisionFixture(object):
@@ -29,7 +49,14 @@ class RevisionFixture(object):
     disturbing the default three-unit scenario every other test depends on.
     """
 
-    def __init__(self, impact="local", prior_verdict="needs-revision", extra_units=0):
+    def __init__(
+        self,
+        impact="local",
+        prior_verdict="needs-revision",
+        extra_units=0,
+        acceptance_facts=None,
+        acceptance_coverage=None,
+    ):
         self.temporary = tempfile.TemporaryDirectory(dir=REPOSITORY)
         self.root = pathlib.Path(self.temporary.name)
         subprocess.run(["git", "init", "-q", str(self.root)], check=True)
@@ -39,12 +66,43 @@ class RevisionFixture(object):
         self.family = "0123456789abcdef0123456789abcdef"
         self.sequence = 0
         self.extra_units = extra_units
+        self.acceptance_facts = copy.deepcopy(acceptance_facts)
+        self.acceptance_coverage = copy.deepcopy(acceptance_coverage)
+        if self.acceptance_facts is not None:
+            coverage = self.acceptance_coverage
+            if coverage is None:
+                coverage = []
+                for fact in self.acceptance_facts:
+                    unit_id = (
+                        "tests"
+                        if fact["id"] == "invalid-time-control-message"
+                        else "change"
+                    )
+                    coverage.append({**fact, "unit_ids": [unit_id]})
+            self.plan_acceptance = {
+                "format": "chess-echo-plan-acceptance-coverage-v1",
+                "requirements": coverage,
+            }
+        else:
+            self.plan_acceptance = None
         self.context = self._context()
-        self._prior_text = self._plan_text("fix issue\n", extra_units)
-        self._current_text = self._plan_text("fix issue carefully\n", extra_units)
+        self._prior_text = self._plan_text(
+            "fix issue\n",
+            extra_units,
+            self.plan_acceptance,
+        )
+        self._current_text = self._plan_text(
+            "fix issue carefully\n",
+            extra_units,
+            self.plan_acceptance,
+        )
         self.prior_plan = self.snapshot(1, self._prior_text.encode(), None)
         self.prior_review = self.review(
-            self.prior_plan, None, "full", ["full"] * (3 + extra_units), prior_verdict,
+            self.prior_plan,
+            None,
+            "full",
+            ["full"] * len(self.prior_plan["document"]["units"]),
+            prior_verdict,
             findings=(prior_verdict != "accepted"),
         )
         self.current_plan = self.snapshot(
@@ -108,15 +166,71 @@ class RevisionFixture(object):
 
     def _context(self):
         source = self.raw("evidence-payload", b"issue source")
-        issue = self.publish({"type": "work-type-issue-snapshot", "id": "issue"}, source, [("context/issue.json", b"{}")])
+        body = ""
+        if self.acceptance_facts is not None:
+            acceptance = {
+                "format": "chess-echo-acceptance-facts-v1",
+                "facts": self.acceptance_facts,
+            }
+            body = (
+                "<!-- chess-echo-acceptance-facts:begin -->\n"
+                + inspector.canonical_bytes(acceptance).decode("utf-8")
+                + "\n<!-- chess-echo-acceptance-facts:end -->\n\n"
+                "Synthetic acceptance contract."
+            )
+        issue_document = self.digest(
+            {
+                "format": "chess-echo-work-type-issue-snapshot-v1",
+                "repository": "NathanZK/ChessEcho",
+                "issue": self.issue,
+                "title": "Synthetic plan acceptance fixture",
+                "url": "https://github.com/NathanZK/ChessEcho/issues/%d" % self.issue,
+                "body": body,
+                "labels": [],
+                "source": source,
+                "captured_at": "2026-09-04T00:00:00Z",
+            },
+            "snapshot_sha256",
+        )
+        issue = self.publish(
+            {"type": "work-type-issue-snapshot", "id": "issue"},
+            source,
+            [("workflow-work-type/issue-snapshot.json", inspector.canonical_bytes(issue_document))],
+        )
         baseline = self.publish({"type": "work-type-baseline", "id": "baseline"}, issue["binding"], [("context/baseline.json", b"{}")])
         triage = self.publish({"type": "work-type-triage", "id": "triage"}, baseline["binding"], [("context/triage.json", b"{}")])
         return {"issue_snapshot_binding": issue["binding"], "baseline_binding": baseline["binding"], "triage_binding": triage["binding"]}
 
     @staticmethod
-    def _plan_text(first_line, extra_units=0):
+    def _plan_text(first_line, extra_units=0, acceptance=None):
         lines = [first_line, "keep tests\n", "preserve docs\n"]
+        if acceptance is not None:
+            facts = {
+                row["id"]: row
+                for row in acceptance["requirements"]
+            }
+            supported = facts.get("supported-time-controls", {}).get("value", "")
+            alias = facts.get("standard-alias", {}).get("value", "")
+            message_fact = facts.get("invalid-time-control-message", {})
+            message = message_fact.get("value", "")
+            lines[0] = (
+                first_line.rstrip("\n")
+                + " Supported timeControls: %s. Direct alias: %s.\n"
+                % (supported, alias)
+            )
+            if message_fact.get("assertion") == "equals":
+                lines[1] = "Assert the invalid message equals: %s\n" % message
+            else:
+                lines[1] = "Assert the invalid message contains: %s\n" % message
         lines.extend("extra line %d\n" % index for index in range(extra_units))
+        if acceptance is not None:
+            lines.extend(
+                [
+                    "<!-- chess-echo-plan-acceptance:begin -->\n",
+                    inspector.canonical_bytes(acceptance).decode("utf-8") + "\n",
+                    "<!-- chess-echo-plan-acceptance:end -->\n",
+                ]
+            )
         return "".join(lines)
 
     def units(self, data):
@@ -146,16 +260,32 @@ class RevisionFixture(object):
                 "content_sha256": inspector.sha256(lines[line_number - 1].encode("utf-8")),
                 "review_class": "ordinary", "dependencies": [],
             })
+        if self.plan_acceptance is not None:
+            start = 4 + self.extra_units
+            base.append(
+                {
+                    "id": "acceptance",
+                    "title": "Acceptance coverage",
+                    "start_line": start,
+                    "end_line": start + 2,
+                    "content_sha256": inspector.sha256(
+                        "".join(lines[start - 1:start + 2]).encode("utf-8")
+                    ),
+                    "review_class": "acceptance-criteria",
+                    "dependencies": ["change"],
+                }
+            )
         return base
 
     def snapshot(self, revision, plan_data, predecessor, context=None, migration=None, document_newline=False):
         context = context or self.context
-        document = self.digest({
+        fields = {
             "format": policy.SNAPSHOT_FORMAT, "issue": self.issue, "family_run_id": self.family,
             "revision": revision, "context": context, "predecessor": predecessor,
             "plan": {"path": policy.PLAN_PATH, "content_sha256": inspector.sha256(plan_data), "size": len(plan_data)},
             "units": self.units(plan_data),
-        }, "snapshot_sha256")
+        }
+        document = self.digest(fields, "snapshot_sha256")
         record = self.publish(
             {"type": "plan-snapshot", "id": "snapshot-%s" % document["snapshot_sha256"]},
             context["triage_binding"],
@@ -389,6 +519,174 @@ class PlanRevisionPolicyTest(unittest.TestCase):
             )
             self.assertEqual("technical-review-accepted", result["outcome"]["code"])
             self.assertEqual("accepted", result["technical_verdict"])
+
+    def _accepted_baseline(self, fixture):
+        review = fixture.review(
+            fixture.prior_plan,
+            None,
+            "full",
+            ["full"] * len(fixture.prior_plan["document"]["units"]),
+            "accepted",
+            findings=False,
+        )
+        request = fixture.digest(
+            {
+                "format": policy.BASELINE_REQUEST_FORMAT,
+                "plan": fixture.prior_plan,
+                "current_review": review,
+            },
+            "request_sha256",
+        )
+        return policy.evaluate_baseline(
+            fixture.root,
+            request,
+            fixture.prior_plan["binding"]["sha256"],
+            review["binding"]["sha256"],
+        )
+
+    def test_structured_acceptance_rejects_plan_omitting_standard(self):
+        coverage = [
+            {
+                **ISSUE_198_ACCEPTANCE_FACTS[0],
+                "unit_ids": ["tests"],
+            },
+            {
+                **ISSUE_198_ACCEPTANCE_FACTS[1],
+                "unit_ids": ["change"],
+            },
+            {
+                "id": "supported-time-controls",
+                "assertion": "contains",
+                "value": "RAPID, BLITZ, BULLET, CLASSICAL",
+                "unit_ids": ["change"],
+            },
+        ]
+        fixture = RevisionFixture(
+            acceptance_facts=ISSUE_198_ACCEPTANCE_FACTS,
+            acceptance_coverage=coverage,
+        )
+        self.addCleanup(fixture.close)
+
+        with self.assertRaises(policy.PlanRevisionPolicyFailure) as error:
+            self._accepted_baseline(fixture)
+
+        self.assertEqual("acceptance-coverage-mismatch", error.exception.code)
+        self.assertEqual("denied", error.exception.status)
+
+    def test_structured_acceptance_rejects_missing_direct_standard_alias(self):
+        coverage = [
+            {
+                **fact,
+                "unit_ids": [
+                    "tests"
+                    if fact["id"] == "invalid-time-control-message"
+                    else "change"
+                ],
+            }
+            for fact in ISSUE_198_ACCEPTANCE_FACTS
+            if fact["id"] != "standard-alias"
+        ]
+        fixture = RevisionFixture(
+            acceptance_facts=ISSUE_198_ACCEPTANCE_FACTS,
+            acceptance_coverage=coverage,
+        )
+        self.addCleanup(fixture.close)
+
+        with self.assertRaises(policy.PlanRevisionPolicyFailure) as error:
+            self._accepted_baseline(fixture)
+
+        self.assertEqual("acceptance-coverage-mismatch", error.exception.code)
+        self.assertEqual("denied", error.exception.status)
+
+    def test_structured_acceptance_rejects_weakened_contains_assertion(self):
+        coverage = [
+            {
+                **fact,
+                "unit_ids": [
+                    "tests"
+                    if fact["id"] == "invalid-time-control-message"
+                    else "change"
+                ],
+            }
+            for fact in ISSUE_198_ACCEPTANCE_FACTS
+        ]
+        coverage[0]["assertion"] = "contains"
+        fixture = RevisionFixture(
+            acceptance_facts=ISSUE_198_ACCEPTANCE_FACTS,
+            acceptance_coverage=coverage,
+        )
+        self.addCleanup(fixture.close)
+
+        with self.assertRaises(policy.PlanRevisionPolicyFailure) as error:
+            self._accepted_baseline(fixture)
+
+        self.assertEqual("acceptance-coverage-mismatch", error.exception.code)
+        self.assertEqual("denied", error.exception.status)
+
+    def test_structured_acceptance_complete_coverage_passes(self):
+        fixture = RevisionFixture(acceptance_facts=ISSUE_198_ACCEPTANCE_FACTS)
+        self.addCleanup(fixture.close)
+
+        result = self._accepted_baseline(fixture)
+
+        self.assertEqual("technical-review-accepted", result["outcome"]["code"])
+        self.assertEqual("accepted", result["technical_verdict"])
+
+    def test_structured_acceptance_rejects_self_referential_coverage(self):
+        coverage = [
+            {**fact, "unit_ids": ["acceptance"]}
+            for fact in ISSUE_198_ACCEPTANCE_FACTS
+        ]
+        fixture = RevisionFixture(
+            acceptance_facts=ISSUE_198_ACCEPTANCE_FACTS,
+            acceptance_coverage=coverage,
+        )
+        self.addCleanup(fixture.close)
+
+        with self.assertRaises(policy.PlanRevisionPolicyFailure) as error:
+            self._accepted_baseline(fixture)
+
+        self.assertEqual("acceptance-coverage-self-reference", error.exception.code)
+        self.assertEqual("denied", error.exception.status)
+
+    def test_present_null_acceptance_facts_fail_closed(self):
+        body = (
+            "<!-- chess-echo-acceptance-facts:begin -->\n"
+            "null\n"
+            "<!-- chess-echo-acceptance-facts:end -->"
+        )
+
+        with self.assertRaises(policy.PlanRevisionPolicyFailure) as error:
+            policy.acceptance_facts(body)
+
+        self.assertEqual("invalid-acceptance-facts-schema", error.exception.code)
+
+    def test_legacy_plan_without_structured_facts_preserves_accepted_review(self):
+        accepted_review = self.fixture.review(
+            self.fixture.prior_plan,
+            None,
+            "full",
+            ["full", "full", "full"],
+            "accepted",
+            findings=False,
+        )
+        request = self.fixture.digest(
+            {
+                "format": policy.BASELINE_REQUEST_FORMAT,
+                "plan": self.fixture.prior_plan,
+                "current_review": accepted_review,
+            },
+            "request_sha256",
+        )
+
+        result = policy.evaluate_baseline(
+            self.fixture.root,
+            request,
+            self.fixture.prior_plan["binding"]["sha256"],
+            accepted_review["binding"]["sha256"],
+        )
+
+        self.assertEqual("technical-review-accepted", result["outcome"]["code"])
 
     def test_baseline_finding_must_be_introduced_against_exact_plan(self):
         foreign_finding = self.fixture.custom_finding(
@@ -1145,7 +1443,10 @@ class PlanRevisionPolicyTest(unittest.TestCase):
             review = self.fixture.review(
                 self.fixture.current_plan, self.fixture.revision["binding"], "incremental",
                 ["incremental", "incremental", "preserved"], "needs-revision",
-                findings=[filler, replacement],
+                findings=sorted(
+                    [filler, replacement],
+                    key=lambda finding: finding["id"],
+                ),
                 outcomes=[{"finding_id": prior_finding["id"], "status": "superseded", "replacement_finding_id": replacement["id"], "reason": "Superseded by a narrower concern."}],
             )
             request = self.fixture.request(review)
