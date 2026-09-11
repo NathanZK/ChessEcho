@@ -333,36 +333,61 @@ class CandidateOutputContractTest(unittest.TestCase):
             },
         }
 
-    def test_valid_candidate_json_preceded_by_prose_remains_rejected(self):
-        candidate = json.dumps(
-            {
-                "format": resume.CANDIDATE_FORMAT,
-                "kind": "implementer",
-                "report": "Implemented the approved change.",
-            },
-            separators=(",", ":"),
+    def test_exact_reviewer_candidate_with_prose_and_fenced_json_is_rejected(self):
+        stdout = (
+            "No other production callers depend on exact message wording — confirms plan's "
+            "Step 4 claim. The plan is accurate and complete.\n\n"
+            "```json\n"
+            '{"format":"chess-echo-orchestrator-agent-candidate-v1","kind":"review",'
+            '"verdict":"accepted","findings":[],"pr":{}}\n'
+            "```"
         )
 
-        with self.assertRaises(resume.ResumeFailure) as raised:
-            resume.decode_candidate(
-                self._result("Working on the requested change.\n" + candidate),
-                "implementer",
-            )
+        decoder = json.loads
+        with mock.patch.object(resume.json, "loads", wraps=decoder) as loads:
+            with self.assertRaises(resume.ResumeFailure) as raised:
+                resume.decode_candidate(self._result(stdout), "review")
 
         self.assertEqual("candidate-output-invalid", raised.exception.code)
+        self.assertEqual(stdout, loads.call_args.args[0])
 
-    def test_exact_valid_candidate_json_remains_accepted(self):
+    def test_exact_clean_reviewer_candidate_json_remains_accepted(self):
         candidate = {
             "format": resume.CANDIDATE_FORMAT,
-            "kind": "implementer",
-            "report": "Implemented the approved change.",
+            "kind": "review",
+            "verdict": "accepted",
+            "findings": [],
+            "pr": {},
         }
         stdout = json.dumps(candidate, separators=(",", ":"))
 
         self.assertEqual(
             candidate,
-            resume.decode_candidate(self._result(stdout), "implementer"),
+            resume.decode_candidate(self._result(stdout), "review"),
         )
+
+
+class OrchestratorInitializationAcceptanceTest(unittest.TestCase):
+    def test_malformed_explicit_acceptance_facts_fail_before_authority(self):
+        fixture = OrchestratorFixture()
+        self.addCleanup(fixture.close)
+        fixture.install_provider(self)
+        responses = json.loads((fixture.bin / "gh-responses.json").read_text())
+        responses["api"]["repos/%s/issues/%d" % (SLUG, ISSUE)]["body"] = (
+            "<!-- chess-echo-acceptance-facts:begin -->\n"
+            "null\n"
+            "<!-- chess-echo-acceptance-facts:end -->"
+        )
+        (fixture.bin / "gh-responses.json").write_text(json.dumps(responses, sort_keys=True))
+        fixture.publish_response_source()
+
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            orchestrator.init(fixture.root, ISSUE, request=fixture.request())
+
+        self.assertEqual("invalid-acceptance-facts-schema", raised.exception.code)
+        with self.assertRaises(orchestrator.OrchestratorFailure) as missing:
+            orchestrator.status(fixture.root, ISSUE)
+        self.assertEqual("orchestration-pointer-missing", missing.exception.code)
 
 
 class OrchestratorLifecycleTest(unittest.TestCase):

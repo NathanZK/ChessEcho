@@ -759,7 +759,8 @@ orchestrator:
 - The **work-type policy** verifies intake, scope, routes, targeted checks, and
   structural completion. Only its implementation route is active.
 - The **plan-revision policy** verifies plan snapshots, exact diffs, technical
-  reviews, findings, and reusable coverage. It never preserves human approval.
+  reviews, findings, reusable coverage, and explicit issue-to-plan acceptance
+  traceability. It never preserves human approval.
 - The **dependency/convergence policy** verifies exact dependencies,
   invalidation, correction roots, and bounded convergence.
 - The **supervision policy** defines `plan`, `tests`, `final`, and
@@ -774,6 +775,45 @@ authority pointer. A process request and its result are deliberately two
 authority steps: one successor claims exact work, external execution publishes
 evidence without moving authority, and a later successor finalizes only that
 exact result. A crash cannot become permission to execute the request twice.
+
+### Explicit issue-to-plan acceptance traceability
+
+Issue authors may opt objective literals into deterministic plan checking with
+one JSON object between exact marker lines at the start of the trusted issue
+body:
+
+```text
+<!-- chess-echo-acceptance-facts:begin -->
+{"facts":[{"assertion":"equals","id":"invalid-message","value":"Exact message."}],"format":"chess-echo-acceptance-facts-v1"}
+<!-- chess-echo-acceptance-facts:end -->
+```
+
+Facts are bounded, sorted by `id`, and use only `contains` or `equals`. The
+Planner copies every fact exactly into a plan block at the end of the plan and
+adds nonempty plan-ordered `unit_ids` that name substantive plan units:
+
+```text
+<!-- chess-echo-plan-acceptance:begin -->
+{"format":"chess-echo-plan-acceptance-coverage-v1","requirements":[{"assertion":"equals","id":"invalid-message","unit_ids":["tests"],"value":"Exact message."}]}
+<!-- chess-echo-plan-acceptance:end -->
+```
+
+Before any technical-review result can become accepted, the plan-revision
+policy resolves the exact issue snapshot through the plan's trusted context,
+parses only these explicit blocks, and requires the same ordered IDs, assertion
+strengths, and values. It also requires every coverage row to name existing
+substantive plan units that contain the exact literal; the metadata block cannot
+cite itself as coverage. Missing literals, `equals` weakened to `contains`, and
+incomplete coverage fail closed with `acceptance-coverage-mismatch`; malformed
+or duplicate structured input also fails closed. An accepted reviewer verdict
+cannot override that result. The Reviewer still owns higher-level reasoning
+about whether the mapped units actually implement the facts.
+
+This mechanism performs no natural-language requirement inference. Issues
+without the explicit block retain existing behavior. Both blocks are separately
+versioned content inside the existing opaque issue-body and plan bytes, so the
+trusted issue-source publication, plan candidate, and plan snapshot v1 schemas
+remain unchanged and require no migration.
 
 ### Authority, evidence, and authorization
 
@@ -862,6 +902,21 @@ trusted source bytes requires updating the corresponding binding. During the
 correction, the host bytes changed while its configured hash did not; CI failed
 until the stale hash was corrected. That is intentional integrity enforcement,
 not ordinary release-version management.
+
+The reviewed provider invokes Copilot with `--output-format json`, but that
+option frames the external event transport; it does not constrain the final
+assistant content to the candidate JSON Schema. The current pinned integration
+does not expose another reviewed, supported schema-constrained response option.
+Candidate shape is therefore communicated in the prompt and enforced only by
+the core decoder. If the underlying CLI later documents a supported response
+schema option, the provider can propose threading the existing operation schema
+through that interface under a separately reviewed provider and pin update.
+This workflow does not guess an undocumented provider-specific flag.
+
+The core decoder passes the complete UTF-8 candidate bytes directly to the JSON
+decoder. It does not trim prose, unwrap Markdown fences, search for embedded
+JSON, or normalize the candidate. A prose-prefixed fenced object is invalid
+even when the embedded object would independently satisfy the review schema.
 
 This separation follows the same dependency direction as
 [Ports and Adapters](https://alistair.cockburn.us/hexagonal-architecture/):

@@ -304,6 +304,7 @@ class Orchestrator(gates.ApprovalGateMixin):
         adapter = self._runtime(request); bootstrap = _translate(adapter.bootstrap_document, "runtime")
         _require(bootstrap["mode"] == "active", "unsupported", "orchestrator-inactive", "New orchestration is disabled by configuration")
         issue_document, raw = _translate(lambda: adapter.observe_issue(self.issue), "runtime"); source = _translate(lambda: issue_source.validate_for_initialization(request["trusted_issue_source"], bootstrap, issue_document, raw, bootstrap["repository"], self.issue), "issue-source")
+        _translate(lambda: plan_policy.acceptance_facts(issue_document["body"]), "plan-policy")
         reader = _translate(lambda: inspector.AuthorityReader(inspector.resolve_store(self.root), self.issue), "inspector")
         _require(_translate(lambda: reader.read_bytes(source, source["kind"]), "inspector") == raw, "stale", "response-source-missing", "Live issue source is absent or changed")
         self.family = self._family(bootstrap, source)

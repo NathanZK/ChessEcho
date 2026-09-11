@@ -43,12 +43,20 @@ DIFF_FORMAT = "chess-echo-unified-plan-diff-v1"
 BASELINE_REQUEST_FORMAT = "chess-echo-plan-baseline-policy-request-v1"
 REVISION_REQUEST_FORMAT = "chess-echo-plan-revision-policy-request-v1"
 RESULT_FORMAT = "chess-echo-plan-revision-policy-result-v1"
+ACCEPTANCE_FACTS_FORMAT = "chess-echo-acceptance-facts-v1"
+ACCEPTANCE_COVERAGE_FORMAT = "chess-echo-plan-acceptance-coverage-v1"
 
 PLAN_PATH = "workflow-plan-revision/plan.md"
 SNAPSHOT_PATH = "workflow-plan-revision/snapshot.json"
 REVIEW_PATH = "workflow-plan-revision/review.json"
 REVISION_PATH = "workflow-plan-revision/revision.json"
 DIFF_PATH = "workflow-plan-revision/plan.diff"
+ISSUE_SNAPSHOT_PATH = "workflow-work-type/issue-snapshot.json"
+ACCEPTANCE_FACTS_BEGIN = "<!-- chess-echo-acceptance-facts:begin -->"
+ACCEPTANCE_FACTS_END = "<!-- chess-echo-acceptance-facts:end -->"
+PLAN_ACCEPTANCE_BEGIN = "<!-- chess-echo-plan-acceptance:begin -->"
+PLAN_ACCEPTANCE_END = "<!-- chess-echo-plan-acceptance:end -->"
+_NO_ACCEPTANCE_BLOCK = object()
 
 OUTCOME_EXIT_CODES = {
     "resolved": 0,
@@ -77,6 +85,7 @@ MAX_DISPOSITIONS = 1_000
 MAX_COVERAGE = 1_000
 MAX_PRESERVED_SOURCES = 32
 MAX_DEPENDENCIES = 10
+MAX_ACCEPTANCE_FACTS = 256
 MAX_TITLE_BYTES = 4_096
 MAX_DETAIL_BYTES = 64 * 1024
 MAX_ACTOR_BYTES = 256
@@ -98,6 +107,7 @@ VERDICTS = ("accepted", "needs-revision", "full-review-required")
 PRIOR_OUTCOME_STATUSES = ("resolved", "remains", "superseded")
 DISPOSITION_STATUSES = ("addressed", "disputed", "deferred")
 IMPACTS = ("local", "full-review-required")
+ACCEPTANCE_ASSERTIONS = ("contains", "equals")
 
 ESCALATION_REASONS = frozenset(
     {
@@ -336,6 +346,239 @@ def _slug_list(values, label, maximum):
     if len(set(values)) != len(values) or list(values) != sorted(values):
         _fail("corrupt", "invalid-%s-order" % label, "%s must be UTF-8 sorted and unique" % label)
     return values
+
+
+def _acceptance_fact(value):
+    _exact_keys(value, {"id", "assertion", "value"}, "acceptance-fact")
+    return {
+        "id": _slug(value["id"], "acceptance-fact-id"),
+        "assertion": _enum(
+            value["assertion"],
+            ACCEPTANCE_ASSERTIONS,
+            "acceptance-assertion",
+        ),
+        "value": _text(
+            value["value"],
+            "acceptance-fact-value",
+            maximum=MAX_DETAIL_BYTES,
+        ),
+    }
+
+
+def _acceptance_facts_document(value):
+    _exact_keys(value, {"format", "facts"}, "acceptance-facts")
+    if value["format"] != ACCEPTANCE_FACTS_FORMAT:
+        _fail(
+            "unsupported",
+            "unsupported-acceptance-facts-format",
+            "Acceptance facts format is unsupported",
+        )
+    if not isinstance(value["facts"], list) or len(value["facts"]) > MAX_ACCEPTANCE_FACTS:
+        _fail(
+            "corrupt",
+            "invalid-acceptance-facts",
+            "Acceptance facts must be a bounded list",
+        )
+    facts = [_acceptance_fact(item) for item in value["facts"]]
+    _ordered_unique(
+        facts,
+        lambda item: item["id"].encode("utf-8"),
+        "acceptance-fact",
+        MAX_ACCEPTANCE_FACTS,
+    )
+    return {"format": ACCEPTANCE_FACTS_FORMAT, "facts": facts}
+
+
+def _reject_acceptance_duplicate_keys(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            _fail(
+                "ambiguous",
+                "duplicate-acceptance-key",
+                "Structured acceptance JSON repeats a key",
+                key,
+            )
+        value[key] = item
+    return value
+
+
+def _acceptance_block(text, begin, end, label):
+    lines = text.split("\n")
+    starts = [index for index, line in enumerate(lines) if line == begin]
+    ends = [index for index, line in enumerate(lines) if line == end]
+    if not starts and not ends:
+        return _NO_ACCEPTANCE_BLOCK
+    if (
+        len(starts) != 1
+        or len(ends) != 1
+        or ends[0] <= starts[0] + 1
+        or begin == ACCEPTANCE_FACTS_BEGIN
+        and starts[0] != 0
+        or begin == PLAN_ACCEPTANCE_BEGIN
+        and any(lines[ends[0] + 1:])
+    ):
+        _fail(
+            "corrupt",
+            "invalid-acceptance-facts",
+            "%s block is missing, duplicated, or empty" % label,
+        )
+    encoded = "\n".join(lines[starts[0] + 1:ends[0]])
+    try:
+        value = json.loads(encoded, object_pairs_hook=_reject_acceptance_duplicate_keys)
+    except (UnicodeError, json.JSONDecodeError, RecursionError, ValueError) as error:
+        _fail(
+            "corrupt",
+            "invalid-acceptance-facts",
+            "%s is invalid JSON: %s" % (label, error),
+        )
+    return value, (starts[0] + 1, ends[0] + 1)
+
+
+def acceptance_facts(body):
+    """Extract only the explicit bounded acceptance-facts block from an issue body."""
+    _text(body, "issue-body", minimum=0, maximum=1024 * 1024, trimmed=False)
+    value = _acceptance_block(
+        body,
+        ACCEPTANCE_FACTS_BEGIN,
+        ACCEPTANCE_FACTS_END,
+        "Issue acceptance facts",
+    )
+    if value is _NO_ACCEPTANCE_BLOCK:
+        value = {"format": ACCEPTANCE_FACTS_FORMAT, "facts": []}
+    else:
+        value, _lines = value
+    return _acceptance_facts_document(value)
+
+
+def _acceptance_requirement(value, unit_map):
+    _exact_keys(
+        value,
+        {"id", "assertion", "value", "unit_ids"},
+        "acceptance-requirement",
+    )
+    fact = _acceptance_fact(
+        {
+            "id": value["id"],
+            "assertion": value["assertion"],
+            "value": value["value"],
+        }
+    )
+    unit_ids = _plan_ordered_subset(
+        value["unit_ids"],
+        unit_map.index,
+        "acceptance-requirement-unit-ids",
+        MAX_UNITS,
+        allow_empty=False,
+    )
+    return {**fact, "unit_ids": list(unit_ids)}
+
+
+def _acceptance_coverage(value, unit_map):
+    _exact_keys(
+        value,
+        {"format", "requirements"},
+        "plan-acceptance-coverage",
+    )
+    if value["format"] != ACCEPTANCE_COVERAGE_FORMAT:
+        _fail(
+            "unsupported",
+            "unsupported-acceptance-coverage-format",
+            "Plan acceptance coverage format is unsupported",
+        )
+    if (
+        not isinstance(value["requirements"], list)
+        or len(value["requirements"]) > MAX_ACCEPTANCE_FACTS
+    ):
+        _fail(
+            "corrupt",
+            "invalid-acceptance-coverage",
+            "Plan acceptance requirements must be a bounded list",
+        )
+    requirements = [
+        _acceptance_requirement(item, unit_map)
+        for item in value["requirements"]
+    ]
+    _ordered_unique(
+        requirements,
+        lambda item: item["id"].encode("utf-8"),
+        "acceptance-requirement",
+        MAX_ACCEPTANCE_FACTS,
+    )
+    return {
+        "format": ACCEPTANCE_COVERAGE_FORMAT,
+        "requirements": requirements,
+    }
+
+
+def _plan_acceptance(plan_lines, unit_map):
+    extracted = _acceptance_block(
+        "".join(plan_lines),
+        PLAN_ACCEPTANCE_BEGIN,
+        PLAN_ACCEPTANCE_END,
+        "Plan acceptance coverage",
+    )
+    if extracted is _NO_ACCEPTANCE_BLOCK:
+        return None
+    value, (start_line, end_line) = extracted
+    coverage = _acceptance_coverage(value, unit_map)
+    block_units = {
+        unit["id"]
+        for unit in unit_map.units
+        if unit["start_line"] <= end_line and unit["end_line"] >= start_line
+    }
+    for requirement in coverage["requirements"]:
+        if block_units.intersection(requirement["unit_ids"]):
+            _fail(
+                "denied",
+                "acceptance-coverage-self-reference",
+                "Acceptance requirements must map to substantive plan units",
+                requirement["id"],
+            )
+        mapped_texts = [
+            "".join(
+                plan_lines[
+                    unit_map.by_id[unit_id]["start_line"] - 1:
+                    unit_map.by_id[unit_id]["end_line"]
+                ]
+            )
+            for unit_id in requirement["unit_ids"]
+        ]
+        if any(requirement["value"] not in text for text in mapped_texts):
+            _fail(
+                "denied",
+                "acceptance-coverage-mismatch",
+                "Each mapped plan unit must preserve the acceptance fact literal",
+                requirement["id"],
+            )
+    return coverage
+
+
+def _verify_acceptance_coverage(facts, coverage):
+    facts = _acceptance_facts_document(facts)
+    if coverage is None:
+        if not facts["facts"]:
+            return
+        _fail(
+            "denied",
+            "acceptance-coverage-mismatch",
+            "Plan acceptance coverage is required",
+        )
+    expected = facts["facts"]
+    actual = [
+        {
+            "id": row["id"],
+            "assertion": row["assertion"],
+            "value": row["value"],
+        }
+        for row in coverage["requirements"]
+    ]
+    if actual != expected:
+        _fail(
+            "denied",
+            "acceptance-coverage-mismatch",
+            "Plan acceptance coverage does not exactly preserve trusted issue facts",
+        )
 
 
 def _plan_ordered_subset(values, order_index, label, maximum, allow_empty=True):
@@ -627,14 +870,41 @@ def _verify_context_chain(root, context, expected_issue, expected_family):
     issue_snapshot_ref = _reference(context["issue_snapshot_binding"], "evidence-binding")
     baseline_ref = _reference(context["baseline_binding"], "evidence-binding")
     triage_ref = _reference(context["triage_binding"], "evidence-binding")
-    _verify_binding_shape(root, issue_snapshot_ref, "work-type-issue-snapshot", None, expected_issue, expected_family)
+    issue_projection = _verify_binding_shape(
+        root,
+        issue_snapshot_ref,
+        "work-type-issue-snapshot",
+        None,
+        expected_issue,
+        expected_family,
+    )
     _verify_binding_shape(root, baseline_ref, "work-type-baseline", issue_snapshot_ref, expected_issue, expected_family)
     _verify_binding_shape(root, triage_ref, "work-type-triage", baseline_ref, expected_issue, expected_family)
+    entry = _single_entry(issue_projection, ISSUE_SNAPSHOT_PATH)
+    data = _read_payload(root, expected_issue, entry)
+    try:
+        issue_snapshot = inspector.parse_json_object(data, "issue snapshot")
+    except inspector.InspectionFailure as failure:
+        _fail(failure.status, failure.code, failure.message, failure.subject)
+    if (
+        not isinstance(issue_snapshot, dict)
+        or issue_snapshot.get("format") != "chess-echo-work-type-issue-snapshot-v1"
+        or issue_snapshot.get("issue") != expected_issue
+        or not isinstance(issue_snapshot.get("body"), str)
+        or _canonical_bytes(issue_snapshot) != data
+    ):
+        _fail(
+            "stale",
+            "issue-snapshot-identity-mismatch",
+            "Plan context issue snapshot identity is incompatible",
+        )
+    _verify_digest(issue_snapshot, "snapshot_sha256", "issue-snapshot")
+    facts = acceptance_facts(issue_snapshot["body"])
     return {
         "issue_snapshot_binding": issue_snapshot_ref,
         "baseline_binding": baseline_ref,
         "triage_binding": triage_ref,
-    }
+    }, facts
 
 
 def _validate_predecessor_shape(value):
@@ -688,7 +958,9 @@ def _project_snapshot(root, envelope, expected_designated_digest, label):
     identity = _check_identity(projection, document["issue"], document["family_run_id"])
     if projection["decision"] != {"type": "plan-snapshot", "id": "snapshot-%s" % document["snapshot_sha256"]}:
         _fail("stale", "binding-decision-mismatch", "Plan snapshot decision is incompatible")
-    context = _verify_context_chain(root, document["context"], document["issue"], document["family_run_id"])
+    context, facts = _verify_context_chain(
+        root, document["context"], document["issue"], document["family_run_id"],
+    )
     if projection["subject"] != context["triage_binding"]:
         _fail("stale", "binding-subject-mismatch", "Plan snapshot subject must equal the exact triage binding")
     entries = _named_entries(projection, {PLAN_PATH, SNAPSHOT_PATH})
@@ -706,6 +978,8 @@ def _project_snapshot(root, envelope, expected_designated_digest, label):
     plan_data = _read_payload(root, document["issue"], plan_entry)
     plan_lines = _validate_plan_bytes(plan_data)
     _verify_units_against_plan(unit_map.units, total_lines, plan_lines)
+    coverage = _plan_acceptance(plan_lines, unit_map)
+    _verify_acceptance_coverage(facts, coverage)
     unit_map.reference_binding = reference
     return {
         "reference": reference,

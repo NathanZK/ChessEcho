@@ -16,6 +16,8 @@ Prefer exact source inspection and stop when mandatory evidence is sufficient. D
 
 Read the complete issue snapshot, relevant repository documentation, implementation, and tests. Identify every acceptance criterion, architectural constraint, existing abstraction, likely file, edge case, compatibility concern, risk, and validation requirement. Do not implement production code or tests.
 
+If the trusted issue body contains a `chess-echo-acceptance-facts-v1` block, preserve every fact byte-for-byte in a final `chess-echo-plan-acceptance-coverage-v1` block, retain its exact `contains` or `equals` assertion, and map it to one or more substantive plan units that each contain the exact literal. Do not map coverage to the metadata block itself, omit literals, weaken assertions, or infer additional structured facts from prose.
+
 Before submitting, complete the mandatory **Source-alignment and executability gate** in `docs/engineering/agent-workflow.md`. Do not plan from filenames, summaries, prior conversation, or assumed framework behavior. Inspect the exact symbols and repository implementation the plan relies on, and include concise source-alignment evidence in the plan.
 
 For analyzer or lint cleanup issues, also follow the guide's analyzer-specific gate: declare the issue's analyzer/check/scope, then inventory every finding in that scope, including suppressions relevant to the same scope. Give every scoped finding an exact location/cause/change/verification owner and answer where it goes. Do not expand the inventory to unrelated repository-wide checks. Prefer the smallest behavior-preserving resolution; do not use suppressions, configuration weakening, analyzer workarounds, or optional adjacent refactors.
