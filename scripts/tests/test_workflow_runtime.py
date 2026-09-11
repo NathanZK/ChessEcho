@@ -2235,6 +2235,74 @@ class WorkflowRuntimeTest(unittest.TestCase):
         )
         self.assertEqual("2026-09-05T00:00:01Z", review["source"]["updated_at"])
 
+    def test_authorization_comment_accepts_only_exact_confirmation_or_one_terminal_lf(
+        self,
+    ):
+        adapter = self.fixture.bootstrap()
+        confirmation = (
+            "approve plan "
+            "d19bd63dc4d41ecb45aa6a1b313f49f0a3ec3cfdc5f70a266a0136c1fc28ef53"
+        )
+        self.assertEqual(77, len(confirmation.encode()))
+
+        def observe(body):
+            def authorization_response(command, **options):
+                args = list(command)[1:]
+                if args == ["api", "repos/NathanZK/ChessEcho/issues/comments/1"]:
+                    value = copy.deepcopy(
+                        json.loads(
+                            (FIXTURES / "runtime-github.json").read_text()
+                        )["authorization"]
+                    )
+                    value["body"] = body
+                    return process_result(command, stdout=json.dumps(value).encode())
+                return self.fixture.supervise(command, **options)
+
+            with mock.patch.object(
+                runtime.workflow_supervisor,
+                "supervise",
+                side_effect=authorization_response,
+            ):
+                return adapter.observe_authorization(
+                    workflow_issue=152,
+                    target_kind="issue",
+                    target_number=152,
+                    source_kind="issue-comment",
+                    source_id=1,
+                    challenge_binding=reference(digest="8" * 64),
+                    confirmation=confirmation,
+                    source_request_binding=reference(digest="9" * 64),
+                )
+
+        for case, body in (
+            ("exact", confirmation),
+            ("one-terminal-lf", confirmation + "\n"),
+        ):
+            with self.subTest(case=case):
+                authorization = observe(body)
+                self.assertEqual(
+                    inspector.sha256(body.encode()),
+                    authorization["source"]["body_sha256"],
+                )
+
+        rejected = {
+            "leading-whitespace": " " + confirmation,
+            "trailing-spaces": confirmation + "  ",
+            "two-terminal-lfs": confirmation + "\n\n",
+            "terminal-crlf": confirmation + "\r\n",
+            "altered-hash": confirmation[:-1] + "e",
+            "appended-text": confirmation + " approved",
+            "unicode-substitution": confirmation.replace("a", "\u0430", 1),
+            "other-byte-difference": confirmation + "\0",
+        }
+        for case, body in rejected.items():
+            with self.subTest(case=case):
+                with self.assertRaises(runtime.RuntimeFailure) as raised:
+                    observe(body)
+                self.assertEqual(
+                    "authorization-confirmation-mismatch", raised.exception.code
+                )
+
     def test_edited_authorization_is_rejected(self):
         adapter = self.fixture.bootstrap()
 
