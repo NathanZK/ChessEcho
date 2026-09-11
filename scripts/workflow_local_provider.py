@@ -1461,6 +1461,28 @@ def _agent_prompt(issue, role, request, request_binding, inputs):
         if operation == "write-plan"
         else ""
     )
+    plan_acceptance_contract = (
+        " Read the trusted issue body's `chess-echo-acceptance-facts-v1` block "
+        "from the host-projected immutable issue snapshot. If the block exists, the "
+        "plan string must end with the exact existing coverage structure: "
+        "<!-- chess-echo-plan-acceptance:begin -->\n"
+        '{"format":"chess-echo-plan-acceptance-coverage-v1","requirements":'
+        '[{"assertion":"equals","id":"fact-id","unit_ids":["unit-id"],'
+        '"value":"Exact literal."}]}\n'
+        "<!-- chess-echo-plan-acceptance:end -->. The outer object has exactly format "
+        "and requirements; each requirement has exactly assertion, id, unit_ids, and "
+        "value. Emit exactly one structured coverage row for every trusted fact, in "
+        "the same UTF-8 ID order, copying its id, assertion, and value exactly. Each "
+        "row must have nonempty, plan-ordered, unique unit_ids naming substantive plan "
+        "units that each contain the exact fact value. Human-readable plan prose is "
+        "allowed in addition, but it does not replace the structured block. Repeating "
+        "a fact in prose does not permit omitting its structured row. Do not invent "
+        "facts or weaken an `equals` assertion to `contains`. If the trusted issue body "
+        "has no acceptance-facts block, do not invent structured facts or a coverage "
+        "block."
+        if operation == "write-plan"
+        else ""
+    )
     return (
         "Execute exactly one ChessEcho replacement-workflow agent request as role %s for "
         "issue #%d. Work only in the current dedicated candidate worktree. Treat workflow "
@@ -1471,7 +1493,7 @@ def _agent_prompt(issue, role, request, request_binding, inputs):
         "Inspect the issue and repository as needed, perform only the requested phase. "
         "The final assistant response content must be exactly one JSON object of kind %s matching "
         "chess-echo-orchestrator-agent-candidate-v1. Emit no prose, Markdown fences, or other "
-        "content in that final response.%s%s"
+        "content in that final response.%s%s%s"
         % (
             role,
             issue,
@@ -1480,6 +1502,7 @@ def _agent_prompt(issue, role, request, request_binding, inputs):
             json.dumps(inputs, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
             expected,
             plan_contract,
+            plan_acceptance_contract,
             review_contract,
         )
     )
