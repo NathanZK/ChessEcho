@@ -586,6 +586,114 @@ class TrustedLocalProviderTest(unittest.TestCase):
         plan_policy._verify_units_against_plan(parsed, last_line, lines)
         self.assertEqual(["canary"], ids)
 
+    def test_planner_prompt_requires_structured_acceptance_coverage(self):
+        facts = {
+            "facts": [
+                {
+                    "assertion": "equals",
+                    "id": "invalid-time-control-message",
+                    "value": (
+                        "Invalid timeControl 'unsupported'. Supported timeControls: "
+                        "RAPID, BLITZ, BULLET, CLASSICAL, STANDARD."
+                    ),
+                },
+                {
+                    "assertion": "contains",
+                    "id": "standard-alias",
+                    "value": "STANDARD",
+                },
+                {
+                    "assertion": "contains",
+                    "id": "supported-time-controls",
+                    "value": "RAPID, BLITZ, BULLET, CLASSICAL, STANDARD",
+                },
+            ],
+            "format": "chess-echo-acceptance-facts-v1",
+        }
+        body = (
+            "<!-- chess-echo-acceptance-facts:begin -->\n"
+            + json.dumps(facts, sort_keys=True, separators=(",", ":"))
+            + "\n<!-- chess-echo-acceptance-facts:end -->\n"
+        )
+        issue_snapshot = json.dumps(
+            {"body": body},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        inputs = [
+            {
+                "role": "issue-snapshot",
+                "binding": {
+                    "kind": "evidence-binding",
+                    "sha256": "e" * 64,
+                    "size": len(issue_snapshot),
+                },
+                "entries": [
+                    {
+                        "path": "workflow-work-type/issue-snapshot.json",
+                        "sha256": inspector.sha256(issue_snapshot),
+                        "size": len(issue_snapshot),
+                        "bytes_base64": base64.b64encode(issue_snapshot).decode("ascii"),
+                    }
+                ],
+            }
+        ]
+
+        prompt = provider._agent_prompt(
+            198,
+            "planner",
+            self.fixture.request(),
+            {"kind": "evidence-binding", "sha256": "d" * 64, "size": 1},
+            inputs,
+        )
+        candidate_contract = provider._plan_candidate_contract(inputs)
+
+        self.assertIn(
+            json.dumps(inputs, ensure_ascii=True, sort_keys=True, separators=(",", ":")),
+            prompt,
+        )
+        self.assertIn(
+            "Read the trusted issue body's `chess-echo-acceptance-facts-v1` block",
+            prompt,
+        )
+        self.assertIn("<!-- chess-echo-plan-acceptance:begin -->", prompt)
+        self.assertIn("<!-- chess-echo-plan-acceptance:end -->", prompt)
+        self.assertIn(
+            '"format":"chess-echo-plan-acceptance-coverage-v1"',
+            prompt,
+        )
+        self.assertIn(
+            "The outer object has exactly format and requirements; each requirement "
+            "has exactly assertion, id, unit_ids, and value",
+            prompt,
+        )
+        self.assertIn(
+            "Emit exactly one structured coverage row for every trusted fact",
+            prompt,
+        )
+        self.assertIn(
+            "copying its id, assertion, and value exactly",
+            prompt,
+        )
+        self.assertIn(
+            "Human-readable plan prose is allowed in addition, but it does not replace "
+            "the structured block",
+            prompt,
+        )
+        self.assertIn(
+            "Repeating a fact in prose does not permit omitting its structured row",
+            prompt,
+        )
+        self.assertIn(
+            "Do not invent facts or weaken an `equals` assertion to `contains`",
+            prompt,
+        )
+        self.assertEqual(
+            ["format", "kind", "plan", "units", "revision"],
+            candidate_contract["required"],
+        )
+        self.assertNotIn("acceptance", candidate_contract["properties"])
+
     def test_planner_prompt_communicates_exact_revision_candidate_contract(self):
         inputs = [
             {"role": "plan-snapshot", "binding": {}, "entries": []},
