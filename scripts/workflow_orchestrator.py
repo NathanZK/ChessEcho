@@ -395,6 +395,7 @@ class Orchestrator(gates.ApprovalGateMixin):
         active = {row["node"]: row["binding"] for row in self._read(state["policy_state_binding"], POLICY_PATH, "policy state")["active"]}
         required = REQUIRED_NODES.get(phase, ())
         extra = [("baseline", baseline_binding)] + [(node, active[node]) for node in required]
+        if phase == "PLANNING": extra.append(("issue-snapshot", triage["issue_snapshot_binding"]))
         if phase == "PLAN_REVIEW": extra.append(("plan-snapshot", self._candidate_binding(state, "plan-snapshot")))
         if phase == "PLANNING" and self._candidate_binding(state, "plan-snapshot", required=False) is not None:
             extra += [("plan-snapshot", self._candidate_binding(state, "plan-snapshot")),

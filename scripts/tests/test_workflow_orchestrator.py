@@ -17,6 +17,7 @@ from scripts import workflow_authority as authority
 from scripts import workflow_evidence as evidence
 from scripts import workflow_issue_source as issue_source
 from scripts import workflow_inspector as inspector
+from scripts import workflow_local_provider as local_provider
 from scripts import workflow_orchestrator as orchestrator
 from scripts import workflow_orchestrator_resume as resume
 from scripts import workflow_plan_revision_policy as plan_policy
@@ -368,6 +369,134 @@ class CandidateOutputContractTest(unittest.TestCase):
 
 
 class OrchestratorInitializationAcceptanceTest(unittest.TestCase):
+    def test_initial_planning_projects_authoritative_issue_snapshot_payload(self):
+        fixture = OrchestratorFixture()
+        self.addCleanup(fixture.close)
+        fixture.install_provider(self)
+        facts = {
+            "format": "chess-echo-acceptance-facts-v1",
+            "facts": [
+                {
+                    "id": "planner-projection",
+                    "assertion": "equals",
+                    "value": "The planner reads this authoritative payload.",
+                }
+            ],
+        }
+        body = (
+            "<!-- chess-echo-acceptance-facts:begin -->\n"
+            + json.dumps(facts, sort_keys=True, separators=(",", ":"))
+            + "\n<!-- chess-echo-acceptance-facts:end -->\n\n"
+            "Project the trusted issue snapshot into initial planning."
+        )
+        responses = json.loads((fixture.bin / "gh-responses.json").read_text())
+        responses["api"]["repos/%s/issues/%d" % (SLUG, ISSUE)]["body"] = body
+        (fixture.bin / "gh-responses.json").write_text(json.dumps(responses, sort_keys=True))
+        fixture.publish_response_source()
+        orchestrator.init(fixture.root, ISSUE, request=fixture.request())
+
+        state = fixture.state()
+        triage = fixture.read(state["triage_binding"])
+        issue_binding = triage["issue_snapshot_binding"]
+        issue_snapshot = fixture.read(
+            issue_binding, "workflow-work-type/issue-snapshot.json"
+        )
+        claimed = fixture.step()
+        self.assertEqual("execution-candidate", claimed["outcome"]["code"])
+        request = fixture.read(
+            fixture.state()["pending"]["request_binding"],
+            "workflow-orchestration/execution-request.json",
+        )
+
+        issue_input = next(
+            item for item in request["input_bindings"]
+            if item["role"] == "issue-snapshot"
+        )
+        self.assertEqual(issue_binding, issue_input["binding"])
+        projected = local_provider._input_projection(fixture.root, ISSUE, request)
+        projected_issue = next(
+            item for item in projected if item["role"] == "issue-snapshot"
+        )
+        self.assertEqual(1, len(projected_issue["entries"]))
+        entry = projected_issue["entries"][0]
+        payload = base64.b64decode(entry["bytes_base64"], validate=True)
+        self.assertEqual(
+            inspector.canonical_bytes(issue_snapshot),
+            payload,
+        )
+        self.assertEqual(issue_snapshot, json.loads(payload))
+        self.assertEqual(body, issue_snapshot["body"])
+        self.assertEqual(facts, plan_policy.acceptance_facts(issue_snapshot["body"]))
+
+        coverage = {
+            "format": "chess-echo-plan-acceptance-coverage-v1",
+            "requirements": [
+                {
+                    **facts["facts"][0],
+                    "unit_ids": ["planner-projection"],
+                }
+            ],
+        }
+        candidate = {
+            "format": resume.CANDIDATE_FORMAT,
+            "kind": "plan",
+            "plan": (
+                facts["facts"][0]["value"]
+                + "\n<!-- chess-echo-plan-acceptance:begin -->\n"
+                + json.dumps(coverage, sort_keys=True, separators=(",", ":"))
+                + "\n<!-- chess-echo-plan-acceptance:end -->\n"
+            ),
+            "units": [
+                {
+                    "id": "planner-projection",
+                    "title": "Project the trusted issue snapshot",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "review_class": "acceptance-criteria",
+                    "dependencies": [],
+                },
+                {
+                    "id": "acceptance-coverage",
+                    "title": "Map the authoritative acceptance fact",
+                    "start_line": 2,
+                    "end_line": 4,
+                    "review_class": "acceptance-criteria",
+                    "dependencies": ["planner-projection"],
+                },
+            ],
+            "revision": None,
+        }
+        raw_candidate = json.dumps(candidate, separators=(",", ":")).encode()
+        candidate_result = {
+            "outcome": "succeeded",
+            "candidate_output": {
+                "sha256": inspector.sha256(raw_candidate),
+                "size": len(raw_candidate),
+            },
+            "process_result": {
+                "stdout": {
+                    "base64": base64.b64encode(raw_candidate).decode("ascii"),
+                }
+            },
+        }
+        decode_candidate = resume.decode_candidate
+        self.assertEqual(candidate, decode_candidate(candidate_result, "plan"))
+        with mock.patch.object(
+            resume,
+            "decode_candidate",
+            side_effect=lambda _result, expected: decode_candidate(
+                candidate_result, expected
+            ),
+        ), mock.patch.object(
+            plan_policy,
+            "evaluate_baseline",
+            wraps=plan_policy.evaluate_baseline,
+        ) as evaluate_baseline:
+            finalized = fixture.step(request=claimed["handoff"])
+
+        self.assertEqual("PLAN_REVIEW", finalized["phase"])
+        self.assertEqual(1, evaluate_baseline.call_count)
+
     def test_malformed_explicit_acceptance_facts_fail_before_authority(self):
         fixture = OrchestratorFixture()
         self.addCleanup(fixture.close)
