@@ -161,7 +161,7 @@ the strict phase-specific contract:
 - final-review PR metadata has exact `head_ref`, `title`, and `body` fields,
   with nonempty `## What`, `## Why`, and `## Testing` sections.
 
-Provider 1.5.5 carries operation-specific JSON Schema copies to communicate the
+Provider 1.5.6 carries operation-specific JSON Schema copies to communicate the
 plan candidate contract in `write-plan` and the review candidate contract in
 `review-plan`, `review-tests`, and `review-final`. The plan schema has distinct
 initial and revision variants selected from the exact projected input roles
@@ -171,7 +171,10 @@ validators. Implementer prompts do not embed a JSON Schema copy. The provider
 cannot normalize an unsupported shape, verdict, extra field, or prose-prefixed
 object into acceptance. #198 demonstrated both an invalid reviewer candidate
 and, in a later isolated run, a planner candidate containing prose before JSON;
-the prompt corrections leave strict decoding unchanged.
+the prompt corrections leave strict decoding unchanged. Its only
+`session.info` compatibility rule accepts an ephemeral `file_created` event
+bound to one active `create` start and its exact path; the event does not alter
+tool completion accounting.
 
 ## Human authority and recovery
 

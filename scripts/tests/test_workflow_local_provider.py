@@ -175,6 +175,34 @@ def _jsonl(candidate=CANDIDATE, include_tool=True):
     )
 
 
+def _jsonl_with_file_created(path="created.txt"):
+    events = _jsonl_events(_jsonl())
+    request = next(
+        event
+        for event in events
+        if event["type"] == "assistant.message"
+        and event["data"]["toolRequests"]
+    )["data"]["toolRequests"][0]
+    request["name"] = "create"
+    request["arguments"] = {"path": path, "content": "created\n"}
+    start = next(
+        event for event in events if event["type"] == "tool.execution_start"
+    )
+    start["data"]["toolName"] = "create"
+    start["data"]["arguments"] = dict(request["arguments"])
+    events.insert(
+        events.index(start) + 1,
+        _event(
+            "session.info",
+            "file-created",
+            start["id"],
+            {"infoType": "file_created", "message": path},
+            True,
+        ),
+    )
+    return _encode_events(events)
+
+
 def _jsonl_events(data):
     return [json.loads(line) for line in data.decode("utf-8").splitlines()]
 
@@ -756,6 +784,172 @@ class TrustedLocalProviderTest(unittest.TestCase):
             json.loads(CANDIDATE),
             resume.decode_candidate(result, "plan"),
         )
+
+    def test_jsonl_accepts_exact_create_file_created_event_without_completing_tool(self):
+        raw = _jsonl_with_file_created()
+        events = _jsonl_events(raw)
+        info_index = next(
+            index
+            for index, event in enumerate(events)
+            if event["type"] == "session.info"
+        )
+        decoder = provider._JsonlCandidateDecoder()
+        decoder.feed(_encode_events(events[: info_index + 1]))
+        self.assertEqual({"tool-1"}, decoder.started_tools)
+        self.assertEqual(set(), decoder.completed_tools)
+        decoder.feed(_encode_events(events[info_index + 1 :]))
+        self.assertEqual(CANDIDATE.encode("utf-8"), decoder.finish())
+
+        bundle = self._execute_through_runtime(transport=raw, bundle=True)
+        self.assertEqual("succeeded", bundle.document["outcome"])
+        self.assertEqual(
+            CANDIDATE.encode("utf-8"),
+            base64.b64decode(
+                bundle.document["process_result"]["stdout"]["base64"],
+                validate=True,
+            ),
+        )
+        self.assertEqual(raw, bundle.attachments[0]["bytes"])
+
+    def test_jsonl_file_created_event_grammar_fails_closed(self):
+        def changed(mutator):
+            events = _jsonl_events(_jsonl_with_file_created())
+            info = next(
+                event for event in events if event["type"] == "session.info"
+            )
+            start = next(
+                event for event in events if event["type"] == "tool.execution_start"
+            )
+            mutator(events, info, start)
+            return _encode_events(events)
+
+        def move_after(events, info, target_type):
+            events.remove(info)
+            target = next(
+                event for event in events if event["type"] == target_type
+            )
+            events.insert(events.index(target) + 1, info)
+
+        def add_second_active_tool(events, info, start):
+            events[:] = [
+                event
+                for event in events
+                if event["type"] != "assistant.tool_call_delta"
+            ]
+            message = next(
+                event
+                for event in events
+                if event["type"] == "assistant.message"
+                and event["data"]["toolRequests"]
+            )
+            second_request = copy.deepcopy(message["data"]["toolRequests"][0])
+            second_request["toolCallId"] = "tool-2"
+            message["data"]["toolRequests"].append(second_request)
+            second_start = copy.deepcopy(start)
+            second_start["id"] = "x1-second"
+            second_start["parentId"] = start["id"]
+            second_start["data"]["toolCallId"] = "tool-2"
+            events.insert(events.index(info), second_start)
+
+        cases = {
+            "unknown-subtype": changed(
+                lambda _events, info, _start: info["data"].__setitem__(
+                    "infoType", "other"
+                )
+            ),
+            "missing-field": changed(
+                lambda _events, info, _start: info["data"].pop("message")
+            ),
+            "extra-field": changed(
+                lambda _events, info, _start: info["data"].__setitem__(
+                    "extra", True
+                )
+            ),
+            "non-ephemeral": changed(
+                lambda _events, info, _start: info.pop("ephemeral")
+            ),
+            "empty-message": changed(
+                lambda _events, info, _start: info["data"].__setitem__(
+                    "message", ""
+                )
+            ),
+            "non-string-message": changed(
+                lambda _events, info, _start: info["data"].__setitem__(
+                    "message", 1
+                )
+            ),
+            "empty-path": changed(
+                lambda _events, _info, start: start["data"]["arguments"].__setitem__(
+                    "path", ""
+                )
+            ),
+            "non-string-path": changed(
+                lambda _events, _info, start: start["data"]["arguments"].__setitem__(
+                    "path", 1
+                )
+            ),
+            "wrong-parent": changed(
+                lambda _events, info, _start: info.__setitem__("parentId", "a1")
+            ),
+            "wrong-active-tool": changed(
+                lambda _events, _info, start: start["data"].__setitem__(
+                    "toolName", "view"
+                )
+            ),
+            "path-mismatch": changed(
+                lambda _events, info, _start: info["data"].__setitem__(
+                    "message", "different.txt"
+                )
+            ),
+            "ambiguous-active-tools": changed(add_second_active_tool),
+            "before-start": changed(
+                lambda events, info, start: (
+                    events.remove(info),
+                    events.insert(events.index(start), info),
+                )
+            ),
+            "after-completion": changed(
+                lambda events, info, _start: move_after(
+                    events, info, "tool.execution_complete"
+                )
+            ),
+            "after-turn-end": changed(
+                lambda events, info, _start: move_after(
+                    events, info, "assistant.turn_end"
+                )
+            ),
+            "after-idle": changed(
+                lambda events, info, _start: move_after(
+                    events, info, "assistant.idle"
+                )
+            ),
+        }
+        for name, raw in cases.items():
+            with self.subTest(name=name):
+                with self.assertRaises(provider.LocalProviderFailure):
+                    provider._extract_candidate_from_jsonl(raw)
+
+        with self.assertRaises(provider.LocalProviderFailure) as raised:
+            provider._extract_candidate_from_jsonl(cases["unknown-subtype"])
+        self.assertEqual("unsupported", raised.exception.status)
+        self.assertEqual("local-agent-jsonl-event", raised.exception.code)
+
+    def test_jsonl_file_created_event_does_not_resolve_missing_completion(self):
+        events = _jsonl_events(_jsonl_with_file_created())
+        completion = next(
+            event
+            for event in events
+            if event["type"] == "tool.execution_complete"
+        )
+        events.remove(completion)
+        turn_end = next(
+            event for event in events if event["type"] == "assistant.turn_end"
+        )
+        turn_end["parentId"] = "x1"
+
+        with self.assertRaises(provider.LocalProviderFailure) as raised:
+            provider._extract_candidate_from_jsonl(_encode_events(events))
+        self.assertEqual("local-agent-jsonl-turn", raised.exception.code)
 
     def test_observed_pinned_cli_ephemeral_reasoning_fixture_is_accepted(self):
         raw = PINNED_CLI_FIXTURE.read_bytes()

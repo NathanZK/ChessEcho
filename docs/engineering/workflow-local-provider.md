@@ -449,6 +449,23 @@ actually given. Strict gates remain necessary because model output is
 untrusted; the correction makes the upstream contract explicit rather than
 weakening the downstream boundary.
 
+### 13. File-created information is not tool completion
+
+**Problem:** A paused isolated #198 run observed an ephemeral `session.info`
+record between a `create` tool start and its successful completion. Provider
+1.5.5 rejected the event type before the run could proceed. **Decision:**
+Provider 1.5.6 accepts only the observed `file_created` subtype: the payload has
+exactly `infoType` and a nonempty string `message`, the event has
+`ephemeral: true`, exactly one tool execution is active, that execution is a
+`create` invocation, the event parent is its exact `tool.execution_start` ID,
+and the message is byte-for-byte equal to the invocation's nonempty string
+`arguments.path`. **Safety:** The information event does not alter requested,
+started, or completed tool accounting. The matching
+`tool.execution_complete` remains mandatory, and every other `session.info`
+shape, subtype, placement, parent, tool, or path fails closed. Raw transport and
+terminal candidate bytes remain unchanged. The preserved paused run was not
+resumed or mutated to make this correction.
+
 ## Copilot JSONL transport decision
 
 Issue #176 exposed two independent Phase 1 transport failures. The initial
@@ -505,6 +522,9 @@ unconsumed metadata on individual tool-request objects, while `toolCallId`,
 validation. The unconsumed `tool.execution_start.data.shellToolInfo` metadata
 is optional but must remain an object when present. Event envelopes and other
 event types remain closed; validation of all other event payloads is unchanged.
+The sole accepted `session.info` shape is the ephemeral `file_created`
+observation described above. It is bound to one active `create` start and its
+exact path, and it never substitutes for tool completion.
 
 The bounded issue-176 run exposed additional exact pinned-CLI shapes that had
 previously been masked by transport truncation. The three ordered startup

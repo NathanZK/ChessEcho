@@ -28,7 +28,7 @@ except ImportError:  # pragma: no cover - direct script loading
 
 
 NAME = "chess-echo-trusted-local"
-VERSION = "1.5.5"
+VERSION = "1.5.6"
 RESULT_FORMAT = "chess-echo-trusted-local-execution-result-v1"
 PROCESS_DIAGNOSTIC_FORMAT = "chess-echo-trusted-local-process-diagnostic-v1"
 DISCOVERY_FORMAT = "chess-echo-pending-result-candidates-v1"
@@ -79,6 +79,7 @@ JSONL_EVENT_TYPES = frozenset(
         "assistant.message",
         "assistant.reasoning",
         "tool.execution_start",
+        "session.info",
         "session.background_tasks_changed",
         "tool.execution_partial_result",
         "tool.execution_complete",
@@ -96,6 +97,7 @@ JSONL_EPHEMERAL_TYPES = frozenset(
         "assistant.reasoning_delta",
         "assistant.tool_call_delta",
         "assistant.reasoning",
+        "session.info",
         "session.background_tasks_changed",
         "tool.execution_partial_result",
         "assistant.message_start",
@@ -369,6 +371,7 @@ class _JsonlCandidateDecoder:
         self.reasoning_message_delta_seen = False
         self.previous_id = None
         self.tool_start_events = {}
+        self.tool_start_invocations = {}
         self.denial_background_tool = None
         self.pending_denial = None
         self.opaque_denial_parents = set()
@@ -769,7 +772,53 @@ class _JsonlCandidateDecoder:
                 _fail("corrupt", "local-agent-jsonl-tool", "Copilot tool start does not match one pending request")
             self.started_tools.add(tool_call_id)
             self.tool_start_events[tool_call_id] = event_id
+            self.tool_start_invocations[tool_call_id] = {
+                "arguments": data["arguments"],
+                "tool_name": data["toolName"],
+            }
             self.denial_background_tool = tool_call_id
+            return
+        if event_type == "session.info":
+            _event_data_keys(data, {"infoType", "message"}, "session info")
+            if data.get("infoType") != "file_created":
+                _fail(
+                    "unsupported",
+                    "local-agent-jsonl-event",
+                    "Copilot session.info subtype is unreviewed",
+                )
+            message = _event_text(data.get("message"), "file-created message")
+            if self.active_turn is None or len(open_tools) != 1:
+                _fail(
+                    "corrupt",
+                    "local-agent-jsonl-sequence",
+                    "Copilot file-created event is outside one active tool execution",
+                )
+            tool_call_id = next(iter(open_tools))
+            invocation = self.tool_start_invocations[tool_call_id]
+            arguments = invocation["arguments"]
+            path = arguments.get("path") if isinstance(arguments, dict) else None
+            if (
+                invocation["tool_name"] != "create"
+                or not isinstance(path, str)
+                or not path
+            ):
+                _fail(
+                    "corrupt",
+                    "local-agent-jsonl-tool",
+                    "Copilot file-created event does not match a create invocation",
+                )
+            if parent_id != self.tool_start_events[tool_call_id]:
+                _fail(
+                    "corrupt",
+                    "local-agent-jsonl-parent",
+                    "Copilot file-created event does not bind its active tool start",
+                )
+            if message != path:
+                _fail(
+                    "corrupt",
+                    "local-agent-jsonl-tool",
+                    "Copilot file-created path does not match its create invocation",
+                )
             return
         if event_type == "tool.execution_partial_result":
             if _event_text(data.get("toolCallId"), "toolCallId") not in self.started_tools:
