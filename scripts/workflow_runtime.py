@@ -982,7 +982,7 @@ class Runtime:
         if accounts.get(account_id) != login or association not in self._config['human_approval']['allowed_associations']:
             _fail('denied', 'authorization-actor-untrusted', 'Authorization actor is not trusted')
         body = value.get('body')
-        if not isinstance(body, str) or body != confirmation:
+        if not isinstance(body, str) or not isinstance(confirmation, str) or body not in (confirmation, confirmation + '\n'):
             _fail('denied', 'authorization-confirmation-mismatch', 'Authorization body is not byte-exact')
         if review_edited or source_kind == 'issue-comment' and value.get('created_at') != value.get('updated_at'): _fail('denied', 'authorization-source-edited', 'Edited authorization sources are not accepted')
         if value.get('id') != source_id:
