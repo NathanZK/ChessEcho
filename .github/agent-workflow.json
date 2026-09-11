@@ -97,9 +97,9 @@
     "local_host": {
       "format": "chess-echo-trusted-local-host-config-v1",
       "name": "chess-echo-trusted-local-host",
-      "version": "1.3.1",
+      "version": "1.4.0",
       "source": "scripts/workflow_local_host.py",
-      "source_sha256": "297f90f4c848d12df5df0983b67ea77803d1e997a3fd97a3a3a2519514d79201",
+      "source_sha256": "cacc8bb99113c49ef98fbd3a32a97802c555b67220870c005f49c4dbe20e1b5e",
       "provider": {
         "name": "chess-echo-trusted-local",
         "version": "1.5.6",

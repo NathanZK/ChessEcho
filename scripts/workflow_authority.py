@@ -46,9 +46,11 @@ CANDIDATE_SLOTS = frozenset(
     documentation-content-check documentation-diff-check human-challenge
     human-authorization cutover-authorization revocation-intent execution-request
     execution-result final-gate-satisfaction pr-publication-gate-satisfaction
-    pr-publication-observation supervision-policy-change""".split()
+    pr-publication-observation supervision-policy-change gate-rejection""".split()
 )
-PENDING_KINDS = frozenset("agent validation git-read github-read github-write human policy".split())
+PENDING_KINDS = frozenset(
+    "agent validation git-read github-read github-write human human-rejection policy".split()
+)
 PENDING_STATUSES = frozenset(("requested", "cancel-requested"))
 TRANSITION_TYPES = frozenset(
     """initialize classify plan-request plan-review plan-revision plan-approve plan-reject
@@ -58,8 +60,8 @@ TRANSITION_TYPES = frozenset(
     validation-request validation-record final-review pr-prepare pr-reconcile
     final-approve final-reject final-revoke artifact-request artifact-review
     artifact-accept artifact-reject artifact-revoke cancel-request abandon pause
-    recover supervision-change-request supervision-change publication-request
-    publication-approve cutover complete""".split()
+    recover rejection-request supervision-change-request supervision-change
+    publication-request publication-approve cutover complete""".split()
 )
 class AuthorityFailure(Exception):
     def __init__(self, status, code, message, subject=None):
@@ -314,7 +316,7 @@ def _related(root, state, cache):
             state["previous_authority"])["decision"]["type"]
         if pending["kind"] == "policy":
             expected = {"gate-challenge"}
-        elif pending["kind"] == "human":
+        elif pending["kind"] in {"human", "human-rejection"}:
             expected = {"gate-challenge", "human-challenge",
                         "supervision-policy-change"}
         else:

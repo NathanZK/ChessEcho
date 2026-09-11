@@ -1,3 +1,4 @@
+import argparse
 import base64
 import contextlib
 import copy
@@ -3119,6 +3120,15 @@ class TrustedLocalHostProcessTest(unittest.TestCase):
             "trusted_worker_authentication=worker_token_reader is not None",
             pathlib.Path(host.__file__).read_text(),
         )
+        commands = next(
+            action
+            for action in host.build_parser()._actions
+            if isinstance(action, argparse._SubParsersAction)
+        )
+        self.assertIn("reject", commands.choices)
+        reject = commands.choices["reject"]
+        reject_options = {action.dest for action in reject._actions}
+        self.assertTrue({"expected_tip", "reason", "authorization"} <= reject_options)
 
     def test_isolated_fresh_process_rejects_candidate_import_shadowing(self):
         with tempfile.TemporaryDirectory(dir=str(REPOSITORY)) as temporary:

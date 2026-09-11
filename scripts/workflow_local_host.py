@@ -19,7 +19,7 @@ sys.dont_write_bytecode = True
 
 
 NAME = "chess-echo-trusted-local-host"
-VERSION = "1.3.1"
+VERSION = "1.4.0"
 CONFIG_FORMAT = "chess-echo-trusted-local-host-config-v1"
 CONTROL_SOURCES = (
     "scripts/workflow_authority.py",
@@ -31,6 +31,7 @@ CONTROL_SOURCES = (
     "scripts/workflow_local_provider.py",
     "scripts/workflow_migration.py",
     "scripts/workflow_orchestrator.py",
+    "scripts/workflow_orchestrator_gates.py",
     "scripts/workflow_orchestrator_resume.py",
     "scripts/workflow_plan_revision_policy.py",
     "scripts/workflow_policy.py",
@@ -461,6 +462,12 @@ def build_parser():
         command.add_argument("--workspace", required=True)
         command.add_argument("--expected-tip", required=True)
         command.add_argument("--authorization")
+    reject = commands.add_parser("reject")
+    reject.add_argument("issue", type=int)
+    reject.add_argument("--workspace", required=True)
+    reject.add_argument("--expected-tip", required=True)
+    reject.add_argument("--reason")
+    reject.add_argument("--authorization")
     cancel = commands.add_parser("cancel")
     cancel.add_argument("issue", type=int)
     cancel.add_argument("--workspace", required=True)
@@ -550,6 +557,19 @@ def main(argv=None):
             elif args.command == "cancel":
                 document = orchestrator.cancel(
                     workspace, args.issue, expected_tip=args.expected_tip, reason=args.reason
+                )
+            elif args.command == "reject":
+                supplied = (
+                    _load_document(args.authorization, "authorization")
+                    if args.authorization
+                    else None
+                )
+                document = orchestrator.reject(
+                    workspace,
+                    args.issue,
+                    expected_tip=args.expected_tip,
+                    authorization=supplied,
+                    reason=args.reason,
                 )
             else:
                 supplied = (

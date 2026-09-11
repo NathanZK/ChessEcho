@@ -27,7 +27,7 @@ runtime, provider, and driver work.
 | Reviewed Phase 1 host and deterministic workspace/result bootstrap | `workflow_local_host.py` |
 | Trusted-local agent execution and execution-fact attestation | `workflow_local_provider.py` |
 | Trusted pre-genesis issue-source publication | `workflow_issue_source.py` |
-| Active replacement lifecycle composition | `workflow_orchestrator.py` |
+| Active replacement lifecycle composition | `workflow_orchestrator.py` and its gate-focused `workflow_orchestrator_gates.py` mixin |
 | Exact candidate decoding, phase-specific candidate schemas, and pending-result resume helpers | `workflow_orchestrator_resume.py` |
 | Bounded automatic continuation over fresh host plans | `workflow_driver.py` |
 | Legacy lifecycle, approvals, reviews, corrections, validation, adoption/migration, and projection-recovery policy | `agent_workflow.py` |
@@ -72,7 +72,10 @@ workflow_issue_source -> workflow_inspector, workflow_cas, workflow_runtime
 workflow_orchestrator -> workflow_inspector, workflow_evidence, workflow_authority,
                          workflow_work_type_policy, workflow_plan_revision_policy,
                          workflow_policy, workflow_supervision_policy, workflow_runtime,
-                         workflow_issue_source, workflow_orchestrator_resume
+                         workflow_issue_source, workflow_orchestrator_gates,
+                         workflow_orchestrator_resume
+workflow_orchestrator_gates -> workflow_inspector, workflow_evidence, workflow_policy,
+                               workflow_runtime, workflow_supervision_policy
 workflow_orchestrator_resume -> workflow_inspector
 workflow_driver
 workflow_repair   -> workflow_inspector, workflow_cas
@@ -143,6 +146,11 @@ validate Copilot transport and extract candidate bytes, but it cannot normalize
 those bytes into a weaker phase contract. The orchestrator imports the resume
 module; the resume module does not import the orchestrator, runtime, provider,
 or host.
+
+`workflow_orchestrator_gates.py` is a same-layer mixin that keeps exact
+approval, rejection, and bounded test-rework composition out of the primary
+orchestrator module. It is not independently callable and does not import the
+orchestrator, authority, provider, host, CAS, or legacy lifecycle.
 
 `workflow_plan_revision_policy.py` is the #125 read-only evaluator.
 It validates native evidence-backed plan snapshots, exact diffs, dispositions,

@@ -25,11 +25,11 @@ def configuration(modes=None):
     }
 
 
-def authorization(challenge_binding, challenge):
+def authorization(challenge_binding, challenge, decision="approve"):
     document = {
         "format": supervision.AUTHORIZATION_FORMAT,
         "challenge_binding": challenge_binding,
-        "decision": "approve",
+        "decision": decision,
         "actor": {"provider": "github", "account_id": 42, "login": "owner"},
         "source": {
             "repository": "NathanZK/ChessEcho",
@@ -165,6 +165,106 @@ class SupervisionPolicyTest(unittest.TestCase):
                 changed_policy,
                 self.authority,
                 "plan",
+            ),
+        )
+
+    def test_rejection_challenge_binds_current_gate_and_rework_identity(self):
+        approval_binding = reference("f")
+        pointer_sha256 = "1" * 64
+        artifact = reference("2")
+        approval = supervision.build_gate_challenge(
+            self.policy_binding,
+            self.policy,
+            self.authority,
+            "tests",
+            [
+                {"slot": "test-manifest", "binding": artifact},
+                {"slot": "test-review", "binding": self.subject},
+            ],
+            self.repository,
+        )
+        challenge = supervision.build_rejection_challenge(
+            self.policy_binding,
+            self.policy,
+            self.authority,
+            pointer_sha256,
+            7,
+            "WAITING_FOR_TEST_APPROVAL",
+            approval_binding,
+            approval,
+            artifact,
+            "Tests contradict the approved plan.",
+            "TEST_IMPLEMENTATION",
+        )
+        challenge_binding = reference("3")
+        human_binding = reference("4")
+        human = authorization(challenge_binding, challenge, decision="reject")
+        rejection = supervision.gate_rejection(
+            self.policy_binding,
+            self.policy,
+            self.authority,
+            pointer_sha256,
+            challenge_binding,
+            challenge,
+            approval,
+            human_binding,
+            human,
+        )
+
+        self.assertEqual(7, rejection["rejected_generation"])
+        self.assertEqual(artifact, rejection["artifact_binding"])
+        self.assertEqual(approval_binding, rejection["approval_challenge_binding"])
+        self.assertEqual("TEST_IMPLEMENTATION", rejection["rework_phase"])
+        self.assertEqual(human_binding, rejection["human_authorization_binding"])
+
+        mutations = {
+            "issue": ISSUE + 1,
+            "family_run_id": "9" * 32,
+            "rejected_generation": 8,
+            "rejected_pointer_sha256": "8" * 64,
+            "authority_binding": reference("5"),
+            "approval_challenge_binding": reference("6"),
+            "artifact_binding": reference("7"),
+            "gate": "plan",
+            "phase": "WAITING_FOR_PLAN_APPROVAL",
+            "rework_phase": "PLANNING",
+        }
+        for field, value in mutations.items():
+            with self.subTest(field=field):
+                changed = copy.deepcopy(challenge)
+                changed[field] = value
+                self.assert_failure(
+                    "gate-rejection-challenge-stale",
+                    lambda changed=changed: supervision.validate_rejection_challenge(
+                        changed,
+                        self.policy_binding,
+                        self.policy,
+                        self.authority,
+                        pointer_sha256,
+                        7,
+                        "WAITING_FOR_TEST_APPROVAL",
+                        approval_binding,
+                        approval,
+                        artifact,
+                        "TEST_IMPLEMENTATION",
+                    ),
+                )
+
+        replayed = copy.deepcopy(rejection)
+        replayed["rejected_pointer_sha256"] = "8" * 64
+        self.assert_failure(
+            "gate-rejection-stale",
+            lambda: supervision.validate_rejection(
+                replayed,
+                self.policy_binding,
+                self.policy,
+                self.authority,
+                pointer_sha256,
+                challenge_binding,
+                challenge,
+                approval,
+                human_binding,
+                human,
             ),
         )
 

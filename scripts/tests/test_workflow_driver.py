@@ -297,6 +297,16 @@ class DriverTest(unittest.TestCase):
                 pending("human"),
                 "PLANNING",
             ),
+            (
+                action(
+                    "authorize-gate-rejection",
+                    "reject",
+                    "tests",
+                    "human-rejection",
+                ),
+                pending("human-rejection"),
+                "WAITING_FOR_TEST_APPROVAL",
+            ),
         )
         for selected, pending_state, phase in cases:
             with self.subTest(action=selected["action"]):

@@ -231,6 +231,8 @@ stateDiagram-v2
   TEST_REVIEW --> WAITING_FOR_TEST_APPROVAL: technical acceptance
   TEST_REVIEW --> PAUSED: needs revision
   WAITING_FOR_TEST_APPROVAL --> IMPLEMENTATION: gate satisfaction
+  WAITING_FOR_TEST_APPROVAL --> WAITING_FOR_TEST_APPROVAL: rejection challenge
+  WAITING_FOR_TEST_APPROVAL --> TEST_IMPLEMENTATION: authorized rejection/rework
   IMPLEMENTATION --> VALIDATION: accepted implementation
   VALIDATION --> FINAL_REVIEW: all checks accepted
   FINAL_REVIEW --> WAITING_FOR_FINAL_APPROVAL: technical acceptance
@@ -267,6 +269,16 @@ test or final review instead pauses because no active replacement transition
 interprets that rejection as permission to alter already selected downstream
 evidence. Recovery first opens a mandatory-human challenge and then returns
 only to the safe phase derived from the exact recorded operation.
+
+At `WAITING_FOR_TEST_APPROVAL`, a human may instead request rejection with a
+reason, then authorize the resulting exact rejection challenge through GitHub.
+The challenge binds the current issue/family, phase, generation, pointer,
+authority, approval challenge, rejected manifest/review, and repository
+observation. Authorization creates a successor generation at
+`TEST_IMPLEMENTATION`; reworked tests replace the old policy manifest while the
+rejected evidence remains immutable history. The replacement must pass a fresh
+technical review and receive a fresh human approval challenge. Other gates have
+no activated rejection target and fail closed.
 
 ### Why the stages are separate
 
@@ -838,7 +850,7 @@ There are three distinct protocols:
    schemas aligned, but only the core decoder validates and authorizes candidate
    meaning.
 
-The current provider (`1.5.6`) and reviewed local host (`1.3.1`) have exact
+The current provider (`1.5.6`) and reviewed local host (`1.4.0`) have exact
 source identities in `.github/agent-workflow.json` under
 `orchestrator.local_host.provider.source_sha256` and
 `orchestrator.local_host.source_sha256`. Those versions are human-readable

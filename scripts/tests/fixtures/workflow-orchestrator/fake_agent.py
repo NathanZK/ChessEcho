@@ -150,6 +150,14 @@ def main(argv):
         value = _implement()
         if mode == "test-drift" and state[role] == 1:
             (ROOT / "scripts" / "not-a-test.py").write_text("DIRTY = True\n")
+        if mode == "rework-tests" and state[role] == 2:
+            (ROOT / "scripts" / "implementation.py").unlink()
+            (ROOT / "scripts" / "tests" / "generated_test.py").write_text(
+                "def test_generated():\n    assert 1 + 1 == 2\n"
+            )
+            _git("add", "scripts/implementation.py", "scripts/tests/generated_test.py")
+            _git("commit", "--amend", "--no-edit")
+            value["report"] = "Reworked the rejected test coverage."
         if mode == "rewrite-tests" and state[role] > 1:
             (ROOT / "scripts" / "tests" / "generated_test.py").write_text(
                 "def test_generated():\n    assert False\n"

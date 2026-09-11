@@ -101,6 +101,7 @@ HUMAN_ACTIONS = frozenset(
     {
         "await-human-approval",
         "approve-gate",
+        "authorize-gate-rejection",
         "authorize-supervision-change",
     }
 )
@@ -299,12 +300,13 @@ def _validate_pending(value):
             "github-read",
             "github-write",
             "human",
+            "human-rejection",
             "policy",
         }
         or not _binding(value["request_binding"])
         or not isinstance(value["status"], str)
         or value["status"] not in {"requested", "cancel-requested"}
-        or (value["status"] == "cancel-requested" and value["kind"] in {"human", "policy"})
+        or (value["status"] == "cancel-requested" and value["kind"] in {"human", "human-rejection", "policy"})
     ):
         _fail("failed", "plan-next-pending", "plan-next returned malformed pending state")
     return value
@@ -408,6 +410,13 @@ def validate_plan(value, issue):
             "gate": "supervision-policy-change",
             "pending_kind": "human",
         }
+    elif pending["kind"] == "human-rejection":
+        expected = action == {
+            "action": "authorize-gate-rejection",
+            "command": "reject",
+            "gate": gate,
+            "pending_kind": "human-rejection",
+        }
     elif pending["kind"] == "human":
         expected = action == {
             "action": "approve-gate",
@@ -426,7 +435,7 @@ def validate_plan(value, issue):
         _fail("failed", "plan-next-pending-action", "plan-next action is inconsistent with pending work")
     should_query = (
         pending is not None
-        and pending["kind"] not in {"human", "policy"}
+        and pending["kind"] not in {"human", "human-rejection", "policy"}
         and pending["status"] == "requested"
     )
     if (query is not None) != should_query:
@@ -822,7 +831,7 @@ class Driver:
                     )
                 journal.record("completed", code="none-completed", steps=steps)
                 return {"outcome": "completed", "code": "none-completed", "steps": steps}
-            if action["action"] in HUMAN_ACTIONS and action["command"] == "approve":
+            if action["action"] in HUMAN_ACTIONS and action["command"] in {"approve", "reject"}:
                 journal.record("stopped", action=action["action"], reason="human", steps=steps)
                 return {"outcome": "human", "code": action["action"], "steps": steps}
             if action["action"] in RECOVERY_ACTIONS and action["command"] == "recover":

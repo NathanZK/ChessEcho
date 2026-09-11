@@ -297,6 +297,23 @@ class OrchestratorFixture:
         return orchestrator.approve(
             self.root, ISSUE, expected_tip=self.tip(), authorization={"kind": "issue-comment", "id": number})
 
+    def reject(self, number, reason="Tests do not satisfy the approved contract."):
+        requested = orchestrator.reject(
+            self.root,
+            ISSUE,
+            expected_tip=self.tip(),
+            reason=reason,
+        )
+        challenge = self.challenge()
+        self.comment(challenge["confirmation"], number)
+        rejected = orchestrator.reject(
+            self.root,
+            ISSUE,
+            expected_tip=self.tip(),
+            authorization={"kind": "issue-comment", "id": number},
+        )
+        return requested, rejected
+
     def calls(self):
         path = self.bin / "gh-calls.jsonl"
         return [] if not path.exists() else [json.loads(line) for line in path.read_text().splitlines()]
@@ -1505,6 +1522,212 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         final_gate = self._agent_pair()
         self.assertEqual("WAITING_FOR_FINAL_APPROVAL", final_gate["phase"])
         self.assertEqual("final", self.fixture.challenge()["gate"])
+
+    def test_test_gate_rejection_preserves_evidence_and_requires_fresh_review_and_approval(self):
+        gate = self._to_test_gate()
+        rejected_generation = gate["generation"]
+        rejected_tip = gate["pointer_sha256"]
+        rejected_state = copy.deepcopy(self.fixture.state())
+        approval_challenge_binding = rejected_state["pending"]["request_binding"]
+        approval_challenge = copy.deepcopy(self.fixture.challenge())
+        rejected_manifest = next(
+            row["binding"]
+            for row in self.fixture.read(
+                rejected_state["policy_state_binding"], orchestrator.POLICY_PATH
+            )["active"]
+            if row["node"] == "test-manifest"
+        )
+        rejected_manifest_projection = copy.deepcopy(
+            evidence.project(self.fixture.root, rejected_manifest)
+        )
+
+        requested = orchestrator.reject(
+            self.fixture.root,
+            ISSUE,
+            expected_tip=self.fixture.tip(),
+            reason="Tests do not satisfy the approved contract.",
+        )
+        self.assertEqual(rejected_generation + 1, requested["generation"])
+        self.assertEqual("WAITING_FOR_TEST_APPROVAL", requested["phase"])
+        self.assertEqual("human-rejection", self.fixture.state()["pending"]["kind"])
+        planned = orchestrator.plan_next(self.fixture.root, ISSUE)
+        self.assertEqual(
+            {
+                "action": "authorize-gate-rejection",
+                "command": "reject",
+                "gate": "tests",
+                "pending_kind": "human-rejection",
+            },
+            planned["next_action"],
+        )
+        self.assertIsNone(planned["pending_result_query"])
+        with self.assertRaises(orchestrator.OrchestratorFailure) as blocked_step:
+            self.fixture.step()
+        self.assertEqual("human-gate-requires-rejection", blocked_step.exception.code)
+        with self.assertRaises(orchestrator.OrchestratorFailure) as blocked_cancel:
+            orchestrator.cancel(
+                self.fixture.root,
+                ISSUE,
+                expected_tip=self.fixture.tip(),
+                reason="Do not reinterpret human rejection as execution.",
+            )
+        self.assertEqual("no-cancellable-attempt", blocked_cancel.exception.code)
+        rejection_challenge_binding = self.fixture.state()["pending"]["request_binding"]
+        rejection_challenge = self.fixture.challenge()
+        self.assertEqual(rejected_tip, rejection_challenge["rejected_pointer_sha256"])
+        self.assertEqual(rejected_generation, rejection_challenge["rejected_generation"])
+        self.assertEqual(approval_challenge_binding, rejection_challenge["approval_challenge_binding"])
+        self.assertEqual(rejected_manifest, rejection_challenge["artifact_binding"])
+
+        self.fixture.comment(rejection_challenge["confirmation"], 7110)
+        rejected = orchestrator.reject(
+            self.fixture.root,
+            ISSUE,
+            expected_tip=self.fixture.tip(),
+            authorization={"kind": "issue-comment", "id": 7110},
+        )
+        self.assertEqual(rejected_generation + 2, rejected["generation"])
+        self.assertEqual("TEST_IMPLEMENTATION", rejected["phase"])
+        self.assertIsNone(self.fixture.state()["pending"])
+        rejection_binding = next(
+            row["binding"]
+            for row in self.fixture.state()["candidates"]
+            if row["slot"] == "gate-rejection"
+        )
+        rejection = self.fixture.read(rejection_binding, supervision.REJECTION_PATH)
+        self.assertEqual(rejection_challenge_binding, rejection["rejection_challenge_binding"])
+        self.assertEqual(approval_challenge_binding, rejection["approval_challenge_binding"])
+        self.assertEqual(rejected_manifest, rejection["artifact_binding"])
+        self.assertEqual("TEST_IMPLEMENTATION", rejection["rework_phase"])
+        self.assertEqual(
+            rejected_manifest_projection,
+            evidence.project(self.fixture.root, rejected_manifest),
+        )
+        historic = self.fixture.read(self.fixture.state()["previous_authority"])
+        self.assertEqual("WAITING_FOR_TEST_APPROVAL", historic["phase"])
+        self.assertEqual("human-rejection", historic["pending"]["kind"])
+        approval_state = self.fixture.read(historic["previous_authority"])
+        self.assertEqual(rejected_state, approval_state)
+        self.assertEqual(approval_challenge, self.fixture.read(approval_challenge_binding))
+
+        self.fixture.mode("rework-tests")
+        self._agent_pair()
+        policy_after_rework = self.fixture.read(
+            self.fixture.state()["policy_state_binding"], orchestrator.POLICY_PATH
+        )
+        active_manifest = next(
+            row["binding"]
+            for row in policy_after_rework["active"]
+            if row["node"] == "test-manifest"
+        )
+        self.assertNotEqual(rejected_manifest, active_manifest)
+        self.assertIn(
+            {
+                "node": "test-manifest",
+                "binding": rejected_manifest,
+                "status": "invalidated",
+                "transition_id": policy_after_rework["transition_tip"],
+            },
+            policy_after_rework["history"],
+        )
+        fresh_gate = self._agent_pair()
+        self.assertEqual("WAITING_FOR_TEST_APPROVAL", fresh_gate["phase"])
+        self.assertNotEqual(approval_challenge_binding, self.fixture.state()["pending"]["request_binding"])
+        with self.assertRaises(orchestrator.OrchestratorFailure) as blocked:
+            self.fixture.step()
+        self.assertEqual("human-gate-requires-approval", blocked.exception.code)
+        self.fixture.comment(approval_challenge["confirmation"], 7111)
+        with self.assertRaises(orchestrator.OrchestratorFailure) as stale:
+            orchestrator.approve(
+                self.fixture.root,
+                ISSUE,
+                expected_tip=self.fixture.tip(),
+                authorization={"kind": "issue-comment", "id": 7111},
+            )
+        self.assertEqual("authorization-confirmation-mismatch", stale.exception.code)
+        approved = self.fixture.approve(7112)
+        self.assertEqual("IMPLEMENTATION", approved["phase"])
+
+    def test_rejection_fails_closed_for_unsupported_malformed_stale_and_replayed_requests(self):
+        self._to_plan_gate()
+        with self.assertRaises(orchestrator.OrchestratorFailure) as unsupported:
+            orchestrator.reject(
+                self.fixture.root,
+                ISSUE,
+                expected_tip=self.fixture.tip(),
+                reason="Revise the plan.",
+            )
+        self.assertEqual("gate-rejection-unsupported", unsupported.exception.code)
+
+        self.fixture.approve(7120)
+        self._agent_pair()
+        self._agent_pair()
+        original_tip = self.fixture.tip()
+        with self.assertRaises(orchestrator.OrchestratorFailure) as malformed:
+            orchestrator.reject(
+                self.fixture.root,
+                ISSUE,
+                expected_tip=original_tip,
+                reason=" ",
+            )
+        self.assertEqual("rejection-reason-required", malformed.exception.code)
+        with self.assertRaises(orchestrator.OrchestratorFailure) as stale:
+            orchestrator.reject(
+                self.fixture.root,
+                ISSUE,
+                expected_tip="0" * 64,
+                reason="Tests are incomplete.",
+            )
+        self.assertEqual("expected-tip-stale", stale.exception.code)
+
+        requested = orchestrator.reject(
+            self.fixture.root,
+            ISSUE,
+            expected_tip=original_tip,
+            reason="Tests are incomplete.",
+        )
+        rejection_tip = requested["pointer_sha256"]
+        rejection_challenge = self.fixture.challenge()
+        self.fixture.comment(rejection_challenge["confirmation"], 7121)
+        with self.assertRaises(orchestrator.OrchestratorFailure) as old_approval:
+            orchestrator.approve(
+                self.fixture.root,
+                ISSUE,
+                expected_tip=rejection_tip,
+                authorization={"kind": "issue-comment", "id": 7121},
+            )
+        self.assertEqual("no-open-gate", old_approval.exception.code)
+        rejected = orchestrator.reject(
+            self.fixture.root,
+            ISSUE,
+            expected_tip=rejection_tip,
+            authorization={"kind": "issue-comment", "id": 7121},
+        )
+        with self.assertRaises(orchestrator.OrchestratorFailure) as replayed:
+            orchestrator.reject(
+                self.fixture.root,
+                ISSUE,
+                expected_tip=rejection_tip,
+                authorization={"kind": "issue-comment", "id": 7121},
+            )
+        self.assertEqual("expected-tip-stale", replayed.exception.code)
+        with self.assertRaises(orchestrator.OrchestratorFailure) as historical:
+            orchestrator.reject(
+                self.fixture.root,
+                ISSUE,
+                expected_tip=rejected["pointer_sha256"],
+                reason="Reject history again.",
+            )
+        self.assertEqual("no-rejectable-gate", historical.exception.code)
+
+    def test_existing_test_approval_path_does_not_create_rejection_evidence(self):
+        self._to_test_gate()
+        approved = self.fixture.approve(7122)
+        self.assertEqual("IMPLEMENTATION", approved["phase"])
+        self.assertNotIn(
+            "gate-rejection",
+            {row["slot"] for row in self.fixture.state()["candidates"]},
+        )
 
     def test_plan_revision_is_policy_checked_once_before_approval(self):
         self.fixture.mode("revision")

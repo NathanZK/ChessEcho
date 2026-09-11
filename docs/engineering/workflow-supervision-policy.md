@@ -50,13 +50,30 @@ or discretionary selection field. Both paths publish a standalone
 authorization, automatic policy satisfaction, and agent/reviewer output remain
 separate evidence types and cannot substitute for one another.
 
+The supervised `tests` gate also has an explicit two-step rejection path. A
+`gate-rejection-challenge` binds the current waiting generation, pointer,
+authority, approval challenge, rejected `test-manifest`, technical review,
+repository observation, human reason, and fixed `TEST_IMPLEMENTATION` target.
+Its byte-exact GitHub authorization has decision `reject`, not `approve`.
+Selection publishes a standalone `gate-rejection` record and a successor
+authority generation; it never edits the approval challenge or rejected
+evidence. Reworked tests replace `test-manifest` through the existing bounded
+policy reopen, which preserves the old node as invalidated history and forces a
+fresh technical review and fresh approval challenge.
+
+No other gate currently has an activated rejection transition. Plan, final, and
+publication rejection would require distinct lifecycle and policy invalidation
+contracts, and automatic gates have no pending human action. Those cases,
+non-gate phases, approved history, and published artifacts fail closed.
+
 Consumers also reconstruct authority history and require the named challenge to
 have been the selected pending request and the satisfaction to have been selected
 by its immediate gate successor. A self-consistent but orphaned challenge,
-decision, or satisfaction cannot authorize later work. Every selected transition
-out of a waiting gate is recomputed against that exact satisfaction, including
-live human-source re-observation; a structurally valid successor cannot skip a
-gate.
+decision, or satisfaction cannot authorize later work. Every selected approval transition out of a waiting gate is recomputed against
+that exact satisfaction, including live human-source re-observation. The test
+rejection transition is independently recomputed against its exact challenge,
+artifact, current authority, and live human-source observation. A structurally
+valid successor cannot skip either gate decision.
 
 The orchestrator retains plan and test satisfaction in the existing
 `plan-approval` and `test-approval` nodes. `final` and `pr-publication`
