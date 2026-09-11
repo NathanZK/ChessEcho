@@ -12,7 +12,7 @@ The driver invokes only:
 /usr/bin/python3 -I CONTROL/scripts/workflow_local_host.py ... step
 ```
 
-It never invokes `init`, `approve`, `set-supervision`, `cancel`, `recover`,
+It never invokes `init`, `approve`, `reject`, `set-supervision`, `cancel`, `recover`,
 merge, CI, or an end-to-end workflow. It never passes `--request`. When a
 pending executable result exists, the next requestless `step` uses the
 orchestrator's exact pending-result query and reviewed result-store discovery.
@@ -59,7 +59,7 @@ atomically unique child even when an earlier home has been populated.
 ## Stops and outcomes
 
 Only exact `command: step` actions on the driver's fixed automatic allowlist
-are dispatched. Human approval and supervision actions stop with exit 2.
+are dispatched. Human approval, rejection, and supervision actions stop with exit 2.
 Recovery and cancelled-attempt actions stop with exit 3. Exhausted bounds stop
 with exit 4. A present issue lock stops with exit 5. Malformed, noncanonical,
 inconclusive, stale, busy, or otherwise failed host output stops with exit 1.

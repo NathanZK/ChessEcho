@@ -38,6 +38,7 @@ python3 scripts/workflow_orchestrator.py plan-next ISSUE --root ROOT
 python3 scripts/workflow_orchestrator.py init ISSUE --root ROOT --request REQUEST
 python3 scripts/workflow_orchestrator.py step ISSUE --root ROOT --expected-tip SHA256 [--request HANDOFF]
 python3 scripts/workflow_orchestrator.py approve ISSUE --root ROOT --expected-tip SHA256 --authorization AUTHORIZATION
+python3 scripts/workflow_orchestrator.py reject ISSUE --root ROOT --expected-tip SHA256 [--reason REASON | --authorization AUTHORIZATION]
 python3 scripts/workflow_orchestrator.py set-supervision ISSUE --root ROOT --expected-tip SHA256 --supervision SUPERVISION
 python3 scripts/workflow_orchestrator.py cancel ISSUE --root ROOT --expected-tip SHA256 --reason REASON
 python3 scripts/workflow_orchestrator.py recover ISSUE --root ROOT --expected-tip SHA256 [--authorization AUTHORIZATION]
@@ -55,6 +56,26 @@ transition without executing another process. A crash requires explicit
 recovery rather than another execution. The orchestrator itself has no
 run-until-done loop or automatic retry; `workflow_driver.py` provides a
 separate bounded continuation loop over fresh `plan-next` results.
+
+`reject` is deliberately narrower than approval. At the current supervised
+`tests` gate, the first call supplies a nonempty reason and replaces the pending
+approval action with an immutable rejection challenge bound to the exact issue,
+family, waiting phase, generation, pointer, authority, approval challenge,
+`test-manifest`, technical review, and repository observation. A second call
+supplies the exact GitHub authorization source for that challenge. It publishes
+standalone rejection and authorization evidence, advances authority by one more
+generation, and returns to `TEST_IMPLEMENTATION`. The rejected manifest,
+review, approval challenge, transport, and provenance remain in immutable
+history. Submitting reworked tests uses the policy's bounded `tests` reopen to
+invalidate the old manifest and descendants, activates a new manifest, and
+requires a new technical review and human approval challenge.
+
+Plan, final, publication, automatic, already-approved, published, historical,
+and non-gate states have no rejection transition. They fail closed rather than
+falling through recovery, retry, or a generic force path. Stale expected tips,
+edited or replayed authorization, changed repository state, and any mismatched
+issue/family/generation/pointer/authority/challenge/artifact binding produce no
+successor.
 
 `set-supervision` is a core orchestrator API but is not exposed by the current
 reviewed Phase 1 local host. The documented host path can operate configured
@@ -83,7 +104,11 @@ activation gap, not as an available local-host operator procedure.
    carried forward and pauses with `unsupported-policy-transition`.
 5. The test author runs before the implementation author. Its clean,
    test-path-only repository observation is wrapped as `test-manifest`;
-   technical test review then opens the independent test challenge.
+   technical test review then opens the independent test challenge. An explicit
+   human rejection opens its own exact challenge and, after authorization,
+   creates a successor generation at `TEST_IMPLEMENTATION`; the reworked
+   manifest replaces the rejected policy root only after another successful
+   test-author result.
 6. Policy-governed test satisfaction activates `test-approval`. The implementation report
    and its clean, one-commit in-scope observation are re-evaluated by the public
    #116 completion policy before activating `implementation-submission`.

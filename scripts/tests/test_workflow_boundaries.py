@@ -24,6 +24,7 @@ PRODUCTION_MODULES = (
     "workflow_local_provider",
     "workflow_migration",
     "workflow_orchestrator",
+    "workflow_orchestrator_gates",
     "workflow_orchestrator_resume",
     "workflow_policy",
     "workflow_plan_revision_policy",
@@ -39,6 +40,7 @@ ORCHESTRATOR_IMPORTS = {
     "workflow_evidence",
     "workflow_inspector",
     "workflow_issue_source",
+    "workflow_orchestrator_gates",
     "workflow_orchestrator_resume",
     "workflow_policy",
     "workflow_plan_revision_policy",
@@ -206,6 +208,16 @@ class WorkflowBoundaryTest(unittest.TestCase):
         self.assertEqual(
             {"workflow_inspector"},
             project_imports("workflow_orchestrator_resume"),
+        )
+        self.assertEqual(
+            {
+                "workflow_evidence",
+                "workflow_inspector",
+                "workflow_policy",
+                "workflow_runtime",
+                "workflow_supervision_policy",
+            },
+            project_imports("workflow_orchestrator_gates"),
         )
 
     def test_dependency_check_recognizes_qualified_and_relative_imports(self):
@@ -628,6 +640,30 @@ class WorkflowBoundaryTest(unittest.TestCase):
         self.assertIn(("authority", "prepare"), calls)
         self.assertIn(("authority", "commit"), calls)
 
+    def test_orchestrator_gate_composition_is_bounded(self):
+        path = SCRIPTS / "workflow_orchestrator_gates.py"
+        self.assertLessEqual(len(path.read_text().splitlines()), 350)
+        tree = syntax_tree("workflow_orchestrator_gates")
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                statements = sum(
+                    1 for child in ast.walk(node)
+                    if isinstance(child, ast.stmt)
+                    and not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                )
+                with self.subTest(function=node.name):
+                    self.assertLessEqual(statements, 60)
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imported.add((node.module or "").split(".")[0])
+        self.assertTrue(
+            {"subprocess", "socket", "urllib", "http", "requests", "fcntl", "ctypes", "os"}.isdisjoint(imported)
+        )
+        self.assertNotIn("workflow_orchestrator", project_imports("workflow_orchestrator_gates"))
+
     def test_orchestrator_parser_has_explicit_handlers(self):
         module = importlib.import_module("scripts.workflow_orchestrator")
         parser = module.build_parser()
@@ -637,7 +673,7 @@ class WorkflowBoundaryTest(unittest.TestCase):
         )
         self.assertEqual(set(subparsers.choices), set(module.COMMAND_HANDLERS))
         self.assertEqual(
-            {"status", "plan-next", "init", "step", "approve", "set-supervision", "cancel", "recover"},
+            {"status", "plan-next", "init", "step", "approve", "reject", "set-supervision", "cancel", "recover"},
             set(module.COMMAND_HANDLERS),
         )
         for handler in module.COMMAND_HANDLERS.values():

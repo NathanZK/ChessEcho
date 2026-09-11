@@ -14,17 +14,28 @@ POLICY_VERSION = "1.0.0"
 CONFIG_FORMAT = "chess-echo-supervision-config-v1"
 POLICY_FORMAT = "chess-echo-supervision-policy-v1"
 CHALLENGE_FORMAT = "chess-echo-gate-challenge-v1"
+REJECTION_CHALLENGE_FORMAT = "chess-echo-gate-rejection-challenge-v1"
+REJECTION_FORMAT = "chess-echo-gate-rejection-v1"
 CHANGE_FORMAT = "chess-echo-supervision-policy-change-v1"
 AUTOMATIC_DECISION_FORMAT = "chess-echo-automatic-gate-decision-v1"
 SATISFACTION_FORMAT = "chess-echo-gate-satisfaction-v1"
 AUTHORIZATION_FORMAT = "chess-echo-human-authorization-v1"
 POLICY_PATH = "workflow-supervision/policy.json"
 CHALLENGE_PATH = "workflow-supervision/gate-challenge.json"
+REJECTION_CHALLENGE_PATH = "workflow-supervision/gate-rejection-challenge.json"
+REJECTION_PATH = "workflow-supervision/gate-rejection.json"
 CHANGE_PATH = "workflow-supervision/policy-change.json"
 AUTOMATIC_DECISION_PATH = "workflow-supervision/automatic-decision.json"
 SATISFACTION_PATH = "workflow-supervision/gate-satisfaction.json"
 GATES = ("final", "plan", "pr-publication", "tests")
 MODES = frozenset(("automatic", "supervised"))
+REWORK_TARGETS = {
+    "tests": {
+        "phase": "WAITING_FOR_TEST_APPROVAL",
+        "rework_phase": "TEST_IMPLEMENTATION",
+        "artifact_slot": "test-manifest",
+    },
+}
 MANDATORY_HUMAN_GATES = frozenset(
     (
         "irreversible-authority-transfer",
@@ -96,6 +107,19 @@ def _identity(issue, family_run_id):
         "invalid-supervision-identity",
         "Supervision identity is invalid",
     )
+
+
+def _reason(value):
+    _require(
+        isinstance(value, str)
+        and value == value.strip()
+        and value
+        and len(value.encode("utf-8")) <= 4096,
+        "corrupt",
+        "invalid-rejection-reason",
+        "Rejection reason must be trimmed, nonempty UTF-8 text at most 4096 bytes",
+    )
+    return value
 
 
 def validate_configuration(value):
@@ -421,6 +445,158 @@ def validate_gate_challenge(
     return copy.deepcopy(value)
 
 
+def build_rejection_challenge(
+    policy_binding,
+    policy,
+    authority_binding,
+    pointer_sha256,
+    generation,
+    phase,
+    approval_challenge_binding,
+    approval_challenge,
+    artifact_binding,
+    reason,
+    rework_phase,
+):
+    current = validate_policy(policy)
+    policy_reference = _reference(policy_binding, "supervision-policy")
+    authority = _reference(authority_binding, "authority")
+    approval_reference = _reference(approval_challenge_binding, "approval-challenge")
+    artifact = _reference(artifact_binding, "artifact")
+    _require(
+        isinstance(pointer_sha256, str)
+        and SHA256_RE.fullmatch(pointer_sha256) is not None
+        and type(generation) is int
+        and generation >= 0,
+        "corrupt",
+        "invalid-rejected-authority",
+        "Rejected authority pointer or generation is invalid",
+    )
+    _require(
+        isinstance(approval_challenge, dict),
+        "corrupt",
+        "invalid-approval-challenge",
+        "Approval challenge must be an object",
+    )
+    gate = approval_challenge.get("gate")
+    target = REWORK_TARGETS.get(gate)
+    _require(
+        target is not None,
+        "unsupported",
+        "gate-rejection-unsupported",
+        "Gate has no safe rejection/rework target",
+        gate,
+    )
+    validated_approval = validate_gate_challenge(
+        approval_challenge,
+        policy_reference,
+        current,
+        approval_challenge.get("authority_binding"),
+        gate,
+    )
+    subjects = _subjects(validated_approval["subjects"])
+    subject_map = {row["slot"]: row["binding"] for row in subjects}
+    valid = (
+        validated_approval["mode"] == "supervised"
+        and phase == target["phase"]
+        and rework_phase == target["rework_phase"]
+        and subject_map.get(target["artifact_slot"]) == artifact
+    )
+    _require(
+        valid,
+        "stale",
+        "gate-rejection-context-stale",
+        "Approval challenge has no exact safe rework context",
+    )
+    core = {
+        "format": REJECTION_CHALLENGE_FORMAT,
+        "issue": current["issue"],
+        "family_run_id": current["family_run_id"],
+        "gate": gate,
+        "decision": "reject",
+        "phase": phase,
+        "rework_phase": rework_phase,
+        "rejected_generation": generation,
+        "rejected_pointer_sha256": pointer_sha256,
+        "authority_binding": authority,
+        "supervision_policy_binding": policy_reference,
+        "approval_challenge_binding": approval_reference,
+        "approval_challenge_sha256": validated_approval["challenge_sha256"],
+        "artifact_binding": artifact,
+        "subjects": subjects,
+        "repository_observation_binding": validated_approval[
+            "repository_observation_binding"
+        ],
+        "reason": _reason(reason),
+    }
+    digest = _digest(core)
+    return {
+        **core,
+        "confirmation": "reject %s %s" % (gate, digest),
+        "challenge_sha256": digest,
+    }
+
+
+def validate_rejection_challenge(
+    value,
+    policy_binding,
+    policy,
+    authority_binding,
+    pointer_sha256,
+    generation,
+    phase,
+    approval_challenge_binding,
+    approval_challenge,
+    artifact_binding,
+    rework_phase,
+):
+    _exact(
+        value,
+        {
+            "format",
+            "issue",
+            "family_run_id",
+            "gate",
+            "decision",
+            "phase",
+            "rework_phase",
+            "rejected_generation",
+            "rejected_pointer_sha256",
+            "authority_binding",
+            "supervision_policy_binding",
+            "approval_challenge_binding",
+            "approval_challenge_sha256",
+            "artifact_binding",
+            "subjects",
+            "repository_observation_binding",
+            "reason",
+            "confirmation",
+            "challenge_sha256",
+        },
+        "gate-rejection-challenge",
+    )
+    expected = build_rejection_challenge(
+        policy_binding,
+        policy,
+        authority_binding,
+        pointer_sha256,
+        generation,
+        phase,
+        approval_challenge_binding,
+        approval_challenge,
+        artifact_binding,
+        value["reason"],
+        rework_phase,
+    )
+    _require(
+        value == expected,
+        "stale",
+        "gate-rejection-challenge-stale",
+        "Gate rejection challenge is not exact",
+    )
+    return copy.deepcopy(value)
+
+
 def automatic_decision(
     policy_binding,
     policy,
@@ -468,7 +644,9 @@ def automatic_decision(
     return document
 
 
-def _validate_human_authorization(value, challenge_binding, challenge):
+def _validate_human_authorization(
+    value, challenge_binding, challenge, decision="approve"
+):
     _exact(
         value,
         {
@@ -487,7 +665,7 @@ def _validate_human_authorization(value, challenge_binding, challenge):
     valid = (
         value["format"] == AUTHORIZATION_FORMAT
         and value["challenge_binding"] == challenge_binding
-        and value["decision"] == "approve"
+        and value["decision"] == decision
         and value["confirmation"] == challenge["confirmation"]
         and isinstance(value["actor"], dict)
         and isinstance(value["source"], dict)
@@ -500,6 +678,132 @@ def _validate_human_authorization(value, challenge_binding, challenge):
         "stale",
         "human-authorization-stale",
         "Human authorization is not exact",
+    )
+    return copy.deepcopy(value)
+
+
+def gate_rejection(
+    policy_binding,
+    policy,
+    authority_binding,
+    pointer_sha256,
+    rejection_challenge_binding,
+    rejection_challenge,
+    approval_challenge,
+    human_authorization_binding,
+    human_authorization,
+):
+    current = validate_policy(policy)
+    challenge_reference = _reference(
+        rejection_challenge_binding, "rejection-challenge"
+    )
+    approval_reference = _reference(
+        rejection_challenge["approval_challenge_binding"], "approval-challenge"
+    )
+    artifact = _reference(rejection_challenge["artifact_binding"], "artifact")
+    validated = validate_rejection_challenge(
+        rejection_challenge,
+        policy_binding,
+        current,
+        authority_binding,
+        pointer_sha256,
+        rejection_challenge["rejected_generation"],
+        rejection_challenge["phase"],
+        approval_reference,
+        approval_challenge,
+        artifact,
+        rejection_challenge["rework_phase"],
+    )
+    authorization_reference = _reference(
+        human_authorization_binding, "human-authorization"
+    )
+    _validate_human_authorization(
+        human_authorization,
+        challenge_reference,
+        validated,
+        decision="reject",
+    )
+    document = {
+        "format": REJECTION_FORMAT,
+        "issue": current["issue"],
+        "family_run_id": current["family_run_id"],
+        "gate": validated["gate"],
+        "decision": "reject",
+        "phase": validated["phase"],
+        "rework_phase": validated["rework_phase"],
+        "rejected_generation": validated["rejected_generation"],
+        "rejected_pointer_sha256": validated["rejected_pointer_sha256"],
+        "authority_binding": _reference(authority_binding, "authority"),
+        "supervision_policy_binding": _reference(
+            policy_binding, "supervision-policy"
+        ),
+        "approval_challenge_binding": approval_reference,
+        "rejection_challenge_binding": challenge_reference,
+        "artifact_binding": artifact,
+        "subjects": copy.deepcopy(validated["subjects"]),
+        "repository_observation_binding": copy.deepcopy(
+            validated["repository_observation_binding"]
+        ),
+        "reason": validated["reason"],
+        "human_authorization_binding": authorization_reference,
+    }
+    document["rejection_sha256"] = _digest(document)
+    return document
+
+
+def validate_rejection(
+    value,
+    policy_binding,
+    policy,
+    authority_binding,
+    pointer_sha256,
+    rejection_challenge_binding,
+    rejection_challenge,
+    approval_challenge,
+    human_authorization_binding,
+    human_authorization,
+):
+    _exact(
+        value,
+        {
+            "format",
+            "issue",
+            "family_run_id",
+            "gate",
+            "decision",
+            "phase",
+            "rework_phase",
+            "rejected_generation",
+            "rejected_pointer_sha256",
+            "authority_binding",
+            "supervision_policy_binding",
+            "approval_challenge_binding",
+            "rejection_challenge_binding",
+            "artifact_binding",
+            "subjects",
+            "repository_observation_binding",
+            "reason",
+            "human_authorization_binding",
+            "rejection_sha256",
+        },
+        "gate-rejection",
+    )
+    expected = gate_rejection(
+        policy_binding,
+        policy,
+        authority_binding,
+        pointer_sha256,
+        rejection_challenge_binding,
+        rejection_challenge,
+        approval_challenge,
+        human_authorization_binding,
+        human_authorization,
+    )
+    _require(
+        value == expected,
+        "stale",
+        "gate-rejection-stale",
+        "Gate rejection is not exact",
     )
     return copy.deepcopy(value)
 

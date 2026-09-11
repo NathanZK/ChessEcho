@@ -52,7 +52,7 @@ def _with_digest(value, field):
 
 def pending_result_query(issue, family_run_id, authority_binding, pending):
     """Build the exact query document used to discover a pending attempt's published result."""
-    if pending is None or pending["kind"] in {"human", "policy"} or pending["status"] != "requested":
+    if pending is None or pending["kind"] in {"human", "human-rejection", "policy"} or pending["status"] != "requested":
         return None
     document = {
         "format": PENDING_RESULT_QUERY_FORMAT,
