@@ -1494,7 +1494,11 @@ def _agent_prompt(issue, role, request, request_binding, inputs):
     )
     plan_contract = (
         " The authoritative plan candidate contract for operation write-plan is this exact "
-        "JSON Schema: %s Additional outer and nested keys are forbidden."
+        "JSON Schema: %s Additional outer and nested keys are forbidden. For every plan "
+        "unit, dependencies is a canonical set representation, not an execution-order "
+        "signal: emit its unit IDs once each in ascending UTF-8 byte order. For example, "
+        'emit ["implementation","test-authoring"], never '
+        '["test-authoring","implementation"].'
         % json.dumps(
             _plan_candidate_contract(inputs),
             ensure_ascii=True,

@@ -618,6 +618,26 @@ class TrustedLocalProviderTest(unittest.TestCase):
         plan_policy._verify_units_against_plan(parsed, last_line, lines)
         self.assertEqual(["canary"], ids)
 
+    def test_planner_prompt_emphasizes_canonical_dependency_order(self):
+        prompt = provider._agent_prompt(
+            198,
+            "planner",
+            self.fixture.request(),
+            {"kind": "evidence-binding", "sha256": "d" * 64, "size": 1},
+            [],
+        )
+
+        self.assertIn(
+            "dependencies is a canonical set representation, not an execution-order "
+            "signal: emit its unit IDs once each in ascending UTF-8 byte order",
+            prompt,
+        )
+        self.assertIn(
+            'emit ["implementation","test-authoring"], never '
+            '["test-authoring","implementation"]',
+            prompt,
+        )
+
     def test_planner_prompt_requires_structured_acceptance_coverage(self):
         facts = {
             "facts": [
