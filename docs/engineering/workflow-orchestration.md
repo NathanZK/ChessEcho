@@ -191,6 +191,9 @@ plan candidate contract in `write-plan` and the review candidate contract in
 `review-plan`, `review-tests`, and `review-final`. The plan schema has distinct
 initial and revision variants selected from the exact projected input roles
 and describes the existing unit-map and deterministic-diff constraints.
+Because JSON Schema cannot express array ordering, the planner prompt also
+states directly that each dependency array is a canonical set representation
+sorted by ascending UTF-8 byte order, not an execution-order signal.
 Focused tests keep these prompt schemas aligned with the unchanged core
 validators. Implementer prompts do not embed a JSON Schema copy. The provider
 cannot normalize an unsupported shape, verdict, extra field, or prose-prefixed

@@ -1574,6 +1574,22 @@ class PlanRevisionPolicyTest(unittest.TestCase):
     # Dependency graph: deep acyclic chain and cycle detection
     # ------------------------------------------------------------------
 
+    def test_dependency_lists_must_be_sorted_and_unique(self):
+        for name, dependencies in (
+            ("unsorted", ["test-authoring", "implementation"]),
+            ("duplicate", ["implementation", "implementation"]),
+        ):
+            with self.subTest(name=name):
+                units_raw = [
+                    _unit("implementation", 1, 1),
+                    _unit("test-authoring", 2, 2),
+                    _unit("delivery", 3, 3, dependencies=dependencies),
+                ]
+                with self.assertRaises(policy.PlanRevisionPolicyFailure) as error:
+                    policy._validate_units_schema(units_raw)
+                self.assertEqual("invalid-snapshot-schema", error.exception.code)
+                self.assertEqual("corrupt", error.exception.status)
+
     def test_dependency_chain_of_1000_units_does_not_recurse(self):
         unit_ids = ["unit-%04d" % index for index in range(1000)]
         units_raw = []
