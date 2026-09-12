@@ -28,7 +28,7 @@ except ImportError:  # pragma: no cover - direct script loading
 
 
 NAME = "chess-echo-trusted-local"
-VERSION = "1.5.6"
+VERSION = "1.5.7"
 RESULT_FORMAT = "chess-echo-trusted-local-execution-result-v1"
 PROCESS_DIAGNOSTIC_FORMAT = "chess-echo-trusted-local-process-diagnostic-v1"
 DISCOVERY_FORMAT = "chess-echo-pending-result-candidates-v1"
@@ -367,6 +367,8 @@ class _JsonlCandidateDecoder:
         self.streamed_messages = set()
         self.reasoning_groups, self.summarized_reasoning = {}, set()
         self.turn_reasoning_id = self.pending_reasoning_summary = None
+        self.pending_opaque_reasoning = None
+        self.pending_opaque_tool_start = None
         self.reasoning_message_id = None
         self.reasoning_message_delta_seen = False
         self.previous_id = None
@@ -413,6 +415,8 @@ class _JsonlCandidateDecoder:
         if event_type not in JSONL_EVENT_TYPES:
             _fail("unsupported", "local-agent-jsonl-event", "Copilot JSONL contains an unreviewed event type")
         previous_type = self.previous_type
+        if self.pending_opaque_reasoning is not None and event_type != "assistant.reasoning":
+            self.pending_opaque_reasoning = None
         if self.pending_reasoning_summary is not None and event_type != "assistant.reasoning":
             _fail("corrupt", "local-agent-jsonl-sequence", "Copilot reasoning summary is missing after its assistant message")
         if previous_type == "assistant.reasoning":
@@ -573,6 +577,8 @@ class _JsonlCandidateDecoder:
             self.active_turn_had_tools = False
             self.model_call_seen = False
             self.turn_reasoning_id = None
+            self.pending_opaque_reasoning = None
+            self.pending_opaque_tool_start = None
             self.reasoning_message_id = None
             self.reasoning_message_delta_seen = False
             self.denial_background_tool = None
@@ -689,6 +695,20 @@ class _JsonlCandidateDecoder:
                     _fail("corrupt", "local-agent-jsonl-tool", "Copilot tool requests do not match streamed tool calls")
                 if self.turn_reasoning_id is not None:
                     self.pending_reasoning_summary = (self.turn_reasoning_id, event_id)
+                elif (
+                    content == ""
+                    and len(requests) == 1
+                    and self.tool_deltas == {requests[0]["toolCallId"]}
+                    and data.get("rte") is True
+                    and isinstance(data.get("reasoningOpaque"), str)
+                    and data["reasoningOpaque"]
+                    and data.get("reasoningText") is None
+                ):
+                    self.pending_opaque_reasoning = (
+                        data["reasoningOpaque"],
+                        event_id,
+                        requests[0]["toolCallId"],
+                    )
             elif content:
                 reasoning_candidate = (
                     self.turn_reasoning_id is not None
@@ -726,19 +746,33 @@ class _JsonlCandidateDecoder:
             _event_data_keys(data, {"content", "reasoningId", "rte"}, "reasoning")
             reasoning_id = _event_text(data.get("reasoningId"), "reasoningId")
             expected_reasoning = self.pending_reasoning_summary
+            expected_opaque = self.pending_opaque_reasoning
+            standard_summary = (
+                expected_reasoning is not None
+                and parent_id == expected_reasoning[1]
+                and reasoning_id == expected_reasoning[0]
+                and self.reasoning_groups.get(reasoning_id) == self.active_turn_start
+            )
+            opaque_summary = (
+                expected_opaque is not None
+                and data.get("content") == ""
+                and parent_id == expected_opaque[1]
+                and reasoning_id == expected_opaque[0]
+                and reasoning_id not in self.reasoning_groups
+            )
             if (
                 not isinstance(data.get("content"), str)
                 or data.get("rte") is not True
-                or expected_reasoning is None
                 or previous_type != "assistant.message"
-                or parent_id != expected_reasoning[1]
-                or reasoning_id != expected_reasoning[0]
-                or self.reasoning_groups.get(reasoning_id) != self.active_turn_start
+                or not (standard_summary or opaque_summary)
                 or reasoning_id in self.summarized_reasoning
             ):
                 _fail("corrupt", "local-agent-jsonl-sequence", "Copilot reasoning summary is malformed or misplaced")
             self.summarized_reasoning.add(reasoning_id)
+            if opaque_summary:
+                self.pending_opaque_tool_start = expected_opaque[2]
             self.pending_reasoning_summary = None
+            self.pending_opaque_reasoning = None
             return
         if event_type == "tool.execution_start":
             tool_start_keys = {
@@ -768,8 +802,15 @@ class _JsonlCandidateDecoder:
             ):
                 _fail("corrupt", "local-agent-jsonl-invalid", "Copilot tool start metadata is malformed")
             _event_field_matches(data, "turnId", self.active_turn, required=True)
-            if self.active_turn is None or tool_call_id not in self.requested_tools or tool_call_id in self.started_tools:
+            if (
+                self.active_turn is None
+                or tool_call_id not in self.requested_tools
+                or tool_call_id in self.started_tools
+                or self.pending_opaque_tool_start is not None
+                and tool_call_id != self.pending_opaque_tool_start
+            ):
                 _fail("corrupt", "local-agent-jsonl-tool", "Copilot tool start does not match one pending request")
+            self.pending_opaque_tool_start = None
             self.started_tools.add(tool_call_id)
             self.tool_start_events[tool_call_id] = event_id
             self.tool_start_invocations[tool_call_id] = {
@@ -932,6 +973,8 @@ class _JsonlCandidateDecoder:
             self.active_turn = self.active_turn_start = self.active_interaction = None
             self.model_call_seen = False
             self.turn_reasoning_id = None
+            self.pending_opaque_reasoning = None
+            self.pending_opaque_tool_start = None
             self.reasoning_message_id = None
             self.reasoning_message_delta_seen = False
             self.denial_background_tool = None
