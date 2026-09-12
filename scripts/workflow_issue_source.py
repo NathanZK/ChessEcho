@@ -18,7 +18,7 @@ else:  # pragma: no cover - direct script execution
     import workflow_runtime as runtime
 
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 PUBLICATION_FORMAT = "chess-echo-trusted-issue-source-publication-v1"
 FAILURE_FORMAT = "chess-echo-trusted-issue-source-failure-v1"
 MAX_SOURCE_BYTES = 512 * 1024
@@ -184,6 +184,12 @@ def _observation(repository, issue, snapshot, raw):
         "denied",
         "issue-is-pull-request",
         "Pre-genesis intake accepts issues, not pull requests",
+    )
+    _require(
+        value.get("state") == "open",
+        "denied",
+        "issue-not-open",
+        "Pre-genesis intake requires an open issue",
     )
     title, body, raw_labels = value.get("title"), value.get("body"), value.get("labels")
     _require(

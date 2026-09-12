@@ -20,10 +20,12 @@ The GitHub token is read from standard input. The operation:
 1. denies frozen issue #115 before runtime or CAS access;
 2. bootstraps the base-pinned `workflow_runtime` and obtains the issue only through
    `Runtime.observe_issue`;
-3. verifies the exact repository, issue number, GitHub API URL, GitHub HTML URL,
+3. requires the observed GitHub issue state to be exactly `open`, with no ordinary
+   override path;
+4. verifies the exact repository, issue number, GitHub API URL, GitHub HTML URL,
    bounded raw size and SHA-256, and the complete canonical snapshot relationship;
-4. publishes only those exact raw bytes with `workflow_cas.publish_immutable`; and
-5. returns `chess-echo-trusted-issue-source-publication-v1`.
+5. publishes only those exact raw bytes with `workflow_cas.publish_immutable`; and
+6. returns `chess-echo-trusted-issue-source-publication-v1`.
 
 The returned publication contains the exact `issue-snapshot` object reference, the
 complete runtime bootstrap document, the runtime source identity, and the intake tool
@@ -32,6 +34,10 @@ so repeated intake of identical bytes returns the same publication despite a new
 capture time. The bootstrap document binds the base commit and tree, configuration
 blob/content identity, and Git/GitHub executable paths and hashes. The GitHub
 credential is never returned or stored.
+
+Closing an issue denies intake before CAS publication or authority initialization.
+Reopening it changes the GitHub issue bytes and therefore requires a fresh explicit
+publication; a receipt from before the state transition cannot be silently reused.
 
 Identical publication is idempotent, including concurrent publication. A conflicting
 object, malformed observation, tool/config/bootstrap change, or identity mismatch
