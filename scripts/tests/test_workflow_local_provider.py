@@ -204,6 +204,38 @@ def _jsonl_with_file_created(path="created.txt"):
     return _encode_events(events)
 
 
+def _jsonl_with_opaque_reasoning():
+    events = _jsonl_events(_jsonl())
+    message = next(
+        event
+        for event in events
+        if event["type"] == "assistant.message"
+        and event["data"]["toolRequests"]
+    )
+    message["data"].update(
+        {
+            "content": "",
+            "reasoningOpaque": "opaque-reasoning-1",
+            "rte": True,
+        }
+    )
+    events.insert(
+        events.index(message) + 1,
+        _event(
+            "assistant.reasoning",
+            "opaque-reasoning-event",
+            message["id"],
+            {
+                "content": "",
+                "reasoningId": "opaque-reasoning-1",
+                "rte": True,
+            },
+            True,
+        ),
+    )
+    return _encode_events(events)
+
+
 def _jsonl_events(data):
     return [json.loads(line) for line in data.decode("utf-8").splitlines()]
 
@@ -1125,6 +1157,160 @@ class TrustedLocalProviderTest(unittest.TestCase):
                 }
             ],
         )
+
+    def test_observed_opaque_reasoning_before_tool_start_is_accepted(self):
+        raw = _jsonl_with_opaque_reasoning()
+        events = _jsonl_events(raw)
+        reasoning_index = next(
+            index
+            for index, event in enumerate(events)
+            if event.get("id") == "opaque-reasoning-event"
+        )
+        message = events[reasoning_index - 1]
+        reasoning = events[reasoning_index]
+        tool_start = events[reasoning_index + 1]
+
+        for reasoning_text in ("absent", None):
+            with self.subTest(reasoningText=reasoning_text):
+                replay = _jsonl_events(raw)
+                replay_message = replay[reasoning_index - 1]
+                if reasoning_text is None:
+                    replay_message["data"]["reasoningText"] = None
+                self.assertEqual(
+                    CANDIDATE.encode("utf-8"),
+                    provider._extract_candidate_from_jsonl(_encode_events(replay)),
+                )
+        self.assertEqual(
+            ["assistant.message", "assistant.reasoning", "tool.execution_start"],
+            [message["type"], reasoning["type"], tool_start["type"]],
+        )
+        self.assertEqual(message["id"], reasoning["parentId"])
+        self.assertEqual(message["id"], tool_start["parentId"])
+        self.assertEqual(
+            message["data"]["reasoningOpaque"],
+            reasoning["data"]["reasoningId"],
+        )
+
+    def test_opaque_reasoning_before_tool_start_rejects_boundary_mutations(self):
+        def changed(mutator):
+            events = _jsonl_events(_jsonl_with_opaque_reasoning())
+            mutator(events)
+            return _encode_events(events)
+
+        def event(events, event_id):
+            return next(item for item in events if item.get("id") == event_id)
+
+        cases = {
+            "reasoning-id": changed(
+                lambda events: event(events, "opaque-reasoning-event")[
+                    "data"
+                ].__setitem__("reasoningId", "other-reasoning")
+            ),
+            "reasoning-parent": changed(
+                lambda events: event(
+                    events, "opaque-reasoning-event"
+                ).__setitem__("parentId", "t1s")
+            ),
+            "reasoning-content": changed(
+                lambda events: event(events, "opaque-reasoning-event")[
+                    "data"
+                ].__setitem__("content", "informational")
+            ),
+            "message-content": changed(
+                lambda events: event(events, "a1")["data"].__setitem__(
+                    "content", "I will inspect the repository."
+                )
+            ),
+            "message-reasoning-text": changed(
+                lambda events: event(events, "a1")["data"].__setitem__(
+                    "reasoningText", ""
+                )
+            ),
+            "missing-tool-delta": changed(
+                lambda events: events.remove(event(events, "d1"))
+            ),
+            "intervening-event": changed(
+                lambda events: events.insert(
+                    events.index(event(events, "opaque-reasoning-event")),
+                    _event(
+                        "session.background_tasks_changed",
+                        "reasoning-interruption",
+                        "a1",
+                        {},
+                        True,
+                    ),
+                )
+            ),
+        }
+        for name, raw in cases.items():
+            with self.subTest(name=name):
+                with self.assertRaises(provider.LocalProviderFailure):
+                    provider._extract_candidate_from_jsonl(raw)
+
+        final_events = _jsonl_events(_jsonl(include_tool=False))
+        final_message = next(
+            item
+            for item in final_events
+            if item["type"] == "assistant.message"
+        )
+        final_message["data"].update(
+            {
+                "reasoningOpaque": "opaque-final-reasoning",
+                "reasoningText": None,
+                "rte": True,
+            }
+        )
+        final_events.insert(
+            final_events.index(final_message) + 1,
+            _event(
+                "assistant.reasoning",
+                "opaque-final-reasoning-event",
+                final_message["id"],
+                {
+                    "content": "",
+                    "reasoningId": "opaque-final-reasoning",
+                    "rte": True,
+                },
+                True,
+            ),
+        )
+        with self.assertRaises(provider.LocalProviderFailure):
+            provider._extract_candidate_from_jsonl(_encode_events(final_events))
+
+        events = _jsonl_events(_jsonl_with_opaque_reasoning())
+        opaque_message = event(events, "a1")
+        opaque_index = events.index(opaque_message)
+        earlier_message = _event(
+            "assistant.message",
+            "a0",
+            "t1s",
+            {
+                "content": "",
+                "messageId": "message-0",
+                "turnId": "1",
+                "interactionId": "i1",
+                "toolRequests": [
+                    {
+                        "toolCallId": "tool-0",
+                        "name": "view",
+                        "type": "function",
+                        "arguments": {},
+                    }
+                ],
+            },
+        )
+        events.insert(opaque_index - 1, earlier_message)
+        opaque_message["parentId"] = earlier_message["id"]
+        tool_start = next(
+            item for item in events if item["type"] == "tool.execution_start"
+        )
+        tool_start["data"]["toolCallId"] = "tool-0"
+        decoder = provider._JsonlCandidateDecoder()
+        for item in events[: events.index(tool_start)]:
+            decoder.feed(_encode_events([item]))
+        with self.assertRaises(provider.LocalProviderFailure) as raised:
+            decoder.feed(_encode_events([tool_start]))
+        self.assertEqual("local-agent-jsonl-tool", raised.exception.code)
 
     def test_observed_denied_tool_probe_fixtures_are_accepted(self):
         for fixture in DENIED_TOOL_FIXTURES:
