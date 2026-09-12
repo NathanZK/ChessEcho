@@ -534,6 +534,28 @@ class TrustedLocalProviderTest(unittest.TestCase):
             )
             return executed if bundle else executed.document
 
+    def _phase_inputs(self, operation):
+        return [
+            {
+                "role": role,
+                "binding": {
+                    "kind": "evidence-binding",
+                    "sha256": ("%064x" % (index + 1)),
+                    "size": 1,
+                },
+                "entries": [
+                    {
+                        "path": path,
+                        "sha256": ("%064x" % (index + 100)),
+                        "size": 1,
+                        "bytes_base64": "e30=",
+                    }
+                    for path in paths
+                ],
+            }
+            for index, (role, paths) in enumerate(provider.PHASE_INPUT_PATHS[operation])
+        ]
+
     def test_agent_prompt_requires_exact_candidate_in_final_response(self):
         prompt = provider._agent_prompt(
             175,
@@ -826,7 +848,7 @@ class TrustedLocalProviderTest(unittest.TestCase):
                     "reviewer",
                     request,
                     {"kind": "evidence-binding", "sha256": "d" * 64, "size": 1},
-                    [],
+                    self._phase_inputs(operation) if operation in provider.PHASE_INPUT_PATHS else [],
                 )
 
                 self.assertEqual(expected_outer_keys, contract["required"])
@@ -897,6 +919,121 @@ class TrustedLocalProviderTest(unittest.TestCase):
                     )
                 else:
                     self.assertIn("may be empty", pr["description"])
+
+    def test_phase_prompts_define_role_duties_authoritative_inputs_and_output_contracts(self):
+        cases = {
+            "write-tests": (
+                "implementer",
+                "Act as the test author.",
+                "Do not implement the production change.",
+            ),
+            "review-tests": (
+                "reviewer",
+                "Act as the independent test reviewer.",
+                "projected test report and test diff",
+            ),
+            "implement": (
+                "implementer",
+                "Act as the implementer.",
+                "do not weaken or replace those tests.",
+            ),
+            "review-final": (
+                "reviewer",
+                "Act as the independent final reviewer.",
+                "authoritative validation results",
+            ),
+        }
+        implementer_contract = json.dumps(
+            provider._implementer_candidate_contract(),
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        for operation, (role, instruction, detail) in cases.items():
+            with self.subTest(operation=operation):
+                request = self.fixture.request()
+                request["operation"] = {
+                    "kind": "agent",
+                    "name": operation,
+                    "role": role,
+                }
+                prompt = provider._agent_prompt(
+                    214,
+                    role,
+                    request,
+                    {"kind": "evidence-binding", "sha256": "d" * 64, "size": 1},
+                    self._phase_inputs(operation),
+                )
+                self.assertIn(instruction, prompt)
+                self.assertIn(detail, prompt)
+                self.assertIn(
+                    "Do not refetch the issue or pull request from GitHub",
+                    prompt,
+                )
+                self.assertIn(
+                    "do not discover transitive CAS or evidence references",
+                    prompt,
+                )
+                if role == "implementer":
+                    self.assertIn(implementer_contract, prompt)
+
+    def test_implementer_prompt_contract_matches_strict_decoder(self):
+        contract = provider._implementer_candidate_contract()
+        self.assertEqual(["format", "kind", "report"], contract["required"])
+        self.assertFalse(contract["additionalProperties"])
+        self.assertEqual(
+            provider.CANDIDATE_FORMAT,
+            contract["properties"]["format"]["const"],
+        )
+        self.assertEqual("implementer", contract["properties"]["kind"]["const"])
+        candidate = {
+            "format": provider.CANDIDATE_FORMAT,
+            "kind": "implementer",
+            "report": "Completed the requested phase.",
+        }
+        self.assertEqual(candidate, resume.candidate_schema(candidate, "implementer"))
+
+    def test_phase_input_contracts_reject_every_omission_and_unexpected_input(self):
+        unexpected = {
+            "role": "unexpected",
+            "binding": {
+                "kind": "evidence-binding",
+                "sha256": "f" * 64,
+                "size": 1,
+            },
+            "entries": [
+                {
+                    "path": "unexpected.json",
+                    "sha256": "e" * 64,
+                    "size": 1,
+                    "bytes_base64": "e30=",
+                }
+            ],
+        }
+        for operation in provider.PHASE_INPUT_PATHS:
+            inputs = self._phase_inputs(operation)
+            provider._validate_phase_inputs(operation, inputs)
+            for index in range(len(inputs)):
+                with self.subTest(operation=operation, omitted=index):
+                    with self.assertRaises(provider.LocalProviderFailure) as raised:
+                        provider._validate_phase_inputs(
+                            operation,
+                            inputs[:index] + inputs[index + 1 :],
+                        )
+                    self.assertEqual(
+                        "local-agent-phase-inputs-invalid",
+                        raised.exception.code,
+                    )
+            with self.subTest(operation=operation, unexpected=True):
+                with self.assertRaises(provider.LocalProviderFailure) as raised:
+                    provider._validate_phase_inputs(
+                        operation,
+                        inputs + [unexpected],
+                    )
+                self.assertEqual(
+                    "local-agent-phase-inputs-invalid",
+                    raised.exception.code,
+                )
 
     def test_prompted_review_candidate_shape_matches_strict_decoder(self):
         self.assertEqual(resume.CANDIDATE_FORMAT, provider.CANDIDATE_FORMAT)
@@ -2766,7 +2903,11 @@ class TrustedLocalProviderTest(unittest.TestCase):
         request = self.fixture.request()
         request["operation"] = {"kind": "agent", "name": "write-tests", "role": "planner"}
         request["request_sha256"] = inspector.sha256(inspector.canonical_bytes({key: value for key, value in request.items() if key != "request_sha256"}))
-        with mock.patch.object(provider, "_input_projection", return_value=[]):
+        with mock.patch.object(
+            provider,
+            "_input_projection",
+            return_value=self._phase_inputs("write-tests"),
+        ), mock.patch.object(provider, "_agent_prompt", return_value="write tests"):
             result = instance.execute(
                 request,
                 {"kind": "evidence-binding", "sha256": "d" * 64, "size": 1},
@@ -2781,7 +2922,11 @@ class TrustedLocalProviderTest(unittest.TestCase):
         with mock.patch.object(
             provider,
             "_input_projection",
-            return_value=[{"bytes_base64": "a" * provider.PROMPT_LIMIT_BYTES}],
+            return_value=self._phase_inputs("write-tests"),
+        ), mock.patch.object(
+            provider,
+            "_agent_prompt",
+            return_value="a" * provider.PROMPT_LIMIT_BYTES,
         ):
             with self.assertRaises(provider.LocalProviderFailure) as raised:
                 instance.execute(

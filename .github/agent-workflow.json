@@ -15,9 +15,9 @@
         "stderr_limit_bytes": 65536,
         "containment": "trusted-local-worktree-v1",
         "provider_name": "chess-echo-trusted-local",
-        "provider_version": "1.5.7",
+        "provider_version": "1.5.8",
         "provider_source": "scripts/workflow_local_provider.py",
-        "provider_source_sha256": "1a4d3ed1d33915d7f07248cee14a3a93a12df0915df3928b1f4e3bf0f87acb82",
+        "provider_source_sha256": "80c521ad5fbe10eb47c1c89763f2fbb10896c8ef1a86811ce29579ba57a120a6",
         "agent_executable_sha256": "fe779da7dd2342c1d23f0744873fa27d0251eaaee4dc6637fa53093639c0f3c9"
       },
       {
@@ -30,9 +30,9 @@
         "stderr_limit_bytes": 65536,
         "containment": "trusted-local-worktree-v1",
         "provider_name": "chess-echo-trusted-local",
-        "provider_version": "1.5.7",
+        "provider_version": "1.5.8",
         "provider_source": "scripts/workflow_local_provider.py",
-        "provider_source_sha256": "1a4d3ed1d33915d7f07248cee14a3a93a12df0915df3928b1f4e3bf0f87acb82",
+        "provider_source_sha256": "80c521ad5fbe10eb47c1c89763f2fbb10896c8ef1a86811ce29579ba57a120a6",
         "agent_executable_sha256": "fe779da7dd2342c1d23f0744873fa27d0251eaaee4dc6637fa53093639c0f3c9"
       },
       {
@@ -45,9 +45,9 @@
         "stderr_limit_bytes": 65536,
         "containment": "trusted-local-worktree-v1",
         "provider_name": "chess-echo-trusted-local",
-        "provider_version": "1.5.7",
+        "provider_version": "1.5.8",
         "provider_source": "scripts/workflow_local_provider.py",
-        "provider_source_sha256": "1a4d3ed1d33915d7f07248cee14a3a93a12df0915df3928b1f4e3bf0f87acb82",
+        "provider_source_sha256": "80c521ad5fbe10eb47c1c89763f2fbb10896c8ef1a86811ce29579ba57a120a6",
         "agent_executable_sha256": "fe779da7dd2342c1d23f0744873fa27d0251eaaee4dc6637fa53093639c0f3c9"
       }
     ],
@@ -99,12 +99,12 @@
       "name": "chess-echo-trusted-local-host",
       "version": "1.4.0",
       "source": "scripts/workflow_local_host.py",
-      "source_sha256": "d858217056a2db1ff05f36da108c0f4210caa3844bd663dcb4326d3cf98f64df",
+      "source_sha256": "df60109bd3585578cf6ea71cf577e87d3d02192a6734c3c2e6d259e5527581ea",
       "provider": {
         "name": "chess-echo-trusted-local",
-        "version": "1.5.7",
+        "version": "1.5.8",
         "source": "scripts/workflow_local_provider.py",
-        "source_sha256": "1a4d3ed1d33915d7f07248cee14a3a93a12df0915df3928b1f4e3bf0f87acb82"
+        "source_sha256": "80c521ad5fbe10eb47c1c89763f2fbb10896c8ef1a86811ce29579ba57a120a6"
       },
       "python": {
         "path": "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3.9",

@@ -28,7 +28,7 @@ except ImportError:  # pragma: no cover - direct script loading
 
 
 NAME = "chess-echo-trusted-local"
-VERSION = "1.5.7"
+VERSION = "1.5.8"
 RESULT_FORMAT = "chess-echo-trusted-local-execution-result-v1"
 PROCESS_DIAGNOSTIC_FORMAT = "chess-echo-trusted-local-process-diagnostic-v1"
 DISCOVERY_FORMAT = "chess-echo-pending-result-candidates-v1"
@@ -63,6 +63,53 @@ CANDIDATE_MAX_BYTES = 448 * 1024
 TRANSPORT_ATTACHMENT_PATH = "workflow-orchestration/copilot-transport.jsonl"
 DENIED_TOOL_MESSAGE = "Permission denied and could not request permission from user"
 DENIED_TOOL_CATEGORY = "permission_denied"
+PHASE_INPUT_PATHS = {
+    "write-tests": [
+        ("approved-plan", ("workflow-plan-revision/plan.md", "workflow-plan-revision/snapshot.json")),
+        ("baseline", ("workflow-work-type/baseline.json",)),
+        ("issue-snapshot", ("workflow-work-type/issue-snapshot.json",)),
+        ("policy-state", ("workflow-policy/state.json",)),
+        ("triage", ("workflow-work-type/triage.json",)),
+    ],
+    "review-tests": [
+        ("approved-plan", ("workflow-plan-revision/plan.md", "workflow-plan-revision/snapshot.json")),
+        ("baseline", ("workflow-work-type/baseline.json",)),
+        ("issue-snapshot", ("workflow-work-type/issue-snapshot.json",)),
+        ("policy-state", ("workflow-policy/state.json",)),
+        ("test-report", ("workflow-orchestration/test-report.json",)),
+        ("tests", ("workflow-work-type/diff-observation.json",)),
+        ("triage", ("workflow-work-type/triage.json",)),
+    ],
+    "implement": [
+        ("approved-plan", ("workflow-plan-revision/plan.md", "workflow-plan-revision/snapshot.json")),
+        ("approved-tests", ("workflow-orchestration/node.json",)),
+        ("approved-tests", ("workflow-orchestration/test-report.json",)),
+        ("approved-tests", ("workflow-work-type/diff-observation.json",)),
+        ("baseline", ("workflow-work-type/baseline.json",)),
+        ("issue-snapshot", ("workflow-work-type/issue-snapshot.json",)),
+        ("policy-state", ("workflow-policy/state.json",)),
+        ("triage", ("workflow-work-type/triage.json",)),
+    ],
+    "review-final": [
+        ("approved-plan", ("workflow-plan-revision/plan.md", "workflow-plan-revision/snapshot.json")),
+        ("approved-tests", ("workflow-orchestration/node.json",)),
+        ("approved-tests", ("workflow-orchestration/test-report.json",)),
+        ("approved-tests", ("workflow-work-type/diff-observation.json",)),
+        ("baseline", ("workflow-work-type/baseline.json",)),
+        ("implementation-evidence", ("workflow-orchestration/implementation-report.json",)),
+        ("implementation-evidence", ("workflow-work-type/diff-observation.json",)),
+        ("issue-snapshot", ("workflow-work-type/issue-snapshot.json",)),
+        ("policy-state", ("workflow-policy/state.json",)),
+        ("triage", ("workflow-work-type/triage.json",)),
+        ("validation-results", ("workflow-orchestration/comprehensive-validation.json",)),
+    ],
+}
+TEST_REWORK_INPUT_PATHS = [
+    ("gate-rejection", ("workflow-supervision/gate-rejection.json",)),
+    ("rejected-approval-challenge", ("workflow-supervision/gate-challenge.json",)),
+    ("rejected-test-manifest", ("workflow-orchestration/node.json",)),
+    ("rejected-test-review", ("workflow-orchestration/test-review.json",)),
+]
 JSONL_STARTUP_TYPES = (
     "session.mcp_servers_loaded",
     "session.skills_loaded",
@@ -1220,7 +1267,37 @@ def _input_projection(root, issue, request):
                 }
             )
         rows.append({"role": item["role"], "binding": copy.deepcopy(item["binding"]), "entries": entries})
+    _validate_phase_inputs(request["operation"]["name"], rows)
     return rows
+
+
+def _validate_phase_inputs(operation, inputs):
+    expected = PHASE_INPUT_PATHS.get(operation)
+    if expected is None:
+        return
+    try:
+        actual = sorted(
+            (
+                item["role"],
+                tuple(sorted(entry["path"] for entry in item["entries"])),
+            )
+            for item in inputs
+        )
+    except (KeyError, TypeError):
+        _fail(
+            "corrupt",
+            "local-agent-phase-inputs-invalid",
+            "Phase producer inputs are malformed",
+        )
+    allowed = [sorted(expected)]
+    if operation == "write-tests":
+        allowed.append(sorted(expected + TEST_REWORK_INPUT_PATHS))
+    if actual not in allowed:
+        _fail(
+            "corrupt",
+            "local-agent-phase-inputs-invalid",
+            "Phase producer inputs are missing or unexpected",
+        )
 
 
 def _review_candidate_contract(operation):
@@ -1500,8 +1577,22 @@ def _plan_candidate_contract(inputs):
     }
 
 
+def _implementer_candidate_contract():
+    return {
+        "additionalProperties": False,
+        "properties": {
+            "format": {"const": CANDIDATE_FORMAT},
+            "kind": {"const": "implementer"},
+            "report": {"minLength": 1, "type": "string"},
+        },
+        "required": ["format", "kind", "report"],
+        "type": "object",
+    }
+
+
 def _agent_prompt(issue, role, request, request_binding, inputs):
     operation = request["operation"]["name"]
+    _validate_phase_inputs(operation, inputs)
     expected = (
         "plan"
         if operation == "write-plan"
@@ -1564,6 +1655,52 @@ def _agent_prompt(issue, role, request, request_binding, inputs):
         if operation == "write-plan"
         else ""
     )
+    implementer_contract = (
+        " The authoritative implementer candidate contract for operation %s is this "
+        "exact JSON Schema: %s Additional outer keys are forbidden."
+        % (
+            operation,
+            json.dumps(
+                _implementer_candidate_contract(),
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        )
+        if operation in {"write-tests", "implement"}
+        else ""
+    )
+    phase_instructions = {
+        "write-tests": (
+            " Act as the test author. Use the immutable issue snapshot and approved "
+            "plan to add focused tests that prove the required behavior. Do not "
+            "implement the production change."
+        ),
+        "review-tests": (
+            " Act as the independent test reviewer. Review the tests in the selected "
+            "candidate worktree against the immutable issue snapshot and approved plan, "
+            "using the projected test report and test diff as the authoritative account "
+            "of the test-author phase."
+        ),
+        "implement": (
+            " Act as the implementer. Implement the immutable issue snapshot and "
+            "approved plan against the exact approved tests in the selected candidate "
+            "worktree; do not weaken or replace those tests."
+        ),
+        "review-final": (
+            " Act as the independent final reviewer. Review the implementation against "
+            "the immutable issue snapshot, approved plan, approved tests, direct "
+            "implementation evidence, and authoritative validation results. Supply the "
+            "exact draft-PR metadata required by the review candidate contract."
+        ),
+    }.get(operation, "")
+    immutable_input_rule = (
+        " Use only the host-projected immutable inputs and the selected candidate "
+        "worktree for authoritative workflow facts. Do not refetch the issue or pull "
+        "request from GitHub, and do not discover transitive CAS or evidence references."
+        if operation in PHASE_INPUT_PATHS
+        else ""
+    )
     return (
         "Execute exactly one ChessEcho replacement-workflow agent request as role %s for "
         "issue #%d. Work only in the current dedicated candidate worktree. Treat workflow "
@@ -1574,7 +1711,7 @@ def _agent_prompt(issue, role, request, request_binding, inputs):
         "Inspect the issue and repository as needed, perform only the requested phase. "
         "The final assistant response content must be exactly one JSON object of kind %s matching "
         "chess-echo-orchestrator-agent-candidate-v1. Emit no prose, Markdown fences, or other "
-        "content in that final response.%s%s%s"
+        "content in that final response.%s%s%s%s%s%s"
         % (
             role,
             issue,
@@ -1585,6 +1722,9 @@ def _agent_prompt(issue, role, request, request_binding, inputs):
             plan_contract,
             plan_acceptance_contract,
             review_contract,
+            implementer_contract,
+            phase_instructions,
+            immutable_input_rule,
         )
     )
 
