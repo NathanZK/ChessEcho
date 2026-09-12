@@ -19,7 +19,7 @@ PENDING_RESULT_QUERY_FORMAT = "chess-echo-pending-result-query-v1"
 PENDING_RESULT_CANDIDATES_FORMAT = "chess-echo-pending-result-candidates-v1"
 CANDIDATE_FORMAT = "chess-echo-orchestrator-agent-candidate-v1"
 RECOVERY_CHALLENGE_FORMAT = "chess-echo-human-challenge-v1"
-REVIEW_PHASES = frozenset({"PLAN_REVIEW", "TEST_REVIEW", "FINAL_REVIEW"})
+REVIEW_OPERATIONS = frozenset({"review-plan", "review-tests", "review-final"})
 SAFE_SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 MAX_REVIEW_FINDINGS = 1_000
 MAX_REVIEW_UNIT_IDS = 1_000
@@ -195,9 +195,9 @@ def validate_plan_candidate(candidate):
     return lines, units
 
 
-def validate_review_candidate(candidate, phase, snapshot_binding, valid_unit_ids):
+def validate_review_candidate(candidate, operation, snapshot_binding, valid_unit_ids):
     """Validate one phase's review semantics before any candidate evidence is published."""
-    _require(phase in REVIEW_PHASES, "corrupt", "candidate-output-invalid", "Review candidate phase is invalid")
+    _require(operation in REVIEW_OPERATIONS, "corrupt", "candidate-output-invalid", "Review candidate operation is invalid")
     _require(isinstance(candidate, dict) and set(candidate) == {"format", "kind", "verdict", "findings", "pr"}, "corrupt", "candidate-output-invalid", "Review candidate has an invalid schema")
     _require(candidate["format"] == CANDIDATE_FORMAT and candidate["kind"] == "review" and isinstance(candidate["pr"], dict), "corrupt", "candidate-output-invalid", "Review candidate has an invalid identity or PR field")
     verdict = candidate["verdict"]

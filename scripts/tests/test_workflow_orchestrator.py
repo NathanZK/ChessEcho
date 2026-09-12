@@ -392,24 +392,24 @@ class CandidateOutputContractTest(unittest.TestCase):
         finding.update(overrides)
         return finding
 
-    def _validate(self, phase, candidate):
+    def _validate(self, operation, candidate):
         return resume.validate_review_candidate(
             candidate,
-            phase,
+            operation,
             self.SNAPSHOT,
             ["change", "tests"],
         )
 
     def test_review_candidate_acceptance_semantics_apply_to_every_review_phase(self):
-        for phase in ("PLAN_REVIEW", "TEST_REVIEW", "FINAL_REVIEW"):
-            with self.subTest(phase=phase, case="accepted-empty"):
+        for operation in ("review-plan", "review-tests", "review-final"):
+            with self.subTest(operation=operation, case="accepted-empty"):
                 self.assertEqual(
                     ("accepted", []),
-                    self._validate(phase, self._review_candidate()),
+                    self._validate(operation, self._review_candidate()),
                 )
-            with self.subTest(phase=phase, case="valid-blocking-rejection"):
+            with self.subTest(operation=operation, case="valid-blocking-rejection"):
                 verdict, findings = self._validate(
-                    phase,
+                    operation,
                     self._review_candidate(
                         verdict="needs-revision",
                         findings=[self._finding()],
@@ -418,17 +418,17 @@ class CandidateOutputContractTest(unittest.TestCase):
                 self.assertEqual("needs-revision", verdict)
                 self.assertEqual(["change"], findings[0]["unit_ids"])
             for verdict in ("needs-revision", "full-review-required"):
-                with self.subTest(phase=phase, case="%s-empty" % verdict):
+                with self.subTest(operation=operation, case="%s-empty" % verdict):
                     with self.assertRaises(resume.ResumeFailure) as raised:
                         self._validate(
-                            phase,
+                            operation,
                             self._review_candidate(verdict=verdict),
                         )
                     self.assertEqual("candidate-output-invalid", raised.exception.code)
-            with self.subTest(phase=phase, case="accepted-with-finding"):
+            with self.subTest(operation=operation, case="accepted-with-finding"):
                 with self.assertRaises(resume.ResumeFailure) as raised:
                     self._validate(
-                        phase,
+                        operation,
                         self._review_candidate(findings=[self._finding()]),
                     )
                 self.assertEqual("candidate-output-invalid", raised.exception.code)
@@ -452,12 +452,12 @@ class CandidateOutputContractTest(unittest.TestCase):
             [self._finding(detail="\u034f")],
             [self._finding(detail="a" * 16385)],
         ]
-        for phase in ("PLAN_REVIEW", "TEST_REVIEW", "FINAL_REVIEW"):
+        for operation in ("review-plan", "review-tests", "review-final"):
             for findings in malformed:
-                with self.subTest(phase=phase, findings=findings):
+                with self.subTest(operation=operation, findings=findings):
                     with self.assertRaises(resume.ResumeFailure) as raised:
                         self._validate(
-                            phase,
+                            operation,
                             self._review_candidate(
                                 verdict="needs-revision",
                                 findings=findings,

@@ -931,7 +931,7 @@ class TrustedLocalProviderTest(unittest.TestCase):
                         ("accepted", []),
                         resume.validate_review_candidate(
                             candidate,
-                            "PLAN_REVIEW",
+                            "review-plan",
                             {
                                 "kind": "evidence-binding",
                                 "sha256": "d" * 64,

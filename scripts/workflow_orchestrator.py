@@ -455,7 +455,7 @@ class Orchestrator(gates.ApprovalGateMixin):
         validated = _translate(
             lambda: resume.validate_review_candidate(
                 candidate,
-                state["phase"],
+                AGENT_PHASES[state["phase"]][1],
                 snapshot_binding,
                 valid_unit_ids,
             ),
@@ -687,7 +687,7 @@ class Orchestrator(gates.ApprovalGateMixin):
         if after is not None: _require(self._read(after, label="repository observation") == result["repository_after"], "stale", "execution-handoff-stale", "Repository result handoff differs")
         return request, result, after, None
     def _finalize(self, inspection, state, supplied):
-        pending = state["pending"]; review_phase = state["phase"] in resume.REVIEW_PHASES
+        pending = state["pending"]; review_phase = state["phase"] in {"PLAN_REVIEW", "TEST_REVIEW", "FINAL_REVIEW"}
         request, result, after, observed = self._verified_handoff(state, inspection, supplied, materialize_after=not review_phase)
         if observed is not None:
             self._runtime(None, state, inspection, request["repository_before"])
