@@ -8,7 +8,7 @@ construction/validation. It performs no Git/GitHub/process execution, publishes 
 commits no authority, selects no lifecycle transition, and performs no GitHub mutation -- all
 of that remains the exclusive responsibility of workflow_orchestrator.py.
 """
-import base64, copy, json
+import base64, copy, json, re, unicodedata
 try:
     import workflow_inspector as inspector
 except ModuleNotFoundError:  # pragma: no cover - package execution
@@ -19,6 +19,12 @@ PENDING_RESULT_QUERY_FORMAT = "chess-echo-pending-result-query-v1"
 PENDING_RESULT_CANDIDATES_FORMAT = "chess-echo-pending-result-candidates-v1"
 CANDIDATE_FORMAT = "chess-echo-orchestrator-agent-candidate-v1"
 RECOVERY_CHALLENGE_FORMAT = "chess-echo-human-challenge-v1"
+REVIEW_PHASES = frozenset({"PLAN_REVIEW", "TEST_REVIEW", "FINAL_REVIEW"})
+SAFE_SLUG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+MAX_REVIEW_FINDINGS = 1_000
+MAX_REVIEW_UNIT_IDS = 1_000
+MAX_REVIEW_DETAIL_BYTES = 64 * 1024
+MAX_REVIEW_DETAIL_CHARACTERS = MAX_REVIEW_DETAIL_BYTES // 4
 
 
 class ResumeFailure(Exception):
@@ -189,19 +195,62 @@ def validate_plan_candidate(candidate):
     return lines, units
 
 
-def validate_review_candidate(candidate, snapshot_binding):
-    """Validate a review candidate's schema and return its verdict with identified, sorted findings."""
-    _require(set(candidate) == {"format", "kind", "verdict", "findings", "pr"}, "corrupt", "candidate-output-invalid", "Review candidate has an invalid schema")
+def validate_review_candidate(candidate, phase, snapshot_binding, valid_unit_ids):
+    """Validate one phase's review semantics before any candidate evidence is published."""
+    _require(phase in REVIEW_PHASES, "corrupt", "candidate-output-invalid", "Review candidate phase is invalid")
+    _require(isinstance(candidate, dict) and set(candidate) == {"format", "kind", "verdict", "findings", "pr"}, "corrupt", "candidate-output-invalid", "Review candidate has an invalid schema")
+    _require(candidate["format"] == CANDIDATE_FORMAT and candidate["kind"] == "review" and isinstance(candidate["pr"], dict), "corrupt", "candidate-output-invalid", "Review candidate has an invalid identity or PR field")
     verdict = candidate["verdict"]
     _require(verdict in {"accepted", "needs-revision", "full-review-required"}, "corrupt", "candidate-output-invalid", "Review verdict is invalid")
+    raw_findings = candidate["findings"]
+    _require(isinstance(raw_findings, list) and len(raw_findings) <= MAX_REVIEW_FINDINGS, "corrupt", "candidate-output-invalid", "Review findings must be a bounded list")
+    valid_units = set(valid_unit_ids)
     findings = []
-    for raw in candidate["findings"]:
+    for raw in raw_findings:
         _require(isinstance(raw, dict) and set(raw) == {"unit_ids", "category", "detail"}, "corrupt", "candidate-output-invalid", "Review finding schema is invalid")
+        unit_ids, category, detail = raw["unit_ids"], raw["category"], raw["detail"]
+        _require(
+            isinstance(unit_ids, list)
+            and 0 < len(unit_ids) <= MAX_REVIEW_UNIT_IDS
+            and all(isinstance(unit_id, str) and SAFE_SLUG_RE.fullmatch(unit_id) is not None for unit_id in unit_ids)
+            and unit_ids == sorted(set(unit_ids), key=lambda unit_id: unit_id.encode("utf-8")),
+            "corrupt",
+            "candidate-output-invalid",
+            "Review finding plan-unit references are invalid",
+        )
+        _require(all(unit_id in valid_units for unit_id in unit_ids), "corrupt", "candidate-output-invalid", "Review finding cites an unknown plan unit")
+        _require(isinstance(category, str) and SAFE_SLUG_RE.fullmatch(category) is not None, "corrupt", "candidate-output-invalid", "Review finding category is invalid")
+        try:
+            detail_size = len(detail.encode("utf-8")) if isinstance(detail, str) else 0
+        except UnicodeEncodeError:
+            detail_size = 0
+        detail_characters = list(detail) if isinstance(detail, str) else []
+        _require(
+            isinstance(detail, str)
+            and detail == detail.strip()
+            and len(detail_characters) <= MAX_REVIEW_DETAIL_CHARACTERS
+            and 0 < detail_size <= MAX_REVIEW_DETAIL_BYTES
+            and "\0" not in detail
+            and not any(
+                unicodedata.category(character) in {"Cc", "Cf", "Cs"}
+                and character not in "\n\r\t"
+                for character in detail_characters
+            )
+            and any(
+                unicodedata.category(character)[0] in {"L", "N", "P", "S"}
+                for character in detail_characters
+            ),
+            "corrupt",
+            "candidate-output-invalid",
+            "Review finding detail is invalid",
+        )
         row = {"introduced_plan_binding": snapshot_binding, **raw}
         row["id"] = "finding-" + _digest({"introduced_plan_binding": row["introduced_plan_binding"], "severity": "blocking", "category": row["category"], "unit_ids": row["unit_ids"], "detail": row["detail"]})
         row["severity"] = "blocking"
         findings.append(row)
     findings.sort(key=lambda row: row["id"])
+    _require(len({row["id"] for row in findings}) == len(findings), "ambiguous", "candidate-output-invalid", "Review findings are duplicated")
+    _require(not findings if verdict == "accepted" else bool(findings), "denied", "candidate-output-invalid", "Review verdict contradicts its blocking findings")
     return verdict, findings
 
 

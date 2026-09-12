@@ -840,12 +840,35 @@ class TrustedLocalProviderTest(unittest.TestCase):
                     ["accepted", "needs-revision", "full-review-required"],
                     contract["properties"]["verdict"]["enum"],
                 )
+                self.assertEqual(
+                    {"properties": {"findings": {"maxItems": 0}}},
+                    contract["allOf"][0]["then"],
+                )
+                self.assertEqual(
+                    {"properties": {"findings": {"minItems": 1}}},
+                    contract["allOf"][0]["else"],
+                )
                 finding = contract["properties"]["findings"]["items"]
                 self.assertEqual(
                     ["unit_ids", "category", "detail"],
                     finding["required"],
                 )
                 self.assertFalse(finding["additionalProperties"])
+                self.assertEqual(
+                    finding["properties"]["category"]["pattern"],
+                    finding["properties"]["unit_ids"]["items"]["pattern"],
+                )
+                self.assertEqual(
+                    (
+                        r"^(?![\s\S]*[\u0000-\u0008\u000B\u000C"
+                        r"\u000E-\u001F\u007F-\u009F])\S(?:[\s\S]*\S)?$"
+                    ),
+                    finding["properties"]["detail"]["pattern"],
+                )
+                self.assertEqual(
+                    16384,
+                    finding["properties"]["detail"]["maxLength"],
+                )
                 self.assertIn(
                     json.dumps(
                         contract,
@@ -908,11 +931,13 @@ class TrustedLocalProviderTest(unittest.TestCase):
                         ("accepted", []),
                         resume.validate_review_candidate(
                             candidate,
+                            "PLAN_REVIEW",
                             {
                                 "kind": "evidence-binding",
                                 "sha256": "d" * 64,
                                 "size": 1,
                             },
+                            ["change"],
                         ),
                     )
                 if operation == "review-final":

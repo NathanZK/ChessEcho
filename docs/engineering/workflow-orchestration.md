@@ -181,12 +181,14 @@ the strict phase-specific contract:
 - plan candidates contain exact plan text, line-bounded units, dependencies,
   review classes, and revision metadata;
 - review candidates use only `accepted`, `needs-revision`, or
-  `full-review-required`, with exact finding fields;
+  `full-review-required`, with exact finding fields, nonempty actionable detail,
+  and valid approved-plan unit references. `accepted` requires no findings;
+  either non-accepted verdict requires at least one blocking finding;
 - implementer candidates contain one nonempty report; and
 - final-review PR metadata has exact `head_ref`, `title`, and `body` fields,
   with nonempty `## What`, `## Why`, and `## Testing` sections.
 
-Provider 1.5.6 carries operation-specific JSON Schema copies to communicate the
+Provider 1.5.7 carries operation-specific JSON Schema copies to communicate the
 plan candidate contract in `write-plan` and the review candidate contract in
 `review-plan`, `review-tests`, and `review-final`. The plan schema has distinct
 initial and revision variants selected from the exact projected input roles
@@ -194,10 +196,14 @@ and describes the existing unit-map and deterministic-diff constraints.
 Because JSON Schema cannot express array ordering, the planner prompt also
 states directly that each dependency array is a canonical set representation
 sorted by ascending UTF-8 byte order, not an execution-order signal.
-Focused tests keep these prompt schemas aligned with the unchanged core
-validators. Implementer prompts do not embed a JSON Schema copy. The provider
+Focused tests keep these prompt schemas aligned with the core validators.
+Implementer prompts do not embed a JSON Schema copy. The provider
 cannot normalize an unsupported shape, verdict, extra field, or prose-prefixed
-object into acceptance. #198 demonstrated both an invalid reviewer candidate
+object into acceptance. Review semantics are checked before candidate
+publication in plan, test, and final review; a malformed or contradictory
+candidate therefore cannot publish active review evidence, open a gate, or
+advance authority. This check is structural and does not infer natural-language
+correctness or introduce a severity taxonomy. #198 demonstrated both an invalid reviewer candidate
 and, in a later isolated run, a planner candidate containing prose before JSON;
 the prompt corrections leave strict decoding unchanged. Its only
 `session.info` compatibility rule accepts an ephemeral `file_created` event
