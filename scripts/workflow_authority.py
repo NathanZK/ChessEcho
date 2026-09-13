@@ -46,10 +46,11 @@ CANDIDATE_SLOTS = frozenset(
     documentation-content-check documentation-diff-check human-challenge
     human-authorization cutover-authorization revocation-intent execution-request
     execution-result final-gate-satisfaction pr-publication-gate-satisfaction
-    pr-publication-observation supervision-policy-change gate-rejection""".split()
+    pr-publication-observation source-publication-request source-publication-result
+    supervision-policy-change gate-rejection""".split()
 )
 PENDING_KINDS = frozenset(
-    "agent validation git-read github-read github-write human human-rejection policy".split()
+    "agent validation git-read github-read github-write source-publication human human-rejection policy".split()
 )
 PENDING_STATUSES = frozenset(("requested", "cancel-requested"))
 TRANSITION_TYPES = frozenset(
@@ -61,7 +62,8 @@ TRANSITION_TYPES = frozenset(
     final-approve final-reject final-revoke artifact-request artifact-review
     artifact-accept artifact-reject artifact-revoke cancel-request abandon pause
     recover rejection-request supervision-change-request supervision-change
-    publication-request publication-approve cutover complete""".split()
+    publication-request publication-approve source-publication-claim
+    source-publication-finalize cutover complete""".split()
 )
 class AuthorityFailure(Exception):
     def __init__(self, status, code, message, subject=None):
@@ -319,6 +321,8 @@ def _related(root, state, cache):
         elif pending["kind"] in {"human", "human-rejection"}:
             expected = {"gate-challenge", "human-challenge",
                         "supervision-policy-change"}
+        elif pending["kind"] == "source-publication":
+            expected = {"source-publication-request"}
         else:
             expected = {"execution-request"}
         _require(decision in expected, "stale", "authority-binding-invalid", "Pending request decision is invalid")

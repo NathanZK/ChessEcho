@@ -17,7 +17,8 @@ publishes through `workflow_evidence.publish`, selects through
 
 Phase 1 is activated through the reviewed
 [`workflow_local_host.py`](workflow-local-provider.md) entry point.
-`RUNTIME_PROVIDER`, `SANDBOX_PROVIDER`, and `PENDING_RESULT_PROVIDER` remain
+`RUNTIME_PROVIDER`, `SOURCE_PUBLICATION_PROVIDER`, `SANDBOX_PROVIDER`, and
+`PENDING_RESULT_PROVIDER` remain
 unset when this module is invoked directly, so an action that needs runtime,
 provider, or pending-result capability fails closed. Core-only actions that do
 not need those seams can still change authority; direct invocation is therefore
@@ -44,8 +45,8 @@ python3 scripts/workflow_orchestrator.py cancel ISSUE --root ROOT --expected-tip
 python3 scripts/workflow_orchestrator.py recover ISSUE --root ROOT --expected-tip SHA256 [--authorization AUTHORIZATION]
 ```
 
-`status` and `plan-next` are read-only. Each mutating command performs at most
-one authority commit. The first `step` atomically claims exactly one bounded
+`status` and `plan-next` are read-only. Each ordinary mutating command performs
+at most one authority commit. The first `step` atomically claims exactly one bounded
 runtime operation and then executes it externally; the claim exists before the
 process starts. Execution publishes its result without changing authority and
 returns an immutable evidence handoff. While that request remains pending, a
@@ -56,6 +57,15 @@ transition without executing another process. A crash requires explicit
 recovery rather than another execution. The orchestrator itself has no
 run-until-done loop or automatic retry; `workflow_driver.py` provides a
 separate bounded continuation loop over fresh `plan-next` results.
+
+Validated source publication is the narrow exception to the external-handoff
+shape. One `step` first commits an exact `source-publication` claim, invokes the
+trusted host's fixed publication operation, and commits the confirmed immutable
+result. If the process exits between the remote mutation and finalization, the
+selected claim remains pending; a later `step` invokes the runtime primitive,
+which observes the exact remote ref before deciding whether any write is
+needed. An exact existing ref is idempotent success, while a divergent or
+unobservable ref cannot authorize draft-PR creation.
 
 `reject` is deliberately narrower than approval. At the current supervised
 `tests` gate, the first call supplies a nonempty reason and replaces the pending
@@ -124,25 +134,28 @@ activation gap, not as an available local-host operator procedure.
    `pr-metadata`.
 9. PR preparation obtains a fresh clean local observation and opens the distinct
    `pr-publication` gate. Its selected standalone satisfaction is mandatory
-   before a GitHub-write request can be claimed. Both selected gate
-   satisfactions and their supervised authorization sources are re-observed
-   before that claim and again after the initial trusted remote-head preflight;
-   both gates must retain one common final-approved repository/config snapshot.
-   The runtime repeats the complete local/remote-head observation after those
-   authorization reads and immediately before the mutation process starts.
-10. Draft-PR creation is claimed and run once. A failed/uncertain write is
+   before source publication can be claimed. The claim binds the exact clean
+   repository observation, commit, tree, repository, and deterministic
+   `refs/heads/chess-echo-agent/issue-<number>` target. The trusted host supplies
+   a publication-only credential to the existing non-force runtime primitive.
+   A confirmed or idempotently reconciled result is published immutably and
+   selected by a separate finalization transition.
+10. Only that finalized exact publication permits a GitHub-write request to be
+   claimed. Both selected gate satisfactions and their supervised authorization
+   sources are re-observed before publication, after publication, and before
+   the PR write. The runtime's PR preflight independently requires the selected
+   remote branch to equal the validated local commit.
+11. Draft-PR creation is claimed and run once. A failed/uncertain write is
    reconciled by a later exact PR observation, never by another create request.
-   The runtime independently observes the already-published remote head twice
-   around complete local observations and requires it to equal the validated
-   local commit before mutation; the orchestrator accepts the result only when
-   it embeds that exact trusted remote-head observation.
+   The orchestrator accepts the result only when it embeds the exact trusted
+   remote-head observation already fixed by source-publication evidence.
    `pr-metadata` requires an `OPEN`, draft PR matching base, head, title, and
    body hashes.
-11. After `pr-metadata` is selected, local state is observed before and after a
+12. After `pr-metadata` is selected, local state is observed before and after a
     fresh PR observation for the same clean head/base/open-draft metadata. A deterministic
     follow-up binds final satisfaction, publication satisfaction, final review,
-    and the PR observation into existing `pr-approval`, then moves the single
-    successor pointer to `COMPLETED`.
+    source-publication result, and the PR observation into existing
+    `pr-approval`, then moves the single successor pointer to `COMPLETED`.
 
 The active #134 bindings are evaluated and published in this exact order:
 `plan-approval`, `test-manifest`, `test-approval`,

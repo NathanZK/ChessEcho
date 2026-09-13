@@ -771,6 +771,13 @@ handoff use `--request FILE`; every post-genesis orchestration mutation
 by `status` as `--expected-tip`. `bootstrap`, `publish-issue-source`, and
 genesis `init` do not have an existing replacement pointer to supply.
 
+For the `step` selected as `publish-validated-branch`, add
+`--source-publication-auth-stdin` and supply a second, publication-only
+credential line distinct from the general GitHub token. The host exposes only
+this deterministic issue-branch operation: repository, ref, commit, and tree
+come from the authority-selected request, and the runtime performs one
+non-force publication or reconciles an already-exact ref.
+
 For a `step` that may launch an agent, add the explicit trusted-worker option
 and second input line:
 

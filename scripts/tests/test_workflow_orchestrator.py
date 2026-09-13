@@ -75,6 +75,66 @@ class TestPendingResultProvider:
         }
 
 
+class TestSourcePublicationProvider:
+    def __init__(self, fixture):
+        self.fixture = fixture
+        self.calls = []
+        self.writes = 0
+        self.mode = "normal"
+
+    def __call__(self, root, issue, reconstruction_request, request, cancel_event):
+        self.calls.append(copy.deepcopy(request))
+        if root != self.fixture.root or issue != ISSUE:
+            raise AssertionError("publication escaped the fixture workspace")
+        if request["target_ref"] != "refs/heads/chess-echo-agent/issue-%d" % ISSUE:
+            raise AssertionError("publication targeted a non-deterministic branch")
+        runtime.reconstruct(self.fixture.root, reconstruction_request, TOKEN)
+        data = json.loads((self.fixture.bin / "gh-responses.json").read_text())
+        remote_refs = data.setdefault("remote_refs", {})
+        current = remote_refs.get(request["target_ref"])
+        if current is not None and current != request["local_commit"]:
+            return self._result(request, "conflict", "publication-remote-ref-conflict", "not-attempted", False, None)
+        if current is None:
+            self.writes += 1
+            remote_refs[request["target_ref"]] = request["local_commit"]
+            (self.fixture.bin / "gh-responses.json").write_text(json.dumps(data, sort_keys=True))
+            if self.mode == "interrupt-after-write":
+                raise KeyboardInterrupt()
+            mutation = "attempted-or-uncertain" if self.mode == "uncertain-transport" else "attempted"
+            return self._result(request, "confirmed", "published", mutation, False, self._remote(request))
+        return self._result(request, "confirmed", "already-published", "not-attempted", True, self._remote(request))
+
+    def _remote(self, request):
+        value = {
+            "format": runtime.REMOTE_HEAD_OBSERVATION_FORMAT,
+            "repository": request["repository"],
+            "ref": request["target_ref"],
+            "sha": request["local_commit"],
+            "repository_observation_sha256": request["repository_observation"]["observation_sha256"],
+            "observed_at": "2026-09-05T00:00:02Z",
+        }
+        value["observation_sha256"] = inspector.sha256(_canonical(value))
+        return value
+
+    def _result(self, request, outcome, code, mutation, idempotent, remote):
+        value = {
+            "format": runtime.SOURCE_PUBLICATION_RESULT_FORMAT,
+            "request_sha256": request["request_sha256"],
+            "repository": request["repository"],
+            "target_ref": request["target_ref"],
+            "source_commit": request["local_commit"],
+            "source_tree": request["local_tree"],
+            "outcome": outcome,
+            "code": code,
+            "mutation": mutation,
+            "idempotent": idempotent,
+            "process_result": None,
+            "remote_head": remote,
+        }
+        value["result_sha256"] = inspector.sha256(_canonical(value))
+        return value
+
+
 class OrchestratorFixture:
     """A real Git/CAS/evidence/policy/runtime fixture with bounded local commands."""
 
@@ -94,6 +154,7 @@ class OrchestratorFixture:
         self.store = inspector.resolve_store(self.root)
         self.store.store_dir.mkdir(parents=True, exist_ok=True)
         self.runtime_instances = []
+        self.publication_provider = TestSourcePublicationProvider(self)
         self._write_gh()
 
     def _skip(self, name):
@@ -199,6 +260,7 @@ class OrchestratorFixture:
                 },
             },
             "graphql": {},
+            "remote_refs": {},
         }
         data.update(extra or {})
         (self.bin / "gh-responses.json").write_text(json.dumps(data, sort_keys=True))
@@ -218,19 +280,29 @@ class OrchestratorFixture:
             return adapter
 
         adapter = provide(self.root, ISSUE, self.request())
-        old_runtime, old_sandbox, old_result = (
+        old_runtime, old_publication, old_sandbox, old_result = (
             orchestrator.RUNTIME_PROVIDER,
+            orchestrator.SOURCE_PUBLICATION_PROVIDER,
             orchestrator.SANDBOX_PROVIDER,
             orchestrator.PENDING_RESULT_PROVIDER,
         )
         test.addCleanup(setattr, orchestrator, "RUNTIME_PROVIDER", old_runtime)
+        test.addCleanup(setattr, orchestrator, "SOURCE_PUBLICATION_PROVIDER", old_publication)
         test.addCleanup(setattr, orchestrator, "SANDBOX_PROVIDER", old_sandbox)
         test.addCleanup(setattr, orchestrator, "PENDING_RESULT_PROVIDER", old_result)
         orchestrator.RUNTIME_PROVIDER = provide
+        orchestrator.SOURCE_PUBLICATION_PROVIDER = self.publication_provider
         orchestrator.PENDING_RESULT_PROVIDER = TestPendingResultProvider()
         orchestrator.SANDBOX_PROVIDER = lambda root, issue, role: TestSandboxProvider(
             self.root, "orchestrator-e2e-sandbox", self.agent_sha256)
         return adapter
+
+    def set_remote_head(self, sha):
+        data = json.loads((self.bin / "gh-responses.json").read_text())
+        data.setdefault("remote_refs", {})[
+            "refs/heads/chess-echo-agent/issue-%d" % ISSUE
+        ] = sha
+        (self.bin / "gh-responses.json").write_text(json.dumps(data, sort_keys=True))
 
     def publish_response_source(self):
         self.issue_source = issue_source.publish(
@@ -727,6 +799,7 @@ class OrchestratorLifecycleTest(unittest.TestCase):
 
     def _finish(self):
         self._to_pr_preparation()
+        self.fixture.step()
         self._agent_pair()
         self._agent_pair()
         return self.fixture.step()
@@ -756,9 +829,12 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         self.assertEqual({"test-diff", "test-report"}, {row["role"] for row in wrappers["test-manifest"]["evidence"]})
         self.assertEqual({"implementation-report"}, {row["role"] for row in wrappers["implementation-submission"]["evidence"]})
         self.assertEqual({"comprehensive-validation"}, {row["role"] for row in wrappers["final-review"]["evidence"]})
-        self.assertEqual({"github-pr-observation"}, {row["role"] for row in wrappers["pr-metadata"]["evidence"]})
         self.assertEqual(
-            {"final-gate-satisfaction", "final-review", "github-pr-observation", "pr-publication-gate-satisfaction"},
+            {"github-pr-observation", "source-publication-result"},
+            {row["role"] for row in wrappers["pr-metadata"]["evidence"]},
+        )
+        self.assertEqual(
+            {"final-gate-satisfaction", "final-review", "github-pr-observation", "pr-publication-gate-satisfaction", "source-publication-result"},
             {row["role"] for row in wrappers["pr-approval"]["evidence"]},
         )
         validation = self.fixture.read(wrappers["validation"]["subject_binding"])
@@ -777,7 +853,7 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         wrapper = wrappers["pr-metadata"]
         observation = self.fixture.read(wrapper["evidence"][0]["binding"])
         self.assertEqual(("OPEN", True), (observation["state"], observation["draft"]))
-        remote_calls = [call for call in self.fixture.calls() if "/git/matching-refs/heads/issue-144" in " ".join(call)]
+        remote_calls = [call for call in self.fixture.calls() if "/git/matching-refs/heads/chess-echo-agent/issue-144" in " ".join(call)]
         self.assertEqual(4, len(remote_calls))
         self.assertFalse(any("merge" in " ".join(call) for call in self.fixture.calls()))
 
@@ -869,6 +945,7 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         self.assertEqual(
             "WAITING_FOR_PR_PUBLICATION_APPROVAL", self.fixture.step()["phase"]
         )
+        self.assertEqual("PR_PREPARATION", self.fixture.step()["phase"])
         self.assertEqual("PR_PREPARATION", self.fixture.step()["phase"])
         self._agent_pair()
         self._agent_pair()
@@ -1286,6 +1363,104 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         self.assertEqual("authorization-confirmation-mismatch", raised.exception.code)
         self.assertFalse(any(call[:2] == ["pr", "create"] for call in self.fixture.calls()))
 
+    def test_missing_remote_ref_is_published_once_before_pr_creation(self):
+        self._to_pr_preparation()
+
+        published = self.fixture.step()
+
+        self.assertEqual("source-published", published["outcome"]["code"])
+        self.assertEqual(1, self.fixture.publication_provider.writes)
+        self.assertFalse(any(call[:2] == ["pr", "create"] for call in self.fixture.calls()))
+        result = self.fixture.read(
+            next(
+                row["binding"]
+                for row in self.fixture.state()["candidates"]
+                if row["slot"] == "source-publication-result"
+            ),
+            orchestrator.SOURCE_PUBLICATION_RESULT_PATH,
+        )
+        self.assertEqual(("confirmed", "published"), (result["outcome"], result["code"]))
+
+    def test_exact_remote_ref_is_idempotent_without_publication_write(self):
+        self._to_pr_preparation()
+        observation = self.fixture.read(
+            next(
+                row["binding"]
+                for row in self.fixture.state()["candidates"]
+                if row["slot"] == "pr-publication-observation"
+            )
+        )
+        self.fixture.set_remote_head(observation["head"]["commit"])
+
+        self.fixture.step()
+
+        self.assertEqual(0, self.fixture.publication_provider.writes)
+        result = self.fixture.read(
+            next(
+                row["binding"]
+                for row in self.fixture.state()["candidates"]
+                if row["slot"] == "source-publication-result"
+            ),
+            orchestrator.SOURCE_PUBLICATION_RESULT_PATH,
+        )
+        self.assertEqual(("confirmed", "already-published", True), (result["outcome"], result["code"], result["idempotent"]))
+
+    def test_divergent_remote_ref_conflicts_before_pr_creation(self):
+        self._to_pr_preparation()
+        self.fixture.set_remote_head("f" * 40)
+
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            self.fixture.step()
+
+        self.assertEqual("publication-remote-ref-conflict", raised.exception.code)
+        self.assertEqual(0, self.fixture.publication_provider.writes)
+        self.assertFalse(any(call[:2] == ["pr", "create"] for call in self.fixture.calls()))
+
+    def test_uncertain_publication_transport_reconciles_without_retry(self):
+        self._to_pr_preparation()
+        self.fixture.publication_provider.mode = "uncertain-transport"
+
+        self.fixture.step()
+
+        self.assertEqual(1, self.fixture.publication_provider.writes)
+        self.assertEqual(1, len(self.fixture.publication_provider.calls))
+        self.assertFalse(any(call[:2] == ["pr", "create"] for call in self.fixture.calls()))
+
+    def test_restart_discovers_existing_exact_publication_without_second_write(self):
+        self._to_pr_preparation()
+        self.fixture.publication_provider.mode = "interrupt-after-write"
+
+        with self.assertRaises(KeyboardInterrupt):
+            self.fixture.step()
+        self.assertEqual("source-publication", self.fixture.state()["pending"]["kind"])
+        self.fixture.publication_provider.mode = "normal"
+
+        self.fixture.step()
+
+        self.assertEqual(1, self.fixture.publication_provider.writes)
+        self.assertEqual(2, len(self.fixture.publication_provider.calls))
+        result = self.fixture.read(
+            next(
+                row["binding"]
+                for row in self.fixture.state()["candidates"]
+                if row["slot"] == "source-publication-result"
+            ),
+            orchestrator.SOURCE_PUBLICATION_RESULT_PATH,
+        )
+        self.assertEqual(("already-published", True), (result["code"], result["idempotent"]))
+
+    def test_pr_creation_claim_before_source_publication_is_rejected(self):
+        self._to_pr_preparation()
+        instance = orchestrator.Orchestrator(self.fixture.root, ISSUE)
+        inspection = instance._status()
+        state = instance._selected_state(inspection)
+
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            instance._claim(inspection, state, None)
+
+        self.assertEqual("candidate-missing", raised.exception.code)
+        self.assertFalse(any(call[:2] == ["pr", "create"] for call in self.fixture.calls()))
+
     def test_orphaned_publication_satisfaction_is_not_authoritative(self):
         requested = {
             "final": "supervised",
@@ -1517,14 +1692,14 @@ class OrchestratorLifecycleTest(unittest.TestCase):
 
     def test_publication_authorization_is_rechecked_after_remote_head_preflight(self):
         self._to_pr_preparation()
-        original = runtime.Runtime.observe_remote_head
+        original = self.fixture.publication_provider
 
-        def revoke(adapter, *args, **kwargs):
-            result = original(adapter, *args, **kwargs)
+        def revoke(*args, **kwargs):
+            result = original(*args, **kwargs)
             self.fixture.comment("edited during remote preflight", 7004)
             return result
 
-        with mock.patch.object(runtime.Runtime, "observe_remote_head", new=revoke):
+        with mock.patch.object(orchestrator, "SOURCE_PUBLICATION_PROVIDER", new=revoke):
             with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
                 self.fixture.step()
         self.assertEqual("authorization-confirmation-mismatch", raised.exception.code)
@@ -1677,6 +1852,7 @@ class OrchestratorLifecycleTest(unittest.TestCase):
 
     def test_post_write_completion_detects_local_drift_during_pr_observation(self):
         self._to_pr_preparation()
+        self.fixture.step()
         self._agent_pair()
         self._agent_pair()
         instance = orchestrator.Orchestrator(self.fixture.root, ISSUE)
@@ -1709,6 +1885,7 @@ class OrchestratorLifecycleTest(unittest.TestCase):
 
     def test_pr_read_handoff_cannot_cross_repository_drift(self):
         self._to_pr_preparation()
+        self.fixture.step()
         self._agent_pair()
         candidate = self.fixture.step()
         (self.fixture.root / "scripts" / "pr-read-drift.py").write_text("DIRTY = True\n")
@@ -2262,6 +2439,7 @@ class OrchestratorLifecycleTest(unittest.TestCase):
     def test_uncertain_pr_write_is_reconciled_without_a_second_create(self):
         self.fixture.set_uncertain_create()
         self._to_pr_preparation()
+        self.fixture.step()
         self._agent_pair()
         write_result = self.fixture.read(
             next(row["binding"] for row in self.fixture.state()["candidates"]
@@ -2361,6 +2539,7 @@ class OrchestratorLifecycleTest(unittest.TestCase):
     def test_cancelled_pr_write_can_only_reconcile_and_never_create_again(self):
         self._to_pr_preparation()
         self.fixture.step()
+        self.fixture.step()
         orchestrator.cancel(
             self.fixture.root, ISSUE, expected_tip=self.fixture.tip(), reason="operator stop")
         orchestrator.recover(self.fixture.root, ISSUE, expected_tip=self.fixture.tip())
@@ -2375,6 +2554,7 @@ class OrchestratorLifecycleTest(unittest.TestCase):
 
     def test_failed_reconciliation_preserves_historical_write_claim(self):
         self._to_pr_preparation()
+        self.fixture.step()
         self.fixture.step()
         orchestrator.cancel(self.fixture.root, ISSUE, expected_tip=self.fixture.tip(), reason="stop write")
         orchestrator.recover(self.fixture.root, ISSUE, expected_tip=self.fixture.tip())
