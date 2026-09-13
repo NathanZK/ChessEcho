@@ -957,6 +957,10 @@ class TrustedLocalProviderTest(unittest.TestCase):
                     "name": operation,
                     "role": role,
                 }
+                if operation == "implement":
+                    request["repository_before"]["base"] = {
+                        "commit": "1" * 40,
+                    }
                 prompt = provider._agent_prompt(
                     214,
                     role,
@@ -976,6 +980,48 @@ class TrustedLocalProviderTest(unittest.TestCase):
                 )
                 if role == "implementer":
                     self.assertIn(implementer_contract, prompt)
+
+    def test_live_implement_prompt_requires_approved_single_commit_history(self):
+        target_base = "1" * 40
+        approved_tests = "2" * 40
+        request = self.fixture.request()
+        request["operation"] = {
+            "kind": "agent",
+            "name": "implement",
+            "role": "implementer",
+        }
+        request["repository_before"] = {
+            "base": {"commit": target_base},
+            "head": {"commit": approved_tests},
+        }
+
+        prompt = provider._agent_prompt(
+            214,
+            "implementer",
+            request,
+            {"kind": "evidence-binding", "sha256": "d" * 64, "size": 1},
+            self._phase_inputs("implement"),
+        )
+
+        self.assertIn("trusted target base commit is %s" % target_base, prompt)
+        self.assertIn(
+            "selected starting commit containing the exact approved tests is %s"
+            % approved_tests,
+            prompt,
+        )
+        self.assertIn("Preserve all approved test changes", prompt)
+        self.assertIn(
+            "trusted target base remains an ancestor of final HEAD",
+            prompt,
+        )
+        self.assertIn(
+            "final HEAD is exactly one commit relative to that base",
+            prompt,
+        )
+        self.assertIn("combine, squash, or amend producer-created history", prompt)
+        self.assertIn("do not drop approved tests or intended production changes", prompt)
+        self.assertIn("leave the candidate worktree clean", prompt)
+        self.assertIn("include no unrelated changes", prompt)
 
     def test_implementer_prompt_contract_matches_strict_decoder(self):
         contract = provider._implementer_candidate_contract()

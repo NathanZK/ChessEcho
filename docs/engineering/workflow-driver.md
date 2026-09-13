@@ -59,10 +59,18 @@ atomically unique child even when an earlier home has been populated.
 ## Stops and outcomes
 
 Only exact `command: step` actions on the driver's fixed automatic allowlist
-are dispatched. Human approval, rejection, and supervision actions stop with exit 2.
-Recovery and cancelled-attempt actions stop with exit 3. Exhausted bounds stop
-with exit 4. A present issue lock stops with exit 5. Malformed, noncanonical,
-inconclusive, stale, busy, or otherwise failed host output stops with exit 1.
+are dispatched. This includes a configured automatic gate only when
+`plan-next` selects its deterministic `satisfy-gate-automatically` action.
+Human approval, rejection, and supervision actions stop with exit 2. For a
+supervised gate, the coordinator must expose the exact pending challenge and
+confirmation, then wait for the human operator to independently create the
+matching GitHub artifact. The coordinator must not create that artifact with
+the operator's token. After the human-created artifact exists, the operator
+uses the documented trusted-local host `approve` command with the exact
+authorization reference before restarting the driver. Recovery and
+cancelled-attempt actions stop with exit 3. Exhausted bounds stop with exit 4.
+A present issue lock stops with exit 5. Malformed, noncanonical, inconclusive,
+stale, busy, or otherwise failed host output stops with exit 1.
 
 On a nonzero host return, the driver accepts only the host's exact canonical
 `chess-echo-trusted-local-host-failure-v1` document and required exit code 2.

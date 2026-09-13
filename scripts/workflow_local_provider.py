@@ -28,7 +28,7 @@ except ImportError:  # pragma: no cover - direct script loading
 
 
 NAME = "chess-echo-trusted-local"
-VERSION = "1.5.8"
+VERSION = "1.5.9"
 RESULT_FORMAT = "chess-echo-trusted-local-execution-result-v1"
 PROCESS_DIAGNOSTIC_FORMAT = "chess-echo-trusted-local-process-diagnostic-v1"
 DISCOVERY_FORMAT = "chess-echo-pending-result-candidates-v1"
@@ -1670,6 +1670,22 @@ def _agent_prompt(issue, role, request, request_binding, inputs):
         if operation in {"write-tests", "implement"}
         else ""
     )
+    implementation_repository_contract = ""
+    if operation == "implement":
+        repository = request["repository_before"]
+        target_base = repository["base"]["commit"]
+        approved_tests = repository["head"]["commit"]
+        implementation_repository_contract = (
+            " The trusted target base commit is %s. The selected starting commit "
+            "containing the exact approved tests is %s. Preserve all approved test "
+            "changes and add the required production changes. Before the final response, "
+            "ensure the trusted target base remains an ancestor of final HEAD and final "
+            "HEAD is exactly one commit relative to that base. You may combine, squash, "
+            "or amend producer-created history as needed, but do not drop approved tests "
+            "or intended production changes. Commit all intended changes, leave the "
+            "candidate worktree clean, and include no unrelated changes."
+            % (target_base, approved_tests)
+        )
     phase_instructions = {
         "write-tests": (
             " Act as the test author. Use the immutable issue snapshot and approved "
@@ -1711,7 +1727,7 @@ def _agent_prompt(issue, role, request, request_binding, inputs):
         "Inspect the issue and repository as needed, perform only the requested phase. "
         "The final assistant response content must be exactly one JSON object of kind %s matching "
         "chess-echo-orchestrator-agent-candidate-v1. Emit no prose, Markdown fences, or other "
-        "content in that final response.%s%s%s%s%s%s"
+        "content in that final response.%s%s%s%s%s%s%s"
         % (
             role,
             issue,
@@ -1724,6 +1740,7 @@ def _agent_prompt(issue, role, request, request_binding, inputs):
             review_contract,
             implementer_contract,
             phase_instructions,
+            implementation_repository_contract,
             immutable_input_rule,
         )
     )
@@ -1878,9 +1895,9 @@ class LocalSandboxProvider:
             )
         inputs = _input_projection(self.root, self.issue, request)
         prompt = _agent_prompt(self.issue, self.role, request, request_binding, inputs)
-        if request["operation"]["name"] in {"write-tests", "implement"}:
+        if request["operation"]["name"] == "write-tests":
             prompt += " Commit all intended changes and leave the candidate worktree clean."
-        else:
+        elif request["operation"]["name"] != "implement":
             prompt += " This is read-only: do not change or commit the candidate worktree."
         if len(prompt.encode("utf-8")) > PROMPT_LIMIT_BYTES:
             _fail("unsupported", "agent-input-projection-too-large", "Encoded agent prompt exceeds the 64 KiB argument limit")

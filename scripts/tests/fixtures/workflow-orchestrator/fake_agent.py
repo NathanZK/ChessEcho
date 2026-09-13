@@ -101,7 +101,7 @@ def _review(needs_revision):
     return value
 
 
-def _implement():
+def _implement(separate_implementation_commit=False):
     test_path = ROOT / "scripts" / "tests" / "generated_test.py"
     if not test_path.exists():
         test_path.parent.mkdir(parents=True, exist_ok=True)
@@ -112,7 +112,10 @@ def _implement():
     else:
         (ROOT / "scripts" / "implementation.py").write_text("VALUE = 'implemented'\n")
         _git("add", "scripts/implementation.py")
-        _git("commit", "--amend", "--no-edit")
+        if separate_implementation_commit:
+            _git("commit", "-m", "feat: implement generated behavior")
+        else:
+            _git("commit", "--amend", "--no-edit")
         report = "Implemented the approved change."
     return {
         "format": "chess-echo-orchestrator-agent-candidate-v1",
@@ -147,7 +150,7 @@ def main(argv):
         if mode == "empty-pr":
             value["pr"]["body"] = "## What\n\n## Why\nReason.\n\n## Testing\nChecked.\n"
     elif role == "implementer":
-        value = _implement()
+        value = _implement(mode == "separate-implementation-commit")
         if mode == "test-drift" and state[role] == 1:
             (ROOT / "scripts" / "not-a-test.py").write_text("DIRTY = True\n")
         if mode == "rework-tests" and state[role] == 2:
