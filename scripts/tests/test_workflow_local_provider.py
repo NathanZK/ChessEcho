@@ -750,6 +750,15 @@ class TrustedLocalProviderTest(unittest.TestCase):
             prompt,
         )
         self.assertIn(
+            "Plan unit ranges must still exhaustively tile every plan line, so treat "
+            "the final three-line acceptance block as metadata, not substantive plan "
+            "content, and give it its own distinct unit range. Do not include that "
+            "metadata unit in any acceptance requirement's unit_ids. Every substantive "
+            "mapped unit must end before the acceptance block begins and contain the "
+            "exact trusted fact literal.",
+            prompt,
+        )
+        self.assertIn(
             "Human-readable plan prose is allowed in addition, but it does not replace "
             "the structured block",
             prompt,
