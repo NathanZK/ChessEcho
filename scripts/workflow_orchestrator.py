@@ -561,8 +561,8 @@ class Orchestrator(publication.SourcePublicationMixin, gates.ApprovalGateMixin):
         _challenge, pending = self._challenge(state, inspection["authority"], "tests", [("test-manifest", manifest), ("test-review", review_binding)], document["repository_observation_binding"], state["generation"] + 1)
         successor = self._successor(state, inspection["authority"], phase="WAITING_FOR_TEST_APPROVAL", candidates=_put(rows, "test-review", review_binding), pending=pending, transition={"type": "tests-review", "request_binding": pending["request_binding"], "result_binding": None, "authorization_binding": None, "repository_observation_binding": None})
         binding, committed = self._commit(successor); return self._result("executed", successor, binding, committed)
-    def _implementation_submit(self, state, inspection, report_binding, after, rows):
-        _require(after is not None, "stale", "repository-after-missing", "Implementation attempt lacks a repository observation")
+    def _implementation_submit(self, state, inspection, report_binding, after, rows, compatibility_warning=None):
+        """Validate implementation authority before binding compatibility warning evidence."""; _require(after is not None, "stale", "repository-after-missing", "Implementation attempt lacks a repository observation")
         triage, baseline, baseline_binding, _config = self._facts(state); observation = self._read(after, label="implementation observation")
         issue_binding = triage["issue_snapshot_binding"]; issue = self._read(issue_binding, label="issue snapshot")
         request = _with_digest({"format": work_type_policy.COMPLETION_REQUEST_FORMAT, "issue_snapshot": {"binding": issue_binding, "document": issue}, "baseline": {"binding": baseline_binding, "document": baseline}, "triage": {"binding": state["triage_binding"], "document": triage}, "observation": {"binding": after, "document": observation}, "artifact": None, "review": None, "acceptance": None, "documentation_content_check": None, "documentation_diff_check": None}, "request_sha256")
@@ -573,7 +573,7 @@ class Orchestrator(publication.SourcePublicationMixin, gates.ApprovalGateMixin):
         profile = next(item for item in baseline["profiles"] if item["id"] == triage["classification"]["validation_profile"])
         if runtime.test_changes(observation, profile["test_paths"]) != approved["changes"]:
             return self._pause(state, inspection, rows, "unsupported-policy-transition")
-        _wrapper, policy_binding = self._bind(state, inspection, "implementation-submission", report_binding, [("implementation-report", report_binding)], after)
+        _wrapper, policy_binding = self._bind(state, inspection, "implementation-submission", report_binding, [("implementation-report", report_binding)] + self._compatibility_rows(state, report_binding, compatibility_warning), after)
         successor = self._successor(state, inspection["authority"], phase="VALIDATION", policy_state_binding=policy_binding, candidates=_drop(rows, "implementation-report"), transition={"type": "implementation-submit", "request_binding": None, "result_binding": None, "authorization_binding": None, "repository_observation_binding": None})
         binding, committed = self._commit(successor); return self._result("executed", successor, binding, committed)
     def _validation_submit(self, state, inspection, request_binding, result_binding, after, rows):
@@ -612,13 +612,13 @@ class Orchestrator(publication.SourcePublicationMixin, gates.ApprovalGateMixin):
         _challenge, pending = self._challenge(state, inspection["authority"], "final", [("final-review", review_binding), ("validation", validation["subject_binding"])], validation["repository_observation_binding"], state["generation"] + 1)
         successor = self._successor(state, inspection["authority"], phase="WAITING_FOR_FINAL_APPROVAL", policy_state_binding=policy_binding, candidates=_drop(rows, "final-review"), pending=pending, transition={"type": "final-review", "request_binding": pending["request_binding"], "result_binding": None, "authorization_binding": None, "repository_observation_binding": None})
         binding, committed = self._commit(successor); return self._result("executed", successor, binding, committed)
-    def _after_agent(self, state, inspection, request_binding, candidate_binding, after, rows, candidate, validated_review=None):
-        phase = state["phase"]
+    def _after_agent(self, state, inspection, request_binding, candidate_binding, after, rows, candidate, validated_review=None, compatibility_warning=None):
+        """Route a validated or narrowly reconstructed candidate through unchanged phase gates."""; phase = state["phase"]
         if phase == "PLANNING": return self._plan_submit(state, inspection, rows, candidate)
         if phase == "PLAN_REVIEW": return self._plan_review(state, inspection, after, rows, candidate, validated_review)
-        if phase == "TEST_IMPLEMENTATION": return self._tests_submit(state, inspection, candidate_binding, after, rows)
+        if phase == "TEST_IMPLEMENTATION": return self._tests_submit(state, inspection, candidate_binding, after, rows, compatibility_warning)
         if phase == "TEST_REVIEW": return self._review_submit(state, inspection, candidate_binding, after, rows, candidate)
-        if phase == "IMPLEMENTATION": return self._implementation_submit(state, inspection, candidate_binding, after, rows)
+        if phase == "IMPLEMENTATION": return self._implementation_submit(state, inspection, candidate_binding, after, rows, compatibility_warning)
         return self._final_submit(state, inspection, candidate_binding, after, rows, candidate)
     def _challenge(self, state, authority_binding, gate, subjects, repository, generation):
         policy_document = self._supervision(state)
@@ -720,7 +720,7 @@ class Orchestrator(publication.SourcePublicationMixin, gates.ApprovalGateMixin):
         if after is not None: _require(self._read(after, label="repository observation") == result["repository_after"], "stale", "execution-handoff-stale", "Repository result handoff differs")
         return request, result, after, None
     def _finalize(self, inspection, state, supplied):
-        pending = state["pending"]; review_phase = state["phase"] in {"PLAN_REVIEW", "TEST_REVIEW", "FINAL_REVIEW"}
+        """Finalize an exact handoff while confining compatibility to implementer decode failures."""; pending = state["pending"]; review_phase = state["phase"] in {"PLAN_REVIEW", "TEST_REVIEW", "FINAL_REVIEW"}
         request, result, after, observed = self._verified_handoff(state, inspection, supplied, materialize_after=not review_phase)
         if observed is not None:
             self._runtime(None, state, inspection, request["repository_before"])
@@ -738,7 +738,7 @@ class Orchestrator(publication.SourcePublicationMixin, gates.ApprovalGateMixin):
         if result["outcome"] != "succeeded": return self._pause(state, inspection, rows, "unsupported-policy-transition" if pending["kind"] == "validation" else "attempt-not-successful")
         if pending["kind"] == "validation": return self._validation_submit(state, inspection, pending["request_binding"], result_binding, after, rows)
         expected = "plan" if state["phase"] == "PLANNING" else "implementer" if state["phase"] in {"TEST_IMPLEMENTATION", "IMPLEMENTATION"} else "review"
-        candidate = validated_review = None
+        candidate = validated_review = compatibility_warning = None
         if expected == "review":
             candidate = self._candidate(result, expected)
             validated_review = self._validated_review_candidate(state, candidate)
@@ -747,12 +747,14 @@ class Orchestrator(publication.SourcePublicationMixin, gates.ApprovalGateMixin):
                 return self._pause(state, inspection, rows, "read-only-agent-repository-drift")
         if candidate is None:
             try: candidate = self._candidate(result, expected)
-            except OrchestratorFailure: return self._pause(state, inspection, rows, "candidate-output-invalid")
+            except OrchestratorFailure as failure:
+                candidate, compatibility_warning = self._compatibility_candidate(state, expected, result, after, failure, result_binding)
+                if candidate is None: return self._pause(state, inspection, rows, "candidate-output-invalid")
         if validated_review is not None and after is None:
             _require(result.get("repository_after") is not None, "stale", "repository-after-missing", "Review attempt lacks a repository observation")
             after = self._repository_after(state, result)
         candidate_binding = self._candidate_artifact(state, result_binding, candidate)
-        return self._after_agent(state, inspection, pending["request_binding"], candidate_binding, after, rows, candidate, validated_review)
+        return self._after_agent(state, inspection, pending["request_binding"], candidate_binding, after, rows, candidate, validated_review, compatibility_warning)
     def advance(self, expected_tip, request):
         inspection = self._status(); state = self._selected_state(inspection)
         if state["pending"] is not None and expected_tip != inspection["pointer_sha256"]: _fail("busy" if state["pending"]["status"] == "requested" else "stale", "attempt-in-flight", "Another attempt owns this state")

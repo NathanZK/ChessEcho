@@ -20,6 +20,12 @@ NODE_PATH = "workflow-orchestration/node.json"
 POLICY_PATH = "workflow-policy/state.json"
 RESULT_PATH = runtime.EXECUTION_RESULT_PATH
 AUTHORIZATION_FORMAT = "chess-echo-human-authorization-v1"
+CANDIDATE_FORMAT = "chess-echo-orchestrator-agent-candidate-v1"
+COMPATIBILITY_WARNING_FORMAT = "chess-echo-producer-compatibility-warning-v1"
+COMPATIBILITY_ARTIFACTS = {
+    "TEST_IMPLEMENTATION": ("test-compatibility-warning", "workflow-orchestration/test-compatibility-warning.json"),
+    "IMPLEMENTATION": ("implementation-compatibility-warning", "workflow-orchestration/implementation-compatibility-warning.json"),
+}
 GATES = {
     "WAITING_FOR_PLAN_APPROVAL": "plan",
     "WAITING_FOR_TEST_APPROVAL": "tests",
@@ -195,7 +201,32 @@ class ApprovalGateMixin:
         wrapper = self._read(self._active(state, nodes[phase]), NODE_PATH, "%s node" % nodes[phase])
         return self._read(wrapper["repository_observation_binding"], label="selected repository observation")
 
-    def _tests_submit(self, state, inspection, report_binding, after, rows):
+    def _compatibility_enabled(self, state):
+        """Read issue eligibility only from the generation-zero pinned configuration."""
+        _triage, _baseline, _baseline_binding, config = self._facts(state)
+        return self.issue in config.get("compatibility", {}).get("producer_representation_recovery_issues", [])
+
+    def _compatibility_candidate(self, state, expected, result, after, failure, result_binding):
+        """Build an untrusted machine report and unpublished warning after strict decode failure."""
+        if not (expected == "implementer" and after is not None and failure.code == "candidate-output-invalid" and self._compatibility_enabled(state)):
+            return None, None
+        _triage, _baseline, baseline_binding, _config = self._facts(state)
+        report = "[workflow-compatibility] machine-authored: strict candidate decode failed in %s (%s/%s); the independently observed repository artifact at %s proceeds to the normal %s validators, which are unchanged; producer text is not trusted." % (state["phase"], failure.status, failure.code, result["repository_after"]["head"]["commit"], state["phase"])
+        candidate = self._candidate_schema({"format": CANDIDATE_FORMAT, "kind": "implementer", "report": report}, expected)
+        warning = {"format": COMPATIBILITY_WARNING_FORMAT, "issue": self.issue, "family_run_id": self.family, "phase": state["phase"], "gate_id": failure.code, "original_outcome": {"status": failure.status, "code": failure.code, "message": failure.message}, "execution_result_binding": result_binding, "candidate_output": result["candidate_output"], "repository_after_binding": after, "configuration_binding": baseline_binding, "reason": "base-pinned producer-representation-recovery allowlist"}
+        return candidate, warning
+
+    def _compatibility_rows(self, state, report_binding, compatibility_warning):
+        """Publish warning evidence only after phase validation and immediately before binding."""
+        if compatibility_warning is None:
+            return []
+        slot, path = COMPATIBILITY_ARTIFACTS[state["phase"]]
+        warning = {**compatibility_warning, "derived_report_binding": report_binding}
+        binding = self._publish(slot, "warning-%s" % _digest(warning), report_binding, [(path, warning)], state["generation"] + 1)
+        return [(slot, binding)]
+
+    def _tests_submit(self, state, inspection, report_binding, after, rows, compatibility_warning=None):
+        """Validate test scope before publishing and binding any compatibility warning."""
         self._gate_require(after is not None, "stale", "repository-after-missing", "Test attempt lacks a repository observation")
         triage, baseline, _baseline_binding, _config = self._facts(state)
         profile = next(item for item in baseline["profiles"] if item["id"] == triage["classification"]["validation_profile"])
@@ -203,11 +234,12 @@ class ApprovalGateMixin:
         if not (runtime.clean_repository(observation) and runtime.test_scope(observation, profile["test_paths"])):
             return self._pause(state, inspection, rows, "test-scope-drift")
         rejection_binding = self._candidate_binding(state, "gate-rejection", required=False)
+        rows_extra = self._compatibility_rows(state, report_binding, compatibility_warning)
         if rejection_binding is None:
-            _wrapper, policy_binding = self._bind(state, inspection, "test-manifest", report_binding, [("test-diff", after), ("test-report", report_binding)], after)
+            _wrapper, policy_binding = self._bind(state, inspection, "test-manifest", report_binding, [("test-diff", after), ("test-report", report_binding)] + rows_extra, after)
         else:
             rejection = self._read(rejection_binding, supervision.REJECTION_PATH, "gate rejection")
-            _wrapper, policy_binding = self._replace_test_manifest(state, inspection, report_binding, [("test-diff", after), ("test-report", report_binding)], after, rejection)
+            _wrapper, policy_binding = self._replace_test_manifest(state, inspection, report_binding, [("test-diff", after), ("test-report", report_binding)] + rows_extra, after, rejection)
         successor = self._successor(state, inspection["authority"], phase="TEST_REVIEW", policy_state_binding=policy_binding, candidates=_drop(rows, "test-manifest", "gate-rejection", "test-review", "human-challenge", "human-authorization"), transition={"type": "tests-request", "request_binding": None, "result_binding": None, "authorization_binding": None, "repository_observation_binding": None})
         binding, committed = self._commit(successor)
         return self._result("executed", successor, binding, committed)

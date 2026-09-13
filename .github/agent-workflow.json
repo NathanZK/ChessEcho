@@ -4,6 +4,10 @@
     "format": "chess-echo-orchestrator-config-v1",
     "mode": "active",
     "frozen_issues": [115],
+    "compatibility": {
+      "format": "chess-echo-producer-compatibility-config-v1",
+      "producer_representation_recovery_issues": [198]
+    },
     "agent_roles": [
       {
         "role": "implementer",

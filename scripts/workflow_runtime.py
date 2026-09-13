@@ -196,14 +196,21 @@ def _index_flags(data):
         (skip if marker == 'S' else assume if marker.islower() else []).append(path)
     return sorted(assume), sorted(skip)
 def _validate_config(config, root):
+    """Validate the exact base-pinned orchestrator trust configuration."""
     if not isinstance(config, dict) or 'orchestrator' not in config: _fail('missing', 'orchestrator-config-missing', 'Base config has no orchestrator block')
     orchestrator = config['orchestrator']
     required = {'format', 'mode', 'frozen_issues', 'agent_roles', 'git', 'github', 'validation_path', 'supervision', 'human_approval'}
-    if not isinstance(orchestrator, dict) or set(orchestrator) not in (required, required | {'local_host'}): _fail('corrupt', 'invalid-orchestrator-config-schema', 'Orchestrator config schema is invalid')
+    if not isinstance(orchestrator, dict) or set(orchestrator) not in (required, required | {'local_host'}, required | {'compatibility'}, required | {'local_host', 'compatibility'}): _fail('corrupt', 'invalid-orchestrator-config-schema', 'Orchestrator config schema is invalid')
     if orchestrator['format'] != 'chess-echo-orchestrator-config-v1': _fail('unsupported', 'orchestrator-config-format', 'Orchestrator config format is unsupported')
     if orchestrator['mode'] not in {'inactive', 'active'}: _fail('unsupported', 'orchestrator-mode', 'Orchestrator mode is unsupported')
     frozen = orchestrator['frozen_issues']
     if not isinstance(frozen, list) or any((type(issue) is not int or issue < 1 for issue in frozen)) or frozen != sorted(set(frozen)): _fail('corrupt', 'invalid-frozen-issues', 'Frozen issues must be sorted and unique')
+    if 'compatibility' in orchestrator:
+        compatibility = orchestrator['compatibility']
+        if not isinstance(compatibility, dict): _fail('corrupt', 'invalid-compatibility-config', 'Compatibility config must be a mapping when present')
+        _exact(compatibility, {'format', 'producer_representation_recovery_issues'}, 'compatibility')
+        issues = compatibility['producer_representation_recovery_issues']
+        if compatibility['format'] != 'chess-echo-producer-compatibility-config-v1' or not isinstance(issues, list) or any((type(issue) is not int or issue < 1 for issue in issues)) or issues != sorted(set(issues)): _fail('corrupt', 'invalid-compatibility-config', 'Compatibility issues must be sorted, unique, positive integers')
     roles = orchestrator['agent_roles']
     if not isinstance(roles, list) or [row.get('role') for row in roles if isinstance(row, dict)] != list(ROLES): _fail('corrupt', 'invalid-agent-roles', 'Exactly three canonically ordered roles are required')
     for row in roles:
