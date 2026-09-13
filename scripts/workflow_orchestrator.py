@@ -367,6 +367,19 @@ class Orchestrator(gates.ApprovalGateMixin):
         return pr, expectation, wrapper
     def _pr_number(self, result, supplied):
         return _translate(lambda: resume.resolve_pr_number(result, supplied), "resume")
+    def _producer_inputs(self, state, phase, triage):
+        if phase not in {"TEST_IMPLEMENTATION", "TEST_REVIEW", "IMPLEMENTATION", "FINAL_REVIEW"}: return []
+        plan_approval = self._read(self._active(state, "plan-approval"), NODE_PATH, "plan approval node")
+        rows = [("approved-plan", plan_approval["subject_binding"]), ("issue-snapshot", triage["issue_snapshot_binding"])]
+        if phase == "TEST_IMPLEMENTATION": return rows
+        manifest = self._read(self._active(state, "test-manifest"), NODE_PATH, "test manifest node")
+        if phase == "TEST_REVIEW": return rows + [("test-report", manifest["subject_binding"]), ("tests", manifest["repository_observation_binding"])]
+        test_approval_binding = self._active(state, "test-approval")
+        rows += [("approved-tests", test_approval_binding), ("approved-tests", manifest["subject_binding"]), ("approved-tests", manifest["repository_observation_binding"])]
+        if phase == "IMPLEMENTATION": return rows
+        implementation = self._read(self._active(state, "implementation-submission"), NODE_PATH, "implementation node")
+        validation = self._read(self._active(state, "validation"), NODE_PATH, "validation node")
+        return rows + [("implementation-evidence", implementation["subject_binding"]), ("implementation-evidence", implementation["repository_observation_binding"]), ("validation-results", validation["subject_binding"])]
     def _claim(self, inspection, state, supplied):
         phase = state["phase"]; triage, baseline, baseline_binding, config = self._facts(state); role = profile = expectation = None
         if phase in AGENT_PHASES:
@@ -394,12 +407,15 @@ class Orchestrator(gates.ApprovalGateMixin):
         if operation["kind"] == "github-write": _pr, expectation, _wrapper = self._pr_context(state, before)
         active = {row["node"]: row["binding"] for row in self._read(state["policy_state_binding"], POLICY_PATH, "policy state")["active"]}
         required = REQUIRED_NODES.get(phase, ())
-        extra = [("baseline", baseline_binding)] + [(node, active[node]) for node in required]
+        extra = [("baseline", baseline_binding)]
+        if phase not in {"TEST_IMPLEMENTATION", "TEST_REVIEW", "IMPLEMENTATION", "FINAL_REVIEW"}:
+            extra += [(node, active[node]) for node in required]
         if phase == "PLANNING": extra.append(("issue-snapshot", triage["issue_snapshot_binding"]))
         if phase == "PLAN_REVIEW": extra.append(("plan-snapshot", self._candidate_binding(state, "plan-snapshot")))
         if phase == "PLANNING" and self._candidate_binding(state, "plan-snapshot", required=False) is not None:
             extra += [("plan-snapshot", self._candidate_binding(state, "plan-snapshot")),
                       ("plan-review", self._candidate_binding(state, "plan-review"))]
+        extra += self._producer_inputs(state, phase, triage)
         extra += self._rejection_inputs(state, phase)
         source, limits = _translate(lambda: runtime.command_source(baseline_binding, baseline, config, operation, role, profile), "runtime"); inputs = runtime.execution_inputs(state, extra)
         attempt = _translate(lambda: runtime.execution_attempt_id(inspection["authority"], operation, source, inputs, before, limits, expectation), "runtime")

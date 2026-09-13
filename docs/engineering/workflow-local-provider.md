@@ -793,7 +793,13 @@ The host calls `workflow_runtime.bootstrap()` only for trusted intake and
 `workflow_runtime.reconstruct()` for every selected later command. Agent
 commands run in the dedicated worktree through `workflow_supervisor`. The host
 projects only the exact request-selected immutable evidence inputs into the
-prompt and binds that projection's digest. The fully encoded prompt is capped
+prompt and binds that projection's digest. Test author, test reviewer,
+implementer, and final reviewer requests have exact role/path contracts for
+their issue snapshot, approved plan, tests, reports/diffs, implementation
+evidence, and validation result as applicable. The provider rejects missing or
+unexpected phase inputs before launch and directs workers not to replace those
+inputs with mutable GitHub refetches or transitive evidence discovery. The
+fully encoded prompt is capped
 at 64 KiB so it remains below the supported host argument budget. Runtime
 validation applies that larger bound only to the prompt position in the exact
 trusted-local provider argv shape; configured commands and every other command

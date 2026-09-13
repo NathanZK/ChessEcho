@@ -630,6 +630,27 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         self.assertEqual("execution-candidate", candidate["outcome"]["code"])
         return self.fixture.step(request=candidate["handoff"])
 
+    def _claimed_input_paths(self):
+        candidate = self.fixture.step()
+        self.assertEqual("execution-candidate", candidate["outcome"]["code"])
+        request = self.fixture.read(
+            self.fixture.state()["pending"]["request_binding"],
+            "workflow-orchestration/execution-request.json",
+        )
+        projection = local_provider._input_projection(
+            self.fixture.root,
+            ISSUE,
+            request,
+        )
+        paths = sorted(
+            (
+                item["role"],
+                tuple(sorted(entry["path"] for entry in item["entries"])),
+            )
+            for item in projection
+        )
+        return candidate, paths
+
     def _to_plan_gate(self):
         self._agent_pair()
         return self._agent_pair()
@@ -759,6 +780,26 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         remote_calls = [call for call in self.fixture.calls() if "/git/matching-refs/heads/issue-144" in " ".join(call)]
         self.assertEqual(4, len(remote_calls))
         self.assertFalse(any("merge" in " ".join(call) for call in self.fixture.calls()))
+
+    def test_phase_producers_receive_exact_direct_authoritative_payloads(self):
+        self._to_plan_gate()
+        self.fixture.approve(7101)
+        observed = {}
+
+        candidate, observed["write-tests"] = self._claimed_input_paths()
+        self.fixture.step(request=candidate["handoff"])
+        candidate, observed["review-tests"] = self._claimed_input_paths()
+        self.fixture.step(request=candidate["handoff"])
+        self.fixture.approve(7102)
+        candidate, observed["implement"] = self._claimed_input_paths()
+        self.fixture.step(request=candidate["handoff"])
+        while self.fixture.state()["phase"] == "VALIDATION":
+            self._agent_pair()
+        candidate, observed["review-final"] = self._claimed_input_paths()
+
+        for operation, expected in local_provider.PHASE_INPUT_PATHS.items():
+            with self.subTest(operation=operation):
+                self.assertEqual(sorted(expected), observed[operation])
 
     def test_contradictory_test_review_creates_no_artifact_gate_or_authority(self):
         self._to_plan_gate()
