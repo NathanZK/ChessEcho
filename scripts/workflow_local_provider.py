@@ -1228,8 +1228,15 @@ def _review_candidate_contract(operation):
         "additionalProperties": False,
         "properties": {
             "unit_ids": {
-                "description": "Nonempty, UTF-8 sorted unique plan-unit IDs.",
-                "items": {"type": "string"},
+                "description": (
+                    "Nonempty, UTF-8 sorted unique IDs from the approved plan "
+                    "snapshot."
+                ),
+                "items": {
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+                    "type": "string",
+                },
+                "maxItems": 1000,
                 "minItems": 1,
                 "type": "array",
                 "uniqueItems": True,
@@ -1239,7 +1246,22 @@ def _review_candidate_contract(operation):
                 "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
                 "type": "string",
             },
-            "detail": {"minLength": 1, "type": "string"},
+            "detail": {
+                "description": (
+                    "Actionable nonempty UTF-8 text of at most 16,384 characters, "
+                    "with no leading/trailing whitespace, disallowed control "
+                    "characters, surrogates, or Unicode format characters, and at "
+                    "least one independently visible letter, number, punctuation "
+                    "mark, or symbol."
+                ),
+                "maxLength": 16384,
+                "minLength": 1,
+                "pattern": (
+                    r"^(?![\s\S]*[\u0000-\u0008\u000B\u000C"
+                    r"\u000E-\u001F\u007F-\u009F])\S(?:[\s\S]*\S)?$"
+                ),
+                "type": "string",
+            },
         },
         "required": ["unit_ids", "category", "detail"],
         "type": "object",
@@ -1278,6 +1300,16 @@ def _review_candidate_contract(operation):
         )
     return {
         "additionalProperties": False,
+        "allOf": [
+            {
+                "if": {
+                    "properties": {"verdict": {"const": "accepted"}},
+                    "required": ["verdict"],
+                },
+                "then": {"properties": {"findings": {"maxItems": 0}}},
+                "else": {"properties": {"findings": {"minItems": 1}}},
+            }
+        ],
         "properties": {
             "format": {"const": CANDIDATE_FORMAT},
             "kind": {"const": "review"},
@@ -1290,11 +1322,13 @@ def _review_candidate_contract(operation):
             },
             "findings": {
                 "description": (
-                    "May be empty. Each entry is a blocking finding with exactly the "
-                    "declared keys."
+                    "Must be empty for accepted and nonempty otherwise. Each entry is "
+                    "a blocking finding with exactly the declared keys."
                 ),
                 "items": finding,
+                "maxItems": 1000,
                 "type": "array",
+                "uniqueItems": True,
             },
             "pr": pr,
         },

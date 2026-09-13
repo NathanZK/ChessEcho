@@ -322,6 +322,12 @@ class OrchestratorFixture:
 
 
 class CandidateOutputContractTest(unittest.TestCase):
+    SNAPSHOT = {
+        "kind": "evidence-binding",
+        "sha256": "d" * 64,
+        "size": 1,
+    }
+
     def _result(self, stdout):
         raw = stdout.encode()
         return {
@@ -367,6 +373,97 @@ class CandidateOutputContractTest(unittest.TestCase):
             candidate,
             resume.decode_candidate(self._result(stdout), "review"),
         )
+
+    def _review_candidate(self, verdict="accepted", findings=None):
+        return {
+            "format": resume.CANDIDATE_FORMAT,
+            "kind": "review",
+            "verdict": verdict,
+            "findings": [] if findings is None else findings,
+            "pr": {},
+        }
+
+    def _finding(self, **overrides):
+        finding = {
+            "unit_ids": ["change"],
+            "category": "implementation",
+            "detail": "Make the implementation step explicit.",
+        }
+        finding.update(overrides)
+        return finding
+
+    def _validate(self, operation, candidate):
+        return resume.validate_review_candidate(
+            candidate,
+            operation,
+            self.SNAPSHOT,
+            ["change", "tests"],
+        )
+
+    def test_review_candidate_acceptance_semantics_apply_to_every_review_phase(self):
+        for operation in ("review-plan", "review-tests", "review-final"):
+            with self.subTest(operation=operation, case="accepted-empty"):
+                self.assertEqual(
+                    ("accepted", []),
+                    self._validate(operation, self._review_candidate()),
+                )
+            with self.subTest(operation=operation, case="valid-blocking-rejection"):
+                verdict, findings = self._validate(
+                    operation,
+                    self._review_candidate(
+                        verdict="needs-revision",
+                        findings=[self._finding()],
+                    ),
+                )
+                self.assertEqual("needs-revision", verdict)
+                self.assertEqual(["change"], findings[0]["unit_ids"])
+            for verdict in ("needs-revision", "full-review-required"):
+                with self.subTest(operation=operation, case="%s-empty" % verdict):
+                    with self.assertRaises(resume.ResumeFailure) as raised:
+                        self._validate(
+                            operation,
+                            self._review_candidate(verdict=verdict),
+                        )
+                    self.assertEqual("candidate-output-invalid", raised.exception.code)
+            with self.subTest(operation=operation, case="accepted-with-finding"):
+                with self.assertRaises(resume.ResumeFailure) as raised:
+                    self._validate(
+                        operation,
+                        self._review_candidate(findings=[self._finding()]),
+                    )
+                self.assertEqual("candidate-output-invalid", raised.exception.code)
+
+    def test_review_candidate_findings_require_exact_actionable_rows(self):
+        malformed = [
+            [self._finding(extra="forbidden")],
+            [self._finding(unit_ids="change")],
+            [self._finding(unit_ids=[])],
+            [self._finding(unit_ids=["tests", "change"])],
+            [self._finding(unit_ids=["change", "change"])],
+            [self._finding(unit_ids=["unknown"])],
+            [self._finding(category="not a slug")],
+            [self._finding(detail="")],
+            [self._finding(detail="   ")],
+            [self._finding(detail=" padded")],
+            [self._finding(detail="\u200b")],
+            [self._finding(detail="action\u200b")],
+            [self._finding(detail="action\u0001detail")],
+            [self._finding(detail="\ufe0f")],
+            [self._finding(detail="\u034f")],
+            [self._finding(detail="a" * 16385)],
+        ]
+        for operation in ("review-plan", "review-tests", "review-final"):
+            for findings in malformed:
+                with self.subTest(operation=operation, findings=findings):
+                    with self.assertRaises(resume.ResumeFailure) as raised:
+                        self._validate(
+                            operation,
+                            self._review_candidate(
+                                verdict="needs-revision",
+                                findings=findings,
+                            ),
+                        )
+                    self.assertEqual("candidate-output-invalid", raised.exception.code)
 
 
 class OrchestratorInitializationAcceptanceTest(unittest.TestCase):
@@ -548,6 +645,54 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         self.fixture.approve(7002)
         return self._agent_pair()
 
+    def _to_final_review(self):
+        self._to_validation()
+        while self.fixture.state()["phase"] == "VALIDATION":
+            self._agent_pair()
+        self.assertEqual("FINAL_REVIEW", self.fixture.state()["phase"])
+
+    def _store_files(self):
+        return {
+            str(path.relative_to(self.fixture.store.store_dir)): path.read_bytes()
+            for path in self.fixture.store.store_dir.rglob("*")
+            if path.is_file()
+        }
+
+    def _assert_review_rejected_without_side_effects(
+        self,
+        candidate,
+        omit_after=False,
+        repository_drift=False,
+    ):
+        handoff = self.fixture.step()
+        self.assertEqual("execution-candidate", handoff["outcome"]["code"])
+        supplied = copy.deepcopy(handoff["handoff"])
+        if omit_after:
+            supplied["repository_after_binding"] = None
+        before_tip = handoff["pointer_sha256"]
+        before_state = self.fixture.read(handoff["authority"])
+        before_files = self._store_files()
+
+        with mock.patch.object(resume, "decode_candidate", return_value=candidate):
+            with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+                if repository_drift:
+                    instance = orchestrator.Orchestrator(self.fixture.root, ISSUE)
+                    instance.family = before_state["family_run_id"]
+                    inspection = {
+                        "authority": handoff["authority"],
+                        "pointer_sha256": before_tip,
+                    }
+                    with mock.patch.object(instance, "_runtime", return_value=self.adapter):
+                        instance._finalize(inspection, before_state, supplied)
+                else:
+                    self.fixture.step(request=supplied)
+
+        self.assertEqual("candidate-output-invalid", raised.exception.code)
+        current = authority.status(self.fixture.root, ISSUE)
+        self.assertEqual(before_tip, current["pointer_sha256"])
+        self.assertEqual(before_state, self.fixture.read(current["authority"]))
+        self.assertEqual(before_files, self._store_files())
+
     def _to_pr_preparation(self):
         self._to_validation()
         while self.fixture.state()["phase"] == "VALIDATION":
@@ -614,6 +759,50 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         remote_calls = [call for call in self.fixture.calls() if "/git/matching-refs/heads/issue-144" in " ".join(call)]
         self.assertEqual(4, len(remote_calls))
         self.assertFalse(any("merge" in " ".join(call) for call in self.fixture.calls()))
+
+    def test_contradictory_test_review_creates_no_artifact_gate_or_authority(self):
+        self._to_plan_gate()
+        self.fixture.approve(7801)
+        self._agent_pair()
+        self.assertEqual("TEST_REVIEW", self.fixture.state()["phase"])
+        self.fixture.mode("read-drift")
+        self._assert_review_rejected_without_side_effects(
+            {
+                "format": resume.CANDIDATE_FORMAT,
+                "kind": "review",
+                "verdict": "accepted",
+                "findings": [
+                    {
+                        "unit_ids": ["change"],
+                        "category": "implementation",
+                        "detail": "The approved requirement is not covered.",
+                    }
+                ],
+                "pr": {},
+            },
+            repository_drift=True,
+        )
+
+    def test_malformed_final_review_creates_no_artifact_gate_or_authority(self):
+        self._to_final_review()
+        self._assert_review_rejected_without_side_effects(
+            {
+                "format": resume.CANDIDATE_FORMAT,
+                "kind": "review",
+                "verdict": "needs-revision",
+                "findings": [],
+                "pr": {
+                    "head_ref": "issue-144",
+                    "title": "Implement workflow feature",
+                    "body": (
+                        "## What\nAdd the workflow feature.\n\n"
+                        "## Why\nIssue #144.\n\n"
+                        "## Testing\nfixture-check\n"
+                    ),
+                },
+            },
+            omit_after=True,
+        )
 
     def test_all_automatic_gates_complete_without_human_gate_authorization(self):
         requested = {gate: "automatic" for gate in ("final", "plan", "pr-publication", "tests")}
@@ -2051,8 +2240,16 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         while self.fixture.state()["phase"] == "VALIDATION":
             self._agent_pair()
         self.fixture.mode("empty-pr")
-        paused = self._agent_pair()
-        self.assertEqual(("paused", "unsupported-policy-transition"), tuple(paused["outcome"].values()))
+        handoff = self.fixture.step()
+        before_tip = self.fixture.tip()
+        before_state = copy.deepcopy(self.fixture.state())
+        before_files = self._store_files()
+        with self.assertRaises(orchestrator.OrchestratorFailure) as malformed:
+            self.fixture.step(request=handoff["handoff"])
+        self.assertEqual("pr-body-headings", malformed.exception.code)
+        self.assertEqual(before_tip, self.fixture.tip())
+        self.assertEqual(before_state, self.fixture.state())
+        self.assertEqual(before_files, self._store_files())
 
         other = OrchestratorFixture()
         self.addCleanup(other.close)
@@ -2379,9 +2576,14 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         restarted = orchestrator.plan_next(self.fixture.root, ISSUE)
         self.assertEqual("PLAN_REVIEW", restarted["phase"])
         self.fixture.mode("malformed")
-        malformed = self._agent_pair()
-        self.assertEqual("PAUSED", malformed["phase"])
-        self.assertEqual("candidate-output-invalid", malformed["outcome"]["code"])
+        handoff = self.fixture.step()
+        before_tip = self.fixture.tip()
+        before_state = copy.deepcopy(self.fixture.state())
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            self.fixture.step(request=handoff["handoff"])
+        self.assertEqual("candidate-output-invalid", raised.exception.code)
+        self.assertEqual(before_tip, self.fixture.tip())
+        self.assertEqual(before_state, self.fixture.state())
 
     def test_final_authorization_is_reobserved_after_repository_and_pr_checks(self):
         self._to_validation()
