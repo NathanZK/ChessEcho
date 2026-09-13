@@ -138,7 +138,8 @@ class TestSourcePublicationProvider:
 class OrchestratorFixture:
     """A real Git/CAS/evidence/policy/runtime fixture with bounded local commands."""
 
-    def __init__(self, mode="active"):
+    def __init__(self, mode="active", compatibility_issues=None):
+        """Initialize a repository whose compatibility key is absent unless requested."""
         self.temporary = tempfile.TemporaryDirectory(dir=str(REPOSITORY))
         self.workspace = pathlib.Path(self.temporary.name)
         self.root, self.bin = self.workspace / "repo", self.workspace / "toolbin"
@@ -148,7 +149,7 @@ class OrchestratorFixture:
         self.gh = self._install(FIXTURES / "fake_gh.py", "gh")
         self.git = shutil.which("git") or self._skip("git")
         self.agent_sha256 = inspector.sha256(self.agent.read_bytes())
-        self.config_bytes = self._write_repository(mode)
+        self.config_bytes = self._write_repository(mode, compatibility_issues)
         self.head = self._git("rev-parse", "HEAD").strip()
         self._git("update-ref", "refs/remotes/origin/main", self.head)
         self.store = inspector.resolve_store(self.root)
@@ -189,7 +190,8 @@ class OrchestratorFixture:
                 paths.append(str(candidate))
         return paths
 
-    def _config(self, mode):
+    def _config(self, mode, compatibility_issues=None):
+        """Build a fixture config with compatibility omitted unless explicitly requested."""
         config = json.loads((REPOSITORY / ".github" / "agent-workflow.json").read_text())
         config["target_base"] = "main"
         config["validation_profiles"]["workflow-tooling"] = {
@@ -227,11 +229,17 @@ class OrchestratorFixture:
                 "allowed_associations": ["COLLABORATOR", "MEMBER", "OWNER"],
             },
         }
+        if compatibility_issues is not None:
+            config["orchestrator"]["compatibility"] = {
+                "format": "chess-echo-producer-compatibility-config-v1",
+                "producer_representation_recovery_issues": compatibility_issues,
+            }
         return (json.dumps(config, ensure_ascii=True, indent=2) + "\n").encode()
 
-    def _write_repository(self, mode):
+    def _write_repository(self, mode, compatibility_issues=None):
+        """Create the fixture repository with its requested pinned compatibility allowlist."""
         self._git("init", "-q")
-        config = self._config(mode)
+        config = self._config(mode, compatibility_issues)
         (self.root / ".github").mkdir()
         (self.root / ".github" / "agent-workflow.json").write_bytes(config)
         (self.root / "scripts").mkdir()
@@ -698,6 +706,7 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         orchestrator.init(self.fixture.root, ISSUE, request=self.fixture.request())
 
     def _agent_pair(self):
+        """Claim and finalize one deterministic agent attempt."""
         candidate = self.fixture.step()
         self.assertEqual("execution-candidate", candidate["outcome"]["code"])
         return self.fixture.step(request=candidate["handoff"])
@@ -724,10 +733,12 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         return candidate, paths
 
     def _to_plan_gate(self):
+        """Advance through planning and plan review."""
         self._agent_pair()
         return self._agent_pair()
 
     def _to_test_gate(self):
+        """Advance through approved planning and test review."""
         self._to_plan_gate()
         self.fixture.approve(7001)
         self._agent_pair()
@@ -745,6 +756,7 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         self.assertEqual("FINAL_REVIEW", self.fixture.state()["phase"])
 
     def _store_files(self):
+        """Snapshot immutable store files for publication side-effect assertions."""
         return {
             str(path.relative_to(self.fixture.store.store_dir)): path.read_bytes()
             for path in self.fixture.store.store_dir.rglob("*")
@@ -2824,6 +2836,22 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         self.assertEqual(before_tip, self.fixture.tip())
         self.assertEqual(before_state, self.fixture.state())
 
+    def test_prose_fenced_implementer_output_stays_strict_by_default(self):
+        self._to_plan_gate()
+        self.fixture.approve(7510)
+        self.fixture.mode("prose-fenced")
+        paused = self._agent_pair()
+        self.assertEqual(("paused", "candidate-output-invalid"), tuple(paused["outcome"].values()))
+        self.assertEqual("PAUSED", self.fixture.state()["phase"])
+
+    def test_prose_fenced_final_implementation_stays_strict_by_default(self):
+        self._to_test_gate()
+        self.fixture.approve(7511)
+        self.fixture.mode("prose-fenced")
+        paused = self._agent_pair()
+        self.assertEqual(("paused", "candidate-output-invalid"), tuple(paused["outcome"].values()))
+        self.assertEqual("PAUSED", self.fixture.state()["phase"])
+
     def test_final_authorization_is_reobserved_after_repository_and_pr_checks(self):
         self._to_validation()
         while self.fixture.state()["phase"] == "VALIDATION":
@@ -2848,6 +2876,388 @@ class OrchestratorLifecycleTest(unittest.TestCase):
                     self.fixture.root, ISSUE, expected_tip=self.fixture.tip(),
                     authorization={"kind": "issue-comment", "id": 7500})
         self.assertEqual("authorization-confirmation-mismatch", raised.exception.code)
+
+
+class ProducerCompatibilityTest(unittest.TestCase):
+    COMPATIBILITY_ISSUES = [ISSUE]
+    WARNING_FORMAT = "chess-echo-producer-compatibility-warning-v1"
+
+    def setUp(self):
+        self.fixture = OrchestratorFixture(
+            compatibility_issues=self.COMPATIBILITY_ISSUES
+        )
+        self.addCleanup(self.fixture.close)
+        self.adapter = self.fixture.install_provider(self)
+        self.fixture.publish_response_source()
+        orchestrator.init(self.fixture.root, ISSUE, request=self.fixture.request())
+
+    def _agent_pair(self):
+        candidate = self.fixture.step()
+        self.assertEqual("execution-candidate", candidate["outcome"]["code"])
+        return self.fixture.step(request=candidate["handoff"])
+
+    def _to_plan_gate(self):
+        self._agent_pair()
+        return self._agent_pair()
+
+    def _to_test_gate(self):
+        self._to_plan_gate()
+        self.fixture.approve(7601)
+        self._agent_pair()
+        return self._agent_pair()
+
+    def _store_files(self):
+        return {
+            str(path.relative_to(self.fixture.store.store_dir)): path.read_bytes()
+            for path in self.fixture.store.store_dir.rglob("*")
+            if path.is_file()
+        }
+
+    def _active_node(self, name):
+        """Return the binding and document for a selected policy node."""
+        state = self.fixture.state()
+        policy_state = self.fixture.read(
+            state["policy_state_binding"], orchestrator.POLICY_PATH
+        )
+        binding = next(
+            row["binding"] for row in policy_state["active"] if row["node"] == name
+        )
+        return binding, self.fixture.read(binding)
+
+    def _warning(self, node_name, slot, path):
+        """Read a compatibility warning selected as node evidence."""
+        _binding, node = self._active_node(node_name)
+        warning_binding = next(
+            row["binding"] for row in node["evidence"] if row["role"] == slot
+        )
+        return node, self.fixture.read(warning_binding, path)
+
+    def _assert_no_warning(self):
+        """Assert no compatibility warning object was published."""
+        self.assertFalse(
+            any(
+                b"chess-echo-producer-compatibility-warning-v1" in value
+                for value in self._store_files().values()
+            )
+        )
+
+    def _reject_tests(self):
+        """Complete the two-step authorized rejection that reopens test implementation."""
+        old_manifest, _node = self._active_node("test-manifest")
+        requested = orchestrator.reject(
+            self.fixture.root,
+            ISSUE,
+            expected_tip=self.fixture.tip(),
+            reason="Tests do not satisfy the approved contract.",
+        )
+        self.assertEqual("WAITING_FOR_TEST_APPROVAL", requested["phase"])
+        challenge = self.fixture.challenge()
+        self.fixture.comment(challenge["confirmation"], 7610)
+        rejected = orchestrator.reject(
+            self.fixture.root,
+            ISSUE,
+            expected_tip=self.fixture.tip(),
+            authorization={"kind": "issue-comment", "id": 7610},
+        )
+        self.assertEqual("TEST_IMPLEMENTATION", rejected["phase"])
+        self.assertTrue(
+            any(
+                row["slot"] == "gate-rejection"
+                for row in self.fixture.state()["candidates"]
+            )
+        )
+        return old_manifest
+
+    def test_planning_remains_strict_with_compatibility_enabled(self):
+        self.fixture.mode("malformed")
+        paused = self._agent_pair()
+        self.assertEqual(("paused", "candidate-output-invalid"), tuple(paused["outcome"].values()))
+        self._assert_no_warning()
+
+    def test_test_implementation_publishes_exact_warning_and_uses_machine_report(self):
+        self._to_plan_gate()
+        self.fixture.approve(7620)
+        self.fixture.mode("prose-fenced")
+        result = self._agent_pair()
+        self.assertEqual("TEST_REVIEW", result["phase"])
+        node, warning = self._warning(
+            "test-manifest",
+            "test-compatibility-warning",
+            "workflow-orchestration/test-compatibility-warning.json",
+        )
+        self.assertEqual(
+            {"test-diff", "test-report", "test-compatibility-warning"},
+            {row["role"] for row in node["evidence"]},
+        )
+        self.assertEqual(
+            {
+                "format", "issue", "family_run_id", "phase", "gate_id",
+                "original_outcome", "execution_result_binding", "candidate_output",
+                "repository_after_binding", "configuration_binding", "reason",
+                "derived_report_binding",
+            },
+            set(warning),
+        )
+        self.assertEqual(self.WARNING_FORMAT, warning["format"])
+        self.assertEqual("candidate-output-invalid", warning["gate_id"])
+        self.assertEqual(
+            {"status": "corrupt", "code": "candidate-output-invalid"},
+            {
+                "status": warning["original_outcome"]["status"],
+                "code": warning["original_outcome"]["code"],
+            },
+        )
+        self.assertEqual("TEST_IMPLEMENTATION", warning["phase"])
+        serialized = json.dumps(warning, sort_keys=True)
+        self.assertNotIn('"tests"', serialized)
+        self.assertNotIn('"final"', serialized)
+        report = self.fixture.read(
+            warning["derived_report_binding"],
+            "workflow-orchestration/test-report.json",
+        )
+        self.assertTrue(report["report"].startswith("[workflow-compatibility] machine-authored:"))
+        self.assertIn(self.fixture._git("rev-parse", "HEAD").strip(), report["report"])
+        self.assertNotIn("gate", report["report"])
+        self.assertNotIn("approval", report["report"])
+        projection = evidence.project(self.fixture.root, warning["derived_report_binding"])
+        self.assertEqual(1, len(projection["entries"]))
+        self.fixture.mode("")
+        reviewed = self._agent_pair()
+        self.assertEqual("WAITING_FOR_TEST_APPROVAL", reviewed["phase"])
+
+    def test_implementation_publishes_compatibility_warning(self):
+        self._to_test_gate()
+        self.fixture.approve(7621)
+        self.fixture.mode("prose-fenced")
+        result = self._agent_pair()
+        self.assertEqual("VALIDATION", result["phase"])
+        _node, warning = self._warning(
+            "implementation-submission",
+            "implementation-compatibility-warning",
+            "workflow-orchestration/implementation-compatibility-warning.json",
+        )
+        self.assertEqual("candidate-output-invalid", warning["gate_id"])
+        self.assertEqual("IMPLEMENTATION", warning["phase"])
+        self.assertNotIn("tests", json.dumps(warning, sort_keys=True))
+        self.assertNotIn("final", json.dumps(warning, sort_keys=True))
+
+    def test_compatibility_guard_conjunction(self):
+        state = self.fixture.state()
+        instance = orchestrator.Orchestrator(self.fixture.root, ISSUE)
+        instance.family = state["family_run_id"]
+        result = {
+            "repository_after": {"head": {"commit": "a" * 40}},
+            "candidate_output": {"sha256": "b" * 64, "size": 1},
+        }
+        failure = orchestrator.OrchestratorFailure(
+            "corrupt", "candidate-output-invalid", "invalid"
+        )
+        binding = {"kind": "evidence-binding", "sha256": "c" * 64, "size": 1}
+        self.assertEqual(
+            (None, None),
+            instance._compatibility_candidate(
+                state, "implementer", result, None, failure, binding
+            ),
+        )
+        for expected, code in (("plan", "candidate-output-invalid"), ("implementer", "other")):
+            current = orchestrator.OrchestratorFailure("corrupt", code, "invalid")
+            self.assertEqual(
+                (None, None),
+                instance._compatibility_candidate(
+                    state, expected, result, binding, current, binding
+                ),
+            )
+
+    def test_rework_replaces_manifest_and_preserves_warning(self):
+        self._to_test_gate()
+        old_manifest = self._reject_tests()
+        self.fixture.mode("prose-fenced-rework")
+        result = self._agent_pair()
+        self.assertEqual("TEST_REVIEW", result["phase"])
+        new_manifest, node = self._active_node("test-manifest")
+        self.assertNotEqual(old_manifest, new_manifest)
+        self.assertIn(
+            "test-compatibility-warning", {row["role"] for row in node["evidence"]}
+        )
+        policy_state = self.fixture.read(
+            self.fixture.state()["policy_state_binding"], orchestrator.POLICY_PATH
+        )
+        self.assertTrue(
+            any(
+                row["binding"] == old_manifest and row["status"] == "invalidated"
+                for row in policy_state["history"]
+            )
+        )
+
+    def test_stale_repository_handoff_remains_hard(self):
+        self._to_plan_gate()
+        self.fixture.approve(7622)
+        self.fixture.mode("prose-fenced")
+        candidate = self.fixture.step()
+        supplied = copy.deepcopy(candidate["handoff"])
+        supplied["repository_after_binding"] = supplied["result_binding"]
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            self.fixture.step(request=supplied)
+        self.assertEqual("execution-handoff-stale", raised.exception.code)
+        self._assert_no_warning()
+
+    def test_scope_drift_pauses_without_warning(self):
+        self._to_plan_gate()
+        self.fixture.approve(7623)
+        self.fixture.mode("prose-fenced-scope-drift")
+        paused = self._agent_pair()
+        self.assertEqual(("paused", "test-scope-drift"), tuple(paused["outcome"].values()))
+        self._assert_no_warning()
+
+    def test_invalid_implementation_topology_fails_without_warning(self):
+        self._to_test_gate()
+        self.fixture.approve(7624)
+        self.fixture.mode("prose-fenced-separate-commit")
+        candidate = self.fixture.step()
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            self.fixture.step(request=candidate["handoff"])
+        self.assertEqual("implementation-observation-invalid", raised.exception.code)
+        self.assertEqual("IMPLEMENTATION", self.fixture.state()["phase"])
+        self._assert_no_warning()
+
+    def test_warning_can_be_orphaned_but_not_selected_on_bind_failure(self):
+        self._to_plan_gate()
+        self.fixture.approve(7625)
+        self.fixture.mode("prose-fenced")
+        candidate = self.fixture.step()
+        before_tip = self.fixture.tip()
+        before_state = copy.deepcopy(self.fixture.state())
+        before_files = self._store_files()
+        with mock.patch.object(
+            orchestrator.Orchestrator,
+            "_bind",
+            side_effect=orchestrator.OrchestratorFailure(
+                "paused", "unsupported-policy-transition", "forced"
+            ),
+        ), self.assertRaises(orchestrator.OrchestratorFailure):
+            self.fixture.step(request=candidate["handoff"])
+        self.assertEqual(before_tip, self.fixture.tip())
+        self.assertEqual(before_state, self.fixture.state())
+        new_files = {
+            path: data for path, data in self._store_files().items()
+            if path not in before_files
+        }
+        self.assertTrue(any(self.WARNING_FORMAT.encode() in data for data in new_files.values()))
+
+    def test_warning_can_be_orphaned_on_rework_bind_failure(self):
+        self._to_test_gate()
+        self._reject_tests()
+        self.fixture.mode("prose-fenced-rework")
+        candidate = self.fixture.step()
+        before_tip = self.fixture.tip()
+        before_state = copy.deepcopy(self.fixture.state())
+        before_files = self._store_files()
+        with mock.patch.object(
+            orchestrator.Orchestrator,
+            "_replace_test_manifest",
+            side_effect=orchestrator.OrchestratorFailure(
+                "paused", "unsupported-policy-transition", "forced"
+            ),
+        ), self.assertRaises(orchestrator.OrchestratorFailure):
+            self.fixture.step(request=candidate["handoff"])
+        self.assertEqual(before_tip, self.fixture.tip())
+        self.assertEqual(before_state, self.fixture.state())
+        new_files = {
+            path: data for path, data in self._store_files().items()
+            if path not in before_files
+        }
+        self.assertTrue(any(self.WARNING_FORMAT.encode() in data for data in new_files.values()))
+
+    def test_producer_text_is_preserved_only_in_raw_execution_result(self):
+        self._to_plan_gate()
+        self.fixture.approve(7626)
+        self.fixture.mode("prose-fenced")
+        self._agent_pair()
+        node, warning = self._warning(
+            "test-manifest",
+            "test-compatibility-warning",
+            "workflow-orchestration/test-compatibility-warning.json",
+        )
+        report = self.fixture.read(
+            warning["derived_report_binding"],
+            "workflow-orchestration/test-report.json",
+        )
+        sentinel = "SALVAGED-PRODUCER-TEXT"
+        self.assertNotIn(sentinel, json.dumps(node, sort_keys=True))
+        self.assertNotIn(sentinel, json.dumps(warning, sort_keys=True))
+        self.assertNotIn(sentinel, json.dumps(report, sort_keys=True))
+        execution = self.fixture.read(
+            warning["execution_result_binding"],
+            "workflow-orchestration/execution-result.json",
+        )
+        raw = base64.b64decode(execution["process_result"]["stdout"]["base64"], validate=True)
+        self.assertIn(sentinel.encode(), raw)
+        self.assertEqual(inspector.sha256(raw), warning["candidate_output"]["sha256"])
+        self.assertEqual(len(raw), warning["candidate_output"]["size"])
+
+    def test_pinned_config_wins_and_live_config_drift_fails_closed(self):
+        state = self.fixture.state()
+        instance = orchestrator.Orchestrator(self.fixture.root, ISSUE)
+        instance.family = state["family_run_id"]
+        config_path = self.fixture.root / ".github" / "agent-workflow.json"
+        live = json.loads(config_path.read_text())
+        live["orchestrator"]["compatibility"]["producer_representation_recovery_issues"] = []
+        config_path.write_text(json.dumps(live, indent=2) + "\n")
+        self.assertEqual(
+            [ISSUE],
+            instance._facts(state)[3]["compatibility"][
+                "producer_representation_recovery_issues"
+            ],
+        )
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            self.fixture.step()
+        self.assertIn(
+            raised.exception.code,
+            {"head-config-drift", "repository-continuity-stale", "runtime-worktree-untrusted"},
+        )
+
+    def test_review_output_remains_strict_with_compatibility_enabled(self):
+        self._agent_pair()
+        self.fixture.mode("malformed")
+        handoff = self.fixture.step()
+        before_tip = self.fixture.tip()
+        before_state = copy.deepcopy(self.fixture.state())
+        before_files = self._store_files()
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            self.fixture.step(request=handoff["handoff"])
+        self.assertEqual("candidate-output-invalid", raised.exception.code)
+        self.assertEqual(before_tip, self.fixture.tip())
+        self.assertEqual(before_state, self.fixture.state())
+        self.assertEqual(before_files, self._store_files())
+
+
+class ProducerCompatibilityExclusivityTest(unittest.TestCase):
+    def test_allowlist_for_another_issue_stays_strict(self):
+        fixture = OrchestratorFixture(compatibility_issues=[199])
+        self.addCleanup(fixture.close)
+        fixture.install_provider(self)
+        fixture.publish_response_source()
+        orchestrator.init(fixture.root, ISSUE, request=fixture.request())
+
+        def agent_pair():
+            """Claim and finalize one deterministic agent attempt."""
+            candidate = fixture.step()
+            self.assertEqual("execution-candidate", candidate["outcome"]["code"])
+            return fixture.step(request=candidate["handoff"])
+
+        agent_pair()
+        agent_pair()
+        fixture.approve(7630)
+        fixture.mode("prose-fenced")
+        paused = agent_pair()
+        self.assertEqual(("paused", "candidate-output-invalid"), tuple(paused["outcome"].values()))
+        self.assertFalse(
+            any(
+                b"chess-echo-producer-compatibility-warning-v1" in path.read_bytes()
+                for path in fixture.store.store_dir.rglob("*")
+                if path.is_file()
+            )
+        )
 
 
 class OrchestratorGenesisAndCliTest(unittest.TestCase):

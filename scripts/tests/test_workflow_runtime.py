@@ -872,6 +872,52 @@ class WorkflowRuntimeTest(unittest.TestCase):
                 with self.assertRaises(runtime.RuntimeFailure):
                     self.fixture.bootstrap()
 
+    def test_compatibility_config_is_exact_and_fail_closed(self):
+        def install(config):
+            """Install config bytes with the matching simulated Git blob identity."""
+            self.fixture.config = json.dumps(config).encode()
+            payload = (
+                b"blob "
+                + str(len(self.fixture.config)).encode()
+                + b"\0"
+                + self.fixture.config
+            )
+            self.fixture.config_blob = hashlib.sha1(payload).hexdigest()
+
+        valid = {
+            "format": "chess-echo-producer-compatibility-config-v1",
+            "producer_representation_recovery_issues": [198],
+        }
+        accepted = json.loads(self.fixture.config)
+        accepted["orchestrator"]["compatibility"] = valid
+        install(accepted)
+        self.fixture.bootstrap()
+
+        cases = [
+            None,
+            [198],
+            {"producer_representation_recovery_issues": [198]},
+            {**valid, "unexpected": True},
+            {**valid, "format": "wrong"},
+            {**valid, "producer_representation_recovery_issues": "198"},
+            {**valid, "producer_representation_recovery_issues": [198, 197]},
+            {**valid, "producer_representation_recovery_issues": [198, 198]},
+            {**valid, "producer_representation_recovery_issues": [0]},
+            {**valid, "producer_representation_recovery_issues": [-1]},
+            {**valid, "producer_representation_recovery_issues": [True]},
+        ]
+        for compatibility in cases:
+            with self.subTest(compatibility=compatibility):
+                config = json.loads(self.fixture.config)
+                config["orchestrator"]["compatibility"] = compatibility
+                install(config)
+                with self.assertRaises(runtime.RuntimeFailure) as raised:
+                    self.fixture.bootstrap()
+                if compatibility is None or isinstance(compatibility, list):
+                    self.assertEqual(
+                        "invalid-compatibility-config", raised.exception.code
+                    )
+
     def test_request_binding_is_verbatim_and_attempt_is_byte_identical(self):
         adapter = self.active_adapter()
         arguments = self.request_arguments(adapter)

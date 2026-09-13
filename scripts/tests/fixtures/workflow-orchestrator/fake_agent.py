@@ -125,6 +125,7 @@ def _implement(separate_implementation_commit=False):
 
 
 def main(argv):
+    """Emit deterministic role output, including intentionally invalid producer representations."""
     if len(argv) == 2 and argv[0] == "--request-binding":
         sys.stdout.write(argv[1])
         return 0
@@ -150,10 +151,16 @@ def main(argv):
         if mode == "empty-pr":
             value["pr"]["body"] = "## What\n\n## Why\nReason.\n\n## Testing\nChecked.\n"
     elif role == "implementer":
-        value = _implement(mode == "separate-implementation-commit")
+        value = _implement(
+            mode in {"separate-implementation-commit", "prose-fenced-separate-commit"}
+        )
+        if mode == "prose-fenced-scope-drift":
+            (ROOT / "scripts" / "not-a-test.py").write_text("DIRTY = True\n")
+            _git("add", "scripts/not-a-test.py")
+            _git("commit", "--amend", "--no-edit")
         if mode == "test-drift" and state[role] == 1:
             (ROOT / "scripts" / "not-a-test.py").write_text("DIRTY = True\n")
-        if mode == "rework-tests" and state[role] == 2:
+        if mode in {"rework-tests", "prose-fenced-rework"} and state[role] == 2:
             (ROOT / "scripts" / "implementation.py").unlink()
             (ROOT / "scripts" / "tests" / "generated_test.py").write_text(
                 "def test_generated():\n    assert 1 + 1 == 2\n"
@@ -169,6 +176,13 @@ def main(argv):
             _git("commit", "--amend", "--no-edit")
     else:
         return 3
+    if role == "implementer" and mode.startswith("prose-fenced"):
+        value["report"] = "SALVAGED-PRODUCER-TEXT"
+        sys.stdout.write(
+            "Here is my report:\n```json\n%s\n```\nDone.\n"
+            % json.dumps(value, separators=(",", ":"))
+        )
+        return 0
     sys.stdout.write(json.dumps(value, separators=(",", ":")))
     return 0
 
