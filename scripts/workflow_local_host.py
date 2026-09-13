@@ -19,7 +19,7 @@ sys.dont_write_bytecode = True
 
 
 NAME = "chess-echo-trusted-local-host"
-VERSION = "1.4.0"
+VERSION = "1.5.1"
 CONFIG_FORMAT = "chess-echo-trusted-local-host-config-v1"
 CONTROL_SOURCES = (
     "scripts/workflow_authority.py",
@@ -32,6 +32,7 @@ CONTROL_SOURCES = (
     "scripts/workflow_migration.py",
     "scripts/workflow_orchestrator.py",
     "scripts/workflow_orchestrator_gates.py",
+    "scripts/workflow_orchestrator_publication.py",
     "scripts/workflow_orchestrator_resume.py",
     "scripts/workflow_plan_revision_policy.py",
     "scripts/workflow_policy.py",
@@ -359,6 +360,7 @@ def _install(
     agent_record,
     token,
     worker_token_reader,
+    publication_token_reader,
 ):
     provider_module = modules["workflow_local_provider"]
     orchestrator = modules["workflow_orchestrator"]
@@ -377,6 +379,22 @@ def _install(
             args.gh_executable,
             token,
         )
+
+    def source_publication_provider(_root, issue, reconstruction_request, request, cancel_event):
+        expected_ref = "refs/heads/%s%d" % (provider_module.WORKTREE_BRANCH_PREFIX, issue)
+        if _root != workspace or issue != args.issue:
+            _fail("denied", "source-publication-workspace-mismatch", "Source publication must target this deterministic issue workspace")
+        if not isinstance(request, dict) or request.get("repository") != args.repository or request.get("target_ref") != expected_ref:
+            _fail("denied", "source-publication-target-mismatch", "Source publication must target this repository's deterministic issue branch")
+        if publication_token_reader is None:
+            _fail("missing", "source-publication-authentication-missing", "Source publication requires an isolated credential")
+        adapter = runtime.reconstruct(
+            workspace,
+            reconstruction_request,
+            token,
+            publication_token_reader(),
+        )
+        return adapter.publish_validated_branch(request, cancel_event=cancel_event)
 
     def sandbox_provider(_root, issue, role):
         row = next((item for item in roles if item["role"] == role), None)
@@ -397,6 +415,7 @@ def _install(
         )
 
     orchestrator.RUNTIME_PROVIDER = runtime_provider
+    orchestrator.SOURCE_PUBLICATION_PROVIDER = source_publication_provider
     orchestrator.SANDBOX_PROVIDER = sandbox_provider
     orchestrator.PENDING_RESULT_PROVIDER = result_store
     return orchestrator, result_store, workspace
@@ -424,6 +443,17 @@ def _read_worker_token(stream):
     return token
 
 
+def _read_publication_token(stream):
+    token = stream.readline().rstrip("\n")
+    if not token:
+        _fail(
+            "missing",
+            "source-publication-authentication-missing",
+            "Source publication credential must be supplied as the next standard-input line",
+        )
+    return token
+
+
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--control-root", required=True)
@@ -438,6 +468,11 @@ def build_parser():
         "--trusted-worker-auth-stdin",
         action="store_true",
         help="Trust the local worker and read its credential as the second stdin line",
+    )
+    parser.add_argument(
+        "--source-publication-auth-stdin",
+        action="store_true",
+        help="Read the isolated source-publication credential as the second stdin line",
     )
     commands = parser.add_subparsers(dest="command", required=True)
     prepare = commands.add_parser("prepare-workspace")
@@ -507,6 +542,9 @@ def main(argv=None):
             worker_token_reader = (
                 lambda: _read_worker_token(sys.stdin)
             ) if args.trusted_worker_auth_stdin else None
+            publication_token_reader = (
+                lambda: _read_publication_token(sys.stdin)
+            ) if args.source_publication_auth_stdin else None
             orchestrator, result_store, workspace = _install(
                 modules,
                 args,
@@ -516,6 +554,7 @@ def main(argv=None):
                 agent_record,
                 token,
                 worker_token_reader,
+                publication_token_reader,
             )
             if args.command == "bootstrap":
                 adapter = orchestrator.RUNTIME_PROVIDER(workspace, args.issue, {})

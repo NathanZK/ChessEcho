@@ -768,10 +768,10 @@ orchestrator:
 - The **authority module** verifies and commits an expected-tip pointer. It
   cannot decide whether the selected transition is semantically legal.
 
-`workflow_orchestrator.py` is the only composition owner. For one action it
-revalidates selected history, calls the relevant public policy/runtime/evidence
-interfaces, constructs one successor candidate, and commits at most one
-authority pointer. A process request and its result are deliberately two
+`workflow_orchestrator.py` and its bounded gate/publication mixins are the only
+composition owner. For one action they revalidate selected history, call the
+relevant public policy/runtime/evidence interfaces, construct one successor
+candidate, and commit at most one authority pointer. A process request and its result are deliberately two
 authority steps: one successor claims exact work, external execution publishes
 evidence without moving authority, and a later successor finalizes only that
 exact result. A crash cannot become permission to execute the request twice.
@@ -890,7 +890,7 @@ There are three distinct protocols:
    schemas aligned, but only the core decoder validates and authorizes candidate
    meaning.
 
-The current provider (`1.5.6`) and reviewed local host (`1.4.0`) have exact
+The current provider (`1.5.8`) and reviewed local host (`1.5.1`) have exact
 source identities in `.github/agent-workflow.json` under
 `orchestrator.local_host.provider.source_sha256` and
 `orchestrator.local_host.source_sha256`. Those versions are human-readable

@@ -25,6 +25,7 @@ PRODUCTION_MODULES = (
     "workflow_migration",
     "workflow_orchestrator",
     "workflow_orchestrator_gates",
+    "workflow_orchestrator_publication",
     "workflow_orchestrator_resume",
     "workflow_policy",
     "workflow_plan_revision_policy",
@@ -41,6 +42,7 @@ ORCHESTRATOR_IMPORTS = {
     "workflow_inspector",
     "workflow_issue_source",
     "workflow_orchestrator_gates",
+    "workflow_orchestrator_publication",
     "workflow_orchestrator_resume",
     "workflow_policy",
     "workflow_plan_revision_policy",
@@ -218,6 +220,15 @@ class WorkflowBoundaryTest(unittest.TestCase):
                 "workflow_supervision_policy",
             },
             project_imports("workflow_orchestrator_gates"),
+        )
+        self.assertEqual(
+            {
+                "workflow_evidence",
+                "workflow_inspector",
+                "workflow_orchestrator_resume",
+                "workflow_runtime",
+            },
+            project_imports("workflow_orchestrator_publication"),
         )
 
     def test_dependency_check_recognizes_qualified_and_relative_imports(self):
@@ -663,6 +674,33 @@ class WorkflowBoundaryTest(unittest.TestCase):
             {"subprocess", "socket", "urllib", "http", "requests", "fcntl", "ctypes", "os"}.isdisjoint(imported)
         )
         self.assertNotIn("workflow_orchestrator", project_imports("workflow_orchestrator_gates"))
+
+    def test_orchestrator_publication_composition_is_bounded(self):
+        path = SCRIPTS / "workflow_orchestrator_publication.py"
+        self.assertLessEqual(len(path.read_text().splitlines()), 250)
+        tree = syntax_tree("workflow_orchestrator_publication")
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                statements = sum(
+                    1 for child in ast.walk(node)
+                    if isinstance(child, ast.stmt)
+                    and not isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                )
+                with self.subTest(function=node.name):
+                    self.assertLessEqual(statements, 60)
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                imported.add((node.module or "").split(".")[0])
+        self.assertTrue(
+            {"subprocess", "socket", "urllib", "http", "requests", "fcntl", "ctypes", "os"}.isdisjoint(imported)
+        )
+        self.assertNotIn(
+            "workflow_orchestrator",
+            project_imports("workflow_orchestrator_publication"),
+        )
 
     def test_orchestrator_parser_has_explicit_handlers(self):
         module = importlib.import_module("scripts.workflow_orchestrator")

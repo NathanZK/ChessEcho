@@ -27,7 +27,7 @@ runtime, provider, and driver work.
 | Reviewed Phase 1 host and deterministic workspace/result bootstrap | `workflow_local_host.py` |
 | Trusted-local agent execution and execution-fact attestation | `workflow_local_provider.py` |
 | Trusted pre-genesis issue-source publication | `workflow_issue_source.py` |
-| Active replacement lifecycle composition | `workflow_orchestrator.py` and its gate-focused `workflow_orchestrator_gates.py` mixin |
+| Active replacement lifecycle composition | `workflow_orchestrator.py` with its gate-focused `workflow_orchestrator_gates.py` and source-publication-focused `workflow_orchestrator_publication.py` mixins |
 | Exact candidate decoding, phase-specific candidate schemas, and pending-result resume helpers | `workflow_orchestrator_resume.py` |
 | Bounded automatic continuation over fresh host plans | `workflow_driver.py` |
 | Legacy lifecycle, approvals, reviews, corrections, validation, adoption/migration, and projection-recovery policy | `agent_workflow.py` |
@@ -184,8 +184,9 @@ authority.
 
 `workflow_local_host.py` is the Phase 1 activation boundary. It uses isolated
 Python startup, verifies its complete controller source set against a clean
-base checkout before importing it, and installs the three fixed orchestrator
-provider seams. `workflow_local_provider.py` executes agents through
+base checkout before importing it, and installs four fixed orchestrator
+provider seams, including the publication-only operation.
+`workflow_local_provider.py` executes agents through
 `workflow_supervisor` in deterministic issue worktrees and records exact
 execution facts. This is a trusted-local control-plane boundary, not hostile
 same-UID, filesystem, credential, network, container, or VM isolation.

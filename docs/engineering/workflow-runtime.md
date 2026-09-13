@@ -121,10 +121,13 @@ publication credentials are supplied only to `reconstruct()` by the reviewed
 host and remain private runtime memory under the same environment restrictions
 as bootstrap.
 
-The direct and package CLIs expose `bootstrap` and `execute`. They require
+The direct and package CLIs expose `bootstrap`, `execute`, and the narrow
+`publish-branch` operation. They require
 absolute Git/GitHub executable paths and read the explicitly selected GitHub
-token from standard input. The CLI has no sandbox-provider option or provider
-discovery mechanism.
+token from standard input. `publish-branch` additionally reads a distinct
+publication credential and accepts only the canonical observation-bound
+request. The CLI has no sandbox-provider option or provider discovery
+mechanism.
 
 ## Fixed process boundary
 

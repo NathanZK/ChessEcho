@@ -6,6 +6,7 @@ try:
     import workflow_evidence as evidence
     import workflow_inspector as inspector
     import workflow_orchestrator_gates as gates
+    import workflow_orchestrator_publication as publication
     import workflow_orchestrator_resume as resume
     import workflow_plan_revision_policy as plan_policy, workflow_policy as policy
     import workflow_runtime as runtime, workflow_issue_source as issue_source
@@ -16,6 +17,7 @@ except ModuleNotFoundError:  # pragma: no cover - package execution
     from scripts import workflow_evidence as evidence
     from scripts import workflow_inspector as inspector
     from scripts import workflow_orchestrator_gates as gates
+    from scripts import workflow_orchestrator_publication as publication
     from scripts import workflow_orchestrator_resume as resume
     from scripts import workflow_plan_revision_policy as plan_policy, workflow_policy as policy
     from scripts import workflow_runtime as runtime, workflow_issue_source as issue_source
@@ -23,6 +25,8 @@ except ModuleNotFoundError:  # pragma: no cover - package execution
     from scripts import workflow_work_type_policy as work_type_policy
 VERSION, STATE_FORMAT, NODE_FORMAT = "1.4.0", authority.STATE_FORMAT, "chess-echo-workflow-node-v1"; CHALLENGE_FORMAT, RECOVERY_CHALLENGE_FORMAT, CANDIDATE_FORMAT, RESULT_FORMAT, FAILURE_FORMAT = supervision.CHALLENGE_FORMAT, "chess-echo-human-challenge-v1", "chess-echo-orchestrator-agent-candidate-v1", "chess-echo-orchestration-orchestrator-result-v1", "chess-echo-orchestration-orchestrator-failure-v1"
 STATE_PATH, NODE_PATH, POLICY_PATH, SUPERVISION_PATH, RUNTIME_PIN_PATH, RESULT_PATH = "workflow-orchestration/state.json", "workflow-orchestration/node.json", "workflow-policy/state.json", supervision.POLICY_PATH, "workflow-orchestration/runtime-reconstruction.json", runtime.EXECUTION_RESULT_PATH
+SOURCE_PUBLICATION_REQUEST_PATH = publication.SOURCE_PUBLICATION_REQUEST_PATH
+SOURCE_PUBLICATION_RESULT_PATH = publication.SOURCE_PUBLICATION_RESULT_PATH
 LIMIT, ATTACHMENT_LIMIT = 2 * 1024 * 1024, runtime.ATTACHMENT_LIMIT_BYTES
 OUTCOMES = {"resolved": 0, "missing": 3, "unsupported": 4, "corrupt": 5, "ambiguous": 6, "stale": 7, "denied": 8, "busy": 9, "conflict": 10, "uncertain": 11, "paused": 12}
 AGENT_PHASES = {"PLANNING": ("planner", "write-plan"), "PLAN_REVIEW": ("reviewer", "review-plan"), "TEST_IMPLEMENTATION": ("implementer", "write-tests"), "TEST_REVIEW": ("reviewer", "review-tests"), "IMPLEMENTATION": ("implementer", "implement"), "FINAL_REVIEW": ("reviewer", "review-final")}
@@ -34,6 +38,7 @@ GATES = gates.GATES
 GATE_NEXT = {"plan": "TEST_IMPLEMENTATION", "tests": "IMPLEMENTATION", "final": "PR_PREPARATION", "pr-publication": "PR_PREPARATION"}; PHASE_ORIGINS = {"PLANNING": {"PLANNING", "PLAN_REVIEW", "TEST_IMPLEMENTATION", "PAUSED"}, "PLAN_REVIEW": {"PLANNING", "PLAN_REVIEW", "PAUSED"}, "WAITING_FOR_PLAN_APPROVAL": {"PLAN_REVIEW"}, "TEST_IMPLEMENTATION": {"WAITING_FOR_PLAN_APPROVAL", "TEST_IMPLEMENTATION", "PAUSED"}, "TEST_REVIEW": {"TEST_IMPLEMENTATION", "TEST_REVIEW", "PAUSED"}, "WAITING_FOR_TEST_APPROVAL": {"TEST_REVIEW"}, "IMPLEMENTATION": {"WAITING_FOR_TEST_APPROVAL", "IMPLEMENTATION", "PAUSED"}, "VALIDATION": {"IMPLEMENTATION", "VALIDATION", "PAUSED"}, "FINAL_REVIEW": {"VALIDATION", "FINAL_REVIEW", "PAUSED"}, "WAITING_FOR_FINAL_APPROVAL": {"FINAL_REVIEW"}, "PR_PREPARATION": {"WAITING_FOR_FINAL_APPROVAL", "PR_PREPARATION", "WAITING_FOR_PR_PUBLICATION_APPROVAL", "PAUSED"}, "WAITING_FOR_PR_PUBLICATION_APPROVAL": {"PR_PREPARATION"}, "COMPLETED": {"PR_PREPARATION"}}
 FROZEN_ISSUES = frozenset({115})
 RUNTIME_PROVIDER = None
+SOURCE_PUBLICATION_PROVIDER = None
 SANDBOX_PROVIDER = None
 PENDING_RESULT_PROVIDER = None
 _UNSET = object()
@@ -74,11 +79,13 @@ def _next(state):
         if pending["kind"] == "policy": return {"action": "satisfy-gate-automatically", "command": "step", "gate": GATES.get(phase), "pending_kind": "policy"}
         return {"action": "approve-gate" if pending["kind"] == "human" else "execute-pending", "command": "approve" if pending["kind"] == "human" else "step", "gate": GATES.get(phase), "pending_kind": pending["kind"]}
     slots = {row["slot"] for row in state["candidates"]}
-    pr_action = "complete-pr-approval" if "pr-metadata" in slots else "prepare-draft-pr" if "pr-publication-gate-satisfaction" in slots else "open-pr-publication-gate"
+    pr_action = "complete-pr-approval" if "pr-metadata" in slots else "prepare-draft-pr" if "source-publication-result" in slots else "publish-validated-branch" if "pr-publication-gate-satisfaction" in slots else "open-pr-publication-gate"
     actions = {"PLANNING": "request-planner", "PLAN_REVIEW": "review-plan", "TEST_IMPLEMENTATION": "request-tests", "TEST_REVIEW": "review-tests", "IMPLEMENTATION": "request-implementation", "VALIDATION": "run-validation", "FINAL_REVIEW": "review-final", "PR_PREPARATION": pr_action, "PAUSED": "request-recovery", "COMPLETED": "none-completed"}
     return {"action": "await-human-approval" if phase in GATES else actions.get(phase, "unknown"), "command": "approve" if phase in GATES else "recover" if phase == "PAUSED" else "read-only" if phase == "COMPLETED" else "step", "gate": GATES.get(phase), "pending_kind": None}
-class Orchestrator(gates.ApprovalGateMixin):
+class Orchestrator(publication.SourcePublicationMixin, gates.ApprovalGateMixin):
     _gate_fail, _gate_require, _gate_translate = staticmethod(_fail), staticmethod(_require), staticmethod(_translate)
+    _publication_fail, _publication_require, _publication_translate = staticmethod(_fail), staticmethod(_require), staticmethod(_translate)
+    def _source_publication_provider(self): return SOURCE_PUBLICATION_PROVIDER
     def __init__(self, root, issue):
         _require(type(issue) is int and issue > 0, "unsupported", "invalid-issue", "Issue must be a positive integer")
         _require(issue not in FROZEN_ISSUES, "denied", "issue-frozen", "Issue is frozen before any workflow lookup", str(issue))
@@ -100,6 +107,17 @@ class Orchestrator(gates.ApprovalGateMixin):
         if expected is not None:
             return "exact", expected
         return ("clean-base", None) if state["phase"] == "PLANNING" else ("trusted-current", None)
+    def _runtime_context(self, state, inspection, expected_repository=_UNSET):
+        state = state or self._selected
+        inspection = inspection or self._selected_inspection
+        _require(inspection is not None, "corrupt", "runtime-authority-missing", "Runtime reconstruction requires selected authority")
+        triage, baseline, baseline_binding, _config = self._facts(state)
+        pin_binding, pin = self._runtime_pin(state)
+        if expected_repository is _UNSET:
+            repository_mode, expected_repository = self._runtime_expectation(state)
+        else:
+            repository_mode = "exact" if expected_repository is not None else "trusted-current"
+        return _translate(lambda: runtime.build_reconstruction_request(pin_binding=pin_binding, pin_document=pin, baseline_binding=baseline_binding, baseline_document=baseline, triage_binding=state["triage_binding"], triage_document=triage, authority_binding=inspection["authority"], repository_mode=repository_mode, repository_observation=expected_repository), "runtime")
     def _runtime(self, request, state=None, inspection=None, expected_repository=_UNSET):
         _require(RUNTIME_PROVIDER is not None, "unsupported", "runtime-provider-unavailable", "No reviewed runtime provider is configured")
         state = state or self._selected
@@ -108,14 +126,7 @@ class Orchestrator(gates.ApprovalGateMixin):
             adapter = _translate(lambda: RUNTIME_PROVIDER(self.root, self.issue, request), "runtime")
             _require(adapter is not None, "unsupported", "runtime-unavailable", "Runtime provider returned no adapter")
             return adapter
-        _require(inspection is not None, "corrupt", "runtime-authority-missing", "Runtime reconstruction requires selected authority")
-        triage, baseline, baseline_binding, _config = self._facts(state)
-        pin_binding, pin = self._runtime_pin(state)
-        if expected_repository is _UNSET:
-            repository_mode, expected_repository = self._runtime_expectation(state)
-        else:
-            repository_mode = "exact" if expected_repository is not None else "trusted-current"
-        context = _translate(lambda: runtime.build_reconstruction_request(pin_binding=pin_binding, pin_document=pin, baseline_binding=baseline_binding, baseline_document=baseline, triage_binding=state["triage_binding"], triage_document=triage, authority_binding=inspection["authority"], repository_mode=repository_mode, repository_observation=expected_repository), "runtime")
+        context = self._runtime_context(state, inspection, expected_repository)
         adapter = _translate(lambda: RUNTIME_PROVIDER(self.root, self.issue, context), "runtime")
         _require(adapter is not None, "unsupported", "runtime-unavailable", "Runtime provider returned no adapter")
         _require(callable(getattr(adapter, "reconstruction_document", None)), "stale", "runtime-reconstruction-unverified", "Runtime provider did not reconstruct the selected evidence")
@@ -235,8 +246,19 @@ class Orchestrator(gates.ApprovalGateMixin):
         rejection_open = self._validate_rejection_request_transition(prior_binding, prior, current) if current["transition"]["type"] == "rejection-request" else False
         rejection_close = self._validate_rejection_completion_transition(prior, current) if prior["pending"] is not None and prior["pending"]["kind"] == "human-rejection" else False
         if gate is not None and not rejection_open and not rejection_close: _require(current["phase"] == GATE_NEXT[gate] and current["pending"] is None and current["supervision_policy_binding"] == prior["supervision_policy_binding"] and current["transition"] == {"type": {"plan": "plan-approve", "tests": "tests-approve", "final": "final-approve", "pr-publication": "publication-approve"}[gate], "request_binding": None, "result_binding": None, "authorization_binding": None, "repository_observation_binding": None}, "stale", "gate-transition-unselected", "Selected authority history bypasses gate satisfaction"); slot = "%s-gate-satisfaction" % gate; wrapper = self._read(self._active(current, {"plan": "plan-approval", "tests": "test-approval"}[gate]), NODE_PATH) if gate in {"plan", "tests"} else None; matches = [row["binding"] for row in wrapper["evidence"] if row["role"] == "gate-satisfaction"] if wrapper is not None else []; _require(wrapper is None or len(matches) == 1, "stale", "gate-transition-unselected", "Gate approval node does not select one satisfaction"); satisfaction = matches[0] if matches else self._candidate_binding(current, slot); transient = copy.deepcopy(current); transient["candidates"] = _put(transient["candidates"], slot, satisfaction); selected_satisfaction, satisfaction_document, satisfaction_challenge = self._satisfaction_context(transient, {"authority": current_binding}, slot, gate, reobserve_human=True, historical=True); subjects = {row["slot"]: row["binding"] for row in satisfaction_challenge["subjects"]}; wrapper_evidence = {row["role"]: row["binding"] for row in wrapper["evidence"]} if wrapper is not None else {}; _require(wrapper is None or (wrapper["node"] == {"plan": "plan-approval", "tests": "test-approval"}[gate] and wrapper["subject_binding"] == subjects[{"plan": "plan-snapshot", "tests": "test-manifest"}[gate]] and len(wrapper["evidence"]) == 2 and wrapper_evidence == {"gate-satisfaction": selected_satisfaction, {"plan": "technical-plan-review", "tests": "technical-test-review"}[gate]: subjects[{"plan": "plan-review", "tests": "test-review"}[gate]]} and wrapper["repository_observation_binding"] == satisfaction_document["repository_observation_binding"] and wrapper["authorization_binding"] == satisfaction_document["human_authorization_binding"]), "stale", "gate-approval-wrapper-stale", "Gate approval wrapper differs from the selected satisfaction")
+        if current["transition"]["type"] == "source-publication-claim":
+            request_binding = current["pending"]["request_binding"] if current["pending"] is not None else None
+            projection = _translate(lambda: evidence.project(self.root, request_binding), "evidence") if request_binding is not None else {}
+            _require(prior["phase"] == current["phase"] == "PR_PREPARATION" and prior["pending"] is None and current["pending"] is not None and current["pending"]["kind"] == "source-publication" and current["pending"]["status"] == "requested" and self._candidate_binding(current, "source-publication-request") == request_binding and projection.get("decision", {}).get("type") == "source-publication-request" and projection.get("subject") == prior_binding and current["transition"] == {"type": "source-publication-claim", "request_binding": request_binding, "result_binding": None, "authorization_binding": None, "repository_observation_binding": None}, "stale", "source-publication-claim-unselected", "Source publication was not selected by the exact authority claim")
+        if prior["pending"] is not None and prior["pending"]["kind"] == "source-publication":
+            request_binding = prior["pending"]["request_binding"]
+            result_binding = self._candidate_binding(current, "source-publication-result", required=False)
+            projection = _translate(lambda: evidence.project(self.root, result_binding), "evidence") if result_binding is not None else {}
+            _require(current["phase"] == "PR_PREPARATION" and current["pending"] is None and result_binding is not None and projection.get("decision", {}).get("type") == "source-publication-result" and projection.get("subject") == request_binding and current["transition"] == {"type": "source-publication-finalize", "request_binding": None, "result_binding": None, "authorization_binding": None, "repository_observation_binding": None}, "stale", "source-publication-finalization-unselected", "Source publication result was not selected by exact finalization")
+        if current["pending"] is not None and current["pending"]["kind"] == "github-write":
+            self._publication_context(prior, {"authority": prior_binding})
         allowed = PHASE_ORIGINS.get(current["phase"]); _require((rejection_open or rejection_close or allowed is None or prior["phase"] in allowed) and not (current["phase"] == "PLANNING" and prior["phase"] == "TEST_IMPLEMENTATION" and current["transition"]["type"] != "plan-reopen"), "stale", "phase-transition-unselected", "Selected authority history skips a required lifecycle phase")
-        if current["phase"] == "COMPLETED": final_satisfaction, _final_document, _final_challenge = self._satisfaction_context(prior, {"authority": prior_binding}, "final-gate-satisfaction", "final", reobserve_human=True, historical=True); publication_satisfaction, _publication_document, _publication_challenge = self._satisfaction_context(prior, {"authority": prior_binding}, "pr-publication-gate-satisfaction", "pr-publication", reobserve_human=True, historical=True); metadata = self._candidate_binding(prior, "pr-metadata"); approval = self._read(self._active(current, "pr-approval"), NODE_PATH, "PR approval node"); approval_evidence = {row["role"]: row["binding"] for row in approval["evidence"]}; write_result, _write_binding = self._prior_pr_result(prior, {"authority": prior_binding}); _require(current["transition"]["type"] == "complete" and current["pending"] is None and metadata == self._active(prior, "pr-metadata") and write_result is not None and write_result.get("reconciliation", {}).get("status") == "confirmed" and approval["subject_binding"] == metadata and len(approval["evidence"]) == 4 and approval_evidence.get("final-gate-satisfaction") == final_satisfaction and approval_evidence.get("pr-publication-gate-satisfaction") == publication_satisfaction and approval_evidence.get("final-review") == self._read(self._active(prior, "final-review"), NODE_PATH)["subject_binding"] and "github-pr-observation" in approval_evidence, "stale", "completion-transition-unselected", "Completion lacks selected publication and reconciled PR evidence")
+        if current["phase"] == "COMPLETED": final_satisfaction, _final_document, _final_challenge = self._satisfaction_context(prior, {"authority": prior_binding}, "final-gate-satisfaction", "final", reobserve_human=True, historical=True); publication_satisfaction, _publication_document, _publication_challenge = self._satisfaction_context(prior, {"authority": prior_binding}, "pr-publication-gate-satisfaction", "pr-publication", reobserve_human=True, historical=True); _publication_request, publication_result, _request_document, _result_document = self._publication_context(prior, {"authority": prior_binding}); metadata = self._candidate_binding(prior, "pr-metadata"); approval = self._read(self._active(current, "pr-approval"), NODE_PATH, "PR approval node"); approval_evidence = {row["role"]: row["binding"] for row in approval["evidence"]}; write_result, _write_binding = self._prior_pr_result(prior, {"authority": prior_binding}); _require(current["transition"]["type"] == "complete" and current["pending"] is None and metadata == self._active(prior, "pr-metadata") and write_result is not None and write_result.get("reconciliation", {}).get("status") == "confirmed" and approval["subject_binding"] == metadata and len(approval["evidence"]) == 5 and approval_evidence.get("final-gate-satisfaction") == final_satisfaction and approval_evidence.get("pr-publication-gate-satisfaction") == publication_satisfaction and approval_evidence.get("source-publication-result") == publication_result and approval_evidence.get("final-review") == self._read(self._active(prior, "final-review"), NODE_PATH)["subject_binding"] and "github-pr-observation" in approval_evidence, "stale", "completion-transition-unselected", "Completion lacks selected source publication and reconciled PR evidence")
         prior_pending = prior["pending"]; recovery_open = current["transition"]["type"] == "recover" and current["phase"] == "PAUSED" and current["pending"] is not None and current["pending"]["kind"] == "human" and not (prior_pending is not None and prior_pending["kind"] == "human"); recovery_close = prior["phase"] == "PAUSED" and prior_pending is not None and prior_pending["kind"] == "human" and current["phase"] != "PAUSED"
         if recovery_open: request_binding, _request, _result = self._recovery_attempt(prior, {"authority": prior_binding}); challenge = self._read(current["pending"]["request_binding"], "workflow-orchestration/human-challenge.json", "recovery challenge"); self._check_recovery_challenge(challenge, current["previous_authority"]); _require(current["transition"]["request_binding"] == current["pending"]["request_binding"] and challenge["subjects"] == [{"slot": "pending-attempt", "binding": request_binding}], "stale", "recovery-transition-unselected", "Recovery request does not select the recorded attempt")
         if recovery_close: challenge_binding = prior_pending["request_binding"]; challenge = self._read(challenge_binding, "workflow-orchestration/human-challenge.json", "recovery challenge"); self._check_recovery_challenge(challenge, prior["previous_authority"]); authorization = self._candidate_binding(current, "human-authorization"); projection = _translate(lambda: evidence.project(self.root, authorization), "evidence"); document = self._read(authorization, "workflow-orchestration/human-authorization.json", "recovery authorization"); source = {"kind": document["source"]["kind"], "id": document["source"]["id"]}; observed = self._authorization_document(prior, challenge, source, challenge_binding, historical=True); request = self._read(challenge["subjects"][0]["binding"], label="recovery request"); _require(current["transition"]["type"] == "recover" and current["pending"] is None and current["phase"] == self._resume_phase(request) and projection["decision"]["type"] == "human-authorization" and projection["subject"] == challenge_binding and document == observed, "stale", "recovery-transition-unselected", "Recovery was not selected by exact live human authorization")
@@ -358,13 +380,6 @@ class Orchestrator(gates.ApprovalGateMixin):
             binding = self._candidate_binding(item, "execution-request", required=False)
             if binding is not None and self._read(binding, label="execution request")["operation"]["kind"] == "github-write": return binding
         return None
-    def _pr_context(self, state, observation):
-        final = self._active(state, "final-review"); wrapper = self._read(final, NODE_PATH, "final review node")
-        candidate = self._candidate_schema(self._read(wrapper["subject_binding"], label="final review candidate"), "review")
-        pr = _translate(lambda: resume.validate_pr_metadata(candidate.get("pr")), "resume")
-        _triage, baseline, _baseline_binding, _config = self._facts(state)
-        expectation = {"repository": baseline["repository"], "base_ref": baseline["target_base"]["name"], "base_sha": observation["base"]["commit"], "head_ref": pr["head_ref"], "head_sha": observation["head"]["commit"], "title_sha256": inspector.sha256(pr["title"].encode()), "body_sha256": inspector.sha256(pr["body"].encode())}
-        return pr, expectation, wrapper
     def _pr_number(self, result, supplied):
         return _translate(lambda: resume.resolve_pr_number(result, supplied), "resume")
     def _producer_inputs(self, state, phase, triage):
@@ -391,6 +406,7 @@ class Orchestrator(gates.ApprovalGateMixin):
             _require(len(done) < len(checks), "corrupt", "validation-already-complete", "Validation completion was not bound")
             operation = {"kind": "validation", "name": checks[len(done)]["name"], "role": None}
         elif phase == "PR_PREPARATION":
+            self._publication_context(state, inspection)
             prior, _prior_binding = self._prior_pr_result(state, inspection)
             unresolved = self._unresolved_pr_request(state, inspection)
             operation = {"kind": "github-write", "name": "create-draft-pr", "role": None} if prior is None and unresolved is None else {"kind": "github-read", "name": "observe-draft-pr-%d" % self._pr_number(prior, supplied), "role": None}
@@ -632,7 +648,8 @@ class Orchestrator(gates.ApprovalGateMixin):
         _pr, expected, _final = self._pr_context(state, request["repository_before"])
         _require(all(observation[key] == expected[key] for key in expected) and observation["state"] == "OPEN" and observation["draft"] is True, "stale", "pr-reconciliation-mismatch", "Observed PR is not the exact open draft requested")
         before, final = state["transition"]["repository_observation_binding"], self._active(state, "final-review")
-        wrapper, policy_binding = self._bind(state, inspection, "pr-metadata", final, [("github-pr-observation", observed)], before)
+        publication_result = self._publication_context(state, inspection)[1]
+        wrapper, policy_binding = self._bind(state, inspection, "pr-metadata", final, [("github-pr-observation", observed), ("source-publication-result", publication_result)], before)
         successor = self._successor(state, inspection["authority"], phase="PR_PREPARATION", policy_state_binding=policy_binding, pending=None, candidates=_put(state["candidates"], "pr-metadata", wrapper), transition={"type": "pr-reconcile", "request_binding": None, "result_binding": None, "authorization_binding": None, "repository_observation_binding": None})
         binding, committed = self._commit(successor); return self._result("executed", successor, binding, committed)
     def _run_pending(self, inspection, state, supplied):
@@ -744,6 +761,9 @@ class Orchestrator(gates.ApprovalGateMixin):
             if state["pending"]["kind"] == "policy": return self._automatic(inspection, state)
             _require(state["pending"]["kind"] != "human-rejection", "unsupported", "human-gate-requires-rejection", "Human rejection challenges require reject")
             _require(state["pending"]["kind"] != "human", "unsupported", "human-gate-requires-approval", "Human gates require approve or recover")
+            if state["pending"]["kind"] == "source-publication":
+                _require(request is None, "unsupported", "source-publication-handoff-prohibited", "Source publication does not accept an external result handoff")
+                return self._run_source_publication(inspection, state)
             if request is None:
                 request = self._discover_pending(state, inspection)
             return self._finalize(inspection, state, request)
@@ -754,6 +774,8 @@ class Orchestrator(gates.ApprovalGateMixin):
                 return self._complete_pr_approval(state, inspection)
             if self._candidate_binding(state, "pr-publication-gate-satisfaction", required=False) is None:
                 return self._open_publication_gate(state, inspection)
+            if self._candidate_binding(state, "source-publication-result", required=False) is None:
+                return self._claim_source_publication(inspection, state)
         return self._claim(inspection, state, request)
     def _gate_inputs(self, state, gate):
         if gate == "plan":
@@ -826,27 +848,6 @@ class Orchestrator(gates.ApprovalGateMixin):
             observed = self._authorization_document(state, challenge, source, challenge_binding, historical=historical)
             _require(observed == mechanism_document, "stale", "authorization-source-stale", "Publication authorization source changed before the write")
         return binding, document, challenge
-    def _open_publication_gate(self, state, inspection):
-        _binding, final_satisfaction, _challenge = self._satisfaction_context(state, inspection, "final-gate-satisfaction", "final", reobserve_human=True)
-        observed = self._fresh_local(state, final_satisfaction["repository_observation_binding"], state["triage_binding"])
-        candidates = _put(state["candidates"], "pr-publication-observation", observed)
-        transient = copy.deepcopy(state); transient["candidates"] = candidates
-        subjects, repository = self._gate_inputs(transient, "pr-publication")
-        _challenge, pending = self._challenge(transient, inspection["authority"], "pr-publication", subjects, repository, state["generation"] + 1)
-        successor = self._successor(state, inspection["authority"], phase="WAITING_FOR_PR_PUBLICATION_APPROVAL", candidates=candidates, pending=pending, transition={"type": "publication-request", "request_binding": pending["request_binding"], "result_binding": None, "authorization_binding": None, "repository_observation_binding": None})
-        binding, committed = self._commit(successor); return self._result("publication-approval-requested", successor, binding, committed)
-    def _complete_pr_approval(self, state, inspection):
-        final_satisfaction, final_document, _final_challenge = self._satisfaction_context(state, inspection, "final-gate-satisfaction", "final", reobserve_human=True)
-        publication_satisfaction, _publication_document, publication_challenge = self._satisfaction_context(state, inspection, "pr-publication-gate-satisfaction", "pr-publication", reobserve_human=True)
-        source_binding = publication_challenge["authority_binding"]
-        fresh_pr, fresh_local = self._fresh_pr(state, source_binding)
-        metadata = self._active(state, "pr-metadata")
-        final = self._read(self._active(state, "final-review"), NODE_PATH, "final review node")["subject_binding"]
-        rows = [("final-gate-satisfaction", final_satisfaction), ("final-review", final), ("github-pr-observation", fresh_pr), ("pr-publication-gate-satisfaction", publication_satisfaction)]
-        authorization = final_document["human_authorization_binding"]
-        _wrapper, policy_binding = self._bind(state, inspection, "pr-approval", metadata, rows, fresh_local, authorization)
-        successor = self._successor(state, inspection["authority"], phase="COMPLETED", policy_state_binding=policy_binding, candidates=_drop(state["candidates"], "final-gate-satisfaction", "pr-publication-gate-satisfaction", "pr-publication-observation", "pr-metadata"), transition={"type": "complete", "request_binding": None, "result_binding": None, "authorization_binding": None, "repository_observation_binding": None})
-        binding, committed = self._commit(successor); return self._result("completed", successor, binding, committed)
     def _publish_satisfaction(self, state, challenge, mechanism, repository):
         challenge_binding = state["pending"]["request_binding"]
         path = "workflow-orchestration/human-authorization.json" if challenge["mode"] == "supervised" else supervision.AUTOMATIC_DECISION_PATH

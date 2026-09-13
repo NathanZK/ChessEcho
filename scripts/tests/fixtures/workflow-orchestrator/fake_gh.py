@@ -47,7 +47,7 @@ def _create(argv):
         "state": "open",
         "draft": True,
         "base": {"ref": base_ref, "sha": _head("refs/remotes/origin/%s" % base_ref)},
-        "head": {"ref": head_ref, "sha": _head("HEAD")},
+        "head": {"ref": head_ref, "sha": data.get("remote_refs", {}).get("refs/heads/%s" % head_ref)},
         "title": title,
         "body": body,
     }
@@ -70,8 +70,11 @@ def _api(argv):
     data = _load()
     if endpoint and "/git/matching-refs/heads/" in endpoint:
         head_ref = endpoint.split("/git/matching-refs/heads/", 1)[1]
-        value = [{"ref": "refs/heads/%s" % head_ref,
-                  "object": {"type": "commit", "sha": _head("HEAD")}}]
+        full_ref = "refs/heads/%s" % head_ref
+        sha = data.get("remote_refs", {}).get(full_ref)
+        value = [] if sha is None else [
+            {"ref": full_ref, "object": {"type": "commit", "sha": sha}}
+        ]
         sys.stdout.write(json.dumps(value, separators=(",", ":")))
         return 0
     if endpoint and endpoint.startswith("repos/") and "/pulls?" in endpoint:

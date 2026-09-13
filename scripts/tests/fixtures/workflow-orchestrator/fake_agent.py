@@ -94,7 +94,7 @@ def _review(needs_revision):
             }
         ]
     value["pr"] = {
-        "head_ref": "issue-144",
+        "head_ref": "chess-echo-agent/issue-144",
         "title": "Implement workflow feature",
         "body": "## What\nAdd the workflow feature.\n\n## Why\nIssue #144.\n\n## Testing\nfixture-check\n",
     }

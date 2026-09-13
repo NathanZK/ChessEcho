@@ -3587,6 +3587,8 @@ class TrustedLocalHostProcessTest(unittest.TestCase):
         }
         self.assertIn("trusted_worker_auth_stdin", actions)
         self.assertFalse(actions["trusted_worker_auth_stdin"].default)
+        self.assertIn("source_publication_auth_stdin", actions)
+        self.assertFalse(actions["source_publication_auth_stdin"].default)
         config = json.loads(
             (REPOSITORY / ".github" / "agent-workflow.json").read_text()
         )
@@ -3602,6 +3604,10 @@ class TrustedLocalHostProcessTest(unittest.TestCase):
         self.assertNotIn("gh auth", source)
         self.assertIn(
             "trusted_worker_authentication=worker_token_reader is not None",
+            pathlib.Path(host.__file__).read_text(),
+        )
+        self.assertIn(
+            "SOURCE_PUBLICATION_PROVIDER = source_publication_provider",
             pathlib.Path(host.__file__).read_text(),
         )
         commands = next(
