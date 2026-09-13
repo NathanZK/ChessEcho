@@ -503,6 +503,7 @@ class Runtime:
         """Return only the result document; execute_bundle also owns its attachments."""
         return self.execute_bundle(request_document, request_binding, **options).document
     def execute_bundle(self, request_document, request_binding, reconciliation_expectation=None, cancel_event=None, sandbox_provider=None, write_payload=None, pre_write_check=None):
+        """Execute a request bundle and determine execution outcome."""
         reconciliation_expectation, write_payload = copy.deepcopy((reconciliation_expectation, write_payload)); config = self._base_config()
         request = self._validate_request(request_document, reconciliation_expectation)
         request_binding = _reference(request_binding, 'request-binding')

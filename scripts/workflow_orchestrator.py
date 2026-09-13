@@ -720,7 +720,8 @@ class Orchestrator(publication.SourcePublicationMixin, gates.ApprovalGateMixin):
         if after is not None: _require(self._read(after, label="repository observation") == result["repository_after"], "stale", "execution-handoff-stale", "Repository result handoff differs")
         return request, result, after, None
     def _finalize(self, inspection, state, supplied):
-        """Finalize an exact handoff while confining compatibility to implementer decode failures."""; pending = state["pending"]; review_phase = state["phase"] in {"PLAN_REVIEW", "TEST_REVIEW", "FINAL_REVIEW"}
+        """Finalize an exact handoff while confining compatibility to implementer decode failures."""
+        pending = state["pending"]; review_phase = state["phase"] in {"PLAN_REVIEW", "TEST_REVIEW", "FINAL_REVIEW"}
         request, result, after, observed = self._verified_handoff(state, inspection, supplied, materialize_after=not review_phase)
         if observed is not None:
             self._runtime(None, state, inspection, request["repository_before"])
@@ -728,14 +729,14 @@ class Orchestrator(publication.SourcePublicationMixin, gates.ApprovalGateMixin):
         self._runtime(None, state, inspection, result["repository_after"])
         result_binding, rows = supplied["result_binding"], _put(_put(state["candidates"], "execution-request", pending["request_binding"]), "execution-result", supplied["result_binding"])
         if pending["kind"] == "github-write":
-            remote = result.get("reconciliation", {}).get("remote_head")
-            before = request["repository_before"]
-            head_ref = self._pr_context(state, before)[0]["head_ref"]
+            remote = result.get("reconciliation", {}).get("remote_head"); before = request["repository_before"]; head_ref = self._pr_context(state, before)[0]["head_ref"]
             _require(isinstance(remote, dict) and remote.get("format") == runtime.REMOTE_HEAD_OBSERVATION_FORMAT and remote.get("repository") == before["repository"] and remote.get("ref") == "refs/heads/%s" % head_ref and remote.get("sha") == before["head"]["commit"] and remote.get("repository_observation_sha256") == before["observation_sha256"], "stale", "trusted-remote-head-missing", "Draft PR result lacks the trusted remote-head observation")
             if result["outcome"] not in {"succeeded", "uncertain"}: return self._pause(state, inspection, rows, "pr-write-failed")
             successor = self._successor(state, inspection["authority"], candidates=rows, transition={"type": "pr-prepare", "request_binding": None, "result_binding": None, "authorization_binding": None, "repository_observation_binding": None})
             binding, committed = self._commit(successor); return self._result("executed", successor, binding, committed)
-        if result["outcome"] != "succeeded": return self._pause(state, inspection, rows, "unsupported-policy-transition" if pending["kind"] == "validation" else "attempt-not-successful")
+        if result["outcome"] != "succeeded":
+            if pending["kind"] == "validation": return self._pause(state, inspection, rows, "unsupported-policy-transition")
+            if not (state["phase"] in {"TEST_IMPLEMENTATION", "IMPLEMENTATION"} and after is not None and self._compatibility_enabled(state)): return self._pause(state, inspection, rows, "attempt-not-successful")
         if pending["kind"] == "validation": return self._validation_submit(state, inspection, pending["request_binding"], result_binding, after, rows)
         expected = "plan" if state["phase"] == "PLANNING" else "implementer" if state["phase"] in {"TEST_IMPLEMENTATION", "IMPLEMENTATION"} else "review"
         candidate = validated_review = compatibility_warning = None
@@ -743,8 +744,7 @@ class Orchestrator(publication.SourcePublicationMixin, gates.ApprovalGateMixin):
             candidate = self._candidate(result, expected)
             validated_review = self._validated_review_candidate(state, candidate)
         if state["phase"] in {"PLANNING", "PLAN_REVIEW", "TEST_REVIEW", "FINAL_REVIEW"}:
-            if not (runtime.same_repository(request["repository_before"], result["repository_after"]) and runtime.clean_repository(result["repository_after"])):
-                return self._pause(state, inspection, rows, "read-only-agent-repository-drift")
+            if not (runtime.same_repository(request["repository_before"], result["repository_after"]) and runtime.clean_repository(result["repository_after"])): return self._pause(state, inspection, rows, "read-only-agent-repository-drift")
         if candidate is None:
             try: candidate = self._candidate(result, expected)
             except OrchestratorFailure as failure:
