@@ -31,6 +31,9 @@ are in [Workflow orchestration](workflow-orchestration.md#commands),
 and [Bounded workflow driver](workflow-driver.md#invocation). No definitive
 operator runbook exists yet; it is tracked by open
 [issue #197](https://github.com/NathanZK/ChessEcho/issues/197).
+The completed [workflow scope-drift retrospective](workflow-scope-drift-retrospective.md)
+records why the producer/governance boundary is under review without changing
+the current architecture or gates.
 
 ### Suggested reading paths
 
