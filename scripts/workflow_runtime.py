@@ -8,7 +8,7 @@ except ImportError:
     import workflow_inspector
     import workflow_runtime_reconstruction as reconstruction
     import workflow_supervisor
-RUNTIME_VERSION = '1.4.0'
+RUNTIME_VERSION = '1.4.1'
 def _runtime_source_sha256():
     sources = {'workflow_runtime.py': workflow_inspector.sha256(pathlib.Path(__file__).read_bytes()), 'workflow_runtime_reconstruction.py': workflow_inspector.sha256(pathlib.Path(reconstruction.__file__).read_bytes())}
     return hashlib.sha256(json.dumps(sources, sort_keys=True, separators=(',', ':')).encode('ascii')).hexdigest()
@@ -846,6 +846,8 @@ class Runtime:
         value = _parse(raw, 'github-issue')
         if type(value.get('number')) is not int or value.get('number') != issue or value.get('url') != 'https://api.github.com/repos/%s/issues/%d' % (self.repository, issue) or value.get('html_url') != 'https://github.com/%s/issues/%d' % (self.repository, issue) or 'pull_request' in value:
             _fail('stale', 'issue-identity-mismatch', 'GitHub issue identity differs from request')
+        if value.get('state') != 'open':
+            _fail('denied', 'issue-not-open', 'Pre-genesis intake requires an open issue')
         raw_labels = value.get('labels')
         if not isinstance(raw_labels, list):
             _fail('corrupt', 'invalid-issue-label', 'GitHub issue labels are invalid')

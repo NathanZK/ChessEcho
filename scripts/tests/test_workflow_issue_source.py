@@ -171,6 +171,24 @@ class WorkflowIssueSourceTest(unittest.TestCase):
                 "issue-identity-mismatch",
             ),
             (
+                "closed",
+                snapshot,
+                json.dumps({**json.loads(raw), "state": "closed"}).encode(),
+                "issue-not-open",
+            ),
+            (
+                "missing-state",
+                snapshot,
+                json.dumps(
+                    {
+                        key: value
+                        for key, value in json.loads(raw).items()
+                        if key != "state"
+                    }
+                ).encode(),
+                "issue-not-open",
+            ),
+            (
                 "wrong-hash",
                 {**snapshot, "source": {**snapshot["source"], "sha256": "0" * 64}},
                 raw,

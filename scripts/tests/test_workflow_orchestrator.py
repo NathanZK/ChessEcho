@@ -194,6 +194,7 @@ class OrchestratorFixture:
                     "url": "https://api.github.com/repos/%s/issues/%d" % (SLUG, ISSUE),
                     "html_url": "https://github.com/%s/issues/%d" % (SLUG, ISSUE),
                     "body": "Implement the feature.", "labels": [{"name": "enhancement"}],
+                    "state": "open",
                     "updated_at": "2026-09-05T00:00:00Z",
                 },
             },
@@ -2467,6 +2468,69 @@ class OrchestratorGenesisAndCliTest(unittest.TestCase):
         with self.assertRaises(authority.AuthorityFailure) as authority_missing:
             authority.status(fixture.root, ISSUE)
         self.assertEqual("orchestration-pointer-missing", authority_missing.exception.code)
+
+    def test_closed_issue_is_rejected_without_publication_or_authority(self):
+        fixture = OrchestratorFixture()
+        self.addCleanup(fixture.close)
+        fixture.install_provider(self)
+        responses = json.loads((fixture.bin / "gh-responses.json").read_text())
+        issue = responses["api"]["repos/%s/issues/%d" % (SLUG, ISSUE)]
+        issue["state"] = "closed"
+        issue["updated_at"] = "2026-09-05T00:01:00Z"
+        (fixture.bin / "gh-responses.json").write_text(
+            json.dumps(responses, sort_keys=True)
+        )
+
+        with self.assertRaises(issue_source.IssueSourceFailure) as closed:
+            fixture.publish_response_source()
+        self.assertEqual(
+            ("denied", "issue-not-open"),
+            (closed.exception.status, closed.exception.code),
+        )
+        self.assertFalse((fixture.store.store_dir / "objects").exists())
+        with self.assertRaises(authority.AuthorityFailure) as authority_missing:
+            authority.status(fixture.root, ISSUE)
+        self.assertEqual(
+            "orchestration-pointer-missing", authority_missing.exception.code
+        )
+
+    def test_reopened_issue_requires_fresh_publication_before_initialization(self):
+        fixture = OrchestratorFixture()
+        self.addCleanup(fixture.close)
+        fixture.install_provider(self)
+        stale_publication = fixture.publish_response_source()
+        responses = json.loads((fixture.bin / "gh-responses.json").read_text())
+        issue = responses["api"]["repos/%s/issues/%d" % (SLUG, ISSUE)]
+        issue["state"] = "closed"
+        issue["updated_at"] = "2026-09-05T00:01:00Z"
+        (fixture.bin / "gh-responses.json").write_text(
+            json.dumps(responses, sort_keys=True)
+        )
+        with self.assertRaises(issue_source.IssueSourceFailure) as closed:
+            fixture.publish_response_source()
+        self.assertEqual("issue-not-open", closed.exception.code)
+
+        issue["state"] = "open"
+        issue["updated_at"] = "2026-09-05T00:02:00Z"
+        (fixture.bin / "gh-responses.json").write_text(
+            json.dumps(responses, sort_keys=True)
+        )
+        with self.assertRaises(orchestrator.OrchestratorFailure) as stale:
+            orchestrator.init(fixture.root, ISSUE, request=fixture.request())
+        self.assertEqual("issue-source-edited", stale.exception.code)
+        with self.assertRaises(authority.AuthorityFailure):
+            authority.status(fixture.root, ISSUE)
+
+        fresh_publication = fixture.publish_response_source()
+        self.assertNotEqual(
+            stale_publication["source"], fresh_publication["source"]
+        )
+        initialized = orchestrator.init(
+            fixture.root, ISSUE, request=fixture.request()
+        )
+        self.assertEqual(
+            ("resolved", "initialized"), tuple(initialized["outcome"].values())
+        )
 
     def test_inactive_and_missing_status_are_typed(self):
         fixture = OrchestratorFixture(mode="inactive")
