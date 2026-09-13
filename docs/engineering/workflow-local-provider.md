@@ -814,8 +814,17 @@ part retain the generic 4 KiB bound. The execution result also records the exact
 executable, argv, cwd, selected commit, authority binding, controlled environment
 identity, bounded process result, raw JSONL transport identity, and separately
 extracted candidate output identity.
-Write phases require the agent to commit all intended changes and leave its
-worktree clean; read-only phases explicitly prohibit candidate changes.
+The test-author phase requires the agent to commit all intended changes and
+leave its worktree clean. The implementation prompt names the actual trusted
+target-base commit and the selected starting commit containing the approved
+tests. It requires the implementer to preserve those tests, add the intended
+production changes, keep the trusted base as an ancestor, normalize
+producer-created history by combining, squashing, or amending when needed, and
+finish with exactly one commit relative to that base, a clean worktree, and no
+unrelated changes. The downstream orchestrator independently retains the same
+one-commit ancestry and approved-test-preservation checks; the provider does
+not repair history after production. Read-only phases explicitly prohibit
+candidate changes.
 
 Before the immutable execution-result binding is published, the orchestrator
 durably records the exact pending-result query, candidate binding, and binding
@@ -845,3 +854,13 @@ prepare-workspace
 Stop immediately on any identity, reconstruction, authority, provider,
 workspace, process, candidate, or gate failure. Do not substitute a fixture,
 change the selected base, infer approval, or bypass the failed guard.
+
+At a configured automatic gate, the bounded driver may dispatch only the
+deterministic `satisfy-gate-automatically` step selected by `plan-next`. At a
+supervised gate, the coordinator or driver must stop, expose the exact pending
+challenge and confirmation to the human operator, and wait. The human must
+independently create the matching GitHub approval artifact; the coordinator
+must not post that artifact with the operator's token or otherwise act as the
+human. Only after the human-created artifact exists may the operator use the
+documented `approve` command with its exact authorization reference and restart
+bounded automatic driving.

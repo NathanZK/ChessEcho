@@ -201,7 +201,7 @@ the strict phase-specific contract:
 - final-review PR metadata has exact `head_ref`, `title`, and `body` fields,
   with nonempty `## What`, `## Why`, and `## Testing` sections.
 
-Provider 1.5.8 carries operation-specific JSON Schema copies to communicate the
+Provider 1.5.9 carries operation-specific JSON Schema copies to communicate the
 plan candidate contract in `write-plan` and the review candidate contract in
 `review-plan`, `review-tests`, and `review-final`. The plan schema has distinct
 initial and revision variants selected from the exact projected input roles
@@ -210,9 +210,12 @@ Because JSON Schema cannot express array ordering, the planner prompt also
 states directly that each dependency array is a canonical set representation
 sorted by ascending UTF-8 byte order, not an execution-order signal.
 The test-author and implementation operations also receive the exact
-implementer candidate schema. Test author, test reviewer, implementer, and
-final reviewer prompts state their phase-specific duties and prohibit mutable
-GitHub refetches or transitive evidence discovery.
+implementer candidate schema. The implementation prompt additionally names the
+trusted target base and approved-test starting commit and requires preservation,
+one-commit ancestry, producer-side history normalization, cleanliness, and no
+unrelated changes. Test author, test reviewer, implementer, and final reviewer
+prompts state their phase-specific duties and prohibit mutable GitHub refetches
+or transitive evidence discovery.
 
 Later-phase claims project the authoritative issue snapshot and approved plan
 directly. Test review additionally receives the test report and immutable test

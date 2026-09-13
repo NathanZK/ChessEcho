@@ -2375,6 +2375,24 @@ class OrchestratorLifecycleTest(unittest.TestCase):
         self.assertEqual(("paused", "unsupported-policy-transition"), tuple(paused["outcome"].values()))
         self.assertEqual("PAUSED", self.fixture.state()["phase"])
 
+    def test_implementation_requires_exactly_one_commit_from_trusted_base(self):
+        self._to_test_gate()
+        self.fixture.approve(7401)
+        self.fixture.mode("separate-implementation-commit")
+
+        candidate = self.fixture.step()
+        with self.assertRaises(orchestrator.OrchestratorFailure) as raised:
+            self.fixture.step(request=candidate["handoff"])
+
+        self.assertEqual(
+            ("stale", "implementation-observation-invalid"),
+            (raised.exception.status, raised.exception.code),
+        )
+        self.assertEqual(
+            "IMPLEMENTATION",
+            self.fixture.state()["phase"],
+        )
+
     def test_rejected_test_review_commits_a_recoverable_pause(self):
         self._to_plan_gate()
         self.fixture.approve(7399)

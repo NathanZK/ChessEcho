@@ -890,7 +890,7 @@ There are three distinct protocols:
    schemas aligned, but only the core decoder validates and authorizes candidate
    meaning.
 
-The current provider (`1.5.8`) and reviewed local host (`1.5.1`) have exact
+The current provider (`1.5.9`) and reviewed local host (`1.5.2`) have exact
 source identities in `.github/agent-workflow.json` under
 `orchestrator.local_host.provider.source_sha256` and
 `orchestrator.local_host.source_sha256`. Those versions are human-readable
