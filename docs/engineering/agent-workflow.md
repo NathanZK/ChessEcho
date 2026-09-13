@@ -790,7 +790,10 @@ body:
 
 Facts are bounded, sorted by `id`, and use only `contains` or `equals`. The
 Planner copies every fact exactly into a plan block at the end of the plan and
-adds nonempty plan-ordered `unit_ids` that name substantive plan units:
+adds nonempty plan-ordered `unit_ids` that name substantive plan units. Plan
+unit ranges still exhaustively tile every line: substantive mapped units end
+before the final three-line acceptance block, while a distinct unit range
+covers that block as metadata and is not named by any requirement:
 
 ```text
 <!-- chess-echo-plan-acceptance:begin -->
@@ -890,7 +893,7 @@ There are three distinct protocols:
    schemas aligned, but only the core decoder validates and authorizes candidate
    meaning.
 
-The current provider (`1.5.9`) and reviewed local host (`1.5.2`) have exact
+The current provider (`1.5.10`) and reviewed local host (`1.5.2`) have exact
 source identities in `.github/agent-workflow.json` under
 `orchestrator.local_host.provider.source_sha256` and
 `orchestrator.local_host.source_sha256`. Those versions are human-readable

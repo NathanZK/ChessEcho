@@ -649,6 +649,38 @@ class PlanRevisionPolicyTest(unittest.TestCase):
         self.assertEqual("acceptance-coverage-self-reference", error.exception.code)
         self.assertEqual("denied", error.exception.status)
 
+    def test_structured_acceptance_rejects_mapped_unit_spanning_metadata(self):
+        class MixedRangeRevisionFixture(RevisionFixture):
+            def units(self, data):
+                lines = data.decode("utf-8").splitlines(True)
+                return [
+                    {
+                        "id": "implementation",
+                        "title": "Implementation",
+                        "start_line": 1,
+                        "end_line": len(lines),
+                        "content_sha256": inspector.sha256(data),
+                        "review_class": "ordinary",
+                        "dependencies": [],
+                    }
+                ]
+
+        coverage = [
+            {**fact, "unit_ids": ["implementation"]}
+            for fact in ISSUE_198_ACCEPTANCE_FACTS
+        ]
+        fixture = MixedRangeRevisionFixture(
+            acceptance_facts=ISSUE_198_ACCEPTANCE_FACTS,
+            acceptance_coverage=coverage,
+        )
+        self.addCleanup(fixture.close)
+
+        with self.assertRaises(policy.PlanRevisionPolicyFailure) as error:
+            self._accepted_baseline(fixture)
+
+        self.assertEqual("acceptance-coverage-self-reference", error.exception.code)
+        self.assertEqual("denied", error.exception.status)
+
     def test_present_null_acceptance_facts_fail_closed(self):
         body = (
             "<!-- chess-echo-acceptance-facts:begin -->\n"
