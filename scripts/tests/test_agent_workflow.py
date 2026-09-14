@@ -451,6 +451,7 @@ class AgentWorkflowTest(unittest.TestCase):
         return evidence_path
 
     def test_uncommitted_implementation_candidate_and_evidence_acceptance(self):
+        """Accepted implementation evidence binds an uncommitted Git candidate."""
         evidence_path = self.bootstrap_to_validation(submit=True)
         st = self.state()
         self.assertEqual("VALIDATION", st["status"])
@@ -465,6 +466,7 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual("implementation\n", (self.root / "src" / "Example.kt").read_text(encoding="utf-8"))
 
     def test_submit_implementation_rejects_candidate_modified_after_evidence(self):
+        """submit-implementation rejects evidence for a different candidate."""
         self.bootstrap_to_implementation()
         # Create candidate A
         (self.root / "src" / "Example.kt").write_text("candidate A\n", encoding="utf-8")
@@ -491,6 +493,7 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual("evidence-candidate-mismatch", payload["error"]["code"])
 
     def test_validation_rejects_candidate_changed_after_submission(self):
+        """Validation independently rejects drift from the accepted candidate."""
         self.bootstrap_to_validation()
         self.assertEqual("VALIDATION", self.state()["status"])
         (self.root / "src" / "Example.kt").write_text("candidate B\n", encoding="utf-8")
@@ -507,6 +510,7 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual("VALIDATION", self.state()["status"])
 
     def test_review_rejects_candidate_changed_after_validation(self):
+        """READY review cannot advance a candidate changed after validation."""
         self.bootstrap_to_validation()
         self.write_artifact("implementation-review.md", "implementation review")
         self.assertEqual(
@@ -537,6 +541,7 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual("IMPLEMENTATION_REVIEW", self.state()["status"])
 
     def test_approve_implementation_rejects_candidate_changed_after_review(self):
+        """Human Gate 3 rejects candidates changed after READY review."""
         self.bootstrap_to_reviewed_implementation()
         (self.root / "src" / "Example.kt").write_text("candidate B\n", encoding="utf-8")
 
@@ -554,6 +559,7 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual("WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", self.state()["status"])
 
     def test_untracked_candidate_change_after_submission_is_detected(self):
+        """Untracked-file candidate drift is part of the bound Git candidate."""
         self.bootstrap_to_implementation()
         (self.root / "src" / "Example.kt").write_text("untracked A\n", encoding="utf-8")
         evidence_path = self.write_evidence()
@@ -701,6 +707,7 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual("TEST_IMPLEMENTATION", self.state()["status"])
 
     def test_init_records_target_head_and_rejects_branch_ahead_of_target(self):
+        """init records target_head and rejects pre-existing branch commits."""
         target_head = self.git("rev-parse", "origin/main").stdout.strip()
         self.assertEqual(0, self.run_cli("init", str(ISSUE))[0])
         initialized = self.state()
@@ -714,6 +721,7 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual("workflow-start-not-at-target", payload["error"]["code"])
 
     def test_pr_250_contamination_scenario_is_rejected_at_init(self):
+        """PR #250-style unrelated ancestry and stale BFS files cannot publish."""
         target_head = self.git("rev-parse", "origin/main").stdout.strip()
         self.checkout_unrelated_branch_ahead_of_target()
         contaminated_head = self.git("rev-parse", "HEAD").stdout.strip()
@@ -884,6 +892,7 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual("WORKFLOW_COMPLETED", self.state()["status"])
 
     def test_approve_implementation_rejects_target_advance(self):
+        """Implementation approval fails closed when the target branch advances."""
         self.bootstrap_to_reviewed_implementation()
         self.git("update-ref", "refs/remotes/origin/main", self.state()["test_commit"])
 
@@ -901,6 +910,7 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual("WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", self.state()["status"])
 
     def test_create_draft_pr_rejects_multiple_commits_relative_to_target(self):
+        """Draft PR publication requires exactly one commit from target_head."""
         self.assertEqual(0, self.run_cli("init", str(ISSUE))[0])
         target_head = self.state()["target_head"]
         self.git("checkout", "-q", "-b", "side", target_head)
@@ -933,6 +943,7 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual("invalid-implementation-topology", payload["error"]["code"])
 
     def test_create_draft_pr_rejects_commit_not_parented_to_target(self):
+        """Draft PR publication rejects commits not parented by target_head."""
         self.assertEqual(0, self.run_cli("init", str(ISSUE))[0])
         target_head = self.state()["target_head"]
         (self.root / "first.txt").write_text("first\n", encoding="utf-8")
@@ -1011,6 +1022,7 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertIsNotNone(rejected["approvals"]["tests"])
 
     def test_reopen_tests_preserves_production_candidate_and_requires_gate_two_again(self):
+        """Exceptional test-fixture recovery preserves production and repeats Gate 2."""
         self.bootstrap_to_implementation()
         previous_test_commit = self.state()["test_commit"]
         previous_test_approval = self.state()["approvals"]["tests"]
@@ -1388,6 +1400,7 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual("class ExampleTest { /* candidate content */ }\n", committed_content)
 
     def test_missing_target_head_does_not_fall_back_to_base_head(self):
+        """Publication operations fail closed instead of using diagnostic base_head."""
         self.bootstrap_to_implementation()
         state = self.state()
         state.pop("target_head", None)
@@ -1445,6 +1458,7 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual("missing-target-head", payload["error"]["code"])
 
     def test_submit_implementation_rejects_agent_created_production_commit(self):
+        """Production agents cannot create the authoritative implementation commit."""
         self.bootstrap_to_implementation()
         (self.root / "src" / "Example.kt").write_text("implementation\n", encoding="utf-8")
         self.git("add", "src/Example.kt")
@@ -1533,6 +1547,7 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual("missing-test-commit", payload["error"]["code"])
 
     def test_run_validation_fails_if_approved_tests_modified(self):
+        """Approved tests remain byte-for-byte immutable after Gate 2."""
         self.bootstrap_to_validation(submit=True)
         # Modify the approved test file in working tree after submit-implementation
         (self.root / "src" / "test" / "ExampleTest.kt").write_text("tampered test\n", encoding="utf-8")

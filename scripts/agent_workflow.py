@@ -295,6 +295,7 @@ def _clear_post_plan(state):
 
 
 def _test_reopen_active(state):
+    """Return whether the latest approved-test recovery path is still active."""
     reopenings = state.get("test_reopenings") or []
     return bool(reopenings and reopenings[-1].get("active"))
 
@@ -651,12 +652,14 @@ def _known_target_head(root, config):
 
 
 def _state_target_head(state):
+    """Return the recorded publication base; never fall back to diagnostic heads."""
     target_head = state.get("target_head")
     _ensure(target_head, "missing-target-head", "Workflow state has no recorded target_head")
     return target_head
 
 
 def _require_target_fresh(root, config, state, context):
+    """Require the PR target branch to remain at the recorded target_head."""
     recorded = _state_target_head(state)
     latest = _resolve_target_head(root, config, fetch=True)
     _ensure(
@@ -668,6 +671,7 @@ def _require_target_fresh(root, config, state, context):
 
 
 def _require_publication_topology(root, config, state, head, context):
+    """Require a final one-commit publication rooted at the current target."""
     target_head = _require_target_fresh(root, config, state, context)
     _git_ancestor(root, config, target_head, head, context)
     _require_direct_child(root, config, target_head, head, context)
@@ -684,6 +688,7 @@ def _require_publication_topology(root, config, state, head, context):
 
 
 def _require_implementation_candidate_matches(root, config, state, context):
+    """Require the current Git candidate to match the accepted implementation candidate."""
     accepted = state.get("implementation_candidate")
     _ensure(
         isinstance(accepted, dict),
@@ -849,7 +854,7 @@ def _validate_pr_body(body_path):
 
 
 def command_init(args, root, config):
-    """Create the issue-local run state and record the trusted starting commit."""
+    """Create run state only when HEAD matches the resolved target_head."""
     run = _run_root(root, config, args.issue)
     _ensure(not run.exists(), "already-initialized", "Workflow run already exists for issue %s" % args.issue)
     initial_head = _current_head(root, config)
@@ -1172,7 +1177,7 @@ def command_reopen_tests(args, root, config):
 
 
 def command_submit_implementation(args, root, config):
-    """Verify and record an uncommitted production candidate after approved tests."""
+    """Bind the uncommitted production candidate to independently verified Git evidence."""
     state = _read_state(root, config, args.issue)
     _expect_status(state, "IMPLEMENTATION", "submit-implementation")
     _ensure(
@@ -1284,7 +1289,7 @@ def command_submit_implementation(args, root, config):
 
 
 def command_run_validation(args, root, config):
-    """Run the selected bounded validation profile and retain its results in state."""
+    """Run bounded validation and revalidate the accepted implementation candidate."""
     state = _read_state(root, config, args.issue)
     _expect_status(state, "VALIDATION", "run-validation")
 
@@ -1346,7 +1351,7 @@ def command_run_validation(args, root, config):
 
 
 def command_review_implementation(args, root, config):
-    """Record the independent implementation review and route to Human Gate 3 or revision."""
+    """Record review only after READY candidates still match accepted Git state."""
     state = _read_state(root, config, args.issue)
     _expect_status(state, "IMPLEMENTATION_REVIEW", "review-implementation")
     _require_role(config, "reviewer", args.reviewer, "review-implementation")
@@ -1460,7 +1465,7 @@ def command_reject_implementation(args, root, config):
 
 
 def command_create_draft_pr(args, root, config):
-    """Reconcile the target branch, then publish a reviewed draft PR and complete workflow."""
+    """Publish only an approved one-commit branch rooted at the fresh target."""
     state = _read_state(root, config, args.issue)
     _expect_status(state, "DRAFT_PR_CREATION", "create-draft-pr")
     implementation_commit = state.get("implementation_commit")
