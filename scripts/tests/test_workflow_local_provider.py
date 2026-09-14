@@ -1162,6 +1162,68 @@ class TrustedLocalProviderTest(unittest.TestCase):
             resume.decode_candidate(result, "plan"),
         )
 
+    def test_decode_candidate_repairs_plan_string_with_embedded_json_and_unescaped_quotes(self):
+        plan_content = (
+            "# Plan: Fix issue\\n\\n"
+            "Summary text with unescaped \"quotes\" and embedded acceptance JSON.\\n\\n"
+            "<!-- chess-echo-plan-acceptance:begin -->\\n"
+            "{\"format\":\"chess-echo-plan-acceptance-coverage-v1\",\"requirements\":["
+            "{\"assertion\":\"equals\",\"id\":\"fact-1\",\"unit_ids\":[\"u1\"],\"value\":\"Invalid 'unsupported'.\"}"
+            "]}\\n"
+            "<!-- chess-echo-plan-acceptance:end -->\\n"
+        )
+        # Unescaped candidate payload where quotes in plan string are not escaped
+        raw_payload = (
+            '{"format": "chess-echo-orchestrator-agent-candidate-v1", '
+            '"kind": "plan", '
+            '"plan": "' + plan_content + '", '
+            '"units": [{"id": "u1", "title": "Unit 1", "start_line": 1, "end_line": 10, "review_class": "ordinary", "dependencies": []}], '
+            '"revision": null}'
+        ).encode("utf-8")
+
+        result = {
+            "outcome": "succeeded",
+            "candidate_output": {
+                "sha256": inspector.sha256(raw_payload),
+                "size": len(raw_payload),
+            },
+            "process_result": {
+                "stdout": {
+                    "bytes": len(raw_payload),
+                    "base64": base64.b64encode(raw_payload).decode("ascii"),
+                }
+            },
+        }
+
+        decoded = resume.decode_candidate(result, "plan")
+        self.assertEqual("chess-echo-orchestrator-agent-candidate-v1", decoded["format"])
+        self.assertEqual("plan", decoded["kind"])
+        self.assertIn("<!-- chess-echo-plan-acceptance:begin -->", decoded["plan"])
+        self.assertIn("<!-- chess-echo-plan-acceptance:end -->", decoded["plan"])
+
+    def test_decode_candidate_rejects_malformed_envelope_and_duplicate_keys(self):
+        # 1. Truly malformed JSON envelope
+        bad_envelope = b'{"format": "chess-echo-orchestrator-agent-candidate-v1", "kind": "plan", "units": bad}'
+        res_bad = {
+            "outcome": "succeeded",
+            "candidate_output": {"sha256": inspector.sha256(bad_envelope), "size": len(bad_envelope)},
+            "process_result": {"stdout": {"bytes": len(bad_envelope), "base64": base64.b64encode(bad_envelope).decode("ascii")}},
+        }
+        with self.assertRaises(resume.ResumeFailure) as cm:
+            resume.decode_candidate(res_bad, "plan")
+        self.assertEqual("candidate-output-invalid", cm.exception.code)
+
+        # 2. Duplicate keys in outer envelope
+        dup_keys = b'{"format": "chess-echo-orchestrator-agent-candidate-v1", "format": "chess-echo-orchestrator-agent-candidate-v1", "kind": "plan", "plan": "a\\n", "units": [], "revision": null}'
+        res_dup = {
+            "outcome": "succeeded",
+            "candidate_output": {"sha256": inspector.sha256(dup_keys), "size": len(dup_keys)},
+            "process_result": {"stdout": {"bytes": len(dup_keys), "base64": base64.b64encode(dup_keys).decode("ascii")}},
+        }
+        with self.assertRaises(resume.ResumeFailure) as cm:
+            resume.decode_candidate(res_dup, "plan")
+        self.assertEqual("candidate-output-invalid", cm.exception.code)
+
     def test_jsonl_accepts_exact_create_file_created_event_without_completing_tool(self):
         raw = _jsonl_with_file_created()
         events = _jsonl_events(raw)

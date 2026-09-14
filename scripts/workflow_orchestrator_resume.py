@@ -166,13 +166,73 @@ def _no_duplicates(pairs):
     return value
 
 
+def _repair_candidate_json_string_fields(raw_text, object_pairs_hook=None):
+    kw = {"object_pairs_hook": object_pairs_hook} if object_pairs_hook else {}
+    if CANDIDATE_FORMAT not in raw_text:
+        return None
+
+    field_match = re.search(r"\"(plan|report|body)\"\s*:\s*\"", raw_text)
+    if not field_match:
+        return None
+
+    start_idx = field_match.end()
+
+    closing_matches = list(re.finditer(r"\"\s*,\s*\"[A-Za-z0-9_]+\"\s*:", raw_text[start_idx:]))
+    if not closing_matches:
+        closing_matches = list(re.finditer(r"\"\s*\}", raw_text[start_idx:]))
+
+    if not closing_matches:
+        return None
+
+    for cm in reversed(closing_matches):
+        end_idx = start_idx + cm.start()
+        field_raw = raw_text[start_idx:end_idx]
+
+        escaped = []
+        i, n = 0, len(field_raw)
+        while i < n:
+            ch = field_raw[i]
+            if ch == "\"":
+                bs_count = 0
+                j = i - 1
+                while j >= 0 and field_raw[j] == "\\":
+                    bs_count += 1
+                    j -= 1
+                if bs_count % 2 == 0:
+                    escaped.append("\\\"")
+                else:
+                    escaped.append("\"")
+            else:
+                escaped.append(ch)
+            i += 1
+
+        fixed_text = raw_text[:start_idx] + "".join(escaped) + raw_text[end_idx:]
+        try:
+            return json.loads(fixed_text, **kw)
+        except (json.JSONDecodeError, ResumeFailure, TypeError, ValueError):
+            continue
+
+    return None
+
+
+def _parse_candidate_json(raw_text, object_pairs_hook=None):
+    kw = {"object_pairs_hook": object_pairs_hook} if object_pairs_hook else {}
+    try:
+        return json.loads(raw_text, **kw)
+    except json.JSONDecodeError as error:
+        repaired = _repair_candidate_json_string_fields(raw_text, object_pairs_hook=object_pairs_hook)
+        if repaired is not None:
+            return repaired
+        raise error
+
+
 def decode_candidate(result, expected):
     """Decode and validate an agent execution result's candidate output against its result-record digest."""
     record = result.get("candidate_output")
     _require(result.get("outcome") == "succeeded" and isinstance(record, dict) and set(record) == {"sha256", "size"}, "corrupt", "candidate-output-invalid", "Agent result has no successful candidate output")
     try:
         raw = base64.b64decode(result["process_result"]["stdout"]["base64"], validate=True)
-        value = json.loads(raw.decode(), object_pairs_hook=_no_duplicates)
+        value = _parse_candidate_json(raw.decode(), object_pairs_hook=_no_duplicates)
     except (KeyError, TypeError, ValueError, UnicodeError, json.JSONDecodeError, RecursionError) as error:
         _fail("corrupt", "candidate-output-invalid", "Agent output is invalid: %s" % error)
     _require(record == {"sha256": inspector.sha256(raw), "size": len(raw)} and isinstance(value, dict), "corrupt", "candidate-output-invalid", "Agent output does not match its result record")
