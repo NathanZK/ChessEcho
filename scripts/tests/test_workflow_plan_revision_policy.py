@@ -681,6 +681,31 @@ class PlanRevisionPolicyTest(unittest.TestCase):
         self.assertEqual("acceptance-coverage-self-reference", error.exception.code)
         self.assertEqual("denied", error.exception.status)
 
+    def test_structured_acceptance_passes_when_prose_uses_variables(self):
+        coverage = [
+            {
+                **ISSUE_198_ACCEPTANCE_FACTS[0],
+                "unit_ids": ["change"],
+            },
+            {
+                **ISSUE_198_ACCEPTANCE_FACTS[1],
+                "unit_ids": ["change"],
+            },
+            {
+                **ISSUE_198_ACCEPTANCE_FACTS[2],
+                "unit_ids": ["change"],
+            },
+        ]
+        fixture = RevisionFixture(
+            acceptance_facts=ISSUE_198_ACCEPTANCE_FACTS,
+            acceptance_coverage=coverage,
+        )
+        self.addCleanup(fixture.close)
+
+        result = self._accepted_baseline(fixture)
+        self.assertEqual("technical-review-accepted", result["outcome"]["code"])
+        self.assertEqual("accepted", result["technical_verdict"])
+
     def test_present_null_acceptance_facts_fail_closed(self):
         body = (
             "<!-- chess-echo-acceptance-facts:begin -->\n"
