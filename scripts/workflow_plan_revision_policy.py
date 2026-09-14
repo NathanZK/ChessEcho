@@ -535,22 +535,6 @@ def _plan_acceptance(plan_lines, unit_map):
                 "Acceptance requirements must map to substantive plan units",
                 requirement["id"],
             )
-        mapped_texts = [
-            "".join(
-                plan_lines[
-                    unit_map.by_id[unit_id]["start_line"] - 1:
-                    unit_map.by_id[unit_id]["end_line"]
-                ]
-            )
-            for unit_id in requirement["unit_ids"]
-        ]
-        if any(requirement["value"] not in text for text in mapped_texts):
-            _fail(
-                "denied",
-                "acceptance-coverage-mismatch",
-                "Each mapped plan unit must preserve the acceptance fact literal",
-                requirement["id"],
-            )
     return coverage
 
 

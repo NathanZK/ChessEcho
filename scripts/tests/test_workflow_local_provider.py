@@ -754,8 +754,7 @@ class TrustedLocalProviderTest(unittest.TestCase):
             "the final three-line acceptance block as metadata, not substantive plan "
             "content, and give it its own distinct unit range. Do not include that "
             "metadata unit in any acceptance requirement's unit_ids. Every substantive "
-            "mapped unit must end before the acceptance block begins and contain the "
-            "exact trusted fact literal.",
+            "mapped unit must end before the acceptance block begins.",
             prompt,
         )
         self.assertIn(
@@ -3836,6 +3835,8 @@ class TrustedLocalHostProcessTest(unittest.TestCase):
                     "agent": {"name": "agent", "sha256": _sha(agent)},
                 }
             )
+            local["provider"]["version"] = provider.VERSION
+            local["provider"]["source_sha256"] = _sha(provider_source)
             for row in config["orchestrator"]["agent_roles"]:
                 row["command_prefix"] = ["agent"]
                 row["provider_version"] = provider.VERSION
