@@ -20,6 +20,7 @@ CONFIG_FORMAT = "chess-echo-skill-workflow-config-v1"
 READY = "READY_FOR_HUMAN_APPROVAL"
 REVISION = "NEEDS_REVISION"
 REVIEW_STATUSES = (READY, REVISION)
+DEFAULT_IMPLEMENTATION_CONFIRMATION = "implementation_approved"
 
 STATUS_SEQUENCE = (
     "PLANNING",
@@ -30,9 +31,10 @@ STATUS_SEQUENCE = (
     "WAITING_FOR_TEST_HUMAN_APPROVAL",
     "IMPLEMENTATION",
     "VALIDATION",
-    "FINAL_REVIEW",
-    "WAITING_FOR_PR_HUMAN_APPROVAL",
-    "PR_APPROVED",
+    "IMPLEMENTATION_REVIEW",
+    "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL",
+    "DRAFT_PR_CREATION",
+    "WORKFLOW_COMPLETED",
 )
 
 ARTIFACT_FILES = {
@@ -41,7 +43,7 @@ ARTIFACT_FILES = {
     "test_report": "test-report.md",
     "test_review": "test-review.md",
     "implementation_report": "implementation-report.md",
-    "final_review": "final-review.md",
+    "implementation_review": "implementation-review.md",
 }
 
 class WorkflowError(Exception):
@@ -220,12 +222,20 @@ def _load_config(root):
         "invalid-config",
         "workflow.approvals must be an object",
     )
-    for key in ("plan", "tests", "pr"):
+    for key in ("plan", "tests"):
         _ensure(
             isinstance(approvals.get(key), str) and approvals[key],
             "invalid-config",
             "workflow.approvals.%s must be a non-empty string" % key,
         )
+    if "implementation" in approvals:
+        _ensure(
+            isinstance(approvals.get("implementation"), str) and approvals["implementation"],
+            "invalid-config",
+            "workflow.approvals.implementation must be a non-empty string",
+        )
+    else:
+        approvals["implementation"] = DEFAULT_IMPLEMENTATION_CONFIRMATION
 
     execution = workflow.get("execution")
     _ensure(
@@ -273,23 +283,30 @@ def _clear_post_plan(state):
         "test_report",
         "test_review",
         "implementation_report",
-        "final_review",
+        "implementation_review",
     ):
         state["artifacts"].pop(key, None)
     state["approvals"]["tests"] = None
-    state["approvals"]["pr"] = None
+    state["approvals"]["implementation"] = None
     state["validation"] = None
-    state["final_review_ready"] = False
+    state["implementation_candidate"] = None
+    state["implementation_review_ready"] = False
     state["draft_pr"] = None
+
+
+def _test_reopen_active(state):
+    reopenings = state.get("test_reopenings") or []
+    return bool(reopenings and reopenings[-1].get("active"))
 
 
 def _clear_post_tests(state):
     """Invalidate implementation and publication state after revised tests."""
-    for key in ("implementation_report", "final_review"):
+    for key in ("implementation_report", "implementation_review"):
         state["artifacts"].pop(key, None)
-    state["approvals"]["pr"] = None
+    state["approvals"]["implementation"] = None
     state["validation"] = None
-    state["final_review_ready"] = False
+    state["implementation_candidate"] = None
+    state["implementation_review_ready"] = False
     state["draft_pr"] = None
 
 
@@ -406,6 +423,49 @@ def _git_status(root, config):
     return [line for line in completed["stdout_text"].splitlines() if line]
 
 
+def _git_status_all(root, config):
+    completed = _run_checked(
+        _git_command(config, "status", "--porcelain", "--untracked-files=all"),
+        _effective_limits(config, "git"),
+        root,
+        "git-status-failed",
+        "unable to inspect working tree",
+    )
+    return [line for line in completed["stdout_text"].splitlines() if line]
+
+
+def _status_path(line):
+    return line[3:] if len(line) >= 4 else line
+
+
+def _require_no_uncommitted_test_changes(root, config, context):
+    test_paths = [
+        _status_path(line)
+        for line in _git_status_all(root, config)
+        if _is_test_file(_status_path(line))
+    ]
+    _ensure(
+        not test_paths,
+        "test-worktree-dirty",
+        "%s requires test changes to be committed before submission: %s"
+        % (context, ", ".join(test_paths)),
+    )
+
+
+def _require_clean_index(root, config, context):
+    completed = _run_bounded(
+        _git_command(config, "diff", "--cached", "--quiet"),
+        _effective_limits(config, "git"),
+        root,
+    )
+    result = completed["result"]
+    _ensure(
+        result.get("outcome") == "success" and result.get("exit_code") == 0,
+        "git-index-dirty",
+        "%s requires no staged changes" % context,
+    )
+
+
 def _git_diff_names(root, config, revision):
     completed = _run_checked(
         _git_command(config, "diff", "--name-only", revision),
@@ -415,6 +475,71 @@ def _git_diff_names(root, config, revision):
         "unable to inspect commit changes",
     )
     return [line.strip() for line in completed["stdout_text"].splitlines() if line.strip()]
+
+
+def _git_candidate_diff(root, config, revision):
+    """Return the deterministic Git representation of the working-tree candidate."""
+    _run_checked(
+        _git_command(config, "rev-parse", "--verify", "%s^{commit}" % revision),
+        _effective_limits(config, "git"),
+        root,
+        "git-revision-failed",
+        "unable to resolve candidate base revision",
+    )
+    tracked = _run_checked(
+        _git_command(config, "diff", "--binary", revision, "--"),
+        _effective_limits(config, "git"),
+        root,
+        "git-diff-failed",
+        "unable to compute candidate diff",
+    )["stdout_text"]
+
+    status = _run_checked(
+        _git_command(config, "status", "--porcelain", "--untracked-files=all"),
+        _effective_limits(config, "git"),
+        root,
+        "git-status-failed",
+        "unable to inspect candidate files",
+    )["stdout_text"]
+    untracked = [
+        line[3:]
+        for line in status.splitlines()
+        if line.startswith("?? ")
+    ]
+    additions = []
+    for path in sorted(untracked):
+        completed = _run_bounded(
+            _git_command(config, "diff", "--binary", "--no-index", "--", "/dev/null", path),
+            _effective_limits(config, "git"),
+            root,
+        )
+        result = completed["result"]
+        _ensure(
+            result.get("exit_code") in (0, 1)
+            and result.get("outcome") in ("success", "nonzero-exit"),
+            "git-diff-failed",
+            "unable to compute candidate diff for %s" % path,
+        )
+        additions.append(completed["stdout_text"])
+    return tracked + "".join(additions)
+
+
+def _git_candidate_names(root, config, revision):
+    """Return tracked and untracked paths represented by the candidate."""
+    names = set(_git_diff_names(root, config, revision))
+    status = _run_checked(
+        _git_command(config, "status", "--porcelain", "--untracked-files=all"),
+        _effective_limits(config, "git"),
+        root,
+        "git-status-failed",
+        "unable to inspect candidate files",
+    )["stdout_text"]
+    names.update(
+        line[3:]
+        for line in status.splitlines()
+        if line.startswith("?? ")
+    )
+    return sorted(names)
 
 
 def _git_commit_count(root, config, base, head, context):
@@ -433,11 +558,31 @@ def _git_commit_count(root, config, base, head, context):
 
 
 def _require_single_commit(root, config, base, head, context):
-    """Require one final implementation commit relative to the approved base."""
+    """Require one final implementation commit relative to the target base."""
     _ensure(
         _git_commit_count(root, config, base, head, context) == 1,
         "invalid-implementation-topology",
-        "%s requires exactly one commit relative to the approved base" % context,
+        "%s requires exactly one commit relative to the target base" % context,
+    )
+
+
+def _commit_parent(root, config, revision):
+    completed = _run_checked(
+        _git_command(config, "rev-parse", "%s^" % revision),
+        _effective_limits(config, "git"),
+        root,
+        "git-parent-failed",
+        "unable to read parent for %s" % revision,
+    )
+    return completed["stdout_text"].strip()
+
+
+def _require_direct_child(root, config, parent, child, context):
+    actual_parent = _commit_parent(root, config, child)
+    _ensure(
+        actual_parent == parent,
+        "invalid-implementation-topology",
+        "%s requires %s to be the direct parent of %s" % (context, parent, child),
     )
 
 
@@ -467,6 +612,32 @@ def _git_fetch_target(root, config):
     )
 
 
+def _remote_exists(root, config):
+    completed = _run_bounded(
+        _git_command(config, "remote", "get-url", "origin"),
+        _effective_limits(config, "git"),
+        root,
+    )
+    result = completed["result"]
+    return result.get("outcome") == "success" and result.get("exit_code") == 0
+
+
+def _resolve_target_head(root, config, fetch=False):
+    if fetch and _remote_exists(root, config):
+        _git_fetch_target(root, config)
+    target = config["target_base"]
+    for ref in ("origin/%s" % target, target):
+        completed = _run_bounded(
+            _git_command(config, "rev-parse", "--verify", "%s^{commit}" % ref),
+            _effective_limits(config, "git"),
+            root,
+        )
+        result = completed["result"]
+        if result.get("outcome") == "success" and result.get("exit_code") == 0:
+            return completed["stdout_text"].strip()
+    _raise("target-head-unresolved", "unable to resolve target branch %s" % target)
+
+
 def _known_target_head(root, config):
     completed = _run_bounded(
         _git_command(config, "rev-parse", "origin/%s" % config["target_base"]),
@@ -477,6 +648,78 @@ def _known_target_head(root, config):
     if result.get("outcome") == "success" and result.get("exit_code") == 0:
         return completed["stdout_text"].strip()
     return None
+
+
+def _state_target_head(state):
+    target_head = state.get("target_head")
+    _ensure(target_head, "missing-target-head", "Workflow state has no recorded target_head")
+    return target_head
+
+
+def _require_target_fresh(root, config, state, context):
+    recorded = _state_target_head(state)
+    latest = _resolve_target_head(root, config, fetch=True)
+    _ensure(
+        latest == recorded,
+        "target-advanced",
+        "%s requires target branch to remain at recorded target_head" % context,
+    )
+    return latest
+
+
+def _require_publication_topology(root, config, state, head, context):
+    target_head = _require_target_fresh(root, config, state, context)
+    _git_ancestor(root, config, target_head, head, context)
+    _require_direct_child(root, config, target_head, head, context)
+    _require_single_commit(root, config, target_head, head, context)
+    changed = _git_diff_names(root, config, "%s..%s" % (target_head, head))
+    scope = state.get("approved_scope") or []
+    _ensure(scope, "missing-approved-scope", "%s requires approved plan scope" % context)
+    _ensure(
+        all(_path_in_scope(path, scope) for path in changed),
+        "implementation-scope-drift",
+        "%s may change only approved files: %s" % (context, ", ".join(changed)),
+    )
+    return target_head
+
+
+def _require_implementation_candidate_matches(root, config, state, context):
+    accepted = state.get("implementation_candidate")
+    _ensure(
+        isinstance(accepted, dict),
+        "missing-implementation-candidate",
+        "%s requires an accepted implementation candidate" % context,
+    )
+    test_commit = state.get("test_commit")
+    _ensure(test_commit, "missing-test-commit", "%s requires test_commit" % context)
+    _ensure(
+        accepted.get("test_commit") == test_commit,
+        "implementation-candidate-mismatch",
+        "%s accepted candidate test_commit does not match workflow test_commit" % context,
+    )
+    accepted_paths = accepted.get("candidate_paths")
+    _ensure(
+        isinstance(accepted.get("candidate_diff"), str)
+        and isinstance(accepted_paths, list)
+        and all(isinstance(path, str) for path in accepted_paths),
+        "invalid-implementation-candidate",
+        "%s accepted candidate is malformed" % context,
+    )
+
+    current_diff = _git_candidate_diff(root, config, test_commit)
+    current_paths = _git_candidate_names(root, config, test_commit)
+    _ensure(
+        all(not _is_test_file(path) for path in current_paths),
+        "tests-modified-after-approval",
+        "%s requires approved tests to remain unchanged" % context,
+    )
+    _ensure(
+        current_diff == accepted["candidate_diff"]
+        and current_paths == sorted(accepted_paths),
+        "implementation-candidate-mismatch",
+        "%s current implementation candidate differs from accepted candidate" % context,
+    )
+    return {"candidate_diff": current_diff, "candidate_paths": current_paths}
 
 
 def _require_clean_tree(root, config, context):
@@ -577,7 +820,8 @@ def _run_validation_checks(root, config, profile_name):
 
 def _require_confirmation(config, state, gate, provided, by):
     """Record an approval only when its configured exact phrase is supplied."""
-    expected = config["workflow"]["approvals"][gate]
+    approvals = config["workflow"]["approvals"]
+    expected = approvals.get(gate)
     _ensure(
         provided == expected,
         "approval-confirmation-mismatch",
@@ -608,6 +852,13 @@ def command_init(args, root, config):
     """Create the issue-local run state and record the trusted starting commit."""
     run = _run_root(root, config, args.issue)
     _ensure(not run.exists(), "already-initialized", "Workflow run already exists for issue %s" % args.issue)
+    initial_head = _current_head(root, config)
+    target_head = _resolve_target_head(root, config, fetch=True)
+    _ensure(
+        initial_head == target_head,
+        "workflow-start-not-at-target",
+        "init requires HEAD to match target branch %s at %s" % (config["target_base"], target_head),
+    )
     _artifacts_dir(root, config, args.issue).mkdir(parents=True, exist_ok=True)
     state = {
         "format": STATE_FORMAT,
@@ -615,14 +866,16 @@ def command_init(args, root, config):
         "target_base": config["target_base"],
         "status": "PLANNING",
         "artifacts": {},
-        "approvals": {"plan": None, "tests": None, "pr": None},
+        "approvals": {"plan": None, "tests": None, "implementation": None},
         "validation": None,
-        "final_review_ready": False,
+        "implementation_review_ready": False,
         "draft_pr": None,
-        "base_head": _current_head(root, config),
-        "target_head": _known_target_head(root, config),
+        "initial_head": initial_head,
+        "base_head": target_head,
+        "target_head": target_head,
         "approved_scope": None,
         "test_commit": None,
+        "implementation_candidate": None,
         "implementation_commit": None,
         "created_at": _now(),
         "updated_at": _now(),
@@ -717,19 +970,22 @@ def command_submit_tests(args, root, config):
     state = _read_state(root, config, args.issue)
     _expect_status(state, "TEST_IMPLEMENTATION", "submit-tests")
     _require_role(config, "test_implementer", args.agent, "submit-tests")
-    _require_clean_tree(root, config, "submit-tests")
+    if _test_reopen_active(state):
+        _require_no_uncommitted_test_changes(root, config, "submit-tests")
+    else:
+        _require_clean_tree(root, config, "submit-tests")
     scope = state.get("approved_scope") or []
     _ensure(scope, "missing-approved-scope", "submit-tests requires approved plan scope")
-    base_head = state.get("base_head")
-    _ensure(base_head, "missing-base-commit", "Workflow has no recorded base commit")
+    target_head = _state_target_head(state)
+    _ensure(target_head, "missing-target-head", "Workflow has no recorded target_head")
     test_head = _current_head(root, config)
     _ensure(
-        test_head != base_head,
+        test_head != target_head,
         "missing-test-commit",
         "submit-tests requires a committed test change",
     )
-    test_paths = _git_diff_names(root, config, "%s..%s" % (base_head, test_head))
-    _git_ancestor(root, config, base_head, test_head, "submit-tests")
+    test_paths = _git_diff_names(root, config, "%s..%s" % (target_head, test_head))
+    _git_ancestor(root, config, target_head, test_head, "submit-tests")
     _require_test_only(test_paths, scope, "submit-tests")
     _ensure(
         shlex.split(args.failure_command),
@@ -754,12 +1010,18 @@ def command_submit_tests(args, root, config):
         "unexpected-test-failure",
         "targeted test failed without the expected behavioral message",
     )
-    _require_clean_tree(root, config, "submit-tests after failure check")
+    if _test_reopen_active(state):
+        _require_no_uncommitted_test_changes(root, config, "submit-tests after failure check")
+    else:
+        _require_clean_tree(root, config, "submit-tests after failure check")
     state["artifacts"]["test_report"] = _record_artifact(
         root, config, args.issue, "test_report", args.artifact
     )
     _clear_post_tests(state)
     state["test_commit"] = test_head
+    if _test_reopen_active(state):
+        state["test_reopenings"][-1]["corrected_test_candidate"] = test_head
+        state["test_reopenings"][-1]["submitted_at"] = _now()
     state["test_failure"] = {
         "command": args.failure_command,
         "contains": args.failure_contains,
@@ -789,13 +1051,60 @@ def command_review_tests(args, root, config):
 
 
 def command_approve_tests(args, root, config):
-    """Advance to implementation only after the exact test approval."""
+    """Human Gate 2: Advance to implementation, create and record authoritative test_commit."""
     state = _read_state(root, config, args.issue)
     _expect_status(state, "WAITING_FOR_TEST_HUMAN_APPROVAL", "approve-tests")
     _require_confirmation(config, state, "tests", args.confirm, args.by)
+
+    candidate_test_commit = state.get("test_commit")
+    target_head = _state_target_head(state)
+    scope = state.get("approved_scope") or []
+    reopened_tests = _test_reopen_active(state)
+    _ensure(candidate_test_commit, "missing-test-commit", "approve-tests requires candidate test_commit")
+    _ensure(target_head, "missing-target-head", "approve-tests requires target_head")
+
+    # Verify that only approved test files changed in the candidate commit
+    test_paths = _git_diff_names(root, config, "%s..%s" % (target_head, candidate_test_commit))
+    _git_ancestor(root, config, target_head, candidate_test_commit, "approve-tests")
+    _require_test_only(test_paths, scope, "approve-tests")
+    _ensure(
+        _current_head(root, config) == candidate_test_commit,
+        "test-commit-mismatch",
+        "approve-tests requires HEAD to match the reviewed test candidate",
+    )
+    _require_no_uncommitted_test_changes(root, config, "approve-tests")
+    _require_clean_index(root, config, "approve-tests")
+
+    # The candidate is already committed by the test implementer.  This empty
+    # workflow-owned commit records the human-approved boundary without
+    # staging, resetting, or discarding any uncommitted production candidate.
+    _run_checked(
+        _git_command(config, "commit", "--allow-empty", "-m", "workflow: approve tests"),
+        _effective_limits(config, "git"),
+        root,
+        "git-commit-failed",
+        "unable to record approved test boundary",
+    )
+    authoritative_test_head = _current_head(root, config)
+    if reopened_tests:
+        _require_no_uncommitted_test_changes(root, config, "post-approve-tests")
+        _require_clean_index(root, config, "post-approve-tests")
+    else:
+        _require_clean_tree(root, config, "post-approve-tests")
+
+    state["test_commit"] = authoritative_test_head
+    if reopened_tests:
+        state["test_reopenings"][-1]["new_test_commit"] = authoritative_test_head
+        state["test_reopenings"][-1]["approved_at"] = state["approvals"]["tests"]["at"]
+        state["test_reopenings"][-1]["active"] = False
     state["status"] = "IMPLEMENTATION"
     _write_state(root, config, args.issue, state)
-    return {"ok": True, "status": state["status"], "approved_by": args.by}
+    return {
+        "ok": True,
+        "status": state["status"],
+        "approved_by": args.by,
+        "test_commit": authoritative_test_head,
+    }
 
 
 def command_reject_tests(args, root, config):
@@ -809,8 +1118,61 @@ def command_reject_tests(args, root, config):
     return {"ok": True, "status": state["status"], "reason": args.reason}
 
 
+def command_reopen_tests(args, root, config):
+    """Exceptionally reopen Human Gate 2 after a proven approved-test fixture defect."""
+    state = _read_state(root, config, args.issue)
+    _expect_status(state, "IMPLEMENTATION", "reopen-tests")
+    _ensure(
+        args.reason == "approved-test-fixture-defect",
+        "invalid-reopen-reason",
+        "reopen-tests requires --reason approved-test-fixture-defect",
+    )
+    _ensure(
+        not state.get("implementation_commit"),
+        "implementation-already-approved",
+        "reopen-tests is not allowed after an implementation commit exists",
+    )
+    _ensure(
+        not state.get("draft_pr"),
+        "draft-pr-already-created",
+        "reopen-tests is not allowed after a draft PR exists",
+    )
+    previous_test_commit = state.get("test_commit")
+    _ensure(previous_test_commit, "missing-test-commit", "reopen-tests requires test_commit")
+    previous_test_approval = state["approvals"].get("tests")
+    _ensure(previous_test_approval, "tests-not-approved", "reopen-tests requires approved tests")
+
+    reopenings = state.setdefault("test_reopenings", [])
+    reopenings.append(
+        {
+            "active": True,
+            "initiated_by": "reopen-tests",
+            "reason": args.reason,
+            "reopened_at": _now(),
+            "previous_test_commit": previous_test_commit,
+            "previous_test_approval": previous_test_approval,
+            "previous_test_report": state["artifacts"].get("test_report"),
+            "previous_test_review": state["artifacts"].get("test_review"),
+        }
+    )
+
+    state["artifacts"].pop("test_report", None)
+    state["artifacts"].pop("test_review", None)
+    state["approvals"]["tests"] = None
+    state["test_commit"] = None
+    _clear_post_tests(state)
+    state["status"] = "TEST_IMPLEMENTATION"
+    _write_state(root, config, args.issue, state)
+    return {
+        "ok": True,
+        "status": state["status"],
+        "reason": args.reason,
+        "previous_test_commit": previous_test_commit,
+    }
+
+
 def command_submit_implementation(args, root, config):
-    """Verify and record a committed production-only change after approved tests."""
+    """Verify and record an uncommitted production candidate after approved tests."""
     state = _read_state(root, config, args.issue)
     _expect_status(state, "IMPLEMENTATION", "submit-implementation")
     _ensure(
@@ -819,67 +1181,103 @@ def command_submit_implementation(args, root, config):
         "submit-implementation requires approved tests",
     )
     _require_role(config, "implementer", args.agent, "submit-implementation")
-    _require_clean_tree(root, config, "submit-implementation")
     test_commit = state.get("test_commit")
     scope = state.get("approved_scope") or []
-    _ensure(test_commit, "missing-test-commit", "submit-implementation requires a committed test change")
+    _ensure(test_commit, "missing-test-commit", "submit-implementation requires an approved test commit")
     _ensure(scope, "missing-approved-scope", "submit-implementation requires approved plan scope")
-    implementation_head = _current_head(root, config)
     _ensure(
-        implementation_head != test_commit,
-        "missing-implementation-commit",
-        "submit-implementation requires a committed final implementation",
+        _current_head(root, config) == test_commit,
+        "implementation-commit-not-allowed",
+        "submit-implementation requires the production candidate to remain uncommitted",
     )
-    _git_ancestor(root, config, state["base_head"], test_commit, "submit-implementation")
-    _git_ancestor(root, config, state["base_head"], implementation_head, "submit-implementation")
-    _require_single_commit(root, config, state["base_head"], implementation_head, "submit-implementation")
-    test_paths = set(_git_diff_names(root, config, "%s..%s" % (state["base_head"], test_commit)))
-    implementation_paths = _git_diff_names(
-        root, config, "%s..%s" % (state["base_head"], implementation_head)
+    _require_clean_index(root, config, "submit-implementation")
+
+    _ensure(
+        getattr(args, "evidence", None),
+        "missing-evidence",
+        "submit-implementation requires --evidence PATH",
+    )
+    evidence_file = _resolve_file(root, args.evidence)
+    evidence = _read_json(evidence_file, "execution evidence")
+
+    # Validate evidence structure and test execution results
+    _ensure(
+        evidence.get("test_command"),
+        "missing-test-command",
+        "execution evidence requires test_command",
     )
     _ensure(
-        test_paths.issubset(implementation_paths),
-        "tests-not-preserved",
-        "submit-implementation must preserve the approved test files",
+        evidence.get("exit_code") == 0,
+        "tests-failed",
+        "execution evidence exit_code must be 0",
     )
+    _ensure(
+        evidence.get("result") == "PASS",
+        "tests-failed",
+        "execution evidence result must be PASS",
+    )
+    _ensure(
+        evidence.get("test_commit") == test_commit,
+        "test-commit-mismatch",
+        "execution evidence test_commit must match workflow test_commit",
+    )
+
+    # Independently obtain current Git candidate representation against test_commit
+    candidate_diff_raw = _git_candidate_diff(root, config, test_commit)
+
+    recorded_diff = evidence.get("candidate_diff", "")
+    _ensure(
+        candidate_diff_raw == recorded_diff,
+        "evidence-candidate-mismatch",
+        "current Git candidate diff does not match recorded evidence diff",
+    )
+
+    # Check that approved tests remain byte-for-byte unchanged relative to test_commit
+    # First check working tree changes for test files:
     test_diff = _run_bounded(
         _git_command(
             config,
             "diff",
             "--quiet",
             test_commit,
-            implementation_head,
             "--",
-            *sorted(test_paths),
+            *sorted([path for path in scope if _is_test_file(path)] or ["."]),
         ),
         _effective_limits(config, "git"),
         root,
     )
+    # Check changed files in working tree against test_commit
+    changed_names = _git_candidate_names(root, config, test_commit)
+
     _ensure(
-        test_diff["result"].get("outcome") == "success"
-        and test_diff["result"].get("exit_code") == 0,
+        all(not _is_test_file(p) for p in changed_names),
         "tests-modified-after-approval",
         "submit-implementation must preserve approved test content",
     )
     _ensure(
-        any(not _is_test_file(path) for path in implementation_paths),
-        "missing-implementation-commit",
-        "submit-implementation requires a committed production change",
+        any(not _is_test_file(path) for path in changed_names),
+        "missing-implementation-candidate",
+        "submit-implementation requires at least one production change",
     )
     _ensure(
-        all(_path_in_scope(path, scope) for path in implementation_paths),
+        all(_path_in_scope(path, scope) for path in changed_names),
         "implementation-scope-drift",
         "submit-implementation may change only approved files: %s"
-        % ", ".join(implementation_paths),
+        % ", ".join(changed_names),
     )
+
     state["artifacts"]["implementation_report"] = _record_artifact(
         root, config, args.issue, "implementation_report", args.artifact
     )
+    state["implementation_candidate"] = {
+        "test_commit": test_commit,
+        "candidate_diff": candidate_diff_raw,
+        "candidate_paths": changed_names,
+        "accepted_at": _now(),
+    }
     state["validation"] = None
-    state["final_review_ready"] = False
+    state["implementation_review_ready"] = False
     state["draft_pr"] = None
-    state["implementation_commit"] = implementation_head
-    state["approvals"]["pr"] = None
     state["status"] = "VALIDATION"
     _write_state(root, config, args.issue, state)
     return {"ok": True, "status": state["status"]}
@@ -889,13 +1287,28 @@ def command_run_validation(args, root, config):
     """Run the selected bounded validation profile and retain its results in state."""
     state = _read_state(root, config, args.issue)
     _expect_status(state, "VALIDATION", "run-validation")
-    _require_clean_tree(root, config, "run-validation")
 
     profile_name = _select_validation_profile(config, args.profile)
     checks = _run_validation_checks(root, config, profile_name)
-    _require_clean_tree(root, config, "run-validation after checks")
 
     all_passed = all(check["passed"] for check in checks)
+    _require_implementation_candidate_matches(root, config, state, "run-validation")
+    if all_passed:
+        test_commit = state.get("test_commit")
+        scope = state.get("approved_scope") or []
+        _ensure(test_commit, "missing-test-commit", "run-validation requires test_commit")
+        test_paths = sorted([path for path in scope if _is_test_file(path)] or ["."])
+        test_diff = _run_bounded(
+            _git_command(config, "diff", "--quiet", test_commit, "--", *test_paths),
+            _effective_limits(config, "git"),
+            root,
+        )
+        result = test_diff["result"]
+        _ensure(
+            result.get("outcome") == "success" and result.get("exit_code") == 0,
+            "git-worktree-dirty",
+            "run-validation requires approved tests to remain unchanged",
+        )
     state["validation"] = {
         "profile": profile_name,
         "ran_at": _now(),
@@ -908,15 +1321,14 @@ def command_run_validation(args, root, config):
             }
             for check in checks
         ],
-        "validated_head": _current_head(root, config),
         "passed": all_passed,
     }
 
     if all_passed:
-        state["status"] = "FINAL_REVIEW"
+        state["status"] = "IMPLEMENTATION_REVIEW"
     else:
         state["status"] = "IMPLEMENTATION"
-        state["final_review_ready"] = False
+        state["implementation_review_ready"] = False
 
     _write_state(root, config, args.issue, state)
     _ensure(
@@ -933,97 +1345,138 @@ def command_run_validation(args, root, config):
     }
 
 
-def command_review_final(args, root, config):
-    """Record the final read-only review only against the current validated HEAD."""
+def command_review_implementation(args, root, config):
+    """Record the independent implementation review and route to Human Gate 3 or revision."""
     state = _read_state(root, config, args.issue)
-    _expect_status(state, "FINAL_REVIEW", "review-final")
-    _require_role(config, "reviewer", args.reviewer, "review-final")
-    _require_clean_tree(root, config, "review-final")
+    _expect_status(state, "IMPLEMENTATION_REVIEW", "review-implementation")
+    _require_role(config, "reviewer", args.reviewer, "review-implementation")
     _ensure(args.status in REVIEW_STATUSES, "invalid-review-status", "Unknown review status")
-    state["artifacts"]["final_review"] = _record_artifact(
-        root, config, args.issue, "final_review", args.artifact
+    state["artifacts"]["implementation_review"] = _record_artifact(
+        root, config, args.issue, "implementation_review", args.artifact
     )
 
     validated = state.get("validation") or {}
-    head = _current_head(root, config)
-
     if args.status == READY:
         _ensure(
             validated.get("passed"),
             "validation-missing",
-            "review-final requires a successful validation run",
+            "review-implementation requires a successful validation run",
         )
-        _ensure(
-            validated.get("validated_head") == head,
-            "validation-stale",
-            "HEAD changed after validation; rerun submit-implementation and run-validation",
-        )
-        state["final_review_ready"] = True
+        _require_implementation_candidate_matches(root, config, state, "review-implementation")
+        state["implementation_review_ready"] = True
+        state["status"] = "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL"
     else:
         state["status"] = "IMPLEMENTATION"
-        state["final_review_ready"] = False
+        state["implementation_review_ready"] = False
         state["validation"] = None
+        state["implementation_candidate"] = None
 
     _write_state(root, config, args.issue, state)
     return {"ok": True, "status": state["status"], "review_status": args.status}
 
 
-def command_create_draft_pr(args, root, config):
-    """Reconcile the target branch, then publish a reviewed draft PR."""
+def command_approve_implementation(args, root, config):
+    """Human Gate 3: authorize implementation and mechanically create the authoritative commit."""
     state = _read_state(root, config, args.issue)
-    _expect_status(state, "FINAL_REVIEW", "create-draft-pr")
+    _expect_status(state, "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", "approve-implementation")
     _ensure(
-        state.get("final_review_ready"),
-        "final-review-not-ready",
-        "create-draft-pr requires a READY_FOR_HUMAN_APPROVAL final review",
+        state.get("implementation_review_ready"),
+        "implementation-review-not-ready",
+        "approve-implementation requires a READY_FOR_HUMAN_APPROVAL implementation review",
     )
-    validated = state.get("validation") or {}
+    _require_confirmation(config, state, "implementation", args.confirm, args.by)
+
+    test_commit = state.get("test_commit")
+    scope = state.get("approved_scope") or []
+    _ensure(test_commit, "missing-test-commit", "approve-implementation requires test_commit")
+    target_head = _require_target_fresh(root, config, state, "approve-implementation")
+    _ensure(
+        _current_head(root, config) == test_commit,
+        "implementation-commit-mismatch",
+        "approve-implementation requires HEAD to match approved test_commit",
+    )
+    _git_ancestor(root, config, target_head, test_commit, "approve-implementation")
+    _require_implementation_candidate_matches(root, config, state, "approve-implementation")
+
+    # Verify approved tests remain unchanged
+    changed_names = _git_candidate_names(root, config, test_commit)
+    _ensure(
+        all(not _is_test_file(p) for p in changed_names),
+        "tests-modified-after-approval",
+        "approve-implementation requires approved tests to remain unchanged",
+    )
+    candidate_names = _git_candidate_names(root, config, test_commit)
+    _require_production_only(candidate_names, scope, "approve-implementation")
+
+    # Create the single authoritative implementation commit relative to the
+    # verified target base, containing approved tests plus reviewed production.
+    _run_checked(
+        _git_command(config, "add", "-A"),
+        _effective_limits(config, "git"),
+        root,
+        "git-add-failed",
+        "unable to stage implementation changes",
+    )
+    _run_checked(
+        _git_command(config, "reset", "--soft", target_head),
+        _effective_limits(config, "git"),
+        root,
+        "git-reset-failed",
+        "unable to soft-reset to target_head",
+    )
+    _run_checked(
+        _git_command(config, "commit", "-qm", "Implement issue #%s" % args.issue),
+        _effective_limits(config, "git"),
+        root,
+        "git-commit-failed",
+        "unable to create authoritative implementation commit",
+    )
+    authoritative_head = _current_head(root, config)
+    _require_clean_tree(root, config, "post-implementation-commit")
+    _require_publication_topology(root, config, state, authoritative_head, "approve-implementation")
+
+    state["implementation_commit"] = authoritative_head
+    state["status"] = "DRAFT_PR_CREATION"
+    _write_state(root, config, args.issue, state)
+    return {
+        "ok": True,
+        "status": state["status"],
+        "approved_by": args.by,
+        "implementation_commit": authoritative_head,
+    }
+
+
+def command_reject_implementation(args, root, config):
+    """Return rejected implementation to IMPLEMENTATION without restart."""
+    state = _read_state(root, config, args.issue)
+    _expect_status(state, "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", "reject-implementation")
+    state["approvals"]["implementation"] = None
+    state["implementation_review_ready"] = False
+    state["validation"] = None
+    state["implementation_candidate"] = None
+    state["status"] = "IMPLEMENTATION"
+    _write_state(root, config, args.issue, state)
+    return {"ok": True, "status": state["status"], "reason": args.reason}
+
+
+def command_create_draft_pr(args, root, config):
+    """Reconcile the target branch, then publish a reviewed draft PR and complete workflow."""
+    state = _read_state(root, config, args.issue)
+    _expect_status(state, "DRAFT_PR_CREATION", "create-draft-pr")
+    implementation_commit = state.get("implementation_commit")
     head = _current_head(root, config)
     _ensure(
-        validated.get("validated_head") == head,
-        "validation-stale",
-        "HEAD changed after validation; rerun submit-implementation and run-validation",
+        implementation_commit and head == implementation_commit,
+        "implementation-commit-mismatch",
+        "create-draft-pr requires HEAD to match approved implementation_commit",
     )
     body_path = _resolve_file(root, args.body_file)
     _validate_pr_body(body_path)
-    _require_single_commit(root, config, state["base_head"], head, "create-draft-pr")
+    if args.skip_github:
+        _require_publication_topology(root, config, state, head, "create-draft-pr")
     if not args.skip_github:
         _require_clean_tree(root, config, "create-draft-pr")
-        _git_fetch_target(root, config)
-        latest_target = _run_checked(
-            _git_command(config, "rev-parse", "origin/%s" % config["target_base"]),
-            _effective_limits(config, "git"),
-            root,
-            "git-target-head-failed",
-            "unable to read fetched target branch",
-        )["stdout_text"].strip()
-        previous_target = state.get("target_head")
-        if previous_target is None:
-            state["target_head"] = latest_target
-            _write_state(root, config, args.issue, state)
-        elif previous_target != latest_target:
-            rebase = _run_bounded(
-                _git_command(config, "rebase", "origin/%s" % config["target_base"]),
-                _effective_limits(config, "git"),
-                root,
-            )
-            result = rebase["result"]
-            _ensure(
-                result.get("outcome") == "success" and result.get("exit_code") == 0,
-                "rebase-required-human-intervention",
-                "target advanced and rebase did not complete cleanly; resolve only within approved scope",
-            )
-            _require_clean_tree(root, config, "post-rebase")
-            state["target_head"] = latest_target
-            state["validation"] = None
-            state["final_review_ready"] = False
-            state["status"] = "IMPLEMENTATION"
-            _write_state(root, config, args.issue, state)
-            _raise(
-                "rebase-requires-review",
-                "target advanced; rebase completed, so rerun validation and final review before publication",
-            )
-        _git_ancestor(root, config, latest_target, head, "create-draft-pr")
+        _require_publication_topology(root, config, state, head, "create-draft-pr")
 
     github_limits = _effective_limits(config, "github")
     command = _github_command(
@@ -1058,31 +1511,9 @@ def command_create_draft_pr(args, root, config):
         "body_file": _relative(body_path, root),
         "publication": publication,
     }
-    state["status"] = "WAITING_FOR_PR_HUMAN_APPROVAL"
+    state["status"] = "WORKFLOW_COMPLETED"
     _write_state(root, config, args.issue, state)
     return {"ok": True, "status": state["status"], "draft_pr": state["draft_pr"]}
-
-
-def command_approve_pr(args, root, config):
-    """Record the final local approval gate before normal GitHub review and merge."""
-    state = _read_state(root, config, args.issue)
-    _expect_status(state, "WAITING_FOR_PR_HUMAN_APPROVAL", "approve-pr")
-    _require_confirmation(config, state, "pr", args.confirm, args.by)
-    state["status"] = "PR_APPROVED"
-    _write_state(root, config, args.issue, state)
-    return {"ok": True, "status": state["status"], "approved_by": args.by}
-
-
-def command_reject_pr(args, root, config):
-    """Return a rejected draft PR to implementation and invalidate its review."""
-    state = _read_state(root, config, args.issue)
-    _expect_status(state, "WAITING_FOR_PR_HUMAN_APPROVAL", "reject-pr")
-    state["approvals"]["pr"] = None
-    state["final_review_ready"] = False
-    state["validation"] = None
-    state["status"] = "IMPLEMENTATION"
-    _write_state(root, config, args.issue, state)
-    return {"ok": True, "status": state["status"], "reason": args.reason}
 
 
 # ---------- argparse ----------
@@ -1173,23 +1604,39 @@ def build_parser():
     _add_issue(reject_tests)
     _add_human(reject_tests, include_reason=True)
 
+    reopen_tests = subparsers.add_parser("reopen-tests")
+    _add_root(reopen_tests)
+    _add_issue(reopen_tests)
+    reopen_tests.add_argument("--reason", required=True)
+
     submit_implementation = subparsers.add_parser("submit-implementation")
     _add_root(submit_implementation)
     _add_issue(submit_implementation)
     _add_artifact(submit_implementation)
     submit_implementation.add_argument("--agent", required=True)
+    submit_implementation.add_argument("--evidence")
 
     run_validation = subparsers.add_parser("run-validation")
     _add_root(run_validation)
     _add_issue(run_validation)
     run_validation.add_argument("--profile", required=True)
 
-    review_final = subparsers.add_parser("review-final")
-    _add_root(review_final)
-    _add_issue(review_final)
-    _add_artifact(review_final)
-    _add_review(review_final)
-    review_final.add_argument("--reviewer", required=True)
+    review_implementation = subparsers.add_parser("review-implementation")
+    _add_root(review_implementation)
+    _add_issue(review_implementation)
+    _add_artifact(review_implementation)
+    _add_review(review_implementation)
+    review_implementation.add_argument("--reviewer", required=True)
+
+    approve_implementation = subparsers.add_parser("approve-implementation")
+    _add_root(approve_implementation)
+    _add_issue(approve_implementation)
+    _add_human(approve_implementation)
+
+    reject_implementation = subparsers.add_parser("reject-implementation")
+    _add_root(reject_implementation)
+    _add_issue(reject_implementation)
+    _add_human(reject_implementation, include_reason=True)
 
     create_draft_pr = subparsers.add_parser("create-draft-pr")
     _add_root(create_draft_pr)
@@ -1198,16 +1645,6 @@ def build_parser():
     create_draft_pr.add_argument("--body-file", required=True)
     create_draft_pr.add_argument("--head")
     create_draft_pr.add_argument("--skip-github", action="store_true")
-
-    approve_pr = subparsers.add_parser("approve-pr")
-    _add_root(approve_pr)
-    _add_issue(approve_pr)
-    _add_human(approve_pr)
-
-    reject_pr = subparsers.add_parser("reject-pr")
-    _add_root(reject_pr)
-    _add_issue(reject_pr)
-    _add_human(reject_pr, include_reason=True)
 
     return parser
 
@@ -1223,12 +1660,13 @@ COMMANDS = {
     "review-tests": command_review_tests,
     "approve-tests": command_approve_tests,
     "reject-tests": command_reject_tests,
+    "reopen-tests": command_reopen_tests,
     "submit-implementation": command_submit_implementation,
     "run-validation": command_run_validation,
-    "review-final": command_review_final,
+    "review-implementation": command_review_implementation,
+    "approve-implementation": command_approve_implementation,
+    "reject-implementation": command_reject_implementation,
     "create-draft-pr": command_create_draft_pr,
-    "approve-pr": command_approve_pr,
-    "reject-pr": command_reject_pr,
 }
 
 
