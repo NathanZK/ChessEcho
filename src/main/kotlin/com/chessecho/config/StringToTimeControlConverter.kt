@@ -8,6 +8,9 @@ import org.springframework.stereotype.Component
 class StringToTimeControlConverter : Converter<String, TimeControl> {
     override fun convert(source: String): TimeControl {
         return TimeControl.fromExternal(source)
-            ?: throw IllegalArgumentException("Invalid timeControl '$source'. Supported timeControls: RAPID, BLITZ, BULLET, CLASSICAL.")
+            ?: throw IllegalArgumentException(
+                "Invalid timeControl '$source'. " +
+                    "Supported timeControls: RAPID, BLITZ, BULLET, CLASSICAL, STANDARD.",
+            )
     }
 }
