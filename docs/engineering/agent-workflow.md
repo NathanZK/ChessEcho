@@ -1,4 +1,4 @@
-# ChessEcho issue workflow (simplified)
+# ChessEcho issue workflow
 
 This repository uses a minimal, file-based issue workflow in `scripts/agent_workflow.py`.
 

@@ -491,6 +491,82 @@ class AgentWorkflowTest(unittest.TestCase):
         )
         self.assertEqual("PR_APPROVED", self.state()["status"])
 
+    def test_pr_rejection_returns_to_implementation_without_restart(self):
+        self.bootstrap_to_validation()
+        self.write_artifact("final-review.md", "final review")
+        self.write_artifact(
+            "pr-body.md",
+            "## What\n- change\n\n## Why\n- reason\n\n## Testing\n- run\n",
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "run-validation",
+                str(ISSUE),
+                "--profile",
+                "workflow-tooling",
+                patches=[
+                    mock.patch.object(workflow, "_current_head", return_value="abc123"),
+                ],
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "review-final",
+                str(ISSUE),
+                "--status",
+                workflow.READY,
+                "--artifact",
+                "artifacts-src/final-review.md",
+                "--reviewer",
+                "chess-echo-reviewer",
+                patches=[
+                    mock.patch.object(workflow, "_current_head", return_value="abc123"),
+                    mock.patch.object(workflow, "_git_commit_count", return_value=1),
+                ],
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "create-draft-pr",
+                str(ISSUE),
+                "--title",
+                "Issue 321",
+                "--body-file",
+                "artifacts-src/pr-body.md",
+                "--skip-github",
+                patches=[
+                    mock.patch.object(workflow, "_current_head", return_value="abc123"),
+                    mock.patch.object(workflow, "_git_commit_count", return_value=1),
+                ],
+            )[0],
+        )
+        before_rejection = self.state()
+        self.assertEqual("WAITING_FOR_PR_HUMAN_APPROVAL", before_rejection["status"])
+        self.assertTrue(before_rejection["final_review_ready"])
+        self.assertIsNotNone(before_rejection["validation"])
+
+        with mock.patch.object(workflow.workflow_supervisor, "supervise") as supervise:
+            code, payload, _ = self.run_cli(
+                "reject-pr",
+                str(ISSUE),
+                "--by",
+                "owner",
+                "--reason",
+                "needs changes",
+            )
+
+        self.assertEqual(0, code)
+        self.assertEqual("IMPLEMENTATION", payload["status"])
+        rejected = self.state()
+        self.assertEqual("IMPLEMENTATION", rejected["status"])
+        self.assertIsNone(rejected["approvals"]["pr"])
+        self.assertFalse(rejected["final_review_ready"])
+        self.assertIsNone(rejected["validation"])
+        supervise.assert_not_called()
+
     def test_validation_failure_returns_to_implementation(self):
         self.bootstrap_to_validation()
 
