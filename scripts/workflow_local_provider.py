@@ -121,6 +121,7 @@ JSONL_EVENT_TYPES = frozenset(
         "user.message",
         "assistant.turn_start",
         "model.call_start",
+        "model.call_failure",
         "assistant.reasoning_delta",
         "assistant.tool_call_delta",
         "assistant.message",
@@ -141,6 +142,7 @@ JSONL_EPHEMERAL_TYPES = frozenset(
     JSONL_STARTUP_TYPES
     + (
         "model.call_start",
+        "model.call_failure",
         "assistant.reasoning_delta",
         "assistant.tool_call_delta",
         "assistant.reasoning",
@@ -642,6 +644,26 @@ class _JsonlCandidateDecoder:
             _event_text(data.get("model"), "model")
             _event_field_matches(data, "turnId", self.active_turn, required=True)
             self.model_call_seen = True
+            return
+        if event_type == "model.call_failure":
+            if self.active_turn is None:
+                _fail("corrupt", "local-agent-jsonl-sequence", "Copilot model call failure is outside an active turn")
+            if not isinstance(data, dict):
+                _fail("corrupt", "local-agent-jsonl-invalid", "Copilot model call failure payload is malformed")
+            if "model" in data:
+                _event_text(data["model"], "model")
+            if "apiEndpoint" in data:
+                _event_text(data["apiEndpoint"], "apiEndpoint")
+            if "transport" in data:
+                _event_text(data["transport"], "transport")
+            if "failureKind" in data:
+                _event_text(data["failureKind"], "failureKind")
+            if "errorMessage" in data:
+                _event_text(data["errorMessage"], "errorMessage")
+            if "durationMs" in data:
+                duration_ms = data["durationMs"]
+                if not isinstance(duration_ms, (int, float)) or type(duration_ms) is bool or duration_ms < 0:
+                    _fail("corrupt", "local-agent-jsonl-invalid", "Copilot model call failure durationMs is malformed")
             return
         if event_type == "assistant.reasoning_delta":
             _event_data_keys(data, {"deltaContent", "reasoningId"}, "reasoning delta")

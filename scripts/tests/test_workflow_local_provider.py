@@ -3228,6 +3228,123 @@ class TrustedLocalProviderTest(unittest.TestCase):
             resume.decode_candidate(result, "plan"),
         )
 
+    def test_observed_model_call_failure_before_retry_is_accepted(self):
+        events = _jsonl_events(_jsonl())
+        turn_start_index = next(
+            index
+            for index, event in enumerate(events)
+            if event["type"] == "assistant.turn_start" and event["data"]["turnId"] == "1"
+        )
+        model_call_start = events[turn_start_index + 1]
+        failure_event = _event(
+            "model.call_failure",
+            "mf1",
+            model_call_start["id"],
+            {
+                "model": "claude-sonnet-5",
+                "durationMs": 69950,
+                "apiEndpoint": "/v1/messages",
+                "transport": "http",
+                "failureKind": "transport",
+                "errorMessage": '"... Operation timed out (os error 60) [ETIMEDOUT]"',
+            },
+            True,
+        )
+        events.insert(turn_start_index + 2, failure_event)
+        raw = _encode_events(events)
+
+        self.assertEqual(
+            CANDIDATE.encode("utf-8"),
+            provider._extract_candidate_from_jsonl(raw),
+        )
+        self.assertIn("model.call_failure", provider.JSONL_EVENT_TYPES)
+        self.assertIn("model.call_failure", provider.JSONL_EPHEMERAL_TYPES)
+
+    def test_model_call_failure_schema_and_sequence_validation(self):
+        def changed(mutator):
+            events = _jsonl_events(_jsonl())
+            turn_start_index = next(
+                index
+                for index, event in enumerate(events)
+                if event["type"] == "assistant.turn_start" and event["data"]["turnId"] == "1"
+            )
+            failure = _event(
+                "model.call_failure",
+                "mf1",
+                events[turn_start_index + 1]["id"],
+                {
+                    "model": "test-model",
+                    "durationMs": 100,
+                    "apiEndpoint": "/v1/messages",
+                    "transport": "http",
+                    "failureKind": "transport",
+                    "errorMessage": "timeout",
+                },
+                True,
+            )
+            events.insert(turn_start_index + 2, failure)
+            mutator(events, failure)
+            return _encode_events(events)
+
+        cases = {
+            "non-ephemeral": (
+                changed(lambda _events, failure: failure.pop("ephemeral")),
+                "local-agent-jsonl-invalid",
+            ),
+            "outside-active-turn": (
+                _encode_events(
+                    [
+                        _event(
+                            "model.call_failure",
+                            "mf0",
+                            "external-1",
+                            {"model": "test-model"},
+                            True,
+                        ),
+                        *_jsonl_events(_jsonl()),
+                    ]
+                ),
+                "local-agent-jsonl-sequence",
+            ),
+            "negative-duration": (
+                changed(
+                    lambda _events, failure: failure["data"].__setitem__(
+                        "durationMs", -1
+                    )
+                ),
+                "local-agent-jsonl-invalid",
+            ),
+            "string-duration": (
+                changed(
+                    lambda _events, failure: failure["data"].__setitem__(
+                        "durationMs", "100"
+                    )
+                ),
+                "local-agent-jsonl-invalid",
+            ),
+            "boolean-duration": (
+                changed(
+                    lambda _events, failure: failure["data"].__setitem__(
+                        "durationMs", True
+                    )
+                ),
+                "local-agent-jsonl-invalid",
+            ),
+            "malformed-model": (
+                changed(
+                    lambda _events, failure: failure["data"].__setitem__(
+                        "model", ""
+                    )
+                ),
+                "local-agent-jsonl-invalid",
+            ),
+        }
+        for name, (raw, expected_code) in cases.items():
+            with self.subTest(name=name):
+                with self.assertRaises(provider.LocalProviderFailure) as raised:
+                    provider._extract_candidate_from_jsonl(raw)
+                self.assertEqual(expected_code, raised.exception.code)
+
     def test_runtime_preserves_raw_transport_candidate_and_stderr_blobs(self):
         transport = _jsonl()
         stderr = b"synthetic bounded stderr"
