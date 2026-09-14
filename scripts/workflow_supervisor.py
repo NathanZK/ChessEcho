@@ -93,6 +93,7 @@ def _result(
     supervisor_error=None,
     containment_kind="posix-process-group",
 ):
+    """Build the structured outcome returned for every supervised process."""
     containment = (
         {
             "kind": "posix-process-group",
@@ -138,6 +139,7 @@ def _validate(
     output_limit_bytes,
     stderr_limit_bytes,
 ):
+    """Reject invalid supervision commands, limits, and execution settings."""
     if (
         not isinstance(command, (list, tuple))
         or not command
@@ -264,6 +266,7 @@ def _terminate(
     streams,
     grace_ms,
 ):
+    """Escalate process-group termination while preserving cleanup diagnostics."""
     forced = False
     cleanup_verified = ownership.released
     try:
@@ -404,6 +407,7 @@ def _supervise_posix(
     deadline,
     external_signals,
 ):
+    """Run one POSIX process group with bounded output, signals, and cleanup."""
     if external_signals:
         return _result(
             command,
