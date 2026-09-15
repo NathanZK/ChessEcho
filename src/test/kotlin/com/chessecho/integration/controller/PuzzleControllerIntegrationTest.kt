@@ -323,6 +323,19 @@ class PuzzleControllerIntegrationTest {
     }
 
     @Test
+    fun `guest requests can read puzzles without a session`() {
+        val response =
+            restTemplate.exchange(
+                "/api/puzzles?platform=CHESS_COM&username=puzzleuser&playerColor=white&minEvalLoss=0.8",
+                HttpMethod.GET,
+                null,
+                object : ParameterizedTypeReference<List<PuzzleResponse>>() {},
+            )
+
+        assertEquals(HttpStatus.OK, response.statusCode)
+    }
+
+    @Test
     fun `negative minEvalLoss rejects request with error response`() {
         val response =
             restTemplate.exchange(

@@ -10,9 +10,8 @@ import * as api from '../services/api';
  * The app resolves the session from `/api/me` before issuing any personalized
  * request. While the session is unresolved (loading) no `fetchPuzzles`/
  * `fetchWeaknesses` fires even when a stale `chessecho_username` is present in
- * `localStorage`; an authenticated result opens the gate; an unauthenticated
- * (or expired) result keeps private fetches suppressed, shows a sign-in CTA, and
- * the auth indicator is NOT derived from the stored Chess.com username.
+ * `localStorage`; session state resolves independently; and guest-eligible
+ * username-based analysis remains available after an unauthenticated result.
  *
  * Written test-first against the planned `fetchCurrentSession` bootstrap in
  * `Home`, so the gating assertions are expected to be red until production
@@ -100,20 +99,31 @@ describe('Session bootstrap gating (Issue #113)', () => {
     });
   });
 
-  it('suppresses personalized fetches and does not derive "Connected" from a stored username when unauthenticated', async () => {
+  it('keeps guest-eligible analysis available with a stored username when unauthenticated', async () => {
     localStorage.setItem('chessecho_username', 'hikaru');
+    window.location.hash = '#weaknesses';
     sessionMocks.fetchCurrentSession.mockResolvedValue({ status: 'unauthenticated' } as SessionState);
+    vi.mocked(api.fetchPuzzles).mockResolvedValue([]);
+    vi.mocked(api.fetchWeaknesses).mockResolvedValue([]);
 
     render(<Home />);
-    await act(async () => {
-      await Promise.resolve();
-    });
 
     await waitFor(() => {
       expect(sessionMocks.fetchCurrentSession).toHaveBeenCalled();
     });
 
-    expect(api.fetchPuzzles).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(api.fetchPuzzles).toHaveBeenCalledWith(
+        'hikaru',
+        'CHESS_COM',
+        'BOTH',
+        expect.any(Number),
+        expect.any(Number),
+        10,
+        0
+      );
+    });
+
     expect(screen.queryByText(/Chess\.com Connected/i)).not.toBeInTheDocument();
     const signInCta =
       screen.queryByRole('button', { name: /sign in|log in/i }) ?? screen.queryByText(/sign in|log in/i);

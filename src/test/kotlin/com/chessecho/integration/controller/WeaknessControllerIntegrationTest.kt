@@ -187,6 +187,19 @@ class WeaknessControllerIntegrationTest {
     }
 
     @Test
+    fun `guest requests can read weaknesses without a session`() {
+        val response =
+            restTemplate.exchange(
+                "/api/positions/weaknesses?platform=CHESS_COM&username=integrationuser&playerColor=white&minEvalLoss=0.8",
+                HttpMethod.GET,
+                null,
+                object : ParameterizedTypeReference<List<WeaknessResponse>>() {},
+            )
+
+        assertEquals(HttpStatus.OK, response.statusCode)
+    }
+
+    @Test
     fun `test asymmetric occurrence play frequencies 20 total occurrences 15 for move A and 5 for move B`() {
         val user = appUserRepository.save(AppUser(email = "asymmetric@test.com"))
         val account = chessAccountRepository.save(ChessAccount(user = user, platform = "CHESS_COM", username = "asymmetricuser"))
