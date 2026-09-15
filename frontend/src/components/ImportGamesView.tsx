@@ -401,21 +401,7 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                     </div>
                   </div>
 
-                  <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
-                    <span className="text-[10px] text-slate-400">Processed</span>
-                    <div className="text-sm font-bold text-sky-300 mt-0.5 font-mono">
-                      {(activeJob.gamesProcessed ?? 0).toLocaleString()}
-                    </div>
-                  </div>
                 </div>
-
-                {activeJob.gamesProcessed != null && (
-                  <div className="space-y-1 text-[11px] text-slate-300">
-                    <p className="font-mono font-semibold text-white">
-                      {`Imported ${activeJob.gamesImported.toLocaleString()} games`}
-                    </p>
-                  </div>
-                )}
 
                 {activeJob.status === 'COMPLETED' && (
                   <div className="p-4 bg-emerald-950/40 border border-emerald-500/40 rounded-xl space-y-3">

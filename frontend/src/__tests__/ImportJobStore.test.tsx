@@ -382,7 +382,7 @@ describe('Issue 98 — import job restore and polling', () => {
     expect(onImportStarted).not.toHaveBeenCalled();
   });
 
-  it('renders meaningful totals-free progress with processed outcome distinctions', () => {
+  it('shows import outcomes without rendering the raw processed count', () => {
     const job = {
       jobId: 'job-unknown-total',
       status: 'PROCESSING' as const,
@@ -398,13 +398,13 @@ describe('Issue 98 — import job restore and polling', () => {
 
     const importedLabel = screen.getByText(/^Imported$/i);
     const skippedLabel = screen.getByText(/^Already imported$/i);
-    const processedLabel = screen.getByText(/^Processed$/i);
     expect(importedLabel.nextElementSibling).toHaveTextContent('1,200');
     expect(skippedLabel.nextElementSibling).toHaveTextContent('200');
-    expect(processedLabel.nextElementSibling).toHaveTextContent('1,470');
-    expect(screen.getByText(/^Imported 1,?200 games$/i)).toBeInTheDocument();
+    expect(screen.queryByText('1,470')).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Processed$/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Games scanned$/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Imported 1,?200 games$/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/^Filtered$/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/1,?470\s*\/\s*\d+/)).not.toBeInTheDocument();
   });
 
   it('distinguishes analyzing, completed, and failed analysis from completed import', async () => {
