@@ -1,13 +1,17 @@
 package com.chessecho.controller
 
+import com.chessecho.dto.HumanMoveBfsRequest
 import com.chessecho.dto.HumanMoveBfsResponse
 import com.chessecho.dto.HumanMoveFinalizeResponse
 import com.chessecho.service.HumanMoveBfsService
 import com.chessecho.service.HumanMoveDistributionFinalizationService
 import com.fasterxml.jackson.databind.ObjectMapper
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
+import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.doThrow
+import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest
@@ -62,6 +66,47 @@ class HumanMoveBfsControllerTest {
             jsonPath("$.ratingBand") { value("1000-1200") }
             jsonPath("$.stopReason") { value("EMPTY_FRONTIER") }
         }
+
+        val captor = argumentCaptor<HumanMoveBfsRequest>()
+        verify(humanMoveBfsService).runBfs(captor.capture())
+        assertEquals(emptyList<String>(), captor.firstValue.excludedPlayers)
+    }
+
+    @Test
+    fun `POST bfs binds excludedPlayers`() {
+        val request =
+            mapOf(
+                "ratingBand" to "1000-1200",
+                "seedPlayers" to listOf("hikaru"),
+                "excludedPlayers" to listOf("eval-user", "holdout-user"),
+            )
+        whenever(humanMoveBfsService.runBfs(any())).thenReturn(
+            HumanMoveBfsResponse(
+                ratingBand = "1000-1200",
+                seedPlayers = 1,
+                playersVisited = 1,
+                maxDepthReached = 0,
+                maxGamesPerPlayer = 100,
+                gamesInspected = 0,
+                rapidGames = 0,
+                qualifyingGames = 0,
+                uniqueGamesProcessed = 0,
+                uniquePositions = 0,
+                totalObservations = 0,
+                stopReason = "EMPTY_FRONTIER",
+            ),
+        )
+
+        mockMvc.post("/api/admin/human-move-distribution/bfs") {
+            contentType = MediaType.APPLICATION_JSON
+            content = objectMapper.writeValueAsString(request)
+        }.andExpect {
+            status { isOk() }
+        }
+
+        val captor = argumentCaptor<HumanMoveBfsRequest>()
+        verify(humanMoveBfsService).runBfs(captor.capture())
+        assertEquals(listOf("eval-user", "holdout-user"), captor.firstValue.excludedPlayers)
     }
 
     @Test

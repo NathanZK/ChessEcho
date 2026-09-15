@@ -8,9 +8,9 @@ Within ChessEcho's Line Exploration, users can play against the engine or a simu
 ### Data Acquisition via Graph Traversal
 The Human Move Provider does not scan a pre-existing complete historical corpus. Instead, data acquisition is a rating-band-specific graph traversal:
 1. Select an initial set of random Chess.com players in a target band (e.g., 800–1000).
-2. Fetch their games and discover their opponents.
-3. Add **all** discovered opponents to the next BFS frontier, regardless of their rating.
-4. For each game, record the **opponent's** moves into the distribution — but only when the opponent's game-time rating falls within the target band. The traversed player's own moves are never attributed.
+2. Fetch their games and discover their opponents. An optional `excludedPlayers` list removes matching seeds before processing and uses case-insensitive Chess.com username matching.
+3. Add **all non-excluded** discovered opponents to the next BFS frontier, regardless of their rating. Excluded opponents are never queued or processed.
+4. For each game, record the **opponent's** moves into the distribution — but only when the opponent's game-time rating falls within the target band. The traversed player's own moves are never attributed. A game involving an excluded opponent contributes no observations and is not claimed as processed.
 5. Continue until coverage criteria are met.
 
 "Seeding a rating band" means actively constructing this corpus.
@@ -89,7 +89,7 @@ Historical seeding has two explicitly separated phases:
 
 Batching is retained purely to bound application memory: the service aggregates a bounded batch in-memory, flushes it, and discards the maps. Batches are **not** independent statistical units; a position seen 2 times in one batch and 3 times in a later batch (or a later run) ends up with `observation_count = 5`.
 
-The BFS request DTO deliberately does not carry `minObservations`. Thresholding is not a gathering-time concern in this model.
+The BFS request accepts an optional `excludedPlayers` array of Chess.com player identifiers/usernames. Matching is case-insensitive under the service's lowercase normalization. Excluded seeds are removed before processing, and excluded discovered opponents are neither queued nor processed; games in which an excluded opponent would otherwise be attributed contribute no observations and are not claimed. Omitting the field or passing `[]` preserves the existing traversal semantics. The BFS request DTO deliberately does not carry `minObservations`. Thresholding is not a gathering-time concern in this model.
 
 ### Finalization
 `POST /api/admin/human-move-distribution/finalize` applies the observation-count threshold globally, once the corpus is considered sufficiently populated:
