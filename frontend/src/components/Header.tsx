@@ -27,10 +27,17 @@ export const Header: React.FC<HeaderProps> = ({
   onSignIn,
 }) => {
   const isPuzzlesLayout = activeTab === 'puzzles';
-  // The connected affordance is derived from session state, not a stored
-  // Chess.com username: an explicitly unauthenticated session is never shown as
-  // connected even if a username lingers in localStorage (#113 AC13).
-  const showConnected = !!username && sessionStatus !== 'unauthenticated';
+  // Keep the selected Chess.com username separate from identity state. A guest
+  // username remains usable for guest-eligible analysis but is not presented as
+  // an authenticated connection.
+  const showConnected =
+    !!username &&
+    (sessionStatus === undefined ||
+      sessionStatus === 'loading' ||
+      sessionStatus === 'authenticated' ||
+      sessionStatus === 'error');
+  const showGuestSelection = !!username && sessionStatus !== undefined && !showConnected && sessionStatus !== 'loading';
+  const showAccount = showConnected || showGuestSelection;
 
   return (
     <header
@@ -160,7 +167,7 @@ export const Header: React.FC<HeaderProps> = ({
         </nav>
 
         {/* User Profile Badge */}
-        {showConnected ? (
+        {showAccount ? (
           <div
             className={`flex items-center bg-slate-800/80 px-3.5 py-1.5 rounded-xl border border-slate-700/60 ${
               isPuzzlesLayout
@@ -189,7 +196,7 @@ export const Header: React.FC<HeaderProps> = ({
                 }`}
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                Chess.com Connected
+                {showConnected ? 'Chess.com Connected' : 'Guest Mode'}
               </div>
             </div>
             {onDisconnect && (
@@ -201,6 +208,16 @@ export const Header: React.FC<HeaderProps> = ({
                 }`}
               >
                 Disconnect
+              </button>
+            )}
+            {showGuestSelection && onSignIn && (
+              <button
+                onClick={onSignIn}
+                className={`ml-2 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold rounded-lg transition cursor-pointer ${
+                  isPuzzlesLayout ? 'shrink-0 max-w-full whitespace-normal 2xl:w-full 2xl:ml-0' : ''
+                }`}
+              >
+                Sign In
               </button>
             )}
           </div>

@@ -48,10 +48,9 @@ export default function Home() {
   // Non-persistent session state, bootstrapped from /api/me. The auth indicator is
   // derived from this — never from a stored Chess.com username (#113 AC7/AC13).
   const [sessionStatus, setSessionStatus] = useState<SessionState['status']>('loading');
-  // Personalized fetches are gated on the session resolving. The gate is a shared
-  // one-shot promise so the puzzle load can await it without a pre-fetch render;
-  // it opens for authenticated (or an unreachable backend / error fallback) and
-  // stays closed for an explicitly unauthenticated session.
+  // Guest-eligible fetches are gated only until the session resolves. The gate is
+  // a shared one-shot promise so the puzzle load cannot race bootstrap, while an
+  // unauthenticated result still permits username-driven guest analysis.
   const sessionGateRef = React.useRef<{ promise: Promise<boolean>; resolve: (open: boolean) => void } | null>(null);
   if (sessionGateRef.current === null) {
     let resolveGate!: (open: boolean) => void;
@@ -60,7 +59,7 @@ export default function Home() {
     });
     sessionGateRef.current = { promise, resolve: resolveGate };
   }
-  const sessionGateOpen = sessionStatus === 'authenticated' || sessionStatus === 'error';
+  const sessionGateOpen = sessionStatus !== 'loading';
 
   const handleJobStatusUpdate = (job: JobStatusResponse | null) => {
     const previousJob = prevJobRef.current;
@@ -643,15 +642,9 @@ export default function Home() {
 
     async function loadData() {
       const seq = ++puzzleLoadSeqRef.current;
-      // Gate on session resolution without forcing an extra committed render:
-      // await the shared session gate so no personalized fetch fires while the
-      // session is unresolved, and none fires at all when it is not open.
-      const open = await sessionGateRef.current!.promise;
+      // Gate on session resolution without forcing an extra committed render.
+      await sessionGateRef.current!.promise;
       if (seq !== puzzleLoadSeqRef.current) return;
-      if (!open) {
-        setIsLoadingPuzzles(false);
-        return;
-      }
       setIsLoadingPuzzles(true);
       setPuzzleLoadError(false);
       setPuzzlePage(0);
@@ -709,16 +702,15 @@ export default function Home() {
     };
   }, [isSettingsInitialized, activeUsername, puzzleColorFilter, minEvalLoss, minMistakeCount, puzzleReloadToken]);
 
-  // Bootstrap the session from /api/me once on mount, resolving the shared gate so
-  // personalized fetches proceed only after the session resolves (and only when it
-  // is authenticated or the backend is unreachable). A late resolve after unmount
-  // is ignored (#113 AC7).
+  // Bootstrap the session from /api/me once on mount, resolving the shared gate
+  // after every outcome so guest-eligible fetches proceed once session state is
+  // known. A late resolve after unmount is ignored (#113 AC7).
   React.useEffect(() => {
     let active = true;
     fetchCurrentSession().then((state) => {
       if (!active) return;
       setSessionStatus(state.status);
-      sessionGateRef.current!.resolve(state.status === 'authenticated' || state.status === 'error');
+      sessionGateRef.current!.resolve(true);
       if (state.status === 'unauthenticated') {
         setIsLoadingPuzzles(false);
       }

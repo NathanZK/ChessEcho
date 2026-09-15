@@ -105,12 +105,30 @@ the same `IdentitySessionService.establishSession` path as any provider.
 
 The SPA bootstraps its session from `GET /api/me` into non-persistent state
 (`loading` → `authenticated` / `unauthenticated` / `error`). No session material is
-written to `localStorage`. Personalized fetches are gated until the session
-resolves, and the authenticated affordance is derived from session state — never
-from a stored Chess.com username. Session calls send `credentials: 'include'`, and
-logout sends the `X-XSRF-TOKEN` header read from the readable cookie. Logout and
-expiry clear private state and bump monotonic generation guards so a late in-flight
-response can never restore a prior user's data.
+written to `localStorage`. Guest-eligible username-based reads wait for bootstrap
+to resolve, but they are not suppressed when the result is `unauthenticated`:
+the selected Chess.com username is a guest capability input, not proof of
+identity. The UI labels that state as guest mode rather than an authenticated
+connection. Session calls send `credentials: 'include'`, and logout sends the
+`X-XSRF-TOKEN` header read from the readable cookie. Logout and expiry clear
+private state and bump monotonic generation guards so a late in-flight response
+can never restore a prior user's data.
+
+### Guest/authenticated capability boundary
+
+| Capability | Guest | Authenticated |
+|---|---|---|
+| Import Chess.com games and poll the username/job flow | Allowed | Allowed |
+| Read username-driven practice puzzles and weakness analysis | Allowed after session bootstrap resolves | Allowed |
+| Continue puzzles, evaluate moves, and use analysis UI | Allowed | Allowed |
+| Persist private history across devices or associate data with an internal owner | Not allowed | Reserved for owner-scoped work in #252 |
+| Access future private/owner-scoped endpoints | Not allowed | Required at the narrowest endpoint boundary |
+
+`GET /api/me` returning `401` is a valid guest state, not an application error.
+Authentication gates must be applied only to capabilities that require durable
+identity, privacy, ownership, or cross-device persistence. Provider integration,
+session expiry, and logout must return guest-eligible flows to the guest state
+without turning authentication into a global prerequisite.
 
 ## Out of scope (follow-ups)
 

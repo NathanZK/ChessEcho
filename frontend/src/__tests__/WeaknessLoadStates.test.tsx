@@ -108,6 +108,27 @@ describe('Weakness load & pagination failure states (Issue #86)', () => {
     vi.restoreAllMocks();
   });
 
+  it('loads guest-eligible weaknesses when a username is available without a session', async () => {
+    vi.mocked(api.fetchWeaknesses).mockResolvedValue([]);
+
+    render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
+
+    await waitFor(() => {
+      expect(api.fetchWeaknesses).toHaveBeenCalledWith(
+        'hikaru',
+        'CHESS_COM',
+        'BOTH',
+        expect.any(Number),
+        expect.any(Number),
+        0,
+        PAGE_SIZE
+      );
+    });
+
+    expect(await screen.findByText('No Recurring Weaknesses Found')).toBeInTheDocument();
+    expect(screen.queryByText('No Connected Account')).not.toBeInTheDocument();
+  });
+
   // T12: the initial-load Retry must actually refetch (the current handler is a
   // no-op) and render cards on a subsequent success.
   it('T12: Retry after an initial-load error refetches and renders weakness cards', async () => {
