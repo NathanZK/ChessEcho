@@ -9,6 +9,7 @@
       "test_implementer": "chess-echo-test-implementer",
       "implementer": "chess-echo-implementer"
     },
+    "approval_mechanism": "self-attested-local-acknowledgment",
     "approvals": {
       "plan": "plan_approved",
       "tests": "tests_approved",

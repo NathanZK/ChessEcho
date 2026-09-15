@@ -706,6 +706,54 @@ class AgentWorkflowTest(unittest.TestCase):
         )
         self.assertEqual("TEST_IMPLEMENTATION", self.state()["status"])
 
+    def test_local_plan_approval_is_self_attested_not_independent_authorization(self):
+        """#122 regression: local CLI fields are assertions, not human authorization."""
+        self.write_artifact("plan.md", "plan")
+        self.write_artifact("plan-review.md", "plan review")
+        self.assertEqual(0, self.run_cli("init", str(ISSUE))[0])
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "submit-plan",
+                str(ISSUE),
+                "--artifact",
+                "artifacts-src/plan.md",
+                "--agent",
+                "chess-echo-planner",
+                "--scope",
+                "src/test/ExampleTest.kt",
+            )[0],
+        )
+
+        code, payload, _ = self.run_cli(
+            "review-plan",
+            str(ISSUE),
+            "--status",
+            workflow.READY,
+            "--artifact",
+            "artifacts-src/plan-review.md",
+            "--reviewer",
+            "chess-echo-reviewer",
+        )
+        self.assertEqual(0, code)
+        self.assertEqual("Approval Gate", payload["approval_gate"]["name"])
+        self.assertEqual("self-attested-local-acknowledgment", payload["approval_gate"]["mechanism"])
+        self.assertFalse(payload["approval_gate"]["independent_authorization"])
+
+        code, payload, _ = self.run_cli(
+            "approve-plan",
+            str(ISSUE),
+            "--by",
+            "autonomous-agent",
+            "--confirm",
+            "plan_approved",
+        )
+        self.assertEqual(0, code)
+        self.assertEqual("self-attested-local-acknowledgment", payload["approval"]["kind"])
+        self.assertEqual("autonomous-agent", payload["approval"]["asserted_by"])
+        self.assertFalse(payload["approval"]["independent_authorization"])
+        self.assertEqual(payload["approval"], self.state()["approvals"]["plan"])
+
     def test_init_records_target_head_and_rejects_branch_ahead_of_target(self):
         """init records target_head and rejects pre-existing branch commits."""
         target_head = self.git("rev-parse", "origin/main").stdout.strip()

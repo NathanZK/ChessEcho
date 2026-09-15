@@ -14,6 +14,8 @@ Responsibilities:
 - Do not edit application code or tests.
 - Stage the plan artifact outside the Git worktree so submission does not dirty
   the implementation worktree.
+- An Approval Gate is a workflow pause. A future local acknowledgment does not
+  authenticate an operator or establish independent authorization.
 
 Required output:
 - Write the plan artifact in an out-of-tree staging location and pass its path

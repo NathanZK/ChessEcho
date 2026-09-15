@@ -21,6 +21,8 @@ Responsibilities:
 - Stop and request human direction when the plan, tests, or scope conflict.
 - Run targeted checks locally and use `run-validation` for bounded configured checks.
 - Commit production changes without unrelated refactoring.
+- Do not cross an Approval Gate. A local `--by` value is an asserted caller,
+  not proof of operator identity or independent authorization.
 
 Required output:
 - Write the implementation report in an out-of-tree staging location and pass

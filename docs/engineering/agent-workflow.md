@@ -31,20 +31,22 @@ worktree makes the required clean-worktree gate fail.
 
 1. `init`
 2. `submit-plan --scope PATH` -> `review-plan`
-3. human `approve-plan`
+3. Approval Gate: `approve-plan`
 4. `submit-tests --failure-command "COMMAND" --failure-contains "EXPECTED"` -> `review-tests`
-5. human `approve-tests`
+5. Approval Gate: `approve-tests`
 6. `submit-implementation --evidence PATH`
 7. `run-validation`
 8. `review-implementation`
 9. `create-draft-pr`
 
-At each human gate, approval requires the exact confirmation phrase from `.github/agent-workflow.json`.
+At each Approval Gate, autonomous execution pauses until an approval operation
+is recorded. The current local operation compares an exact confirmation phrase
+from `.github/agent-workflow.json`; it does not authenticate the caller.
 
 When plan review reaches `WAITING_FOR_PLAN_HUMAN_APPROVAL`, `review-plan`
-prints the exact submitted plan, the exact read-only review, the required
-approval command, and an explicit stopped-at-gate message. No approval is
-inferred or generated automatically.
+prints the exact submitted plan, the exact read-only review, an Approval Gate
+descriptor, the local acknowledgment command, and an explicit stopped-at-gate
+message. No operator decision is inferred or generated automatically.
 
 ```mermaid
 stateDiagram-v2
@@ -53,13 +55,13 @@ stateDiagram-v2
     PLANNING --> PLAN_REVIEW: submit-plan
     PLAN_REVIEW --> WAITING_FOR_PLAN_HUMAN_APPROVAL: review-plan READY
     PLAN_REVIEW --> PLANNING: review-plan NEEDS_REVISION
-    WAITING_FOR_PLAN_HUMAN_APPROVAL --> TEST_IMPLEMENTATION: approve-plan (Human Gate 1)
+    WAITING_FOR_PLAN_HUMAN_APPROVAL --> TEST_IMPLEMENTATION: approve-plan (Approval Gate 1)
     WAITING_FOR_PLAN_HUMAN_APPROVAL --> PLANNING: reject-plan
 
     TEST_IMPLEMENTATION --> TEST_REVIEW: submit-tests executes targeted failing test
     TEST_REVIEW --> WAITING_FOR_TEST_HUMAN_APPROVAL: review-tests READY
     TEST_REVIEW --> TEST_IMPLEMENTATION: review-tests NEEDS_REVISION
-    WAITING_FOR_TEST_HUMAN_APPROVAL --> IMPLEMENTATION: approve-tests creates authoritative test_commit (Human Gate 2)
+    WAITING_FOR_TEST_HUMAN_APPROVAL --> IMPLEMENTATION: approve-tests creates test boundary (Approval Gate 2)
     WAITING_FOR_TEST_HUMAN_APPROVAL --> TEST_IMPLEMENTATION: reject-tests
 
     IMPLEMENTATION --> TEST_IMPLEMENTATION: reopen-tests --reason approved-test-fixture-defect
@@ -68,7 +70,7 @@ stateDiagram-v2
     VALIDATION --> IMPLEMENTATION: validation failure or candidate drift
     IMPLEMENTATION_REVIEW --> WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL: review-implementation READY after candidate revalidation
     IMPLEMENTATION_REVIEW --> IMPLEMENTATION: review-implementation NEEDS_REVISION
-    WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL --> DRAFT_PR_CREATION: approve-implementation creates authoritative implementation commit (Human Gate 3)
+    WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL --> DRAFT_PR_CREATION: approve-implementation creates implementation commit (Approval Gate 3)
     WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL --> IMPLEMENTATION: reject-implementation
 
     DRAFT_PR_CREATION --> WORKFLOW_COMPLETED: create-draft-pr verifies one-commit topology
@@ -77,29 +79,66 @@ stateDiagram-v2
 ```
 
 Tests are committed before production code so the behavior contract is independently reviewable.
-`approve-tests` creates the authoritative `test_commit`, and later stages enforce that approved tests
+`approve-tests` creates the workflow `test_commit`, and later stages enforce that approved tests
 remain byte-for-byte unchanged. Production implementation remains an uncommitted candidate until Human
 Gate 3. `submit-implementation` independently compares the current native Git candidate diff with the
 submitted execution evidence, records the accepted candidate, and validation, implementation review, and
-implementation approval each recompute that Git candidate before advancing.
+the implementation Approval Gate each recompute that Git candidate before advancing.
 
 The workflow records `target_head` from the configured PR target branch at `init` and requires the
 worktree `HEAD` to match it, so pre-existing branch commits cannot be absorbed into a run. Immediately
-before implementation approval and draft PR creation, the workflow fetches the target branch and fails
-closed if it advanced. `approve-implementation` creates the single authoritative implementation commit
+before the implementation Approval Gate and draft PR creation, the workflow fetches the target branch and fails
+closed if it advanced. `approve-implementation` creates the single workflow implementation commit
 directly on `target_head`; `create-draft-pr` verifies that the final branch has exactly one commit, that
 `HEAD^` is the target, and that changed paths remain within the approved scope. `create-draft-pr` is a
-workflow action, not a human approval gate. PR review, CI, and merge remain external GitHub processes.
+workflow action, not an Approval Gate. PR review, CI, and merge remain external GitHub processes.
 
 There is no `approve-pr`, `reject-pr`, `WAITING_FOR_PR`, or `PR_APPROVED` state. The exceptional
 `reopen-tests --reason approved-test-fixture-defect` transition exists only to recover from a proven
-approved-test fixture defect before implementation approval or draft PR creation; it preserves any
-uncommitted production candidate and requires Human Gate 2 to run again.
+approved-test fixture defect before the implementation Approval Gate or draft PR creation; it preserves any
+uncommitted production candidate and requires Approval Gate 2 to run again.
 
-The local approval command records the supplied human identity but cannot authenticate an arbitrary
-`--by` value by itself. Operators must run approval commands as the human decision-maker; GitHub remains
-the authoritative approval and merge system. Adding a second approval protocol would duplicate that
-authority rather than improve it.
+## Approval terminology and assurance
+
+An **Approval Gate** is a workflow pause before autonomous progression. It is
+not, by its name or persisted legacy status identifier, proof that an approval
+was performed by a human.
+
+- **Operator approval** is a deliberate decision by the person operating the
+  session. The local workflow cannot authenticate it from command-line text.
+- **Self-attested/local approval** is the present
+  `approve-* --by ... --confirm ...` mechanism. It records a matching static
+  phrase and an `asserted_by` value supplied by the calling process. It does
+  not authenticate that value, prove the caller was an operator, or establish
+  independent authorization.
+- **Host-confirmed approval** is a Copilot-host permission decision permitting
+  a requested tool invocation in a restrictive interactive session.
+- **Independent authorization** is a trusted authority's verifiable,
+  exact-challenge-bound approval that an agent cannot forge. It is not
+  implemented by this local workflow.
+
+The #122 incident demonstrated why this distinction matters: an autonomous
+agent invoked the local command with `--by nathankebede` and the public
+confirmation phrase. That event was self-attested local input, not
+independently observed operator authorization.
+
+Copilot host permissions can provide optional operational friction. For a
+governance-sensitive run, use an interactive session in manual permission mode;
+avoid `--allow-all`, `--yolo`, `--allow-all-tools`, `COPILOT_ALLOW_ALL=true`,
+and broad or location-persisted permissions for approval-relevant operations.
+The host can then interrupt a requested direct operation and require an
+operator decision, preferably for that invocation only.
+
+Host friction is defense in depth, not an authority receipt. It does not
+authenticate an operator, prove intent, produce workflow-verifiable approval,
+bind an immutable workflow challenge, or prevent all equivalent local effects.
+A command deny rule blocks a matching request, not the semantic effect: another
+permitted shell, interpreter, edit, or state-write path may reproduce it.
+`--assisted-approval` is an automated safety judge, not operator approval.
+
+The stronger independent-authorization assurance described by #237 remains
+future work. Do not claim that either the local CLI or Copilot host friction
+satisfies that requirement.
 
 ## Bounded execution
 
