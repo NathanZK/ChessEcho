@@ -131,6 +131,84 @@ class HumanMoveBfsServiceTest {
     }
 
     @Test
+    fun `excluded seed is not visited or fetched`() {
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(emptyList())
+
+        val response =
+            service.runBfs(
+                HumanMoveBfsRequest(
+                    ratingBand = RatingBand.BAND_1000_1200.value,
+                    seedPlayers = listOf("ExcludedPlayer", "p1"),
+                    excludedPlayers = listOf("eXcLuDeDpLaYeR"),
+                    maxDepth = 0,
+                ),
+            )
+
+        verify(chessComClient, never()).fetchArchiveUrls("excludedplayer")
+        verify(chessComClient).fetchArchiveUrls("p1")
+        assertEquals(1, response.playersVisited)
+    }
+
+    @Test
+    fun `excluded discovered opponent is not added to the frontier`() {
+        val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
+        whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(
+            listOf(rapidGame("http://game1", "p1", 1100, "ExcludedPlayer", 1150)),
+        )
+
+        val response =
+            service.runBfs(
+                HumanMoveBfsRequest(
+                    ratingBand = RatingBand.BAND_1000_1200.value,
+                    seedPlayers = listOf("p1"),
+                    excludedPlayers = listOf("eXcLuDeDpLaYeR"),
+                    maxDepth = 1,
+                ),
+            )
+
+        verify(chessComClient, never()).fetchArchiveUrls("excludedplayer")
+        assertEquals(1, response.playersVisited)
+    }
+
+    @Test
+    fun `excluded discovered opponent contributes no observations or claimed game`() {
+        val stores = makeRepositoryStateful()
+        val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
+        whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(
+            listOf(
+                rapidGame(
+                    url = "http://excluded-game",
+                    whiteUser = "p1",
+                    whiteRating = 1100,
+                    blackUser = "ExcludedPlayer",
+                    blackRating = 1150,
+                    pgn = "[Event \"Live Chess\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Nf3 Nc6 1-0",
+                ),
+            ),
+        )
+
+        val response =
+            service.runBfs(
+                HumanMoveBfsRequest(
+                    ratingBand = RatingBand.BAND_1000_1200.value,
+                    seedPlayers = listOf("p1"),
+                    excludedPlayers = listOf("eXcLuDeDpLaYeR"),
+                    maxDepth = 1,
+                ),
+            )
+
+        assertEquals(0, response.qualifyingGames)
+        assertEquals(0, response.totalObservations)
+        assertEquals(0, response.uniqueGamesProcessed)
+        assertTrue(stores.distributions.isEmpty())
+        assertTrue(stores.seenGameUrls.isEmpty())
+        verify(humanMoveBfsSeenGameClaimer, never()).claimGameUrls(any<Collection<String>>())
+        verify(humanMoveDistributionRepository, never()).saveAll(anyList())
+    }
+
+    @Test
     fun `test exact 10 seed players accepted`() {
         val seeds = (1..10).map { "player$it" }
         for (seed in seeds) {

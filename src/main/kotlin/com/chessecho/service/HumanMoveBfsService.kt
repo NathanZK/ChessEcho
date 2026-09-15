@@ -43,8 +43,13 @@ class HumanMoveBfsService(
 
         val visitedPlayers = mutableSetOf<String>()
         val queuedPlayers = mutableSetOf<String>()
+        val excludedPlayers = request.excludedPlayers.map { it.lowercase() }.toSet()
 
-        var currentFrontier = request.seedPlayers.map { it.lowercase() }.distinct()
+        var currentFrontier =
+            request.seedPlayers
+                .map { it.lowercase() }
+                .filterNot { it in excludedPlayers }
+                .distinct()
         queuedPlayers.addAll(currentFrontier)
 
         var depth = 0
@@ -235,6 +240,13 @@ class HumanMoveBfsService(
                         val isPlayerWhite = (whiteUsername == player)
                         val opponent = if (isPlayerWhite) blackUsername else whiteUsername
                         val opponentRating = if (isPlayerWhite) blackRating else whiteRating
+
+                        if (opponent in excludedPlayers) {
+                            // Excluded opponents must not affect traversal, attribution,
+                            // or the persistent seen-game claim.
+                            seenGameUrls.remove(url)
+                            continue
+                        }
 
                         // Add opponent to frontier regardless of rating
                         if (!visitedPlayers.contains(opponent) && !queuedPlayers.contains(opponent)) {

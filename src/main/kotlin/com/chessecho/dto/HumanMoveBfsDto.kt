@@ -3,6 +3,7 @@ package com.chessecho.dto
 data class HumanMoveBfsRequest(
     val ratingBand: String,
     val seedPlayers: List<String>,
+    val excludedPlayers: List<String> = emptyList(),
     val maxQualifyingGames: Int = 2000,
     val maxGamesPerPlayer: Int = 100,
     val maxPlayers: Int = 100,
