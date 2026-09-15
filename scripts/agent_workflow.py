@@ -21,6 +21,7 @@ READY = "READY_FOR_HUMAN_APPROVAL"
 REVISION = "NEEDS_REVISION"
 REVIEW_STATUSES = (READY, REVISION)
 DEFAULT_IMPLEMENTATION_CONFIRMATION = "implementation_approved"
+LOCAL_ACKNOWLEDGMENT_KIND = "self-attested-local-acknowledgment"
 
 STATUS_SEQUENCE = (
     "PLANNING",
@@ -236,6 +237,13 @@ def _load_config(root):
         )
     else:
         approvals["implementation"] = DEFAULT_IMPLEMENTATION_CONFIRMATION
+
+    _ensure(
+        workflow.get("approval_mechanism", LOCAL_ACKNOWLEDGMENT_KIND)
+        == LOCAL_ACKNOWLEDGMENT_KIND,
+        "invalid-config",
+        "workflow.approval_mechanism must be %s" % LOCAL_ACKNOWLEDGMENT_KIND,
+    )
 
     execution = workflow.get("execution")
     _ensure(
@@ -823,8 +831,20 @@ def _run_validation_checks(root, config, profile_name):
     return results
 
 
-def _require_confirmation(config, state, gate, provided, by):
-    """Record an approval only when its configured exact phrase is supplied."""
+def _approval_gate(gate, instruction, command):
+    """Describe a local Approval Gate without claiming independent authority."""
+    return {
+        "name": "Approval Gate",
+        "gate": gate,
+        "mechanism": LOCAL_ACKNOWLEDGMENT_KIND,
+        "independent_authorization": False,
+        "message": instruction,
+        "approval_command": command,
+    }
+
+
+def _record_local_acknowledgment(config, state, gate, provided, by):
+    """Record matching local inputs without authenticating the asserted caller."""
     approvals = config["workflow"]["approvals"]
     expected = approvals.get(gate)
     _ensure(
@@ -832,11 +852,15 @@ def _require_confirmation(config, state, gate, provided, by):
         "approval-confirmation-mismatch",
         "Expected confirmation phrase for %s gate: %s" % (gate, expected),
     )
-    state["approvals"][gate] = {
-        "by": by,
+    acknowledgment = {
+        "kind": LOCAL_ACKNOWLEDGMENT_KIND,
+        "asserted_by": by,
         "confirmation": provided,
-        "at": _now(),
+        "recorded_at": _now(),
+        "independent_authorization": False,
     }
+    state["approvals"][gate] = acknowledgment
+    return acknowledgment
 
 
 def _validate_pr_body(body_path):
@@ -931,32 +955,39 @@ def command_review_plan(args, root, config):
     _write_state(root, config, args.issue, state)
     response = {"ok": True, "status": state["status"], "review_status": args.status}
     if state["status"] == "WAITING_FOR_PLAN_HUMAN_APPROVAL":
+        command = (
+            "python3 scripts/agent_workflow.py approve-plan %s --by LOGIN "
+            "--confirm plan_approved" % args.issue
+        )
+        response["approval_gate"] = _approval_gate(
+            "plan",
+            "The coordinator is stopped. Inspect the exact submitted plan and read-only "
+            "review before an operator records a local acknowledgment.",
+            command,
+        )
         response["human_approval"] = {
             "required": True,
             "message": (
-                "The coordinator is stopped. Inspect the exact submitted plan and read-only "
-                "review, then run approve-plan with the configured confirmation phrase."
+                "Legacy compatibility payload. The local command records a self-attested "
+                "acknowledgment; it does not authenticate the asserted operator."
             ),
             "plan_path": state["artifacts"]["plan"]["path"],
             "plan": _artifact_text(root, config, args.issue, "plan"),
             "review_path": state["artifacts"]["plan_review"]["path"],
             "review": _artifact_text(root, config, args.issue, "plan_review"),
-            "approval_command": (
-                "python3 scripts/agent_workflow.py approve-plan %s --by LOGIN "
-                "--confirm plan_approved" % args.issue
-            ),
+            "approval_command": command,
         }
     return response
 
 
 def command_approve_plan(args, root, config):
-    """Advance to test implementation only after the exact plan approval."""
+    """Advance after matching self-attested local plan acknowledgment."""
     state = _read_state(root, config, args.issue)
     _expect_status(state, "WAITING_FOR_PLAN_HUMAN_APPROVAL", "approve-plan")
-    _require_confirmation(config, state, "plan", args.confirm, args.by)
+    acknowledgment = _record_local_acknowledgment(config, state, "plan", args.confirm, args.by)
     state["status"] = "TEST_IMPLEMENTATION"
     _write_state(root, config, args.issue, state)
-    return {"ok": True, "status": state["status"], "approved_by": args.by}
+    return {"ok": True, "status": state["status"], "approval": acknowledgment}
 
 
 def command_reject_plan(args, root, config):
@@ -1052,14 +1083,23 @@ def command_review_tests(args, root, config):
     if args.status == REVISION:
         _clear_post_tests(state)
     _write_state(root, config, args.issue, state)
-    return {"ok": True, "status": state["status"], "review_status": args.status}
+    response = {"ok": True, "status": state["status"], "review_status": args.status}
+    if state["status"] == "WAITING_FOR_TEST_HUMAN_APPROVAL":
+        response["approval_gate"] = _approval_gate(
+            "tests",
+            "The coordinator is stopped. Inspect the exact submitted tests and read-only "
+            "review before an operator records a local acknowledgment.",
+            "python3 scripts/agent_workflow.py approve-tests %s --by LOGIN "
+            "--confirm tests_approved" % args.issue,
+        )
+    return response
 
 
 def command_approve_tests(args, root, config):
-    """Human Gate 2: Advance to implementation, create and record authoritative test_commit."""
+    """Approval Gate 2: record local acknowledgment and the test boundary."""
     state = _read_state(root, config, args.issue)
     _expect_status(state, "WAITING_FOR_TEST_HUMAN_APPROVAL", "approve-tests")
-    _require_confirmation(config, state, "tests", args.confirm, args.by)
+    acknowledgment = _record_local_acknowledgment(config, state, "tests", args.confirm, args.by)
 
     candidate_test_commit = state.get("test_commit")
     target_head = _state_target_head(state)
@@ -1081,7 +1121,7 @@ def command_approve_tests(args, root, config):
     _require_clean_index(root, config, "approve-tests")
 
     # The candidate is already committed by the test implementer.  This empty
-    # workflow-owned commit records the human-approved boundary without
+    # The workflow-owned commit records the locally acknowledged boundary without
     # staging, resetting, or discarding any uncommitted production candidate.
     _run_checked(
         _git_command(config, "commit", "--allow-empty", "-m", "workflow: approve tests"),
@@ -1100,14 +1140,14 @@ def command_approve_tests(args, root, config):
     state["test_commit"] = authoritative_test_head
     if reopened_tests:
         state["test_reopenings"][-1]["new_test_commit"] = authoritative_test_head
-        state["test_reopenings"][-1]["approved_at"] = state["approvals"]["tests"]["at"]
+        state["test_reopenings"][-1]["approved_at"] = state["approvals"]["tests"]["recorded_at"]
         state["test_reopenings"][-1]["active"] = False
     state["status"] = "IMPLEMENTATION"
     _write_state(root, config, args.issue, state)
     return {
         "ok": True,
         "status": state["status"],
-        "approved_by": args.by,
+        "approval": acknowledgment,
         "test_commit": authoritative_test_head,
     }
 
@@ -1377,11 +1417,20 @@ def command_review_implementation(args, root, config):
         state["implementation_candidate"] = None
 
     _write_state(root, config, args.issue, state)
-    return {"ok": True, "status": state["status"], "review_status": args.status}
+    response = {"ok": True, "status": state["status"], "review_status": args.status}
+    if state["status"] == "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL":
+        response["approval_gate"] = _approval_gate(
+            "implementation",
+            "The coordinator is stopped. Inspect the validated implementation candidate and "
+            "read-only review before an operator records a local acknowledgment.",
+            "python3 scripts/agent_workflow.py approve-implementation %s --by LOGIN "
+            "--confirm implementation_approved" % args.issue,
+        )
+    return response
 
 
 def command_approve_implementation(args, root, config):
-    """Human Gate 3: authorize implementation and mechanically create the authoritative commit."""
+    """Approval Gate 3: record local acknowledgment and commit the candidate."""
     state = _read_state(root, config, args.issue)
     _expect_status(state, "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", "approve-implementation")
     _ensure(
@@ -1389,7 +1438,9 @@ def command_approve_implementation(args, root, config):
         "implementation-review-not-ready",
         "approve-implementation requires a READY_FOR_HUMAN_APPROVAL implementation review",
     )
-    _require_confirmation(config, state, "implementation", args.confirm, args.by)
+    acknowledgment = _record_local_acknowledgment(
+        config, state, "implementation", args.confirm, args.by
+    )
 
     test_commit = state.get("test_commit")
     scope = state.get("approved_scope") or []
@@ -1446,7 +1497,7 @@ def command_approve_implementation(args, root, config):
     return {
         "ok": True,
         "status": state["status"],
-        "approved_by": args.by,
+        "approval": acknowledgment,
         "implementation_commit": authoritative_head,
     }
 

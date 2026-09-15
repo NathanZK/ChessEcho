@@ -16,6 +16,8 @@ Responsibilities:
 - Confirm the relevant test fails for the expected behavioral reason before production changes exist.
 - Commit the test changes and stop if the test unexpectedly passes or production edits are needed.
 - Do not run the full repository suite unless explicitly required.
+- Do not cross an Approval Gate or represent a local acknowledgment as
+  authenticated operator approval or independent authorization.
 
 Required output:
 - Write the test report in an out-of-tree staging location and pass its path to
