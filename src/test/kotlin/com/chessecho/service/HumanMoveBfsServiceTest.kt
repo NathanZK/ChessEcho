@@ -504,6 +504,180 @@ class HumanMoveBfsServiceTest {
         verify(chessComClient).fetchMonthlyGames(olderArchive)
     }
 
+    // ── Incremental ingestion: maxGamesPerPlayer counts only new games ────────
+
+    @Test
+    fun `maxGamesPerPlayer - repeated run with same budget processes zero additional games once all are seen`() {
+        // Player has exactly 3 rapid games total. Run 1 with budget 3 claims all
+        // of them. Run 2 with the same budget must find 0 new eligible games,
+        // because maxGamesPerPlayer bounds *new* games, not games merely
+        // inspected/already-claimed.
+        val stores = makeRepositoryStateful()
+
+        val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
+        val games = (1..3).map { rapidGame("http://game$it", "p1", 1100, "p2", 1150) }
+        whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(games)
+
+        val request =
+            HumanMoveBfsRequest(
+                ratingBand = RatingBand.BAND_1000_1200.value,
+                seedPlayers = listOf("p1"),
+                maxDepth = 0,
+                maxGamesPerPlayer = 3,
+            )
+
+        val firstRun = service.runBfs(request)
+        assertEquals(3, firstRun.qualifyingGames, "first run must process all 3 available games")
+        assertEquals(3, stores.seenGameUrls.size)
+
+        val secondRun = service.runBfs(request)
+        assertEquals(
+            0,
+            secondRun.qualifyingGames,
+            "second run with the same budget must contribute 0 new games once all games are already seen",
+        )
+        assertEquals(3, stores.seenGameUrls.size, "seen-game store must not grow when no new games exist")
+    }
+
+    @Test
+    fun `maxGamesPerPlayer - increasing the budget between runs processes up to the new budget in new games`() {
+        // Traversal order (newest to oldest, i.e. games.reversed()) is:
+        //   claim1, claim2, claim3, new1, new2, new3, new4, new5
+        // Run 1 (budget 3) claims claim1..claim3, matching the first 3 games
+        // in traversal order.
+        // Run 2 (budget 5) must find 5 NEW games in its own right, because
+        // maxGamesPerPlayer bounds new games per run, not games merely
+        // inspected. The already-claimed games earlier in traversal order
+        // must not consume any of run 2's budget.
+        val stores = makeRepositoryStateful()
+
+        val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
+
+        val claimedGames = (1..3).map { rapidGame("http://claim$it", "p1", 1100, "p2", 1150) }
+        val newGames = (1..5).map { rapidGame("http://new$it", "p1", 1100, "p2", 1150) }
+        val traversalOrder = claimedGames + newGames
+        // The service iterates games.reversed(), so feed it pre-reversed to get
+        // the intended traversal order above.
+        whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(traversalOrder.reversed())
+
+        service.runBfs(
+            HumanMoveBfsRequest(
+                ratingBand = RatingBand.BAND_1000_1200.value,
+                seedPlayers = listOf("p1"),
+                maxDepth = 0,
+                maxGamesPerPlayer = 3,
+            ),
+        )
+        assertEquals(
+            setOf("http://claim1", "http://claim2", "http://claim3"),
+            stores.seenGameUrls,
+            "run 1 must claim exactly the first 3 games in traversal order",
+        )
+
+        val secondRun =
+            service.runBfs(
+                HumanMoveBfsRequest(
+                    ratingBand = RatingBand.BAND_1000_1200.value,
+                    seedPlayers = listOf("p1"),
+                    maxDepth = 0,
+                    maxGamesPerPlayer = 5,
+                ),
+            )
+
+        assertEquals(
+            5,
+            secondRun.qualifyingGames,
+            "run 2 must find all 5 new games up to its own budget of 5, unaffected by the " +
+                "3 already-claimed games ahead of them in traversal order",
+        )
+        assertEquals(
+            8,
+            stores.seenGameUrls.size,
+            "3 previously-claimed + 5 newly-claimed games = 8 distinct games total",
+        )
+    }
+
+    @Test
+    fun `maxGamesPerPlayer - a player with fewer new games than the requested budget contributes only the available new games`() {
+        // Player has 5 rapid games total. Run 1 with budget 3 claims 3 of them,
+        // leaving only 2 new games available. Run 2 requests a much larger
+        // budget (10) than the number of remaining new games; only the 2
+        // available new games should be processed, without error or hanging.
+        val stores = makeRepositoryStateful()
+
+        val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
+        val games = (1..5).map { rapidGame("http://game$it", "p1", 1100, "p2", 1150) }
+        whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(games)
+
+        service.runBfs(
+            HumanMoveBfsRequest(
+                ratingBand = RatingBand.BAND_1000_1200.value,
+                seedPlayers = listOf("p1"),
+                maxDepth = 0,
+                maxGamesPerPlayer = 3,
+            ),
+        )
+        assertEquals(3, stores.seenGameUrls.size)
+
+        val secondRun =
+            service.runBfs(
+                HumanMoveBfsRequest(
+                    ratingBand = RatingBand.BAND_1000_1200.value,
+                    seedPlayers = listOf("p1"),
+                    maxDepth = 0,
+                    maxGamesPerPlayer = 10,
+                ),
+            )
+
+        assertEquals(
+            2,
+            secondRun.qualifyingGames,
+            "only the 2 remaining new games must be processed even though the budget (10) is much larger",
+        )
+        assertEquals(5, stores.seenGameUrls.size, "all 5 available games must eventually be claimed across both runs")
+    }
+
+    @Test
+    fun `maxGamesPerPlayer - BFS continues into an older archive when the newer archive is entirely already seen`() {
+        // The newer archive's 3 rapid games were already claimed by a previous
+        // run. The older archive has 2 unseen rapid games. A budget of 2 must
+        // not be exhausted by re-inspecting the fully-claimed newer archive;
+        // the BFS must continue into the older archive to find the 2 new games.
+        val stores = makeRepositoryStateful()
+
+        val newerArchive = "https://api.chess.com/pub/player/p1/games/2021/02"
+        val olderArchive = "https://api.chess.com/pub/player/p1/games/2021/01"
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(olderArchive, newerArchive))
+
+        val newerGames = (1..3).map { rapidGame("http://n-rapid$it", "p1", 1100, "p2", 1150) }
+        val olderGames = (1..2).map { rapidGame("http://o-rapid$it", "p1", 1100, "p2", 1150) }
+        whenever(chessComClient.fetchMonthlyGames(newerArchive)).thenReturn(newerGames)
+        whenever(chessComClient.fetchMonthlyGames(olderArchive)).thenReturn(olderGames)
+
+        // Simulate a previous run having already claimed all 3 newer-archive games.
+        stores.seenGameUrls.addAll(newerGames.mapNotNull { it["url"] as? String })
+
+        val response =
+            service.runBfs(
+                HumanMoveBfsRequest(
+                    ratingBand = RatingBand.BAND_1000_1200.value,
+                    seedPlayers = listOf("p1"),
+                    maxDepth = 0,
+                    maxGamesPerPlayer = 2,
+                ),
+            )
+
+        assertEquals(
+            2,
+            response.qualifyingGames,
+            "the 2 new games in the older archive must be found despite the newer archive being fully already-seen",
+        )
+        verify(chessComClient).fetchMonthlyGames(olderArchive)
+    }
+
     @Test
     fun `test opponent added even if out of band`() {
         val seedPlayers = listOf("p1")
