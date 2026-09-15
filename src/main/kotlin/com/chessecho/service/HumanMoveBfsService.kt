@@ -166,14 +166,18 @@ class HumanMoveBfsService(
                     }
 
                 var playerGamesInspected = 0
-                var playerRapidGamesInspected = 0
+                // Counts only NEW (not previously seen/claimed) rapid games found
+                // for this player in this run. maxGamesPerPlayer bounds this
+                // per-run new-game budget, not the number of games merely
+                // inspected, so previously ingested games must not consume it.
+                var playerNewRapidGamesInspected = 0
                 var playerQualifyingGames = 0
                 var newOpponentsDiscovered = 0
 
                 // Process archives from newest to oldest
                 for (archiveUrl in archiveUrls.reversed()) {
                     if (totalQualifyingGames >= request.maxQualifyingGames) break
-                    if (playerRapidGamesInspected >= request.maxGamesPerPlayer) break
+                    if (playerNewRapidGamesInspected >= request.maxGamesPerPlayer) break
 
                     val games =
                         try {
@@ -200,7 +204,7 @@ class HumanMoveBfsService(
                     // Process games from newest to oldest in the archive
                     for (game in games.reversed()) {
                         if (totalQualifyingGames >= request.maxQualifyingGames) break
-                        if (playerRapidGamesInspected >= request.maxGamesPerPlayer) break
+                        if (playerNewRapidGamesInspected >= request.maxGamesPerPlayer) break
 
                         totalGamesInspected++
                         playerGamesInspected++
@@ -217,7 +221,6 @@ class HumanMoveBfsService(
                         }
 
                         totalRapidGames++
-                        playerRapidGamesInspected++
 
                         val url = game["url"] as? String ?: continue
                         if (!seenGameUrls.add(url)) {
@@ -226,6 +229,10 @@ class HumanMoveBfsService(
                         if (url in alreadyClaimedUrls) {
                             continue // Already contributed by a prior batch / run / day
                         }
+
+                        // Only games that are new (not previously claimed) count
+                        // toward this run's per-player new-game budget.
+                        playerNewRapidGamesInspected++
 
                         val whiteData = game["white"] as? Map<*, *> ?: continue
                         val blackData = game["black"] as? Map<*, *> ?: continue
