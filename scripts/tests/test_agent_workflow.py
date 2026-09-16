@@ -813,6 +813,143 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual(1, code)
         self.assertEqual("workflow-start-not-at-target", payload["error"]["code"])
 
+    def bootstrap_to_planning_for_reanchor(self):
+        self.write_artifact("plan.md", "plan")
+        self.write_artifact("plan-review.md", "plan review")
+        self.assertEqual(0, self.run_cli("init", str(ISSUE))[0])
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "submit-plan",
+                str(ISSUE),
+                "--artifact",
+                "artifacts-src/plan.md",
+                "--agent",
+                "chess-echo-planner",
+                "--scope",
+                "scripts/agent_workflow.py",
+                "--scope",
+                "scripts/tests/test_agent_workflow.py",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "review-plan",
+                str(ISSUE),
+                "--status",
+                workflow.READY,
+                "--artifact",
+                "artifacts-src/plan-review.md",
+                "--reviewer",
+                "chess-echo-reviewer",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "approve-plan",
+                str(ISSUE),
+                "--by",
+                "owner",
+                "--confirm",
+                "plan_approved",
+            )[0],
+        )
+
+    def advance_remote_target(self, name="authorized remote merge"):
+        (self.root / "remote.txt").write_text("remote\n", encoding="utf-8")
+        self.git("add", "remote.txt")
+        self.git("commit", "-qm", name)
+        remote_head = self.git("rev-parse", "HEAD").stdout.strip()
+        self.git("update-ref", "refs/remotes/origin/main", remote_head)
+        return remote_head
+
+    def test_reanchor_target_preserves_scope_and_provenance_on_fast_forward(self):
+        """A governed fast-forward updates only the trusted target identity."""
+        self.bootstrap_to_planning_for_reanchor()
+        before = self.state()
+        remote_head = self.advance_remote_target()
+
+        code, payload, _ = self.run_cli(
+            "reanchor-target",
+            str(ISSUE),
+            "--by",
+            "owner",
+        )
+
+        self.assertEqual(0, code)
+        self.assertEqual("TEST_IMPLEMENTATION", payload["status"])
+        after = self.state()
+        self.assertEqual(remote_head, after["target_head"])
+        self.assertEqual(remote_head, after["base_head"])
+        self.assertEqual(before["approved_scope"], after["approved_scope"])
+        self.assertEqual(before["artifacts"], after["artifacts"])
+        self.assertEqual(before["approvals"]["plan"], after["approvals"]["plan"])
+        provenance = after["target_reanchors"][-1]
+        self.assertEqual(before["target_head"], provenance["previous_target_head"])
+        self.assertEqual(remote_head, provenance["new_target_head"])
+        self.assertEqual("owner", provenance["requested_by"])
+        self.assertTrue(provenance["requested_at"])
+        self.assertEqual("origin/main", provenance["remote_ref"])
+        self.assert_clean_status()
+
+    def test_reanchor_target_rejects_non_descendant_remote(self):
+        """An unrelated remote target cannot become the trusted base."""
+        self.bootstrap_to_planning_for_reanchor()
+        before = self.state()
+        unrelated = self.unrelated_empty_tree_commit()
+        self.git("update-ref", "refs/remotes/origin/main", unrelated)
+
+        code, payload, _ = self.run_cli(
+            "reanchor-target",
+            str(ISSUE),
+            "--by",
+            "owner",
+        )
+
+        self.assertEqual(1, code)
+        self.assertEqual("invalid-git-ancestry", payload["error"]["code"])
+        self.assertEqual(before, self.state())
+
+    def test_reanchor_target_rejects_dirty_worktree(self):
+        """Re-anchoring never inspects or changes a dirty working tree."""
+        self.bootstrap_to_planning_for_reanchor()
+        before = self.state()
+        self.advance_remote_target()
+        (self.root / "uncommitted.txt").write_text("dirty\n", encoding="utf-8")
+
+        code, payload, _ = self.run_cli(
+            "reanchor-target",
+            str(ISSUE),
+            "--by",
+            "owner",
+        )
+
+        self.assertEqual(1, code)
+        self.assertEqual("git-worktree-dirty", payload["error"]["code"])
+        self.assertEqual(before, self.state())
+
+    def test_reanchor_target_fails_closed_for_invalid_downstream_artifact(self):
+        """Ambiguous downstream ancestry prevents a trusted-base update."""
+        self.bootstrap_to_implementation()
+        before = self.state()
+        self.advance_remote_target()
+
+        code, payload, _ = self.run_cli(
+            "reanchor-target",
+            str(ISSUE),
+            "--by",
+            "owner",
+        )
+
+        self.assertEqual(1, code)
+        self.assertIn(
+            payload["error"]["code"],
+            {"invalid-artifact-ancestry", "artifact-validity-undetermined"},
+        )
+        self.assertEqual(before, self.state())
+
     def test_pr_250_contamination_scenario_is_rejected_at_init(self):
         """PR #250-style unrelated ancestry and stale BFS files cannot publish."""
         target_head = self.git("rev-parse", "origin/main").stdout.strip()

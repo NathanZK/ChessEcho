@@ -744,6 +744,120 @@ def _require_clean_tree(root, config, context):
     )
 
 
+def _reanchor_target_artifacts(root, config, state, old_target, new_target, context):
+    """Validate that pre-implementation artifacts remain safe after re-anchoring."""
+    test_commit = state.get("test_commit")
+    if not test_commit:
+        return {"test_commit": None, "validated": []}
+
+    _git_ancestor(root, config, old_target, test_commit, context)
+    test_paths = _git_diff_names(root, config, "%s..%s" % (old_target, test_commit))
+    scope = state.get("approved_scope") or []
+    _require_test_only(test_paths, scope, context)
+    try:
+        _git_ancestor(root, config, new_target, test_commit, context)
+    except WorkflowError as error:
+        _ensure(
+            error.code == "invalid-git-ancestry",
+            error.code,
+            error.message,
+        )
+        target_paths = _git_diff_names(root, config, "%s..%s" % (old_target, new_target))
+        _ensure(
+            not set(target_paths).intersection(test_paths),
+            "invalid-artifact-scope",
+            "%s cannot re-anchor a test artifact that overlaps target changes" % context,
+        )
+        _ensure(
+            _current_head(root, config) == test_commit,
+            "artifact-validity-undetermined",
+            "%s requires HEAD to match the test artifact before re-anchoring" % context,
+        )
+        _run_checked(
+            _git_command(config, "rebase", "--onto", new_target, old_target, test_commit),
+            _effective_limits(config, "git"),
+            root,
+            "git-rebase-failed",
+            "%s could not preserve the test artifact on the new target" % context,
+        )
+        test_commit = _current_head(root, config)
+    _ensure(
+        not state.get("implementation_candidate")
+        and not state.get("implementation_commit")
+        and not state.get("draft_pr"),
+        "artifact-validity-undetermined",
+        "%s cannot re-anchor after implementation artifacts exist" % context,
+    )
+    return {"test_commit": test_commit, "validated": ["test_commit", *test_paths]}
+
+
+def command_reanchor_target(args, root, config):
+    """Re-anchor a run to a fetched descendant target without resetting its plan."""
+    state = _read_state(root, config, args.issue)
+    if state["status"] in (
+        "IMPLEMENTATION",
+        "VALIDATION",
+        "IMPLEMENTATION_REVIEW",
+        "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL",
+        "DRAFT_PR_CREATION",
+        "WORKFLOW_COMPLETED",
+    ):
+        _raise(
+            "artifact-validity-undetermined",
+            "reanchor-target cannot establish downstream artifact validity in status %s"
+            % state["status"],
+        )
+    allowed = (
+        "PLANNING",
+        "PLAN_REVIEW",
+        "WAITING_FOR_PLAN_HUMAN_APPROVAL",
+        "TEST_IMPLEMENTATION",
+        "TEST_REVIEW",
+        "WAITING_FOR_TEST_HUMAN_APPROVAL",
+    )
+    _ensure(
+        state["status"] in allowed,
+        "invalid-transition",
+        "reanchor-target is not safe in status %s" % state["status"],
+    )
+    _ensure(args.by.strip(), "missing-requester", "reanchor-target requires a requester")
+    _require_clean_tree(root, config, "reanchor-target")
+    old_target = _state_target_head(state)
+    new_target = _resolve_target_head(root, config, fetch=True)
+    _ensure(
+        new_target != old_target,
+        "target-not-advanced",
+        "reanchor-target requires origin/%s to advance" % config["target_base"],
+    )
+    _git_ancestor(root, config, old_target, new_target, "reanchor-target")
+    validation = _reanchor_target_artifacts(
+        root, config, state, old_target, new_target, "reanchor-target"
+    )
+    if validation["test_commit"]:
+        state["test_commit"] = validation["test_commit"]
+
+    provenance = {
+        "previous_target_head": old_target,
+        "new_target_head": new_target,
+        "target_base": config["target_base"],
+        "remote_ref": "origin/%s" % config["target_base"],
+        "requested_by": args.by,
+        "requested_at": _now(),
+        "validated_artifacts": validation["validated"],
+    }
+    state.setdefault("target_reanchors", []).append(provenance)
+    state["target_head"] = new_target
+    state["base_head"] = new_target
+    _write_state(root, config, args.issue, state)
+    return {
+        "ok": True,
+        "status": state["status"],
+        "previous_target_head": old_target,
+        "new_target_head": new_target,
+        "provenance": provenance,
+    }
+
+
 def _is_test_file(path):
     return (
         path.startswith("src/test/")
@@ -1725,6 +1839,11 @@ def build_parser():
     _add_issue(reopen_tests)
     reopen_tests.add_argument("--reason", required=True)
 
+    reanchor_target = subparsers.add_parser("reanchor-target")
+    _add_root(reanchor_target)
+    _add_issue(reanchor_target)
+    reanchor_target.add_argument("--by", required=True)
+
     submit_implementation = subparsers.add_parser("submit-implementation")
     _add_root(submit_implementation)
     _add_issue(submit_implementation)
@@ -1778,6 +1897,7 @@ COMMANDS = {
     "approve-tests": command_approve_tests,
     "reject-tests": command_reject_tests,
     "reopen-tests": command_reopen_tests,
+    "reanchor-target": command_reanchor_target,
     "submit-implementation": command_submit_implementation,
     "run-validation": command_run_validation,
     "review-implementation": command_review_implementation,
