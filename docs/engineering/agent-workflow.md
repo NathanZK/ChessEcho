@@ -24,6 +24,10 @@ with:
   transition journal)
 - `implementation-approval-transition.json` (the immutable Gate 3
   transition journal)
+- `implementation-target-reconciliation-transition.json` (the immutable
+  post-Gate-3 target-reconciliation transition journal, present only when a
+  committed-but-not-persisted implementation approval is reconciled onto an
+  advanced target)
 
 The transition journals are created only after each gate's existing
 preconditions pass and after the exact local acknowledgment is accepted, but
@@ -138,6 +142,7 @@ stateDiagram-v2
     IMPLEMENTATION_REVIEW --> WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL: review-implementation READY after candidate revalidation
     IMPLEMENTATION_REVIEW --> IMPLEMENTATION: review-implementation NEEDS_REVISION
     WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL --> DRAFT_PR_CREATION: approve-implementation creates implementation commit (Approval Gate 3)
+    WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL --> DRAFT_PR_CREATION: reconcile-implementation-target re-applies a committed candidate onto an advanced target
     WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL --> IMPLEMENTATION: reject-implementation
 
     DRAFT_PR_CREATION --> WORKFLOW_COMPLETED: create-draft-pr verifies one-commit topology
@@ -164,16 +169,21 @@ byte-for-byte. `NOT_APPLICABLE` is an explicit approved state with no approved t
 does not substitute the repository root for an empty test-path set. Missing or malformed applicability
 or approved-scope state fails closed.
 
-`reconcile-candidate` is the only governed recovery after implementation
-submission and before publication when the target branch advances. It preserves
-the run only if the workflow can prove all of the following against the fetched
-descendant target: prior target identity, approved test boundary, exact
-accepted candidate path set and tree identity, approved scope, approved applicability state
-(`REQUIRED` or `NOT_APPLICABLE`), and one-commit publication topology
-preconditions. Any non-descendant target, unexpected staged change, candidate
-drift, scope drift, malformed applicability/test-boundary state, overlapping
-target changes, rebase conflict, or post-rebase diff mismatch is treated as
-ambiguous validity and fails closed without mutating the run.
+`reconcile-candidate` is the governed recovery for an accepted *uncommitted*
+candidate after implementation submission and before publication when the
+target branch advances. It preserves the run only if the workflow can prove all
+of the following against the fetched descendant target: prior target identity,
+approved test boundary, exact accepted candidate path set and tree identity,
+approved scope, approved applicability state (`REQUIRED` or `NOT_APPLICABLE`),
+and one-commit publication topology preconditions. Any non-descendant target,
+unexpected staged change, candidate drift, scope drift, malformed
+applicability/test-boundary state, overlapping target changes, rebase conflict,
+or post-rebase diff mismatch is treated as ambiguous validity and fails closed
+without mutating the run. The distinct post-Gate-3 case — a
+committed-but-not-persisted authoritative commit whose target has since
+advanced — is handled only by `reconcile-implementation-target` (see
+[Reconciling a committed Gate 3 candidate onto an advanced target](#reconciling-a-committed-gate-3-candidate-onto-an-advanced-target)),
+never by `reconcile-candidate` or `recover-implementation-approval`.
 
 The workflow records `target_head` from the configured PR target branch at `init` and requires the
 worktree `HEAD` to match it, so pre-existing branch commits cannot be absorbed into a run. Immediately
@@ -225,7 +235,64 @@ replace GitHub review and CI. If recovery cannot prove one of the enumerated
 shapes, preserve the worktree and obtain operator direction rather than
 guessing.
 
-Gate 2 (`approve-tests`) uses the same durable-journal-before-commit design.
+### Reconciling a committed Gate 3 candidate onto an advanced target
+
+`recover-implementation-approval` deliberately fails closed once the target
+has advanced past the interrupted candidate: it never reconciles a moved
+target, and `reconcile-candidate` only handles an accepted *uncommitted*
+candidate (`HEAD == test_commit`), not the committed authoritative commit.
+For the narrow post-Gate-3 shape where the implementation-approval journal is
+`committed-but-not-persisted`, `HEAD` is the exact journal-bound candidate
+commit (one direct child of the journal target), and `origin/<target_base>`
+has since advanced to a strict descendant of that journal target, use the
+explicit governed command:
+
+```bash
+python3 scripts/agent_workflow.py reconcile-implementation-target ISSUE --by REQUESTER --confirm implementation_target_reconciled
+```
+
+This is a distinct governed transition, not a reuse of the recovery,
+`reanchor-target`, or `reconcile-candidate` paths. It requires its own
+explicit authorization (`implementation_target_reconciled`) and never mutates
+or adopts the old commit. Preconditions, all revalidated before any Git
+mutation, are: the committed-but-not-persisted implementation-approval journal
+with unchanged authorization; the journal target is an ancestor of, and a
+strict descendant relationship holds to, the freshly resolved origin target;
+`HEAD` is exactly the journal-bound interrupted candidate commit (one direct
+child of the journal target); the approved test boundary and accepted
+candidate identity/tree/content/path are unchanged (issue #282 equivalence);
+and the worktree is clean.
+
+It then writes an atomic, `fsync`-backed reconciliation journal
+(`implementation-target-reconciliation-transition.json`) that preserves the
+old and new targets, the old candidate commit, the bound candidate identity,
+test boundary, both the source Gate 3 acknowledgment and the reconciliation
+acknowledgment, topology proofs, and status/timestamps — before any Git
+mutation. It applies the exact journaled approved test boundary and production
+candidate as binary patches onto the advanced target, requiring clean
+three-way application (a conflicting downstream change to a candidate path
+fails closed; unrelated surrounding changes do not), with no automatic
+conflict resolution. It creates exactly one new implementation commit directly
+on the advanced target, independently proves that commit realizes the
+journal-bound candidate and boundary with a single direct-child topology,
+reviewed subject, in-scope production-only paths, and a clean worktree, and
+only then atomically advances `state.json` to `DRAFT_PR_CREATION` (recording
+`implementation_commit`, the new `target_head`, and a
+`implementation_target_reconciliations` provenance entry).
+
+Reconciliation is crash-safe and idempotent: the pending journal is written
+before the commit, so a crash before the commit retries into exactly one new
+commit; the reconciled commit is durably recorded before final state
+persistence, so a crash after the commit verifies and persists the existing
+commit instead of creating a second one; and re-invoking after success is a
+pure verified no-op. A tampered pending or committed reconciliation journal,
+an incorrect confirmation phrase, a drifted `HEAD`, a non-descendant or
+non-advanced target, candidate/test-boundary tampering, or an unclean
+application all fail closed without advancing workflow state. Like the other
+journals it is crash-consistency evidence, not independent authorization, and
+never creates a PR or advances another gate.
+
+
 The journal is written to `test-approval-transition.json` after the existing
 `approve-tests` preconditions pass (approved-test-only scope, ancestry, exact
 `test_commit` boundary, clean index) and before the workflow-owned
@@ -406,6 +473,7 @@ python3 scripts/agent_workflow.py run-validation ISSUE --profile PROFILE
 python3 scripts/agent_workflow.py review-implementation ISSUE --status READY_FOR_HUMAN_APPROVAL|NEEDS_REVISION --artifact PATH --reviewer chess-echo-reviewer
 python3 scripts/agent_workflow.py approve-implementation ISSUE --by LOGIN --confirm implementation_approved
 python3 scripts/agent_workflow.py recover-implementation-approval ISSUE
+python3 scripts/agent_workflow.py reconcile-implementation-target ISSUE --by REQUESTER --confirm implementation_target_reconciled
 python3 scripts/agent_workflow.py reject-implementation ISSUE --by LOGIN --reason "..."
 python3 scripts/agent_workflow.py create-draft-pr ISSUE --title "..." --body-file PATH
 ```
