@@ -4,6 +4,8 @@ import io
 import json
 import os
 import pathlib
+import re
+import stat
 import subprocess
 import sys
 import tempfile
@@ -296,6 +298,50 @@ class AgentWorkflowTest(unittest.TestCase):
     def recover_implementation_approval(self):
         return self.run_cli("recover-implementation-approval", str(ISSUE))
 
+    def test_transition_journal_path(self):
+        return (
+            self.root
+            / ".agent-workflow"
+            / "runs"
+            / f"issue-{ISSUE}"
+            / "test-approval-transition.json"
+        )
+
+    def approve_tests(self):
+        return self.run_cli(
+            "approve-tests",
+            str(ISSUE),
+            "--by",
+            "owner",
+            "--confirm",
+            "tests_approved",
+        )
+
+    def recover_test_approval(self):
+        return self.run_cli("recover-test-approval", str(ISSUE))
+
+    def assert_test_transition_journal_matches_state(self):
+        journal_path = self.test_transition_journal_path()
+        self.assertTrue(
+            journal_path.is_file(),
+            "test approval journal must be durable before Git mutation",
+        )
+        journal = json.loads(journal_path.read_text(encoding="utf-8"))
+        state = self.state()
+        self.assertEqual(ISSUE, journal["issue"])
+        self.assertEqual("approve-tests", journal["operation"])
+        self.assertEqual(state["target_head"], journal["target_head"])
+        self.assertEqual(state["test_commit"], journal["candidate_test_commit"])
+        self.assertEqual(state["approved_scope"], journal["approved_scope"])
+        self.assertEqual(
+            state["test_implementation_status"], journal["test_implementation_status"]
+        )
+        self.assertIn(
+            journal["status"],
+            ("pending", "committed-but-not-persisted", "finalized"),
+        )
+        return journal
+
     def assert_transition_journal_matches_state(self):
         journal_path = self.transition_journal_path()
         self.assertTrue(
@@ -336,10 +382,10 @@ class AgentWorkflowTest(unittest.TestCase):
     def fail_checked_git_command(self, token, code):
         original = workflow._run_checked
 
-        def injected(command, limits, cwd, error_code, context):
+        def injected(command, limits, cwd, error_code, context, env=None):
             if token in command:
                 raise workflow.WorkflowError(code, "injected failure at %s" % token)
-            return original(command, limits, cwd, error_code, context)
+            return original(command, limits, cwd, error_code, context, env=env)
 
         return mock.patch.object(workflow, "_run_checked", side_effect=injected)
 
@@ -422,12 +468,11 @@ class AgentWorkflowTest(unittest.TestCase):
         self.git("add", "-A", "src/main/HumanMoveBfsDto.kt")
         self.git("commit", "-qm", "2123f935 Revert \"Support excluded BFS players\"")
 
-    def bootstrap_to_implementation(self):
+    def bootstrap_to_waiting_for_test_approval(self):
         self.write_artifact("plan.md", "plan")
         self.write_artifact("plan-review.md", "plan review")
         self.write_artifact("test-report.md", "tests")
         self.write_artifact("test-review.md", "test review")
-        self.write_artifact("implementation-report.md", "implementation")
 
         self.assertEqual(0, self.run_cli("init", str(ISSUE))[0])
         self.assertEqual(
@@ -505,17 +550,11 @@ class AgentWorkflowTest(unittest.TestCase):
                 "chess-echo-reviewer",
             )[0],
         )
-        self.assertEqual(
-            0,
-            self.run_cli(
-                "approve-tests",
-                str(ISSUE),
-                "--by",
-                "owner",
-                "--confirm",
-                "tests_approved",
-            )[0],
-        )
+
+    def bootstrap_to_implementation(self):
+        self.bootstrap_to_waiting_for_test_approval()
+        self.write_artifact("implementation-report.md", "implementation")
+        self.assertEqual(0, self.approve_tests()[0])
 
     def bootstrap_to_test_implementation(self):
         self.write_artifact("plan.md", "plan")
@@ -1039,6 +1078,111 @@ class AgentWorkflowTest(unittest.TestCase):
 
         self.assertEqual(1, code)
         self.assertEqual("implementation-candidate-mismatch", payload["error"]["code"])
+
+    def test_gate3_candidate_tree_ignores_diff_serialization_reordering(self):
+        """Tree/content/mode/path equivalence tolerates diff/status text reordering.
+
+        This is a regression test for the #276 defect: the pre-#282
+        equivalence check compared concatenated ``git diff``/``git status``
+        text byte-for-byte, so serialization/ordering artifacts in that text
+        (unrelated to any real content, mode, or path change) could cause a
+        false rejection. The replacement check is an exact Git tree id, so
+        reordering or otherwise mutating only the recorded diff text must not
+        cause validation/review/approval to fail.
+        """
+        self.bootstrap_to_validation()
+        state = self.state()
+        accepted_tree = state["implementation_candidate"]["candidate_tree"]
+        self.assertTrue(re.fullmatch(r"[0-9a-f]{40}", accepted_tree))
+        # Corrupt only the diff text's serialization/order; the underlying
+        # tree, content, mode, and path set are untouched.
+        original_diff = state["implementation_candidate"]["candidate_diff"]
+        state["implementation_candidate"]["candidate_diff"] = (
+            "diff --git a/reordered noise\n" + original_diff[::-1]
+        )
+        self.write_state(state)
+
+        code, payload, _ = self.run_cli(
+            "run-validation",
+            str(ISSUE),
+            "--profile",
+            "workflow-tooling",
+        )
+
+        self.assertEqual(0, code)
+        self.assertEqual("IMPLEMENTATION_REVIEW", payload["status"])
+        self.assertEqual(accepted_tree, self.state()["implementation_candidate"]["candidate_tree"])
+
+    def test_gate3_candidate_tree_still_rejects_persisted_evidence_drift(self):
+        """A tampered accepted tree id fails closed even if diff/paths look unchanged."""
+        self.bootstrap_to_validation()
+        state = self.state()
+        # Leave candidate_diff/candidate_paths exactly as recorded (what the
+        # pre-#282 check alone would have accepted) but corrupt the
+        # authoritative tree id, simulating persisted-evidence drift.
+        state["implementation_candidate"]["candidate_tree"] = "1" * 40
+        self.write_state(state)
+
+        code, payload, _ = self.run_cli(
+            "run-validation",
+            str(ISSUE),
+            "--profile",
+            "workflow-tooling",
+        )
+
+        self.assertEqual(1, code)
+        self.assertEqual("implementation-candidate-mismatch", payload["error"]["code"])
+        self.assertEqual("VALIDATION", self.state()["status"])
+
+    def test_gate3_rejects_malformed_candidate_tree(self):
+        """A missing or malformed persisted tree id is rejected, not silently trusted."""
+        self.bootstrap_to_validation()
+        state = self.state()
+        state["implementation_candidate"]["candidate_tree"] = "not-a-tree-id"
+        self.write_state(state)
+
+        code, payload, _ = self.run_cli(
+            "run-validation",
+            str(ISSUE),
+            "--profile",
+            "workflow-tooling",
+        )
+
+        self.assertEqual(1, code)
+        self.assertEqual("invalid-implementation-candidate", payload["error"]["code"])
+
+    def test_gate3_rejects_candidate_path_set_change(self):
+        """Adding an extra candidate path after acceptance still fails closed."""
+        self.bootstrap_to_validation()
+        (self.root / "src" / "Extra.kt").write_text("extra\n", encoding="utf-8")
+
+        code, payload, _ = self.run_cli(
+            "run-validation",
+            str(ISSUE),
+            "--profile",
+            "workflow-tooling",
+        )
+
+        self.assertEqual(1, code)
+        self.assertEqual("implementation-candidate-mismatch", payload["error"]["code"])
+        self.assertEqual("VALIDATION", self.state()["status"])
+
+    def test_gate3_rejects_candidate_mode_change(self):
+        """An executable-bit change on an otherwise byte-identical file fails closed."""
+        self.bootstrap_to_validation()
+        target = self.root / "src" / "Example.kt"
+        target.chmod(target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+        code, payload, _ = self.run_cli(
+            "run-validation",
+            str(ISSUE),
+            "--profile",
+            "workflow-tooling",
+        )
+
+        self.assertEqual(1, code)
+        self.assertEqual("implementation-candidate-mismatch", payload["error"]["code"])
+        self.assertEqual("VALIDATION", self.state()["status"])
 
     def test_submit_implementation_evidence_integrity_checks(self):
         self.bootstrap_to_implementation()
@@ -2983,6 +3127,257 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual(["src/test/ExampleTest.kt"], test_diff_names)
         committed_content = self.git("show", f"{test_commit}:src/test/ExampleTest.kt").stdout
         self.assertEqual("class ExampleTest { /* candidate content */ }\n", committed_content)
+
+    def test_approve_tests_journal_durability_precedes_commit(self):
+        """A durable test-approval journal is written before the workflow-owned commit."""
+        self.bootstrap_to_waiting_for_test_approval()
+        before_state = self.state()
+        before_head = self.git("rev-parse", "HEAD").stdout.strip()
+
+        with self.fail_checked_git_command("commit", "injected-before-test-commit"):
+            code, payload, _ = self.approve_tests()
+
+        self.assertEqual(1, code)
+        self.assertEqual("injected-before-test-commit", payload["error"]["code"])
+        self.assertEqual(before_head, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertEqual(before_state, self.state())
+        journal = self.assert_test_transition_journal_matches_state()
+        self.assertEqual("pending", journal["status"])
+        self.assert_clean_status()
+
+    def test_approve_tests_recovers_post_commit_persistence_failure_without_second_commit(self):
+        """A crash between the empty commit and state persistence recovers idempotently."""
+        self.bootstrap_to_waiting_for_test_approval()
+        original_write_state = workflow._write_state
+
+        def fail_final_state(root, config, issue, state):
+            if state.get("status") == "IMPLEMENTATION":
+                raise workflow.WorkflowError(
+                    "injected-post-commit-test-state-failure",
+                    "injected state persistence failure after authoritative test commit",
+                )
+            return original_write_state(root, config, issue, state)
+
+        with mock.patch.object(workflow, "_write_state", side_effect=fail_final_state):
+            code, payload, _ = self.approve_tests()
+
+        self.assertEqual(1, code)
+        self.assertEqual("injected-post-commit-test-state-failure", payload["error"]["code"])
+        authoritative_commit = self.git("rev-parse", "HEAD").stdout.strip()
+        state_after_failure = self.state()
+        self.assertEqual("WAITING_FOR_TEST_HUMAN_APPROVAL", state_after_failure["status"])
+        journal = self.assert_test_transition_journal_matches_state()
+        self.assertEqual("committed-but-not-persisted", journal["status"])
+        self.assertEqual(authoritative_commit, journal["authoritative_commit"])
+
+        code, payload, _ = self.recover_test_approval()
+        self.assertEqual(0, code)
+        self.assertEqual("IMPLEMENTATION", payload["status"])
+        self.assertEqual(authoritative_commit, payload["test_commit"])
+        recovered = self.state()
+        self.assertEqual(authoritative_commit, recovered["test_commit"])
+        self.assertEqual(journal["acknowledgment"], recovered["approvals"]["tests"])
+        self.assert_clean_status()
+
+        # A second recovery attempt is idempotent: no duplicate empty commit is created.
+        state_after_recovery = self.state()
+        head_after_recovery = self.git("rev-parse", "HEAD").stdout.strip()
+        code, payload, _ = self.recover_test_approval()
+        self.assertEqual(0, code)
+        self.assertEqual("IMPLEMENTATION", payload["status"])
+        self.assertEqual(head_after_recovery, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertEqual(state_after_recovery, self.state())
+
+    def test_recover_test_approval_fails_closed_on_missing_journal(self):
+        self.bootstrap_to_waiting_for_test_approval()
+        code, payload, _ = self.recover_test_approval()
+        self.assertEqual(1, code)
+        self.assertEqual("missing-file", payload["error"]["code"])
+
+    def test_recover_test_approval_fails_closed_on_corrupt_journal(self):
+        self.bootstrap_to_waiting_for_test_approval()
+        with self.fail_checked_git_command("commit", "injected-before-test-commit"):
+            self.approve_tests()
+        self.test_transition_journal_path().write_text("not json", encoding="utf-8")
+        code, payload, _ = self.recover_test_approval()
+        self.assertEqual(1, code)
+        self.assertIn(payload["error"]["code"], ("invalid-json", "malformed-test-approval-journal"))
+
+    def test_recover_test_approval_fails_closed_on_stale_mismatched_journal(self):
+        self.bootstrap_to_waiting_for_test_approval()
+        with self.fail_checked_git_command("commit", "injected-before-test-commit"):
+            self.approve_tests()
+        journal = json.loads(self.test_transition_journal_path().read_text(encoding="utf-8"))
+        journal["candidate_test_commit"] = "0" * 40
+        journal["expected_parent"] = "0" * 40
+        self.test_transition_journal_path().write_text(
+            json.dumps(journal, indent=2) + "\n", encoding="utf-8"
+        )
+        code, payload, _ = self.recover_test_approval()
+        self.assertEqual(1, code)
+        self.assertEqual("test-approval-journal-mismatch", payload["error"]["code"])
+
+    def test_recover_test_approval_rejects_invalid_git_topology(self):
+        """Recovery never infers authorization from Git topology alone."""
+        self.bootstrap_to_waiting_for_test_approval()
+        with self.fail_checked_git_command("commit", "injected-before-test-commit"):
+            self.approve_tests()
+        self.assert_test_transition_journal_matches_state()
+        (self.root / "unrelated.txt").write_text("unrelated\n", encoding="utf-8")
+        self.git("add", "unrelated.txt")
+        self.git("commit", "-qm", "unauthorized unrelated commit")
+        code, payload, _ = self.recover_test_approval()
+        self.assertEqual(1, code)
+        self.assertEqual("test-approval-content-drift", payload["error"]["code"])
+        self.assertEqual("WAITING_FOR_TEST_HUMAN_APPROVAL", self.state()["status"])
+
+    def test_approve_tests_not_applicable_journal_and_recovery(self):
+        """NOT_APPLICABLE test approval is journaled and recoverable identically to REQUIRED."""
+        (self.root / "src").mkdir()
+        (self.root / "src" / "Example.kt").write_text("baseline\n", encoding="utf-8")
+        self.git("add", "src/Example.kt")
+        self.git("commit", "-qm", "baseline implementation")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        self.write_artifact("plan.md", "plan")
+        self.write_artifact("plan-review.md", "plan review")
+        self.write_artifact("test-report.md", "tests")
+        self.write_artifact("test-review.md", "test review")
+        self.assertEqual(0, self.run_cli("init", str(ISSUE))[0])
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "submit-plan",
+                str(ISSUE),
+                "--artifact",
+                "artifacts-src/plan.md",
+                "--agent",
+                "chess-echo-planner",
+                "--scope",
+                "src/Example.kt",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "review-plan",
+                str(ISSUE),
+                "--status",
+                workflow.READY,
+                "--artifact",
+                "artifacts-src/plan-review.md",
+                "--reviewer",
+                "chess-echo-reviewer",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "approve-plan",
+                str(ISSUE),
+                "--by",
+                "owner",
+                "--confirm",
+                "plan_approved",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "submit-tests",
+                str(ISSUE),
+                "--artifact",
+                "artifacts-src/test-report.md",
+                "--agent",
+                "chess-echo-test-implementer",
+                "--not-applicable",
+                "--reason",
+                "Approved implementation scope contains no test files.",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "review-tests",
+                str(ISSUE),
+                "--status",
+                workflow.READY,
+                "--artifact",
+                "artifacts-src/test-review.md",
+                "--reviewer",
+                "chess-echo-reviewer",
+            )[0],
+        )
+        before_head = self.git("rev-parse", "HEAD").stdout.strip()
+        with self.fail_checked_git_command("commit", "injected-before-not-applicable-commit"):
+            code, payload, _ = self.approve_tests()
+        self.assertEqual(1, code)
+        self.assertEqual(before_head, self.git("rev-parse", "HEAD").stdout.strip())
+        journal = self.assert_test_transition_journal_matches_state()
+        self.assertEqual("pending", journal["status"])
+        self.assertEqual([], journal["test_paths"])
+
+        code, payload, _ = self.recover_test_approval()
+        self.assertEqual(0, code)
+        self.assertEqual("IMPLEMENTATION", payload["status"])
+        self.assertNotEqual(before_head, self.state()["test_commit"])
+
+    def test_approve_tests_reopening_metadata_preserved_through_journal_and_recovery(self):
+        """Reopened-test acknowledgment/reopening metadata survives a crash and recovery."""
+        self.bootstrap_to_implementation()
+        code, payload, _ = self.run_cli(
+            "reopen-tests",
+            str(ISSUE),
+            "--reason",
+            "approved-test-fixture-defect",
+        )
+        self.assertEqual(0, code)
+        (self.root / "src" / "test" / "ExampleTest.kt").write_text(
+            "corrected test\n", encoding="utf-8"
+        )
+        self.git("add", "src/test/ExampleTest.kt")
+        self.git("commit", "-qm", "correct test fixture")
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "submit-tests",
+                str(ISSUE),
+                "--artifact",
+                "artifacts-src/test-report.md",
+                "--agent",
+                "chess-echo-test-implementer",
+                "--failure-command",
+                "%s -c \"print('expected failure'); import sys; sys.exit(1)\"" % sys.executable,
+                "--failure-contains",
+                "expected failure",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "review-tests",
+                str(ISSUE),
+                "--status",
+                workflow.READY,
+                "--artifact",
+                "artifacts-src/test-review.md",
+                "--reviewer",
+                "chess-echo-reviewer",
+            )[0],
+        )
+        with self.fail_checked_git_command("commit", "injected-before-reopened-approval-commit"):
+            code, payload, _ = self.approve_tests()
+        self.assertEqual(1, code)
+        journal = self.assert_test_transition_journal_matches_state()
+        self.assertIsNotNone(journal["reopening"])
+        self.assertTrue(journal["reopening"]["active"])
+        self.assertEqual("approved-test-fixture-defect", journal["reopening"]["reason"])
+
+        code, payload, _ = self.recover_test_approval()
+        self.assertEqual(0, code)
+        self.assertEqual("IMPLEMENTATION", payload["status"])
+        recovered = self.state()
+        self.assertFalse(recovered["test_reopenings"][0]["active"])
+        self.assertEqual(recovered["test_commit"], recovered["test_reopenings"][0]["new_test_commit"])
 
     def test_missing_target_head_does_not_fall_back_to_base_head(self):
         """Publication operations fail closed instead of using diagnostic base_head."""
