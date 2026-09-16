@@ -100,6 +100,11 @@ Gate 3. `submit-implementation` independently compares the current native Git ca
 submitted execution evidence, records the accepted candidate, and validation, implementation review, and
 the implementation Approval Gate each recompute that Git candidate before advancing.
 
+During `run-validation`, `REQUIRED` test implementations must retain every approved test path
+byte-for-byte. `NOT_APPLICABLE` is an explicit approved state with no approved test files; validation
+does not substitute the repository root for an empty test-path set. Missing or malformed applicability
+or approved-scope state fails closed.
+
 The workflow records `target_head` from the configured PR target branch at `init` and requires the
 worktree `HEAD` to match it, so pre-existing branch commits cannot be absorbed into a run. Immediately
 before the implementation Approval Gate and draft PR creation, the workflow fetches the target branch and fails

@@ -495,6 +495,110 @@ class AgentWorkflowTest(unittest.TestCase):
         )
         return evidence_path
 
+    def bootstrap_to_not_applicable_validation(self):
+        (self.root / "src").mkdir()
+        (self.root / "src" / "Example.kt").write_text("baseline\n", encoding="utf-8")
+        self.git("add", "src/Example.kt")
+        self.git("commit", "-qm", "baseline implementation")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        self.write_artifact("plan.md", "plan")
+        self.write_artifact("plan-review.md", "plan review")
+        self.write_artifact("test-report.md", "tests")
+        self.write_artifact("test-review.md", "test review")
+        self.write_artifact("implementation-report.md", "implementation")
+        self.assertEqual(0, self.run_cli("init", str(ISSUE))[0])
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "submit-plan",
+                str(ISSUE),
+                "--artifact",
+                "artifacts-src/plan.md",
+                "--agent",
+                "chess-echo-planner",
+                "--scope",
+                "src/Example.kt",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "review-plan",
+                str(ISSUE),
+                "--status",
+                workflow.READY,
+                "--artifact",
+                "artifacts-src/plan-review.md",
+                "--reviewer",
+                "chess-echo-reviewer",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "approve-plan",
+                str(ISSUE),
+                "--by",
+                "owner",
+                "--confirm",
+                "plan_approved",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "submit-tests",
+                str(ISSUE),
+                "--artifact",
+                "artifacts-src/test-report.md",
+                "--agent",
+                "chess-echo-test-implementer",
+                "--not-applicable",
+                "--reason",
+                "Approved implementation scope contains no test files.",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "review-tests",
+                str(ISSUE),
+                "--status",
+                workflow.READY,
+                "--artifact",
+                "artifacts-src/test-review.md",
+                "--reviewer",
+                "chess-echo-reviewer",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "approve-tests",
+                str(ISSUE),
+                "--by",
+                "owner",
+                "--confirm",
+                "tests_approved",
+            )[0],
+        )
+        (self.root / "src" / "Example.kt").write_text("implementation\n", encoding="utf-8")
+        evidence_path = self.write_evidence(test_scope=[])
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "submit-implementation",
+                str(ISSUE),
+                "--artifact",
+                "artifacts-src/implementation-report.md",
+                "--agent",
+                "chess-echo-implementer",
+                "--evidence",
+                evidence_path,
+            )[0],
+        )
+        return evidence_path
+
     def test_uncommitted_implementation_candidate_and_evidence_acceptance(self):
         """Accepted implementation evidence binds an uncommitted Git candidate."""
         evidence_path = self.bootstrap_to_validation(submit=True)
@@ -552,6 +656,57 @@ class AgentWorkflowTest(unittest.TestCase):
 
         self.assertEqual(1, code)
         self.assertEqual("implementation-candidate-mismatch", payload["error"]["code"])
+        self.assertEqual("VALIDATION", self.state()["status"])
+
+    def test_required_validation_rejects_approved_test_mutation(self):
+        """REQUIRED test implementations keep approved test content immutable."""
+        self.bootstrap_to_validation()
+        (self.root / "src" / "test" / "ExampleTest.kt").write_text(
+            "mutated after approval\n", encoding="utf-8"
+        )
+
+        code, payload, _ = self.run_cli(
+            "run-validation",
+            str(ISSUE),
+            "--profile",
+            "workflow-tooling",
+        )
+
+        self.assertEqual(1, code)
+        self.assertEqual("tests-modified-after-approval", payload["error"]["code"])
+        self.assertEqual("VALIDATION", self.state()["status"])
+
+    def test_not_applicable_validation_allows_non_test_implementation_change(self):
+        """NOT_APPLICABLE does not compare an empty test path set as the repository."""
+        self.bootstrap_to_not_applicable_validation()
+
+        code, payload, _ = self.run_cli(
+            "run-validation",
+            str(ISSUE),
+            "--profile",
+            "workflow-tooling",
+        )
+
+        self.assertEqual(0, code)
+        self.assertEqual("IMPLEMENTATION_REVIEW", payload["status"])
+        self.assertEqual("NOT_APPLICABLE", self.state()["test_implementation_status"])
+
+    def test_validation_rejects_invalid_test_applicability_state(self):
+        """Malformed applicability state fails closed instead of bypassing validation."""
+        self.bootstrap_to_validation()
+        state = self.state()
+        state["test_implementation_status"] = None
+        self.write_state(state)
+
+        code, payload, _ = self.run_cli(
+            "run-validation",
+            str(ISSUE),
+            "--profile",
+            "workflow-tooling",
+        )
+
+        self.assertEqual(1, code)
+        self.assertEqual("invalid-test-applicability", payload["error"]["code"])
         self.assertEqual("VALIDATION", self.state()["status"])
 
     def test_review_rejects_candidate_changed_after_validation(self):
