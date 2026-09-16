@@ -1001,6 +1001,59 @@ def command_reject_plan(args, root, config):
     return {"ok": True, "status": state["status"], "reason": args.reason}
 
 
+def command_request_plan_revision(args, root, config):
+    """Return test implementation to planning for a structured plan defect."""
+    state = _read_state(root, config, args.issue)
+    _expect_status(state, "TEST_IMPLEMENTATION", "request-plan-revision")
+    _ensure(
+        args.reason.strip(),
+        "missing-plan-revision-reason",
+        "request-plan-revision requires a non-empty reason",
+    )
+    _ensure(
+        args.reason_code == "approved-plan-defect",
+        "invalid-plan-revision-reason-code",
+        "request-plan-revision requires reason code approved-plan-defect",
+    )
+
+    artifacts = state["artifacts"]
+    history_index = len(state.get("plan_revision_requests") or []) + 1
+    history_dir = _artifacts_dir(root, config, args.issue) / "plan-revisions" / str(history_index)
+    history_dir.mkdir(parents=True, exist_ok=True)
+    archived = {}
+    for kind in ("plan", "plan_review", "test_report", "test_review"):
+        artifact = artifacts.get(kind)
+        if not artifact:
+            continue
+        source = root / artifact["path"]
+        if source.is_file():
+            destination = history_dir / source.name
+            destination.write_bytes(source.read_bytes())
+            archived[kind] = _relative(destination, root)
+
+    request = {
+        "requested_by": args.by,
+        "requested_at": _now(),
+        "reason_code": args.reason_code,
+        "reason": args.reason.strip(),
+        "from_status": state["status"],
+        "prior_scope": list(state.get("approved_scope") or []),
+        "prior_plan": artifacts.get("plan"),
+        "prior_artifacts": archived,
+        "prior_test_commit": state.get("test_commit"),
+        "prior_test_failure": state.get("test_failure"),
+    }
+    state.setdefault("plan_revision_requests", []).append(request)
+    state["approvals"]["plan"] = None
+    _clear_post_plan(state)
+    state["test_commit"] = None
+    state.pop("test_failure", None)
+    state["approved_scope"] = None
+    state["status"] = "PLANNING"
+    _write_state(root, config, args.issue, state)
+    return {"ok": True, "status": state["status"], "plan_revision": request}
+
+
 def command_submit_tests(args, root, config):
     """Verify and record a committed tests-only change plus its targeted failure."""
     state = _read_state(root, config, args.issue)
@@ -1635,6 +1688,13 @@ def build_parser():
     _add_issue(reject_plan)
     _add_human(reject_plan, include_reason=True)
 
+    request_plan_revision = subparsers.add_parser("request-plan-revision")
+    _add_root(request_plan_revision)
+    _add_issue(request_plan_revision)
+    request_plan_revision.add_argument("--by", required=True)
+    request_plan_revision.add_argument("--reason-code", required=True)
+    request_plan_revision.add_argument("--reason", required=True)
+
     submit_tests = subparsers.add_parser("submit-tests")
     _add_root(submit_tests)
     _add_issue(submit_tests)
@@ -1712,6 +1772,7 @@ COMMANDS = {
     "review-plan": command_review_plan,
     "approve-plan": command_approve_plan,
     "reject-plan": command_reject_plan,
+    "request-plan-revision": command_request_plan_revision,
     "submit-tests": command_submit_tests,
     "review-tests": command_review_tests,
     "approve-tests": command_approve_tests,

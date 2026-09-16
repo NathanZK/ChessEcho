@@ -58,6 +58,7 @@ stateDiagram-v2
     WAITING_FOR_PLAN_HUMAN_APPROVAL --> TEST_IMPLEMENTATION: approve-plan (Approval Gate 1)
     WAITING_FOR_PLAN_HUMAN_APPROVAL --> PLANNING: reject-plan
 
+    TEST_IMPLEMENTATION --> PLANNING: request-plan-revision --reason-code approved-plan-defect
     TEST_IMPLEMENTATION --> TEST_REVIEW: submit-tests executes targeted failing test
     TEST_REVIEW --> WAITING_FOR_TEST_HUMAN_APPROVAL: review-tests READY
     TEST_REVIEW --> TEST_IMPLEMENTATION: review-tests NEEDS_REVISION
@@ -97,6 +98,16 @@ There is no `approve-pr`, `reject-pr`, `WAITING_FOR_PR`, or `PR_APPROVED` state.
 `reopen-tests --reason approved-test-fixture-defect` transition exists only to recover from a proven
 approved-test fixture defect before the implementation Approval Gate or draft PR creation; it preserves any
 uncommitted production candidate and requires Approval Gate 2 to run again.
+
+When an approved plan is discovered to be defective during `TEST_IMPLEMENTATION`,
+`request-plan-revision` is the only governed recovery to planning. It requires
+`--reason-code approved-plan-defect`, a non-empty explanation, and an asserted
+requester. The command is rejected in every other workflow state, does not
+accept replacement scope, archives the prior plan/review and downstream evidence
+under the issue run's `artifacts/plan-revisions/` directory, and clears active
+downstream approvals and candidates. A replacement plan must then be submitted,
+reviewed, and approved through Approval Gate 1 before test implementation resumes.
+This transition does not provide the separate `NOT_APPLICABLE` capability.
 
 ## Approval terminology and assurance
 
@@ -154,6 +165,7 @@ python3 scripts/agent_workflow.py submit-plan ISSUE --artifact PATH --agent ches
 python3 scripts/agent_workflow.py review-plan ISSUE --status READY_FOR_HUMAN_APPROVAL|NEEDS_REVISION --artifact PATH --reviewer chess-echo-reviewer
 python3 scripts/agent_workflow.py approve-plan ISSUE --by LOGIN --confirm plan_approved
 python3 scripts/agent_workflow.py reject-plan ISSUE --by LOGIN --reason "..."
+python3 scripts/agent_workflow.py request-plan-revision ISSUE --by LOGIN --reason-code approved-plan-defect --reason "..."
 python3 scripts/agent_workflow.py submit-tests ISSUE --artifact PATH --agent chess-echo-test-implementer --failure-command "COMMAND" --failure-contains "EXPECTED"
 python3 scripts/agent_workflow.py review-tests ISSUE --status READY_FOR_HUMAN_APPROVAL|NEEDS_REVISION --artifact PATH --reviewer chess-echo-reviewer
 python3 scripts/agent_workflow.py approve-tests ISSUE --by LOGIN --confirm tests_approved

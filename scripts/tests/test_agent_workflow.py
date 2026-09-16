@@ -429,6 +429,51 @@ class AgentWorkflowTest(unittest.TestCase):
             )[0],
         )
 
+    def bootstrap_to_test_implementation(self):
+        self.write_artifact("plan.md", "plan")
+        self.write_artifact("plan-review.md", "plan review")
+        self.assertEqual(0, self.run_cli("init", str(ISSUE))[0])
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "submit-plan",
+                str(ISSUE),
+                "--artifact",
+                "artifacts-src/plan.md",
+                "--agent",
+                "chess-echo-planner",
+                "--scope",
+                "src/test/ExampleTest.kt",
+                "--scope",
+                "src/Example.kt",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "review-plan",
+                str(ISSUE),
+                "--status",
+                workflow.READY,
+                "--artifact",
+                "artifacts-src/plan-review.md",
+                "--reviewer",
+                "chess-echo-reviewer",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "approve-plan",
+                str(ISSUE),
+                "--by",
+                "owner",
+                "--confirm",
+                "plan_approved",
+            )[0],
+        )
+        self.assertEqual("TEST_IMPLEMENTATION", self.state()["status"])
+
     def bootstrap_to_validation(self, submit=True):
         self.bootstrap_to_implementation()
         (self.root / "src" / "Example.kt").write_text("implementation\n", encoding="utf-8")
@@ -1202,6 +1247,88 @@ class AgentWorkflowTest(unittest.TestCase):
         )
         self.assertEqual(1, code)
         self.assertEqual("draft-pr-already-created", payload["error"]["code"])
+
+    def test_plan_revision_request_returns_to_planning_with_audit_history(self):
+        self.bootstrap_to_test_implementation()
+        prior = self.state()
+
+        code, payload, _ = self.run_cli(
+            "request-plan-revision",
+            str(ISSUE),
+            "--by",
+            "test-implementer",
+            "--reason-code",
+            "approved-plan-defect",
+            "--reason",
+            "The approved scope omits the regression test required by the implementation.",
+        )
+
+        self.assertEqual(0, code)
+        self.assertEqual("PLANNING", payload["status"])
+        revised = self.state()
+        self.assertEqual("PLANNING", revised["status"])
+        self.assertIsNone(revised["approved_scope"])
+        self.assertIsNone(revised["approvals"]["plan"])
+        request = revised["plan_revision_requests"][0]
+        self.assertEqual(prior["artifacts"]["plan"], request["prior_plan"])
+        self.assertEqual("test-implementer", request["requested_by"])
+        self.assertEqual("approved-plan-defect", request["reason_code"])
+        self.assertIn("omits the regression test", request["reason"])
+        self.assertEqual(prior["approved_scope"], request["prior_scope"])
+        self.assertEqual("TEST_IMPLEMENTATION", request["from_status"])
+        self.assertIn("plan", revised["artifacts"])
+        self.assertIsNone(revised["test_commit"])
+        self.assertIsNone(revised["validation"])
+
+    def test_plan_revision_request_requires_structured_reason(self):
+        self.bootstrap_to_test_implementation()
+        for arguments, expected in (
+            (("--reason-code", "approved-plan-defect", "--reason", ""), "missing-plan-revision-reason"),
+            (("--reason-code", "unknown", "--reason", "scope is wrong"), "invalid-plan-revision-reason-code"),
+        ):
+            code, payload, _ = self.run_cli(
+                "request-plan-revision",
+                str(ISSUE),
+                "--by",
+                "test-implementer",
+                *arguments,
+            )
+            self.assertEqual(1, code)
+            self.assertEqual(expected, payload["error"]["code"])
+            self.assertEqual("TEST_IMPLEMENTATION", self.state()["status"])
+
+    def test_plan_revision_request_is_fail_closed_outside_test_implementation(self):
+        self.write_artifact("plan.md", "plan")
+        self.assertEqual(0, self.run_cli("init", str(ISSUE))[0])
+        code, payload, _ = self.run_cli(
+            "request-plan-revision",
+            str(ISSUE),
+            "--by",
+            "test-implementer",
+            "--reason-code",
+            "approved-plan-defect",
+            "--reason",
+            "The approved plan requires a bounded correction.",
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("invalid-transition", payload["error"]["code"])
+        self.assertEqual("PLANNING", self.state()["status"])
+
+    def test_plan_revision_request_is_rejected_in_implementation(self):
+        self.bootstrap_to_implementation()
+        code, payload, _ = self.run_cli(
+            "request-plan-revision",
+            str(ISSUE),
+            "--by",
+            "test-implementer",
+            "--reason-code",
+            "approved-plan-defect",
+            "--reason",
+            "The approved plan requires a bounded correction.",
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("invalid-transition", payload["error"]["code"])
+        self.assertEqual("IMPLEMENTATION", self.state()["status"])
 
     def test_validation_failure_returns_to_implementation(self):
         self.bootstrap_to_validation()
