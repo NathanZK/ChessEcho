@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import io
 import json
 import os
@@ -379,6 +380,20 @@ class AgentWorkflowTest(unittest.TestCase):
             )[0],
         )
         self.assertEqual("WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", self.state()["status"])
+
+    def bootstrap_to_draft_pr_creation(self):
+        """Drive a run through every gate to the terminal DRAFT_PR_CREATION status."""
+        self.bootstrap_to_reviewed_implementation()
+        code, payload, _ = self.run_cli(
+            "approve-implementation",
+            str(ISSUE),
+            "--by",
+            "owner",
+            "--confirm",
+            "implementation_approved",
+        )
+        self.assertEqual(0, code)
+        self.assertEqual("DRAFT_PR_CREATION", self.state()["status"])
 
     def checkout_unrelated_branch_ahead_of_target(self, branch="unrelated-work"):
         self.git("checkout", "-q", "-b", branch)
@@ -3129,6 +3144,260 @@ class AgentWorkflowTest(unittest.TestCase):
         )
         self.assertEqual(1, code)
         self.assertEqual("tests-modified-after-approval", payload["error"]["code"])
+
+    # ---------- supersede-run ----------
+
+    def test_supersede_run_retires_eligible_run_and_preserves_it_intact(self):
+        """A DRAFT_PR_CREATION run can be superseded, preserving its full record."""
+        self.bootstrap_to_draft_pr_creation()
+        original_state = self.state()
+        original_run_dir = self.root / ".agent-workflow" / "runs" / f"issue-{ISSUE}"
+        original_state_bytes = (original_run_dir / "state.json").read_bytes()
+        original_artifacts = sorted(
+            path.name for path in (original_run_dir / "artifacts").iterdir()
+        )
+
+        code, payload, _ = self.run_cli(
+            "supersede-run",
+            str(ISSUE),
+            "--by",
+            "owner",
+            "--reason",
+            "target_head was acquired from a substituted remote",
+            "--confirm",
+            "supersede_confirmed",
+        )
+        self.assertEqual(0, code, payload)
+        self.assertTrue(payload["ok"])
+
+        # The canonical run location is gone entirely.
+        self.assertFalse(original_run_dir.exists())
+
+        destination = self.root / payload["superseded_run_location"]
+        self.assertTrue(destination.is_dir())
+
+        # The full historical state and artifacts are preserved byte-for-byte.
+        self.assertEqual(original_state_bytes, (destination / "state.json").read_bytes())
+        preserved_artifacts = sorted(
+            path.name for path in (destination / "artifacts").iterdir()
+        )
+        self.assertEqual(original_artifacts, preserved_artifacts)
+
+        manifest = json.loads(
+            (destination / "supersession-manifest.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(workflow.SUPERSESSION_FORMAT, manifest["format"])
+        self.assertEqual(ISSUE, manifest["issue"])
+        self.assertEqual(
+            str(pathlib.Path(".agent-workflow") / "runs" / f"issue-{ISSUE}"),
+            manifest["original_run_location"],
+        )
+        self.assertEqual(payload["superseded_run_location"], manifest["superseded_run_location"])
+        self.assertEqual("DRAFT_PR_CREATION", manifest["original_status"])
+        self.assertEqual(original_state["implementation_commit"], original_state["implementation_commit"])
+        self.assertEqual(
+            hashlib.sha256(original_state_bytes).hexdigest(),
+            manifest["original_state_sha256"],
+        )
+        self.assertEqual(
+            "target_head was acquired from a substituted remote", manifest["reason"]
+        )
+        self.assertEqual("owner", manifest["authorized_by"])
+        self.assertEqual("supersede_confirmed", manifest["confirmation"])
+        self.assertIn("authorized_at", manifest)
+        self.assertIn("workflow_head_at_supersession", manifest)
+        self.assertEqual("main", manifest["target_base"])
+
+    def test_supersede_run_requires_explicit_authorization_confirmation(self):
+        """A mismatched confirmation phrase is rejected, not silently accepted."""
+        self.bootstrap_to_draft_pr_creation()
+        code, payload, _ = self.run_cli(
+            "supersede-run",
+            str(ISSUE),
+            "--by",
+            "owner",
+            "--reason",
+            "invalid provenance",
+            "--confirm",
+            "not-the-right-phrase",
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("approval-confirmation-mismatch", payload["error"]["code"])
+        # The run must remain entirely untouched after a rejected attempt.
+        run_dir = self.root / ".agent-workflow" / "runs" / f"issue-{ISSUE}"
+        self.assertTrue(run_dir.exists())
+        self.assertEqual("DRAFT_PR_CREATION", self.state()["status"])
+
+    def test_supersede_run_requires_non_empty_reason(self):
+        """An empty --reason is refused rather than accepted as a formality."""
+        self.bootstrap_to_draft_pr_creation()
+        code, payload, _ = self.run_cli(
+            "supersede-run",
+            str(ISSUE),
+            "--by",
+            "owner",
+            "--reason",
+            "   ",
+            "--confirm",
+            "supersede_confirmed",
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("missing-supersession-reason", payload["error"]["code"])
+
+    def test_supersede_run_fails_closed_when_no_run_exists(self):
+        """supersede-run on an issue that was never initialized fails closed."""
+        code, payload, _ = self.run_cli(
+            "supersede-run",
+            str(ISSUE),
+            "--by",
+            "owner",
+            "--reason",
+            "no run to retire",
+            "--confirm",
+            "supersede_confirmed",
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("no-existing-run", payload["error"]["code"])
+
+    def test_supersede_run_is_not_repeatable_on_the_same_run(self):
+        """A second supersede-run attempt fails closed exactly like a missing run."""
+        self.bootstrap_to_draft_pr_creation()
+        first_code, first_payload, _ = self.run_cli(
+            "supersede-run",
+            str(ISSUE),
+            "--by",
+            "owner",
+            "--reason",
+            "invalid provenance",
+            "--confirm",
+            "supersede_confirmed",
+        )
+        self.assertEqual(0, first_code, first_payload)
+
+        second_code, second_payload, _ = self.run_cli(
+            "supersede-run",
+            str(ISSUE),
+            "--by",
+            "owner",
+            "--reason",
+            "invalid provenance (retry)",
+            "--confirm",
+            "supersede_confirmed",
+        )
+        self.assertEqual(1, second_code)
+        self.assertEqual("no-existing-run", second_payload["error"]["code"])
+
+        # Only the original supersession location exists; no duplicate/partial
+        # historical directory was created by the rejected retry.
+        superseded_parent = self.root / ".agent-workflow" / "runs" / "superseded"
+        entries = list(superseded_parent.iterdir())
+        self.assertEqual(1, len(entries))
+
+    def test_supersede_run_rejects_unsafe_active_run(self):
+        """An early-stage, still-actionable run cannot be superseded."""
+        self.bootstrap_to_implementation()
+        self.assertEqual("IMPLEMENTATION", self.state()["status"])
+        code, payload, _ = self.run_cli(
+            "supersede-run",
+            str(ISSUE),
+            "--by",
+            "owner",
+            "--reason",
+            "convenience, not a real invalidation",
+            "--confirm",
+            "supersede_confirmed",
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("run-not-eligible-for-supersession", payload["error"]["code"])
+        run_dir = self.root / ".agent-workflow" / "runs" / f"issue-{ISSUE}"
+        self.assertTrue(run_dir.exists())
+        self.assertEqual("IMPLEMENTATION", self.state()["status"])
+
+    def test_supersede_run_allows_fresh_init_with_no_inherited_evidence(self):
+        """After supersession, init creates an unrelated, evidence-free run."""
+        self.bootstrap_to_draft_pr_creation()
+        old_implementation_commit = self.state()["implementation_commit"]
+        old_target_head = self.state()["target_head"]
+
+        code, payload, _ = self.run_cli(
+            "supersede-run",
+            str(ISSUE),
+            "--by",
+            "owner",
+            "--reason",
+            "target_head was acquired from a substituted remote",
+            "--confirm",
+            "supersede_confirmed",
+        )
+        self.assertEqual(0, code, payload)
+
+        # The workflow's own HEAD is the current authoritative target base;
+        # init requires HEAD to already sit at the resolved target.
+        self.git("checkout", "-q", "main")
+        current_head = self.git("rev-parse", "HEAD").stdout.strip()
+        self.git("update-ref", "refs/remotes/origin/main", current_head)
+
+        code, payload, _ = self.run_cli("init", str(ISSUE))
+        self.assertEqual(0, code, payload)
+        self.assertEqual("PLANNING", payload["status"])
+
+        fresh_state = self.state()
+        self.assertIsNone(fresh_state["implementation_commit"])
+        self.assertIsNone(fresh_state["test_commit"])
+        self.assertIsNone(fresh_state["draft_pr"])
+        self.assertIsNone(fresh_state["approvals"]["plan"])
+        self.assertIsNone(fresh_state["approvals"]["tests"])
+        self.assertIsNone(fresh_state["approvals"]["implementation"])
+        self.assertNotEqual(old_implementation_commit, fresh_state.get("implementation_commit"))
+        self.assertEqual(current_head, fresh_state["target_head"])
+        # The retired run's stale target is not reused as the fresh baseline.
+        self.assertNotEqual(old_target_head, fresh_state["target_head"])
+
+    def test_supersede_run_removes_issue_from_every_normal_command(self):
+        """Normal, mutating workflow commands cannot touch a superseded run."""
+        self.bootstrap_to_draft_pr_creation()
+        code, _, _ = self.run_cli(
+            "supersede-run",
+            str(ISSUE),
+            "--by",
+            "owner",
+            "--reason",
+            "target_head was acquired from a substituted remote",
+            "--confirm",
+            "supersede_confirmed",
+        )
+        self.assertEqual(0, code)
+
+        for arguments in (
+            ("status", str(ISSUE)),
+            ("approve-implementation", str(ISSUE), "--by", "owner", "--confirm", "implementation_approved"),
+            ("reject-implementation", str(ISSUE), "--by", "owner", "--reason", "x"),
+            ("run-validation", str(ISSUE), "--profile", "workflow-tooling"),
+            ("recover-implementation-approval", str(ISSUE)),
+            ("reanchor-target", str(ISSUE), "--by", "owner"),
+            ("reconcile-candidate", str(ISSUE), "--by", "owner"),
+            ("create-draft-pr", str(ISSUE), "--title", "x", "--body-file", "artifacts-src/plan.md"),
+        ):
+            code, payload, _ = self.run_cli(*arguments)
+            self.assertEqual(1, code, arguments)
+            self.assertEqual("missing-file", payload["error"]["code"], arguments)
+
+    def test_supersede_run_manifest_captures_authoritative_workflow_head(self):
+        """The manifest binds the transition to the workflow's own current HEAD, not stale state."""
+        self.bootstrap_to_draft_pr_creation()
+        expected_head = self.git("rev-parse", "HEAD").stdout.strip()
+        code, payload, _ = self.run_cli(
+            "supersede-run",
+            str(ISSUE),
+            "--by",
+            "owner",
+            "--reason",
+            "target_head was acquired from a substituted remote",
+            "--confirm",
+            "supersede_confirmed",
+        )
+        self.assertEqual(0, code)
+        self.assertEqual(expected_head, payload["manifest"]["workflow_head_at_supersession"])
 
 
 if __name__ == "__main__":

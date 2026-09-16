@@ -282,6 +282,51 @@ configured or no `origin` remote at all, matching prior behavior for such
 environments (for example, local test harnesses that simulate `origin/<
 target_base>` via a ref without a real remote).
 
+## Superseding an invalidated run
+
+`supersede-run` retires a run whose provenance was invalidated by something
+outside the workflow's own gates (for example: a `target_head` later proven
+to have come from a substituted remote, per "Target authenticity" above) so
+the same issue can be re-run cleanly from a trusted baseline.
+
+It is deliberately not a recovery or reconciliation mechanism: unlike
+`reanchor-target` or `reconcile-candidate`, it never inspects, adopts,
+verifies, or transfers any approval, candidate, or evidence into a new run.
+It only relocates the existing run's on-disk state and artifacts, intact, to
+a durable historical location outside every canonical `issue-<n>` run path,
+and records why and by whom that happened.
+
+Requirements:
+
+- The run must exist (`no-existing-run` otherwise) and be in `DRAFT_PR_CREATION`
+  or `WORKFLOW_COMPLETED` (`run-not-eligible-for-supersession` otherwise).
+  Earlier-stage runs are refused because they may still make legitimate
+  progress through normal commands; superseding them would discard
+  recoverable work as a matter of convenience, not necessity.
+- A non-empty `--reason` and a matching `--confirm` phrase
+  (`workflow.approvals.supersede`, default `supersede_confirmed`) and `--by`
+  identity are required, following the same local-acknowledgment convention
+  used by every other human approval gate.
+- The retired run's directory (state, artifacts, everything) is moved,
+  unmodified, to `.agent-workflow/runs/superseded/issue-<n>-<timestamp>-<
+  token>/`, alongside a `supersession-manifest.json` recording the original
+  and new locations, the original status, a SHA-256 of the original
+  `state.json`, the reason, the authorizing identity and confirmation, the
+  workflow's own `HEAD` at the time of the transition, and the target base.
+- Because the move removes the run from its canonical `issue-<n>` path,
+  every normal workflow command for that issue (approvals, rejections,
+  validation, recovery, `reanchor-target`, `reconcile-candidate`,
+  `create-draft-pr`, even `status`) fails closed with a missing-run error
+  until a fresh `init` creates a new run — the superseded run cannot be
+  resumed or mutated through any normal command, and a second
+  `supersede-run` attempt on the same issue fails closed identically to one
+  that was never initialized. `init` for the same issue then binds a fresh,
+  empty state to the current authoritative target with no inherited
+  approval, candidate, or evidence state from the retired run.
+- The historical run remains fully intact on disk for audit; inspecting it
+  is a plain file read, not a workflow command, so no separate read path is
+  needed or provided.
+
 ## Bounded execution
 
 All external commands run via `scripts/workflow_supervisor.py` with configured timeout, grace period, and output caps.
@@ -292,6 +337,7 @@ Normal repository CI remains the broad validation authority; local checks are ta
 ```bash
 python3 scripts/agent_workflow.py init ISSUE
 python3 scripts/agent_workflow.py status ISSUE
+python3 scripts/agent_workflow.py supersede-run ISSUE --by REQUESTER --reason "..." --confirm supersede_confirmed
 python3 scripts/agent_workflow.py submit-plan ISSUE --artifact PATH --agent chess-echo-planner
 python3 scripts/agent_workflow.py review-plan ISSUE --status READY_FOR_HUMAN_APPROVAL|NEEDS_REVISION --artifact PATH --reviewer chess-echo-reviewer
 python3 scripts/agent_workflow.py approve-plan ISSUE --by LOGIN --confirm plan_approved
