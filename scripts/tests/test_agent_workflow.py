@@ -219,6 +219,7 @@ class AgentWorkflowTest(unittest.TestCase):
         result="PASS",
         test_commit=None,
         candidate_diff=None,
+        commit_subject="Update example workflow implementation",
         stdout="tests ok\n",
         stderr="",
     ):
@@ -239,6 +240,7 @@ class AgentWorkflowTest(unittest.TestCase):
             "result": result,
             "test_commit": test_commit,
             "candidate_diff": candidate_diff or "",
+            "commit_subject": commit_subject,
             "stdout": stdout,
             "stderr": stderr,
         }
@@ -998,6 +1000,67 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual(1, code)
         self.assertEqual("test-commit-mismatch", payload["error"]["code"])
 
+    def test_implementation_commit_subject_validation_rejects_generic_issue_only_subjects(self):
+        """Commit subjects must describe the change, not only identify the issue."""
+        generic_subjects = [
+            "Implement issue #321",
+            "implement issue 321",
+            "Fix issue #321",
+            "Resolve #321",
+            "Issue #321",
+        ]
+
+        for subject in generic_subjects:
+            with self.subTest(subject=subject):
+                with self.assertRaises(workflow.WorkflowError) as raised:
+                    workflow._validate_implementation_commit_subject(subject, ISSUE)
+                self.assertEqual("invalid-implementation-commit-subject", raised.exception.code)
+
+    def test_submit_implementation_rejects_missing_commit_subject(self):
+        """Implementation submission fails closed when no meaningful subject is available."""
+        self.bootstrap_to_implementation()
+        (self.root / "src" / "Example.kt").write_text("implementation\n", encoding="utf-8")
+        evidence_path = self.write_evidence()
+        evidence = json.loads((self.root / evidence_path).read_text(encoding="utf-8"))
+        del evidence["commit_subject"]
+        (self.root / evidence_path).write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+
+        code, payload, _ = self.run_cli(
+            "submit-implementation",
+            str(ISSUE),
+            "--artifact",
+            "artifacts-src/implementation-report.md",
+            "--agent",
+            "chess-echo-implementer",
+            "--evidence",
+            evidence_path,
+        )
+
+        self.assertEqual(1, code)
+        self.assertEqual("invalid-implementation-commit-subject", payload["error"]["code"])
+        self.assertEqual("IMPLEMENTATION", self.state()["status"])
+
+    def test_submit_implementation_rejects_generic_commit_subject(self):
+        """Implementation submission must not accept the old generic fallback subject."""
+        self.bootstrap_to_implementation()
+        (self.root / "src" / "Example.kt").write_text("implementation\n", encoding="utf-8")
+        evidence_path = self.write_evidence(commit_subject="Implement issue #321")
+
+        code, payload, _ = self.run_cli(
+            "submit-implementation",
+            str(ISSUE),
+            "--artifact",
+            "artifacts-src/implementation-report.md",
+            "--agent",
+            "chess-echo-implementer",
+            "--evidence",
+            evidence_path,
+        )
+
+        self.assertEqual(1, code)
+        self.assertEqual("invalid-implementation-commit-subject", payload["error"]["code"])
+        self.assertEqual("IMPLEMENTATION", self.state()["status"])
+
     def test_role_and_confirmation_guards(self):
         self.write_artifact("plan.md", "plan")
         self.write_artifact("plan-review.md", "review")
@@ -1674,7 +1737,10 @@ class AgentWorkflowTest(unittest.TestCase):
         current_head = self.git("rev-parse", "HEAD").stdout.strip()
         self.assertEqual(authoritative_commit, current_head)
         self.assertEqual(target_head, self.git("rev-parse", f"{current_head}^").stdout.strip())
-        self.assertEqual("Implement issue #321", self.git("show", "-s", "--format=%s", current_head).stdout.strip())
+        self.assertEqual(
+            "Update example workflow implementation",
+            self.git("show", "-s", "--format=%s", current_head).stdout.strip(),
+        )
         # Exactly 1 commit relative to target_head
         commit_count = int(self.git("rev-list", "--count", f"{target_head}..{current_head}").stdout.strip())
         self.assertEqual(1, commit_count)
