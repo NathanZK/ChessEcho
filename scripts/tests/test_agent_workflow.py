@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -480,6 +481,121 @@ class AgentWorkflowTest(unittest.TestCase):
         evidence_path = self.write_evidence()
         if not submit:
             return evidence_path
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "submit-implementation",
+                str(ISSUE),
+                "--artifact",
+                "artifacts-src/implementation-report.md",
+                "--agent",
+                "chess-echo-implementer",
+                "--evidence",
+                evidence_path,
+            )[0],
+        )
+        return evidence_path
+
+    def bootstrap_to_not_applicable_ci_validation(self):
+        workflow_dir = self.root / ".github" / "workflows"
+        workflow_dir.mkdir(parents=True, exist_ok=True)
+        (workflow_dir / "ci.yml").write_text(
+            "name: ci\njobs:\n  frontend:\n    steps:\n      - run: npm run test\n",
+            encoding="utf-8",
+        )
+        self.git("add", ".github/workflows/ci.yml")
+        self.git("commit", "-qm", "baseline ci workflow")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        self.write_artifact("plan.md", "plan")
+        self.write_artifact("plan-review.md", "plan review")
+        self.write_artifact("test-report.md", "tests")
+        self.write_artifact("test-review.md", "test review")
+        self.write_artifact("implementation-report.md", "implementation")
+        self.assertEqual(0, self.run_cli("init", str(ISSUE))[0])
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "submit-plan",
+                str(ISSUE),
+                "--artifact",
+                "artifacts-src/plan.md",
+                "--agent",
+                "chess-echo-planner",
+                "--scope",
+                ".github/workflows/ci.yml",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "review-plan",
+                str(ISSUE),
+                "--status",
+                workflow.READY,
+                "--artifact",
+                "artifacts-src/plan-review.md",
+                "--reviewer",
+                "chess-echo-reviewer",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "approve-plan",
+                str(ISSUE),
+                "--by",
+                "owner",
+                "--confirm",
+                "plan_approved",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "submit-tests",
+                str(ISSUE),
+                "--artifact",
+                "artifacts-src/test-report.md",
+                "--agent",
+                "chess-echo-test-implementer",
+                "--not-applicable",
+                "--reason",
+                "Approved implementation scope contains no test files.",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "review-tests",
+                str(ISSUE),
+                "--status",
+                workflow.READY,
+                "--artifact",
+                "artifacts-src/test-review.md",
+                "--reviewer",
+                "chess-echo-reviewer",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "approve-tests",
+                str(ISSUE),
+                "--by",
+                "owner",
+                "--confirm",
+                "tests_approved",
+            )[0],
+        )
+        (workflow_dir / "ci.yml").write_text(
+            "name: ci\njobs:\n  frontend:\n    steps:\n      - run: npm run lint\n      - run: npm run test\n",
+            encoding="utf-8",
+        )
+        evidence_path = self.write_evidence(
+            test_scope=[],
+            stdout="lint baseline ok\n",
+            test_command="%s -c \"print('lint baseline ok')\"" % sys.executable,
+        )
         self.assertEqual(
             0,
             self.run_cli(
@@ -1013,12 +1129,84 @@ class AgentWorkflowTest(unittest.TestCase):
         )
 
     def advance_remote_target(self, name="authorized remote merge"):
-        (self.root / "remote.txt").write_text("remote\n", encoding="utf-8")
-        self.git("add", "remote.txt")
-        self.git("commit", "-qm", name)
-        remote_head = self.git("rev-parse", "HEAD").stdout.strip()
+        return self.advance_remote_target_with_changes(
+            {"remote.txt": "remote\n"},
+            name=name,
+        )
+
+    def advance_remote_target_over_candidate(self, content=None, name="authorized overlapping remote merge"):
+        candidate_path = self.root / "src" / "Example.kt"
+        return self.advance_remote_target_with_changes(
+            {"src/Example.kt": candidate_path.read_text(encoding="utf-8") if content is None else content},
+            name=name,
+        )
+
+    def advance_remote_target_with_changes(self, changes, name="authorized remote merge"):
+        base = self.state().get("target_head") or self.git("rev-parse", "origin/main").stdout.strip()
+        index_path = self.root / "alt-index"
+        if index_path.exists():
+            index_path.unlink()
+        env = os.environ.copy()
+        env["GIT_INDEX_FILE"] = str(index_path)
+        subprocess.run(
+            ["git", "read-tree", base],
+            cwd=self.root,
+            check=True,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for path, content in changes.items():
+            blob = subprocess.run(
+                ["git", "hash-object", "-w", "--stdin"],
+                cwd=self.root,
+                check=True,
+                env=env,
+                input=content,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            ).stdout.strip()
+            subprocess.run(
+                ["git", "update-index", "--add", "--cacheinfo", "100644", blob, path],
+                cwd=self.root,
+                check=True,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        tree = subprocess.run(
+            ["git", "write-tree"],
+            cwd=self.root,
+            check=True,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ).stdout.strip()
+        remote_head = subprocess.run(
+            ["git", "commit-tree", tree, "-p", base, "-m", name],
+            cwd=self.root,
+            check=True,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ).stdout.strip()
+        if index_path.exists():
+            index_path.unlink()
         self.git("update-ref", "refs/remotes/origin/main", remote_head)
         return remote_head
+
+    def assert_candidate_state_matches(self, test_commit, expected_diff, expected_paths):
+        self.assertEqual(test_commit, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertEqual(expected_diff, self.git_candidate_diff(test_commit))
+        self.assertEqual(expected_paths, workflow._git_candidate_names(self.root, self.root_config(), test_commit))
+
+    def root_config(self):
+        return workflow._load_config(self.root)
 
     def test_reanchor_target_preserves_scope_and_provenance_on_fast_forward(self):
         """A governed fast-forward updates only the trusted target identity."""
@@ -1104,6 +1292,210 @@ class AgentWorkflowTest(unittest.TestCase):
             {"invalid-artifact-ancestry", "artifact-validity-undetermined"},
         )
         self.assertEqual(before, self.state())
+
+    def test_reconcile_candidate_preserves_candidate_and_provenance_on_fast_forward(self):
+        """A reconciled candidate keeps its approved meaning on a descendant target."""
+        self.bootstrap_to_validation()
+        before = self.state()
+        expected_diff = before["implementation_candidate"]["candidate_diff"]
+        expected_paths = before["implementation_candidate"]["candidate_paths"]
+        remote_head = self.advance_remote_target()
+
+        code, payload, _ = self.run_cli(
+            "reconcile-candidate",
+            str(ISSUE),
+            "--by",
+            "owner",
+        )
+
+        self.assertEqual(0, code)
+        self.assertEqual("VALIDATION", payload["status"])
+        after = self.state()
+        self.assertEqual(remote_head, after["target_head"])
+        self.assertEqual(remote_head, after["base_head"])
+        self.assertEqual(before["approved_scope"], after["approved_scope"])
+        self.assertEqual(before["artifacts"]["implementation_report"], after["artifacts"]["implementation_report"])
+        self.assertEqual(before["approvals"]["plan"], after["approvals"]["plan"])
+        self.assertEqual(before["approvals"]["tests"], after["approvals"]["tests"])
+        self.assertIsNone(after["validation"])
+        self.assertFalse(after["implementation_review_ready"])
+        self.assertNotEqual(before["test_commit"], after["test_commit"])
+        self.assertEqual(after["test_commit"], after["implementation_candidate"]["test_commit"])
+        self.assertEqual(expected_diff, after["implementation_candidate"]["candidate_diff"])
+        self.assertEqual(expected_paths, after["implementation_candidate"]["candidate_paths"])
+        self.assert_candidate_state_matches(after["test_commit"], expected_diff, expected_paths)
+        provenance = after["candidate_reconciliations"][-1]
+        self.assertEqual(before["target_head"], provenance["previous_target_head"])
+        self.assertEqual(remote_head, provenance["new_target_head"])
+        self.assertEqual("owner", provenance["requested_by"])
+        self.assertEqual("rebase", provenance["reconciliation_method"])
+        self.assertEqual(before["test_commit"], provenance["candidate_before"]["test_commit"])
+        self.assertEqual(after["test_commit"], provenance["candidate_after"]["test_commit"])
+        self.assertEqual(expected_paths, provenance["candidate_before"]["candidate_paths"])
+        self.assertEqual(expected_paths, provenance["candidate_after"]["candidate_paths"])
+        self.assertEqual(
+            provenance["candidate_before"]["candidate_diff_sha256"],
+            provenance["candidate_after"]["candidate_diff_sha256"],
+        )
+        self.assertEqual([], provenance["target_overlap_paths"])
+
+    def test_reconcile_candidate_rejects_non_descendant_remote(self):
+        """Candidate reconciliation rejects unrelated target ancestry."""
+        self.bootstrap_to_validation()
+        before = self.state()
+        unrelated = self.unrelated_empty_tree_commit()
+        self.git("update-ref", "refs/remotes/origin/main", unrelated)
+
+        code, payload, _ = self.run_cli(
+            "reconcile-candidate",
+            str(ISSUE),
+            "--by",
+            "owner",
+        )
+
+        self.assertEqual(1, code)
+        self.assertEqual("invalid-git-ancestry", payload["error"]["code"])
+        self.assertEqual(before, self.state())
+
+    def test_reconcile_candidate_rejects_dirty_index(self):
+        """Unexpected staged changes are rejected before reconciliation."""
+        self.bootstrap_to_validation()
+        before = self.state()
+        self.advance_remote_target()
+        (self.root / "extra.txt").write_text("unexpected\n", encoding="utf-8")
+        self.git("add", "extra.txt")
+
+        code, payload, _ = self.run_cli(
+            "reconcile-candidate",
+            str(ISSUE),
+            "--by",
+            "owner",
+        )
+
+        self.assertEqual(1, code)
+        self.assertEqual("git-index-dirty", payload["error"]["code"])
+        self.assertEqual(before, self.state())
+
+    def test_reconcile_candidate_rejects_scope_drift(self):
+        """Approved scope must still cover the candidate exactly."""
+        self.bootstrap_to_validation()
+        self.advance_remote_target()
+        state = self.state()
+        state["approved_scope"] = ["src/test/ExampleTest.kt"]
+        self.write_state(state)
+        before = self.state()
+
+        code, payload, _ = self.run_cli(
+            "reconcile-candidate",
+            str(ISSUE),
+            "--by",
+            "owner",
+        )
+
+        self.assertEqual(1, code)
+        self.assertEqual("implementation-scope-drift", payload["error"]["code"])
+        self.assertEqual(before, self.state())
+
+    def test_reconcile_candidate_rejects_content_drift(self):
+        """Only the accepted candidate may be reconciled."""
+        self.bootstrap_to_validation()
+        before = self.state()
+        self.advance_remote_target()
+        (self.root / "src" / "Example.kt").write_text("candidate B\n", encoding="utf-8")
+
+        code, payload, _ = self.run_cli(
+            "reconcile-candidate",
+            str(ISSUE),
+            "--by",
+            "owner",
+        )
+
+        self.assertEqual(1, code)
+        self.assertEqual("implementation-candidate-mismatch", payload["error"]["code"])
+        self.assertEqual(before, self.state())
+
+    def test_reconcile_candidate_rejects_invalid_test_applicability_state(self):
+        """Malformed approved test applicability fails closed."""
+        self.bootstrap_to_validation()
+        self.advance_remote_target()
+        state = self.state()
+        state["test_implementation_status"] = None
+        self.write_state(state)
+        before = self.state()
+
+        code, payload, _ = self.run_cli(
+            "reconcile-candidate",
+            str(ISSUE),
+            "--by",
+            "owner",
+        )
+
+        self.assertEqual(1, code)
+        self.assertEqual("invalid-test-applicability", payload["error"]["code"])
+        self.assertEqual(before, self.state())
+
+    def test_reconcile_candidate_rejects_conflicting_target_overlap(self):
+        """Target changes that touch candidate paths are not safely reconcilable."""
+        self.bootstrap_to_validation()
+        before = self.state()
+        self.advance_remote_target_over_candidate(
+            content="remote overlap\n",
+            name="authorized conflicting remote merge",
+        )
+
+        code, payload, _ = self.run_cli(
+            "reconcile-candidate",
+            str(ISSUE),
+            "--by",
+            "owner",
+        )
+
+        self.assertEqual(1, code)
+        self.assertEqual("artifact-validity-undetermined", payload["error"]["code"])
+        self.assertEqual(before, self.state())
+        self.assertEqual("implementation\n", (self.root / "src" / "Example.kt").read_text(encoding="utf-8"))
+
+    def test_reconcile_candidate_rejects_ambiguous_candidate_overlap_already_present_upstream(self):
+        """Even identical upstream path overlap is ambiguous and fails closed."""
+        self.bootstrap_to_validation()
+        before = self.state()
+        self.advance_remote_target_over_candidate()
+
+        code, payload, _ = self.run_cli(
+            "reconcile-candidate",
+            str(ISSUE),
+            "--by",
+            "owner",
+        )
+
+        self.assertEqual(1, code)
+        self.assertEqual("artifact-validity-undetermined", payload["error"]["code"])
+        self.assertEqual(before, self.state())
+
+    def test_reconcile_candidate_preserves_not_applicable_ci_candidate(self):
+        """A synthetic #261-style CI-only candidate can reconcile after target advance."""
+        self.bootstrap_to_not_applicable_ci_validation()
+        before = self.state()
+        expected_diff = before["implementation_candidate"]["candidate_diff"]
+        expected_paths = before["implementation_candidate"]["candidate_paths"]
+        remote_head = self.advance_remote_target()
+
+        code, payload, _ = self.run_cli(
+            "reconcile-candidate",
+            str(ISSUE),
+            "--by",
+            "owner",
+        )
+
+        self.assertEqual(0, code)
+        self.assertEqual("VALIDATION", payload["status"])
+        after = self.state()
+        self.assertEqual("NOT_APPLICABLE", after["test_implementation_status"])
+        self.assertEqual(before["test_implementation_reason"], after["test_implementation_reason"])
+        self.assertEqual(remote_head, after["target_head"])
+        self.assertEqual(expected_diff, after["implementation_candidate"]["candidate_diff"])
+        self.assertEqual(expected_paths, after["implementation_candidate"]["candidate_paths"])
+        self.assert_candidate_state_matches(after["test_commit"], expected_diff, expected_paths)
 
     def test_pr_250_contamination_scenario_is_rejected_at_init(self):
         """PR #250-style unrelated ancestry and stale BFS files cannot publish."""

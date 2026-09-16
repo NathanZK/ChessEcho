@@ -4,6 +4,7 @@
 import argparse
 import base64
 import datetime as dt
+import hashlib
 import json
 import pathlib
 import re
@@ -723,6 +724,229 @@ def _approved_test_paths(state, context):
     return test_paths
 
 
+def _git_diff_text(root, config, base, head, paths=None):
+    command = _git_command(config, "diff", "--binary", base, head, "--")
+    if paths:
+        command.extend(paths)
+    completed = _run_checked(
+        command,
+        _effective_limits(config, "git"),
+        root,
+        "git-diff-failed",
+        "unable to compute diff for %s..%s" % (base, head),
+    )
+    return completed["stdout_text"]
+
+
+def _candidate_identity(test_commit, candidate_diff, candidate_paths):
+    encoded = candidate_diff.encode("utf-8")
+    return {
+        "test_commit": test_commit,
+        "candidate_paths": sorted(candidate_paths),
+        "candidate_diff_sha256": hashlib.sha256(encoded).hexdigest(),
+        "candidate_diff_bytes": len(encoded),
+    }
+
+
+def _target_change_paths(root, config, old_target, new_target):
+    return _git_diff_names(root, config, "%s..%s" % (old_target, new_target))
+
+
+def _reconciliation_supported_status(state):
+    return state["status"] in (
+        "VALIDATION",
+        "IMPLEMENTATION_REVIEW",
+        "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL",
+    )
+
+
+def _best_effort_rebase_abort(root, config):
+    _run_bounded(
+        _git_command(config, "rebase", "--abort"),
+        _effective_limits(config, "git"),
+        root,
+    )
+
+
+def _restore_candidate_worktree(root, config, candidate_commit, test_commit):
+    _run_checked(
+        _git_command(config, "reset", "--hard", candidate_commit),
+        _effective_limits(config, "git"),
+        root,
+        "git-reset-failed",
+        "unable to restore candidate commit after failed reconciliation",
+    )
+    _run_checked(
+        _git_command(config, "reset", "--mixed", test_commit),
+        _effective_limits(config, "git"),
+        root,
+        "git-reset-failed",
+        "unable to restore implementation candidate after failed reconciliation",
+    )
+
+
+def _reconcile_candidate_artifacts(root, config, state, old_target, new_target, context):
+    scope = state.get("approved_scope")
+    _ensure(
+        isinstance(scope, list) and scope and all(isinstance(path, str) for path in scope),
+        "missing-approved-scope",
+        "%s requires approved plan scope" % context,
+    )
+    _ensure(
+        state["approvals"].get("plan") is not None and state["approvals"].get("tests") is not None,
+        "missing-approval",
+        "%s requires approved plan and tests" % context,
+    )
+
+    test_commit = state.get("test_commit")
+    _ensure(test_commit, "missing-test-commit", "%s requires test_commit" % context)
+    _ensure(
+        _current_head(root, config) == test_commit,
+        "implementation-commit-not-allowed",
+        "%s requires HEAD to match approved test_commit" % context,
+    )
+    _require_clean_index(root, config, context)
+    _git_ancestor(root, config, old_target, test_commit, context)
+
+    applicability = state.get("test_implementation_status")
+    test_paths = _approved_test_paths(state, context)
+    if applicability == "REQUIRED":
+        _require_test_only(
+            _git_diff_names(root, config, "%s..%s" % (old_target, test_commit)),
+            scope,
+            context,
+        )
+    else:
+        _ensure(
+            applicability == "NOT_APPLICABLE",
+            "invalid-test-applicability",
+            "%s requires valid test implementation applicability" % context,
+        )
+        _ensure(
+            state.get("test_implementation_reason"),
+            "missing-test-applicability-reason",
+            "%s requires approved NOT_APPLICABLE rationale" % context,
+        )
+
+    current_candidate = _require_implementation_candidate_matches(root, config, state, context)
+    _ensure(
+        all(not _is_test_file(path) for path in current_candidate["candidate_paths"]),
+        "implementation-test-modification",
+        "%s may change only approved production files: %s"
+        % (context, ", ".join(current_candidate["candidate_paths"])),
+    )
+    _require_candidate_scope(current_candidate["candidate_paths"], scope, context)
+
+    target_paths = _target_change_paths(root, config, old_target, new_target)
+    protected_paths = sorted(set(test_paths).union(current_candidate["candidate_paths"]))
+    overlap = sorted(set(target_paths).intersection(protected_paths))
+    _ensure(
+        not overlap,
+        "artifact-validity-undetermined",
+        "%s cannot reconcile overlapping target changes: %s" % (context, ", ".join(overlap)),
+    )
+
+    test_diff_before = _git_diff_text(root, config, old_target, test_commit, test_paths)
+    candidate_before = _candidate_identity(
+        test_commit,
+        current_candidate["candidate_diff"],
+        current_candidate["candidate_paths"],
+    )
+    implementation_candidate = state["implementation_candidate"]
+    preserved_accepted_at = implementation_candidate.get("accepted_at")
+
+    _run_checked(
+        _git_command(config, "add", "-A"),
+        _effective_limits(config, "git"),
+        root,
+        "git-add-failed",
+        "unable to stage implementation candidate for reconciliation",
+    )
+    _run_checked(
+        _git_command(config, "commit", "-qm", "workflow: reconcile implementation candidate"),
+        _effective_limits(config, "git"),
+        root,
+        "git-commit-failed",
+        "unable to checkpoint implementation candidate for reconciliation",
+    )
+    original_candidate_commit = _current_head(root, config)
+
+    try:
+        _run_checked(
+            _git_command(config, "rebase", "--onto", new_target, old_target, original_candidate_commit),
+            _effective_limits(config, "git"),
+            root,
+            "git-rebase-failed",
+            "%s could not reconcile candidate onto the new target" % context,
+        )
+        rebased_candidate_commit = _current_head(root, config)
+        new_test_commit = _commit_parent(root, config, rebased_candidate_commit)
+        _git_ancestor(root, config, new_target, new_test_commit, context)
+
+        test_diff_after = _git_diff_text(root, config, new_target, new_test_commit, test_paths)
+        _ensure(
+            test_diff_before == test_diff_after,
+            "artifact-validity-undetermined",
+            "%s could not prove approved test-boundary equivalence on the new target" % context,
+        )
+
+        _run_checked(
+            _git_command(config, "reset", "--mixed", new_test_commit),
+            _effective_limits(config, "git"),
+            root,
+            "git-reset-failed",
+            "unable to restore uncommitted candidate after reconciliation",
+        )
+        current_diff_after = _git_candidate_diff(root, config, new_test_commit)
+        current_paths_after = _git_candidate_names(root, config, new_test_commit)
+        _ensure(
+            current_paths_after,
+            "missing-implementation-commit",
+            "%s must contain at least one production change" % context,
+        )
+        _ensure(
+            all(not _is_test_file(path) for path in current_paths_after),
+            "implementation-test-modification",
+            "%s may change only approved production files: %s"
+            % (context, ", ".join(current_paths_after)),
+        )
+        _require_candidate_scope(current_paths_after, scope, context)
+        _ensure(
+            current_diff_after == current_candidate["candidate_diff"]
+            and current_paths_after == current_candidate["candidate_paths"],
+            "artifact-validity-undetermined",
+            "%s could not prove implementation candidate equivalence on the new target" % context,
+        )
+        _require_clean_index(root, config, "post-reconcile-candidate")
+
+        candidate_after = _candidate_identity(
+            new_test_commit,
+            current_diff_after,
+            current_paths_after,
+        )
+        return {
+            "test_commit": new_test_commit,
+            "candidate": {
+                "test_commit": new_test_commit,
+                "candidate_diff": current_diff_after,
+                "candidate_paths": current_paths_after,
+                "accepted_at": preserved_accepted_at,
+            },
+            "candidate_before": candidate_before,
+            "candidate_after": candidate_after,
+            "target_paths": target_paths,
+            "target_overlap_paths": overlap,
+            "test_paths": test_paths,
+            "test_diff_sha256_before": hashlib.sha256(test_diff_before.encode("utf-8")).hexdigest(),
+            "test_diff_sha256_after": hashlib.sha256(test_diff_after.encode("utf-8")).hexdigest(),
+            "reconciliation_method": "rebase",
+        }
+    except WorkflowError:
+        _best_effort_rebase_abort(root, config)
+        _restore_candidate_worktree(root, config, original_candidate_commit, test_commit)
+        raise
+
+
 def _require_implementation_candidate_matches(root, config, state, context):
     """Require the current Git candidate to match the accepted implementation candidate."""
     accepted = state.get("implementation_candidate")
@@ -886,6 +1110,81 @@ def command_reanchor_target(args, root, config):
     }
 
 
+def command_reconcile_candidate(args, root, config):
+    """Reconcile an accepted uncommitted candidate onto a newer descendant target."""
+    state = _read_state(root, config, args.issue)
+    _ensure(
+        _reconciliation_supported_status(state),
+        "invalid-transition",
+        "reconcile-candidate is not safe in status %s" % state["status"],
+    )
+    _ensure(args.by.strip(), "missing-requester", "reconcile-candidate requires a requester")
+    _ensure(
+        not state.get("implementation_commit") and not state.get("draft_pr"),
+        "invalid-transition",
+        "reconcile-candidate is not allowed after publication artifacts exist",
+    )
+
+    old_target = _state_target_head(state)
+    new_target = _resolve_target_head(root, config, fetch=True)
+    _ensure(
+        new_target != old_target,
+        "target-not-advanced",
+        "reconcile-candidate requires origin/%s to advance" % config["target_base"],
+    )
+    _git_ancestor(root, config, old_target, new_target, "reconcile-candidate")
+
+    status_before = state["status"]
+    validation = _reconcile_candidate_artifacts(
+        root, config, state, old_target, new_target, "reconcile-candidate"
+    )
+
+    state["test_commit"] = validation["test_commit"]
+    state["implementation_candidate"] = validation["candidate"]
+    state["target_head"] = new_target
+    state["base_head"] = new_target
+    state["validation"] = None
+    state["implementation_review_ready"] = False
+    state["approvals"]["implementation"] = None
+    state["status"] = "VALIDATION"
+
+    provenance = {
+        "previous_target_head": old_target,
+        "new_target_head": new_target,
+        "target_base": config["target_base"],
+        "remote_ref": "origin/%s" % config["target_base"],
+        "requested_by": args.by,
+        "requested_at": _now(),
+        "status_before": status_before,
+        "status_after": state["status"],
+        "reconciliation_method": validation["reconciliation_method"],
+        "target_paths": validation["target_paths"],
+        "target_overlap_paths": validation["target_overlap_paths"],
+        "test_paths": validation["test_paths"],
+        "test_implementation_status": state.get("test_implementation_status"),
+        "test_diff_sha256_before": validation["test_diff_sha256_before"],
+        "test_diff_sha256_after": validation["test_diff_sha256_after"],
+        "candidate_before": validation["candidate_before"],
+        "candidate_after": validation["candidate_after"],
+        "validated_invariants": {
+            "strict_descendant_target": True,
+            "approved_scope_preserved": True,
+            "approved_tests_preserved": True,
+            "candidate_equivalence_proved": True,
+            "publication_artifacts_absent": True,
+        },
+    }
+    state.setdefault("candidate_reconciliations", []).append(provenance)
+    _write_state(root, config, args.issue, state)
+    return {
+        "ok": True,
+        "status": state["status"],
+        "previous_target_head": old_target,
+        "new_target_head": new_target,
+        "provenance": provenance,
+    }
+
+
 def _is_test_file(path):
     return (
         path.startswith("src/test/")
@@ -923,6 +1222,14 @@ def _require_production_only(paths, scope, context):
         all(not _is_test_file(path) and _path_in_scope(path, scope) for path in paths),
         "implementation-test-modification",
         "%s may change only approved production files: %s" % (context, ", ".join(paths)),
+    )
+
+
+def _require_candidate_scope(paths, scope, context):
+    _ensure(
+        all(_path_in_scope(path, scope) for path in paths),
+        "implementation-scope-drift",
+        "%s may change only approved files: %s" % (context, ", ".join(paths)),
     )
 
 
@@ -1924,6 +2231,11 @@ def build_parser():
     _add_issue(reanchor_target)
     reanchor_target.add_argument("--by", required=True)
 
+    reconcile_candidate = subparsers.add_parser("reconcile-candidate")
+    _add_root(reconcile_candidate)
+    _add_issue(reconcile_candidate)
+    reconcile_candidate.add_argument("--by", required=True)
+
     submit_implementation = subparsers.add_parser("submit-implementation")
     _add_root(submit_implementation)
     _add_issue(submit_implementation)
@@ -1978,6 +2290,7 @@ COMMANDS = {
     "reject-tests": command_reject_tests,
     "reopen-tests": command_reopen_tests,
     "reanchor-target": command_reanchor_target,
+    "reconcile-candidate": command_reconcile_candidate,
     "submit-implementation": command_submit_implementation,
     "run-validation": command_run_validation,
     "review-implementation": command_review_implementation,
