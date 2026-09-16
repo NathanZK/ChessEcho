@@ -936,6 +936,7 @@ def _reconcile_candidate_artifacts(root, config, state, old_target, new_target, 
                 "test_commit": new_test_commit,
                 "candidate_diff": current_diff_after,
                 "candidate_paths": current_paths_after,
+                "commit_subject": implementation_candidate.get("commit_subject"),
                 "accepted_at": preserved_accepted_at,
             },
             "candidate_before": candidate_before,
@@ -976,6 +977,9 @@ def _require_implementation_candidate_matches(root, config, state, context):
         "invalid-implementation-candidate",
         "%s accepted candidate is malformed" % context,
     )
+    commit_subject = _validate_implementation_commit_subject(
+        accepted.get("commit_subject"), state["issue"]
+    )
 
     current_diff = _git_candidate_diff(root, config, test_commit)
     current_paths = _git_candidate_names(root, config, test_commit)
@@ -990,7 +994,11 @@ def _require_implementation_candidate_matches(root, config, state, context):
         "implementation-candidate-mismatch",
         "%s current implementation candidate differs from accepted candidate" % context,
     )
-    return {"candidate_diff": current_diff, "candidate_paths": current_paths}
+    return {
+        "candidate_diff": current_diff,
+        "candidate_paths": current_paths,
+        "commit_subject": commit_subject,
+    }
 
 
 def _require_clean_tree(root, config, context):
@@ -1329,6 +1337,49 @@ def _validate_pr_body(body_path):
         "invalid-pr-body-format",
         "Draft PR body must contain exactly ## What, ## Why, and ## Testing in order",
     )
+
+
+def _validate_implementation_commit_subject(subject, issue):
+    """Require a reviewed, descriptive implementation commit subject."""
+    _ensure(
+        isinstance(subject, str),
+        "invalid-implementation-commit-subject",
+        "implementation evidence requires commit_subject",
+    )
+    normalized = subject.strip()
+    _ensure(
+        normalized,
+        "invalid-implementation-commit-subject",
+        "implementation commit subject must not be empty",
+    )
+    _ensure(
+        len(normalized) <= 72,
+        "invalid-implementation-commit-subject",
+        "implementation commit subject must be concise",
+    )
+    _ensure(
+        all(ord(character) >= 32 and ord(character) != 127 for character in normalized),
+        "invalid-implementation-commit-subject",
+        "implementation commit subject must be a single printable line",
+    )
+    _ensure(
+        re.search(r"[A-Za-z]", normalized),
+        "invalid-implementation-commit-subject",
+        "implementation commit subject must describe the change",
+    )
+
+    compact = re.sub(r"\s+", " ", normalized).lower()
+    generic_issue_only = (
+        r"(?:(?:implement|implements|implemented|fix|fixes|fixed|resolve|resolves|"
+        r"resolved|address|addresses|addressed)\s+)?(?:issue\s+)?#?\d+"
+    )
+    _ensure(
+        not re.fullmatch(generic_issue_only, compact),
+        "invalid-implementation-commit-subject",
+        "implementation commit subject must describe the change, not only identify issue #%s"
+        % issue,
+    )
+    return normalized
 
 
 # ---------- commands ----------
@@ -1826,6 +1877,9 @@ def command_submit_implementation(args, root, config):
         "test-commit-mismatch",
         "execution evidence test_commit must match workflow test_commit",
     )
+    commit_subject = _validate_implementation_commit_subject(
+        evidence.get("commit_subject"), args.issue
+    )
 
     # Independently obtain current Git candidate representation against test_commit
     candidate_diff_raw = _git_candidate_diff(root, config, test_commit)
@@ -1864,6 +1918,7 @@ def command_submit_implementation(args, root, config):
         "test_commit": test_commit,
         "candidate_diff": candidate_diff_raw,
         "candidate_paths": changed_names,
+        "commit_subject": commit_subject,
         "accepted_at": _now(),
     }
     state["validation"] = None
@@ -1998,7 +2053,9 @@ def command_approve_implementation(args, root, config):
         "approve-implementation requires HEAD to match approved test_commit",
     )
     _git_ancestor(root, config, target_head, test_commit, "approve-implementation")
-    _require_implementation_candidate_matches(root, config, state, "approve-implementation")
+    current_candidate = _require_implementation_candidate_matches(
+        root, config, state, "approve-implementation"
+    )
 
     # Verify approved tests remain unchanged
     changed_names = _git_candidate_names(root, config, test_commit)
@@ -2027,7 +2084,7 @@ def command_approve_implementation(args, root, config):
         "unable to soft-reset to target_head",
     )
     _run_checked(
-        _git_command(config, "commit", "-qm", "Implement issue #%s" % args.issue),
+        _git_command(config, "commit", "-qm", current_candidate["commit_subject"]),
         _effective_limits(config, "git"),
         root,
         "git-commit-failed",
