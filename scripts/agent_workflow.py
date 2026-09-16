@@ -695,6 +695,10 @@ def _require_publication_topology(root, config, state, head, context):
     return target_head
 
 
+def _tests_not_applicable(state):
+    return state.get("test_implementation_status") == "NOT_APPLICABLE"
+
+
 def _require_implementation_candidate_matches(root, config, state, context):
     """Require the current Git candidate to match the accepted implementation candidate."""
     accepted = state.get("implementation_candidate")
@@ -1018,6 +1022,8 @@ def command_init(args, root, config):
         "target_head": target_head,
         "approved_scope": None,
         "test_commit": None,
+        "test_implementation_status": "REQUIRED",
+        "test_implementation_reason": None,
         "implementation_candidate": None,
         "implementation_commit": None,
         "created_at": _now(),
@@ -1046,6 +1052,9 @@ def command_submit_plan(args, root, config):
     _ensure(args.scope, "missing-approved-scope", "submit-plan requires at least one approved path")
     state["artifacts"]["plan"] = _record_artifact(root, config, args.issue, "plan", args.artifact)
     state["approved_scope"] = args.scope
+    state["test_implementation_status"] = (
+        "NOT_APPLICABLE" if not any(_is_test_file(path) for path in args.scope) else "REQUIRED"
+    )
     _clear_post_plan(state)
     state["status"] = "PLAN_REVIEW"
     _write_state(root, config, args.issue, state)
@@ -1181,6 +1190,35 @@ def command_submit_tests(args, root, config):
     _ensure(scope, "missing-approved-scope", "submit-tests requires approved plan scope")
     target_head = _state_target_head(state)
     _ensure(target_head, "missing-target-head", "Workflow has no recorded target_head")
+
+    if args.not_applicable:
+        _ensure(
+            args.reason.strip(),
+            "missing-test-applicability-reason",
+            "--not-applicable requires a non-empty reason",
+        )
+        _ensure(
+            state.get("test_implementation_status") == "NOT_APPLICABLE",
+            "test-applicability-not-approved",
+            "NOT_APPLICABLE must be established by the approved plan",
+        )
+        _ensure(
+            _current_head(root, config) == target_head,
+            "not-applicable-test-commit-drift",
+            "NOT_APPLICABLE requires no test commit or candidate changes",
+        )
+        state["artifacts"]["test_report"] = _record_artifact(
+            root, config, args.issue, "test_report", args.artifact
+        )
+        _clear_post_tests(state)
+        state["test_commit"] = target_head
+        state["test_implementation_status"] = "NOT_APPLICABLE"
+        state["test_implementation_reason"] = args.reason.strip()
+        state["test_failure"] = None
+        state["status"] = "TEST_REVIEW"
+        _write_state(root, config, args.issue, state)
+        return {"ok": True, "status": state["status"], "test_implementation_status": "NOT_APPLICABLE"}
+
     test_head = _current_head(root, config)
     _ensure(
         test_head != target_head,
@@ -1191,7 +1229,7 @@ def command_submit_tests(args, root, config):
     _git_ancestor(root, config, target_head, test_head, "submit-tests")
     _require_test_only(test_paths, scope, "submit-tests")
     _ensure(
-        shlex.split(args.failure_command),
+        args.failure_command and shlex.split(args.failure_command),
         "missing-test-failure-check",
         "submit-tests requires a targeted failure command",
     )
@@ -1272,6 +1310,22 @@ def command_approve_tests(args, root, config):
     target_head = _state_target_head(state)
     scope = state.get("approved_scope") or []
     reopened_tests = _test_reopen_active(state)
+    if _tests_not_applicable(state):
+        _ensure(
+            candidate_test_commit == target_head,
+            "not-applicable-test-commit-drift",
+            "approve-tests requires NOT_APPLICABLE to remain at target_head",
+        )
+        _ensure(_current_head(root, config) == target_head, "test-commit-mismatch", "approve-tests requires HEAD to match target_head")
+        _require_clean_index(root, config, "approve-tests")
+        _run_checked(
+            _git_command(config, "commit", "--allow-empty", "-m", "workflow: approve tests"),
+            _effective_limits(config, "git"), root, "git-commit-failed", "unable to record approved test boundary",
+        )
+        state["test_commit"] = _current_head(root, config)
+        state["status"] = "IMPLEMENTATION"
+        _write_state(root, config, args.issue, state)
+        return {"ok": True, "status": state["status"], "approval": acknowledgment, "test_commit": state["test_commit"]}
     _ensure(candidate_test_commit, "missing-test-commit", "approve-tests requires candidate test_commit")
     _ensure(target_head, "missing-target-head", "approve-tests requires target_head")
 
@@ -1814,8 +1868,10 @@ def build_parser():
     _add_issue(submit_tests)
     _add_artifact(submit_tests)
     submit_tests.add_argument("--agent", required=True)
-    submit_tests.add_argument("--failure-command", required=True)
-    submit_tests.add_argument("--failure-contains", required=True)
+    submit_tests.add_argument("--failure-command", required=False)
+    submit_tests.add_argument("--failure-contains", required=False)
+    submit_tests.add_argument("--not-applicable", action="store_true")
+    submit_tests.add_argument("--reason", default="")
 
     review_tests = subparsers.add_parser("review-tests")
     _add_root(review_tests)
