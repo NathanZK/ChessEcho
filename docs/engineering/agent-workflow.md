@@ -266,6 +266,22 @@ The stronger independent-authorization assurance described by #237 remains
 future work. Do not claim that either the local CLI or Copilot host friction
 satisfies that requirement.
 
+## Target authenticity
+
+Every point that resolves `origin/<target_base>` for a fetch (`init` and the
+target-freshness check that guards later gates) first verifies that `origin`
+itself resolves to the repository configured in `authoritative_remote`
+(`.github/agent-workflow.json`, e.g. `"github.com/NathanZK/ChessEcho"`). The
+resolved `origin` URL is normalized (scheme, credentials, and `.git` suffix
+stripped; SSH shorthand rewritten to `host/owner/repo`) and compared against
+the configured expectation. A local `url.*.insteadOf` rewrite, or any other
+substitution that causes `origin` to resolve to a different repository, fails
+closed with `remote-not-authoritative` before any fetch or target resolution
+is trusted. The check is inert only when a run has no `authoritative_remote`
+configured or no `origin` remote at all, matching prior behavior for such
+environments (for example, local test harnesses that simulate `origin/<
+target_base>` via a ref without a real remote).
+
 ## Bounded execution
 
 All external commands run via `scripts/workflow_supervisor.py` with configured timeout, grace period, and output caps.
