@@ -20,17 +20,20 @@ Each issue run lives in:
 with:
 - `state.json` (current gate state)
 - `artifacts/` (plan/review/report files)
+- `test-approval-transition.json` (the immutable Gate 2 test-approval
+  transition journal)
 - `implementation-approval-transition.json` (the immutable Gate 3
   transition journal)
 
-The transition journal is created only after Gate 3's existing preconditions
-pass and after the exact local acknowledgment is accepted, but before any
-`git add`, `git reset`, or `git commit`. JSON state and journal writes use a
+The transition journals are created only after each gate's existing
+preconditions pass and after the exact local acknowledgment is accepted, but
+before the workflow-owned `git commit` (and, for Gate 3, before any `git add`
+or `git reset`). JSON state and journal writes use a
 same-directory temporary file, file flush and `fsync`, atomic replacement, and
 directory `fsync` where supported. Persistence failures are explicit workflow
 errors; malformed or missing state and journal documents fail closed.
 
-The journal records the exact acknowledgment, including
+The Gate 3 journal records the exact acknowledgment, including
 `independent_authorization: false`, and binds the existing
 `implementation_candidate` to the canonical `_candidate_identity` projection
 (`test_commit`, sorted paths, candidate diff SHA-256, and candidate diff byte
@@ -39,6 +42,15 @@ journal is transition evidence and does not introduce a second candidate model
 or digest. It also records the approved target and direct parent, test boundary
 and applicability, scope, validation/evidence, review readiness, approvals,
 artifacts, and reviewed subject.
+
+The Gate 2 journal records the same class of evidence for the test-approval
+transition: the exact acknowledgment, the target and candidate test commit
+(also the expected direct parent of the authoritative commit), approved
+scope, applicability (`REQUIRED` or `NOT_APPLICABLE`), the reviewed test
+paths, existing test failure/report evidence, and any active test-reopening
+metadata. It is transition evidence for `approve-tests`, structured the same
+way as the Gate 3 journal, so a crash between the workflow-owned empty commit
+and state persistence is recoverable without guessing at authorization.
 
 Artifact source files supplied with `--artifact` must be staged outside the Git
 worktree (for example, in the session's attachment or temporary artifact
@@ -139,9 +151,13 @@ records the rationale and proceeds to test review without a test commit. The exi
 approved plan does not establish `NOT_APPLICABLE`; the implementer cannot select that path ad hoc.
 `approve-tests` creates the workflow `test_commit`, and later stages enforce that approved tests
 remain byte-for-byte unchanged. Production implementation remains an uncommitted candidate until Human
-Gate 3. `submit-implementation` independently compares the current native Git candidate diff with the
-submitted execution evidence, records the accepted candidate, and validation, implementation review, and
-the implementation Approval Gate each recompute that Git candidate before advancing.
+Gate 3. `submit-implementation` records the accepted candidate's path set and a canonical Git tree
+identity (`candidate_tree`, computed from an empty scratch index populated only with the candidate's own
+changed paths, independent of unrelated base-tree drift). Validation, implementation review, and the
+implementation Approval Gate each recompute the current path set and tree identity and require an exact
+match against the accepted candidate before advancing; this authoritative content/mode/path equivalence
+check replaced an earlier raw-diff-byte comparison that was fragile to tracked/untracked diff
+serialization ordering.
 
 During `run-validation`, `REQUIRED` test implementations must retain every approved test path
 byte-for-byte. `NOT_APPLICABLE` is an explicit approved state with no approved test files; validation
@@ -152,7 +168,7 @@ or approved-scope state fails closed.
 submission and before publication when the target branch advances. It preserves
 the run only if the workflow can prove all of the following against the fetched
 descendant target: prior target identity, approved test boundary, exact
-accepted candidate diff/paths, approved scope, approved applicability state
+accepted candidate path set and tree identity, approved scope, approved applicability state
 (`REQUIRED` or `NOT_APPLICABLE`), and one-commit publication topology
 preconditions. Any non-descendant target, unexpected staged change, candidate
 drift, scope drift, malformed applicability/test-boundary state, overlapping
@@ -208,6 +224,39 @@ cannot authenticate the asserted operator, prevent external Git mutations, or
 replace GitHub review and CI. If recovery cannot prove one of the enumerated
 shapes, preserve the worktree and obtain operator direction rather than
 guessing.
+
+Gate 2 (`approve-tests`) uses the same durable-journal-before-commit design.
+The journal is written to `test-approval-transition.json` after the existing
+`approve-tests` preconditions pass (approved-test-only scope, ancestry, exact
+`test_commit` boundary, clean index) and before the workflow-owned
+`git commit --allow-empty -m "workflow: approve tests"`. Use the explicit
+recovery command after an interrupted Gate 2 transition:
+
+```bash
+python3 scripts/agent_workflow.py recover-test-approval ISSUE
+```
+
+Recovery accepts no identity, acknowledgment, or commit input. It relies only
+on the durable journal and existing workflow evidence, revalidates every
+binding, and never advances another gate. The only accepted Git shapes are:
+
+| Shape | Required state |
+| --- | --- |
+| `HEAD == candidate_test_commit` (or `target_head` for `NOT_APPLICABLE`) | clean index and, for `REQUIRED`, no uncommitted test changes |
+| `HEAD` is the verified direct child of `candidate_test_commit` | journal-bound authoritative empty commit |
+| final workflow state already persisted | final state, journal, and commit agree |
+
+Target advancement, candidate/path drift, altered acknowledgments,
+applicability, scope, test-boundary, failure/report evidence, reopening
+metadata, subject, parent, or topology all fail closed; recovery never infers
+authorization from Git topology alone -- a same-parent commit that changes
+any file content, or that lacks the durable journal, is rejected rather than
+adopted. Recovery is idempotent: committed transitions are verified and
+persisted (updating `test_commit`, `approvals.tests`, and any active
+`test_reopenings` entry exactly as `approve-tests` would), not
+recommitted, and a finalized transition is only re-read. Both `REQUIRED` and
+`NOT_APPLICABLE` applicability are supported; the journal binds an empty
+`test_paths` list for `NOT_APPLICABLE`.
 
 There is no `approve-pr`, `reject-pr`, `WAITING_FOR_PR`, or `PR_APPROVED` state. The exceptional
 `reopen-tests --reason approved-test-fixture-defect` transition exists only to recover from a proven
@@ -349,6 +398,7 @@ python3 scripts/agent_workflow.py reanchor-target ISSUE --by REQUESTER
 python3 scripts/agent_workflow.py reconcile-candidate ISSUE --by REQUESTER
 python3 scripts/agent_workflow.py review-tests ISSUE --status READY_FOR_HUMAN_APPROVAL|NEEDS_REVISION --artifact PATH --reviewer chess-echo-reviewer
 python3 scripts/agent_workflow.py approve-tests ISSUE --by LOGIN --confirm tests_approved
+python3 scripts/agent_workflow.py recover-test-approval ISSUE
 python3 scripts/agent_workflow.py reject-tests ISSUE --by LOGIN --reason "..."
 python3 scripts/agent_workflow.py reopen-tests ISSUE --reason approved-test-fixture-defect
 python3 scripts/agent_workflow.py submit-implementation ISSUE --artifact PATH --agent chess-echo-implementer --evidence PATH
