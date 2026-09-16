@@ -26,7 +26,17 @@ READY = "READY_FOR_HUMAN_APPROVAL"
 REVISION = "NEEDS_REVISION"
 REVIEW_STATUSES = (READY, REVISION)
 DEFAULT_IMPLEMENTATION_CONFIRMATION = "implementation_approved"
+DEFAULT_SUPERSESSION_CONFIRMATION = "supersede_confirmed"
 LOCAL_ACKNOWLEDGMENT_KIND = "self-attested-local-acknowledgment"
+SUPERSESSION_FORMAT = "chess-echo-skill-workflow-supersession-v1"
+
+# Supersession is reserved for runs that have already cleared every human
+# approval gate and are stalled only on provenance discovered after the
+# fact (for example: a target later found to originate from a substituted
+# remote). Superseding an earlier-stage run would discard legitimate,
+# still-recoverable in-flight work as a matter of convenience, which this
+# command intentionally refuses to do.
+SUPERSESSION_ELIGIBLE_STATUSES = ("DRAFT_PR_CREATION", "WORKFLOW_COMPLETED")
 
 STATUS_SEQUENCE = (
     "PLANNING",
@@ -163,6 +173,25 @@ def _run_root(root, config, issue):
     return _artifact_root(root, config) / ("issue-%s" % issue)
 
 
+def _superseded_run_parent(root, config):
+    """Return the durable, non-colliding parent directory for retired runs.
+
+    This lives alongside (never inside) the ``issue-<n>`` naming scheme used
+    by ``_run_root`` so a superseded run can never be mistaken for, or
+    collide with, a canonical run for any issue number.
+    """
+    return _artifact_root(root, config) / "superseded"
+
+
+def _superseded_run_destination(root, config, issue):
+    """Return a fresh, unique historical location for one supersession."""
+    token = uuid.uuid4().hex[:12]
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return _superseded_run_parent(root, config) / (
+        "issue-%s-%s-%s" % (issue, stamp, token)
+    )
+
+
 def _state_path(root, config, issue):
     return _run_root(root, config, issue) / "state.json"
 
@@ -290,6 +319,15 @@ def _load_config(root):
         )
     else:
         approvals["implementation"] = DEFAULT_IMPLEMENTATION_CONFIRMATION
+
+    if "supersede" in approvals:
+        _ensure(
+            isinstance(approvals.get("supersede"), str) and approvals["supersede"],
+            "invalid-config",
+            "workflow.approvals.supersede must be a non-empty string",
+        )
+    else:
+        approvals["supersede"] = DEFAULT_SUPERSESSION_CONFIRMATION
 
     _ensure(
         workflow.get("approval_mechanism", LOCAL_ACKNOWLEDGMENT_KIND)
@@ -2214,6 +2252,88 @@ def command_status(args, root, config):
     }
 
 
+def command_supersede_run(args, root, config):
+    """Retire an eligible run, preserving it intact so the issue can be re-run.
+
+    This is a governance escape hatch, not a recovery/reconciliation
+    mechanism: it never edits, adopts, or transfers any approval, candidate,
+    or evidence from the retired run. It only relocates the run's on-disk
+    record to a durable historical location, out of reach of every normal
+    workflow command, and durably records why and by whom that happened.
+    """
+    run = _run_root(root, config, args.issue)
+    _ensure(
+        run.exists(),
+        "no-existing-run",
+        "supersede-run requires an existing run for issue %s" % args.issue,
+    )
+    state = _read_state(root, config, args.issue)
+    _ensure(
+        state["status"] in SUPERSESSION_ELIGIBLE_STATUSES,
+        "run-not-eligible-for-supersession",
+        "supersede-run requires status in %s (current: %s)"
+        % (list(SUPERSESSION_ELIGIBLE_STATUSES), state["status"]),
+    )
+    reason = (args.reason or "").strip()
+    _ensure(reason, "missing-supersession-reason", "supersede-run requires a non-empty --reason")
+
+    approvals = config["workflow"]["approvals"]
+    expected_confirmation = approvals.get("supersede", DEFAULT_SUPERSESSION_CONFIRMATION)
+    _ensure(
+        args.confirm == expected_confirmation,
+        "approval-confirmation-mismatch",
+        "Expected confirmation phrase for supersede gate: %s" % expected_confirmation,
+    )
+    _ensure(
+        (args.by or "").strip(),
+        "missing-supersession-authorization",
+        "supersede-run requires a non-empty --by identity",
+    )
+
+    state_path = _state_path(root, config, args.issue)
+    original_state_sha256 = hashlib.sha256(state_path.read_bytes()).hexdigest()
+    original_run_location = _relative(run, root)
+    original_status = state["status"]
+
+    destination = _superseded_run_destination(root, config, args.issue)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    _ensure(
+        not destination.exists(),
+        "supersession-destination-collision",
+        "supersede-run destination already exists: %s" % destination,
+    )
+
+    # The rename is the single point of no return: once it succeeds, the
+    # canonical run directory no longer exists, so every normal workflow
+    # command for this issue fails closed with a missing-run error until a
+    # fresh `init` creates a new one, and a second supersede-run attempt
+    # fails closed identically to an issue that was never initialized.
+    run.rename(destination)
+
+    manifest = {
+        "format": SUPERSESSION_FORMAT,
+        "issue": args.issue,
+        "original_run_location": original_run_location,
+        "superseded_run_location": _relative(destination, root),
+        "original_status": original_status,
+        "original_state_sha256": original_state_sha256,
+        "reason": reason,
+        "authorized_by": args.by,
+        "confirmation": args.confirm,
+        "authorized_at": _now(),
+        "workflow_head_at_supersession": _current_head(root, config),
+        "target_base": config["target_base"],
+    }
+    _write_json(destination / "supersession-manifest.json", manifest)
+
+    return {
+        "ok": True,
+        "issue": args.issue,
+        "superseded_run_location": manifest["superseded_run_location"],
+        "manifest": manifest,
+    }
+
+
 def command_submit_plan(args, root, config):
     """Store a planner report and bind its approved file scope to the run."""
     state = _read_state(root, config, args.issue)
@@ -3011,6 +3131,13 @@ def build_parser():
     _add_root(status)
     _add_issue(status)
 
+    supersede_run = subparsers.add_parser("supersede-run")
+    _add_root(supersede_run)
+    _add_issue(supersede_run)
+    supersede_run.add_argument("--by", required=True)
+    supersede_run.add_argument("--reason", required=True)
+    supersede_run.add_argument("--confirm", required=True)
+
     submit_plan = subparsers.add_parser("submit-plan")
     _add_root(submit_plan)
     _add_issue(submit_plan)
@@ -3133,6 +3260,7 @@ def build_parser():
 COMMANDS = {
     "init": command_init,
     "status": command_status,
+    "supersede-run": command_supersede_run,
     "submit-plan": command_submit_plan,
     "review-plan": command_review_plan,
     "approve-plan": command_approve_plan,
