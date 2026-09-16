@@ -1266,6 +1266,149 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual(1, code)
         self.assertEqual("workflow-start-not-at-target", payload["error"]["code"])
 
+    def set_authoritative_remote(self, identity):
+        config_path = self.root / ".github" / "agent-workflow.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        if identity is None:
+            config.pop("authoritative_remote", None)
+        else:
+            config["authoritative_remote"] = identity
+        config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+
+    def remotes_dir(self):
+        if not hasattr(self, "_remotes_dir"):
+            self._remotes_dir = tempfile.TemporaryDirectory()
+            self.addCleanup(self._remotes_dir.cleanup)
+        return pathlib.Path(self._remotes_dir.name)
+
+    def init_bare_remote(self, dirname):
+        """Create a bare repository outside the worktree root for use as a remote."""
+        bare_path = self.remotes_dir() / dirname
+        subprocess.run(
+            ["git", "init", "--bare", "-q", str(bare_path)],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        return bare_path
+
+    def add_real_origin_remote(self, bare_dirname="authoritative-origin.git", commit_pending_config=True):
+        """Create a real, fetchable bare remote and register it as origin.
+
+        Existing tests never configure a real `origin` remote (they simulate
+        `origin/<target_base>` with a bare tracking ref), so the new
+        authoritative-remote guard is inert for them. This helper opts a
+        specific test into a real remote so the guard's fetch-time behavior
+        can be exercised end to end. The bare remote lives outside the
+        worktree root so it never appears as untracked worktree content.
+        """
+        if commit_pending_config and self.git("status", "--porcelain", "--", ".github/agent-workflow.json").stdout.strip():
+            self.git("add", ".github/agent-workflow.json")
+            self.git("commit", "-qm", "test: configure authoritative remote")
+        bare_path = self.init_bare_remote(bare_dirname)
+        ref = self.git("rev-parse", "HEAD").stdout.strip()
+        self.git("push", "-q", str(bare_path), "%s:refs/heads/main" % ref)
+        self.git("remote", "add", "origin", str(bare_path))
+        return self.git("remote", "get-url", "origin").stdout.strip()
+
+    def test_init_succeeds_with_correctly_configured_authoritative_remote(self):
+        """A real origin matching the configured authoritative identity is trusted."""
+        resolved = self.add_real_origin_remote()
+        self.set_authoritative_remote(resolved)
+
+        target_head = self.git("rev-parse", "HEAD").stdout.strip()
+        code, payload, _ = self.run_cli("init", str(ISSUE))
+
+        self.assertEqual(0, code)
+        self.assertEqual(target_head, self.state()["target_head"])
+
+    def test_init_rejects_origin_redirected_by_instead_of(self):
+        """A local url.*.insteadOf rewrite of origin fails closed."""
+        resolved = self.add_real_origin_remote(bare_dirname="authoritative-origin.git")
+        self.set_authoritative_remote(resolved)
+        substitute = self.init_bare_remote("substitute-mirror.git")
+        self.git(
+            "push", "-q", str(substitute), "%s:refs/heads/main" % self.git("rev-parse", "HEAD").stdout.strip()
+        )
+        self.git("config", "url.%s.insteadOf" % substitute, resolved)
+
+        code, payload, _ = self.run_cli("init", str(ISSUE))
+
+        self.assertEqual(1, code)
+        self.assertEqual("remote-not-authoritative", payload["error"]["code"])
+        self.assertFalse((self.root / ".agent-workflow" / "runs" / ("issue-%s" % ISSUE)).exists())
+
+    def test_init_rejects_arbitrary_local_mirror_path(self):
+        """An origin pointed at an arbitrary local mirror path is rejected."""
+        self.set_authoritative_remote("github.com/NathanZK/ChessEcho")
+        mirror = self.init_bare_remote("some-local-mirror.git")
+        self.git(
+            "push", "-q", str(mirror), "%s:refs/heads/main" % self.git("rev-parse", "HEAD").stdout.strip()
+        )
+        self.git("remote", "add", "origin", str(mirror))
+
+        code, payload, _ = self.run_cli("init", str(ISSUE))
+
+        self.assertEqual(1, code)
+        self.assertEqual("remote-not-authoritative", payload["error"]["code"])
+
+    def test_init_rejects_incorrect_owner_repository_identity(self):
+        """A same-host but different owner/repo origin is rejected."""
+        self.set_authoritative_remote("github.com/NathanZK/ChessEcho")
+        self.git("remote", "add", "origin", "https://github.com/someone-else/ChessEcho.git")
+
+        code, payload, _ = self.run_cli("init", str(ISSUE))
+
+        self.assertEqual(1, code)
+        self.assertEqual("remote-not-authoritative", payload["error"]["code"])
+
+    def test_init_fails_closed_when_resolved_remote_identity_is_ambiguous(self):
+        """An unparsable/ambiguous resolved remote never defaults to trusted."""
+        self.set_authoritative_remote("github.com/NathanZK/ChessEcho")
+        self.git("remote", "add", "origin", "not-a-recognizable-remote-identity")
+
+        code, payload, _ = self.run_cli("init", str(ISSUE))
+
+        self.assertEqual(1, code)
+        self.assertEqual("remote-not-authoritative", payload["error"]["code"])
+
+    def test_init_is_unaffected_when_no_authoritative_remote_is_configured(self):
+        """Runs without a configured expectation keep prior fetch-optional behavior."""
+        self.set_authoritative_remote(None)
+        target_head = self.git("rev-parse", "origin/main").stdout.strip()
+
+        code, payload, _ = self.run_cli("init", str(ISSUE))
+
+        self.assertEqual(0, code)
+        self.assertEqual(target_head, self.state()["target_head"])
+
+    def test_reanchor_target_rejects_origin_redirected_by_instead_of(self):
+        """Target-freshness resolution also fails closed on a substituted origin."""
+        bare_path = self.remotes_dir() / "authoritative-origin.git"
+        self.set_authoritative_remote(str(bare_path))
+        resolved = self.add_real_origin_remote(bare_dirname="authoritative-origin.git")
+        self.assertEqual(str(bare_path), resolved)
+        self.assertEqual([], self.git("status", "--porcelain").stdout.splitlines())
+        self.bootstrap_to_planning_for_reanchor()
+
+        advanced = self.unrelated_empty_tree_commit()
+        substitute = self.init_bare_remote("reanchor-substitute.git")
+        self.git("push", "-q", str(substitute), "%s:refs/heads/main" % advanced)
+        self.git("config", "url.%s.insteadOf" % substitute, resolved)
+        before = self.state()
+
+        code, payload, _ = self.run_cli(
+            "reanchor-target",
+            str(ISSUE),
+            "--by",
+            "owner",
+        )
+
+        self.assertEqual(1, code)
+        self.assertEqual("remote-not-authoritative", payload["error"]["code"])
+        self.assertEqual(before, self.state())
+
     def bootstrap_to_planning_for_reanchor(self):
         self.write_artifact("plan.md", "plan")
         self.write_artifact("plan-review.md", "plan review")

@@ -684,8 +684,76 @@ def _remote_exists(root, config):
     return result.get("outcome") == "success" and result.get("exit_code") == 0
 
 
+def _redact_remote_url(url):
+    """Strip embedded credentials before a resolved remote URL is surfaced in errors."""
+    return re.sub(r"^([a-zA-Z][a-zA-Z0-9+.-]*://)[^@/]+@", r"\1", url.strip())
+
+
+def _normalize_remote_identity(url):
+    """Normalize a remote URL/identity to a host/owner/repo form for comparison.
+
+    Tolerates https://, ssh://, and git@host:owner/repo shorthand forms, an
+    optional trailing ".git", and embedded credentials, so equivalent
+    identities compare equal regardless of the transport used to reach them.
+    """
+    text = url.strip()
+    text = re.sub(r"^[a-zA-Z][a-zA-Z0-9+.-]*://(?:[^@/]+@)?", "", text)
+    text = re.sub(r"^[^@/]+@", "", text)
+    match = re.match(r"^([^/:]+):(.+)$", text)
+    if match:
+        text = "%s/%s" % (match.group(1), match.group(2))
+    text = text.rstrip("/")
+    if text.endswith(".git"):
+        text = text[: -len(".git")]
+    return text.lower()
+
+
+def _authoritative_remote_expectation(config):
+    expected = config.get("authoritative_remote")
+    if not expected or not isinstance(expected, str) or not expected.strip():
+        return None
+    return expected.strip()
+
+
+def _require_authoritative_remote(root, config, context):
+    """Fail closed unless origin resolves to the configured authoritative repository.
+
+    This defends against a local `url.*.insteadOf` (or any other) rewrite that
+    causes `origin` to resolve to a different repository than the one the
+    workflow is configured to trust as its target branch source. The check is
+    inert when the run has no configured expectation or no origin remote at
+    all, matching the existing conditional-fetch behavior for such
+    environments.
+    """
+    expected = _authoritative_remote_expectation(config)
+    if expected is None or not _remote_exists(root, config):
+        return None
+    completed = _run_bounded(
+        _git_command(config, "remote", "get-url", "origin"),
+        _effective_limits(config, "git"),
+        root,
+    )
+    result = completed["result"]
+    _ensure(
+        result.get("outcome") == "success" and result.get("exit_code") == 0,
+        "remote-url-unresolved",
+        "%s: unable to resolve the origin remote URL" % context,
+    )
+    resolved = completed["stdout_text"].strip()
+    resolved_identity = _normalize_remote_identity(resolved)
+    expected_identity = _normalize_remote_identity(expected)
+    _ensure(
+        resolved_identity == expected_identity,
+        "remote-not-authoritative",
+        "%s: origin (%s) does not resolve to the authoritative repository %s"
+        % (context, _redact_remote_url(resolved), expected),
+    )
+    return resolved_identity
+
+
 def _resolve_target_head(root, config, fetch=False):
     if fetch and _remote_exists(root, config):
+        _require_authoritative_remote(root, config, "resolve-target-head")
         _git_fetch_target(root, config)
     target = config["target_base"]
     for ref in ("origin/%s" % target, target):

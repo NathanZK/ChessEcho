@@ -1,5 +1,6 @@
 {
   "target_base": "main",
+  "authoritative_remote": "github.com/NathanZK/ChessEcho",
   "workflow": {
     "format": "chess-echo-skill-workflow-config-v1",
     "run_root": ".agent-workflow/runs",
