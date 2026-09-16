@@ -272,6 +272,76 @@ class AgentWorkflowTest(unittest.TestCase):
         status_lines = [l for l in self.git("status", "--porcelain").stdout.splitlines() if l.strip()]
         self.assertEqual([], status_lines)
 
+    def transition_journal_path(self):
+        return (
+            self.root
+            / ".agent-workflow"
+            / "runs"
+            / f"issue-{ISSUE}"
+            / "implementation-approval-transition.json"
+        )
+
+    def approve_implementation(self, patches=None):
+        return self.run_cli(
+            "approve-implementation",
+            str(ISSUE),
+            "--by",
+            "owner",
+            "--confirm",
+            "implementation_approved",
+            patches=patches,
+        )
+
+    def recover_implementation_approval(self):
+        return self.run_cli("recover-implementation-approval", str(ISSUE))
+
+    def assert_transition_journal_matches_state(self):
+        journal_path = self.transition_journal_path()
+        self.assertTrue(
+            journal_path.is_file(),
+            "implementation approval journal must be durable before Git mutation",
+        )
+        journal = json.loads(journal_path.read_text(encoding="utf-8"))
+        state = self.state()
+        candidate = state["implementation_candidate"]
+        identity = workflow._candidate_identity(
+            state["test_commit"],
+            candidate["candidate_diff"],
+            candidate["candidate_paths"],
+        )
+        self.assertEqual(ISSUE, journal["issue"])
+        self.assertEqual("approve-implementation", journal["operation"])
+        self.assertEqual(
+            state["implementation_candidate"], journal["implementation_candidate"]
+        )
+        self.assertEqual(identity, journal["candidate_identity"])
+        self.assertEqual(state["target_head"], journal["target_head"])
+        self.assertEqual(state["test_commit"], journal["test_commit"])
+        self.assertEqual(state["approved_scope"], journal["approved_scope"])
+        self.assertEqual(
+            state["test_implementation_status"],
+            journal["test_implementation_status"],
+        )
+        self.assertEqual(
+            state["implementation_candidate"]["commit_subject"],
+            journal["reviewed_commit_subject"],
+        )
+        self.assertIn(
+            journal["status"],
+            ("pending", "committed-but-not-persisted", "finalized"),
+        )
+        return journal
+
+    def fail_checked_git_command(self, token, code):
+        original = workflow._run_checked
+
+        def injected(command, limits, cwd, error_code, context):
+            if token in command:
+                raise workflow.WorkflowError(code, "injected failure at %s" % token)
+            return original(command, limits, cwd, error_code, context)
+
+        return mock.patch.object(workflow, "_run_checked", side_effect=injected)
+
     def unrelated_empty_tree_commit(self):
         completed = subprocess.run(
             ["git", "commit-tree", "4b825dc642cb6eb9a060e54bf8d69288fbee4904", "-m", "unrelated base"],
@@ -1800,6 +1870,332 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual(1, code)
         self.assertEqual("target-advanced", payload["error"]["code"])
         self.assertEqual("WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", self.state()["status"])
+
+    def test_failure_before_journal_durability_leaves_state_and_git_unchanged(self):
+        """A journal persistence failure happens before any Git mutation."""
+        self.bootstrap_to_reviewed_implementation()
+        before_state = self.state()
+        before_head = self.git("rev-parse", "HEAD").stdout.strip()
+        original_write_json = workflow._write_json
+
+        def fail_journal_write(path, payload):
+            if path.name == "implementation-approval-transition.json":
+                raise workflow.WorkflowError(
+                    "injected-journal-persistence-failure",
+                    "injected journal persistence failure",
+                )
+            return original_write_json(path, payload)
+
+        with mock.patch.object(workflow, "_write_json", side_effect=fail_journal_write):
+            code, payload, _ = self.approve_implementation()
+
+        self.assertEqual(1, code)
+        self.assertEqual("injected-journal-persistence-failure", payload["error"]["code"])
+        self.assertEqual(before_head, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertEqual(before_state, self.state())
+        self.assertFalse(self.transition_journal_path().exists())
+
+    def test_journal_durability_precedes_staging(self):
+        """A staged-interruption journal binds recovery before Git staging starts."""
+        self.bootstrap_to_reviewed_implementation()
+        before_state = self.state()
+        before_head = self.git("rev-parse", "HEAD").stdout.strip()
+
+        with self.fail_checked_git_command("add", "injected-before-staging"):
+            code, payload, _ = self.approve_implementation()
+
+        self.assertEqual(1, code)
+        self.assertEqual("injected-before-staging", payload["error"]["code"])
+        self.assertEqual(before_head, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertEqual(before_state, self.state())
+        journal = self.assert_transition_journal_matches_state()
+        self.assertEqual("pending", journal["status"])
+        self.assert_clean_status()
+
+    def test_recovery_reuses_only_the_exact_existing_candidate(self):
+        """Recovery rejects candidate drift and accepts the original candidate unchanged."""
+        self.bootstrap_to_reviewed_implementation()
+        candidate_file = self.root / "src" / "Example.kt"
+        original_candidate = candidate_file.read_text(encoding="utf-8")
+
+        with self.fail_checked_git_command("add", "injected-before-staging"):
+            self.approve_implementation()
+        self.assert_transition_journal_matches_state()
+
+        candidate_file.write_text(original_candidate + "drift\n", encoding="utf-8")
+        code, payload, _ = self.recover_implementation_approval()
+        self.assertEqual(1, code)
+        self.assertFalse(payload["ok"])
+        self.assertEqual("WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", self.state()["status"])
+        self.assertEqual(self.state()["test_commit"], self.git("rev-parse", "HEAD").stdout.strip())
+
+        candidate_file.write_text(original_candidate, encoding="utf-8")
+        code, payload, _ = self.recover_implementation_approval()
+        self.assertEqual(0, code)
+        self.assertEqual("DRAFT_PR_CREATION", payload["status"])
+        self.assertEqual(payload["implementation_commit"], self.git("rev-parse", "HEAD").stdout.strip())
+
+    def test_staged_candidate_recovery_rejects_extra_content(self):
+        """Recovery accepts only the exact candidate that was staged before interruption."""
+        self.bootstrap_to_reviewed_implementation()
+        with self.fail_checked_git_command("reset", "injected-before-reset"):
+            self.approve_implementation()
+        self.assert_transition_journal_matches_state()
+        staged_check = subprocess.run(
+            ["git", "diff", "--cached", "--quiet"],
+            cwd=self.root,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        self.assertEqual(1, staged_check.returncode)
+
+        (self.root / "unexpected.txt").write_text("unexpected\n", encoding="utf-8")
+        code, payload, _ = self.recover_implementation_approval()
+        self.assertEqual(1, code)
+        self.assertFalse(payload["ok"])
+        self.assertEqual("WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", self.state()["status"])
+
+        (self.root / "unexpected.txt").unlink()
+        code, payload, _ = self.recover_implementation_approval()
+        self.assertEqual(0, code)
+        self.assertEqual("DRAFT_PR_CREATION", payload["status"])
+
+    def test_soft_reset_recovery_requires_exact_approved_test_boundary(self):
+        """Recovery resumes a soft-reset interruption only with tests plus the candidate."""
+        self.bootstrap_to_reviewed_implementation()
+        target_head = self.state()["target_head"]
+        test_commit = self.state()["test_commit"]
+        with self.fail_checked_git_command("commit", "injected-before-commit"):
+            self.approve_implementation()
+        self.assert_transition_journal_matches_state()
+        self.assertEqual(target_head, self.git("rev-parse", "HEAD").stdout.strip())
+        staged_names = [
+            line.strip()
+            for line in self.git("diff", "--cached", "--name-only").stdout.splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(["src/Example.kt", "src/test/ExampleTest.kt"], sorted(staged_names))
+        self.assertEqual(test_commit, self.state()["test_commit"])
+
+        code, payload, _ = self.recover_implementation_approval()
+        self.assertEqual(0, code)
+        self.assertEqual("DRAFT_PR_CREATION", payload["status"])
+        implementation_commit = self.git("rev-parse", "HEAD").stdout.strip()
+        self.assertEqual(target_head, self.git("rev-parse", f"{implementation_commit}^").stdout.strip())
+        self.assertEqual(1, int(self.git("rev-list", "--count", f"{target_head}..{implementation_commit}").stdout.strip()))
+        self.assert_clean_status()
+
+    def test_post_commit_state_persistence_failure_recovers_without_second_commit(self):
+        """The #276 post-commit failure recovers the same authoritative commit and acknowledgment."""
+        self.bootstrap_to_reviewed_implementation()
+        original_write_state = workflow._write_state
+
+        def fail_final_state(root, config, issue, state):
+            if state.get("status") == "DRAFT_PR_CREATION":
+                raise workflow.WorkflowError(
+                    "injected-post-commit-state-failure",
+                    "injected state persistence failure after authoritative commit",
+                )
+            return original_write_state(root, config, issue, state)
+
+        with mock.patch.object(workflow, "_write_state", side_effect=fail_final_state):
+            code, payload, _ = self.approve_implementation()
+
+        self.assertEqual(1, code)
+        self.assertEqual("injected-post-commit-state-failure", payload["error"]["code"])
+        authoritative_commit = self.git("rev-parse", "HEAD").stdout.strip()
+        state_after_failure = self.state()
+        self.assertEqual("WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", state_after_failure["status"])
+        self.assertIsNone(state_after_failure["implementation_commit"])
+        journal = self.assert_transition_journal_matches_state()
+        self.assertEqual("committed-but-not-persisted", journal["status"])
+        self.assertEqual(authoritative_commit, journal["authoritative_commit"])
+
+        code, payload, _ = self.recover_implementation_approval()
+        self.assertEqual(0, code)
+        self.assertEqual("DRAFT_PR_CREATION", payload["status"])
+        self.assertEqual(authoritative_commit, payload["implementation_commit"])
+        recovered = self.state()
+        self.assertEqual(authoritative_commit, recovered["implementation_commit"])
+        self.assertEqual(
+            journal["acknowledgment"], recovered["approvals"]["implementation"]
+        )
+        self.assertEqual(
+            journal["acknowledgment"], payload["approval"]
+        )
+        self.assertEqual(1, int(self.git("rev-list", "--count", f"{recovered['target_head']}..HEAD").stdout.strip()))
+        self.assert_clean_status()
+
+        state_after_recovery = self.state()
+        code, payload, _ = self.recover_implementation_approval()
+        self.assertEqual(0, code)
+        self.assertEqual("DRAFT_PR_CREATION", payload["status"])
+        self.assertEqual(authoritative_commit, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertEqual(state_after_recovery, self.state())
+
+    def test_final_state_persistence_before_journal_finalization_is_idempotent(self):
+        """A final-state/journal ordering interruption remains recoverable and idempotent."""
+        self.bootstrap_to_reviewed_implementation()
+        original_write_json = workflow._write_json
+        final_journal_write_seen = False
+
+        def fail_final_journal_write(path, payload):
+            nonlocal final_journal_write_seen
+            if (
+                path.name == "implementation-approval-transition.json"
+                and payload.get("implementation_commit")
+                and not final_journal_write_seen
+            ):
+                final_journal_write_seen = True
+                raise workflow.WorkflowError(
+                    "injected-journal-finalization-failure",
+                    "injected journal finalization failure",
+                )
+            return original_write_json(path, payload)
+
+        with mock.patch.object(workflow, "_write_json", side_effect=fail_final_journal_write):
+            code, payload, _ = self.approve_implementation()
+
+        self.assertEqual(1, code)
+        self.assertEqual("injected-journal-finalization-failure", payload["error"]["code"])
+        implementation_commit = self.state()["implementation_commit"]
+        self.assertIsNotNone(implementation_commit)
+        self.assertEqual("DRAFT_PR_CREATION", self.state()["status"])
+        self.assertEqual(implementation_commit, self.git("rev-parse", "HEAD").stdout.strip())
+
+        code, payload, _ = self.recover_implementation_approval()
+        self.assertEqual(0, code)
+        self.assertEqual("DRAFT_PR_CREATION", payload["status"])
+        self.assertEqual(implementation_commit, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assert_clean_status()
+
+    def test_atomic_state_replacement_preserves_complete_old_document_on_failure(self):
+        """An interrupted atomic replacement leaves a complete old JSON document."""
+        state_file = self.root / "atomic-state.json"
+        old_state = {"status": "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", "value": "old"}
+        new_state = {"status": "DRAFT_PR_CREATION", "value": "new"}
+        state_file.write_text(json.dumps(old_state) + "\n", encoding="utf-8")
+
+        with mock.patch.object(
+            os,
+            "replace",
+            side_effect=OSError("injected atomic replacement failure"),
+        ):
+            with self.assertRaises(workflow.WorkflowError) as failure:
+                workflow._write_json(state_file, new_state)
+
+        self.assertIn("persist", failure.exception.message.lower())
+        self.assertEqual(old_state, json.loads(state_file.read_text(encoding="utf-8")))
+
+    def test_recovery_rejects_matching_direct_child_without_transition_marker(self):
+        """A matching authoritative-looking commit without a journal is never adopted."""
+        self.bootstrap_to_reviewed_implementation()
+        target_head = self.state()["target_head"]
+        candidate_subject = self.state()["implementation_candidate"]["commit_subject"]
+        self.git("add", "-A")
+        self.git("reset", "--soft", target_head)
+        self.git("commit", "-qm", candidate_subject)
+        matching_commit = self.git("rev-parse", "HEAD").stdout.strip()
+        self.assertFalse(self.transition_journal_path().exists())
+
+        code, payload, _ = self.recover_implementation_approval()
+        self.assertEqual(1, code)
+        self.assertFalse(payload["ok"])
+        self.assertIn("journal", json.dumps(payload).lower())
+        self.assertEqual(matching_commit, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertEqual("WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", self.state()["status"])
+
+    def test_recovery_fails_closed_for_journal_binding_mismatches(self):
+        """Acknowledgment, identity, scope, evidence, topology, and result mismatches fail closed."""
+        self.bootstrap_to_reviewed_implementation()
+        self.assertEqual(0, self.approve_implementation()[0])
+        journal_path = self.transition_journal_path()
+        original_text = journal_path.read_text(encoding="utf-8")
+        original_state = self.state()
+        original_head = self.git("rev-parse", "HEAD").stdout.strip()
+        mutations = {
+            "acknowledgment": lambda value: value["acknowledgment"].update(
+                {"confirmation": "wrong-confirmation"}
+            ),
+            "transition": lambda value: value.update({"from_status": "IMPLEMENTATION"}),
+            "candidate identity": lambda value: value["candidate_identity"].update(
+                {"candidate_diff_sha256": "0" * 64}
+            ),
+            "candidate metadata": lambda value: value["implementation_candidate"].update(
+                {"candidate_paths": ["unexpected.kt"]}
+            ),
+            "target and parent": lambda value: value.update(
+                {"target_head": "0" * 40, "expected_parent": "0" * 40}
+            ),
+            "test applicability": lambda value: value.update(
+                {"test_implementation_status": "NOT_APPLICABLE"}
+            ),
+            "scope and evidence": lambda value: value.update(
+                {"approved_scope": ["unexpected.kt"], "evidence": {"passed": False}}
+            ),
+            "subject": lambda value: value.update(
+                {"reviewed_commit_subject": "unreviewed subject"}
+            ),
+            "validation and review": lambda value: value.update(
+                {"validation": {"passed": False}, "implementation_review_ready": False}
+            ),
+            "paths and commits": lambda value: value.update(
+                {"candidate_paths": ["unexpected.kt"], "test_commit": "0" * 40}
+            ),
+            "final result": lambda value: value.update(
+                {"status": "finalized", "implementation_commit": "0" * 40}
+            ),
+        }
+
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                mutated = json.loads(original_text)
+                mutate(mutated)
+                journal_path.write_text(
+                    json.dumps(mutated, indent=2) + "\n", encoding="utf-8"
+                )
+                code, payload, _ = self.recover_implementation_approval()
+                self.assertEqual(1, code)
+                self.assertFalse(payload["ok"])
+                self.assertEqual(original_head, self.git("rev-parse", "HEAD").stdout.strip())
+                self.assertEqual(original_state, self.state())
+                journal_path.write_text(original_text, encoding="utf-8")
+
+    def test_recovery_rejects_target_advance_and_dirty_worktree_or_index(self):
+        """Target freshness and clean-worktree invariants are recovery preconditions."""
+        self.bootstrap_to_reviewed_implementation()
+        with self.fail_checked_git_command("add", "injected-before-staging"):
+            self.approve_implementation()
+        self.assert_transition_journal_matches_state()
+
+        advanced = self.git("commit-tree", "4b825dc642cb6eb9a060e54bf8d69288fbee4904", "-p", self.state()["target_head"], "-m", "target advance").stdout.strip()
+        self.git("update-ref", "refs/remotes/origin/main", advanced)
+        code, payload, _ = self.recover_implementation_approval()
+        self.assertEqual(1, code)
+        self.assertFalse(payload["ok"])
+        self.git("update-ref", "refs/remotes/origin/main", self.state()["target_head"])
+
+        (self.root / "dirty.txt").write_text("dirty\n", encoding="utf-8")
+        code, payload, _ = self.recover_implementation_approval()
+        self.assertEqual(1, code)
+        self.assertFalse(payload["ok"])
+        (self.root / "dirty.txt").unlink()
+        self.assert_clean_status()
+
+    def test_recovery_never_creates_a_pr_or_advances_another_gate(self):
+        """Recovery finalizes only implementation approval and does not publish a PR."""
+        self.bootstrap_to_reviewed_implementation()
+        with self.fail_checked_git_command("commit", "injected-before-commit"):
+            self.approve_implementation()
+        self.assert_transition_journal_matches_state()
+        code, payload, _ = self.recover_implementation_approval()
+        self.assertEqual(0, code)
+        self.assertEqual("DRAFT_PR_CREATION", payload["status"])
+        self.assertNotIn("pull_request", payload)
+        self.assertFalse((self.root / ".github" / "draft-pr-created").exists())
+        self.assertEqual("DRAFT_PR_CREATION", self.state()["status"])
 
     def test_create_draft_pr_rejects_multiple_commits_relative_to_target(self):
         """Draft PR publication requires exactly one commit from target_head."""
