@@ -49,6 +49,27 @@ target identities, requester, timestamp, and artifact validation in
 in place. Runs with implementation candidates, implementation commits, or
 draft PRs fail closed rather than being reset or silently invalidated.
 
+When the run already has an accepted implementation candidate but has not yet
+published a workflow implementation commit, use
+`reconcile-candidate ISSUE --by REQUESTER`. This recovery is legal only in
+`VALIDATION`, `IMPLEMENTATION_REVIEW`, and
+`WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL`. It does **not** relax
+`reanchor-target`; instead it handles the later lifecycle states that
+`reanchor-target` intentionally rejects. The command fetches
+`origin/<target_base>`, requires a strict descendant of the recorded
+`target_head`, requires the controlled uncommitted candidate state (`HEAD ==
+test_commit`, clean index, and exact match to the accepted candidate), rejects
+any overlap between target-advance paths and approved test/candidate paths,
+rebases the approved test boundary plus a temporary candidate checkpoint onto
+the new target, and proves equivalence by comparing the exact test-boundary and
+candidate diffs before and after reapplication. It records append-only
+provenance in `candidate_reconciliations` with old/new targets, requester,
+timestamp, target-change paths, candidate identities before/after, approved
+test-boundary diff hashes, reconciliation method, and validated invariants.
+Plan intent, approved scope, approved tests, applicability, and implementation
+evidence remain in place only when that proof succeeds; otherwise the command
+fails closed and leaves the run unchanged.
+
 At each Approval Gate, autonomous execution pauses until an approval operation
 is recorded. The current local operation compares an exact confirmation phrase
 from `.github/agent-workflow.json`; it does not authenticate the caller.
@@ -78,6 +99,9 @@ stateDiagram-v2
 
     IMPLEMENTATION --> TEST_IMPLEMENTATION: reopen-tests --reason approved-test-fixture-defect
     IMPLEMENTATION --> VALIDATION: submit-implementation binds uncommitted candidate to Git evidence
+    VALIDATION --> VALIDATION: reconcile-candidate rebases preserved candidate to descendant target
+    IMPLEMENTATION_REVIEW --> VALIDATION: reconcile-candidate clears stale validation/review after target advance
+    WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL --> VALIDATION: reconcile-candidate clears stale validation/review after target advance
     VALIDATION --> IMPLEMENTATION_REVIEW: run-validation revalidates candidate
     VALIDATION --> IMPLEMENTATION: validation failure or candidate drift
     IMPLEMENTATION_REVIEW --> WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL: review-implementation READY after candidate revalidation
@@ -104,6 +128,17 @@ During `run-validation`, `REQUIRED` test implementations must retain every appro
 byte-for-byte. `NOT_APPLICABLE` is an explicit approved state with no approved test files; validation
 does not substitute the repository root for an empty test-path set. Missing or malformed applicability
 or approved-scope state fails closed.
+
+`reconcile-candidate` is the only governed recovery after implementation
+submission and before publication when the target branch advances. It preserves
+the run only if the workflow can prove all of the following against the fetched
+descendant target: prior target identity, approved test boundary, exact
+accepted candidate diff/paths, approved scope, approved applicability state
+(`REQUIRED` or `NOT_APPLICABLE`), and one-commit publication topology
+preconditions. Any non-descendant target, unexpected staged change, candidate
+drift, scope drift, malformed applicability/test-boundary state, overlapping
+target changes, rebase conflict, or post-rebase diff mismatch is treated as
+ambiguous validity and fails closed without mutating the run.
 
 The workflow records `target_head` from the configured PR target branch at `init` and requires the
 worktree `HEAD` to match it, so pre-existing branch commits cannot be absorbed into a run. Immediately
@@ -188,6 +223,7 @@ python3 scripts/agent_workflow.py request-plan-revision ISSUE --by LOGIN --reaso
 python3 scripts/agent_workflow.py submit-tests ISSUE --artifact PATH --agent chess-echo-test-implementer --failure-command "COMMAND" --failure-contains "EXPECTED"
 python3 scripts/agent_workflow.py submit-tests ISSUE --artifact PATH --agent chess-echo-test-implementer --not-applicable --reason "Approved rationale"
 python3 scripts/agent_workflow.py reanchor-target ISSUE --by REQUESTER
+python3 scripts/agent_workflow.py reconcile-candidate ISSUE --by REQUESTER
 python3 scripts/agent_workflow.py review-tests ISSUE --status READY_FOR_HUMAN_APPROVAL|NEEDS_REVISION --artifact PATH --reviewer chess-echo-reviewer
 python3 scripts/agent_workflow.py approve-tests ISSUE --by LOGIN --confirm tests_approved
 python3 scripts/agent_workflow.py reject-tests ISSUE --by LOGIN --reason "..."
