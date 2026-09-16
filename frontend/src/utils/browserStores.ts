@@ -1,4 +1,4 @@
-import { JobStatusResponse } from '../services/api';
+import { AccountSummary, JobStatusResponse } from '../services/api';
 import { soundService } from '../services/soundService';
 
 type Listener = () => void;
@@ -86,7 +86,9 @@ export type TabValue = 'puzzles' | 'weaknesses' | 'import';
 
 const TAB_KEY = 'chessecho_active_tab';
 const USERNAME_KEY = 'chessecho_username';
+const ACCOUNT_KEY = 'chessecho_active_account';
 const JOB_KEY = 'chessecho_active_job';
+const SESSION_USER_KEY = 'chessecho_session_user';
 
 const isTab = (value: string | null): value is TabValue =>
   value === 'puzzles' || value === 'weaknesses' || value === 'import';
@@ -133,17 +135,51 @@ export const activeUsernameStore = createStore<string | undefined>({
   },
 });
 
+/**
+ * The selected account is display context only. Authorization remains the
+ * server-side session plus the account UUID sent to authenticated endpoints.
+ */
+export const activeAccountStore = createStore<AccountSummary | undefined>({
+  read: () => {
+    const saved = window.localStorage.getItem(ACCOUNT_KEY);
+    if (!saved) return undefined;
+    try {
+      const account = JSON.parse(saved) as AccountSummary;
+      return account.id && account.platform && account.username ? account : undefined;
+    } catch {
+      return undefined;
+    }
+  },
+  fallback: () => undefined,
+  persist: (value) => {
+    if (value) {
+      window.localStorage.setItem(ACCOUNT_KEY, JSON.stringify(value));
+    } else {
+      window.localStorage.removeItem(ACCOUNT_KEY);
+    }
+  },
+});
+
 export const activeJobStore = createStore<JobStatusResponse | null>({
   read: () => {
     const savedUser = window.localStorage.getItem(USERNAME_KEY);
-    if (!savedUser) {
+    const savedAccount = window.localStorage.getItem(ACCOUNT_KEY);
+    if (!savedUser && !savedAccount) {
       window.localStorage.removeItem(JOB_KEY);
       return null;
     }
     const saved = window.localStorage.getItem(JOB_KEY);
     if (!saved) return null;
     try {
-      return JSON.parse(saved) as JobStatusResponse;
+      const job = JSON.parse(saved) as JobStatusResponse;
+      if (job.accountId && savedAccount) {
+        const account = JSON.parse(savedAccount) as AccountSummary;
+        if (account.id !== job.accountId) {
+          window.localStorage.removeItem(JOB_KEY);
+          return null;
+        }
+      }
+      return job;
     } catch {
       // Invalid JSON: the stored value is deliberately retained.
       return null;
@@ -158,6 +194,39 @@ export const activeJobStore = createStore<JobStatusResponse | null>({
     }
   },
 });
+
+const clearAccountScopedState = (clearUsername: boolean) => {
+  activeAccountStore.set(undefined);
+  activeJobStore.set(null);
+  if (clearUsername) {
+    activeUsernameStore.set(undefined);
+  }
+};
+
+/**
+ * Reconciles persisted account context with the server-authenticated identity.
+ * Returns false when an authenticated response lacks a stable user identity.
+ */
+export const reconcileSessionStorageOwner = (userId: string | undefined): boolean => {
+  const previousUserId = window.localStorage.getItem(SESSION_USER_KEY);
+  if (!userId) {
+    window.localStorage.removeItem(SESSION_USER_KEY);
+    if (previousUserId !== null) {
+      clearAccountScopedState(true);
+    }
+    return false;
+  }
+
+  if (previousUserId !== userId) {
+    clearAccountScopedState(true);
+  }
+  window.localStorage.setItem(SESSION_USER_KEY, userId);
+  return true;
+};
+
+export const clearAuthenticatedAccountState = () => {
+  clearAccountScopedState(true);
+};
 
 export interface PuzzleSettings {
   colorFilter: 'BOTH' | 'WHITE' | 'BLACK';

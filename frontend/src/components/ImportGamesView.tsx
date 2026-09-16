@@ -3,12 +3,13 @@
 import React, { useState, useSyncExternalStore } from 'react';
 import { Download, CheckCircle2, Clock, Calendar, Play } from 'lucide-react';
 
-import { startImportJob, pollJobStatus, JobStatusResponse } from '../services/api';
+import { startImportJob, startAccountImportJob, pollJobStatus, JobStatusResponse } from '../services/api';
 import { activeJobStore } from '../utils/browserStores';
 import { MonthPicker } from './MonthPicker';
 
 interface ImportGamesViewProps {
   connectedUsername?: string;
+  connectedAccountId?: string;
   onImportStarted?: (username: string) => void;
   onNavigateTab?: (tab: 'puzzles' | 'weaknesses') => void;
   onDisconnect?: () => void;
@@ -17,6 +18,7 @@ interface ImportGamesViewProps {
 
 export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
   connectedUsername,
+  connectedAccountId,
   onImportStarted,
   onNavigateTab,
   onDisconnect,
@@ -108,10 +110,14 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : 'Failed to poll job status';
         console.error('Error polling import job status:', err);
-        if (msg.includes('404')) {
+        if (msg.includes('404') || msg.includes('401') || msg.includes('403')) {
           clearInterval(interval);
           updateActiveJobRef.current(null);
-          setErrorMessage('Previous import job is no longer available. You can start a new import.');
+          setErrorMessage(
+            msg.includes('401') || msg.includes('403')
+              ? 'Your account session no longer authorizes this import. You can start a new import.'
+              : 'Previous import job is no longer available. You can start a new import.'
+          );
           setPollingError(null);
         } else {
           setPollingError(msg);
@@ -120,7 +126,7 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
     }, 2000);
 
     return () => clearInterval(interval);
-  }, [activeJob, connectedUsername, onImportStarted, username]);
+  }, [activeJob, connectedUsername, onImportStarted, username, connectedAccountId]);
 
   const handleTimeControlToggle = (tc: string) => {
     if (timeControls.includes(tc)) {
@@ -153,14 +159,24 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
     }
     setErrorMessage(null);
     try {
-      const response = await startImportJob(
-        trimmedUser,
-        'CHESS_COM',
-        timeControls,
-        playerColor,
-        fromDate || undefined,
-        toDate || undefined
-      );
+      const response = connectedAccountId
+        ? await startAccountImportJob({
+            accountId: connectedAccountId,
+            platform: 'CHESS_COM',
+            username: trimmedUser,
+            timeControls,
+            playerColor,
+            fromDate: fromDate || undefined,
+            toDate: toDate || undefined,
+          })
+        : await startImportJob(
+            trimmedUser,
+            'CHESS_COM',
+            timeControls,
+            playerColor,
+            fromDate || undefined,
+            toDate || undefined
+          );
 
       if (onImportStarted) {
         onImportStarted(trimmedUser);
@@ -171,6 +187,14 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
         status: response.status,
         gamesImported: 0,
         gamesSkipped: 0,
+        accountId: response.accountId,
+        platform: response.platform,
+        username: response.username,
+        fromDate: response.fromDate,
+        toDate: response.toDate,
+        timeControls: response.timeControls,
+        playerColor: response.playerColor,
+        configurationState: response.configurationState,
       };
 
       updateActiveJob(initialStatus);

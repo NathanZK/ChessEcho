@@ -23,6 +23,23 @@ function csrfToken(): string {
   return match ? decodeURIComponent(match.substring('XSRF-TOKEN='.length)) : '';
 }
 
+export interface AccountSummary {
+  id: string;
+  platform: string;
+  username: string;
+}
+
+function jsonHeaders(): HeadersInit {
+  return {
+    'Content-Type': 'application/json',
+    'X-XSRF-TOKEN': csrfToken(),
+  };
+}
+
+function looksLikeUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 /**
  * Bootstraps the current session from `GET /api/me`. A `200` resolves to an
  * authenticated principal summary (no reusable credential), a `401` to
@@ -81,9 +98,39 @@ export async function devLogin(): Promise<SessionState | null> {
   }
 }
 
+export async function fetchAccounts(): Promise<AccountSummary[]> {
+  const response = await fetch(`${API_BASE_URL}/accounts`, { credentials: 'include' });
+  if (response.status === 401) return [];
+  if (!response.ok) throw new Error(`Failed to load accounts: ${response.status}`);
+  const body = await response.json();
+  return Array.isArray(body) ? (body as AccountSummary[]) : [];
+}
+
+export async function associateAccount(platform: string, username: string): Promise<AccountSummary> {
+  const response = await fetch(`${API_BASE_URL}/accounts`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: jsonHeaders(),
+    body: JSON.stringify({ platform, username }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body?.error || `Failed to associate account: ${response.status}`);
+  }
+  return (await response.json()) as AccountSummary;
+}
+
 export interface ImportJobResponse {
   jobId: string;
   status: 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+  accountId?: string;
+  platform?: string;
+  username?: string;
+  fromDate?: string | null;
+  toDate?: string | null;
+  timeControls?: string[];
+  playerColor?: string;
+  configurationState?: 'READY' | 'UNRESOLVED';
 }
 
 export interface JobStatusResponse {
@@ -94,6 +141,37 @@ export interface JobStatusResponse {
   gamesProcessed?: number;
   errorMessage?: string | null;
   analysisStatus?: 'NOT_STARTED' | 'ANALYZING' | 'COMPLETED' | 'FAILED';
+  accountId?: string;
+  platform?: string;
+  username?: string;
+  fromDate?: string | null;
+  toDate?: string | null;
+  timeControls?: string[];
+  playerColor?: string;
+  configurationState?: 'READY' | 'UNRESOLVED';
+}
+
+export interface AccountImportOptions {
+  accountId: string;
+  platform?: string;
+  username?: string;
+  timeControls: string[];
+  playerColor: string;
+  fromDate?: string;
+  toDate?: string;
+}
+
+/** Authenticated import helper. The account UUID is the authoritative selector. */
+export async function startAccountImportJob(options: AccountImportOptions): Promise<ImportJobResponse> {
+  return startImportJob(
+    options.username || '',
+    options.platform || 'CHESS_COM',
+    options.timeControls,
+    options.playerColor,
+    options.fromDate,
+    options.toDate,
+    options.accountId
+  );
 }
 
 
@@ -202,7 +280,7 @@ export async function evaluateMove(
  * `startImportJob`/`pollJobStatus`; a successful empty result still resolves `[]`.
  */
 async function fetchJsonArray<T>(url: string, resource: string): Promise<T[]> {
-  const response = await fetch(url);
+  const response = await fetch(url, { credentials: 'include' });
 
   if (!response.ok) {
     throw new Error(`Failed to load ${resource}: ${response.status}`);
@@ -229,7 +307,10 @@ export async function fetchPuzzles(
 
   const formattedPlatform = platform.toUpperCase();
   const formattedColor = playerColor.toUpperCase();
-  const url = `${API_BASE_URL}/puzzles?platform=${encodeURIComponent(formattedPlatform)}&username=${encodeURIComponent(username)}&playerColor=${encodeURIComponent(formattedColor)}&minEvalLoss=${minEvalLoss}&minMistakeCount=${minMistakeCount}&limit=${limit}&page=${page}`;
+  const selector = looksLikeUuid(username)
+    ? `accountId=${encodeURIComponent(username)}`
+    : `platform=${encodeURIComponent(formattedPlatform)}&username=${encodeURIComponent(username)}`;
+  const url = `${API_BASE_URL}/puzzles?${selector}&playerColor=${encodeURIComponent(formattedColor)}&minEvalLoss=${minEvalLoss}&minMistakeCount=${minMistakeCount}&limit=${limit}&page=${page}`;
 
   const data = await fetchJsonArray<Puzzle>(url, 'puzzles');
 
@@ -261,7 +342,10 @@ export async function fetchWeaknesses(
 
   const formattedPlatform = platform.toUpperCase();
   const formattedColor = playerColor.toUpperCase();
-  const url = `${API_BASE_URL}/positions/weaknesses?platform=${encodeURIComponent(formattedPlatform)}&username=${encodeURIComponent(username)}&playerColor=${encodeURIComponent(formattedColor)}&minEvalLoss=${minEvalLoss}&minMistakeCount=${minMistakeCount}&page=${page}&size=${size}`;
+  const selector = looksLikeUuid(username)
+    ? `accountId=${encodeURIComponent(username)}`
+    : `platform=${encodeURIComponent(formattedPlatform)}&username=${encodeURIComponent(username)}`;
+  const url = `${API_BASE_URL}/positions/weaknesses?${selector}&playerColor=${encodeURIComponent(formattedColor)}&minEvalLoss=${minEvalLoss}&minMistakeCount=${minMistakeCount}&page=${page}&size=${size}`;
 
   return await fetchJsonArray<WeaknessResponse>(url, 'weaknesses');
 }
@@ -273,19 +357,29 @@ export async function startImportJob(
   timeControls: string[],
   playerColor: string,
   fromDate?: string,
-  toDate?: string
+  toDate?: string,
+  accountId?: string
 ): Promise<ImportJobResponse> {
+  const accountSelector = accountId || (looksLikeUuid(username) ? username : undefined);
+  const snapshotUsername = accountId ? username : accountSelector ? '' : username;
+  const body: Record<string, unknown> = {
+    platform,
+    timeControls: timeControls.map((tc) => tc.toUpperCase()),
+    playerColor: playerColor.toUpperCase(),
+    fromDate: fromDate?.trim() || undefined,
+    toDate: toDate?.trim() || undefined,
+  };
+  if (accountSelector) {
+    body.accountId = accountSelector;
+    if (snapshotUsername.trim()) body.username = snapshotUsername;
+  } else {
+    body.username = username;
+  }
   const response = await fetch(`${API_BASE_URL}/games/import`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      username,
-      platform,
-      timeControls: timeControls.map((tc) => tc.toUpperCase()),
-      playerColor: playerColor.toUpperCase(),
-      fromDate: fromDate?.trim() || undefined,
-      toDate: toDate?.trim() || undefined,
-    }),
+    credentials: 'include',
+    headers: jsonHeaders(),
+    body: JSON.stringify(body),
   });
 
   if (!response.ok) {
@@ -303,7 +397,7 @@ export async function startImportJob(
 }
 
 export async function pollJobStatus(jobId: string): Promise<JobStatusResponse> {
-  const response = await fetch(`${API_BASE_URL}/jobs/${jobId}`);
+  const response = await fetch(`${API_BASE_URL}/jobs/${jobId}`, { credentials: 'include' });
 
   if (!response.ok) {
     throw new Error(`Failed to poll job status: ${response.status}`);

@@ -3,10 +3,13 @@ package com.chessecho.web
 import com.chessecho.service.auth.AuthenticatedPrincipal
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.springframework.core.MethodParameter
+import org.springframework.lang.Nullable
 import org.springframework.mock.web.MockHttpServletRequest
 import org.springframework.web.context.request.ServletWebRequest
 import java.util.UUID
@@ -46,13 +49,56 @@ class AuthenticatedPrincipalArgumentResolverTest {
         assertEquals(principal, resolved)
     }
 
+    @Suppress("UNUSED_PARAMETER")
+    private fun optionalHandler(
+        @Nullable principal: AuthenticatedPrincipal?,
+    ) = Unit
+
+    private fun optionalPrincipalParameter(): MethodParameter {
+        val method = this::class.java.getDeclaredMethod("optionalHandler", AuthenticatedPrincipal::class.java)
+        return MethodParameter(method, 0)
+    }
+
     @Test
-    fun `fails closed with UnauthenticatedException when no principal is present`() {
+    fun `required principal is rejected when absent`() {
         val request = MockHttpServletRequest()
 
         assertThrows(UnauthenticatedException::class.java) {
             resolver.resolveArgument(principalParameter(), null, ServletWebRequest(request), null)
         }
+    }
+
+    @Test
+    fun `required principal is returned when present`() {
+        val principal = AuthenticatedPrincipal(appUserId = UUID.randomUUID(), devPrincipal = false)
+        val request = MockHttpServletRequest()
+        request.setAttribute(SessionAuthenticationFilter.PRINCIPAL_ATTRIBUTE, principal)
+
+        assertEquals(
+            principal,
+            resolver.resolveArgument(principalParameter(), null, ServletWebRequest(request), null),
+        )
+    }
+
+    @Test
+    fun `explicitly nullable optional marker returns null when principal is absent`() {
+        val request = MockHttpServletRequest()
+
+        assertNotNull(optionalPrincipalParameter().getParameterAnnotation(Nullable::class.java))
+        assertTrue(resolver.supportsParameter(optionalPrincipalParameter()))
+        assertNull(resolver.resolveArgument(optionalPrincipalParameter(), null, ServletWebRequest(request), null))
+    }
+
+    @Test
+    fun `explicitly nullable optional marker returns principal when present`() {
+        val principal = AuthenticatedPrincipal(appUserId = UUID.randomUUID(), devPrincipal = true)
+        val request = MockHttpServletRequest()
+        request.setAttribute(SessionAuthenticationFilter.PRINCIPAL_ATTRIBUTE, principal)
+
+        assertEquals(
+            principal,
+            resolver.resolveArgument(optionalPrincipalParameter(), null, ServletWebRequest(request), null),
+        )
     }
 
     @Test

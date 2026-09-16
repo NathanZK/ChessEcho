@@ -3,9 +3,8 @@
 This document describes the provider-neutral identity and server-side session
 foundation introduced by [issue #113](https://github.com/NathanZK/ChessEcho/issues/113),
 implementing the first slice of the architecture approved in issue #79 (decisions
-D1, D2, and D7). It deliberately does **not** select or integrate a production
-identity provider, associate Chess.com accounts, or migrate existing endpoints to
-owner scope — those remain follow-ups.
+D1, D2, and D7), together with the owner boundary from issue #252. It still does
+not select or integrate a production identity provider.
 
 ## Goals
 
@@ -30,7 +29,7 @@ owner scope — those remain follow-ups.
 | `email_snapshot`, `email_verified` | Optional metadata only. Never keys the identity and never triggers a merge. |
 | `created_at`, `last_seen_at` | Timestamps. |
 
-`app_user.email` is nullable (Flyway `V2`) so a provider-neutral principal can be
+`app_user.email` is nullable (the clean Flyway `V1__baseline.sql`) so a provider-neutral principal can be
 provisioned from `(issuer, subject)` claims that carry no email. The `UNIQUE(email)`
 constraint is retained; PostgreSQL permits multiple `NULL`s.
 
@@ -75,9 +74,11 @@ concrete adapter and it exists only inside the development allowlist.
   `UnauthenticatedException` (→ `401`) when a required principal is absent. It
   never exposes the raw secret.
 - **`CsrfEnforcementInterceptor`** enforces double-submit CSRF on the
-  state-changing session endpoints (`POST /api/logout`, `POST /api/dev/session`),
-  comparing the `X-XSRF-TOKEN` header to the `XSRF-TOKEN` cookie in constant time
-  (`MessageDigest.isEqual`). CORS preflight requests are exempt.
+  state-changing endpoints (`POST /api/logout`, `POST /api/dev/session`,
+  `POST /api/accounts`, and `POST /api/games/import`), comparing the
+  `X-XSRF-TOKEN` header to the `XSRF-TOKEN` cookie in constant time
+  (`MessageDigest.isEqual`). `GET`, `HEAD`, and `OPTIONS` (including CORS
+  preflight) are safe and exempt.
 - **`SessionCookieWriter`** writes the `HttpOnly` session cookie and the deletion
   cookie (identical attributes, empty value, `Max-Age=0`).
 - CORS gains `allowCredentials(true)` bound to the existing explicit origins.
@@ -118,11 +119,32 @@ can never restore a prior user's data.
 
 | Capability | Guest | Authenticated |
 |---|---|---|
-| Import Chess.com games and poll the username/job flow | Allowed | Allowed |
-| Read username-driven practice puzzles and weakness analysis | Allowed after session bootstrap resolves | Allowed |
+| Import Chess.com games and poll an unclaimed job | Allowed with CSRF | Allowed for owned account IDs |
+| Read unclaimed practice puzzles and weakness analysis | Allowed after session bootstrap resolves | Allowed for owned account IDs |
 | Continue puzzles, evaluate moves, and use analysis UI | Allowed | Allowed |
-| Persist private history across devices or associate data with an internal owner | Not allowed | Reserved for owner-scoped work in #252 |
-| Access future private/owner-scoped endpoints | Not allowed | Required at the narrowest endpoint boundary |
+| Persist private history across devices or associate data with an internal owner | Not allowed | `POST /api/accounts` claims an account |
+| Access private games, weaknesses, puzzles, or jobs after claim | Not allowed | Required owner principal and account UUID |
+
+### Issue #252 ownership rules
+
+`ChessAccount.user_id` is nullable only for an explicitly unclaimed guest
+account. Every private and derived row is reached through its
+`chess_account_id`; callers cannot authorize with a username, email, local
+storage value, or job ID. Authenticated reads and imports select an account by
+UUID and verify `user_id`; guest reads and imports can select only an unclaimed
+canonical `(platform, username)` identity. Claiming is atomic under a row lock
+and the case-insensitive unique index, so one owner wins a race and another
+receives `409 ACCOUNT_CLAIM_CONFLICT`.
+
+`POST /api/games/import` persists the complete immutable command snapshot:
+account, normalized provider identity, date bounds, sorted time controls, and
+player color. Workers reload that snapshot and fail closed with
+`INVALID_READY_JOB_CONFIGURATION` rather than trusting a caller request.
+`READY`/`UNRESOLVED` state and the supported status, platform, color, date, and
+time-control checks are enforced by the baseline database and the domain.
+The active-job partial unique index permits only one queued or processing job
+per account. `GET /api/jobs/{id}` rechecks the persisted relationship on every
+poll and never treats the returned `accountId` as a credential.
 
 `GET /api/me` returning `401` is a valid guest state, not an application error.
 Authentication gates must be applied only to capabilities that require durable
@@ -132,6 +154,7 @@ without turning authentication into a global prerequisite.
 
 ## Out of scope (follow-ups)
 
-Production provider selection/integration, Chess.com association, owner-scoped
-endpoint migration, async import ownership redesign, legacy placeholder adoption,
-issue #76 progress, and profiles/account/session-management UI.
+Production provider selection/integration, issue #76 progress, and broader
+profiles/account lifecycle management remain out of scope. The pre-production
+Flyway history is a single complete `V1__baseline.sql`; no V2/V3 upgrade,
+quarantine, reparenting, or placeholder-user backfill exists.

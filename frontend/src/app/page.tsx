@@ -8,10 +8,10 @@ import { PuzzleFeedbackPanel, type ChallengeSubmissionResult } from '@/component
 import { WeaknessesList } from '@/components/WeaknessesList';
 import { ImportGamesView } from '@/components/ImportGamesView';
 import { Puzzle } from '@/mock/mockData';
-import { fetchPuzzles, JobStatusResponse, ContinuationMode, ContinuationCandidate, ExplorationPlayMode, toWhitePerspective, fetchPuzzleContinuation, fetchCurrentSession, logout as apiLogout, type SessionState } from '@/services/api';
+import { fetchPuzzles, JobStatusResponse, ContinuationMode, ContinuationCandidate, ExplorationPlayMode, toWhitePerspective, fetchPuzzleContinuation, fetchCurrentSession, fetchAccounts, logout as apiLogout, type SessionState } from '@/services/api';
 import { soundService } from '@/services/soundService';
 import { usePuzzleContinuation } from '@/utils/usePuzzleContinuation';
-import { activeTabStore, activeUsernameStore, activeJobStore, puzzleSettingsStore } from '@/utils/browserStores';
+import { activeTabStore, activeUsernameStore, activeAccountStore, activeJobStore, clearAuthenticatedAccountState, puzzleSettingsStore, reconcileSessionStorageOwner } from '@/utils/browserStores';
 
 export const EXPLORATION_STEP_DELAY_MS = 800;
 
@@ -41,6 +41,22 @@ export default function Home() {
     activeUsernameStore.getSnapshot,
     activeUsernameStore.getServerSnapshot
   );
+  const activeAccount = useSyncExternalStore(
+    activeAccountStore.subscribe,
+    activeAccountStore.getSnapshot,
+    activeAccountStore.getServerSnapshot
+  );
+  const previousAccountIdRef = React.useRef<string | undefined>(activeAccount?.id);
+  React.useEffect(() => {
+    if (
+      previousAccountIdRef.current &&
+      activeAccount?.id &&
+      previousAccountIdRef.current !== activeAccount.id
+    ) {
+      activeJobStore.set(null);
+    }
+    previousAccountIdRef.current = activeAccount?.id;
+  }, [activeAccount?.id]);
   const [activeJobStatus, setActiveJobStatus] = useState<JobStatusResponse | null>(null);
   const [weaknessRefreshKey, setWeaknessRefreshKey] = useState<number>(0);
   const prevJobRef = React.useRef<JobStatusResponse | null>(null);
@@ -74,6 +90,24 @@ export default function Home() {
     prevJobRef.current = job;
     setActiveJobStatus(job);
   };
+
+  const clearLiveJobState = React.useCallback(() => {
+    prevJobRef.current = null;
+    setActiveJobStatus(null);
+  }, []);
+
+  const reconcileSessionIdentity = React.useCallback(
+    (userId: string | undefined) => {
+      const hadAuthenticatedIdentity =
+        typeof window !== 'undefined' && localStorage.getItem('chessecho_session_user') !== null;
+      const reconciled = reconcileSessionStorageOwner(userId);
+      if (userId !== undefined || hadAuthenticatedIdentity) {
+        clearLiveJobState();
+      }
+      return reconciled;
+    },
+    [clearLiveJobState]
+  );
 
   const changeTab = (tab: TabType) => {
     activeTabStore.set(tab);
@@ -125,9 +159,10 @@ export default function Home() {
   // cannot restore the prior user's data (#113 AC8). Generations are bumped first.
   const clearSessionState = () => {
     invalidatePuzzleRequests();
+    reconcileSessionIdentity(undefined);
     handleDisconnect();
+    activeAccountStore.set(undefined);
     activeJobStore.set(null);
-    setActiveJobStatus(null);
     setWeaknessRefreshKey((k) => k + 1);
   };
 
@@ -141,7 +176,31 @@ export default function Home() {
     // No production provider is wired in this slice; re-check the session so a
     // session established out-of-band (e.g. the dev endpoint) is picked up.
     setSessionStatus('loading');
-    fetchCurrentSession().then((state) => setSessionStatus(state.status));
+    fetchCurrentSession().then(async (state) => {
+      if (state.status === 'authenticated') {
+        if (reconcileSessionIdentity(state.userId)) {
+          try {
+            const accounts = await fetchAccounts();
+            if (accounts.length === 0) {
+              clearAuthenticatedAccountState();
+              clearLiveJobState();
+            } else {
+              const selected = accounts[0];
+              activeAccountStore.set(selected);
+              activeUsernameStore.set(selected.username);
+            }
+          } catch {
+            clearAuthenticatedAccountState();
+            clearLiveJobState();
+          }
+        }
+      } else if (state.status === 'unauthenticated') {
+        reconcileSessionIdentity(undefined);
+      } else {
+        reconcileSessionIdentity(undefined);
+      }
+      setSessionStatus(state.status);
+    });
   };
 
   // Explicit client initialization gate to prevent hydration mismatch and double-fetch
@@ -652,7 +711,7 @@ export default function Home() {
       setIsFetchingMorePuzzles(false);
       try {
         const data = await fetchPuzzles(
-          activeUsername!,
+          activeAccount?.id || activeUsername!,
           'CHESS_COM',
           puzzleColorFilter,
           minEvalLoss,
@@ -700,25 +759,55 @@ export default function Home() {
     return () => {
       requestSequence.current++;
     };
-  }, [isSettingsInitialized, activeUsername, puzzleColorFilter, minEvalLoss, minMistakeCount, puzzleReloadToken]);
+  }, [isSettingsInitialized, activeUsername, activeAccount?.id, puzzleColorFilter, minEvalLoss, minMistakeCount, puzzleReloadToken]);
 
   // Bootstrap the session from /api/me once on mount, resolving the shared gate
   // after every outcome so guest-eligible fetches proceed once session state is
   // known. A late resolve after unmount is ignored (#113 AC7).
   React.useEffect(() => {
     let active = true;
-    fetchCurrentSession().then((state) => {
+    fetchCurrentSession().then(async (state) => {
       if (!active) return;
       setSessionStatus(state.status);
-      sessionGateRef.current!.resolve(true);
       if (state.status === 'unauthenticated') {
+        reconcileSessionIdentity(undefined);
         setIsLoadingPuzzles(false);
+        sessionGateRef.current!.resolve(true);
+      } else if (state.status === 'authenticated') {
+        if (!reconcileSessionIdentity(state.userId)) {
+          sessionGateRef.current!.resolve(true);
+          return;
+        }
+        try {
+          const accounts = await fetchAccounts();
+          if (!active) return;
+          if (accounts.length === 0) {
+            clearAuthenticatedAccountState();
+            clearLiveJobState();
+          } else {
+            const current = activeAccountStore.getSnapshot();
+            const selected = current && accounts.some((account) => account.id === current.id)
+              ? current
+              : accounts[0];
+            activeAccountStore.set(selected);
+            activeUsernameStore.set(selected.username);
+          }
+        } catch {
+          clearAuthenticatedAccountState();
+          clearLiveJobState();
+        } finally {
+          if (active) sessionGateRef.current!.resolve(true);
+        }
+      } else {
+        reconcileSessionIdentity(undefined);
+        setIsLoadingPuzzles(false);
+        sessionGateRef.current!.resolve(true);
       }
     });
     return () => {
       active = false;
     };
-  }, []);
+  }, [clearLiveJobState, reconcileSessionIdentity]);
 
   const handleRetryPuzzleLoad = () => {
     invalidatePuzzleRequests();
@@ -735,7 +824,7 @@ export default function Home() {
     setIsFetchingMorePuzzles(false);
     try {
       const data = await fetchPuzzles(
-        activeUsername,
+        activeAccount?.id || activeUsername,
         'CHESS_COM',
         puzzleColorFilter,
         minEvalLoss,
@@ -825,7 +914,7 @@ export default function Home() {
       const nextPage = puzzlePage + 1;
       try {
         const data = await fetchPuzzles(
-          activeUsername,
+          activeAccount?.id || activeUsername,
           'CHESS_COM',
           puzzleColorFilter,
           minEvalLoss,
@@ -1455,7 +1544,7 @@ export default function Home() {
         {/* TAB 2: WEAKNESSES LIBRARY */}
         {activeTab === 'weaknesses' && (
           <WeaknessesList
-            username={sessionGateOpen ? activeUsername : undefined}
+            username={sessionGateOpen ? activeAccount?.id || activeUsername : undefined}
             minEvalLoss={minEvalLoss}
             onMinEvalLossChange={handleMinEvalLossChange}
             minMistakeCount={minMistakeCount}
@@ -1473,6 +1562,7 @@ export default function Home() {
         {activeTab === 'import' && (
           <ImportGamesView
             connectedUsername={activeUsername}
+            connectedAccountId={activeAccount?.id}
             onDisconnect={handleDisconnect}
             onImportStarted={(user) => handleSetUsername(user)}
             onNavigateTab={(tab) => changeTab(tab)}

@@ -34,6 +34,8 @@ The goal is to change habits, not to memorize engine lines.
 - **Interactive personalized puzzles**: practice your actual recurring weaknesses on an interactive board; the system recognizes your historical mistake moves and gives targeted feedback
 - **Evaluation bar, hints, undo/redo**: move-by-move evaluation tracking, source-square hint highlighting, and full board navigation
 - **Configurable thresholds**: adjust minimum eval loss, minimum mistake count, and color filter without triggering new Stockfish analysis
+- **Owner-scoped accounts**: authenticated users can atomically associate a Chess.com account; unclaimed guest data remains available only until it is claimed
+- **Immutable import jobs**: every job persists its account, date, time-control, color, and provider snapshot; workers fail closed on malformed configuration
 
 ---
 
@@ -48,7 +50,7 @@ The goal is to change habits, not to memorize engine lines.
 | **Frontend** | Next.js 16, React 19, TypeScript |
 | **Board UI** | react-chessboard, chess.js |
 | **Styling** | Tailwind CSS 4 |
-| **Backend testing** | JUnit 5, Mockito, H2 |
+| **Backend testing** | JUnit 5, Mockito, H2, Testcontainers (PostgreSQL 16) |
 | **Frontend testing** | Vitest, Testing Library |
 | **CI** | GitHub Actions |
 
@@ -214,9 +216,9 @@ Move-order transpositions that produce legally identical positions are grouped t
 
 **Kotlin/Spring Boot backend** — handles game import (via Chess.com's public API), PGN parsing, position detection, engine analysis orchestration, weakness calculation, and puzzle serving. Runs on port 8080.
 
-**PostgreSQL** — stores users, chess accounts, imported games, board positions, position occurrences, engine analysis results, and import job state. Schema is managed by Flyway with a single migration.
+**PostgreSQL** — stores provider-neutral users/sessions, canonical chess accounts, imported games, board positions, position occurrences, engine analysis results, and owner-scoped import jobs. Schema is managed by one clean `V1__baseline.sql` migration; the unreleased V1/V2 history and any V3 upgrade/quarantine path are not used.
 
-**Asynchronous import job** — when a game import is started, the backend creates a job record and executes the pipeline asynchronously. Live game progress is checkpointed after each archive. Game ingestion and the subsequent Stockfish analysis have independent statuses on the same job, and the frontend polls both every two seconds.
+**Asynchronous import job** — when a game import is started, the backend creates a job record and executes the pipeline asynchronously. Live game progress is checkpointed after each archive. Game ingestion and the subsequent Stockfish analysis have independent statuses on the same job, and the frontend polls both every two seconds. Authenticated jobs are selected by account UUID and can be polled only by the owner; guest jobs are limited to unclaimed accounts.
 
 **Stockfish analysis** — qualifying positions are analyzed by spawning Stockfish as a subprocess. The baseline position evaluation and the evaluation of each historically played move are stored. Analysis runs at depth 16.
 

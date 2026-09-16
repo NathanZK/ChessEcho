@@ -1,7 +1,12 @@
 package com.chessecho.controller
 
 import com.chessecho.dto.ErrorResponse
+import com.chessecho.service.AccountClaimConflictException
+import com.chessecho.service.AccountNotFoundException
+import com.chessecho.service.AccountSelectionMismatchException
+import com.chessecho.service.AccountSelectionRequiredException
 import com.chessecho.service.ActiveImportJobException
+import com.chessecho.service.ForbiddenAccountException
 import com.chessecho.web.CsrfException
 import com.chessecho.web.UnauthenticatedException
 import org.springframework.http.HttpStatus
@@ -30,6 +35,36 @@ class GlobalExceptionHandler {
         ResponseEntity
             .status(HttpStatus.NOT_FOUND)
             .body(ErrorResponse(error = "NOT_FOUND", details = listOf(ex.message ?: "Resource not found")))
+
+    @ExceptionHandler(AccountNotFoundException::class)
+    fun handleAccountNotFound(ex: AccountNotFoundException): ResponseEntity<ErrorResponse> =
+        ResponseEntity
+            .status(HttpStatus.NOT_FOUND)
+            .body(ErrorResponse(error = "ACCOUNT_NOT_FOUND", details = listOf(ex.message ?: "Account not found")))
+
+    @ExceptionHandler(ForbiddenAccountException::class)
+    fun handleForbidden(ex: ForbiddenAccountException): ResponseEntity<ErrorResponse> =
+        ResponseEntity
+            .status(HttpStatus.FORBIDDEN)
+            .body(ErrorResponse(error = "FORBIDDEN", details = listOf(ex.message ?: "Forbidden")))
+
+    @ExceptionHandler(AccountClaimConflictException::class)
+    fun handleAccountClaimConflict(ex: AccountClaimConflictException): ResponseEntity<ErrorResponse> =
+        ResponseEntity
+            .status(HttpStatus.CONFLICT)
+            .body(ErrorResponse(error = "ACCOUNT_CLAIM_CONFLICT", details = listOf(ex.message ?: "Account claim conflict")))
+
+    @ExceptionHandler(AccountSelectionRequiredException::class)
+    fun handleAccountSelectionRequired(ex: AccountSelectionRequiredException): ResponseEntity<ErrorResponse> =
+        ResponseEntity
+            .badRequest()
+            .body(ErrorResponse(error = "ACCOUNT_SELECTION_REQUIRED", details = listOf(ex.message ?: "Account selection required")))
+
+    @ExceptionHandler(AccountSelectionMismatchException::class)
+    fun handleAccountSelectionMismatch(ex: AccountSelectionMismatchException): ResponseEntity<ErrorResponse> =
+        ResponseEntity
+            .badRequest()
+            .body(ErrorResponse(error = "ACCOUNT_SELECTION_MISMATCH", details = listOf(ex.message ?: "Account selection mismatch")))
 
     @ExceptionHandler(IllegalArgumentException::class)
     fun handleBadRequest(ex: IllegalArgumentException): ResponseEntity<ErrorResponse> =

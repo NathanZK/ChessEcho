@@ -40,6 +40,8 @@ dependencies {
     // Apache HttpClient5 backs TestRestTemplate so it can send the credentialed-CORS
     // preflight headers (Origin, Access-Control-Request-Method) that the JDK client drops.
     testImplementation("org.apache.httpcomponents.client5:httpclient5")
+    testImplementation("org.testcontainers:postgresql:1.20.1")
+    testImplementation("org.testcontainers:junit-jupiter:1.20.1")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     testRuntimeOnly("com.h2database:h2")
 }

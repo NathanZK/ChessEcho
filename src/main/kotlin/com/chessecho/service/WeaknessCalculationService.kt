@@ -11,9 +11,12 @@ import com.chessecho.dto.WeaknessResponse
 import com.chessecho.repository.ChessAccountRepository
 import com.chessecho.repository.EngineAnalysisRepository
 import com.chessecho.repository.PositionOccurrenceRepository
+import com.chessecho.service.auth.AuthenticatedPrincipal
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.web.context.request.RequestContextHolder
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.UUID
@@ -27,6 +30,8 @@ class WeaknessCalculationService(
     private val practicalEvidenceService: PracticalEvidenceService,
     private val weaknessPriorityPolicy: WeaknessPriorityPolicy,
 ) {
+    @Autowired(required = false)
+    private var accountOwnershipService: AccountOwnershipService? = null
     private val log = LoggerFactory.getLogger(javaClass)
 
     companion object {
@@ -43,21 +48,31 @@ class WeaknessCalculationService(
         minEvalLoss: Double = DEFAULT_MIN_EVAL_LOSS,
         minMistakeCount: Int = DEFAULT_MIN_MISTAKE_COUNT,
         minTimesReached: Int = DEFAULT_MIN_TIMES_REACHED,
+        principal: AuthenticatedPrincipal? = null,
+        accountId: UUID? = null,
     ): List<WeaknessResponse> {
         val startTime = System.currentTimeMillis()
         require(minEvalLoss >= 0.0) { "minEvalLoss must be non-negative" }
 
+        val requestAttributes = RequestContextHolder.getRequestAttributes()
+        val ownership = accountOwnershipService
         val account =
-            chessAccountRepository.findByPlatformAndUsernameIgnoreCase(platform.name, username)
-                ?: run {
-                    log.info(
-                        "Weakness calculation failed: account not found for platform={} playerColor={} minEvalLoss={}",
-                        platform,
-                        playerColor,
-                        minEvalLoss,
-                    )
-                    throw NoSuchElementException("Chess account not found")
-                }
+            if (ownership != null && accountId != null) {
+                ownership.resolvePrivateRead(accountId, principal)
+            } else if (ownership != null && (requestAttributes != null || principal != null)) {
+                ownership.resolvePrivateRead(platform, username, principal)
+            } else {
+                chessAccountRepository.findByPlatformAndUsernameIgnoreCase(platform.name, username)
+                    ?: run {
+                        log.info(
+                            "Weakness calculation failed: account not found for platform={} playerColor={} minEvalLoss={}",
+                            platform,
+                            playerColor,
+                            minEvalLoss,
+                        )
+                        throw NoSuchElementException("Chess account not found")
+                    }
+            }
 
         val color = playerColor.name
         val totalOccurrences = positionOccurrenceRepository.countByChessAccountId(account.id)

@@ -10,6 +10,7 @@ import com.chessecho.domain.PositionOccurrence
 import com.chessecho.domain.UserPositionStats
 import com.chessecho.dto.WeaknessResponse
 import com.chessecho.repository.AppUserRepository
+import com.chessecho.repository.AsyncJobRepository
 import com.chessecho.repository.ChessAccountRepository
 import com.chessecho.repository.EngineAnalysisRepository
 import com.chessecho.repository.GameRepository
@@ -44,6 +45,9 @@ class WeaknessControllerIntegrationTest {
     private lateinit var appUserRepository: AppUserRepository
 
     @Autowired
+    private lateinit var asyncJobRepository: AsyncJobRepository
+
+    @Autowired
     private lateinit var chessAccountRepository: ChessAccountRepository
 
     @Autowired
@@ -72,7 +76,7 @@ class WeaknessControllerIntegrationTest {
     @BeforeEach
     fun setup() {
         val user = appUserRepository.save(AppUser(email = "integration@test.com"))
-        val account = chessAccountRepository.save(ChessAccount(user = user, platform = "CHESS_COM", username = "integrationuser"))
+        val account = chessAccountRepository.save(ChessAccount(user = null, platform = "CHESS_COM", username = "integrationuser"))
 
         val game =
             gameRepository.save(
@@ -152,6 +156,7 @@ class WeaknessControllerIntegrationTest {
         engineAnalysisRepository.deleteAll()
         positionOccurrenceRepository.deleteAll()
         userPositionStatsRepository.deleteAll()
+        asyncJobRepository.deleteAll()
         positionRepository.deleteAll()
         gameRepository.deleteAll()
         chessAccountRepository.deleteAll()
@@ -202,7 +207,7 @@ class WeaknessControllerIntegrationTest {
     @Test
     fun `test asymmetric occurrence play frequencies 20 total occurrences 15 for move A and 5 for move B`() {
         val user = appUserRepository.save(AppUser(email = "asymmetric@test.com"))
-        val account = chessAccountRepository.save(ChessAccount(user = user, platform = "CHESS_COM", username = "asymmetricuser"))
+        val account = chessAccountRepository.save(ChessAccount(user = null, platform = "CHESS_COM", username = "asymmetricuser"))
 
         val game =
             gameRepository.save(
@@ -299,7 +304,7 @@ class WeaknessControllerIntegrationTest {
     @Test
     fun `test playerColor BOTH considers both WHITE and BLACK occurrences`() {
         val user = appUserRepository.save(AppUser(email = "both@test.com"))
-        val account = chessAccountRepository.save(ChessAccount(user = user, platform = "CHESS_COM", username = "bothuser"))
+        val account = chessAccountRepository.save(ChessAccount(user = null, platform = "CHESS_COM", username = "bothuser"))
 
         val position =
             positionRepository.save(
@@ -457,7 +462,7 @@ class WeaknessControllerIntegrationTest {
     @Test
     fun `test weaknesses endpoint pagination with page size and priority ordering`() {
         val user = appUserRepository.save(AppUser(email = "pagination@test.com"))
-        val account = chessAccountRepository.save(ChessAccount(user = user, platform = "CHESS_COM", username = "pageuser"))
+        val account = chessAccountRepository.save(ChessAccount(user = null, platform = "CHESS_COM", username = "pageuser"))
         val game =
             gameRepository.save(
                 Game(chessAccount = account, platformGameId = "pagegame", timeControl = "blitz", pgn = "pgn", result = "win"),

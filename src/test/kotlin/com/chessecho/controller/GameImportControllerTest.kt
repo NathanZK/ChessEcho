@@ -4,15 +4,21 @@ import com.chessecho.domain.AsyncJob
 import com.chessecho.repository.AsyncJobRepository
 import com.chessecho.service.ActiveImportJobException
 import com.chessecho.service.GameImportService
+import com.chessecho.service.auth.AuthenticatedPrincipal
+import com.chessecho.service.auth.IdentitySessionService
+import com.chessecho.web.SessionAuthenticationFilter
 import com.fasterxml.jackson.databind.ObjectMapper
+import jakarta.servlet.http.Cookie
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.doThrow
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.whenever
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest
 import org.springframework.boot.test.mock.mockito.MockBean
+import org.springframework.context.annotation.Import
 import org.springframework.http.MediaType
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.get
@@ -23,6 +29,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 @WebMvcTest(GameImportController::class)
+@Import(
+    SessionAuthenticationFilter::class,
+)
+@EnableConfigurationProperties(com.chessecho.config.SessionCookieProperties::class)
 class GameImportControllerTest {
     @Autowired
     lateinit var mockMvc: MockMvc
@@ -36,6 +46,9 @@ class GameImportControllerTest {
     @MockBean
     lateinit var asyncJobRepository: AsyncJobRepository
 
+    @MockBean
+    lateinit var identitySessionService: IdentitySessionService
+
     private val validRequest =
         mapOf(
             "username" to "hikaru",
@@ -43,6 +56,22 @@ class GameImportControllerTest {
             "timeControls" to listOf("RAPID", "BLITZ"),
             "playerColor" to "BOTH",
         )
+
+    @Test
+    fun `POST guest import with a valid session is rejected before lookup with ACCOUNT_SELECTION_REQUIRED`() {
+        whenever(identitySessionService.resolveSession("good-secret"))
+            .thenReturn(AuthenticatedPrincipal(UUID.randomUUID(), devPrincipal = false))
+
+        mockMvc.post("/api/games/import") {
+            contentType = MediaType.APPLICATION_JSON
+            content = """{"platform":"CHESS_COM","username":"caseplayer","timeControls":["BLITZ"],"playerColor":"WHITE"}"""
+            cookie(Cookie("CHESSECHO_SESSION", "good-secret"), Cookie("XSRF-TOKEN", "csrf-1"))
+            header("X-XSRF-TOKEN", "csrf-1")
+        }.andExpect {
+            status { isBadRequest() }
+            jsonPath("$.error") { value("ACCOUNT_SELECTION_REQUIRED") }
+        }
+    }
 
     @Test
     fun `POST games import returns 202 with jobId on valid request`() {
@@ -96,6 +125,45 @@ class GameImportControllerTest {
         }.andExpect {
             status { isBadRequest() }
             jsonPath("$.error") { value("VALIDATION_ERROR") }
+        }
+    }
+
+    @Test
+    fun `POST games import rejects guest-shaped payloads when authenticated selection is required`() {
+        val request =
+            mapOf(
+                "platform" to "CHESS_COM",
+                "username" to "hikaru",
+                "timeControls" to listOf("BLITZ"),
+                "playerColor" to "WHITE",
+            )
+
+        mockMvc.post("/api/games/import") {
+            contentType = MediaType.APPLICATION_JSON
+            content = objectMapper.writeValueAsString(request)
+        }.andExpect {
+            status { isBadRequest() }
+            jsonPath("$.error") { value("ACCOUNT_SELECTION_REQUIRED") }
+        }
+    }
+
+    @Test
+    fun `POST games import rejects mismatched authenticated account snapshots with ACCOUNT_SELECTION_MISMATCH`() {
+        val request =
+            mapOf(
+                "accountId" to UUID.randomUUID().toString(),
+                "platform" to "CHESS_COM",
+                "username" to "caseplayer",
+                "timeControls" to listOf("BLITZ"),
+                "playerColor" to "WHITE",
+            )
+
+        mockMvc.post("/api/games/import") {
+            contentType = MediaType.APPLICATION_JSON
+            content = objectMapper.writeValueAsString(request)
+        }.andExpect {
+            status { isBadRequest() }
+            jsonPath("$.error") { value("ACCOUNT_SELECTION_MISMATCH") }
         }
     }
 
