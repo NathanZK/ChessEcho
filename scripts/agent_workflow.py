@@ -700,8 +700,8 @@ def _tests_not_applicable(state):
     return state.get("test_implementation_status") == "NOT_APPLICABLE"
 
 
-def _approved_test_paths(state, context):
-    """Return approved test paths while preserving applicability invariants."""
+def _approved_test_paths(root, config, state, context):
+    """Return concrete approved test paths while preserving applicability invariants."""
     applicability = state.get("test_implementation_status")
     _ensure(
         applicability in ("REQUIRED", "NOT_APPLICABLE"),
@@ -714,14 +714,20 @@ def _approved_test_paths(state, context):
         "invalid-approved-test-scope",
         "%s requires a valid approved test scope" % context,
     )
-    test_paths = sorted(path for path in scope if _is_test_file(path))
-    if applicability == "REQUIRED":
-        _ensure(
-            test_paths,
-            "missing-approved-test-paths",
-            "%s requires approved test paths" % context,
-        )
-    return test_paths
+    if applicability == "NOT_APPLICABLE":
+        return []
+
+    test_commit = state.get("test_commit")
+    _ensure(test_commit, "missing-test-commit", "%s requires test_commit" % context)
+    target_head = state.get("target_head")
+    if not target_head:
+        approved_candidate = _commit_parent(root, config, test_commit)
+        target_head = _commit_parent(root, config, approved_candidate)
+    test_paths = _git_diff_names(
+        root, config, "%s..%s" % (target_head, test_commit)
+    )
+    _require_test_only(test_paths, scope, context)
+    return sorted(test_paths)
 
 
 def _git_diff_text(root, config, base, head, paths=None):
@@ -809,7 +815,7 @@ def _reconcile_candidate_artifacts(root, config, state, old_target, new_target, 
     _git_ancestor(root, config, old_target, test_commit, context)
 
     applicability = state.get("test_implementation_status")
-    test_paths = _approved_test_paths(state, context)
+    test_paths = _approved_test_paths(root, config, state, context)
     if applicability == "REQUIRED":
         _require_test_only(
             _git_diff_names(root, config, "%s..%s" % (old_target, test_commit)),
@@ -1187,12 +1193,14 @@ def command_reconcile_candidate(args, root, config):
 
 def _is_test_file(path):
     return (
-        path.startswith("src/test/")
+        path == "src/test"
+        or path.startswith("src/test/")
         or path.startswith("frontend/") and (
             "/__tests__/" in path
             or path.endswith((".test.ts", ".test.tsx", ".test.js", ".test.jsx"))
             or path.endswith((".spec.ts", ".spec.tsx", ".spec.js", ".spec.jsx"))
         )
+        or path == "scripts/tests"
         or path.startswith("scripts/tests/")
     )
 
@@ -1829,20 +1837,6 @@ def command_submit_implementation(args, root, config):
         "current Git candidate diff does not match recorded evidence diff",
     )
 
-    # Check that approved tests remain byte-for-byte unchanged relative to test_commit
-    # First check working tree changes for test files:
-    test_diff = _run_bounded(
-        _git_command(
-            config,
-            "diff",
-            "--quiet",
-            test_commit,
-            "--",
-            *sorted([path for path in scope if _is_test_file(path)] or ["."]),
-        ),
-        _effective_limits(config, "git"),
-        root,
-    )
     # Check changed files in working tree against test_commit
     changed_names = _git_candidate_names(root, config, test_commit)
 
@@ -1893,7 +1887,7 @@ def command_run_validation(args, root, config):
     if all_passed:
         test_commit = state.get("test_commit")
         _ensure(test_commit, "missing-test-commit", "run-validation requires test_commit")
-        test_paths = _approved_test_paths(state, "run-validation")
+        test_paths = _approved_test_paths(root, config, state, "run-validation")
         if test_paths:
             test_diff = _run_bounded(
                 _git_command(config, "diff", "--quiet", test_commit, "--", *test_paths),

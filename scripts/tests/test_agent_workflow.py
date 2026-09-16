@@ -792,6 +792,55 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual("tests-modified-after-approval", payload["error"]["code"])
         self.assertEqual("VALIDATION", self.state()["status"])
 
+    def test_approved_test_paths_expand_directory_scopes_to_concrete_tests(self):
+        """Directory scopes protect changed tests without treating mixed roots as tests."""
+        files = {
+            "src/test/foo/BarTest.kt": "bar\n",
+            "scripts/tests/test_agent_workflow.py": "workflow\n",
+            "frontend/src/components/Button.test.tsx": "button test\n",
+        }
+        production = self.root / "frontend/src/components/Button.tsx"
+        production.parent.mkdir(parents=True, exist_ok=True)
+        production.write_text("button production\n", encoding="utf-8")
+        self.git("add", "frontend/src/components/Button.tsx")
+        self.git("commit", "-qm", "frontend production baseline")
+        for relative, content in files.items():
+            path = self.root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+        self.git("add", ".")
+        self.git("commit", "-qm", "directory-scoped tests")
+        state = {
+            "target_head": self.git("rev-parse", "HEAD^").stdout.strip(),
+            "test_commit": self.git("rev-parse", "HEAD").stdout.strip(),
+            "approved_scope": ["src/test", "scripts/tests", "frontend/src"],
+            "test_implementation_status": "REQUIRED",
+        }
+
+        self.assertEqual(
+            [
+                "frontend/src/components/Button.test.tsx",
+                "scripts/tests/test_agent_workflow.py",
+                "src/test/foo/BarTest.kt",
+            ],
+            workflow._approved_test_paths(
+                self.root,
+                self.root_config(),
+                state,
+                "directory-scope regression",
+            ),
+        )
+
+    def test_test_file_boundaries_cover_directory_roots_without_mixed_frontend_scope(self):
+        """Test classification is boundary-safe for roots and mixed frontend source."""
+        self.assertTrue(workflow._is_test_file("src/test"))
+        self.assertTrue(workflow._is_test_file("src/test/foo/BarTest.kt"))
+        self.assertTrue(workflow._is_test_file("scripts/tests"))
+        self.assertTrue(workflow._is_test_file("scripts/tests/test_agent_workflow.py"))
+        self.assertTrue(workflow._is_test_file("frontend/src/Button.test.tsx"))
+        self.assertTrue(workflow._is_test_file("frontend/src/Button.spec.ts"))
+        self.assertFalse(workflow._is_test_file("frontend/src/Button.tsx"))
+
     def test_not_applicable_validation_allows_non_test_implementation_change(self):
         """NOT_APPLICABLE does not compare an empty test path set as the repository."""
         self.bootstrap_to_not_applicable_validation()
