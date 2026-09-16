@@ -39,6 +39,16 @@ worktree makes the required clean-worktree gate fail.
 8. `review-implementation`
 9. `create-draft-pr`
 
+An in-progress run may use `reanchor-target ISSUE --by REQUESTER` only before
+implementation artifacts exist (planning through test review). The command
+requires a clean worktree, fetches `origin/<target_base>`, and accepts only a
+strict descendant of the recorded `target_head`; it never accepts a
+caller-supplied commit or replacement scope. It records append-only old/new
+target identities, requester, timestamp, and artifact validation in
+`target_reanchors`. Plans, scope, approvals, and valid test artifacts remain
+in place. Runs with implementation candidates, implementation commits, or
+draft PRs fail closed rather than being reset or silently invalidated.
+
 At each Approval Gate, autonomous execution pauses until an approval operation
 is recorded. The current local operation compares an exact confirmation phrase
 from `.github/agent-workflow.json`; it does not authenticate the caller.
@@ -167,6 +177,7 @@ python3 scripts/agent_workflow.py approve-plan ISSUE --by LOGIN --confirm plan_a
 python3 scripts/agent_workflow.py reject-plan ISSUE --by LOGIN --reason "..."
 python3 scripts/agent_workflow.py request-plan-revision ISSUE --by LOGIN --reason-code approved-plan-defect --reason "..."
 python3 scripts/agent_workflow.py submit-tests ISSUE --artifact PATH --agent chess-echo-test-implementer --failure-command "COMMAND" --failure-contains "EXPECTED"
+python3 scripts/agent_workflow.py reanchor-target ISSUE --by REQUESTER
 python3 scripts/agent_workflow.py review-tests ISSUE --status READY_FOR_HUMAN_APPROVAL|NEEDS_REVISION --artifact PATH --reviewer chess-echo-reviewer
 python3 scripts/agent_workflow.py approve-tests ISSUE --by LOGIN --confirm tests_approved
 python3 scripts/agent_workflow.py reject-tests ISSUE --by LOGIN --reason "..."
