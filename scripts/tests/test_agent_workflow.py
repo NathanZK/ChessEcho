@@ -1598,6 +1598,63 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual(1, code)
         self.assertEqual("tests-modified-after-approval", payload["error"]["code"])
 
+    def test_test_implementation_can_be_marked_not_applicable_for_approved_work(self):
+        self.write_artifact("plan.md", "plan")
+        self.write_artifact("plan-review.md", "plan review")
+        self.write_artifact("test-report.md", "tests")
+        self.assertEqual(0, self.run_cli("init", str(ISSUE))[0])
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "submit-plan",
+                str(ISSUE),
+                "--artifact",
+                "artifacts-src/plan.md",
+                "--agent",
+                "chess-echo-planner",
+                "--scope",
+                "docs/engineering/agent-workflow.md",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "review-plan",
+                str(ISSUE),
+                "--status",
+                workflow.READY,
+                "--artifact",
+                "artifacts-src/plan-review.md",
+                "--reviewer",
+                "chess-echo-reviewer",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "approve-plan",
+                str(ISSUE),
+                "--by",
+                "owner",
+                "--confirm",
+                "plan_approved",
+            )[0],
+        )
+
+        code, payload, _ = self.run_cli(
+            "submit-tests",
+            str(ISSUE),
+            "--artifact",
+            "artifacts-src/test-report.md",
+            "--agent",
+            "chess-echo-test-implementer",
+            "--not-applicable",
+            "--reason",
+            "Approved task has no test-file change.",
+        )
+        self.assertEqual(0, code)
+        self.assertEqual("TEST_REVIEW", self.state()["status"])
+
     def test_approve_tests_creates_and_verifies_test_commit_mechanically(self):
         self.write_artifact("plan.md", "plan")
         self.write_artifact("plan-review.md", "plan review")

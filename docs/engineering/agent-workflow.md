@@ -69,7 +69,8 @@ stateDiagram-v2
     WAITING_FOR_PLAN_HUMAN_APPROVAL --> PLANNING: reject-plan
 
     TEST_IMPLEMENTATION --> PLANNING: request-plan-revision --reason-code approved-plan-defect
-    TEST_IMPLEMENTATION --> TEST_REVIEW: submit-tests executes targeted failing test
+    TEST_IMPLEMENTATION --> TEST_REVIEW: submit-tests (REQUIRED) executes targeted failing test
+    TEST_IMPLEMENTATION --> TEST_REVIEW: submit-tests (NOT_APPLICABLE) records approved rationale
     TEST_REVIEW --> WAITING_FOR_TEST_HUMAN_APPROVAL: review-tests READY
     TEST_REVIEW --> TEST_IMPLEMENTATION: review-tests NEEDS_REVISION
     WAITING_FOR_TEST_HUMAN_APPROVAL --> IMPLEMENTATION: approve-tests creates test boundary (Approval Gate 2)
@@ -90,6 +91,9 @@ stateDiagram-v2
 ```
 
 Tests are committed before production code so the behavior contract is independently reviewable.
+For an approved plan that explicitly classifies test implementation as `NOT_APPLICABLE`, `submit-tests --not-applicable --reason "..."`
+records the rationale and proceeds to test review without a test commit. The existing `REQUIRED` path remains mandatory whenever the
+approved plan does not establish `NOT_APPLICABLE`; the implementer cannot select that path ad hoc.
 `approve-tests` creates the workflow `test_commit`, and later stages enforce that approved tests
 remain byte-for-byte unchanged. Production implementation remains an uncommitted candidate until Human
 Gate 3. `submit-implementation` independently compares the current native Git candidate diff with the
@@ -177,6 +181,7 @@ python3 scripts/agent_workflow.py approve-plan ISSUE --by LOGIN --confirm plan_a
 python3 scripts/agent_workflow.py reject-plan ISSUE --by LOGIN --reason "..."
 python3 scripts/agent_workflow.py request-plan-revision ISSUE --by LOGIN --reason-code approved-plan-defect --reason "..."
 python3 scripts/agent_workflow.py submit-tests ISSUE --artifact PATH --agent chess-echo-test-implementer --failure-command "COMMAND" --failure-contains "EXPECTED"
+python3 scripts/agent_workflow.py submit-tests ISSUE --artifact PATH --agent chess-echo-test-implementer --not-applicable --reason "Approved rationale"
 python3 scripts/agent_workflow.py reanchor-target ISSUE --by REQUESTER
 python3 scripts/agent_workflow.py review-tests ISSUE --status READY_FOR_HUMAN_APPROVAL|NEEDS_REVISION --artifact PATH --reviewer chess-echo-reviewer
 python3 scripts/agent_workflow.py approve-tests ISSUE --by LOGIN --confirm tests_approved

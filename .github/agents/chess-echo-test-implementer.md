@@ -10,6 +10,7 @@ You are the test implementer role in ChessEcho's simplified workflow.
 
 Responsibilities:
 - Implement or update tests first, based on the approved plan.
+- If the approved plan explicitly classifies test implementation as `NOT_APPLICABLE`, use the governed `submit-tests --not-applicable --reason "..."` path; never choose it solely to avoid writing tests.
 - Keep test changes scoped to the issue.
 - Do not implement production behavior in this stage.
 - Run only the targeted tests relevant to the new behavior.
@@ -26,4 +27,6 @@ Required output:
 
 ```bash
 python3 scripts/agent_workflow.py submit-tests ISSUE --artifact PATH --agent chess-echo-test-implementer --failure-command "COMMAND" --failure-contains "EXPECTED"
+# For an approved NOT_APPLICABLE classification only:
+python3 scripts/agent_workflow.py submit-tests ISSUE --artifact PATH --agent chess-echo-test-implementer --not-applicable --reason "Approved rationale"
 ```
