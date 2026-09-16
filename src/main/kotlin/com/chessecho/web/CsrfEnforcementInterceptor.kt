@@ -22,7 +22,11 @@ class CsrfEnforcementInterceptor(
         response: HttpServletResponse,
         handler: Any,
     ): Boolean {
-        if (CorsUtils.isPreFlightRequest(request)) {
+        if (request.method.equals("GET", ignoreCase = true) ||
+            request.method.equals("HEAD", ignoreCase = true) ||
+            request.method.equals("OPTIONS", ignoreCase = true) ||
+            CorsUtils.isPreFlightRequest(request)
+        ) {
             return true
         }
         // Only enforce for real controller handlers; a static-resource fallback

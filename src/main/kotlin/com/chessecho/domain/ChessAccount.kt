@@ -19,8 +19,8 @@ class ChessAccount(
     @GeneratedValue(strategy = GenerationType.UUID)
     val id: UUID = UUID.randomUUID(),
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "user_id", nullable = false)
-    val user: AppUser,
+    @JoinColumn(name = "user_id")
+    var user: AppUser? = null,
     @Column(nullable = false)
     val platform: String,
     @Column(nullable = false)

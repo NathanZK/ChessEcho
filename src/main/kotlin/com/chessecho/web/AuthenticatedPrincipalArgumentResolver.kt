@@ -2,6 +2,7 @@ package com.chessecho.web
 
 import com.chessecho.service.auth.AuthenticatedPrincipal
 import org.springframework.core.MethodParameter
+import org.springframework.lang.Nullable
 import org.springframework.web.bind.support.WebDataBinderFactory
 import org.springframework.web.context.request.NativeWebRequest
 import org.springframework.web.context.request.RequestAttributes
@@ -15,15 +16,23 @@ import org.springframework.web.method.support.ModelAndViewContainer
  * [UnauthenticatedException] (mapped to 401). It never exposes the raw secret.
  */
 class AuthenticatedPrincipalArgumentResolver : HandlerMethodArgumentResolver {
-    override fun supportsParameter(parameter: MethodParameter): Boolean = parameter.parameterType == AuthenticatedPrincipal::class.java
+    override fun supportsParameter(parameter: MethodParameter): Boolean {
+        return parameter.parameterType == AuthenticatedPrincipal::class.java
+    }
 
     override fun resolveArgument(
         parameter: MethodParameter,
         mavContainer: ModelAndViewContainer?,
         webRequest: NativeWebRequest,
         binderFactory: WebDataBinderFactory?,
-    ): Any {
+    ): Any? {
         val principal = webRequest.getAttribute(SessionAuthenticationFilter.PRINCIPAL_ATTRIBUTE, RequestAttributes.SCOPE_REQUEST)
-        return principal ?: throw UnauthenticatedException()
+        if (principal != null) return principal
+        if (parameter.getParameterAnnotation(OptionalAuthenticatedPrincipal::class.java) != null ||
+            parameter.getParameterAnnotation(Nullable::class.java) != null
+        ) {
+            return null
+        }
+        throw UnauthenticatedException()
     }
 }

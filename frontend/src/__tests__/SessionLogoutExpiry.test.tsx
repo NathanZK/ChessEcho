@@ -33,6 +33,7 @@ vi.mock('../services/api', async () => {
     logout: sessionMocks.logout,
     fetchPuzzles: vi.fn(),
     fetchWeaknesses: vi.fn(),
+    fetchAccounts: vi.fn(),
   };
 });
 
@@ -68,6 +69,9 @@ describe('Session logout/expiry clearing (Issue #113)', () => {
     window.location.hash = '';
     vi.resetAllMocks();
     vi.mocked(api.fetchWeaknesses).mockResolvedValue([]);
+    vi.mocked(api.fetchAccounts).mockResolvedValue([
+      { id: 'account-1', platform: 'CHESS_COM', username: 'hikaru' },
+    ]);
     sessionMocks.fetchCurrentSession.mockResolvedValue({
       status: 'authenticated',
       userId: 'user-1',
@@ -81,6 +85,7 @@ describe('Session logout/expiry clearing (Issue #113)', () => {
   });
 
   it('logout calls the session API, clears the active job, and drops a late puzzle response', async () => {
+    localStorage.setItem('chessecho_session_user', 'user-1');
     localStorage.setItem('chessecho_username', 'hikaru');
     localStorage.setItem(
       'chessecho_active_job',
@@ -104,6 +109,7 @@ describe('Session logout/expiry clearing (Issue #113)', () => {
     });
 
     expect(localStorage.getItem('chessecho_active_job')).toBeNull();
+    expect(localStorage.getItem('chessecho_session_user')).toBeNull();
 
     // A late resolve of the prior in-flight puzzle load must not repopulate.
     await act(async () => {

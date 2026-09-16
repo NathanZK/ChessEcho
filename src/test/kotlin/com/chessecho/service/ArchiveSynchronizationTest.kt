@@ -83,9 +83,9 @@ class ArchiveSynchronizationTest {
         positionOccurrenceRepository.deleteAll()
         positionRepository.deleteAll()
         gameRepository.deleteAll()
+        asyncJobRepository.deleteAll()
         chessAccountRepository.deleteAll()
         appUserRepository.deleteAll()
-        asyncJobRepository.deleteAll()
     }
 
     @Test

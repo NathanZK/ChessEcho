@@ -4,7 +4,40 @@ This document outlines the API contract for all REST endpoints available in Ches
 
 ---
 
-## 1. Start Import Job
+## 1. Account Association and Ownership
+
+Authenticated account association is the only way to claim a durable Chess.com
+account. `userId`, a username, an account UUID stored in the browser, and a job
+UUID are never bearer credentials.
+
+### `GET /api/accounts`
+
+Requires a live `CHESSECHO_SESSION` and returns the caller's accounts:
+
+```json
+[
+  {"id": "account-uuid", "platform": "CHESS_COM", "username": "Hikaru"}
+]
+```
+
+### `POST /api/accounts`
+
+Requires the session and a matching `X-XSRF-TOKEN`/`XSRF-TOKEN` pair. Platform
+and username are trimmed before validation; account identity is unique by
+case-insensitive `(platform, username)`.
+
+```json
+{"platform": "chess_com", "username": " Hikaru "}
+```
+
+`201 Created` creates or claims an unclaimed account; `200 OK` is an idempotent
+repeat by the same owner; `401 UNAUTHENTICATED` means no live session;
+`409 ACCOUNT_CLAIM_CONFLICT` means another owner already claimed the identity;
+`403 CSRF_FAILED` means the double-submit pair is missing or mismatched.
+
+---
+
+## 2. Start Import Job
 Initiates an asynchronous game import job from Chess.com or Lichess.
 
 - **Endpoint:** `POST /api/games/import`
@@ -13,14 +46,28 @@ Initiates an asynchronous game import job from Chess.com or Lichess.
 ### Request Body
 ```json
 {
-  "username": "string (required)",
-  "platform": "CHESS_COM",
+  "accountId": "UUID (authenticated form)",
+  "platform": "CHESS_COM (optional snapshot in authenticated form)",
+  "username": "string (optional snapshot in authenticated form)",
   "timeControls": ["RAPID", "BLITZ", "BULLET", "CLASSICAL"],
   "playerColor": "WHITE | BLACK | BOTH (required)",
   "fromDate": "YYYY-MM (optional)",
   "toDate": "YYYY-MM (optional)"
 }
 ```
+
+There are two mutually exclusive selector forms:
+
+* **Authenticated:** `accountId` is the sole selector. Optional `platform` and
+  `username` values are metadata snapshots and must match the selected account
+  when supplied.
+* **Guest:** omit `accountId` (or send JSON `null`) and supply both `platform`
+  and `username`. The server creates or reuses an explicitly unclaimed account.
+
+A valid session plus a guest-shaped body never falls back to an unclaimed
+username: it returns `400 ACCOUNT_SELECTION_REQUIRED`. A selected account with
+an inconsistent snapshot returns `400 ACCOUNT_SELECTION_MISMATCH`. Both forms
+require CSRF, including a guest request with no session cookie.
 
 ### Curl Example
 ```bash
@@ -69,7 +116,7 @@ An active import job is already running for this user/platform combination.
 
 ---
 
-## 2. Poll Job Status
+## 3. Poll Job Status
 Fetches the status and metrics of a running or completed import job.
 
 - **Endpoint:** `GET /api/jobs/{id}`
@@ -92,9 +139,18 @@ curl http://localhost:8080/api/jobs/3fa85f64-5717-4562-b3fc-2c963f66afa6
   "gamesSkipped": 5,
   "gamesProcessed": 150,
   "errorMessage": null,
-  "analysisStatus": "NOT_STARTED | ANALYZING | COMPLETED | FAILED"
+  "analysisStatus": "NOT_STARTED | ANALYZING | COMPLETED | FAILED",
+  "accountId": "account-uuid",
+  "configurationState": "READY"
 }
 ```
+
+The response also includes the persisted platform, username, date bounds,
+canonical sorted time controls, and player color when the job is resolved.
+`READY` jobs are immutable commands. `UNRESOLVED` or malformed jobs fail closed
+and are never exposed to a guest or foreign owner. A guest can poll only an
+unclaimed account job; an authenticated caller can poll only their own account.
+There is at most one `QUEUED`/`PROCESSING` job per account.
 
 `status` tracks game ingestion and becomes `COMPLETED` before Stockfish analysis starts.
 Progress counters are updated after each archive. `gamesProcessed` counts every game examined,
@@ -113,14 +169,14 @@ independent analysis lifecycle; an analysis failure does not change a completed 
 
 ---
 
-## 3. Get Imported Games
+## 4. Get Imported Games
 Retrieves a paginated list of imported games for a specified player and platform.
 
 - **Endpoint:** `GET /api/games`
 
 ### Query Parameters
-- `username` (string, required): Player's username.
-- `platform` (Platform enum, required): Platform identifier (`CHESS_COM`).
+- `accountId` (UUID, authenticated form): The sole owner-scoped selector.
+- `username` and `platform` (guest form): Select an unclaimed account together.
 - `page` (int, optional, default: 0): Zero-indexed page number.
 - `size` (int, optional, default: 20): Page size limit.
 - `sort` (string, optional): Sorting specification.
@@ -157,14 +213,14 @@ curl "http://localhost:8080/api/games?username=magnuscarlsen&platform=CHESS_COM&
 
 ---
 
-## 4. Get Position Weaknesses
+## 5. Get Position Weaknesses
 Retrieves calculated chess weaknesses based on position evaluations and recurring player mistakes.
 
 - **Endpoint:** `GET /api/positions/weaknesses`
 
 ### Query Parameters
-- `platform` (Platform enum, required): Platform identifier (`CHESS_COM`).
-- `username` (string, required): Player username.
+- `accountId` (UUID, authenticated form), or normalized `platform` + `username`
+  in guest mode.
 - `playerColor` (PlayerColor enum, required): `WHITE`, `BLACK`, or `BOTH`.
 - `minEvalLoss` (double, optional, default: `0.8`): Minimum engine evaluation loss, in pawns, required for a move to be classified as a mistake. A lower value means a stricter definition of a mistake.
 - `minMistakeCount` (int, optional, default: `3`): Minimum number of mistakes required to qualify as a weakness.
@@ -212,14 +268,14 @@ curl "http://localhost:8080/api/positions/weaknesses?platform=CHESS_COM&username
 
 ---
 
-## 5. Get Puzzles
+## 6. Get Puzzles
 Retrieves position puzzles created from detected player weaknesses for interactive training.
 
 - **Endpoint:** `GET /api/puzzles`
 
 ### Query Parameters
-- `platform` (Platform enum, required): Platform identifier (`CHESS_COM`).
-- `username` (string, required): Player username.
+- `accountId` (UUID, authenticated form), or normalized `platform` + `username`
+  in guest mode.
 - `playerColor` (PlayerColor enum, required): `WHITE` or `BLACK`.
 - `minEvalLoss` (double, optional, default: `0.8`): Minimum engine evaluation loss, in pawns, required for a move to be classified as a mistake. A lower value means a stricter definition of a mistake.
 - `minMistakeCount` (int, optional, default: `3`): Minimum mistake count threshold.
@@ -264,7 +320,7 @@ curl "http://localhost:8080/api/puzzles?platform=CHESS_COM&username=magnuscarlse
 
 ---
 
-## 6. Get Puzzle Continuation
+## 7. Get Puzzle Continuation
 Retrieves continuation candidate moves and resulting board states for a given position.
 
 - **Endpoint:** `GET /api/puzzles/continuation`
@@ -326,7 +382,7 @@ No continuation moves available for the given position.
 
 ---
 
-## 7. Evaluate User Exploration Move
+## 8. Evaluate User Exploration Move
 Evaluates an arbitrary legal move played from an arbitrary position (FEN) during interactive line exploration against the engine baseline and determines whether its evaluation loss is within the configured user exploration threshold (`0.80` pawns).
 
 - **Endpoint:** `GET /api/puzzles/evaluate-move`

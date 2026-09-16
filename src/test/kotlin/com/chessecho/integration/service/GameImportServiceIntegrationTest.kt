@@ -23,11 +23,14 @@ import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.doAnswer
 import org.mockito.kotlin.doThrow
 import org.mockito.kotlin.verify
+import org.mockito.kotlin.verifyNoInteractions
 import org.mockito.kotlin.whenever
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.mock.mockito.MockBean
+import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.test.context.ActiveProfiles
+import org.springframework.transaction.support.TransactionTemplate
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -65,6 +68,12 @@ class GameImportServiceIntegrationTest {
 
     @Autowired
     private lateinit var userPositionStatsRepository: UserPositionStatsRepository
+
+    @Autowired
+    private lateinit var jdbcTemplate: JdbcTemplate
+
+    @Autowired
+    private lateinit var transactionTemplate: TransactionTemplate
 
     @MockBean
     private lateinit var chessComClient: ChessComClient
@@ -130,9 +139,9 @@ class GameImportServiceIntegrationTest {
         positionOccurrenceRepository.deleteAll()
         positionRepository.deleteAll()
         gameRepository.deleteAll()
+        asyncJobRepository.deleteAll()
         chessAccountRepository.deleteAll()
         appUserRepository.deleteAll()
-        asyncJobRepository.deleteAll()
     }
 
     @Test
@@ -158,6 +167,7 @@ class GameImportServiceIntegrationTest {
                 completedJob = currentJob
                 break
             }
+
             Thread.sleep(100)
             attempts++
         }
@@ -197,6 +207,54 @@ class GameImportServiceIntegrationTest {
 
         val positionsInDb = positionRepository.findAllById(affectedIds)
         assertEquals(affectedIds.size, positionsInDb.size)
+    }
+
+    @Test
+    fun `worker waits for concurrent account deletion and rejects the resulting unresolved job`() {
+        val request =
+            ImportGamesRequest(
+                username = "deleted-before-claim",
+                platform = Platform.CHESS_COM,
+                timeControls = listOf(com.chessecho.domain.TimeControl.BLITZ),
+                playerColor = PlayerColor.BOTH,
+            )
+        val job = gameImportService.createImportJob(request)
+        val accountId = job.chessAccount!!.id
+        val deletionApplied = CountDownLatch(1)
+        val releaseDeletion = CountDownLatch(1)
+        val pool = java.util.concurrent.Executors.newSingleThreadExecutor()
+
+        try {
+            val deletion =
+                pool.submit {
+                    transactionTemplate.executeWithoutResult {
+                        jdbcTemplate.update(
+                            "UPDATE async_job SET configuration_state = 'UNRESOLVED', chess_account_id = NULL WHERE id = ?",
+                            job.id,
+                        )
+                        jdbcTemplate.update("DELETE FROM chess_account WHERE id = ?", accountId)
+                        deletionApplied.countDown()
+                        assertTrue(releaseDeletion.await(5, TimeUnit.SECONDS), "Account deletion was not released")
+                    }
+                }
+            assertTrue(deletionApplied.await(5, TimeUnit.SECONDS), "Account deletion did not reach the worker race")
+
+            gameImportService.executeImportJob(job.id)
+            Thread.sleep(250)
+            verifyNoInteractions(chessComClient)
+
+            releaseDeletion.countDown()
+            deletion.get(5, TimeUnit.SECONDS)
+            val failed = awaitTerminalJob(job.id)
+            assertEquals("FAILED", failed.status)
+            assertEquals("INVALID_READY_JOB_CONFIGURATION", failed.errorMessage)
+            assertEquals(AsyncJob.CONFIGURATION_UNRESOLVED, failed.configurationState)
+            assertEquals(null, failed.chessAccount)
+            verifyNoInteractions(chessComClient)
+        } finally {
+            releaseDeletion.countDown()
+            pool.shutdownNow()
+        }
     }
 
     @Test

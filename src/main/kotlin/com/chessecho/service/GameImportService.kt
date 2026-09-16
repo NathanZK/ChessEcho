@@ -1,6 +1,5 @@
 package com.chessecho.service
 
-import com.chessecho.domain.AppUser
 import com.chessecho.domain.AsyncJob
 import com.chessecho.domain.ChessAccount
 import com.chessecho.domain.Game
@@ -10,7 +9,6 @@ import com.chessecho.domain.PlayerColor
 import com.chessecho.domain.TimeControl
 import com.chessecho.domain.UserPositionStats
 import com.chessecho.dto.ImportGamesRequest
-import com.chessecho.repository.AppUserRepository
 import com.chessecho.repository.AsyncJobRepository
 import com.chessecho.repository.ChessAccountRepository
 import com.chessecho.repository.GameRepository
@@ -18,6 +16,7 @@ import com.chessecho.repository.ImportedArchiveRepository
 import com.chessecho.repository.PositionOccurrenceRepository
 import com.chessecho.repository.PositionRepository
 import com.chessecho.repository.UserPositionStatsRepository
+import com.chessecho.service.auth.AuthenticatedPrincipal
 import org.slf4j.LoggerFactory
 import org.springframework.scheduling.annotation.Async
 import org.springframework.stereotype.Service
@@ -30,7 +29,6 @@ import java.util.UUID
 @Service
 class GameImportService(
     private val asyncJobRepository: AsyncJobRepository,
-    private val appUserRepository: AppUserRepository,
     private val chessAccountRepository: ChessAccountRepository,
     private val gameRepository: GameRepository,
     private val importedArchiveRepository: ImportedArchiveRepository,
@@ -41,6 +39,7 @@ class GameImportService(
     private val positionRepository: PositionRepository,
     private val engineAnalysisOrchestrator: EngineAnalysisOrchestrator,
     private val transactionTemplate: TransactionTemplate,
+    private val accountOwnershipService: AccountOwnershipService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -52,22 +51,41 @@ class GameImportService(
      * Creates a new QUEUED import job for the specified user and platform.
      * Throws ActiveImportJobException if an active job already exists.
      */
-    fun createImportJob(request: ImportGamesRequest): AsyncJob {
+    fun createImportJob(request: ImportGamesRequest): AsyncJob = createImportJob(request, null)
+
+    fun createImportJob(
+        request: ImportGamesRequest,
+        principal: AuthenticatedPrincipal?,
+    ): AsyncJob {
+        val account = accountOwnershipService.resolveImportAccount(request, principal)
         return transactionTemplate.execute {
-            asyncJobRepository.findByUsernameAndStatusIn(request.username, ACTIVE_STATUSES)
+            val lockedAccount =
+                chessAccountRepository.findByIdForUpdate(account.id)
+                    ?: throw AccountNotFoundException("Import account not found: ${account.id}")
+            asyncJobRepository.findByChessAccountIdAndStatusIn(lockedAccount.id, ACTIVE_STATUSES)
                 ?.let {
                     throw ActiveImportJobException(
-                        "An active import job already exists for username '${request.username}' (jobId=${it.id})",
+                        "An active import job already exists for account '${lockedAccount.id}' (jobId=${it.id})",
                     )
                 }
 
             val job =
                 AsyncJob(
-                    username = request.username,
-                    platform = request.platform.name,
+                    chessAccount = lockedAccount,
+                    username = lockedAccount.username,
+                    platform = lockedAccount.platform,
                     status = "QUEUED",
+                    fromDate = request.normalizedFromDate(),
+                    toDate = request.normalizedToDate(),
+                    timeControlsCsv = request.canonicalTimeControls(),
+                    playerColor = request.playerColor!!.name,
+                    configurationState = AsyncJob.CONFIGURATION_READY,
                 )
-            asyncJobRepository.save(job)
+            try {
+                asyncJobRepository.saveAndFlush(job)
+            } catch (_: org.springframework.dao.DataIntegrityViolationException) {
+                throw ActiveImportJobException("An active import job already exists for account '${lockedAccount.id}'")
+            }
         }!!
     }
 
@@ -81,20 +99,15 @@ class GameImportService(
      * ensuring no database transaction remains open during external HTTP calls to Chess.com.
      */
     @Async
-    fun executeImportJob(
-        jobId: UUID,
-        request: ImportGamesRequest,
-    ) {
-        val job =
-            asyncJobRepository.findById(jobId)
-                .orElseThrow { IllegalStateException("AsyncJob not found: $jobId") }
+    fun executeImportJob(jobId: UUID) {
+        val job = claimForExecution(jobId) ?: return
 
-        log.info("Starting import job ${job.id} for user ${request.username}")
-        updateJobStatus(job, "PROCESSING")
+        val account = job.chessAccount!!
+        val request = requestFromJob(job)
+        log.info("Starting import job ${job.id} for account ${account.id}")
 
         try {
-            val account = getOrCreateAccount(request.username, request.platform)
-            val archiveUrls = fetchArchiveUrls(request.username, request.fromDate, request.toDate)
+            val archiveUrls = fetchArchiveUrls(account.username, job.fromDate, job.toDate)
 
             val alreadyImportedArchives =
                 transactionTemplate.execute {
@@ -121,7 +134,7 @@ class GameImportService(
                         "Archive {} ({}) already imported for user {} (contains {} games), skipping HTTP download.",
                         archiveUrl,
                         yearMonth,
-                        request.username,
+                        account.username,
                         importedArchive.gameCount,
                     )
                     skipped += importedArchive.gameCount
@@ -182,6 +195,68 @@ class GameImportService(
         }
     }
 
+    private fun claimForExecution(jobId: UUID): AsyncJob? =
+        transactionTemplate.execute {
+            val job =
+                asyncJobRepository.findByIdForUpdate(jobId)
+                    ?: asyncJobRepository.findAnyByIdForUpdate(jobId)
+                    ?: throw IllegalStateException("AsyncJob not found: $jobId")
+
+            if (job.status != "QUEUED") {
+                return@execute null
+            }
+            if (!isExecutable(job)) {
+                job.status = "FAILED"
+                job.errorMessage = "INVALID_READY_JOB_CONFIGURATION"
+                job.updatedAt = Instant.now()
+                asyncJobRepository.saveAndFlush(job)
+                return@execute null
+            }
+
+            job.status = "PROCESSING"
+            job.updatedAt = Instant.now()
+            asyncJobRepository.saveAndFlush(job)
+        }
+
+    /**
+     * Compatibility entry point for callers that still pass the original
+     * request. The request is ignored after insertion; workers always reload
+     * the immutable persisted configuration.
+     */
+    @Async
+    fun executeImportJob(
+        jobId: UUID,
+        @Suppress("UNUSED_PARAMETER") request: ImportGamesRequest,
+    ) {
+        executeImportJob(jobId)
+    }
+
+    private fun requestFromJob(job: AsyncJob): ImportGamesRequest =
+        ImportGamesRequest(
+            accountId = job.chessAccount?.id,
+            platform = runCatching { Platform.valueOf(job.platform) }.getOrNull(),
+            username = job.username,
+            timeControls =
+                job.timeControlsCsv
+                    ?.split(',')
+                    ?.mapNotNull { runCatching { TimeControl.valueOf(it) }.getOrNull() }
+                    ?: emptyList(),
+            playerColor = runCatching { PlayerColor.valueOf(job.playerColor ?: "") }.getOrNull(),
+            fromDate = job.fromDate,
+            toDate = job.toDate,
+        )
+
+    private fun isExecutable(job: AsyncJob): Boolean =
+        runCatching {
+            job.validateConfiguration()
+            val account = job.chessAccount ?: return@runCatching false
+            job.configurationState == AsyncJob.CONFIGURATION_READY &&
+                account.platform == job.platform &&
+                account.username.equals(job.username, ignoreCase = true) &&
+                job.playerColor in AsyncJob.ALLOWED_PLAYER_COLORS &&
+                !job.timeControlsCsv.isNullOrBlank()
+        }.getOrDefault(false)
+
     private fun persistImportProgress(
         job: AsyncJob,
         imported: Int,
@@ -204,26 +279,6 @@ class GameImportService(
         asyncJobRepository.save(job)
     }
 
-    private fun getOrCreateAccount(
-        username: String,
-        platform: Platform,
-    ): ChessAccount {
-        return transactionTemplate.execute {
-            chessAccountRepository.findByPlatformAndUsernameIgnoreCase(platform.name, username)?.let { return@execute it }
-
-            val dummyEmail = "$username@placeholder.chessecho.com"
-            val user = appUserRepository.findByEmail(dummyEmail) ?: appUserRepository.save(AppUser(email = dummyEmail))
-
-            chessAccountRepository.save(
-                ChessAccount(
-                    user = user,
-                    platform = platform.name,
-                    username = username,
-                ),
-            )
-        }!!
-    }
-
     private data class ImportMonthResult(
         val imported: Int,
         val skipped: Int,
@@ -238,7 +293,9 @@ class GameImportService(
         isPastMonth: Boolean,
         request: ImportGamesRequest,
     ): ImportMonthResult {
-        val username = request.username
+        val username = request.username.ifBlank { account.username }
+        val requestedTimeControls = request.timeControls.toSet()
+        val requestedPlayerColor = request.playerColor ?: PlayerColor.BOTH
         log.debug("Fetching games from $archiveUrl")
 
         // External HTTP request executed outside any DB transaction
@@ -263,7 +320,7 @@ class GameImportService(
 
             val timeClass = game["time_class"] as? String
             val domainTimeControl = TimeControl.fromExternal(timeClass)
-            if (domainTimeControl == null || !request.timeControls.contains(domainTimeControl)) {
+            if (domainTimeControl == null || !requestedTimeControls.contains(domainTimeControl)) {
                 continue
             }
 
@@ -276,7 +333,7 @@ class GameImportService(
             val isPlayerWhite = white.equals(username, ignoreCase = true)
             val isPlayerBlack = black.equals(username, ignoreCase = true)
             val colorMatch =
-                when (request.playerColor) {
+                when (requestedPlayerColor) {
                     PlayerColor.WHITE -> isPlayerWhite
                     PlayerColor.BLACK -> isPlayerBlack
                     PlayerColor.BOTH -> isPlayerWhite || isPlayerBlack

@@ -8,6 +8,7 @@ import com.chessecho.domain.MoveEvaluation
 import com.chessecho.domain.Position
 import com.chessecho.domain.PositionOccurrence
 import com.chessecho.repository.AppUserRepository
+import com.chessecho.repository.AsyncJobRepository
 import com.chessecho.repository.ChessAccountRepository
 import com.chessecho.repository.EngineAnalysisRepository
 import com.chessecho.repository.GameRepository
@@ -62,6 +63,9 @@ class PracticalWeaknessControllerIntegrationTest {
     private lateinit var chessAccountRepository: ChessAccountRepository
 
     @Autowired
+    private lateinit var asyncJobRepository: AsyncJobRepository
+
+    @Autowired
     private lateinit var gameRepository: GameRepository
 
     @Autowired
@@ -85,6 +89,7 @@ class PracticalWeaknessControllerIntegrationTest {
         engineAnalysisRepository.deleteAll()
         positionOccurrenceRepository.deleteAll()
         userPositionStatsRepository.deleteAll()
+        asyncJobRepository.deleteAll()
         positionRepository.deleteAll()
         gameRepository.deleteAll()
         chessAccountRepository.deleteAll()
@@ -461,7 +466,7 @@ class PracticalWeaknessControllerIntegrationTest {
         val user = appUserRepository.save(AppUser(email = "$username-${nextId++}@integration.test"))
         return chessAccountRepository.save(
             ChessAccount(
-                user = user,
+                user = null,
                 platform = "CHESS_COM",
                 username = username,
             ),

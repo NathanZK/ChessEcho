@@ -6,12 +6,18 @@ import com.chessecho.domain.PlayerColor
 import com.chessecho.dto.ContinuationResponse
 import com.chessecho.dto.MoveEvaluationResponse
 import com.chessecho.dto.PuzzleResponse
+import com.chessecho.service.AccountOwnershipService
 import com.chessecho.service.MoveEvaluationService
 import com.chessecho.service.WeaknessCalculationService
+import com.chessecho.service.auth.AuthenticatedPrincipal
 import com.chessecho.service.continuation.ContinuationService
+import com.chessecho.web.OptionalAuthenticatedPrincipal
+import com.chessecho.web.SessionAuthenticationFilter
 import io.swagger.v3.oas.annotations.Parameter
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.RequestAttribute
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
@@ -23,10 +29,14 @@ class PuzzleController(
     private val continuationService: ContinuationService,
     private val moveEvaluationService: MoveEvaluationService,
 ) {
+    @Autowired(required = false)
+    private var accountOwnershipService: AccountOwnershipService? = null
+
     @GetMapping("/puzzles")
     fun getPuzzles(
-        @RequestParam platform: Platform,
-        @RequestParam username: String,
+        @RequestParam(required = false) platform: Platform?,
+        @RequestParam(required = false) username: String?,
+        @RequestParam(required = false) accountId: java.util.UUID?,
         @RequestParam playerColor: PlayerColor,
         @Parameter(
             description =
@@ -38,6 +48,9 @@ class PuzzleController(
         @RequestParam(defaultValue = "3") minMistakeCount: Int,
         @RequestParam(defaultValue = "5") limit: Int,
         @RequestParam(defaultValue = "0") page: Int,
+        @OptionalAuthenticatedPrincipal
+        @RequestAttribute(name = SessionAuthenticationFilter.PRINCIPAL_ATTRIBUTE, required = false)
+        principal: AuthenticatedPrincipal?,
     ): ResponseEntity<List<PuzzleResponse>> {
         val threshold = minEvalLoss ?: WeaknessCalculationService.DEFAULT_MIN_EVAL_LOSS
         if (threshold < 0.0) {
@@ -46,11 +59,13 @@ class PuzzleController(
 
         val weaknesses =
             weaknessCalculationService.getWeaknesses(
-                platform = platform,
-                username = username,
+                platform = platform ?: Platform.CHESS_COM,
+                username = username.orEmpty(),
                 playerColor = playerColor,
                 minEvalLoss = threshold,
                 minMistakeCount = maxOf(1, minMistakeCount),
+                principal = principal.takeIf { accountOwnershipService != null },
+                accountId = accountId,
             )
 
         val pagedWeaknesses =

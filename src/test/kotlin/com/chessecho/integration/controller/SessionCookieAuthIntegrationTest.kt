@@ -112,6 +112,30 @@ class SessionCookieAuthIntegrationTest {
     }
 
     @Test
+    fun `guest import with valid CSRF succeeds without the session cookie`() {
+        val bootstrap = get(null)
+        val csrf = cookieValue(bootstrap.headers, csrfCookieName)
+        assertNotNull(csrf)
+
+        val headers = HttpHeaders()
+        headers.add(HttpHeaders.COOKIE, "$csrfCookieName=$csrf")
+        headers.add(csrfHeaderName, csrf)
+        headers.contentType = org.springframework.http.MediaType.APPLICATION_JSON
+        val response =
+            restTemplate.exchange(
+                url("/api/games/import"),
+                HttpMethod.POST,
+                HttpEntity(
+                    """{"platform":"CHESS_COM","username":"guest-player","timeControls":["BLITZ"],"playerColor":"WHITE"}""",
+                    headers,
+                ),
+                String::class.java,
+            )
+
+        assertEquals(HttpStatus.ACCEPTED, response.statusCode)
+    }
+
+    @Test
     fun `a garbage session cookie fails closed`() {
         assertEquals(HttpStatus.UNAUTHORIZED, get("$sessionCookieName=not-a-real-secret").statusCode)
     }

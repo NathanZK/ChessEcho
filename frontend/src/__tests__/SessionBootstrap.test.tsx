@@ -37,6 +37,50 @@ vi.mock('../services/api', async () => {
     logout: sessionMocks.logout,
     fetchPuzzles: vi.fn(),
     fetchWeaknesses: vi.fn(),
+    fetchAccounts: vi.fn(),
+  };
+});
+
+vi.mock('../components/ImportGamesView', () => ({
+  ImportGamesView: ({
+    onJobStatusUpdate,
+  }: {
+    onJobStatusUpdate?: (job: api.JobStatusResponse | null) => void;
+  }) => (
+    <button
+      type="button"
+      onClick={() =>
+        onJobStatusUpdate?.({
+          jobId: 'old-live-job',
+          status: 'COMPLETED',
+          gamesImported: 1,
+          gamesSkipped: 0,
+          gamesProcessed: 1,
+          analysisStatus: 'ANALYZING',
+        })
+      }
+    >
+      Seed prior live job
+    </button>
+  ),
+}));
+
+vi.mock('../components/WeaknessesList', async () => {
+  const actual =
+    await vi.importActual<typeof import('../components/WeaknessesList')>(
+      '../components/WeaknessesList'
+    );
+  const ActualWeaknessesList = actual.WeaknessesList;
+  return {
+    ...actual,
+    WeaknessesList: (props: React.ComponentProps<typeof ActualWeaknessesList>) => (
+      <>
+        <span data-testid="analysis-active">
+          {props.isAnalysisActive ? 'active' : 'inactive'}
+        </span>
+        <ActualWeaknessesList {...props} />
+      </>
+    ),
   };
 });
 
@@ -59,6 +103,9 @@ describe('Session bootstrap gating (Issue #113)', () => {
     vi.resetAllMocks();
     vi.mocked(api.fetchPuzzles).mockResolvedValue([]);
     vi.mocked(api.fetchWeaknesses).mockResolvedValue([]);
+    vi.mocked(api.fetchAccounts).mockResolvedValue([
+      { id: 'account-1', platform: 'CHESS_COM', username: 'hikaru' },
+    ]);
   });
 
   afterEach(() => {
@@ -80,6 +127,7 @@ describe('Session bootstrap gating (Issue #113)', () => {
 
   it('opens the gate and fetches personalized data once the session is authenticated', async () => {
     localStorage.setItem('chessecho_username', 'hikaru');
+    window.location.hash = '#weaknesses';
     const d = deferred<SessionState>();
     sessionMocks.fetchCurrentSession.mockReturnValue(d.promise);
 
@@ -96,6 +144,15 @@ describe('Session bootstrap gating (Issue #113)', () => {
 
     await waitFor(() => {
       expect(api.fetchPuzzles).toHaveBeenCalled();
+      expect(api.fetchWeaknesses).toHaveBeenCalledWith(
+        'account-1',
+        'CHESS_COM',
+        'BOTH',
+        expect.any(Number),
+        expect.any(Number),
+        0,
+        20
+      );
     });
   });
 
@@ -128,5 +185,98 @@ describe('Session bootstrap gating (Issue #113)', () => {
     const signInCta =
       screen.queryByRole('button', { name: /sign in|log in/i }) ?? screen.queryByText(/sign in|log in/i);
     expect(signInCta).toBeTruthy();
+  });
+
+  it('clears stale account and job state before bootstrapping a different authenticated user', async () => {
+    localStorage.setItem('chessecho_session_user', 'user-1');
+    localStorage.setItem('chessecho_username', 'old-player');
+    localStorage.setItem(
+      'chessecho_active_account',
+      JSON.stringify({ id: 'old-account', platform: 'CHESS_COM', username: 'old-player' })
+    );
+    localStorage.setItem(
+      'chessecho_active_job',
+      JSON.stringify({ jobId: 'old-job', accountId: 'old-account', status: 'QUEUED' })
+    );
+    sessionMocks.fetchCurrentSession.mockResolvedValue({
+      status: 'authenticated',
+      userId: 'user-2',
+      devPrincipal: false,
+    });
+    vi.mocked(api.fetchAccounts).mockResolvedValue([]);
+    const session = deferred<SessionState>();
+    sessionMocks.fetchCurrentSession.mockReturnValue(session.promise);
+    window.location.hash = '#import';
+
+    render(<Home />);
+
+    await act(async () => {
+      screen.getByRole('button', { name: 'Seed prior live job' }).click();
+      window.location.hash = '#weaknesses';
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId('analysis-active')).toHaveTextContent('active');
+
+    await act(async () => {
+      session.resolve({ status: 'authenticated', userId: 'user-2', devPrincipal: false });
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(api.fetchAccounts).toHaveBeenCalled());
+    expect(localStorage.getItem('chessecho_session_user')).toBe('user-2');
+    expect(localStorage.getItem('chessecho_username')).toBeNull();
+    expect(localStorage.getItem('chessecho_active_account')).toBeNull();
+    expect(localStorage.getItem('chessecho_active_job')).toBeNull();
+    expect(screen.getByTestId('analysis-active')).toHaveTextContent('inactive');
+    expect(api.fetchPuzzles).not.toHaveBeenCalledWith(
+      'old-player',
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything()
+    );
+  });
+
+  it('preserves a never-authenticated guest job when session bootstrap is unauthenticated', async () => {
+    localStorage.setItem('chessecho_username', 'guest-player');
+    localStorage.setItem(
+      'chessecho_active_job',
+      JSON.stringify({ jobId: 'guest-job', accountId: 'guest-account', status: 'QUEUED' })
+    );
+    sessionMocks.fetchCurrentSession.mockResolvedValue({ status: 'unauthenticated' } as SessionState);
+
+    render(<Home />);
+
+    await waitFor(() => expect(sessionMocks.fetchCurrentSession).toHaveBeenCalled());
+    expect(localStorage.getItem('chessecho_active_job')).toBe(
+      JSON.stringify({ jobId: 'guest-job', accountId: 'guest-account', status: 'QUEUED' })
+    );
+    expect(localStorage.getItem('chessecho_username')).toBe('guest-player');
+  });
+
+  it('clears prior authenticated state when session identity cannot be established', async () => {
+    localStorage.setItem('chessecho_session_user', 'user-1');
+    localStorage.setItem('chessecho_username', 'old-player');
+    localStorage.setItem(
+      'chessecho_active_account',
+      JSON.stringify({ id: 'old-account', platform: 'CHESS_COM', username: 'old-player' })
+    );
+    localStorage.setItem(
+      'chessecho_active_job',
+      JSON.stringify({ jobId: 'old-job', accountId: 'old-account', status: 'QUEUED' })
+    );
+    sessionMocks.fetchCurrentSession.mockResolvedValue({ status: 'error' } as SessionState);
+
+    render(<Home />);
+
+    await waitFor(() => expect(sessionMocks.fetchCurrentSession).toHaveBeenCalled());
+    expect(localStorage.getItem('chessecho_session_user')).toBeNull();
+    expect(localStorage.getItem('chessecho_username')).toBeNull();
+    expect(localStorage.getItem('chessecho_active_account')).toBeNull();
+    expect(localStorage.getItem('chessecho_active_job')).toBeNull();
+    expect(api.fetchPuzzles).not.toHaveBeenCalled();
+    expect(api.fetchWeaknesses).not.toHaveBeenCalled();
   });
 });
