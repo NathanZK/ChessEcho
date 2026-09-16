@@ -699,6 +699,30 @@ def _tests_not_applicable(state):
     return state.get("test_implementation_status") == "NOT_APPLICABLE"
 
 
+def _approved_test_paths(state, context):
+    """Return approved test paths while preserving applicability invariants."""
+    applicability = state.get("test_implementation_status")
+    _ensure(
+        applicability in ("REQUIRED", "NOT_APPLICABLE"),
+        "invalid-test-applicability",
+        "%s requires valid test implementation applicability" % context,
+    )
+    scope = state.get("approved_scope")
+    _ensure(
+        isinstance(scope, list) and scope and all(isinstance(path, str) for path in scope),
+        "invalid-approved-test-scope",
+        "%s requires a valid approved test scope" % context,
+    )
+    test_paths = sorted(path for path in scope if _is_test_file(path))
+    if applicability == "REQUIRED":
+        _ensure(
+            test_paths,
+            "missing-approved-test-paths",
+            "%s requires approved test paths" % context,
+        )
+    return test_paths
+
+
 def _require_implementation_candidate_matches(root, config, state, context):
     """Require the current Git candidate to match the accepted implementation candidate."""
     accepted = state.get("implementation_candidate")
@@ -1561,20 +1585,20 @@ def command_run_validation(args, root, config):
     _require_implementation_candidate_matches(root, config, state, "run-validation")
     if all_passed:
         test_commit = state.get("test_commit")
-        scope = state.get("approved_scope") or []
         _ensure(test_commit, "missing-test-commit", "run-validation requires test_commit")
-        test_paths = sorted([path for path in scope if _is_test_file(path)] or ["."])
-        test_diff = _run_bounded(
-            _git_command(config, "diff", "--quiet", test_commit, "--", *test_paths),
-            _effective_limits(config, "git"),
-            root,
-        )
-        result = test_diff["result"]
-        _ensure(
-            result.get("outcome") == "success" and result.get("exit_code") == 0,
-            "git-worktree-dirty",
-            "run-validation requires approved tests to remain unchanged",
-        )
+        test_paths = _approved_test_paths(state, "run-validation")
+        if test_paths:
+            test_diff = _run_bounded(
+                _git_command(config, "diff", "--quiet", test_commit, "--", *test_paths),
+                _effective_limits(config, "git"),
+                root,
+            )
+            result = test_diff["result"]
+            _ensure(
+                result.get("outcome") == "success" and result.get("exit_code") == 0,
+                "git-worktree-dirty",
+                "run-validation requires approved tests to remain unchanged",
+            )
     state["validation"] = {
         "profile": profile_name,
         "ran_at": _now(),
