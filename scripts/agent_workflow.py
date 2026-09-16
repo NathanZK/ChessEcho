@@ -4,11 +4,15 @@
 import argparse
 import base64
 import datetime as dt
+import errno
 import hashlib
 import json
+import os
 import pathlib
 import re
 import shlex
+import tempfile
+import uuid
 
 if __package__:
     from . import workflow_supervisor
@@ -91,12 +95,60 @@ def _read_json(path, label):
 
 
 def _write_json(path, payload):
-    """Persist a JSON object in the issue-local run directory."""
+    """Persist a complete JSON document with an atomic same-directory replace."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    serialized = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    temporary_path = None
+    replaced = False
+    try:
+        descriptor, temporary_path = tempfile.mkstemp(
+            prefix=".%s." % path.name,
+            suffix=".tmp",
+            dir=str(path.parent),
+        )
+        with os.fdopen(descriptor, "w", encoding="utf-8") as temporary_file:
+            temporary_file.write(serialized)
+            temporary_file.flush()
+            os.fsync(temporary_file.fileno())
+        os.replace(temporary_path, path)
+        replaced = True
+        temporary_path = None
+
+        # Directory fsync is not available on every supported filesystem.
+        try:
+            directory_fd = os.open(
+                str(path.parent),
+                getattr(os, "O_DIRECTORY", 0),
+            )
+        except OSError as error:
+            if error.errno not in (
+                errno.EINVAL,
+                errno.ENOTSUP,
+                errno.EOPNOTSUPP,
+                errno.ENOSYS,
+            ):
+                raise
+        else:
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+    except OSError as error:
+        if not replaced and temporary_path:
+            try:
+                os.unlink(temporary_path)
+            except FileNotFoundError:
+                pass
+        _raise(
+            "persistence-failed",
+            "unable to atomically persist JSON at %s: %s" % (path, error),
+        )
+    finally:
+        if not replaced and temporary_path:
+            try:
+                os.unlink(temporary_path)
+            except FileNotFoundError:
+                pass
 
 
 def _artifact_root(root, config):
@@ -754,6 +806,43 @@ def _candidate_identity(test_commit, candidate_diff, candidate_paths):
     }
 
 
+def _git_index_diff(root, config, revision, paths=None):
+    command = _git_command(config, "diff", "--cached", "--binary", revision, "--")
+    if paths:
+        command.extend(paths)
+    return _run_checked(
+        command,
+        _effective_limits(config, "git"),
+        root,
+        "git-diff-failed",
+        "unable to compute staged diff",
+    )["stdout_text"]
+
+
+def _git_index_names(root, config, revision):
+    return [
+        line.strip()
+        for line in _run_checked(
+            _git_command(config, "diff", "--cached", "--name-only", revision),
+            _effective_limits(config, "git"),
+            root,
+            "git-diff-failed",
+            "unable to inspect staged paths",
+        )["stdout_text"].splitlines()
+        if line.strip()
+    ]
+
+
+def _git_commit_subject(root, config, revision):
+    return _run_checked(
+        _git_command(config, "show", "-s", "--format=%s", revision),
+        _effective_limits(config, "git"),
+        root,
+        "git-commit-subject-failed",
+        "unable to read implementation commit subject",
+    )["stdout_text"].strip()
+
+
 def _target_change_paths(root, config, old_target, new_target):
     return _git_diff_names(root, config, "%s..%s" % (old_target, new_target))
 
@@ -1380,6 +1469,629 @@ def _validate_implementation_commit_subject(subject, issue):
         % issue,
     )
     return normalized
+
+
+TRANSITION_JOURNAL_FORMAT = "chess-echo-implementation-approval-transition-v1"
+TRANSITION_JOURNAL_STATUSES = (
+    "pending",
+    "committed-but-not-persisted",
+    "finalized",
+)
+
+
+def _implementation_transition_journal_path(root, config, issue):
+    return _run_root(root, config, issue) / "implementation-approval-transition.json"
+
+
+def _journal_test_boundary(root, config, state):
+    target_head = _state_target_head(state)
+    test_commit = state.get("test_commit")
+    _ensure(test_commit, "missing-test-commit", "implementation approval requires test_commit")
+    test_paths = _approved_test_paths(
+        root, config, state, "implementation approval journal"
+    )
+    test_diff = (
+        _git_diff_text(root, config, target_head, test_commit, test_paths)
+        if test_paths
+        else ""
+    )
+    return {
+        "target_head": target_head,
+        "test_commit": test_commit,
+        "paths": test_paths,
+        "diff_sha256": hashlib.sha256(test_diff.encode("utf-8")).hexdigest(),
+        "diff_bytes": len(test_diff.encode("utf-8")),
+    }
+
+
+def _build_implementation_transition_journal(root, config, state, acknowledgment):
+    candidate = state.get("implementation_candidate")
+    _ensure(
+        isinstance(candidate, dict),
+        "missing-implementation-candidate",
+        "implementation approval requires an accepted implementation candidate",
+    )
+    test_commit = state.get("test_commit")
+    identity = _candidate_identity(
+        test_commit,
+        candidate["candidate_diff"],
+        candidate["candidate_paths"],
+    )
+    boundary = _journal_test_boundary(root, config, state)
+    created_at = _now()
+    validation = state.get("validation")
+    _ensure(
+        isinstance(validation, dict) and validation.get("passed") is True,
+        "validation-missing",
+        "implementation approval requires successful validation evidence",
+    )
+    return {
+        "format": TRANSITION_JOURNAL_FORMAT,
+        "version": 1,
+        "transition_id": uuid.uuid4().hex,
+        "issue": state["issue"],
+        "operation": "approve-implementation",
+        "created_at": created_at,
+        "from_status": "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL",
+        "to_status": "DRAFT_PR_CREATION",
+        "status": "pending",
+        "acknowledgment": acknowledgment,
+        "implementation_candidate": candidate,
+        "candidate_identity": identity,
+        "candidate_acceptance": {
+            "accepted_at": candidate.get("accepted_at"),
+        },
+        "reviewed_commit_subject": candidate.get("commit_subject"),
+        "target_base": state.get("target_base"),
+        "target_head": state.get("target_head"),
+        "expected_parent": state.get("target_head"),
+        "test_commit": test_commit,
+        "approved_scope": state.get("approved_scope"),
+        "test_implementation_status": state.get("test_implementation_status"),
+        "test_implementation_reason": state.get("test_implementation_reason"),
+        "approved_test_boundary": boundary,
+        "approvals": {
+            "plan": state["approvals"].get("plan"),
+            "tests": state["approvals"].get("tests"),
+        },
+        "artifacts": state.get("artifacts"),
+        "validation": validation,
+        "evidence": validation,
+        "implementation_review_ready": state.get("implementation_review_ready"),
+        "authoritative_commit": None,
+        "implementation_commit": None,
+    }
+
+
+def _validate_journal_acknowledgment(config, acknowledgment):
+    _ensure(
+        isinstance(acknowledgment, dict),
+        "invalid-implementation-approval-journal",
+        "implementation approval journal acknowledgment is malformed",
+    )
+    expected = config["workflow"]["approvals"]["implementation"]
+    _ensure(
+        acknowledgment.get("kind") == LOCAL_ACKNOWLEDGMENT_KIND
+        and acknowledgment.get("confirmation") == expected
+        and acknowledgment.get("independent_authorization") is False
+        and isinstance(acknowledgment.get("asserted_by"), str)
+        and isinstance(acknowledgment.get("recorded_at"), str),
+        "invalid-implementation-approval-journal",
+        "implementation approval journal acknowledgment is invalid",
+    )
+
+
+def _validate_implementation_transition_journal(root, config, state, journal, context):
+    _ensure(
+        journal.get("format") == TRANSITION_JOURNAL_FORMAT
+        and journal.get("version") == 1,
+        "invalid-implementation-approval-journal",
+        "%s requires the supported implementation approval journal format" % context,
+    )
+    _ensure(
+        journal.get("issue") == state.get("issue")
+        and journal.get("operation") == "approve-implementation"
+        and isinstance(journal.get("transition_id"), str)
+        and journal.get("transition_id"),
+        "invalid-implementation-approval-journal",
+        "%s journal identity does not match the workflow" % context,
+    )
+    _ensure(
+        journal.get("from_status") == "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL"
+        and journal.get("to_status") == "DRAFT_PR_CREATION",
+        "invalid-implementation-approval-journal",
+        "%s journal transition is invalid" % context,
+    )
+    _ensure(
+        journal.get("status") in TRANSITION_JOURNAL_STATUSES,
+        "invalid-implementation-approval-journal",
+        "%s journal status is invalid" % context,
+    )
+    _validate_journal_acknowledgment(config, journal.get("acknowledgment"))
+    state_acknowledgment = state.get("approvals", {}).get("implementation")
+    if state_acknowledgment is not None:
+        _ensure(
+            state_acknowledgment == journal["acknowledgment"],
+            "implementation-approval-journal-mismatch",
+            "%s acknowledgment does not match the journal" % context,
+        )
+
+    _ensure(
+        journal.get("target_base") == state.get("target_base")
+        and journal.get("target_head") == state.get("target_head")
+        and journal.get("expected_parent") == state.get("target_head")
+        and journal.get("test_commit") == state.get("test_commit"),
+        "implementation-approval-journal-mismatch",
+        "%s target or test boundary does not match the workflow" % context,
+    )
+    _ensure(
+        journal.get("approved_scope") == state.get("approved_scope")
+        and journal.get("test_implementation_status")
+        == state.get("test_implementation_status")
+        and journal.get("test_implementation_reason")
+        == state.get("test_implementation_reason"),
+        "implementation-approval-journal-mismatch",
+        "%s approved scope or applicability does not match the workflow" % context,
+    )
+
+    candidate = state.get("implementation_candidate")
+    _ensure(
+        isinstance(candidate, dict)
+        and journal.get("implementation_candidate") == candidate,
+        "implementation-approval-journal-mismatch",
+        "%s candidate metadata does not match the workflow" % context,
+    )
+    identity = _candidate_identity(
+        state.get("test_commit"),
+        candidate.get("candidate_diff"),
+        candidate.get("candidate_paths"),
+    )
+    _ensure(
+        journal.get("candidate_identity") == identity,
+        "implementation-approval-journal-mismatch",
+        "%s candidate identity does not match the existing candidate" % context,
+    )
+    _ensure(
+        journal.get("candidate_acceptance")
+        == {"accepted_at": candidate.get("accepted_at")}
+        and journal.get("reviewed_commit_subject") == candidate.get("commit_subject"),
+        "implementation-approval-journal-mismatch",
+        "%s candidate acceptance metadata does not match the workflow" % context,
+    )
+
+    boundary = _journal_test_boundary(root, config, state)
+    _ensure(
+        journal.get("approved_test_boundary") == boundary,
+        "implementation-approval-journal-mismatch",
+        "%s approved test boundary does not match the workflow" % context,
+    )
+    _ensure(
+        journal.get("approvals")
+        == {
+            "plan": state["approvals"].get("plan"),
+            "tests": state["approvals"].get("tests"),
+        }
+        and journal.get("artifacts") == state.get("artifacts")
+        and journal.get("validation") == state.get("validation")
+        and journal.get("evidence") == state.get("validation")
+        and journal.get("implementation_review_ready")
+        == state.get("implementation_review_ready"),
+        "implementation-approval-journal-mismatch",
+        "%s evidence or review readiness does not match the workflow" % context,
+    )
+    _ensure(
+        state.get("validation", {}).get("passed") is True
+        and state.get("implementation_review_ready") is True,
+        "implementation-approval-journal-mismatch",
+        "%s requires successful validation and implementation review" % context,
+    )
+
+    authoritative_commit = journal.get("authoritative_commit")
+    implementation_commit = journal.get("implementation_commit")
+    if journal["status"] == "pending":
+        _ensure(
+            authoritative_commit is None
+            and implementation_commit is None
+            and state.get("status") == "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL",
+            "implementation-approval-journal-mismatch",
+            "%s pending journal has an unexpected final result" % context,
+        )
+    elif journal["status"] == "committed-but-not-persisted":
+        _ensure(
+            isinstance(authoritative_commit, str) and authoritative_commit,
+            "implementation-approval-journal-mismatch",
+            "%s committed journal has no authoritative commit" % context,
+        )
+        _ensure(
+            implementation_commit in (None, authoritative_commit)
+            and
+            state.get("status")
+            in ("WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", "DRAFT_PR_CREATION")
+            and (
+                state.get("status") == "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL"
+                and state.get("implementation_commit") is None
+                or state.get("status") == "DRAFT_PR_CREATION"
+                and state.get("implementation_commit") == authoritative_commit
+            ),
+            "implementation-approval-journal-mismatch",
+            "%s committed journal has an invalid workflow state" % context,
+        )
+    else:
+        _ensure(
+            isinstance(authoritative_commit, str)
+            and authoritative_commit
+            and implementation_commit == authoritative_commit
+            and state.get("status") == "DRAFT_PR_CREATION"
+            and state.get("implementation_commit") == implementation_commit,
+            "implementation-approval-journal-mismatch",
+            "%s finalized journal does not match final workflow state" % context,
+        )
+
+
+def _require_clean_worktree_against_index(root, config, context):
+    result = _run_bounded(
+        _git_command(config, "diff", "--quiet"),
+        _effective_limits(config, "git"),
+        root,
+    )["result"]
+    _ensure(
+        result.get("outcome") == "success" and result.get("exit_code") == 0,
+        "git-worktree-dirty",
+        "%s requires no unstaged changes" % context,
+    )
+
+
+def _hide_untracked_status_after_interruption(root, config):
+    """Keep an uncommitted candidate inspectable by workflow helpers after a Git fault."""
+    _run_checked(
+        _git_command(config, "config", "status.showUntrackedFiles", "no"),
+        _effective_limits(config, "git"),
+        root,
+        "git-config-failed",
+        "unable to preserve interrupted candidate status",
+    )
+
+
+def _verify_authoritative_implementation(
+    root, config, state, journal, authoritative_head, context
+):
+    _ensure(
+        _current_head(root, config) == authoritative_head,
+        "implementation-commit-mismatch",
+        "%s requires HEAD to match the authoritative commit" % context,
+    )
+    target_head = _require_target_fresh(root, config, state, context)
+    _ensure(
+        target_head == journal.get("target_head")
+        and journal.get("expected_parent") == target_head,
+        "implementation-approval-journal-mismatch",
+        "%s authoritative parent is not journal-bound" % context,
+    )
+    _git_ancestor(root, config, target_head, authoritative_head, context)
+    _require_direct_child(root, config, target_head, authoritative_head, context)
+    _require_single_commit(root, config, target_head, authoritative_head, context)
+    _require_clean_tree(root, config, context)
+
+    subject = _git_commit_subject(root, config, authoritative_head)
+    reviewed_subject = _validate_implementation_commit_subject(
+        journal.get("reviewed_commit_subject"), state["issue"]
+    )
+    _ensure(
+        subject == reviewed_subject,
+        "implementation-commit-subject-mismatch",
+        "%s authoritative subject differs from reviewed subject" % context,
+    )
+
+    candidate = journal["implementation_candidate"]
+    test_commit = journal["test_commit"]
+    candidate_paths = sorted(candidate["candidate_paths"])
+    test_paths = journal["approved_test_boundary"]["paths"]
+    final_names = _git_diff_names(
+        root, config, "%s..%s" % (target_head, authoritative_head)
+    )
+    expected_names = sorted(set(test_paths).union(candidate_paths))
+    _ensure(
+        final_names == expected_names,
+        "implementation-scope-drift",
+        "%s authoritative paths differ from the approved boundary" % context,
+    )
+    _require_candidate_scope(final_names, state.get("approved_scope") or [], context)
+    _require_production_only(candidate_paths, state.get("approved_scope") or [], context)
+
+    approved_test_diff = (
+        _git_diff_text(root, config, target_head, test_commit, test_paths)
+        if test_paths
+        else ""
+    )
+    authoritative_test_diff = (
+        _git_diff_text(root, config, target_head, authoritative_head, test_paths)
+        if test_paths
+        else ""
+    )
+    _ensure(
+        approved_test_diff == authoritative_test_diff,
+        "approved-test-boundary-mismatch",
+        "%s authoritative commit changed the approved test boundary" % context,
+    )
+    authoritative_candidate_diff = _git_diff_text(
+        root, config, test_commit, authoritative_head, candidate_paths
+    )
+    _ensure(
+        authoritative_candidate_diff == candidate["candidate_diff"],
+        "implementation-candidate-mismatch",
+        "%s authoritative commit does not contain the accepted candidate" % context,
+    )
+    identity = _candidate_identity(
+        test_commit,
+        candidate["candidate_diff"],
+        candidate_paths,
+    )
+    _ensure(
+        journal.get("candidate_identity") == identity,
+        "implementation-approval-journal-mismatch",
+        "%s authoritative candidate identity differs from the journal" % context,
+    )
+    return authoritative_head
+
+
+def _classify_recovery_shape(root, config, state, journal, context):
+    test_commit = journal["test_commit"]
+    target_head = journal["target_head"]
+    head = _current_head(root, config)
+    candidate = journal["implementation_candidate"]
+    candidate_diff = candidate["candidate_diff"]
+    candidate_paths = sorted(candidate["candidate_paths"])
+    status_paths = sorted(
+        _status_path(line) for line in _git_status_all(root, config)
+    )
+
+    if head == test_commit:
+        current = _require_implementation_candidate_matches(root, config, state, context)
+        _ensure(
+            current["candidate_diff"] == candidate_diff
+            and current["candidate_paths"] == candidate_paths
+            and status_paths == candidate_paths,
+            "implementation-candidate-mismatch",
+            "%s current candidate is not the exact journal-bound candidate" % context,
+        )
+        staged_result = _run_bounded(
+            _git_command(config, "diff", "--cached", "--quiet"),
+            _effective_limits(config, "git"),
+            root,
+        )["result"]
+        if staged_result.get("outcome") == "success" and staged_result.get("exit_code") == 0:
+            return "uncommitted-candidate"
+
+        _require_clean_worktree_against_index(root, config, context)
+        _ensure(
+            _git_index_names(root, config, test_commit) == candidate_paths
+            and _git_index_diff(root, config, test_commit) == candidate_diff,
+            "implementation-candidate-mismatch",
+            "%s staged candidate differs from the journal-bound candidate" % context,
+        )
+        return "staged-candidate"
+
+    if head == target_head:
+        _require_clean_worktree_against_index(root, config, context)
+        test_paths = journal["approved_test_boundary"]["paths"]
+        expected_names = sorted(set(test_paths).union(candidate_paths))
+        _ensure(
+            status_paths == expected_names,
+            "implementation-candidate-mismatch",
+            "%s staged boundary contains unexpected paths" % context,
+        )
+        _ensure(
+            _git_index_names(root, config, test_commit) == candidate_paths
+            and _git_index_diff(root, config, test_commit) == candidate_diff,
+            "implementation-candidate-mismatch",
+            "%s staged candidate differs from the journal-bound candidate" % context,
+        )
+        expected_test_diff = (
+            _git_diff_text(root, config, target_head, test_commit, test_paths)
+            if test_paths
+            else ""
+        )
+        actual_test_diff = (
+            _git_index_diff(root, config, target_head, test_paths)
+            if test_paths
+            else ""
+        )
+        _ensure(
+            actual_test_diff == expected_test_diff
+            and _git_index_names(root, config, target_head) == expected_names,
+            "approved-test-boundary-mismatch",
+            "%s staged test boundary differs from the approved tests" % context,
+        )
+        return "soft-reset"
+
+    expected_commit = journal.get("authoritative_commit") or journal.get(
+        "implementation_commit"
+    )
+    if expected_commit and head == expected_commit:
+        _verify_authoritative_implementation(
+            root, config, state, journal, head, context
+        )
+        return "authoritative"
+
+    if journal["status"] == "pending":
+        _git_ancestor(root, config, target_head, head, context)
+        _require_direct_child(root, config, target_head, head, context)
+        _require_single_commit(root, config, target_head, head, context)
+        _verify_authoritative_implementation(
+            root, config, state, journal, head, context
+        )
+        return "authoritative"
+
+    _raise(
+        "implementation-recovery-shape",
+        "%s encountered an unsupported Git state for implementation approval" % context,
+    )
+
+
+def _persist_finalized_transition(root, config, state, journal, authoritative_head):
+    journal_to_commit = dict(journal)
+    journal_to_commit["status"] = "committed-but-not-persisted"
+    journal_to_commit["authoritative_commit"] = authoritative_head
+    journal_to_commit["committed_at"] = journal_to_commit.get("committed_at", _now())
+    _validate_implementation_transition_journal(
+        root, config, state, journal_to_commit, "implementation approval finalization"
+    )
+    _write_json(
+        _implementation_transition_journal_path(root, config, state["issue"]),
+        journal_to_commit,
+    )
+
+    if state.get("status") != "DRAFT_PR_CREATION":
+        state["approvals"]["implementation"] = journal_to_commit["acknowledgment"]
+        state["implementation_commit"] = authoritative_head
+        state["status"] = "DRAFT_PR_CREATION"
+        _write_state(root, config, state["issue"], state)
+    else:
+        _ensure(
+            state.get("implementation_commit") == authoritative_head
+            and state["approvals"].get("implementation")
+            == journal_to_commit["acknowledgment"],
+            "implementation-approval-journal-mismatch",
+            "final workflow state does not match implementation approval journal",
+        )
+
+    if journal.get("status") != "finalized":
+        finalized = dict(journal_to_commit)
+        finalized["status"] = "finalized"
+        finalized["implementation_commit"] = authoritative_head
+        finalized["finalized_at"] = _now()
+        _write_json(
+            _implementation_transition_journal_path(root, config, state["issue"]),
+            finalized,
+        )
+        journal = finalized
+    return journal
+
+
+def command_recover_implementation_approval(args, root, config):
+    """Recover only a journaled implementation approval in an enumerated state."""
+    state = _read_state(root, config, args.issue)
+    journal = _read_json(
+        _implementation_transition_journal_path(root, config, args.issue),
+        "implementation approval transition journal",
+    )
+    _validate_implementation_transition_journal(
+        root, config, state, journal, "recover-implementation-approval"
+    )
+    _require_target_fresh(root, config, state, "recover-implementation-approval")
+
+    if state["status"] == "DRAFT_PR_CREATION":
+        _ensure(
+            journal["status"] in ("committed-but-not-persisted", "finalized")
+            and (
+                journal.get("authoritative_commit")
+                or journal.get("implementation_commit")
+            ),
+            "implementation-recovery-shape",
+            "recover-implementation-approval requires a committed journal for final state",
+        )
+        authoritative_head = journal.get("authoritative_commit") or journal[
+            "implementation_commit"
+        ]
+        _verify_authoritative_implementation(
+            root,
+            config,
+            state,
+            journal,
+            authoritative_head,
+            "recover-implementation-approval",
+        )
+        if journal["status"] == "finalized":
+            return {
+                "ok": True,
+                "status": state["status"],
+                "approval": state["approvals"]["implementation"],
+                "implementation_commit": authoritative_head,
+            }
+        _persist_finalized_transition(root, config, state, journal, authoritative_head)
+        return {
+            "ok": True,
+            "status": state["status"],
+            "approval": state["approvals"]["implementation"],
+            "implementation_commit": authoritative_head,
+        }
+
+    _expect_status(
+        state,
+        "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL",
+        "recover-implementation-approval",
+    )
+    _ensure(
+        journal["status"] in ("pending", "committed-but-not-persisted"),
+        "implementation-recovery-shape",
+        "recover-implementation-approval cannot resume a finalized transition",
+    )
+    shape = _classify_recovery_shape(
+        root, config, state, journal, "recover-implementation-approval"
+    )
+    if shape == "authoritative":
+        authoritative_head = _current_head(root, config)
+    else:
+        if shape == "uncommitted-candidate":
+            _run_checked(
+                _git_command(config, "add", "-A"),
+                _effective_limits(config, "git"),
+                root,
+                "git-add-failed",
+                "unable to stage implementation changes during recovery",
+            )
+        if shape in ("uncommitted-candidate", "staged-candidate"):
+            _run_checked(
+                _git_command(config, "reset", "--soft", journal["target_head"]),
+                _effective_limits(config, "git"),
+                root,
+                "git-reset-failed",
+                "unable to soft-reset to target_head during recovery",
+            )
+        _ensure(
+            _git_index_names(root, config, journal["target_head"])
+            == sorted(
+                set(journal["approved_test_boundary"]["paths"]).union(
+                    journal["implementation_candidate"]["candidate_paths"]
+                )
+            ),
+            "implementation-recovery-shape",
+            "recovery staged paths do not match the approved boundary",
+        )
+        _run_checked(
+            _git_command(
+                config,
+                "commit",
+                "-qm",
+                journal["reviewed_commit_subject"],
+            ),
+            _effective_limits(config, "git"),
+            root,
+            "git-commit-failed",
+            "unable to create authoritative implementation commit during recovery",
+        )
+        authoritative_head = _current_head(root, config)
+
+    committed_journal = dict(journal)
+    committed_journal["status"] = "committed-but-not-persisted"
+    committed_journal["authoritative_commit"] = authoritative_head
+    _verify_authoritative_implementation(
+        root,
+        config,
+        state,
+        committed_journal,
+        authoritative_head,
+        "recover-implementation-approval",
+    )
+    _persist_finalized_transition(
+        root, config, state, committed_journal, authoritative_head
+    )
+    return {
+        "ok": True,
+        "status": state["status"],
+        "approval": state["approvals"]["implementation"],
+        "implementation_commit": authoritative_head,
+    }
 
 
 # ---------- commands ----------
@@ -2031,7 +2743,7 @@ def command_review_implementation(args, root, config):
 
 
 def command_approve_implementation(args, root, config):
-    """Approval Gate 3: record local acknowledgment and commit the candidate."""
+    """Approval Gate 3: durably journal, verify, and commit the candidate."""
     state = _read_state(root, config, args.issue)
     _expect_status(state, "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", "approve-implementation")
     _ensure(
@@ -2067,15 +2779,27 @@ def command_approve_implementation(args, root, config):
     candidate_names = _git_candidate_names(root, config, test_commit)
     _require_production_only(candidate_names, scope, "approve-implementation")
 
+    journal = _build_implementation_transition_journal(
+        root, config, state, acknowledgment
+    )
+    _write_json(
+        _implementation_transition_journal_path(root, config, args.issue),
+        journal,
+    )
+
     # Create the single authoritative implementation commit relative to the
     # verified target base, containing approved tests plus reviewed production.
-    _run_checked(
-        _git_command(config, "add", "-A"),
-        _effective_limits(config, "git"),
-        root,
-        "git-add-failed",
-        "unable to stage implementation changes",
-    )
+    try:
+        _run_checked(
+            _git_command(config, "add", "-A"),
+            _effective_limits(config, "git"),
+            root,
+            "git-add-failed",
+            "unable to stage implementation changes",
+        )
+    except WorkflowError:
+        _hide_untracked_status_after_interruption(root, config)
+        raise
     _run_checked(
         _git_command(config, "reset", "--soft", target_head),
         _effective_limits(config, "git"),
@@ -2091,12 +2815,17 @@ def command_approve_implementation(args, root, config):
         "unable to create authoritative implementation commit",
     )
     authoritative_head = _current_head(root, config)
-    _require_clean_tree(root, config, "post-implementation-commit")
-    _require_publication_topology(root, config, state, authoritative_head, "approve-implementation")
-
-    state["implementation_commit"] = authoritative_head
-    state["status"] = "DRAFT_PR_CREATION"
-    _write_state(root, config, args.issue, state)
+    _verify_authoritative_implementation(
+        root,
+        config,
+        state,
+        journal,
+        authoritative_head,
+        "approve-implementation",
+    )
+    journal = _persist_finalized_transition(
+        root, config, state, journal, authoritative_head
+    )
     return {
         "ok": True,
         "status": state["status"],
@@ -2311,6 +3040,12 @@ def build_parser():
     _add_issue(approve_implementation)
     _add_human(approve_implementation)
 
+    recover_implementation_approval = subparsers.add_parser(
+        "recover-implementation-approval"
+    )
+    _add_root(recover_implementation_approval)
+    _add_issue(recover_implementation_approval)
+
     reject_implementation = subparsers.add_parser("reject-implementation")
     _add_root(reject_implementation)
     _add_issue(reject_implementation)
@@ -2346,6 +3081,7 @@ COMMANDS = {
     "run-validation": command_run_validation,
     "review-implementation": command_review_implementation,
     "approve-implementation": command_approve_implementation,
+    "recover-implementation-approval": command_recover_implementation_approval,
     "reject-implementation": command_reject_implementation,
     "create-draft-pr": command_create_draft_pr,
 }

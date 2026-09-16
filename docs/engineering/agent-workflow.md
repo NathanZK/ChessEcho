@@ -20,6 +20,25 @@ Each issue run lives in:
 with:
 - `state.json` (current gate state)
 - `artifacts/` (plan/review/report files)
+- `implementation-approval-transition.json` (the immutable Gate 3
+  transition journal)
+
+The transition journal is created only after Gate 3's existing preconditions
+pass and after the exact local acknowledgment is accepted, but before any
+`git add`, `git reset`, or `git commit`. JSON state and journal writes use a
+same-directory temporary file, file flush and `fsync`, atomic replacement, and
+directory `fsync` where supported. Persistence failures are explicit workflow
+errors; malformed or missing state and journal documents fail closed.
+
+The journal records the exact acknowledgment, including
+`independent_authorization: false`, and binds the existing
+`implementation_candidate` to the canonical `_candidate_identity` projection
+(`test_commit`, sorted paths, candidate diff SHA-256, and candidate diff byte
+length). The candidate object and identity helper remain authoritative; the
+journal is transition evidence and does not introduce a second candidate model
+or digest. It also records the approved target and direct parent, test boundary
+and applicability, scope, validation/evidence, review readiness, approvals,
+artifacts, and reviewed subject.
 
 Artifact source files supplied with `--artifact` must be staged outside the Git
 worktree (for example, in the session's attachment or temporary artifact
@@ -148,6 +167,48 @@ directly on `target_head`; `create-draft-pr` verifies that the final branch has 
 `HEAD^` is the target, and that changed paths remain within the approved scope. `create-draft-pr` is a
 workflow action, not an Approval Gate. PR review, CI, and merge remain external GitHub processes.
 
+Immediately after creating the authoritative commit, Gate 3 independently
+recomputes the accepted candidate and approved test boundary, checks the
+reviewed subject, approved scope, target freshness, direct-parent and
+one-commit topology, and requires a clean index and worktree. Only then is
+`state.json` atomically moved to `DRAFT_PR_CREATION` with the exact
+acknowledgment and `implementation_commit`. Journal finalization is a
+separate idempotent step, so a failure between commit and state persistence
+remains recoverable without creating a second commit.
+
+Use the explicit recovery command after an interrupted Gate 3 transition:
+
+```bash
+python3 scripts/agent_workflow.py recover-implementation-approval ISSUE
+```
+
+Recovery accepts no identity, acknowledgment, candidate, parent, or commit
+input. It relies only on the durable journal and existing workflow evidence,
+revalidates every binding and publication invariant, and never creates a PR or
+advances another gate. The only accepted Git shapes are:
+
+| Shape | Required state |
+| --- | --- |
+| `HEAD == test_commit` with the original uncommitted candidate | clean index and exact candidate |
+| `HEAD == test_commit` with the exact candidate staged | no unstaged or extra content |
+| `HEAD == target_head` after the soft reset | exact approved tests plus exact candidate staged |
+| `HEAD` is the verified direct child of `target_head` | journal-bound authoritative commit |
+| final workflow state already persisted | final state, journal, and commit agree |
+
+Target advancement, candidate or path drift, extra content, staged/unstaged
+ambiguity, altered acknowledgments, applicability, scope, evidence,
+validation, review, subject, parent, topology, or final-result metadata all
+fail closed. A matching direct-child commit without the durable journal is
+never adopted. Recovery is idempotent: committed transitions are verified and
+persisted, not recommitted, and a finalized transition is only re-read.
+
+This journal is crash-consistency evidence for the local workflow, not a
+general transaction framework or an independent authorization mechanism. It
+cannot authenticate the asserted operator, prevent external Git mutations, or
+replace GitHub review and CI. If recovery cannot prove one of the enumerated
+shapes, preserve the worktree and obtain operator direction rather than
+guessing.
+
 There is no `approve-pr`, `reject-pr`, `WAITING_FOR_PR`, or `PR_APPROVED` state. The exceptional
 `reopen-tests --reason approved-test-fixture-defect` transition exists only to recover from a proven
 approved-test fixture defect before the implementation Approval Gate or draft PR creation; it preserves any
@@ -232,6 +293,7 @@ python3 scripts/agent_workflow.py submit-implementation ISSUE --artifact PATH --
 python3 scripts/agent_workflow.py run-validation ISSUE --profile PROFILE
 python3 scripts/agent_workflow.py review-implementation ISSUE --status READY_FOR_HUMAN_APPROVAL|NEEDS_REVISION --artifact PATH --reviewer chess-echo-reviewer
 python3 scripts/agent_workflow.py approve-implementation ISSUE --by LOGIN --confirm implementation_approved
+python3 scripts/agent_workflow.py recover-implementation-approval ISSUE
 python3 scripts/agent_workflow.py reject-implementation ISSUE --by LOGIN --reason "..."
 python3 scripts/agent_workflow.py create-draft-pr ISSUE --title "..." --body-file PATH
 ```
