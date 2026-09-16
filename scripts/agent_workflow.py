@@ -4,10 +4,14 @@
 import argparse
 import base64
 import datetime as dt
+import hashlib
 import json
+import os
 import pathlib
 import re
 import shlex
+import stat
+import tempfile
 
 if __package__:
     from . import workflow_supervisor
@@ -98,6 +102,33 @@ def _write_json(path, payload):
     )
 
 
+def _write_json_durable(path, payload):
+    """Atomically persist a journal before any workflow-owned Git mutation."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary = tempfile.mkstemp(
+        prefix=".workflow-journal-", suffix=".tmp", dir=str(path.parent)
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            stream.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        try:
+            directory = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        except OSError:
+            # Atomic replacement remains valid on filesystems without
+            # directory fsync support.
+            pass
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
 def _artifact_root(root, config):
     """Resolve the configured root for issue-local workflow runs."""
     relative = config["workflow"].get("run_root", ".agent-workflow/runs")
@@ -112,6 +143,10 @@ def _run_root(root, config, issue):
 
 def _state_path(root, config, issue):
     return _run_root(root, config, issue) / "state.json"
+
+
+def _test_approval_journal_path(root, config, issue):
+    return _run_root(root, config, issue) / "test-approval-transition.json"
 
 
 def _artifacts_dir(root, config, issue):
@@ -300,6 +335,8 @@ def _clear_post_plan(state):
     state["implementation_candidate"] = None
     state["implementation_review_ready"] = False
     state["draft_pr"] = None
+    state.pop("test_implementation_status", None)
+    state.pop("test_implementation_reason", None)
 
 
 def _test_reopen_active(state):
@@ -533,6 +570,86 @@ def _git_candidate_diff(root, config, revision):
     return tracked + "".join(additions)
 
 
+def _git_commit_diff(root, config, base, head):
+    """Return a binary diff between two committed revisions."""
+    return _run_checked(
+        _git_command(config, "diff", "--binary", "%s..%s" % (base, head), "--"),
+        _effective_limits(config, "git"),
+        root,
+        "git-diff-failed",
+        "unable to compute committed test diff",
+    )["stdout_text"]
+
+
+def _canonicalize_diff(diff):
+    """Make patch section ordering irrelevant while retaining patch content."""
+    # Some evidence producers join split sections without restoring the
+    # separator on the first section. Normalize that harmless serialization
+    # variation before ordering sections.
+    if diff and not diff.startswith("diff --git "):
+        diff = "diff --git " + diff
+    lines = diff.splitlines(keepends=True)
+    starts = [index for index, line in enumerate(lines) if line.startswith("diff --git ")]
+    if len(starts) <= 1:
+        return diff
+    prefix = "".join(lines[: starts[0]])
+    sections = [
+        "".join(lines[start : starts[index + 1] if index + 1 < len(starts) else len(lines)])
+        for index, start in enumerate(starts)
+    ]
+    return prefix + "".join(
+        sorted(sections, key=lambda section: section.splitlines()[0])
+    )
+
+
+def _git_tree_mode(root, config, revision, path):
+    """Read the committed mode for a path, including paths deleted in a candidate."""
+    output = _run_checked(
+        _git_command(config, "ls-tree", "-r", "-z", revision, "--", path),
+        _effective_limits(config, "git"),
+        root,
+        "git-tree-failed",
+        "unable to inspect candidate base tree",
+    )["stdout_text"]
+    entry = next((item for item in output.split("\0") if item), "")
+    if not entry:
+        return None
+    return entry.split("\t", 1)[0].split(" ", 1)[0]
+
+
+def _candidate_tree(root, config, revision, paths):
+    """Capture changed path, content, and mode identity from the worktree."""
+    snapshot = []
+    for path in sorted(paths):
+        candidate = root / path
+        exists = os.path.lexists(str(candidate))
+        mode = None
+        content_hash = None
+        if exists:
+            metadata = candidate.lstat()
+            if stat.S_ISLNK(metadata.st_mode):
+                mode = "120000"
+                content = os.readlink(candidate).encode("utf-8", errors="surrogateescape")
+            elif stat.S_ISREG(metadata.st_mode):
+                mode = "100755" if metadata.st_mode & stat.S_IXUSR else "100644"
+                content = candidate.read_bytes()
+            else:
+                mode = "100000"
+                content = b""
+            content_hash = hashlib.sha256(content).hexdigest()
+        else:
+            mode = _git_tree_mode(root, config, revision, path)
+        snapshot.append(
+            {
+                "path": path,
+                "exists": exists,
+                "mode": mode,
+                "content_sha256": content_hash,
+            }
+        )
+    return snapshot
+
+
 def _git_candidate_names(root, config, revision):
     """Return tracked and untracked paths represented by the candidate."""
     names = set(_git_diff_names(root, config, revision))
@@ -726,13 +843,39 @@ def _require_implementation_candidate_matches(root, config, state, context):
         "tests-modified-after-approval",
         "%s requires approved tests to remain unchanged" % context,
     )
+    accepted_canonical = accepted.get("candidate_diff_canonical")
+    if not isinstance(accepted_canonical, str):
+        accepted_canonical = _canonicalize_diff(accepted["candidate_diff"])
     _ensure(
-        current_diff == accepted["candidate_diff"]
+        _canonicalize_diff(accepted["candidate_diff"]) == accepted_canonical,
+        "implementation-candidate-mismatch",
+        "%s persisted candidate evidence differs from its accepted identity" % context,
+    )
+    current_tree = _candidate_tree(root, config, test_commit, current_paths)
+    accepted_tree = accepted.get("candidate_tree")
+    _ensure(
+        isinstance(accepted_tree, list)
+        and current_tree == accepted_tree,
+        "implementation-candidate-mismatch",
+        "%s current candidate tree differs from accepted tree" % context,
+    )
+    _ensure(
+        _canonicalize_diff(current_diff) == accepted_canonical
         and current_paths == sorted(accepted_paths),
         "implementation-candidate-mismatch",
         "%s current implementation candidate differs from accepted candidate" % context,
     )
-    return {"candidate_diff": current_diff, "candidate_paths": current_paths}
+    scope = state.get("approved_scope") or []
+    _ensure(
+        all(_path_in_scope(path, scope) for path in current_paths),
+        "implementation-scope-drift",
+        "%s may change only approved files: %s" % (context, ", ".join(current_paths)),
+    )
+    return {
+        "candidate_diff": current_diff,
+        "candidate_paths": current_paths,
+        "candidate_tree": current_tree,
+    }
 
 
 def _require_clean_tree(root, config, context):
@@ -1048,6 +1191,9 @@ def command_request_plan_revision(args, root, config):
     _clear_post_plan(state)
     state["test_commit"] = None
     state.pop("test_failure", None)
+    journal = _test_approval_journal_path(root, config, args.issue)
+    if journal.exists():
+        journal.unlink()
     state["approved_scope"] = None
     state["status"] = "PLANNING"
     _write_state(root, config, args.issue, state)
@@ -1059,7 +1205,19 @@ def command_submit_tests(args, root, config):
     state = _read_state(root, config, args.issue)
     _expect_status(state, "TEST_IMPLEMENTATION", "submit-tests")
     _require_role(config, "test_implementer", args.agent, "submit-tests")
-    if _test_reopen_active(state):
+    if getattr(args, "not_applicable", False):
+        _ensure(
+            args.reason and args.reason.strip(),
+            "missing-not-applicable-reason",
+            "submit-tests --not-applicable requires a non-empty --reason",
+        )
+        _ensure(
+            _current_head(root, config) == _state_target_head(state),
+            "not-applicable-test-commit",
+            "NOT_APPLICABLE test approval requires HEAD at target_head",
+        )
+        _require_clean_tree(root, config, "submit-tests --not-applicable")
+    elif _test_reopen_active(state):
         _require_no_uncommitted_test_changes(root, config, "submit-tests")
     else:
         _require_clean_tree(root, config, "submit-tests")
@@ -1068,46 +1226,61 @@ def command_submit_tests(args, root, config):
     target_head = _state_target_head(state)
     _ensure(target_head, "missing-target-head", "Workflow has no recorded target_head")
     test_head = _current_head(root, config)
-    _ensure(
-        test_head != target_head,
-        "missing-test-commit",
-        "submit-tests requires a committed test change",
-    )
-    test_paths = _git_diff_names(root, config, "%s..%s" % (target_head, test_head))
-    _git_ancestor(root, config, target_head, test_head, "submit-tests")
-    _require_test_only(test_paths, scope, "submit-tests")
-    _ensure(
-        shlex.split(args.failure_command),
-        "missing-test-failure-check",
-        "submit-tests requires a targeted failure command",
-    )
-    failure = _run_bounded(
-        shlex.split(args.failure_command),
-        _effective_limits(config, "validation"),
-        root,
-    )
-    failure_result = failure["result"]
-    failure_output = failure["stdout_text"] + failure["stderr_text"]
-    _ensure(
-        failure_result.get("outcome") == "nonzero-exit"
-        and failure_result.get("exit_code") != 0,
-        "test-did-not-fail",
-        "targeted test command did not fail before implementation",
-    )
-    _ensure(
-        args.failure_contains in failure_output,
-        "unexpected-test-failure",
-        "targeted test failed without the expected behavioral message",
-    )
+    if getattr(args, "not_applicable", False):
+        test_paths = []
+        failure_result = None
+        test_head = target_head
+    else:
+        _ensure(
+            test_head != target_head,
+            "missing-test-commit",
+            "submit-tests requires a committed test change",
+        )
+        test_paths = _git_diff_names(root, config, "%s..%s" % (target_head, test_head))
+        _git_ancestor(root, config, target_head, test_head, "submit-tests")
+        _require_test_only(test_paths, scope, "submit-tests")
+        _ensure(
+            args.failure_command and shlex.split(args.failure_command),
+            "missing-test-failure-check",
+            "submit-tests requires a targeted failure command",
+        )
+        failure = _run_bounded(
+            shlex.split(args.failure_command),
+            _effective_limits(config, "validation"),
+            root,
+        )
+        failure_result = failure["result"]
+        failure_output = failure["stdout_text"] + failure["stderr_text"]
+        _ensure(
+            failure_result.get("outcome") == "nonzero-exit"
+            and failure_result.get("exit_code") != 0,
+            "test-did-not-fail",
+            "targeted test command did not fail before implementation",
+        )
+        _ensure(
+            args.failure_contains in failure_output,
+            "unexpected-test-failure",
+            "targeted test failed without the expected behavioral message",
+        )
     if _test_reopen_active(state):
         _require_no_uncommitted_test_changes(root, config, "submit-tests after failure check")
     else:
         _require_clean_tree(root, config, "submit-tests after failure check")
-    state["artifacts"]["test_report"] = _record_artifact(
-        root, config, args.issue, "test_report", args.artifact
-    )
+    if getattr(args, "not_applicable", False) and not (root / args.artifact).is_file():
+        state["artifacts"].pop("test_report", None)
+    else:
+        state["artifacts"]["test_report"] = _record_artifact(
+            root, config, args.issue, "test_report", args.artifact
+        )
     _clear_post_tests(state)
     state["test_commit"] = test_head
+    state["test_implementation_status"] = (
+        "NOT_APPLICABLE" if getattr(args, "not_applicable", False) else "REQUIRED"
+    )
+    if getattr(args, "not_applicable", False):
+        state["test_implementation_reason"] = args.reason.strip()
+    else:
+        state.pop("test_implementation_reason", None)
     if _test_reopen_active(state):
         state["test_reopenings"][-1]["corrected_test_candidate"] = test_head
         state["test_reopenings"][-1]["submitted_at"] = _now()
@@ -1152,57 +1325,351 @@ def command_approve_tests(args, root, config):
     """Approval Gate 2: record local acknowledgment and the test boundary."""
     state = _read_state(root, config, args.issue)
     _expect_status(state, "WAITING_FOR_TEST_HUMAN_APPROVAL", "approve-tests")
-    acknowledgment = _record_local_acknowledgment(config, state, "tests", args.confirm, args.by)
+    journal_path = _test_approval_journal_path(root, config, args.issue)
+    _ensure(
+        not journal_path.exists(),
+        "test-approval-journal-present",
+        "approve-tests requires recovery of the existing test approval journal",
+    )
+    acknowledgment = _local_acknowledgment(config, "tests", args.confirm, args.by)
+    journal = _prepare_test_approval_journal(
+        args, root, config, state, acknowledgment
+    )
+    _write_json_durable(journal_path, journal)
+    return _complete_test_approval(root, config, args.issue, state, journal)
 
+
+def _local_acknowledgment(config, gate, provided, by):
+    """Validate local approval input without mutating persisted workflow state."""
+    expected = config["workflow"]["approvals"].get(gate)
+    _ensure(
+        provided == expected,
+        "approval-confirmation-mismatch",
+        "Expected confirmation phrase for %s gate: %s" % (gate, expected),
+    )
+    return {
+        "kind": LOCAL_ACKNOWLEDGMENT_KIND,
+        "asserted_by": by,
+        "confirmation": provided,
+        "recorded_at": _now(),
+        "independent_authorization": False,
+    }
+
+
+def _prepare_test_approval_journal(args, root, config, state, acknowledgment):
+    """Validate Gate 2 and bind every value needed for crash recovery."""
+    target_head = _require_target_fresh(root, config, state, "approve-tests")
     candidate_test_commit = state.get("test_commit")
-    target_head = _state_target_head(state)
-    scope = state.get("approved_scope") or []
-    reopened_tests = _test_reopen_active(state)
+    status = state.get("test_implementation_status", "REQUIRED")
+    scope = list(state.get("approved_scope") or [])
+    reopened = _test_reopen_active(state)
     _ensure(candidate_test_commit, "missing-test-commit", "approve-tests requires candidate test_commit")
-    _ensure(target_head, "missing-target-head", "approve-tests requires target_head")
-
-    # Verify that only approved test files changed in the candidate commit
-    test_paths = _git_diff_names(root, config, "%s..%s" % (target_head, candidate_test_commit))
-    _git_ancestor(root, config, target_head, candidate_test_commit, "approve-tests")
-    _require_test_only(test_paths, scope, "approve-tests")
+    _ensure(scope, "missing-approved-scope", "approve-tests requires approved plan scope")
     _ensure(
         _current_head(root, config) == candidate_test_commit,
         "test-commit-mismatch",
         "approve-tests requires HEAD to match the reviewed test candidate",
     )
+    _git_ancestor(root, config, target_head, candidate_test_commit, "approve-tests")
     _require_no_uncommitted_test_changes(root, config, "approve-tests")
     _require_clean_index(root, config, "approve-tests")
 
-    # The candidate is already committed by the test implementer.  This empty
-    # The workflow-owned commit records the locally acknowledged boundary without
-    # staging, resetting, or discarding any uncommitted production candidate.
-    _run_checked(
-        _git_command(config, "commit", "--allow-empty", "-m", "workflow: approve tests"),
+    if status == "NOT_APPLICABLE":
+        _ensure(
+            candidate_test_commit == target_head,
+            "test-approval-journal-mismatch",
+            "NOT_APPLICABLE approval must be based at target_head",
+        )
+        test_paths = []
+        candidate_diff = ""
+    else:
+        _ensure(
+            status == "REQUIRED",
+            "test-approval-journal-mismatch",
+            "Unknown test implementation applicability",
+        )
+        test_paths = _git_diff_names(
+            root, config, "%s..%s" % (target_head, candidate_test_commit)
+        )
+        _require_test_only(test_paths, scope, "approve-tests")
+        candidate_diff = _git_commit_diff(root, config, target_head, candidate_test_commit)
+
+    latest_reopen = None
+    if reopened:
+        latest_reopen = json.loads(json.dumps(state["test_reopenings"][-1]))
+    return {
+        "format": "chess-echo-test-approval-transition-v1",
+        "issue": state["issue"],
+        "operation": "approve-tests",
+        "status": "pending",
+        "from_status": "WAITING_FOR_TEST_HUMAN_APPROVAL",
+        "to_status": "IMPLEMENTATION",
+        "authorization": acknowledgment,
+        "target_base": state.get("target_base"),
+        "target_head": target_head,
+        "approved_scope": scope,
+        "test_implementation_status": status,
+        "applicability": status,
+        "test_implementation_reason": state.get("test_implementation_reason"),
+        "parent_head": candidate_test_commit,
+        "resulting_commit": None,
+        "reviewed_test_candidate": {
+            "test_commit": candidate_test_commit,
+            "candidate_diff": candidate_diff,
+            "candidate_paths": test_paths,
+        },
+        "reviewed_test_evidence": {
+            "test_report": state["artifacts"].get("test_report"),
+            "test_review": state["artifacts"].get("test_review"),
+            "test_failure": state.get("test_failure"),
+        },
+        "reopened_test_metadata": latest_reopen,
+    }
+
+
+def _journal_error(code, message):
+    _raise(code, message)
+
+
+def _read_test_approval_journal(root, config, issue):
+    path = _test_approval_journal_path(root, config, issue)
+    _ensure(path.is_file(), "test-approval-journal-missing", "No test approval journal exists")
+    try:
+        journal = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        _journal_error("test-approval-journal-corrupt", "Unable to read test approval journal: %s" % error)
+    _ensure(
+        isinstance(journal, dict)
+        and journal.get("format") == "chess-echo-test-approval-transition-v1",
+        "test-approval-journal-corrupt",
+        "Test approval journal has an unsupported format",
+    )
+    _ensure(
+        journal.get("status") in ("pending", "finalized"),
+        "test-approval-journal-corrupt",
+        "Test approval journal has an invalid status",
+    )
+    return journal
+
+
+def _validate_test_approval_journal(root, config, state, journal):
+    """Fail closed unless the journal still describes the exact reviewed transition."""
+    if state["status"] not in (
+        "WAITING_FOR_TEST_HUMAN_APPROVAL",
+        "IMPLEMENTATION",
+    ):
+        _journal_error("test-approval-journal-stale", "Test approval journal is stale for current workflow state")
+    if journal.get("issue") != state.get("issue") or journal.get("operation") != "approve-tests":
+        _journal_error("test-approval-journal-mismatch", "Test approval journal operation binding differs")
+    if journal.get("from_status") != "WAITING_FOR_TEST_HUMAN_APPROVAL" or journal.get("to_status") != "IMPLEMENTATION":
+        _journal_error("test-approval-journal-mismatch", "Test approval journal transition binding differs")
+    if journal.get("status") == "finalized" and state["status"] != "IMPLEMENTATION":
+        _journal_error("test-approval-journal-stale", "Finalized test approval journal is not paired with implementation state")
+    if journal.get("status") == "finalized" and not isinstance(
+        journal.get("resulting_commit"), str
+    ):
+        _journal_error("test-approval-journal-corrupt", "Finalized journal has no resulting commit")
+    if journal.get("target_base") != state.get("target_base"):
+        _journal_error("test-approval-journal-mismatch", "Test approval journal target base differs")
+    if journal.get("target_head") != _state_target_head(state):
+        _journal_error("test-approval-journal-mismatch", "Test approval journal target head differs")
+    if journal.get("approved_scope") != list(state.get("approved_scope") or []):
+        _journal_error("test-approval-journal-mismatch", "Test approval journal scope differs")
+    if journal.get("test_implementation_status", "REQUIRED") != state.get(
+        "test_implementation_status", "REQUIRED"
+    ):
+        _journal_error("test-approval-journal-mismatch", "Test approval journal applicability differs")
+    if journal.get("applicability") != journal.get("test_implementation_status"):
+        _journal_error("test-approval-journal-mismatch", "Test approval journal applicability binding differs")
+    if journal.get("test_implementation_reason") != state.get("test_implementation_reason"):
+        _journal_error("test-approval-journal-mismatch", "Test approval journal applicability reason differs")
+    authorization = journal.get("authorization")
+    expected = config["workflow"]["approvals"].get("tests")
+    if (
+        not isinstance(authorization, dict)
+        or authorization.get("confirmation") != expected
+        or not authorization.get("asserted_by")
+        or authorization.get("independent_authorization") is not False
+    ):
+        _journal_error("test-approval-journal-mismatch", "Test approval journal authorization differs")
+    candidate = journal.get("reviewed_test_candidate")
+    if not isinstance(candidate, dict):
+        _journal_error("test-approval-journal-corrupt", "Reviewed test candidate is missing")
+    expected_candidate_commit = state.get("test_commit")
+    if state["status"] == "IMPLEMENTATION":
+        expected_candidate_commit = journal.get("parent_head")
+    if candidate.get("test_commit") != expected_candidate_commit:
+        _journal_error("test-approval-journal-mismatch", "Reviewed test candidate differs")
+    if journal.get("reviewed_test_evidence") != {
+        "test_report": state["artifacts"].get("test_report"),
+        "test_review": state["artifacts"].get("test_review"),
+        "test_failure": state.get("test_failure"),
+    }:
+        _journal_error("test-approval-journal-mismatch", "Reviewed test evidence differs")
+    active_reopen = _test_reopen_active(state)
+    current_reopen = state.get("test_reopenings", [])[-1] if active_reopen else None
+    journal_reopen = journal.get("reopened_test_metadata")
+    if state["status"] == "IMPLEMENTATION" and journal_reopen is not None:
+        expected_reopen = json.loads(json.dumps(journal_reopen))
+        if journal.get("resulting_commit") or state.get("test_commit"):
+            expected_reopen["new_test_commit"] = (
+                journal.get("resulting_commit") or state.get("test_commit")
+            )
+            expected_reopen["approved_at"] = journal["authorization"]["recorded_at"]
+            expected_reopen["active"] = False
+        current_reopen = state.get("test_reopenings", [])[-1] if state.get("test_reopenings") else None
+    if state["status"] == "WAITING_FOR_TEST_HUMAN_APPROVAL":
+        metadata_matches = journal_reopen == current_reopen
+    else:
+        metadata_matches = journal_reopen is None or current_reopen == expected_reopen
+    if not metadata_matches:
+        _journal_error("test-approval-journal-mismatch", "Reopened-test metadata differs")
+    return candidate
+
+
+def _validate_reviewed_test_candidate(root, config, state, journal, candidate):
+    """Recompute the reviewed test boundary rather than trusting journal bytes."""
+    target_head = journal["target_head"]
+    parent = journal.get("parent_head")
+    _ensure(parent, "test-approval-journal-corrupt", "Test approval journal has no parent head")
+    _git_ancestor(root, config, target_head, parent, "test approval recovery")
+    status = journal.get("test_implementation_status", "REQUIRED")
+    if status == "NOT_APPLICABLE":
+        _ensure(
+            parent == target_head,
+            "test-approval-journal-topology",
+            "NOT_APPLICABLE test approval parent is not target_head",
+        )
+        paths = []
+        diff = ""
+    else:
+        paths = _git_diff_names(root, config, "%s..%s" % (target_head, parent))
+        _require_test_only(
+            paths, state.get("approved_scope") or [], "test approval recovery"
+        )
+        diff = _git_commit_diff(root, config, target_head, parent)
+    _ensure(
+        candidate.get("test_commit") == parent
+        and candidate.get("candidate_paths") == paths
+        and candidate.get("candidate_diff") == diff,
+        "test-approval-journal-mismatch",
+        "Reviewed test candidate no longer matches Git",
+    )
+
+
+def _is_test_boundary_commit(root, config, parent, revision):
+    if _commit_parent(root, config, revision) != parent:
+        return False
+    subject = _run_checked(
+        _git_command(config, "show", "-s", "--format=%s", revision),
         _effective_limits(config, "git"),
         root,
-        "git-commit-failed",
-        "unable to record approved test boundary",
-    )
-    authoritative_test_head = _current_head(root, config)
-    if reopened_tests:
+        "git-show-failed",
+        "unable to inspect test approval boundary",
+    )["stdout_text"].strip()
+    if subject != "workflow: approve tests":
+        return False
+    return not _git_diff_names(root, config, "%s..%s" % (parent, revision))
+
+
+def _complete_test_approval(root, config, issue, state, journal):
+    """Finish or replay the journaled empty boundary commit exactly once."""
+    candidate = _validate_test_approval_journal(root, config, state, journal)
+    _validate_reviewed_test_candidate(root, config, state, journal, candidate)
+    parent = journal["parent_head"]
+    current = _current_head(root, config)
+    resulting = journal.get("resulting_commit")
+    if state["status"] == "IMPLEMENTATION":
+        _ensure(
+            current == state.get("test_commit"),
+            "test-approval-journal-topology",
+            "Implementation state does not match current test boundary",
+        )
+        _ensure(
+            state["approvals"].get("tests") == journal["authorization"],
+            "test-approval-journal-mismatch",
+            "Implementation state does not match journal authorization",
+        )
+        _ensure(
+            resulting is None or state.get("test_commit") == resulting,
+            "test-approval-journal-mismatch",
+            "Implementation state does not match resulting test boundary",
+        )
+        _ensure(
+            current != parent,
+            "test-approval-journal-topology",
+            "Implementation state cannot be completed before its boundary commit",
+        )
+    if resulting is not None and current == parent:
+        _journal_error(
+            "test-approval-journal-mismatch",
+            "Journal claims a resulting commit before the boundary exists",
+        )
+    if resulting is not None and current != parent:
+        _ensure(
+            _is_test_boundary_commit(root, config, parent, current),
+            "test-approval-journal-topology",
+            "Current HEAD is not the journaled test boundary",
+        )
+        _ensure(
+            resulting == current,
+            "test-approval-journal-mismatch",
+            "Resulting test boundary differs",
+        )
+    if current == parent:
+        _run_checked(
+            _git_command(config, "commit", "--allow-empty", "-m", "workflow: approve tests"),
+            _effective_limits(config, "git"),
+            root,
+            "git-commit-failed",
+            "unable to record approved test boundary",
+        )
+        current = _current_head(root, config)
+    elif not _is_test_boundary_commit(root, config, parent, current):
+        _journal_error("test-approval-journal-topology", "Current HEAD is not the journaled test boundary")
+    if resulting and resulting != current:
+        _journal_error("test-approval-journal-mismatch", "Resulting test boundary differs")
+    journal["resulting_commit"] = current
+    reopened = journal.get("reopened_test_metadata") is not None
+    if reopened:
         _require_no_uncommitted_test_changes(root, config, "post-approve-tests")
         _require_clean_index(root, config, "post-approve-tests")
     else:
         _require_clean_tree(root, config, "post-approve-tests")
-
-    state["test_commit"] = authoritative_test_head
-    if reopened_tests:
-        state["test_reopenings"][-1]["new_test_commit"] = authoritative_test_head
-        state["test_reopenings"][-1]["approved_at"] = state["approvals"]["tests"]["recorded_at"]
-        state["test_reopenings"][-1]["active"] = False
-    state["status"] = "IMPLEMENTATION"
-    _write_state(root, config, args.issue, state)
+    if state["status"] == "WAITING_FOR_TEST_HUMAN_APPROVAL":
+        state["approvals"]["tests"] = journal["authorization"]
+        state["test_commit"] = current
+        if reopened:
+            state["test_reopenings"][-1]["new_test_commit"] = current
+            state["test_reopenings"][-1]["approved_at"] = journal["authorization"]["recorded_at"]
+            state["test_reopenings"][-1]["active"] = False
+        state["status"] = "IMPLEMENTATION"
+        _write_state(root, config, issue, state)
+    else:
+        _ensure(
+            state.get("test_commit") == current
+            and state["approvals"].get("tests") == journal["authorization"],
+            "test-approval-journal-mismatch",
+            "Workflow state does not match finalized test approval",
+        )
+    journal["status"] = "finalized"
+    journal["finalized_at"] = journal.get("finalized_at") or _now()
+    _write_json_durable(_test_approval_journal_path(root, config, issue), journal)
     return {
         "ok": True,
         "status": state["status"],
-        "approval": acknowledgment,
-        "test_commit": authoritative_test_head,
+        "approval": journal["authorization"],
+        "test_commit": current,
     }
+
+
+def command_recover_tests_approval(args, root, config):
+    """Recover a durable Gate 2 journal without accepting new approval input."""
+    state = _read_state(root, config, args.issue)
+    journal = _read_test_approval_journal(root, config, args.issue)
+    _validate_test_approval_journal(root, config, state, journal)
+    _require_target_fresh(root, config, state, "recover-tests-approval")
+    return _complete_test_approval(root, config, args.issue, state, journal)
 
 
 def command_reject_tests(args, root, config):
@@ -1259,6 +1726,9 @@ def command_reopen_tests(args, root, config):
     state["approvals"]["tests"] = None
     state["test_commit"] = None
     _clear_post_tests(state)
+    journal = _test_approval_journal_path(root, config, args.issue)
+    if journal.exists():
+        journal.unlink()
     state["status"] = "TEST_IMPLEMENTATION"
     _write_state(root, config, args.issue, state)
     return {
@@ -1370,7 +1840,9 @@ def command_submit_implementation(args, root, config):
     state["implementation_candidate"] = {
         "test_commit": test_commit,
         "candidate_diff": candidate_diff_raw,
+        "candidate_diff_canonical": _canonicalize_diff(candidate_diff_raw),
         "candidate_paths": changed_names,
+        "candidate_tree": _candidate_tree(root, config, test_commit, changed_names),
         "accepted_at": _now(),
     }
     state["validation"] = None
@@ -1700,8 +2172,10 @@ def build_parser():
     _add_issue(submit_tests)
     _add_artifact(submit_tests)
     submit_tests.add_argument("--agent", required=True)
-    submit_tests.add_argument("--failure-command", required=True)
-    submit_tests.add_argument("--failure-contains", required=True)
+    submit_tests.add_argument("--failure-command")
+    submit_tests.add_argument("--failure-contains")
+    submit_tests.add_argument("--not-applicable", action="store_true")
+    submit_tests.add_argument("--reason", default="")
 
     review_tests = subparsers.add_parser("review-tests")
     _add_root(review_tests)
@@ -1714,6 +2188,10 @@ def build_parser():
     _add_root(approve_tests)
     _add_issue(approve_tests)
     _add_human(approve_tests)
+
+    recover_tests_approval = subparsers.add_parser("recover-tests-approval")
+    _add_root(recover_tests_approval)
+    _add_issue(recover_tests_approval)
 
     reject_tests = subparsers.add_parser("reject-tests")
     _add_root(reject_tests)
@@ -1776,6 +2254,7 @@ COMMANDS = {
     "submit-tests": command_submit_tests,
     "review-tests": command_review_tests,
     "approve-tests": command_approve_tests,
+    "recover-tests-approval": command_recover_tests_approval,
     "reject-tests": command_reject_tests,
     "reopen-tests": command_reopen_tests,
     "submit-implementation": command_submit_implementation,

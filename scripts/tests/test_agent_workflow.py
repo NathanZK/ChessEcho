@@ -307,6 +307,207 @@ class AgentWorkflowTest(unittest.TestCase):
         )
         self.assertEqual("WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", self.state()["status"])
 
+    def bootstrap_to_reviewed_tests(self):
+        self.write_artifact("plan.md", "plan")
+        self.write_artifact("plan-review.md", "plan review")
+        self.write_artifact("test-report.md", "tests")
+        self.write_artifact("test-review.md", "test review")
+        self.assertEqual(0, self.run_cli("init", str(ISSUE))[0])
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "submit-plan",
+                str(ISSUE),
+                "--artifact",
+                "artifacts-src/plan.md",
+                "--agent",
+                "chess-echo-planner",
+                "--scope",
+                "src/test/ExampleTest.kt",
+                "--scope",
+                "src/Example.kt",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "review-plan",
+                str(ISSUE),
+                "--status",
+                workflow.READY,
+                "--artifact",
+                "artifacts-src/plan-review.md",
+                "--reviewer",
+                "chess-echo-reviewer",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "approve-plan",
+                str(ISSUE),
+                "--by",
+                "owner",
+                "--confirm",
+                "plan_approved",
+            )[0],
+        )
+        (self.root / "src" / "test").mkdir(parents=True, exist_ok=True)
+        (self.root / "src" / "test" / "ExampleTest.kt").write_text(
+            "class ExampleTest { /* regression */ }\n", encoding="utf-8"
+        )
+        self.git("add", "src/test/ExampleTest.kt")
+        self.git("commit", "-qm", "submit regression tests")
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "submit-tests",
+                str(ISSUE),
+                "--artifact",
+                "artifacts-src/test-report.md",
+                "--agent",
+                "chess-echo-test-implementer",
+                "--failure-command",
+                "%s -c \"print('expected failure'); import sys; sys.exit(1)\"" % sys.executable,
+                "--failure-contains",
+                "expected failure",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "review-tests",
+                str(ISSUE),
+                "--status",
+                workflow.READY,
+                "--artifact",
+                "artifacts-src/test-review.md",
+                "--reviewer",
+                "chess-echo-reviewer",
+            )[0],
+        )
+        self.assertEqual("WAITING_FOR_TEST_HUMAN_APPROVAL", self.state()["status"])
+
+    def bootstrap_to_reviewed_not_applicable_tests(self):
+        self.write_artifact("plan.md", "plan")
+        self.write_artifact("plan-review.md", "plan review")
+        self.write_artifact("test-report.md", "tests")
+        self.write_artifact("test-review.md", "test review")
+        self.assertEqual(0, self.run_cli("init", str(ISSUE))[0])
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "submit-plan",
+                str(ISSUE),
+                "--artifact",
+                "artifacts-src/plan.md",
+                "--agent",
+                "chess-echo-planner",
+                "--scope",
+                "docs/engineering/agent-workflow.md",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "review-plan",
+                str(ISSUE),
+                "--status",
+                workflow.READY,
+                "--artifact",
+                "artifacts-src/plan-review.md",
+                "--reviewer",
+                "chess-echo-reviewer",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "approve-plan",
+                str(ISSUE),
+                "--by",
+                "owner",
+                "--confirm",
+                "plan_approved",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "submit-tests",
+                str(ISSUE),
+                "--artifact",
+                "artifacts-src/test-report.md",
+                "--agent",
+                "chess-echo-test-implementer",
+                "--not-applicable",
+                "--reason",
+                "Approved task has no test-file change.",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "review-tests",
+                str(ISSUE),
+                "--status",
+                workflow.READY,
+                "--artifact",
+                "artifacts-src/test-review.md",
+                "--reviewer",
+                "chess-echo-reviewer",
+            )[0],
+        )
+        self.assertEqual("WAITING_FOR_TEST_HUMAN_APPROVAL", self.state()["status"])
+
+    def _approval_transition_journal_path(self):
+        return (
+            self.root
+            / ".agent-workflow"
+            / "runs"
+            / f"issue-{ISSUE}"
+            / "test-approval-transition.json"
+        )
+
+    def approve_tests(self, patches=None):
+        return self.run_cli(
+            "approve-tests",
+            str(ISSUE),
+            "--by",
+            "owner",
+            "--confirm",
+            "tests_approved",
+            patches=patches,
+        )
+
+    def recover_tests_approval(self):
+        return self.run_cli("recover-tests-approval", str(ISSUE))
+
+    def fail_test_boundary_commit(self):
+        original = workflow._run_checked
+
+        def injected(command, limits, cwd, error_code, context):
+            if command[-1:] == ["workflow: approve tests"]:
+                raise workflow.WorkflowError(
+                    "injected-boundary-failure",
+                    "injected test boundary commit failure",
+                )
+            return original(command, limits, cwd, error_code, context)
+
+        return mock.patch.object(workflow, "_run_checked", side_effect=injected)
+
+    def create_pending_test_approval_journal(self):
+        candidate_head = self.git("rev-parse", "HEAD").stdout.strip()
+        code, payload, _ = self.approve_tests(patches=[self.fail_test_boundary_commit()])
+        self.assertEqual(1, code)
+        self.assertEqual("injected-boundary-failure", payload["error"]["code"])
+        self.assertEqual(candidate_head, self.git("rev-parse", "HEAD").stdout.strip())
+        journal_path = self._approval_transition_journal_path()
+        self.assertTrue(journal_path.is_file())
+        journal = json.loads(journal_path.read_text(encoding="utf-8"))
+        self.assertEqual("pending", journal["status"])
+        return journal
+
     def checkout_unrelated_branch_ahead_of_target(self, branch="unrelated-work"):
         self.git("checkout", "-q", "-b", branch)
         (self.root / "src" / "test").mkdir(parents=True, exist_ok=True)
@@ -1790,6 +1991,212 @@ class AgentWorkflowTest(unittest.TestCase):
         )
         self.assertEqual(1, code)
         self.assertEqual("tests-modified-after-approval", payload["error"]["code"])
+
+    def test_gate_two_journal_is_durable_before_boundary_commit(self):
+        """Gate 2 records all recovery bindings before mutating Git."""
+        self.bootstrap_to_reviewed_tests()
+        journal = self.create_pending_test_approval_journal()
+        state = self.state()
+
+        self.assertEqual(ISSUE, journal["issue"])
+        self.assertEqual("approve-tests", journal["operation"])
+        self.assertEqual("WAITING_FOR_TEST_HUMAN_APPROVAL", journal["from_status"])
+        self.assertEqual("IMPLEMENTATION", journal["to_status"])
+        self.assertEqual(state["target_head"], journal["target_head"])
+        self.assertEqual(state["approved_scope"], journal["approved_scope"])
+        self.assertEqual(state["test_commit"], journal["reviewed_test_candidate"]["test_commit"])
+        self.assertEqual(
+            state["test_implementation_status"],
+            journal["test_implementation_status"],
+        )
+        self.assertIsNone(state["approvals"]["tests"])
+        self.assertEqual("pending", journal["status"])
+
+    def test_gate_two_recovery_replays_pending_boundary_without_second_commit(self):
+        """A crash after journaling is recovered idempotently from the journal."""
+        self.bootstrap_to_reviewed_tests()
+        candidate_head = self.git("rev-parse", "HEAD").stdout.strip()
+        self.create_pending_test_approval_journal()
+
+        code, payload, _ = self.recover_tests_approval()
+        self.assertEqual(0, code)
+        self.assertEqual("IMPLEMENTATION", payload["status"])
+        recovered = self.state()
+        recovered_head = self.git("rev-parse", "HEAD").stdout.strip()
+        self.assertEqual(recovered_head, recovered["test_commit"])
+        self.assertNotEqual(candidate_head, recovered_head)
+        self.assertEqual(
+            "finalized",
+            json.loads(
+                self._approval_transition_journal_path().read_text(encoding="utf-8")
+            )["status"],
+        )
+
+        code, payload, _ = self.recover_tests_approval()
+        self.assertEqual(0, code)
+        self.assertEqual("IMPLEMENTATION", payload["status"])
+        self.assertEqual(recovered_head, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertEqual(recovered, self.state())
+
+    def test_gate_two_recovery_rejects_journal_binding_drift(self):
+        """Recovery fails closed when authorization or reviewed evidence drifts."""
+        self.bootstrap_to_reviewed_tests()
+        self.create_pending_test_approval_journal()
+        journal_path = self._approval_transition_journal_path()
+        journal = json.loads(journal_path.read_text(encoding="utf-8"))
+        journal["approved_scope"] = ["src/UnexpectedTest.kt"]
+        journal_path.write_text(json.dumps(journal, indent=2) + "\n", encoding="utf-8")
+        head_before = self.git("rev-parse", "HEAD").stdout.strip()
+
+        code, payload, _ = self.recover_tests_approval()
+        self.assertEqual(1, code)
+        self.assertEqual("test-approval-journal-mismatch", payload["error"]["code"])
+        self.assertEqual(head_before, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertEqual("WAITING_FOR_TEST_HUMAN_APPROVAL", self.state()["status"])
+
+    def test_gate_two_not_applicable_recovery_preserves_applicability(self):
+        """NOT_APPLICABLE Gate 2 recovery keeps its rationale and empty boundary."""
+        self.bootstrap_to_reviewed_not_applicable_tests()
+        target_head = self.state()["target_head"]
+        self.create_pending_test_approval_journal()
+        journal = json.loads(
+            self._approval_transition_journal_path().read_text(encoding="utf-8")
+        )
+        self.assertEqual("NOT_APPLICABLE", journal["test_implementation_status"])
+        self.assertEqual("", journal["reviewed_test_candidate"]["candidate_diff"])
+        self.assertEqual([], journal["reviewed_test_candidate"]["candidate_paths"])
+
+        code, payload, _ = self.recover_tests_approval()
+        self.assertEqual(0, code)
+        self.assertEqual("IMPLEMENTATION", payload["status"])
+        state = self.state()
+        self.assertEqual("NOT_APPLICABLE", state["test_implementation_status"])
+        self.assertEqual(
+            "Approved task has no test-file change.",
+            state["test_implementation_reason"],
+        )
+        self.assertNotEqual(target_head, state["test_commit"])
+
+    def test_gate_three_accepts_equivalent_candidate_with_different_diff_order(self):
+        """Gate 3 compares the authoritative tree, not patch serialization order."""
+        self.bootstrap_to_implementation()
+        state = self.state()
+        state["approved_scope"].append("src/Other.kt")
+        self.write_state(state)
+        (self.root / "src" / "Example.kt").write_text("implementation\n", encoding="utf-8")
+        (self.root / "src" / "Other.kt").write_text("second implementation\n", encoding="utf-8")
+        evidence = self.write_evidence()
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "submit-implementation",
+                str(ISSUE),
+                "--artifact",
+                "artifacts-src/implementation-report.md",
+                "--agent",
+                "chess-echo-implementer",
+                "--evidence",
+                evidence,
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "run-validation",
+                str(ISSUE),
+                "--profile",
+                "workflow-tooling",
+            )[0],
+        )
+        self.write_artifact("implementation-review.md", "implementation review")
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "review-implementation",
+                str(ISSUE),
+                "--status",
+                workflow.READY,
+                "--artifact",
+                "artifacts-src/implementation-review.md",
+                "--reviewer",
+                "chess-echo-reviewer",
+            )[0],
+        )
+        state = self.state()
+        candidate_diff = state["implementation_candidate"]["candidate_diff"]
+        sections = candidate_diff.split("diff --git ")
+        self.assertGreaterEqual(len(sections), 3)
+        state["implementation_candidate"]["candidate_diff"] = sections[0] + "diff --git ".join(
+            reversed(sections[1:])
+        )
+        self.write_state(state)
+
+        code, payload, _ = self.run_cli(
+            "approve-implementation",
+            str(ISSUE),
+            "--by",
+            "owner",
+            "--confirm",
+            "implementation_approved",
+        )
+        self.assertEqual(0, code)
+        self.assertEqual("DRAFT_PR_CREATION", payload["status"])
+        self.assertEqual(payload["implementation_commit"], self.state()["implementation_commit"])
+
+    def test_gate_three_rejects_candidate_path_drift_after_review(self):
+        """Gate 3 does not accept a candidate whose path set changed."""
+        self.bootstrap_to_reviewed_implementation()
+        (self.root / "src" / "Example.kt").rename(self.root / "src" / "Renamed.kt")
+
+        code, payload, _ = self.run_cli(
+            "approve-implementation",
+            str(ISSUE),
+            "--by",
+            "owner",
+            "--confirm",
+            "implementation_approved",
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("implementation-candidate-mismatch", payload["error"]["code"])
+        self.assertEqual("WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", self.state()["status"])
+
+    def test_gate_three_rejects_test_boundary_drift_after_review(self):
+        """Gate 3 rejects a production approval when approved tests were changed."""
+        self.bootstrap_to_reviewed_implementation()
+        (self.root / "src" / "test" / "ExampleTest.kt").write_text(
+            "tampered after review\n", encoding="utf-8"
+        )
+
+        code, payload, _ = self.run_cli(
+            "approve-implementation",
+            str(ISSUE),
+            "--by",
+            "owner",
+            "--confirm",
+            "implementation_approved",
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("tests-modified-after-approval", payload["error"]["code"])
+        self.assertEqual("WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", self.state()["status"])
+
+    def test_gate_three_rejects_persisted_candidate_identity_drift(self):
+        """Gate 3 rejects a persisted candidate whose identity no longer matches Git."""
+        self.bootstrap_to_reviewed_implementation()
+        state = self.state()
+        state["implementation_candidate"]["candidate_diff"] += "\n# persisted identity drift\n"
+        self.write_state(state)
+
+        code, payload, _ = self.run_cli(
+            "approve-implementation",
+            str(ISSUE),
+            "--by",
+            "owner",
+            "--confirm",
+            "implementation_approved",
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("implementation-candidate-mismatch", payload["error"]["code"])
+        self.assertEqual("WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", self.state()["status"])
 
 
 if __name__ == "__main__":
