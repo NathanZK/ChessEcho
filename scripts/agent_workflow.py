@@ -5776,6 +5776,34 @@ def _verify_completed_run_reconciled_commit(
             )
 
 
+def _load_authoritative_validation_config(scratch_root, context):
+    """Load and verify the validation configuration from the reconciliation
+    target itself, never from the caller's possibly-stale checkout.
+
+    Historical run evidence (the recorded ``validation_profile`` name,
+    approved scope, approved test boundary, etc.) remains a historical
+    input, but the executable validation profile *definitions* (setup and
+    check commands) used to replay it must reflect what the authoritative
+    target actually declares in ``.github/agent-workflow.json`` -- the
+    caller's live checkout may predate a validation config change (for
+    example a newly required setup step) and silently run reconciliation
+    checks against the wrong environment contract. ``scratch_root`` is
+    already checked out at the authoritative target, so re-running the same
+    schema validation used at startup both obtains and verifies the
+    authoritative configuration; any failure fails closed with no fallback
+    to the stale caller configuration.
+    """
+    try:
+        return _load_config(scratch_root)
+    except WorkflowError as error:
+        _raise(
+            "authoritative-config-unverifiable",
+            "%s could not obtain/verify the authoritative validation configuration "
+            "from the reconciliation target (%s: %s)"
+            % (context, error.code, error.message),
+        )
+
+
 def _attempt_completed_run_reconciliation(root, config, source, new_target, transition_id):
         context = "reconcile-completed-run"
         scratch = _completed_run_scratch_path(
@@ -5783,6 +5811,14 @@ def _attempt_completed_run_reconciliation(root, config, source, new_target, tran
         )
         _create_scratch_worktree(root, config, scratch, new_target, context)
         try:
+            authoritative_config = _load_authoritative_validation_config(scratch, context)
+            _ensure(
+                source["validation_profile"]
+                in authoritative_config["validation_profiles"],
+                "unknown-profile",
+                "%s authoritative target configuration is missing validation profile %s"
+                % (context, source["validation_profile"]),
+            )
             boundary_attempt = _try_apply_reconciliation_patch(
                 scratch, config, scratch.parent, source["approved_test_patch"]
             )
@@ -5811,7 +5847,7 @@ def _attempt_completed_run_reconciliation(root, config, source, new_target, tran
                     "checks": None,
                 }
             execution = _execute_validation_profile(
-                scratch, config, source["validation_profile"]
+                scratch, authoritative_config, source["validation_profile"]
             )
             if execution["checks"] is None:
                 # Setup (e.g. provisioning ignored/generated dependencies) failed

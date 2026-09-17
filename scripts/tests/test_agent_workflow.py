@@ -6775,6 +6775,148 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
         self.assertIsNone(journal.get("revision_issue"))
         self.assertIsNone(journal.get("outcome"))
 
+    def test_reconcile_completed_run_loads_setup_newly_added_at_authoritative_target(
+        self,
+    ):
+        """A stale caller checkout lacking a newly-introduced setup step must
+        not silently skip it: reconciliation must load and run the setup
+        declared by the authoritative target itself (issue #313)."""
+        parent_state = self.bootstrap_completed_parent(
+            self.PARENT_ISSUE, profile="workflow-tooling"
+        )
+        self.set_parent_draft_pr(
+            self.PARENT_ISSUE,
+            number=300,
+            head_ref_name="parent-branch",
+            head_ref_oid=parent_state["implementation_commit"],
+            url="https://example.test/pr/300",
+            repository="owner/repo",
+        )
+        # The caller's own live .github/agent-workflow.json (still checked
+        # out at the old implementation_commit) has no setup step for
+        # "workflow-tooling" -- this simulates the stale-caller-config shape
+        # from the #109 acceptance attempt.
+        stale_config = json.loads(
+            (self.root / ".github" / "agent-workflow.json").read_text(encoding="utf-8")
+        )
+        self.assertNotIn(
+            "setup", stale_config["validation_profiles"]["workflow-tooling"]
+        )
+
+        # The authoritative target (origin/main) advances with a config
+        # change that adds a required setup step to the same profile name.
+        authoritative_config = json.loads(json.dumps(stale_config))
+        authoritative_config["validation_profiles"]["workflow-tooling"]["setup"] = [
+            {
+                "name": "provision-generated-dependency",
+                "command": [
+                    sys.executable,
+                    "-c",
+                    "import pathlib\n"
+                    "d = pathlib.Path('generated')\n"
+                    "d.mkdir(exist_ok=True)\n"
+                    "(d / 'marker.txt').write_text('ok')\n",
+                ],
+            }
+        ]
+        new_target = self.advance_remote_ref_past_commit(
+            parent_state["target_head"],
+            {
+                ".github/agent-workflow.json": json.dumps(
+                    authoritative_config, indent=2
+                )
+                + "\n",
+                "unrelated.txt": "downstream unrelated change\n",
+            },
+        )
+        initial_pr = {
+            "number": 300,
+            "state": "OPEN",
+            "isDraft": True,
+            "baseRefName": "main",
+            "headRefName": "parent-branch",
+            "headRefOid": parent_state["implementation_commit"],
+            "headRepository": {"nameWithOwner": "owner/repo"},
+            "url": "https://example.test/pr/300",
+        }
+
+        with self.patch_gh_view_and_reflect_push(initial_pr):
+            code, payload, _ = self.reconcile_completed_run(self.PARENT_ISSUE)
+
+        self.assertEqual(0, code)
+        self.assertTrue(payload["ok"])
+        self.assertEqual("WORKFLOW_COMPLETED", payload["status"])
+        after = self.state_for(self.PARENT_ISSUE)
+        self.assertEqual(new_target, after["target_head"])
+        journal = json.loads(
+            self.completed_run_reconciliation_journal_path(
+                self.PARENT_ISSUE
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual("finalized", journal["status"])
+        self.assertEqual("reconciled", journal["outcome"])
+        # If the stale caller config were used, "setup" would be None
+        # because the caller's on-disk profile has no setup step at all.
+        self.assertIsNotNone(journal["setup"])
+        self.assertTrue(all(step["passed"] for step in journal["setup"]))
+
+    def test_reconcile_completed_run_fails_closed_when_authoritative_config_invalid(
+        self,
+    ):
+        """If the authoritative target's configuration cannot be obtained or
+        verified, reconciliation must fail closed with no fallback to the
+        caller's stale configuration (issue #313)."""
+        parent_state = self.bootstrap_completed_parent(self.PARENT_ISSUE)
+        self.set_parent_draft_pr(
+            self.PARENT_ISSUE,
+            number=300,
+            head_ref_name="parent-branch",
+            head_ref_oid=parent_state["implementation_commit"],
+            url="https://example.test/pr/300",
+            repository="owner/repo",
+        )
+        broken_config = json.loads(
+            (self.root / ".github" / "agent-workflow.json").read_text(encoding="utf-8")
+        )
+        # An authoritative config with no validation profiles at all fails
+        # the same schema validation applied at startup.
+        broken_config["validation_profiles"] = {}
+        self.advance_remote_ref_past_commit(
+            parent_state["target_head"],
+            {
+                ".github/agent-workflow.json": json.dumps(broken_config, indent=2)
+                + "\n",
+            },
+        )
+
+        code, payload, _ = self.reconcile_completed_run(self.PARENT_ISSUE)
+
+        self.assertEqual(1, code)
+        self.assertEqual(
+            "authoritative-config-unverifiable", payload["error"]["code"]
+        )
+        after = self.state_for(self.PARENT_ISSUE)
+        self.assertEqual("WORKFLOW_COMPLETED", after["status"])
+        journal = json.loads(
+            self.completed_run_reconciliation_journal_path(
+                self.PARENT_ISSUE
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual("pending", journal["status"])
+        self.assertIsNone(journal.get("revision_issue"))
+        self.assertIsNone(journal.get("outcome"))
+        scratch_root = (
+            self.root
+            / ".agent-workflow"
+            / "runs"
+            / ("issue-%s" % self.PARENT_ISSUE)
+            / ".scratch"
+        )
+        self.assertFalse(
+            scratch_root.exists() and any(scratch_root.iterdir()),
+            "scratch reconciliation worktree must be cleaned up",
+        )
+
     def test_reconcile_completed_run_starts_test_revision_when_validation_fails(self):
         parent_state = self.bootstrap_completed_parent(self.PARENT_ISSUE)
         self.set_parent_draft_pr(

@@ -734,6 +734,39 @@ no setup is configured), `setup_passed`, and `checks` (`null` when setup
 failed and checks never ran) so audits can distinguish a setup/environment
 failure from an actual check/test failure.
 
+### Configuration provenance for reconciliation
+
+`reconcile-completed-run` replays historical, already-approved evidence (the
+approved test boundary, the recovered production delta, the approved scope,
+the reviewed commit subject, and the recorded validation profile *name*), but
+the *executable* validation profile definitions — the `setup` and `checks`
+commands that a profile actually runs — must reflect what the authoritative
+reconciliation target currently declares in `.github/agent-workflow.json`,
+never whatever happens to be checked out in the caller's live worktree. A
+caller checkout can lag the authoritative target (for example, it may predate
+a change that added a required `setup` step for a profile), and running
+validation with that stale configuration can silently skip environment
+provisioning the authoritative target now requires, producing a misleading
+check failure instead of an accurate result.
+
+To avoid this, after the workflow creates its isolated scratch worktree at
+the newly resolved, strict-descendant authoritative target (see
+[Reconciling a completed run onto an advanced target](#reconciling-a-completed-run-onto-an-advanced-target)),
+it re-loads and re-validates `.github/agent-workflow.json` from that scratch
+worktree — the same schema validation applied to the caller's own
+configuration at startup — before running that profile's setup or checks.
+Only this freshly obtained and verified authoritative configuration is used
+to execute the recorded validation profile; the caller's original
+configuration is never substituted, and there is no fallback path to it. If
+the authoritative configuration cannot be loaded, fails schema validation, or
+no longer declares the recorded validation profile, the command fails closed
+with `authoritative-config-unverifiable` and leaves the reconciliation
+journal `pending` for retry, exactly like a `validation-setup-failed` outcome.
+This never mutates the completed run or its draft PR, and it is distinct from
+governance state such as roles, approvals, and command execution limits,
+which remain bound to the run's own recorded configuration and are
+unaffected. Historical run evidence itself is never rewritten by this check.
+
 ### Completed-run reconciliation journal
 
 Before any Git mutation, the workflow writes
