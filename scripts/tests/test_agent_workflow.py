@@ -421,8 +421,12 @@ class AgentWorkflowTest(unittest.TestCase):
         )
         return completed.stdout.strip()
 
-    def bootstrap_to_reviewed_implementation(self):
-        self.bootstrap_to_validation()
+    def bootstrap_to_reviewed_implementation(
+        self, implementation_paths=None, candidate_setup=None
+    ):
+        self.bootstrap_to_validation(
+            implementation_paths=implementation_paths, candidate_setup=candidate_setup
+        )
         self.write_artifact("implementation-review.md", "implementation review")
         self.assertEqual(
             0,
@@ -462,7 +466,9 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual(0, code)
         self.assertEqual("DRAFT_PR_CREATION", self.state()["status"])
 
-    def bootstrap_to_committed_candidate_pending_target_advance(self):
+    def bootstrap_to_committed_candidate_pending_target_advance(
+        self, implementation_paths=None, candidate_setup=None
+    ):
         """Reproduce the exact #276 crash shape that `reconcile-implementation-target` exists for.
 
         The implementation-approval journal is durable and valid, the
@@ -473,7 +479,9 @@ class AgentWorkflowTest(unittest.TestCase):
         descendant of the returned candidate commit (not of the original
         target) to complete the reconciliation scenario.
         """
-        self.bootstrap_to_reviewed_implementation()
+        self.bootstrap_to_reviewed_implementation(
+            implementation_paths=implementation_paths, candidate_setup=candidate_setup
+        )
         original_write_state = workflow._write_state
 
         def fail_final_state(root, config, issue, state):
@@ -503,7 +511,9 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assert_clean_status()
         return candidate_commit
 
-    def bootstrap_to_pending_journal_committed_candidate_pending_target_advance(self):
+    def bootstrap_to_pending_journal_committed_candidate_pending_target_advance(
+        self, implementation_paths=None, candidate_setup=None
+    ):
         """Create the pending-journal reconciliation shape introduced by issue #287.
 
         The implementation-approval transition journal is durably written in
@@ -516,7 +526,9 @@ class AgentWorkflowTest(unittest.TestCase):
           * HEAD at the exact interrupted candidate commit (direct child of
             the journal target_head)
         """
-        self.bootstrap_to_reviewed_implementation()
+        self.bootstrap_to_reviewed_implementation(
+            implementation_paths=implementation_paths, candidate_setup=candidate_setup
+        )
         original_write_json = workflow._write_json
         committed_journal_write_seen = False
 
@@ -555,6 +567,61 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assert_clean_status()
         return candidate_commit
 
+    def bootstrap_mixed_order_interrupted_candidate(self, source_shape):
+        """Create a legacy tracked-then-untracked diff that Git serializes by path."""
+        tracked_path = "src/ZTracked.kt"
+        added_path = "src/AAdded.kt"
+        paths = [tracked_path, added_path]
+        (self.root / tracked_path).parent.mkdir(parents=True, exist_ok=True)
+        (self.root / tracked_path).write_text("baseline\n", encoding="utf-8")
+        self.git("add", tracked_path)
+        self.git("commit", "-qm", "seed tracked implementation")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+
+        def add_untracked_candidate_file():
+            (self.root / added_path).write_text("added implementation\n", encoding="utf-8")
+
+        bootstrap = {
+            "committed-but-not-persisted": (
+                self.bootstrap_to_committed_candidate_pending_target_advance
+            ),
+            "pending": (
+                self.bootstrap_to_pending_journal_committed_candidate_pending_target_advance
+            ),
+        }[source_shape]
+        candidate_commit = bootstrap(
+            implementation_paths=paths, candidate_setup=add_untracked_candidate_file
+        )
+        journal = json.loads(self.transition_journal_path().read_text(encoding="utf-8"))
+        candidate = journal["implementation_candidate"]
+        encoded_diff = candidate["candidate_diff"].encode("utf-8")
+        journal["candidate_identity"] = {
+            "test_commit": journal["test_commit"],
+            "candidate_paths": sorted(candidate["candidate_paths"]),
+            "candidate_diff_sha256": hashlib.sha256(encoded_diff).hexdigest(),
+            "candidate_diff_bytes": len(encoded_diff),
+        }
+        self.transition_journal_path().write_text(
+            json.dumps(journal, indent=2) + "\n", encoding="utf-8"
+        )
+        legacy_diff = journal["implementation_candidate"]["candidate_diff"]
+        unified_diff = self.git(
+            "diff",
+            "--binary",
+            f"{journal['test_commit']}..{candidate_commit}",
+            "--",
+            *paths,
+        ).stdout
+        self.assertLess(
+            legacy_diff.index(f"b/{tracked_path}"),
+            legacy_diff.index(f"b/{added_path}"),
+        )
+        self.assertLess(
+            unified_diff.index(f"b/{added_path}"),
+            unified_diff.index(f"b/{tracked_path}"),
+        )
+        return candidate_commit
+
     def checkout_unrelated_branch_ahead_of_target(self, branch="unrelated-work"):
         self.git("checkout", "-q", "-b", branch)
         (self.root / "src" / "test").mkdir(parents=True, exist_ok=True)
@@ -582,7 +649,9 @@ class AgentWorkflowTest(unittest.TestCase):
         self.git("add", "-A", "src/main/HumanMoveBfsDto.kt")
         self.git("commit", "-qm", "2123f935 Revert \"Support excluded BFS players\"")
 
-    def bootstrap_to_waiting_for_test_approval(self):
+    def bootstrap_to_waiting_for_test_approval(self, implementation_paths=None):
+        if implementation_paths is None:
+            implementation_paths = ["src/Example.kt"]
         self.write_artifact("plan.md", "plan")
         self.write_artifact("plan-review.md", "plan review")
         self.write_artifact("test-report.md", "tests")
@@ -600,8 +669,7 @@ class AgentWorkflowTest(unittest.TestCase):
                 "chess-echo-planner",
                 "--scope",
                 "src/test/ExampleTest.kt",
-                "--scope",
-                "src/Example.kt",
+                *sum((["--scope", path] for path in implementation_paths), []),
             )[0],
         )
         (self.root / "src" / "test").mkdir(parents=True, exist_ok=True)
@@ -665,8 +733,10 @@ class AgentWorkflowTest(unittest.TestCase):
             )[0],
         )
 
-    def bootstrap_to_implementation(self):
-        self.bootstrap_to_waiting_for_test_approval()
+    def bootstrap_to_implementation(self, implementation_paths=None):
+        self.bootstrap_to_waiting_for_test_approval(
+            implementation_paths=implementation_paths
+        )
         self.write_artifact("implementation-report.md", "implementation")
         self.assertEqual(0, self.approve_tests()[0])
 
@@ -715,9 +785,17 @@ class AgentWorkflowTest(unittest.TestCase):
         )
         self.assertEqual("TEST_IMPLEMENTATION", self.state()["status"])
 
-    def bootstrap_to_validation(self, submit=True):
-        self.bootstrap_to_implementation()
-        (self.root / "src" / "Example.kt").write_text("implementation\n", encoding="utf-8")
+    def bootstrap_to_validation(
+        self, submit=True, implementation_paths=None, candidate_setup=None
+    ):
+        self.bootstrap_to_implementation(implementation_paths=implementation_paths)
+        implementation_path = (
+            implementation_paths[0] if implementation_paths else "src/Example.kt"
+        )
+        (self.root / implementation_path).parent.mkdir(parents=True, exist_ok=True)
+        (self.root / implementation_path).write_text("implementation\n", encoding="utf-8")
+        if candidate_setup:
+            candidate_setup()
         evidence_path = self.write_evidence()
         if not submit:
             return evidence_path
@@ -2735,6 +2813,51 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual(reconciled_commit, provenance["reconciled_commit"])
         self.assertEqual("owner", provenance["requested_by"])
         self.assertTrue(provenance["requested_at"])
+
+    def test_reconcile_implementation_target_accepts_reordered_legacy_diff_for_committed_journal(self):
+        """Legacy tracked-then-untracked candidate diffs reconcile after unified Git reordering."""
+        candidate_commit = self.bootstrap_mixed_order_interrupted_candidate(
+            "committed-but-not-persisted"
+        )
+        self.advance_remote_ref_past_commit(
+            self.state()["test_commit"], {"downstream.txt": "downstream\n"}
+        )
+
+        code, payload, _ = self.reconcile_implementation_target()
+
+        self.assertEqual(0, code)
+        self.assertTrue(payload["ok"])
+        self.assertEqual("DRAFT_PR_CREATION", self.state()["status"])
+
+    def test_reconcile_implementation_target_accepts_reordered_legacy_diff_for_pending_journal(self):
+        """Pending journals accept an exact candidate despite diff-section serialization order."""
+        candidate_commit = self.bootstrap_mixed_order_interrupted_candidate("pending")
+        self.advance_remote_ref_past_commit(
+            self.state()["test_commit"], {"downstream.txt": "downstream\n"}
+        )
+
+        code, payload, _ = self.reconcile_implementation_target()
+
+        self.assertEqual(0, code)
+        self.assertTrue(payload["ok"])
+        self.assertEqual("DRAFT_PR_CREATION", self.state()["status"])
+
+    def test_reconcile_implementation_target_rejects_genuine_content_difference_after_reordering(self):
+        """Canonical ordering must not mask an interrupted candidate content difference."""
+        candidate_commit = self.bootstrap_mixed_order_interrupted_candidate("pending")
+        self.advance_remote_ref_past_commit(
+            self.state()["test_commit"], {"downstream.txt": "downstream\n"}
+        )
+        (self.root / "src" / "ZTracked.kt").write_text(
+            "tampered implementation\n", encoding="utf-8"
+        )
+        drifted_commit = self.amend_head_preserving_subject()
+
+        code, payload, _ = self.reconcile_implementation_target()
+
+        self.assertEqual(1, code)
+        self.assertEqual("implementation-candidate-mismatch", payload["error"]["code"])
+        self.assertEqual(drifted_commit, self.git("rev-parse", "HEAD").stdout.strip())
 
     def test_reconcile_implementation_target_rejects_non_descendant_target(self):
         """An unrelated remote target can never become the reconciliation base."""

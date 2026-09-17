@@ -983,7 +983,62 @@ def _git_diff_text(root, config, base, head, paths=None):
     return completed["stdout_text"]
 
 
+def _canonical_candidate_diff(candidate_diff):
+    """Serialize exact per-file diff sections in a stable path order."""
+    _ensure(
+        isinstance(candidate_diff, str),
+        "invalid-implementation-candidate",
+        "candidate diff must be text",
+    )
+    if not candidate_diff:
+        return ""
+
+    sections = re.split(r"(?m)(?=^diff --git )", candidate_diff)
+    _ensure(
+        not sections[0] and all(section for section in sections[1:]),
+        "invalid-implementation-candidate",
+        "candidate diff must contain only complete file sections",
+    )
+    keyed_sections = []
+    for section in sections[1:]:
+        header = section.splitlines()[0] if section.splitlines() else ""
+        try:
+            header_paths = shlex.split(header.removeprefix("diff --git "))
+        except ValueError as error:
+            raise WorkflowError(
+                "invalid-implementation-candidate",
+                "candidate diff has an invalid file header",
+            ) from error
+        _ensure(
+            header.startswith("diff --git ")
+            and len(header_paths) == 2
+            and header_paths[0].startswith("a/")
+            and header_paths[1].startswith("b/"),
+            "invalid-implementation-candidate",
+            "candidate diff has an invalid file header",
+        )
+        keyed_sections.append((tuple(header_paths), section))
+
+    keys = [key for key, _ in keyed_sections]
+    _ensure(
+        len(keys) == len(set(keys)),
+        "invalid-implementation-candidate",
+        "candidate diff contains duplicate file sections",
+    )
+    return "".join(section for _, section in sorted(keyed_sections))
+
+
 def _candidate_identity(test_commit, candidate_diff, candidate_paths):
+    encoded = _canonical_candidate_diff(candidate_diff).encode("utf-8")
+    return {
+        "test_commit": test_commit,
+        "candidate_paths": sorted(candidate_paths),
+        "candidate_diff_sha256": hashlib.sha256(encoded).hexdigest(),
+        "candidate_diff_bytes": len(encoded),
+    }
+
+
+def _legacy_candidate_identity(test_commit, candidate_diff, candidate_paths):
     encoded = candidate_diff.encode("utf-8")
     return {
         "test_commit": test_commit,
@@ -991,6 +1046,13 @@ def _candidate_identity(test_commit, candidate_diff, candidate_paths):
         "candidate_diff_sha256": hashlib.sha256(encoded).hexdigest(),
         "candidate_diff_bytes": len(encoded),
     }
+
+
+def _candidate_identity_matches(identity, test_commit, candidate_diff, candidate_paths):
+    return identity in (
+        _candidate_identity(test_commit, candidate_diff, candidate_paths),
+        _legacy_candidate_identity(test_commit, candidate_diff, candidate_paths),
+    )
 
 
 def _git_index_diff(root, config, revision, paths=None):
@@ -1859,13 +1921,13 @@ def _validate_implementation_transition_journal(root, config, state, journal, co
         "implementation-approval-journal-mismatch",
         "%s candidate metadata does not match the workflow" % context,
     )
-    identity = _candidate_identity(
-        state.get("test_commit"),
-        candidate.get("candidate_diff"),
-        candidate.get("candidate_paths"),
-    )
     _ensure(
-        journal.get("candidate_identity") == identity,
+        _candidate_identity_matches(
+            journal.get("candidate_identity"),
+            state.get("test_commit"),
+            candidate.get("candidate_diff"),
+            candidate.get("candidate_paths"),
+        ),
         "implementation-approval-journal-mismatch",
         "%s candidate identity does not match the existing candidate" % context,
     )
@@ -2035,17 +2097,18 @@ def _verify_authoritative_implementation(
         root, config, test_commit, authoritative_head, candidate_paths
     )
     _ensure(
-        authoritative_candidate_diff == candidate["candidate_diff"],
+        _canonical_candidate_diff(authoritative_candidate_diff)
+        == _canonical_candidate_diff(candidate["candidate_diff"]),
         "implementation-candidate-mismatch",
         "%s authoritative commit does not contain the accepted candidate" % context,
     )
-    identity = _candidate_identity(
-        test_commit,
-        candidate["candidate_diff"],
-        candidate_paths,
-    )
     _ensure(
-        journal.get("candidate_identity") == identity,
+        _candidate_identity_matches(
+            journal.get("candidate_identity"),
+            test_commit,
+            candidate["candidate_diff"],
+            candidate_paths,
+        ),
         "implementation-approval-journal-mismatch",
         "%s authoritative candidate identity differs from the journal" % context,
     )
@@ -2066,7 +2129,8 @@ def _classify_recovery_shape(root, config, state, journal, context):
     if head == test_commit:
         current = _require_implementation_candidate_matches(root, config, state, context)
         _ensure(
-            current["candidate_diff"] == candidate_diff
+            _canonical_candidate_diff(current["candidate_diff"])
+            == _canonical_candidate_diff(candidate_diff)
             and current["candidate_paths"] == candidate_paths
             and status_paths == candidate_paths,
             "implementation-candidate-mismatch",
@@ -2083,7 +2147,8 @@ def _classify_recovery_shape(root, config, state, journal, context):
         _require_clean_worktree_against_index(root, config, context)
         _ensure(
             _git_index_names(root, config, test_commit) == candidate_paths
-            and _git_index_diff(root, config, test_commit) == candidate_diff,
+            and _canonical_candidate_diff(_git_index_diff(root, config, test_commit))
+            == _canonical_candidate_diff(candidate_diff),
             "implementation-candidate-mismatch",
             "%s staged candidate differs from the journal-bound candidate" % context,
         )
@@ -2100,7 +2165,8 @@ def _classify_recovery_shape(root, config, state, journal, context):
         )
         _ensure(
             _git_index_names(root, config, test_commit) == candidate_paths
-            and _git_index_diff(root, config, test_commit) == candidate_diff,
+            and _canonical_candidate_diff(_git_index_diff(root, config, test_commit))
+            == _canonical_candidate_diff(candidate_diff),
             "implementation-candidate-mismatch",
             "%s staged candidate differs from the journal-bound candidate" % context,
         )
@@ -2397,13 +2463,18 @@ def _verify_interrupted_candidate_commit(root, config, state, impl_journal, cand
 
     candidate_diff = _git_diff_text(root, config, test_commit, candidate_commit, candidate_paths)
     _ensure(
-        candidate_diff == candidate["candidate_diff"],
+        _canonical_candidate_diff(candidate_diff)
+        == _canonical_candidate_diff(candidate["candidate_diff"]),
         "implementation-candidate-mismatch",
         "%s interrupted candidate does not contain the accepted candidate" % context,
     )
-    identity = _candidate_identity(test_commit, candidate_diff, candidate_paths)
     _ensure(
-        impl_journal.get("candidate_identity") == identity,
+        _candidate_identity_matches(
+            impl_journal.get("candidate_identity"),
+            test_commit,
+            candidate["candidate_diff"],
+            candidate_paths,
+        ),
         "implementation-candidate-mismatch",
         "%s interrupted candidate identity differs from the journal" % context,
     )
@@ -3844,7 +3915,8 @@ def command_submit_implementation(args, root, config):
 
     recorded_diff = evidence.get("candidate_diff", "")
     _ensure(
-        candidate_diff_raw == recorded_diff,
+        _canonical_candidate_diff(candidate_diff_raw)
+        == _canonical_candidate_diff(recorded_diff),
         "evidence-candidate-mismatch",
         "current Git candidate diff does not match recorded evidence diff",
     )
