@@ -10,6 +10,13 @@ plugins {
 group = "com.chessecho"
 version = "0.0.1-SNAPSHOT"
 
+// Spring Boot's dependency-management BOM pins org.testcontainers artifacts to an
+// older release (1.19.8) that is incompatible with Docker Engine 29+'s minimum
+// supported client API version. Override the BOM property so the whole
+// org.testcontainers dependency graph resolves consistently to the compatible
+// version declared below, instead of only the directly-declared artifacts.
+extra["testcontainers.version"] = "1.21.4"
+
 java {
     toolchain {
         languageVersion.set(JavaLanguageVersion.of(21))
@@ -40,8 +47,8 @@ dependencies {
     // Apache HttpClient5 backs TestRestTemplate so it can send the credentialed-CORS
     // preflight headers (Origin, Access-Control-Request-Method) that the JDK client drops.
     testImplementation("org.apache.httpcomponents.client5:httpclient5")
-    testImplementation("org.testcontainers:postgresql:1.20.1")
-    testImplementation("org.testcontainers:junit-jupiter:1.20.1")
+    testImplementation("org.testcontainers:postgresql:1.21.4")
+    testImplementation("org.testcontainers:junit-jupiter:1.21.4")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     testRuntimeOnly("com.h2database:h2")
 }
