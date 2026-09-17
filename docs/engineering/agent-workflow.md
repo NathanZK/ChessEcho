@@ -518,6 +518,104 @@ Requirements:
   is a plain file read, not a workflow command, so no separate read path is
   needed or provided.
 
+## Governed revisions
+
+`start-revision` creates a new run for `ISSUE` that is bound to an existing,
+eligible parent run (`--parent-issue`) instead of starting from scratch. It
+exists so that a change requested after review — a wording fix, a follow-up
+implementation tweak, a test correction, or a genuine plan/scope change — only
+re-establishes the governance commitments actually affected, instead of
+mechanically rerunning the entire Plan → Tests → Implementation → Publication
+sequence.
+
+```bash
+python3 scripts/agent_workflow.py start-revision ISSUE --parent-issue PARENT_ISSUE --class cosmetic|implementation|test|plan --by REQUESTER
+```
+
+Eligibility and inheritance rules:
+
+- The parent run must exist, be in `DRAFT_PR_CREATION` or
+  `WORKFLOW_COMPLETED` (the same statuses `supersede-run` accepts), and have
+  an authoritative `implementation_commit` (`parent-run-not-eligible` /
+  `parent-run-missing-implementation-commit` otherwise). A run that never
+  reached an authoritative implementation has nothing settled to revise
+  incrementally.
+- `--class test` additionally requires the parent's tests to have been
+  `REQUIRED` (not `NOT_APPLICABLE`) — there is no test boundary to correct
+  otherwise.
+- `ISSUE` must not already have a run, and HEAD must already be at the
+  current authoritative `target_head` (the same starting condition as
+  `init`).
+- Every revision class **inherits the parent's approved plan and approved
+  scope by exact content** — never re-typed, never re-approved from
+  scratch — and enters the workflow at the class's entry boundary:
+  - `cosmetic` and `implementation` enter directly at `IMPLEMENTATION`,
+    inheriting the parent's approved test boundary as well as its plan.
+  - `test` enters at `TEST_IMPLEMENTATION`, inheriting only the approved
+    plan; the test boundary must be re-established.
+  - `plan` enters at `PLANNING`; nothing downstream is inherited.
+- For `cosmetic`/`implementation` revisions, the parent's approved test
+  boundary cannot be reused by SHA (the parent's `test_commit` is a sibling
+  of the parent's squashed `implementation_commit`, not an ancestor of the
+  new target). Instead, `start-revision` independently verifies — via a real
+  `git diff` against the current target — that the approved test file
+  content is byte-identical to what was approved, and only then treats the
+  current target itself as the (trivially satisfied) inherited test
+  boundary. Any drift fails closed with `inherited-test-content-drift`
+  rather than silently trusting stale test content.
+- The claimed `--class` is only a request, not a bypass:
+  `submit-implementation` independently derives the narrowest required
+  boundary from the parent implementation, approved scope/plan identity,
+  approved test paths, and current Git content. Claims narrower than that
+  boundary fail closed with `revision-class-mismatch`; broader claims remain
+  safe because they re-establish more downstream commitments.
+- A cosmetic Markdown revision is deliberately narrow. The current
+  deterministic classifier permits whitespace-only changes and Mermaid
+  direction changes (`LR`, `TB`, etc.) while requiring all semantic Markdown,
+  including node/edge labels, workflow rules, commands, security requirements,
+  acceptance criteria, and architecture behavior, to remain byte-equivalent
+  after normalization. Merely using a `.md` suffix is never sufficient.
+
+## PR revisions
+
+`publish-pr-revision` is the publication-side counterpart to `start-revision`:
+it lets a freshly governed revision update an **explicitly named, already
+open** draft PR instead of creating a new one. It is a distinct, separate
+operation from `create-draft-pr` — `create-draft-pr` never updates an
+existing PR, and `publish-pr-revision` never creates a new one.
+
+```bash
+python3 scripts/agent_workflow.py publish-pr-revision ISSUE --target-pr NUMBER --by REQUESTER --confirm pr_revision_confirmed
+python3 scripts/agent_workflow.py recover-pr-revision ISSUE
+```
+
+- Only runs created via `start-revision` are eligible
+  (`not-a-revision-run` otherwise), and the parent run must have a recorded
+  draft PR identity (repository, number, branch, head OID) captured by
+  `create-draft-pr` or a prior `publish-pr-revision`.
+- `--target-pr` must match that recorded identity exactly
+  (`pr-identity-mismatch`); nothing about which PR is updated is inferred.
+- Immediately before publishing, the PR's live state is independently
+  re-fetched via `gh pr view` and re-verified against every recorded
+  expectation: repository and number must match, it must still be `OPEN` and
+  a draft, target the configured base branch, keep the same head branch name,
+  and — critically — still be at the exact head commit recorded when the
+  parent PR identity was captured. Any divergence fails closed instead of
+  overwriting unexpected remote state.
+- The update is published with `git push --force-with-lease`, bound to the
+  exact previously-observed head, so a concurrent push that this run did not
+  see is rejected by Git itself rather than silently clobbered.
+- The operation is journaled (`chess-echo-pr-revision-transition-v1`) before
+  the push. After the leased push, the workflow independently re-reads the PR
+  and re-verifies its repository, number, open/draft state, base, branch, and
+  resulting head before finalizing. A post-push mismatch leaves the pending
+  journal intact for governed recovery.
+- `recover-pr-revision` first binds the journal back to the exact child run,
+  parent PR, expected old head, and approved new implementation. It then
+  revalidates the complete live PR identity/state. Only a fully matching
+  post-push head is finalized; the exact pre-push head is retryable, and every
+  other state fails closed rather than guessing whether publication occurred.
+
 ## Bounded execution
 
 All external commands run via `scripts/workflow_supervisor.py` with configured timeout, grace period, and output caps.
@@ -552,6 +650,9 @@ python3 scripts/agent_workflow.py reconcile-implementation-target ISSUE --by REQ
 python3 scripts/agent_workflow.py reconcile-implementation-target ISSUE --by REQUESTER --confirm implementation_target_reconciliation_reanchored
 python3 scripts/agent_workflow.py reject-implementation ISSUE --by LOGIN --reason "..."
 python3 scripts/agent_workflow.py create-draft-pr ISSUE --title "..." --body-file PATH
+python3 scripts/agent_workflow.py start-revision ISSUE --parent-issue PARENT_ISSUE --class cosmetic|implementation|test|plan --by REQUESTER
+python3 scripts/agent_workflow.py publish-pr-revision ISSUE --target-pr NUMBER --by REQUESTER --confirm pr_revision_confirmed
+python3 scripts/agent_workflow.py recover-pr-revision ISSUE
 ```
 
 `create-draft-pr` enforces the PR body section headings: `## What`, `## Why`, `## Testing`.

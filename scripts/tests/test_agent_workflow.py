@@ -5421,5 +5421,1033 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual(expected_head, payload["manifest"]["workflow_head_at_supersession"])
 
 
+class RevisionAndPrRevisionTest(AgentWorkflowTest):
+    """Tests for start-revision, cosmetic revision-class enforcement, and
+    publish-pr-revision/recover-pr-revision (issue #302)."""
+
+    PARENT_ISSUE = 9001
+    CHILD_ISSUE = 9002
+
+    def state_for(self, issue):
+        path = self.root / ".agent-workflow" / "runs" / ("issue-%s" % issue) / "state.json"
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def write_state_for(self, issue, state):
+        path = self.root / ".agent-workflow" / "runs" / ("issue-%s" % issue) / "state.json"
+        path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+    def patch_gh_and_push(self, pr_json=None, push_error=None, pr_json_sequence=None):
+        original = workflow._run_checked
+        responses = iter(pr_json_sequence or [])
+        self.gh_view_calls = []
+        self.git_push_calls = []
+
+        def injected(command, limits, cwd, code, context, env=None):
+            if command[:3] == ["gh", "pr", "view"]:
+                self.gh_view_calls.append(command)
+                response = next(responses) if pr_json_sequence is not None else pr_json
+                return {
+                    "command": command,
+                    "result": {"outcome": "success", "exit_code": 0},
+                    "stdout_text": json.dumps(response),
+                    "stderr_text": "",
+                }
+            if command[:2] == ["git", "push"]:
+                self.git_push_calls.append(command)
+                if push_error:
+                    raise workflow.WorkflowError(push_error, "injected push failure")
+                return {
+                    "command": command,
+                    "result": {"outcome": "success", "exit_code": 0},
+                    "stdout_text": "",
+                    "stderr_text": "",
+                }
+            return original(command, limits, cwd, code, context, env=env)
+
+        return mock.patch.object(workflow, "_run_checked", side_effect=injected)
+
+    def bootstrap_completed_parent(self, issue):
+        """Drive a small, real run through every gate to WORKFLOW_COMPLETED."""
+        self.write_artifact("parent-plan.md", "parent plan")
+        self.write_artifact("parent-plan-review.md", "parent plan review")
+        self.write_artifact("parent-test-report.md", "parent tests")
+        self.write_artifact("parent-test-review.md", "parent test review")
+        self.write_artifact("parent-impl-report.md", "parent implementation")
+        self.write_artifact("parent-impl-review.md", "parent implementation review")
+        self.write_artifact(
+            "parent-pr-body.md",
+            "## What\n- x\n\n## Why\n- y\n\n## Testing\n- z\n",
+        )
+
+        self.assertEqual(0, self.run_cli("init", str(issue))[0])
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "submit-plan", str(issue),
+                "--artifact", "artifacts-src/parent-plan.md",
+                "--agent", "chess-echo-planner",
+                "--scope", "docs/example.md",
+                "--scope", "src/main/Example.kt",
+                "--scope", "src/test/ExampleTest.kt",
+            )[0],
+        )
+        (self.root / "src" / "test").mkdir(parents=True, exist_ok=True)
+        (self.root / "src" / "test" / "ExampleTest.kt").write_text("test\n", encoding="utf-8")
+        self.git("add", "src/test/ExampleTest.kt")
+        self.git("commit", "-qm", "candidate tests for parent")
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "review-plan", str(issue),
+                "--status", workflow.READY,
+                "--artifact", "artifacts-src/parent-plan-review.md",
+                "--reviewer", "chess-echo-reviewer",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli("approve-plan", str(issue), "--by", "owner", "--confirm", "plan_approved")[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "submit-tests", str(issue),
+                "--artifact", "artifacts-src/parent-test-report.md",
+                "--agent", "chess-echo-test-implementer",
+                "--failure-command",
+                "%s -c \"print('expected failure'); import sys; sys.exit(1)\"" % sys.executable,
+                "--failure-contains", "expected failure",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "review-tests", str(issue),
+                "--status", workflow.READY,
+                "--artifact", "artifacts-src/parent-test-review.md",
+                "--reviewer", "chess-echo-reviewer",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli("approve-tests", str(issue), "--by", "owner", "--confirm", "tests_approved")[0],
+        )
+        (self.root / "docs").mkdir(parents=True, exist_ok=True)
+        (self.root / "docs" / "example.md").write_text(
+            "# Example\n\n```mermaid\nflowchart LR\n    A --> B\n```\n",
+            encoding="utf-8",
+        )
+        test_commit = self.state_for(issue)["test_commit"]
+        candidate_diff = self.git_candidate_diff(test_commit)
+        evidence = {
+            "test_command": "%s -c \"print('tests ok')\"" % sys.executable,
+            "test_scope": ["src/test/ExampleTest.kt"],
+            "exit_code": 0,
+            "result": "PASS",
+            "test_commit": test_commit,
+            "candidate_diff": candidate_diff,
+            "commit_subject": "Add example documentation for issue #%s" % issue,
+            "stdout": "tests ok\n",
+            "stderr": "",
+        }
+        evidence_path = self.root / "artifacts-src" / ("parent-evidence-%s.json" % issue)
+        evidence_path.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "submit-implementation", str(issue),
+                "--artifact", "artifacts-src/parent-impl-report.md",
+                "--agent", "chess-echo-implementer",
+                "--evidence", "artifacts-src/parent-evidence-%s.json" % issue,
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli("run-validation", str(issue), "--profile", "workflow-tooling")[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "review-implementation", str(issue),
+                "--status", workflow.READY,
+                "--artifact", "artifacts-src/parent-impl-review.md",
+                "--reviewer", "chess-echo-reviewer",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "approve-implementation", str(issue), "--by", "owner", "--confirm", "implementation_approved",
+            )[0],
+        )
+        self.assertEqual("DRAFT_PR_CREATION", self.state_for(issue)["status"])
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "create-draft-pr", str(issue),
+                "--title", "Parent PR",
+                "--body-file", "artifacts-src/parent-pr-body.md",
+                "--skip-github",
+            )[0],
+        )
+        self.assertEqual("WORKFLOW_COMPLETED", self.state_for(issue)["status"])
+        # --skip-github never calls gh, so identity is populated explicitly
+        # by callers that need publish-pr-revision's parent linkage.
+        return self.state_for(issue)
+
+    def advance_main_past(self, issue):
+        """Simulate the parent run's PR having merged: fast-forward origin/main."""
+        state = self.state_for(issue)
+        self.assertEqual(self.git("rev-parse", "HEAD").stdout.strip(), state["implementation_commit"])
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
+
+    def set_parent_draft_pr(
+        self,
+        issue,
+        number,
+        head_ref_name,
+        head_ref_oid,
+        url="https://example.test/pr/1",
+        repository="owner/repo",
+    ):
+        state = self.state_for(issue)
+        state["draft_pr"]["number"] = number
+        state["draft_pr"]["head_ref_name"] = head_ref_name
+        state["draft_pr"]["head_ref_oid"] = head_ref_oid
+        state["draft_pr"]["url"] = url
+        state["draft_pr"]["repository"] = repository
+        self.write_state_for(issue, state)
+
+    def test_start_revision_requires_eligible_parent_status(self):
+        code, payload, _ = self.run_cli(
+            "start-revision", str(self.CHILD_ISSUE),
+            "--parent-issue", str(self.PARENT_ISSUE),
+            "--class", "cosmetic",
+            "--by", "tester",
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("no-parent-run", payload["error"]["code"])
+
+        self.bootstrap_completed_parent(self.PARENT_ISSUE)
+        state = self.state_for(self.PARENT_ISSUE)
+        state["status"] = "IMPLEMENTATION"
+        self.write_state_for(self.PARENT_ISSUE, state)
+        code, payload, _ = self.run_cli(
+            "start-revision", str(self.CHILD_ISSUE),
+            "--parent-issue", str(self.PARENT_ISSUE),
+            "--class", "cosmetic",
+            "--by", "tester",
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("parent-run-not-eligible", payload["error"]["code"])
+
+    def test_start_revision_cosmetic_inherits_plan_and_tests_and_enters_implementation(self):
+        self.bootstrap_completed_parent(self.PARENT_ISSUE)
+        self.advance_main_past(self.PARENT_ISSUE)
+        parent_state = self.state_for(self.PARENT_ISSUE)
+
+        code, payload, _ = self.run_cli(
+            "start-revision", str(self.CHILD_ISSUE),
+            "--parent-issue", str(self.PARENT_ISSUE),
+            "--class", "cosmetic",
+            "--by", "tester",
+        )
+        self.assertEqual(0, code)
+        self.assertEqual("IMPLEMENTATION", payload["status"])
+        child_state = self.state_for(self.CHILD_ISSUE)
+        self.assertEqual(parent_state["approved_scope"], child_state["approved_scope"])
+        self.assertIsNotNone(child_state["approvals"]["plan"])
+        self.assertIsNotNone(child_state["approvals"]["tests"])
+        self.assertEqual(child_state["target_head"], child_state["test_commit"])
+        self.assertEqual(self.PARENT_ISSUE, child_state["parent_run"]["issue"])
+        self.assertEqual("cosmetic", child_state["parent_run"]["class"])
+
+    def test_start_revision_test_class_inherits_plan_only_and_enters_test_implementation(self):
+        self.bootstrap_completed_parent(self.PARENT_ISSUE)
+        self.advance_main_past(self.PARENT_ISSUE)
+
+        code, payload, _ = self.run_cli(
+            "start-revision", str(self.CHILD_ISSUE),
+            "--parent-issue", str(self.PARENT_ISSUE),
+            "--class", "test",
+            "--by", "tester",
+        )
+        self.assertEqual(0, code)
+        self.assertEqual("TEST_IMPLEMENTATION", payload["status"])
+        child_state = self.state_for(self.CHILD_ISSUE)
+        self.assertIsNotNone(child_state["approvals"]["plan"])
+        self.assertIsNone(child_state["approvals"]["tests"])
+        self.assertIsNone(child_state["test_commit"])
+
+    def test_start_revision_plan_class_inherits_nothing_and_enters_planning(self):
+        self.bootstrap_completed_parent(self.PARENT_ISSUE)
+        self.advance_main_past(self.PARENT_ISSUE)
+
+        code, payload, _ = self.run_cli(
+            "start-revision", str(self.CHILD_ISSUE),
+            "--parent-issue", str(self.PARENT_ISSUE),
+            "--class", "plan",
+            "--by", "tester",
+        )
+        self.assertEqual(0, code)
+        self.assertEqual("PLANNING", payload["status"])
+        child_state = self.state_for(self.CHILD_ISSUE)
+        self.assertIsNone(child_state["approved_scope"])
+        self.assertIsNone(child_state["approvals"]["plan"])
+        self.assertIsNone(child_state["approvals"]["tests"])
+
+    def test_submit_implementation_rejects_non_cosmetic_change_for_cosmetic_revision(self):
+        self.bootstrap_completed_parent(self.PARENT_ISSUE)
+        self.advance_main_past(self.PARENT_ISSUE)
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "start-revision", str(self.CHILD_ISSUE),
+                "--parent-issue", str(self.PARENT_ISSUE),
+                "--class", "cosmetic",
+                "--by", "tester",
+            )[0],
+        )
+        child_state = self.state_for(self.CHILD_ISSUE)
+        test_commit = child_state["test_commit"]
+        self.assertEqual(0, self.git("checkout", "-q", test_commit).returncode)
+
+        # An in-scope but non-documentation change while claiming a cosmetic
+        # revision must fail closed, independent of the agent's claimed class.
+        (self.root / "docs").mkdir(parents=True, exist_ok=True)
+        code_file = self.root / "docs" / "example.md"
+        code_file.write_text("# Example\nCosmetic wording fix.\n", encoding="utf-8")
+        in_scope_code_file = self.root / "src" / "main" / "Example.kt"
+        in_scope_code_file.parent.mkdir(parents=True, exist_ok=True)
+        in_scope_code_file.write_text("class Example\n", encoding="utf-8")
+
+        self.write_artifact("child-plan.md", "n/a")  # placeholder to keep artifacts-src populated
+        evidence_path = self.write_evidence(
+            name="child-evidence-cosmetic.json",
+            test_scope=["src/test/ExampleTest.kt"],
+            test_commit=test_commit,
+            candidate_diff=self.git_candidate_diff(test_commit),
+            commit_subject="Add cosmetic documentation fix for issue #%s" % self.CHILD_ISSUE,
+        )
+
+        code, payload, _ = self.run_cli(
+            "submit-implementation", str(self.CHILD_ISSUE),
+            "--artifact", "artifacts-src/parent-impl-report.md",
+            "--agent", "chess-echo-implementer",
+            "--evidence", evidence_path,
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("revision-class-mismatch", payload["error"]["code"])
+
+    def test_submit_implementation_accepts_cosmetic_change_for_cosmetic_revision(self):
+        self.bootstrap_completed_parent(self.PARENT_ISSUE)
+        self.advance_main_past(self.PARENT_ISSUE)
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "start-revision", str(self.CHILD_ISSUE),
+                "--parent-issue", str(self.PARENT_ISSUE),
+                "--class", "cosmetic",
+                "--by", "tester",
+            )[0],
+        )
+        child_state = self.state_for(self.CHILD_ISSUE)
+        test_commit = child_state["test_commit"]
+        self.assertEqual(0, self.git("checkout", "-q", test_commit).returncode)
+
+        (self.root / "docs").mkdir(parents=True, exist_ok=True)
+        doc_file = self.root / "docs" / "example.md"
+        doc_file.write_text(
+            "# Example\n\n```mermaid\nflowchart TB\n    A --> B\n```\n",
+            encoding="utf-8",
+        )
+
+        evidence_path = self.write_evidence(
+            name="child-evidence-cosmetic-ok.json",
+            test_scope=["src/test/ExampleTest.kt"],
+            test_commit=test_commit,
+            candidate_diff=self.git_candidate_diff(test_commit),
+            commit_subject="Add cosmetic documentation fix for issue #%s" % self.CHILD_ISSUE,
+        )
+        code, payload, _ = self.run_cli(
+            "submit-implementation", str(self.CHILD_ISSUE),
+            "--artifact", "artifacts-src/parent-impl-report.md",
+            "--agent", "chess-echo-implementer",
+            "--evidence", evidence_path,
+        )
+        self.assertEqual(0, code)
+        self.assertEqual("VALIDATION", payload["status"])
+
+    def test_implementation_revision_rejects_changed_approved_test(self):
+        self.bootstrap_completed_parent(self.PARENT_ISSUE)
+        self.advance_main_past(self.PARENT_ISSUE)
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "start-revision", str(self.CHILD_ISSUE),
+                "--parent-issue", str(self.PARENT_ISSUE),
+                "--class", "implementation",
+                "--by", "tester",
+            )[0],
+        )
+        child_state = self.state_for(self.CHILD_ISSUE)
+        test_commit = child_state["test_commit"]
+        self.assertEqual(0, self.git("checkout", "-q", test_commit).returncode)
+        (self.root / "src" / "main").mkdir(parents=True, exist_ok=True)
+        (self.root / "src" / "main" / "Example.kt").write_text(
+            "class Example\n", encoding="utf-8"
+        )
+        (self.root / "src" / "test" / "ExampleTest.kt").write_text(
+            "changed approved test\n", encoding="utf-8"
+        )
+        evidence_path = self.write_evidence(
+            name="child-evidence-changed-test.json",
+            test_scope=["src/test/ExampleTest.kt"],
+            test_commit=test_commit,
+            candidate_diff=self.git_candidate_diff(test_commit),
+            commit_subject="Change example implementation for issue #%s" % self.CHILD_ISSUE,
+        )
+        code, payload, _ = self.run_cli(
+            "submit-implementation", str(self.CHILD_ISSUE),
+            "--artifact", "artifacts-src/parent-impl-report.md",
+            "--agent", "chess-echo-implementer",
+            "--evidence", evidence_path,
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("revision-class-mismatch", payload["error"]["code"])
+
+    def test_implementation_revision_rejects_new_test_path(self):
+        self.bootstrap_completed_parent(self.PARENT_ISSUE)
+        self.advance_main_past(self.PARENT_ISSUE)
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "start-revision", str(self.CHILD_ISSUE),
+                "--parent-issue", str(self.PARENT_ISSUE),
+                "--class", "implementation",
+                "--by", "tester",
+            )[0],
+        )
+        child_state = self.state_for(self.CHILD_ISSUE)
+        test_commit = child_state["test_commit"]
+        self.assertEqual(0, self.git("checkout", "-q", test_commit).returncode)
+        (self.root / "src" / "main").mkdir(parents=True, exist_ok=True)
+        (self.root / "src" / "main" / "Example.kt").write_text(
+            "class Example\n", encoding="utf-8"
+        )
+        (self.root / "src" / "test" / "NewExampleTest.kt").write_text(
+            "new test\n", encoding="utf-8"
+        )
+        evidence_path = self.write_evidence(
+            name="child-evidence-new-test.json",
+            test_scope=["src/test/ExampleTest.kt"],
+            test_commit=test_commit,
+            candidate_diff=self.git_candidate_diff(test_commit),
+            commit_subject="Change example implementation for issue #%s" % self.CHILD_ISSUE,
+        )
+        code, payload, _ = self.run_cli(
+            "submit-implementation", str(self.CHILD_ISSUE),
+            "--artifact", "artifacts-src/parent-impl-report.md",
+            "--agent", "chess-echo-implementer",
+            "--evidence", evidence_path,
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("revision-class-mismatch", payload["error"]["code"])
+
+    def test_implementation_revision_rejects_deleted_approved_test(self):
+        self.bootstrap_completed_parent(self.PARENT_ISSUE)
+        self.advance_main_past(self.PARENT_ISSUE)
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "start-revision", str(self.CHILD_ISSUE),
+                "--parent-issue", str(self.PARENT_ISSUE),
+                "--class", "implementation",
+                "--by", "tester",
+            )[0],
+        )
+        child_state = self.state_for(self.CHILD_ISSUE)
+        test_commit = child_state["test_commit"]
+        self.assertEqual(0, self.git("checkout", "-q", test_commit).returncode)
+        (self.root / "src" / "main").mkdir(parents=True, exist_ok=True)
+        (self.root / "src" / "main" / "Example.kt").write_text(
+            "class Example\n", encoding="utf-8"
+        )
+        (self.root / "src" / "test" / "ExampleTest.kt").unlink()
+        evidence_path = self.write_evidence(
+            name="child-evidence-deleted-test.json",
+            test_scope=["src/test/ExampleTest.kt"],
+            test_commit=test_commit,
+            candidate_diff=self.git_candidate_diff(test_commit),
+            commit_subject="Change example implementation for issue #%s" % self.CHILD_ISSUE,
+        )
+        code, payload, _ = self.run_cli(
+            "submit-implementation", str(self.CHILD_ISSUE),
+            "--artifact", "artifacts-src/parent-impl-report.md",
+            "--agent", "chess-echo-implementer",
+            "--evidence", evidence_path,
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("revision-class-mismatch", payload["error"]["code"])
+
+    def test_cosmetic_markdown_classifier_accepts_layout_only_change(self):
+        before = "```mermaid\nflowchart LR\n    A --> B\n```\n"
+        after = "```mermaid\nflowchart TB\n    A --> B\n```\n"
+        self.assertTrue(
+            workflow._is_cosmetic_markdown_change(
+                "docs/engineering/diagram.md", before, after
+            )
+        )
+
+    def test_cosmetic_markdown_classifier_rejects_workflow_rule_change(self):
+        self.assertFalse(
+            workflow._is_cosmetic_markdown_change(
+                "docs/engineering/agent-workflow.md",
+                "The command must verify the approved scope.\n",
+                "The command may skip verification of the approved scope.\n",
+            )
+        )
+
+    def test_cosmetic_markdown_classifier_rejects_operational_command_change(self):
+        self.assertFalse(
+            workflow._is_cosmetic_markdown_change(
+                "docs/engineering/agent-workflow.md",
+                "`publish-pr-revision --confirm pr_revision_confirmed`\n",
+                "`publish-pr-revision --confirm bypassed`\n",
+            )
+        )
+
+    def test_cosmetic_markdown_classifier_rejects_security_requirement_change(self):
+        self.assertFalse(
+            workflow._is_cosmetic_markdown_change(
+                "docs/engineering/agent-workflow.md",
+                "Unexpected divergence must fail closed.\n",
+                "Unexpected divergence may be ignored.\n",
+            )
+        )
+
+    def test_cosmetic_markdown_classifier_rejects_acceptance_criteria_change(self):
+        self.assertFalse(
+            workflow._is_cosmetic_markdown_change(
+                "docs/engineering/agent-workflow.md",
+                "- [ ] Verify the live PR head.\n",
+                "- [ ] Trust the recorded PR head.\n",
+            )
+        )
+
+    def test_cosmetic_markdown_classifier_rejects_architecture_behavior_change(self):
+        self.assertFalse(
+            workflow._is_cosmetic_markdown_change(
+                "docs/engineering/agent-workflow-architecture.md",
+                "Only one authoritative implementation commit is published.\n",
+                "Multiple unrelated implementation commits may be published.\n",
+            )
+        )
+
+    def test_revision_boundary_classifier_orders_all_boundaries(self):
+        scope = ["docs/example.md", "src/main/Example.kt", "src/test/ExampleTest.kt"]
+        self.assertEqual(
+            "cosmetic",
+            workflow._classify_revision_boundary(
+                parent_scope=scope,
+                approved_scope=scope,
+                changed_paths=["docs/example.md"],
+                changed_test_paths=[],
+                cosmetic_content_valid=True,
+                plan_content_changed=False,
+            ),
+        )
+        self.assertEqual(
+            "implementation",
+            workflow._classify_revision_boundary(
+                parent_scope=scope,
+                approved_scope=scope,
+                changed_paths=["src/main/Example.kt"],
+                changed_test_paths=[],
+                cosmetic_content_valid=False,
+                plan_content_changed=False,
+            ),
+        )
+        self.assertEqual(
+            "test",
+            workflow._classify_revision_boundary(
+                parent_scope=scope,
+                approved_scope=scope,
+                changed_paths=["src/test/ExampleTest.kt", "src/main/Example.kt"],
+                changed_test_paths=["src/test/ExampleTest.kt"],
+                cosmetic_content_valid=False,
+                plan_content_changed=False,
+            ),
+        )
+        self.assertEqual(
+            "plan",
+            workflow._classify_revision_boundary(
+                parent_scope=scope,
+                approved_scope=scope + ["src/main/NewBehavior.kt"],
+                changed_paths=["src/main/NewBehavior.kt"],
+                changed_test_paths=[],
+                cosmetic_content_valid=False,
+                plan_content_changed=True,
+            ),
+        )
+
+    def test_revision_boundary_rejects_every_narrower_claim(self):
+        self.assertFalse(workflow._revision_claim_covers("cosmetic", "implementation"))
+        self.assertFalse(workflow._revision_claim_covers("implementation", "test"))
+        self.assertFalse(workflow._revision_claim_covers("test", "plan"))
+        self.assertTrue(workflow._revision_claim_covers("plan", "implementation"))
+
+    def bootstrap_child_at_draft_pr_creation(self, revision_class="implementation"):
+        self.bootstrap_completed_parent(self.PARENT_ISSUE)
+        self.advance_main_past(self.PARENT_ISSUE)
+        self.set_parent_draft_pr(
+            self.PARENT_ISSUE, number=300, head_ref_name="parent-branch",
+            head_ref_oid="0" * 40,
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "start-revision", str(self.CHILD_ISSUE),
+                "--parent-issue", str(self.PARENT_ISSUE),
+                "--class", revision_class,
+                "--by", "tester",
+            )[0],
+        )
+        child_state = self.state_for(self.CHILD_ISSUE)
+        test_commit = child_state["test_commit"]
+        self.assertEqual(0, self.git("checkout", "-q", test_commit).returncode)
+        (self.root / "docs").mkdir(parents=True, exist_ok=True)
+        doc_file = self.root / "docs" / "example.md"
+        doc_file.write_text("# Example\nCosmetic wording fix.\n", encoding="utf-8")
+        evidence_path = self.write_evidence(
+            name="child-evidence-publish.json",
+            test_scope=["src/test/ExampleTest.kt"],
+            test_commit=test_commit,
+            candidate_diff=self.git_candidate_diff(test_commit),
+            commit_subject="Add cosmetic documentation fix for issue #%s" % self.CHILD_ISSUE,
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "submit-implementation", str(self.CHILD_ISSUE),
+                "--artifact", "artifacts-src/parent-impl-report.md",
+                "--agent", "chess-echo-implementer",
+                "--evidence", evidence_path,
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli("run-validation", str(self.CHILD_ISSUE), "--profile", "workflow-tooling")[0],
+        )
+        self.write_artifact("child-impl-review.md", "child implementation review")
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "review-implementation", str(self.CHILD_ISSUE),
+                "--status", workflow.READY,
+                "--artifact", "artifacts-src/child-impl-review.md",
+                "--reviewer", "chess-echo-reviewer",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "approve-implementation", str(self.CHILD_ISSUE), "--by", "owner",
+                "--confirm", "implementation_approved",
+            )[0],
+        )
+        self.assertEqual("DRAFT_PR_CREATION", self.state_for(self.CHILD_ISSUE)["status"])
+
+    def test_publish_pr_revision_requires_revision_run(self):
+        self.bootstrap_completed_parent(self.PARENT_ISSUE)
+        state = self.state_for(self.PARENT_ISSUE)
+        state["status"] = "DRAFT_PR_CREATION"
+        self.write_state_for(self.PARENT_ISSUE, state)
+        code, payload, _ = self.run_cli(
+            "publish-pr-revision", str(self.PARENT_ISSUE),
+            "--target-pr", "300",
+            "--by", "owner",
+            "--confirm", "pr_revision_confirmed",
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("not-a-revision-run", payload["error"]["code"])
+
+    def test_publish_pr_revision_requires_matching_target_pr(self):
+        self.bootstrap_child_at_draft_pr_creation()
+        code, payload, _ = self.run_cli(
+            "publish-pr-revision", str(self.CHILD_ISSUE),
+            "--target-pr", "999",
+            "--by", "owner",
+            "--confirm", "pr_revision_confirmed",
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("pr-identity-mismatch", payload["error"]["code"])
+
+    def test_publish_pr_revision_fails_closed_on_head_divergence(self):
+        self.bootstrap_child_at_draft_pr_creation()
+        live_pr = {
+            "number": 300,
+            "state": "OPEN",
+            "isDraft": True,
+            "baseRefName": "main",
+            "headRefName": "parent-branch",
+            "headRefOid": "f" * 40,
+            "headRepository": {"nameWithOwner": "owner/repo"},
+            "url": "https://example.test/pr/300",
+        }
+        with self.patch_gh_and_push(pr_json=live_pr):
+            code, payload, _ = self.run_cli(
+                "publish-pr-revision", str(self.CHILD_ISSUE),
+                "--target-pr", "300",
+                "--by", "owner",
+                "--confirm", "pr_revision_confirmed",
+            )
+        self.assertEqual(1, code)
+        self.assertEqual("pr-head-diverged", payload["error"]["code"])
+
+    def test_publish_pr_revision_success_pushes_and_completes(self):
+        self.bootstrap_child_at_draft_pr_creation()
+        child_state = self.state_for(self.CHILD_ISSUE)
+        live_pr_before = {
+            "number": 300,
+            "state": "OPEN",
+            "isDraft": True,
+            "baseRefName": "main",
+            "headRefName": "parent-branch",
+            "headRefOid": "0" * 40,
+            "headRepository": {"nameWithOwner": "owner/repo"},
+            "url": "https://example.test/pr/300",
+        }
+        live_pr_after = dict(
+            live_pr_before, headRefOid=child_state["implementation_commit"]
+        )
+        with self.patch_gh_and_push(
+            pr_json_sequence=[live_pr_before, live_pr_after]
+        ):
+            code, payload, _ = self.run_cli(
+                "publish-pr-revision", str(self.CHILD_ISSUE),
+                "--target-pr", "300",
+                "--by", "owner",
+                "--confirm", "pr_revision_confirmed",
+            )
+        self.assertEqual(0, code)
+        self.assertEqual("WORKFLOW_COMPLETED", payload["status"])
+        child_state = self.state_for(self.CHILD_ISSUE)
+        self.assertEqual(300, child_state["draft_pr"]["number"])
+        self.assertEqual(
+            child_state["implementation_commit"], child_state["draft_pr"]["head_ref_oid"]
+        )
+        journal_path = (
+            self.root / ".agent-workflow" / "runs" / ("issue-%s" % self.CHILD_ISSUE)
+            / "pr-revision-transition.json"
+        )
+        journal = json.loads(journal_path.read_text(encoding="utf-8"))
+        self.assertEqual("finalized", journal["status"])
+        self.assertEqual(2, len(self.gh_view_calls))
+        self.assertIn(
+            "--force-with-lease=refs/heads/parent-branch:%s" % ("0" * 40),
+            self.git_push_calls[0],
+        )
+
+    def test_publish_pr_revision_rejects_non_draft_pr(self):
+        self.bootstrap_child_at_draft_pr_creation()
+        live_pr = {
+            "number": 300,
+            "state": "OPEN",
+            "isDraft": False,
+            "baseRefName": "main",
+            "headRefName": "parent-branch",
+            "headRefOid": "0" * 40,
+            "headRepository": {"nameWithOwner": "owner/repo"},
+            "url": "https://example.test/pr/300",
+        }
+        with self.patch_gh_and_push(pr_json=live_pr):
+            code, payload, _ = self.run_cli(
+                "publish-pr-revision", str(self.CHILD_ISSUE),
+                "--target-pr", "300",
+                "--by", "owner",
+                "--confirm", "pr_revision_confirmed",
+            )
+        self.assertEqual(1, code)
+        self.assertEqual("pr-not-draft", payload["error"]["code"])
+        self.assertEqual([], self.git_push_calls)
+
+    def test_publish_pr_revision_rejects_repository_mismatch(self):
+        self.bootstrap_child_at_draft_pr_creation()
+        live_pr = {
+            "number": 300,
+            "state": "OPEN",
+            "isDraft": True,
+            "baseRefName": "main",
+            "headRefName": "parent-branch",
+            "headRefOid": "0" * 40,
+            "headRepository": {"nameWithOwner": "attacker/fork"},
+            "url": "https://example.test/pr/300",
+        }
+        with self.patch_gh_and_push(pr_json=live_pr):
+            code, payload, _ = self.run_cli(
+                "publish-pr-revision", str(self.CHILD_ISSUE),
+                "--target-pr", "300",
+                "--by", "owner",
+                "--confirm", "pr_revision_confirmed",
+            )
+        self.assertEqual(1, code)
+        self.assertEqual("pr-repository-mismatch", payload["error"]["code"])
+        self.assertEqual([], self.git_push_calls)
+
+    def test_publish_pr_revision_keeps_pending_journal_on_post_push_divergence(self):
+        self.bootstrap_child_at_draft_pr_creation()
+        child_state = self.state_for(self.CHILD_ISSUE)
+        before = {
+            "number": 300,
+            "state": "OPEN",
+            "isDraft": True,
+            "baseRefName": "main",
+            "headRefName": "parent-branch",
+            "headRefOid": "0" * 40,
+            "headRepository": {"nameWithOwner": "owner/repo"},
+            "url": "https://example.test/pr/300",
+        }
+        diverged = dict(before, headRefOid="f" * 40)
+        with self.patch_gh_and_push(pr_json_sequence=[before, diverged]):
+            code, payload, _ = self.run_cli(
+                "publish-pr-revision", str(self.CHILD_ISSUE),
+                "--target-pr", "300",
+                "--by", "owner",
+                "--confirm", "pr_revision_confirmed",
+            )
+        self.assertEqual(1, code)
+        self.assertEqual("pr-revision-post-push-mismatch", payload["error"]["code"])
+        journal_path = (
+            self.root / ".agent-workflow" / "runs" / ("issue-%s" % self.CHILD_ISSUE)
+            / "pr-revision-transition.json"
+        )
+        journal = json.loads(journal_path.read_text(encoding="utf-8"))
+        self.assertEqual("pending", journal["status"])
+        self.assertEqual("DRAFT_PR_CREATION", self.state_for(self.CHILD_ISSUE)["status"])
+        self.assertEqual(child_state["implementation_commit"], journal["new_head"])
+
+    def test_recover_pr_revision_finalizes_after_interrupted_push(self):
+        self.bootstrap_child_at_draft_pr_creation()
+        child_state = self.state_for(self.CHILD_ISSUE)
+        new_head = child_state["implementation_commit"]
+        journal_path = (
+            self.root / ".agent-workflow" / "runs" / ("issue-%s" % self.CHILD_ISSUE)
+            / "pr-revision-transition.json"
+        )
+        journal_path.write_text(
+            json.dumps(
+                {
+                    "format": workflow.PR_REVISION_JOURNAL_FORMAT,
+                    "version": 1,
+                    "transition_id": "abc",
+                    "issue": self.CHILD_ISSUE,
+                    "operation": "publish-pr-revision",
+                    "created_at": "2020-01-01T00:00:00+00:00",
+                    "status": "pending",
+                    "target_pr": 300,
+                    "target_repository": "owner/repo",
+                    "target_base": "main",
+                    "target_branch": "parent-branch",
+                    "expected_head": "0" * 40,
+                    "new_head": new_head,
+                    "requested_by": "owner",
+                    "confirmation": "pr_revision_confirmed",
+                }
+            ),
+            encoding="utf-8",
+        )
+        live_pr = {
+            "number": 300,
+            "state": "OPEN",
+            "isDraft": True,
+            "baseRefName": "main",
+            "headRefName": "parent-branch",
+            "headRefOid": new_head,
+            "headRepository": {"nameWithOwner": "owner/repo"},
+            "url": "https://example.test/pr/300",
+        }
+        with self.patch_gh_and_push(pr_json=live_pr):
+            code, payload, _ = self.run_cli("recover-pr-revision", str(self.CHILD_ISSUE))
+        self.assertEqual(0, code)
+        self.assertTrue(payload["recovered"])
+        self.assertEqual("WORKFLOW_COMPLETED", self.state_for(self.CHILD_ISSUE)["status"])
+
+    def test_recover_pr_revision_retry_required_when_push_never_happened(self):
+        self.bootstrap_child_at_draft_pr_creation()
+        child_state = self.state_for(self.CHILD_ISSUE)
+        new_head = child_state["implementation_commit"]
+        journal_path = (
+            self.root / ".agent-workflow" / "runs" / ("issue-%s" % self.CHILD_ISSUE)
+            / "pr-revision-transition.json"
+        )
+        journal_path.write_text(
+            json.dumps(
+                {
+                    "format": workflow.PR_REVISION_JOURNAL_FORMAT,
+                    "version": 1,
+                    "transition_id": "abc",
+                    "issue": self.CHILD_ISSUE,
+                    "operation": "publish-pr-revision",
+                    "created_at": "2020-01-01T00:00:00+00:00",
+                    "status": "pending",
+                    "target_pr": 300,
+                    "target_repository": "owner/repo",
+                    "target_base": "main",
+                    "target_branch": "parent-branch",
+                    "expected_head": "0" * 40,
+                    "new_head": new_head,
+                    "requested_by": "owner",
+                    "confirmation": "pr_revision_confirmed",
+                }
+            ),
+            encoding="utf-8",
+        )
+        live_pr = {
+            "number": 300,
+            "state": "OPEN",
+            "isDraft": True,
+            "baseRefName": "main",
+            "headRefName": "parent-branch",
+            "headRefOid": "0" * 40,
+            "headRepository": {"nameWithOwner": "owner/repo"},
+            "url": "https://example.test/pr/300",
+        }
+        with self.patch_gh_and_push(pr_json=live_pr):
+            code, payload, _ = self.run_cli("recover-pr-revision", str(self.CHILD_ISSUE))
+        self.assertEqual(0, code)
+        self.assertTrue(payload["retry_required"])
+        self.assertNotEqual("WORKFLOW_COMPLETED", self.state_for(self.CHILD_ISSUE)["status"])
+
+    def test_recover_pr_revision_fails_closed_on_ambiguous_head(self):
+        self.bootstrap_child_at_draft_pr_creation()
+        child_state = self.state_for(self.CHILD_ISSUE)
+        new_head = child_state["implementation_commit"]
+        journal_path = (
+            self.root / ".agent-workflow" / "runs" / ("issue-%s" % self.CHILD_ISSUE)
+            / "pr-revision-transition.json"
+        )
+        journal_path.write_text(
+            json.dumps(
+                {
+                    "format": workflow.PR_REVISION_JOURNAL_FORMAT,
+                    "version": 1,
+                    "transition_id": "abc",
+                    "issue": self.CHILD_ISSUE,
+                    "operation": "publish-pr-revision",
+                    "created_at": "2020-01-01T00:00:00+00:00",
+                    "status": "pending",
+                    "target_pr": 300,
+                    "target_repository": "owner/repo",
+                    "target_base": "main",
+                    "target_branch": "parent-branch",
+                    "expected_head": "0" * 40,
+                    "new_head": new_head,
+                    "requested_by": "owner",
+                    "confirmation": "pr_revision_confirmed",
+                }
+            ),
+            encoding="utf-8",
+        )
+        live_pr = {
+            "number": 300,
+            "state": "OPEN",
+            "isDraft": True,
+            "baseRefName": "main",
+            "headRefName": "parent-branch",
+            "headRefOid": "e" * 40,
+            "headRepository": {"nameWithOwner": "owner/repo"},
+            "url": "https://example.test/pr/300",
+        }
+        with self.patch_gh_and_push(pr_json=live_pr):
+            code, payload, _ = self.run_cli("recover-pr-revision", str(self.CHILD_ISSUE))
+        self.assertEqual(1, code)
+        self.assertEqual("pr-revision-recovery-ambiguous", payload["error"]["code"])
+
+    def test_recover_pr_revision_revalidates_full_pr_state_before_finalizing(self):
+        self.bootstrap_child_at_draft_pr_creation()
+        child_state = self.state_for(self.CHILD_ISSUE)
+        new_head = child_state["implementation_commit"]
+        journal_path = (
+            self.root / ".agent-workflow" / "runs" / ("issue-%s" % self.CHILD_ISSUE)
+            / "pr-revision-transition.json"
+        )
+        journal_path.write_text(
+            json.dumps(
+                {
+                    "format": workflow.PR_REVISION_JOURNAL_FORMAT,
+                    "version": 1,
+                    "transition_id": "abc",
+                    "issue": self.CHILD_ISSUE,
+                    "operation": "publish-pr-revision",
+                    "created_at": "2020-01-01T00:00:00+00:00",
+                    "status": "pending",
+                    "target_pr": 300,
+                    "target_repository": "owner/repo",
+                    "target_base": "main",
+                    "target_branch": "parent-branch",
+                    "expected_head": "0" * 40,
+                    "new_head": new_head,
+                    "requested_by": "owner",
+                    "confirmation": "pr_revision_confirmed",
+                }
+            ),
+            encoding="utf-8",
+        )
+        closed_pr_at_new_head = {
+            "number": 300,
+            "state": "CLOSED",
+            "isDraft": True,
+            "baseRefName": "main",
+            "headRefName": "parent-branch",
+            "headRefOid": new_head,
+            "headRepository": {"nameWithOwner": "owner/repo"},
+            "url": "https://example.test/pr/300",
+        }
+        with self.patch_gh_and_push(pr_json=closed_pr_at_new_head):
+            code, payload, _ = self.run_cli(
+                "recover-pr-revision", str(self.CHILD_ISSUE)
+            )
+        self.assertEqual(1, code)
+        self.assertEqual("pr-revision-recovery-state-mismatch", payload["error"]["code"])
+        self.assertEqual("pending", json.loads(journal_path.read_text())["status"])
+        self.assertEqual("DRAFT_PR_CREATION", self.state_for(self.CHILD_ISSUE)["status"])
+
+    def test_recover_pr_revision_rejects_journal_bound_to_other_run(self):
+        self.bootstrap_child_at_draft_pr_creation()
+        child_state = self.state_for(self.CHILD_ISSUE)
+        journal_path = (
+            self.root / ".agent-workflow" / "runs" / ("issue-%s" % self.CHILD_ISSUE)
+            / "pr-revision-transition.json"
+        )
+        journal_path.write_text(
+            json.dumps(
+                {
+                    "format": workflow.PR_REVISION_JOURNAL_FORMAT,
+                    "version": 1,
+                    "transition_id": "abc",
+                    "issue": 9999,
+                    "operation": "publish-pr-revision",
+                    "created_at": "2020-01-01T00:00:00+00:00",
+                    "status": "pending",
+                    "target_pr": 300,
+                    "target_repository": "owner/repo",
+                    "target_base": "main",
+                    "target_branch": "parent-branch",
+                    "expected_head": "0" * 40,
+                    "new_head": child_state["implementation_commit"],
+                    "requested_by": "owner",
+                    "confirmation": "pr_revision_confirmed",
+                }
+            ),
+            encoding="utf-8",
+        )
+        code, payload, _ = self.run_cli(
+            "recover-pr-revision", str(self.CHILD_ISSUE)
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("pr-revision-journal-mismatch", payload["error"]["code"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -42,6 +42,22 @@ SUPERSESSION_FORMAT = "chess-echo-skill-workflow-supersession-v1"
 # command intentionally refuses to do.
 SUPERSESSION_ELIGIBLE_STATUSES = ("DRAFT_PR_CREATION", "WORKFLOW_COMPLETED")
 
+# A revision links a new run to an eligible parent run so only the
+# commitments downstream of the smallest affected boundary are
+# re-established. Eligibility mirrors supersession: a parent run must
+# already have cleared every human approval gate before it can be revised.
+REVISION_PARENT_ELIGIBLE_STATUSES = SUPERSESSION_ELIGIBLE_STATUSES
+REVISION_CLASSES = ("cosmetic", "implementation", "test", "plan")
+REVISION_ENTRY_STATUS = {
+    "cosmetic": "IMPLEMENTATION",
+    "implementation": "IMPLEMENTATION",
+    "test": "TEST_IMPLEMENTATION",
+    "plan": "PLANNING",
+}
+DEFAULT_PR_REVISION_CONFIRMATION = "pr_revision_confirmed"
+PR_REVISION_JOURNAL_FORMAT = "chess-echo-pr-revision-transition-v1"
+PR_REVISION_JOURNAL_STATUSES = ("pending", "finalized")
+
 STATUS_SEQUENCE = (
     "PLANNING",
     "PLAN_REVIEW",
@@ -332,6 +348,15 @@ def _load_config(root):
         )
     else:
         approvals["supersede"] = DEFAULT_SUPERSESSION_CONFIRMATION
+
+    if "pr_revision" in approvals:
+        _ensure(
+            isinstance(approvals.get("pr_revision"), str) and approvals["pr_revision"],
+            "invalid-config",
+            "workflow.approvals.pr_revision must be a non-empty string",
+        )
+    else:
+        approvals["pr_revision"] = DEFAULT_PR_REVISION_CONFIRMATION
 
     _ensure(
         workflow.get("approval_mechanism", LOCAL_ACKNOWLEDGMENT_KIND)
@@ -963,6 +988,28 @@ def _approved_test_paths(root, config, state, context):
     if not target_head:
         approved_candidate = _commit_parent(root, config, test_commit)
         target_head = _commit_parent(root, config, approved_candidate)
+    parent_run = state.get("parent_run") or {}
+    if parent_run.get("class") in ("cosmetic", "implementation"):
+        # A cosmetic/implementation revision inherits its parent's exact
+        # test_commit object by content copy (see command_start_revision).
+        # That commit is a sibling of the current target (both descend
+        # from the parent's original pre-test base), not its ancestor or
+        # descendant, so the usual "target_head..test_commit" diff is
+        # meaningless. Protect the parent's recorded test paths instead --
+        # they were themselves independently derived from a real diff when
+        # the parent run established them.
+        inherited_test_paths = parent_run.get("parent_test_paths")
+        _ensure(
+            isinstance(inherited_test_paths, list) and inherited_test_paths,
+            "missing-test-commit",
+            "%s must contain at least one test change" % context,
+        )
+        _ensure(
+            all(_is_test_file(path) and _path_in_scope(path, scope) for path in inherited_test_paths),
+            "test-scope-drift",
+            "%s may change only approved test files: %s" % (context, ", ".join(inherited_test_paths)),
+        )
+        return sorted(inherited_test_paths)
     test_paths = _git_diff_names(
         root, config, "%s..%s" % (target_head, test_commit)
     )
@@ -982,6 +1029,77 @@ def _git_diff_text(root, config, base, head, paths=None):
         "unable to compute diff for %s..%s" % (base, head),
     )
     return completed["stdout_text"]
+
+
+def _git_file_text(root, config, revision, path):
+    completed = _run_bounded(
+        _git_command(config, "show", "%s:%s" % (revision, path)),
+        _effective_limits(config, "git"),
+        root,
+    )
+    result = completed["result"]
+    if result.get("outcome") == "success" and result.get("exit_code") == 0:
+        return completed["stdout_text"]
+    return None
+
+
+def _artifact_sha256(root, artifact):
+    if not isinstance(artifact, dict) or not artifact.get("path"):
+        return None
+    path = root / artifact["path"]
+    _ensure(path.is_file(), "artifact-missing", "recorded artifact is missing: %s" % path)
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _derive_revision_boundary(root, config, state):
+    """Derive the minimum revision boundary from parent evidence and current content."""
+    parent_run = state.get("parent_run") or {}
+    parent_issue = parent_run.get("issue")
+    parent_commit = parent_run.get("parent_implementation_commit")
+    _ensure(
+        parent_issue is not None and parent_commit,
+        "invalid-parent-run",
+        "revision classification requires parent issue and implementation commit",
+    )
+    parent_state = _read_state(root, config, parent_issue)
+    _ensure(
+        parent_state.get("implementation_commit") == parent_commit,
+        "parent-run-drift",
+        "parent implementation identity changed after start-revision",
+    )
+    changed_paths = _git_candidate_names(root, config, parent_commit)
+    changed_test_paths = [path for path in changed_paths if _is_test_file(path)]
+    parent_plan = parent_state.get("artifacts", {}).get("plan")
+    current_plan = state.get("artifacts", {}).get("plan")
+    plan_content_changed = _artifact_sha256(root, parent_plan) != _artifact_sha256(
+        root, current_plan
+    )
+
+    cosmetic_content_valid = bool(changed_paths)
+    for path in changed_paths:
+        before = _git_file_text(root, config, parent_commit, path)
+        current_path = root / path
+        after = (
+            current_path.read_text(encoding="utf-8")
+            if current_path.is_file() and not current_path.is_symlink()
+            else None
+        )
+        if (
+            before is None
+            or after is None
+            or not _is_cosmetic_markdown_change(path, before, after)
+        ):
+            cosmetic_content_valid = False
+            break
+
+    return _classify_revision_boundary(
+        parent_scope=parent_run.get("parent_approved_scope") or [],
+        approved_scope=state.get("approved_scope") or [],
+        changed_paths=changed_paths,
+        changed_test_paths=changed_test_paths,
+        cosmetic_content_valid=cosmetic_content_valid,
+        plan_content_changed=plan_content_changed,
+    )
 
 
 def _canonical_candidate_diff(candidate_diff):
@@ -1581,6 +1699,94 @@ def _path_in_scope(path, scope):
     return any(path == allowed or path.startswith(allowed.rstrip("/") + "/") for allowed in scope)
 
 
+# Intentionally narrow: only documentation files are eligible for a
+# "cosmetic" revision today. Per-language structural/AST-equivalence
+# analysis for code files is documented future work, not implemented here,
+# so a cosmetic revision can never legitimately touch a code file.
+COSMETIC_ALLOWLIST_SUFFIXES = (".md",)
+REVISION_CLASS_ORDER = {
+    "cosmetic": 0,
+    "implementation": 1,
+    "test": 2,
+    "plan": 3,
+}
+
+
+def _is_cosmetic_allowlisted_path(path):
+    """Return whether a path may participate in a mechanically-checked cosmetic revision."""
+    return path.endswith(COSMETIC_ALLOWLIST_SUFFIXES)
+
+
+def _normalize_markdown_for_cosmetic_comparison(text):
+    """Remove only mechanically recognized presentation changes from Markdown."""
+    normalized = []
+    in_mermaid = False
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        if stripped == "```mermaid":
+            in_mermaid = True
+            normalized.append(stripped)
+            continue
+        if in_mermaid and stripped == "```":
+            in_mermaid = False
+            normalized.append(stripped)
+            continue
+        if in_mermaid and re.fullmatch(
+            r"(?:flowchart|graph|direction)\s+(?:TB|TD|BT|RL|LR)", stripped
+        ):
+            normalized.append("<mermaid-direction>")
+            continue
+        normalized.append(re.sub(r"\s+", " ", stripped))
+    _ensure(
+        not in_mermaid,
+        "invalid-cosmetic-markdown",
+        "cosmetic Markdown comparison requires closed Mermaid fences",
+    )
+    return "\n".join(normalized)
+
+
+def _is_cosmetic_markdown_change(path, before, after):
+    """Allow whitespace and Mermaid direction changes, never semantic text changes."""
+    return (
+        _is_cosmetic_allowlisted_path(path)
+        and before != after
+        and _normalize_markdown_for_cosmetic_comparison(before)
+        == _normalize_markdown_for_cosmetic_comparison(after)
+    )
+
+
+def _classify_revision_boundary(
+    *,
+    parent_scope,
+    approved_scope,
+    changed_paths,
+    changed_test_paths,
+    cosmetic_content_valid,
+    plan_content_changed,
+):
+    """Return the narrowest mechanically proven boundary for a revision."""
+    if (
+        plan_content_changed
+        or sorted(parent_scope or []) != sorted(approved_scope or [])
+        or any(not _path_in_scope(path, parent_scope or []) for path in changed_paths)
+    ):
+        return "plan"
+    if changed_test_paths:
+        return "test"
+    if changed_paths and cosmetic_content_valid:
+        return "cosmetic"
+    return "implementation"
+
+
+def _revision_claim_covers(claimed, required):
+    """Return whether a claimed boundary is at least as strict as required."""
+    return (
+        claimed in REVISION_CLASS_ORDER
+        and required in REVISION_CLASS_ORDER
+        and REVISION_CLASS_ORDER[claimed] >= REVISION_CLASS_ORDER[required]
+    )
+
+
 def _require_test_only(paths, scope, context):
     """Require that a commit contains only approved test paths."""
     _ensure(paths, "missing-test-commit", "%s must contain at least one test change" % context)
@@ -2070,7 +2276,15 @@ def _verify_authoritative_implementation(
     final_names = _git_diff_names(
         root, config, "%s..%s" % (target_head, authoritative_head)
     )
-    expected_names = sorted(set(test_paths).union(candidate_paths))
+    # When the approved test boundary already equals the target (an
+    # inherited boundary from a governed revision whose parent's tests
+    # were already merged), the approved test paths are not newly
+    # introduced by this diff -- they were already present in target_head
+    # -- so only the production candidate paths are expected here.
+    if test_commit == target_head:
+        expected_names = sorted(set(candidate_paths))
+    else:
+        expected_names = sorted(set(test_paths).union(candidate_paths))
     _ensure(
         final_names == expected_names,
         "implementation-scope-drift",
@@ -3255,6 +3469,182 @@ def command_init(args, root, config):
     return {"ok": True, "issue": args.issue, "status": state["status"], "run_dir": _relative(run, root)}
 
 
+def command_start_revision(args, root, config):
+    """Link a new run to an eligible parent run for a bounded governed revision.
+
+    Only the commitments downstream of the claimed revision class's entry
+    point are re-established; upstream artifacts/approvals are copied by
+    exact content, never re-typed, so every existing downstream check
+    (test-boundary re-verification, scope/topology checks, approval
+    confirmation phrases) re-validates them unchanged. The claimed class is
+    only a request: for a ``cosmetic`` revision, ``submit-implementation``
+    independently re-derives whether the actual diff qualifies and fails
+    closed with ``revision-class-mismatch`` if it does not.
+    """
+    revision_class = args.revision_class
+    _ensure(
+        revision_class in REVISION_CLASSES,
+        "invalid-revision-class",
+        "start-revision --class must be one of %s" % ", ".join(REVISION_CLASSES),
+    )
+    _ensure(
+        (args.by or "").strip(),
+        "missing-revision-authorization",
+        "start-revision requires a non-empty --by identity",
+    )
+
+    parent_issue = args.parent_issue
+    parent_run_dir = _run_root(root, config, parent_issue)
+    _ensure(
+        parent_run_dir.exists(),
+        "no-parent-run",
+        "start-revision requires an existing run for parent issue %s" % parent_issue,
+    )
+    parent_state = _read_state(root, config, parent_issue)
+    _ensure(
+        parent_state["status"] in REVISION_PARENT_ELIGIBLE_STATUSES,
+        "parent-run-not-eligible",
+        "start-revision requires the parent run to be in %s (current: %s)"
+        % (list(REVISION_PARENT_ELIGIBLE_STATUSES), parent_state["status"]),
+    )
+    _ensure(
+        parent_state.get("implementation_commit"),
+        "parent-run-missing-implementation-commit",
+        "start-revision requires the parent run to have an authoritative implementation commit",
+    )
+    if revision_class == "test":
+        _ensure(
+            parent_state.get("test_implementation_status") == "REQUIRED",
+            "parent-run-tests-not-applicable",
+            "start-revision --class test requires the parent run to have REQUIRED tests",
+        )
+
+    run = _run_root(root, config, args.issue)
+    _ensure(not run.exists(), "already-initialized", "Workflow run already exists for issue %s" % args.issue)
+    initial_head = _current_head(root, config)
+    target_head = _resolve_target_head(root, config, fetch=True)
+    _ensure(
+        initial_head == target_head,
+        "workflow-start-not-at-target",
+        "start-revision requires HEAD to match target branch %s at %s" % (config["target_base"], target_head),
+    )
+
+    parent_scope = parent_state.get("approved_scope") or []
+    parent_test_paths = []
+    if parent_state.get("test_implementation_status") == "REQUIRED":
+        parent_test_paths = _approved_test_paths(root, config, parent_state, "start-revision")
+
+    if revision_class in ("cosmetic", "implementation") and parent_test_paths:
+        # The parent's approved test_commit is not an ancestor of the new
+        # target (it is a sibling of the parent's squashed implementation
+        # commit, sharing only their common pre-test base). Rather than
+        # reusing that unrelated commit object, independently verify the
+        # approved test content survived the merge byte-for-byte at the
+        # current target, and use the target itself as the inherited test
+        # boundary so every ordinary ancestor/diff invariant downstream
+        # continues to hold unmodified.
+        parent_test_commit = parent_state.get("test_commit")
+        _ensure(
+            parent_test_commit,
+            "parent-run-missing-test-commit",
+            "start-revision requires the parent run's test_commit to verify inherited test content",
+        )
+        test_content_check = _run_bounded(
+            _git_command(
+                config, "diff", "--quiet", parent_test_commit, target_head, "--", *parent_test_paths
+            ),
+            _effective_limits(config, "git"),
+            root,
+        )
+        result = test_content_check["result"]
+        _ensure(
+            result.get("outcome") == "success" and result.get("exit_code") == 0,
+            "inherited-test-content-drift",
+            "start-revision requires the approved test content to be unchanged in the current target",
+        )
+
+    _artifacts_dir(root, config, args.issue).mkdir(parents=True, exist_ok=True)
+    state = {
+        "format": STATE_FORMAT,
+        "issue": args.issue,
+        "target_base": config["target_base"],
+        "status": REVISION_ENTRY_STATUS[revision_class],
+        "artifacts": {},
+        "approvals": {"plan": None, "tests": None, "implementation": None},
+        "validation": None,
+        "implementation_review_ready": False,
+        "draft_pr": None,
+        "initial_head": initial_head,
+        "base_head": target_head,
+        "target_head": target_head,
+        "approved_scope": None,
+        "test_commit": None,
+        "test_implementation_status": "REQUIRED",
+        "test_implementation_reason": None,
+        "implementation_candidate": None,
+        "implementation_commit": None,
+        "created_at": _now(),
+        "updated_at": _now(),
+        "parent_run": {
+            "issue": parent_issue,
+            "class": revision_class,
+            "requested_by": args.by,
+            "linked_at": _now(),
+            "parent_status_at_link": parent_state["status"],
+            "parent_implementation_commit": parent_state.get("implementation_commit"),
+            "parent_draft_pr": parent_state.get("draft_pr"),
+            "parent_approved_scope": parent_scope,
+            "parent_test_paths": parent_test_paths,
+        },
+    }
+
+    if revision_class in ("cosmetic", "implementation"):
+        # Plan and tests remain the trusted, unrevised boundary: copy the
+        # exact approved artifact bytes/content identity so downstream
+        # commands (submit-implementation, run-validation,
+        # approve-implementation) re-verify against the same evidence they
+        # always have, never a re-typed or re-asserted copy.
+        for kind in ("plan", "plan_review", "test_report", "test_review"):
+            artifact = parent_state["artifacts"].get(kind)
+            if artifact:
+                state["artifacts"][kind] = _record_artifact(
+                    root, config, args.issue, kind, root / artifact["path"]
+                )
+        state["approved_scope"] = parent_scope
+        state["approvals"]["plan"] = parent_state["approvals"].get("plan")
+        state["approvals"]["tests"] = parent_state["approvals"].get("tests")
+        state["test_commit"] = target_head if parent_test_paths else parent_state.get("test_commit")
+        state["test_implementation_status"] = parent_state.get("test_implementation_status")
+        state["test_implementation_reason"] = parent_state.get("test_implementation_reason")
+    elif revision_class == "test":
+        # Plan remains trusted; tests must be re-established through a
+        # fresh submit-tests -> review-tests -> approve-tests cycle, and
+        # implementation must subsequently be re-established against the
+        # revised approved test boundary (already enforced unchanged by
+        # submit-implementation's existing test-boundary checks).
+        for kind in ("plan", "plan_review"):
+            artifact = parent_state["artifacts"].get(kind)
+            if artifact:
+                state["artifacts"][kind] = _record_artifact(
+                    root, config, args.issue, kind, root / artifact["path"]
+                )
+        state["approved_scope"] = parent_scope
+        state["approvals"]["plan"] = parent_state["approvals"].get("plan")
+        state["test_implementation_status"] = parent_state.get("test_implementation_status")
+    # revision_class == "plan": nothing is inherited; a fresh submit-plan
+    # defines its own scope exactly like an ordinary new run, and every
+    # downstream approval must be re-established from scratch.
+
+    _write_state(root, config, args.issue, state)
+    return {
+        "ok": True,
+        "issue": args.issue,
+        "status": state["status"],
+        "run_dir": _relative(run, root),
+        "parent_run": state["parent_run"],
+    }
+
+
 def command_status(args, root, config):
     """Return the persisted gate state for one issue-local workflow run."""
     state = _read_state(root, config, args.issue)
@@ -4195,6 +4585,22 @@ def command_submit_implementation(args, root, config):
     # Check changed files in working tree against test_commit
     changed_names = _git_candidate_names(root, config, test_commit)
 
+    parent_run = state.get("parent_run")
+    if parent_run:
+        required_revision_class = _derive_revision_boundary(root, config, state)
+        claimed_revision_class = parent_run.get("class")
+        _ensure(
+            _revision_claim_covers(claimed_revision_class, required_revision_class),
+            "revision-class-mismatch",
+            "claimed %s revision is narrower than mechanically required %s boundary"
+            % (claimed_revision_class, required_revision_class),
+        )
+        state["revision_classification"] = {
+            "claimed": claimed_revision_class,
+            "required": required_revision_class,
+            "classified_at": _now(),
+        }
+
     _ensure(
         all(not _is_test_file(p) for p in changed_names),
         "tests-modified-after-approval",
@@ -4438,6 +4844,49 @@ def command_reject_implementation(args, root, config):
     return {"ok": True, "status": state["status"], "reason": args.reason}
 
 
+def _repository_from_pr_url(url):
+    match = re.match(r"https://github\.com/([^/]+/[^/]+)/pull/\d+(?:/.*)?$", url or "")
+    return match.group(1) if match else None
+
+
+def _authoritative_repository(config):
+    identity = _normalize_remote_identity(_authoritative_remote_expectation(config) or "")
+    parts = identity.split("/")
+    return "/".join(parts[-2:]) if len(parts) >= 3 else None
+
+
+def _lookup_pr_identity(root, config, pr_reference, repository=None):
+    """Independently look up a PR's number/branch/head/url via `gh pr view`."""
+    github_limits = _effective_limits(config, "github")
+    command = _github_command(
+        config,
+        "pr",
+        "view",
+        pr_reference,
+        "--json",
+        "number,headRefName,headRefOid,headRepository,baseRefName,state,isDraft,url",
+    )
+    if repository:
+        command.extend(["--repo", repository])
+    completed = _run_checked(
+        command,
+        github_limits,
+        root,
+        "pr-lookup-failed",
+        "unable to independently verify PR %s" % pr_reference,
+    )
+    try:
+        identity = json.loads(completed["stdout_text"])
+    except ValueError:
+        _raise("pr-lookup-invalid", "gh pr view returned malformed JSON for %s" % pr_reference)
+    head_repository = identity.get("headRepository")
+    if isinstance(head_repository, dict):
+        identity["repository"] = head_repository.get("nameWithOwner")
+    else:
+        identity["repository"] = _repository_from_pr_url(identity.get("url"))
+    return identity
+
+
 def command_create_draft_pr(args, root, config):
     """Publish only an approved one-commit branch rooted at the fresh target."""
     state = _read_state(root, config, args.issue)
@@ -4474,6 +4923,7 @@ def command_create_draft_pr(args, root, config):
         command.extend(["--head", args.head])
 
     publication = {"command": [shlex.join(command)], "executed": not args.skip_github}
+    pr_identity = {}
     if not args.skip_github:
         completed = _run_checked(
             command,
@@ -4483,16 +4933,337 @@ def command_create_draft_pr(args, root, config):
             "unable to create draft PR",
         )
         publication["stdout"] = completed["stdout_text"].strip()
+        # Independently look up the created PR's identity/head rather than
+        # trusting `gh pr create`'s text output, so a future governed
+        # revision can verify this exact PR before publishing to it.
+        pr_identity = _lookup_pr_identity(
+            root,
+            config,
+            publication["stdout"],
+            repository=_authoritative_repository(config),
+        )
 
     state["draft_pr"] = {
         "created_at": _now(),
         "title": args.title,
         "body_file": _relative(body_path, root),
         "publication": publication,
+        "number": pr_identity.get("number"),
+        "head_ref_name": pr_identity.get("headRefName"),
+        "head_ref_oid": pr_identity.get("headRefOid"),
+        "repository": pr_identity.get("repository")
+        or _authoritative_repository(config)
+        or _repository_from_pr_url(pr_identity.get("url")),
+        "url": pr_identity.get("url"),
     }
     state["status"] = "WORKFLOW_COMPLETED"
     _write_state(root, config, args.issue, state)
     return {"ok": True, "status": state["status"], "draft_pr": state["draft_pr"]}
+
+
+def _pr_revision_journal_path(root, config, issue):
+    return _run_root(root, config, issue) / "pr-revision-transition.json"
+
+
+def _require_pr_revision_identity(live, expected, context):
+    checks = (
+        ("number", "pr-identity-mismatch"),
+        ("repository", "pr-repository-mismatch"),
+        ("baseRefName", "pr-base-mismatch"),
+        ("headRefName", "pr-branch-mismatch"),
+    )
+    for field, code in checks:
+        _ensure(
+            live.get(field) == expected.get(field),
+            code,
+            "%s requires %s=%s (observed: %s)"
+            % (context, field, expected.get(field), live.get(field)),
+        )
+    _ensure(
+        live.get("state") == "OPEN",
+        "pr-not-open" if context == "publish-pr-revision" else "pr-revision-recovery-state-mismatch",
+        "%s requires the PR to remain OPEN" % context,
+    )
+    _ensure(
+        live.get("isDraft") is True,
+        "pr-not-draft" if context == "publish-pr-revision" else "pr-revision-recovery-state-mismatch",
+        "%s requires the PR to remain a draft" % context,
+    )
+
+
+def _pr_revision_expected_identity(number, repository, base, branch):
+    return {
+        "number": number,
+        "repository": repository,
+        "baseRefName": base,
+        "headRefName": branch,
+    }
+
+
+def command_publish_pr_revision(args, root, config):
+    """Publish a governed revision as an update to an explicitly named, existing draft PR.
+
+    This is a separate, distinct operation from `create-draft-pr`: it never
+    creates a new PR and `create-draft-pr` never updates an existing one.
+    The named PR's identity, base, state, and current head are
+    independently re-verified via `gh pr view` immediately before
+    publishing; any divergence from what this run's `start-revision`
+    recorded for its parent fails closed rather than silently overwriting
+    unexpected remote state.
+    """
+    state = _read_state(root, config, args.issue)
+    _expect_status(state, "DRAFT_PR_CREATION", "publish-pr-revision")
+    parent_run = state.get("parent_run")
+    _ensure(
+        parent_run,
+        "not-a-revision-run",
+        "publish-pr-revision requires a run created via start-revision",
+    )
+    parent_draft_pr = parent_run.get("parent_draft_pr") or {}
+    expected_number = parent_draft_pr.get("number")
+    expected_head = parent_draft_pr.get("head_ref_oid")
+    expected_branch = parent_draft_pr.get("head_ref_name")
+    expected_repository = (
+        parent_draft_pr.get("repository")
+        or _repository_from_pr_url(parent_draft_pr.get("url"))
+        or _authoritative_repository(config)
+    )
+    _ensure(
+        expected_number is not None
+        and expected_head
+        and expected_branch
+        and expected_repository,
+        "parent-draft-pr-missing-identity",
+        "publish-pr-revision requires the parent run to have a recorded draft PR identity "
+        "(repository, number, branch, and head) from create-draft-pr or a prior publish-pr-revision",
+    )
+    _ensure(
+        args.target_pr == expected_number,
+        "pr-identity-mismatch",
+        "publish-pr-revision --target-pr %s does not match the parent run's recorded PR #%s"
+        % (args.target_pr, expected_number),
+    )
+
+    implementation_commit = state.get("implementation_commit")
+    head = _current_head(root, config)
+    _ensure(
+        implementation_commit and head == implementation_commit,
+        "implementation-commit-mismatch",
+        "publish-pr-revision requires HEAD to match approved implementation_commit",
+    )
+    _require_clean_tree(root, config, "publish-pr-revision")
+    _require_publication_topology(root, config, state, head, "publish-pr-revision")
+
+    approvals = config["workflow"]["approvals"]
+    expected_confirmation = approvals.get("pr_revision", DEFAULT_PR_REVISION_CONFIRMATION)
+    _ensure(
+        args.confirm == expected_confirmation,
+        "approval-confirmation-mismatch",
+        "Expected confirmation phrase for pr_revision gate: %s" % expected_confirmation,
+    )
+    _ensure(
+        (args.by or "").strip(),
+        "missing-revision-authorization",
+        "publish-pr-revision requires a non-empty --by identity",
+    )
+
+    # Independently re-fetch live PR state; never trust the journal or a
+    # prior lookup for the divergence check itself.
+    expected_identity = _pr_revision_expected_identity(
+        expected_number,
+        expected_repository,
+        config["target_base"],
+        expected_branch,
+    )
+    live = _lookup_pr_identity(
+        root, config, str(args.target_pr), repository=expected_repository
+    )
+    _require_pr_revision_identity(live, expected_identity, "publish-pr-revision")
+    observed_head = live.get("headRefOid")
+    _ensure(
+        observed_head == expected_head,
+        "pr-head-diverged",
+        "publish-pr-revision requires PR #%s head to remain %s (observed: %s)"
+        % (args.target_pr, expected_head, observed_head),
+    )
+
+    journal_path = _pr_revision_journal_path(root, config, args.issue)
+    journal = {
+        "format": PR_REVISION_JOURNAL_FORMAT,
+        "version": 1,
+        "transition_id": uuid.uuid4().hex,
+        "issue": args.issue,
+        "operation": "publish-pr-revision",
+        "created_at": _now(),
+        "status": "pending",
+        "target_pr": args.target_pr,
+        "target_repository": expected_repository,
+        "target_base": config["target_base"],
+        "target_branch": expected_branch,
+        "expected_head": expected_head,
+        "new_head": implementation_commit,
+        "parent_issue": parent_run.get("issue"),
+        "parent_implementation_commit": parent_run.get("parent_implementation_commit"),
+        "requested_by": args.by,
+        "confirmation": args.confirm,
+    }
+    _write_json(journal_path, journal)
+
+    github_limits = _effective_limits(config, "github")
+    push_command = _git_command(
+        config,
+        "push",
+        "origin",
+        "%s:refs/heads/%s" % (implementation_commit, expected_branch),
+        "--force-with-lease=refs/heads/%s:%s" % (expected_branch, expected_head),
+    )
+    _run_checked(
+        push_command,
+        github_limits,
+        root,
+        "pr-revision-push-failed",
+        "unable to publish revision to PR #%s" % args.target_pr,
+    )
+
+    published = _lookup_pr_identity(
+        root, config, str(args.target_pr), repository=expected_repository
+    )
+    try:
+        _require_pr_revision_identity(
+            published, expected_identity, "publish-pr-revision post-push"
+        )
+        _ensure(
+            published.get("headRefOid") == implementation_commit,
+            "pr-revision-post-push-mismatch",
+            "publish-pr-revision post-push head does not match the approved implementation",
+        )
+    except WorkflowError as error:
+        raise WorkflowError(
+            "pr-revision-post-push-mismatch",
+            "post-push PR verification failed: %s" % error.message,
+        ) from error
+
+    journal["status"] = "finalized"
+    journal["finalized_at"] = _now()
+    _write_json(journal_path, journal)
+
+    state["draft_pr"] = {
+        "created_at": parent_draft_pr.get("created_at"),
+        "title": parent_draft_pr.get("title"),
+        "body_file": parent_draft_pr.get("body_file"),
+        "publication": {"command": [shlex.join(push_command)], "executed": True},
+        "number": expected_number,
+        "head_ref_name": expected_branch,
+        "head_ref_oid": implementation_commit,
+        "repository": expected_repository,
+        "url": parent_draft_pr.get("url"),
+        "revision_of": {"target_pr": args.target_pr, "previous_head": expected_head},
+    }
+    state["status"] = "WORKFLOW_COMPLETED"
+    _write_state(root, config, args.issue, state)
+    return {"ok": True, "status": state["status"], "draft_pr": state["draft_pr"]}
+
+
+def command_recover_pr_revision(args, root, config):
+    """Recover an interrupted publish-pr-revision by re-verifying live PR state.
+
+    Never resolves ambiguity by inference: if the PR's live head matches
+    neither the pre-push nor post-push head this run recorded, recovery
+    fails closed and requires explicit operator investigation.
+    """
+    state = _read_state(root, config, args.issue)
+    journal_path = _pr_revision_journal_path(root, config, args.issue)
+    _ensure(
+        journal_path.exists(),
+        "no-pr-revision-journal",
+        "recover-pr-revision requires a prior publish-pr-revision attempt for issue %s" % args.issue,
+    )
+    journal = _read_json(journal_path, "pr-revision transition journal")
+    _ensure(
+        journal.get("format") == PR_REVISION_JOURNAL_FORMAT,
+        "invalid-pr-revision-journal",
+        "pr-revision transition journal has unsupported format",
+    )
+    parent_run = state.get("parent_run") or {}
+    parent_draft_pr = parent_run.get("parent_draft_pr") or {}
+    expected_repository = (
+        parent_draft_pr.get("repository")
+        or _repository_from_pr_url(parent_draft_pr.get("url"))
+        or _authoritative_repository(config)
+    )
+    _ensure(
+        journal.get("operation") == "publish-pr-revision"
+        and journal.get("issue") == state.get("issue")
+        and journal.get("status") in PR_REVISION_JOURNAL_STATUSES
+        and journal.get("target_pr") == parent_draft_pr.get("number")
+        and journal.get("target_repository") == expected_repository
+        and journal.get("target_base") == config["target_base"]
+        and journal.get("target_branch") == parent_draft_pr.get("head_ref_name")
+        and journal.get("expected_head") == parent_draft_pr.get("head_ref_oid")
+        and journal.get("new_head") == state.get("implementation_commit"),
+        "pr-revision-journal-mismatch",
+        "pr-revision journal is not bound to the current revision run and parent PR",
+    )
+    if journal.get("status") == "finalized" and state.get("status") == "WORKFLOW_COMPLETED":
+        return {"ok": True, "status": state["status"], "recovered": False, "already_finalized": True}
+
+    _expect_status(state, "DRAFT_PR_CREATION", "recover-pr-revision")
+    expected_identity = _pr_revision_expected_identity(
+        journal["target_pr"],
+        journal["target_repository"],
+        journal["target_base"],
+        journal["target_branch"],
+    )
+    live = _lookup_pr_identity(
+        root,
+        config,
+        str(journal["target_pr"]),
+        repository=journal["target_repository"],
+    )
+    try:
+        _require_pr_revision_identity(
+            live, expected_identity, "recover-pr-revision"
+        )
+    except WorkflowError as error:
+        raise WorkflowError(
+            "pr-revision-recovery-state-mismatch",
+            "recovery PR verification failed: %s" % error.message,
+        ) from error
+    observed_head = live.get("headRefOid")
+    if observed_head == journal["new_head"]:
+        # The push landed but the local state update did not persist before
+        # an interruption; finalize now using only journaled evidence.
+        journal["status"] = "finalized"
+        journal["finalized_at"] = _now()
+        _write_json(journal_path, journal)
+        state["draft_pr"] = {
+            "number": journal["target_pr"],
+            "head_ref_name": journal["target_branch"],
+            "head_ref_oid": journal["new_head"],
+            "repository": journal["target_repository"],
+            "revision_of": {
+                "target_pr": journal["target_pr"],
+                "previous_head": journal["expected_head"],
+            },
+        }
+        state["status"] = "WORKFLOW_COMPLETED"
+        _write_state(root, config, args.issue, state)
+        return {"ok": True, "status": state["status"], "recovered": True}
+    if observed_head == journal["expected_head"]:
+        # The push never happened; nothing to recover beyond retrying the
+        # normal publish-pr-revision command.
+        return {
+            "ok": True,
+            "status": state["status"],
+            "recovered": False,
+            "retry_required": True,
+        }
+    _raise(
+        "pr-revision-recovery-ambiguous",
+        "PR #%s head %s matches neither the expected pre-push (%s) nor post-push (%s) head; "
+        "recovery requires explicit operator investigation"
+        % (journal["target_pr"], observed_head, journal["expected_head"], journal["new_head"]),
+    )
 
 
 # ---------- argparse ----------
@@ -4529,6 +5300,15 @@ def build_parser():
     init = subparsers.add_parser("init")
     _add_root(init)
     _add_issue(init)
+
+    start_revision = subparsers.add_parser("start-revision")
+    _add_root(start_revision)
+    _add_issue(start_revision)
+    start_revision.add_argument("--parent-issue", type=int, required=True)
+    start_revision.add_argument(
+        "--class", dest="revision_class", choices=REVISION_CLASSES, required=True
+    )
+    start_revision.add_argument("--by", required=True)
 
     status = subparsers.add_parser("status")
     _add_root(status)
@@ -4666,11 +5446,23 @@ def build_parser():
     create_draft_pr.add_argument("--head")
     create_draft_pr.add_argument("--skip-github", action="store_true")
 
+    publish_pr_revision = subparsers.add_parser("publish-pr-revision")
+    _add_root(publish_pr_revision)
+    _add_issue(publish_pr_revision)
+    publish_pr_revision.add_argument("--target-pr", type=int, required=True)
+    publish_pr_revision.add_argument("--by", required=True)
+    publish_pr_revision.add_argument("--confirm", required=True)
+
+    recover_pr_revision = subparsers.add_parser("recover-pr-revision")
+    _add_root(recover_pr_revision)
+    _add_issue(recover_pr_revision)
+
     return parser
 
 
 COMMANDS = {
     "init": command_init,
+    "start-revision": command_start_revision,
     "status": command_status,
     "supersede-run": command_supersede_run,
     "submit-plan": command_submit_plan,
@@ -4694,6 +5486,8 @@ COMMANDS = {
     "recover-implementation-approval": command_recover_implementation_approval,
     "reject-implementation": command_reject_implementation,
     "create-draft-pr": command_create_draft_pr,
+    "publish-pr-revision": command_publish_pr_revision,
+    "recover-pr-revision": command_recover_pr_revision,
 }
 
 
