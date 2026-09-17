@@ -167,13 +167,48 @@ describe('Frontend Puzzle Continuation Architecture & Candidate Selection', () =
       expect(policy([])).toBeNull();
     });
 
-    it('ENGINE still selects the first candidate deterministically', () => {
-      const policy = createStochasticSelectionPolicy();
+    it('ENGINE selects uniformly across candidates using the supplied random function', () => {
       const candidates: api.ContinuationCandidate[] = [
         { move: 'e4', resultingFen: 'f1', providerType: 'ENGINE', evalCp: 50 },
         { move: 'd4', resultingFen: 'f2', providerType: 'ENGINE', evalCp: 40 },
+        { move: 'Nf3', resultingFen: 'f3', providerType: 'ENGINE', evalCp: 30 },
       ];
-      expect(policy(candidates)?.move).toBe('e4');
+
+      expect(createStochasticSelectionPolicy(() => 0)(candidates)?.move).toBe('e4');
+      expect(createStochasticSelectionPolicy(() => 0.333)(candidates)?.move).toBe('e4');
+      expect(createStochasticSelectionPolicy(() => 0.334)(candidates)?.move).toBe('d4');
+      expect(createStochasticSelectionPolicy(() => 0.666)(candidates)?.move).toBe('d4');
+      expect(createStochasticSelectionPolicy(() => 0.667)(candidates)?.move).toBe('Nf3');
+      expect(createStochasticSelectionPolicy(() => 0.999)(candidates)?.move).toBe('Nf3');
+    });
+
+    it('re-applies ENGINE selection on cached responses without refetching', async () => {
+      const mockResponse: api.ContinuationResponse = {
+        fen: fen1,
+        requestedMode: 'ENGINE',
+        effectiveProvider: 'ENGINE',
+        candidates: [
+          { move: 'e4', resultingFen: 'f1', providerType: 'ENGINE' },
+          { move: 'd4', resultingFen: 'f2', providerType: 'ENGINE' },
+        ],
+      };
+      vi.mocked(api.fetchPuzzleContinuation).mockResolvedValueOnce(mockResponse);
+
+      const first = await continuationService.getContinuation(
+        fen1,
+        'ENGINE',
+        createStochasticSelectionPolicy(() => 0),
+      );
+      const second = await continuationService.getContinuation(
+        fen1,
+        'ENGINE',
+        createStochasticSelectionPolicy(() => 0.999),
+      );
+
+      expect(first.candidate?.move).toBe('e4');
+      expect(second.candidate?.move).toBe('d4');
+      expect(second.fromCache).toBe(true);
+      expect(api.fetchPuzzleContinuation).toHaveBeenCalledTimes(1);
     });
 
     it('HUMAN with one candidate selects that candidate', () => {
