@@ -40,8 +40,8 @@ errors; malformed or missing state and journal documents fail closed.
 The Gate 3 journal records the exact acknowledgment, including
 `independent_authorization: false`, and binds the existing
 `implementation_candidate` to the canonical `_candidate_identity` projection
-(`test_commit`, sorted paths, candidate diff SHA-256, and candidate diff byte
-length). The candidate object and identity helper remain authoritative; the
+(`test_commit`, sorted paths, canonical per-file candidate diff SHA-256, and
+canonical candidate diff byte length). The candidate object and identity helper remain authoritative; the
 journal is transition evidence and does not introduce a second candidate model
 or digest. It also records the approved target and direct parent, test boundary
 and applicability, scope, validation/evidence, review readiness, approvals,
@@ -156,7 +156,10 @@ records the rationale and proceeds to test review without a test commit. The exi
 approved plan does not establish `NOT_APPLICABLE`; the implementer cannot select that path ad hoc.
 `approve-tests` creates the workflow `test_commit`, and later stages enforce that approved tests
 remain byte-for-byte unchanged. Production implementation remains an uncommitted candidate until Human
-Gate 3. `submit-implementation` records the accepted candidate's path set and a canonical Git tree
+Gate 3. Candidate diff equivalence and its identity canonicalize exact
+per-file diff sections by their `diff --git` path headers, so tracked and
+new-file section serialization order does not matter while content, path, and
+mode differences still fail closed. `submit-implementation` records the accepted candidate's path set and a canonical Git tree
 identity (`candidate_tree`, computed from an empty scratch index populated only with the candidate's own
 changed paths, independent of unrelated base-tree drift). Validation, implementation review, and the
 implementation Approval Gate each recompute the current path set and tree identity and require an exact
