@@ -141,6 +141,43 @@ approved tests, candidate identity, and topology against durable evidence.
 The detailed recovery commands and preconditions remain in
 [`agent-workflow.md`](agent-workflow.md).
 
+## Governed revisions
+
+A completed run's Plan → Tests → Implementation → Publication commitments do
+not have to be rebuilt from scratch for a follow-up change. `start-revision`
+binds a new run to an eligible completed/published parent run and enters the
+workflow at the boundary matching a claimed revision class (`cosmetic`,
+`implementation`, `test`, or `plan`), inheriting only the parent's commitments
+that remain valid and re-establishing only what is downstream of that
+boundary:
+
+```mermaid
+flowchart LR
+    Plan --> Tests --> Implementation --> Publication
+    Plan -.plan revision.-> Plan
+    Tests -.test revision.-> Tests
+    Implementation -.cosmetic or implementation revision.-> Implementation
+```
+
+The claimed class is a request, not an authorization: mechanical checks over
+the parent implementation, approved plan/scope, approved tests, and current
+Git content derive the minimum required boundary and reject a narrower claim.
+Cosmetic Markdown is restricted to normalized whitespace and Mermaid direction
+layout changes; semantic labels, rules, commands, requirements, and behavior
+remain significant. No agent or LLM judgment classifies a revision or bypasses
+re-establishment of an affected boundary.
+
+On the publication side, `publish-pr-revision` lets such a revision update an
+explicitly named, already-open draft PR — re-verifying its live identity,
+repository, open/draft state, base, branch, and head immediately before
+publishing and pushing with `--force-with-lease` — as a distinct operation
+from first-time draft PR creation. The PR is independently re-read after the
+push before finalization. `recover-pr-revision` binds the journal to the exact
+run and revalidates the complete live PR state, failing closed on any
+unexpected divergence. Full
+preconditions and failure modes are in
+[`agent-workflow.md`](agent-workflow.md#governed-revisions).
+
 ## Security and governance boundary
 
 Agents produce plans, tests, implementation candidates, and reports.
