@@ -27,10 +27,15 @@ REVISION = "NEEDS_REVISION"
 REVIEW_STATUSES = (READY, REVISION)
 DEFAULT_IMPLEMENTATION_CONFIRMATION = "implementation_approved"
 DEFAULT_SUPERSESSION_CONFIRMATION = "supersede_confirmed"
+DEFAULT_COMPLETED_RUN_RECONCILIATION_CONFIRMATION = "completed_run_reconciled"
 RECONCILIATION_CONFIRMATION = "implementation_target_reconciled"
 RECONCILIATION_REANCHOR_CONFIRMATION = "implementation_target_reconciliation_reanchored"
 RECONCILIATION_JOURNAL_FORMAT = "chess-echo-implementation-target-reconciliation-transition-v1"
 RECONCILIATION_JOURNAL_STATUSES = ("pending", "committed", "finalized")
+COMPLETED_RUN_RECONCILIATION_JOURNAL_FORMAT = (
+    "chess-echo-completed-run-reconciliation-transition-v1"
+)
+COMPLETED_RUN_RECONCILIATION_JOURNAL_STATUSES = ("pending", "committed", "finalized")
 LOCAL_ACKNOWLEDGMENT_KIND = "self-attested-local-acknowledgment"
 SUPERSESSION_FORMAT = "chess-echo-skill-workflow-supersession-v1"
 
@@ -357,6 +362,18 @@ def _load_config(root):
         )
     else:
         approvals["pr_revision"] = DEFAULT_PR_REVISION_CONFIRMATION
+
+    if "completed_run_reconciliation" in approvals:
+        _ensure(
+            isinstance(approvals.get("completed_run_reconciliation"), str)
+            and approvals["completed_run_reconciliation"],
+            "invalid-config",
+            "workflow.approvals.completed_run_reconciliation must be a non-empty string",
+        )
+    else:
+        approvals["completed_run_reconciliation"] = (
+            DEFAULT_COMPLETED_RUN_RECONCILIATION_CONFIRMATION
+        )
 
     _ensure(
         workflow.get("approval_mechanism", LOCAL_ACKNOWLEDGMENT_KIND)
@@ -2613,6 +2630,41 @@ def _git_tree_entry(root, config, revision, path):
     return line[0].split("\t", 1)[0].strip()
 
 
+def _git_unmerged_paths(root, config):
+    completed = _run_checked(
+        _git_command(config, "diff", "--name-only", "--diff-filter=U"),
+        _effective_limits(config, "git"),
+        root,
+        "git-diff-failed",
+        "unable to inspect reconciliation conflict paths",
+    )
+    return sorted(line.strip() for line in completed["stdout_text"].splitlines() if line.strip())
+
+
+def _try_apply_reconciliation_patch(root, config, patch_dir, patch_text):
+    if not patch_text:
+        return {"applied": True, "conflict_paths": []}
+    patch_dir.mkdir(parents=True, exist_ok=True)
+    patch_path = patch_dir / (".reconcile-%s.patch" % uuid.uuid4().hex)
+    try:
+        patch_path.write_text(patch_text, encoding="utf-8")
+        completed = _run_bounded(
+            _git_command(config, "apply", "--3way", "--index", str(patch_path)),
+            _effective_limits(config, "git"),
+            root,
+        )
+        result = completed["result"]
+        if result.get("outcome") == "success" and result.get("exit_code") == 0:
+            return {"applied": True, "conflict_paths": []}
+        return {
+            "applied": False,
+            "conflict_paths": _git_unmerged_paths(root, config),
+        }
+    finally:
+        if patch_path.exists():
+            patch_path.unlink()
+
+
 def _apply_reconciliation_patch(root, config, issue, patch_text, label):
     """Apply one binary patch via a durable same-run file with three-way fallback.
 
@@ -2620,23 +2672,14 @@ def _apply_reconciliation_patch(root, config, issue, patch_text, label):
     while a genuinely conflicting downstream change to a candidate path fails
     closed, and it never silently auto-resolves surrounding-context conflicts.
     """
-    if not patch_text:
-        return
-    run_dir = _run_root(root, config, issue)
-    run_dir.mkdir(parents=True, exist_ok=True)
-    patch_path = run_dir / (".reconcile-%s.patch" % uuid.uuid4().hex)
-    try:
-        patch_path.write_text(patch_text, encoding="utf-8")
-        _run_checked(
-            _git_command(config, "apply", "--3way", "--index", str(patch_path)),
-            _effective_limits(config, "git"),
-            root,
+    attempt = _try_apply_reconciliation_patch(
+        root, config, _run_root(root, config, issue), patch_text
+    )
+    if not attempt["applied"]:
+        _raise(
             "patch-apply-conflict",
             "reconcile-implementation-target could not cleanly apply the %s" % label,
         )
-    finally:
-        if patch_path.exists():
-            patch_path.unlink()
 
 
 def _restore_reconciliation_head(root, config, candidate_commit):
@@ -3469,7 +3512,19 @@ def command_init(args, root, config):
     return {"ok": True, "issue": args.issue, "status": state["status"], "run_dir": _relative(run, root)}
 
 
-def command_start_revision(args, root, config):
+def _start_revision_run(
+    root,
+    config,
+    issue,
+    parent_issue,
+    revision_class,
+    by,
+    *,
+    git_root=None,
+    resolved_target_head=None,
+    context="start-revision",
+    inherit_parent_test_commit_verbatim=False,
+):
     """Link a new run to an eligible parent run for a bounded governed revision.
 
     Only the commitments downstream of the claimed revision class's entry
@@ -3481,48 +3536,29 @@ def command_start_revision(args, root, config):
     independently re-derives whether the actual diff qualifies and fails
     closed with ``revision-class-mismatch`` if it does not.
     """
-    revision_class = args.revision_class
     _ensure(
         revision_class in REVISION_CLASSES,
         "invalid-revision-class",
         "start-revision --class must be one of %s" % ", ".join(REVISION_CLASSES),
     )
     _ensure(
-        (args.by or "").strip(),
+        (by or "").strip(),
         "missing-revision-authorization",
         "start-revision requires a non-empty --by identity",
     )
+    git_root = git_root or root
+    parent_state = _require_revision_parent_state(
+        root,
+        config,
+        parent_issue,
+        context,
+        require_required_tests=(revision_class == "test"),
+    )
 
-    parent_issue = args.parent_issue
-    parent_run_dir = _run_root(root, config, parent_issue)
-    _ensure(
-        parent_run_dir.exists(),
-        "no-parent-run",
-        "start-revision requires an existing run for parent issue %s" % parent_issue,
-    )
-    parent_state = _read_state(root, config, parent_issue)
-    _ensure(
-        parent_state["status"] in REVISION_PARENT_ELIGIBLE_STATUSES,
-        "parent-run-not-eligible",
-        "start-revision requires the parent run to be in %s (current: %s)"
-        % (list(REVISION_PARENT_ELIGIBLE_STATUSES), parent_state["status"]),
-    )
-    _ensure(
-        parent_state.get("implementation_commit"),
-        "parent-run-missing-implementation-commit",
-        "start-revision requires the parent run to have an authoritative implementation commit",
-    )
-    if revision_class == "test":
-        _ensure(
-            parent_state.get("test_implementation_status") == "REQUIRED",
-            "parent-run-tests-not-applicable",
-            "start-revision --class test requires the parent run to have REQUIRED tests",
-        )
-
-    run = _run_root(root, config, args.issue)
-    _ensure(not run.exists(), "already-initialized", "Workflow run already exists for issue %s" % args.issue)
-    initial_head = _current_head(root, config)
-    target_head = _resolve_target_head(root, config, fetch=True)
+    run = _run_root(root, config, issue)
+    _ensure(not run.exists(), "already-initialized", "Workflow run already exists for issue %s" % issue)
+    initial_head = _current_head(git_root, config)
+    target_head = resolved_target_head or _resolve_target_head(git_root, config, fetch=True)
     _ensure(
         initial_head == target_head,
         "workflow-start-not-at-target",
@@ -3534,7 +3570,11 @@ def command_start_revision(args, root, config):
     if parent_state.get("test_implementation_status") == "REQUIRED":
         parent_test_paths = _approved_test_paths(root, config, parent_state, "start-revision")
 
-    if revision_class in ("cosmetic", "implementation") and parent_test_paths:
+    if (
+        revision_class in ("cosmetic", "implementation")
+        and parent_test_paths
+        and not inherit_parent_test_commit_verbatim
+    ):
         # The parent's approved test_commit is not an ancestor of the new
         # target (it is a sibling of the parent's squashed implementation
         # commit, sharing only their common pre-test base). Rather than
@@ -3563,10 +3603,10 @@ def command_start_revision(args, root, config):
             "start-revision requires the approved test content to be unchanged in the current target",
         )
 
-    _artifacts_dir(root, config, args.issue).mkdir(parents=True, exist_ok=True)
+    _artifacts_dir(root, config, issue).mkdir(parents=True, exist_ok=True)
     state = {
         "format": STATE_FORMAT,
-        "issue": args.issue,
+        "issue": issue,
         "target_base": config["target_base"],
         "status": REVISION_ENTRY_STATUS[revision_class],
         "artifacts": {},
@@ -3588,7 +3628,7 @@ def command_start_revision(args, root, config):
         "parent_run": {
             "issue": parent_issue,
             "class": revision_class,
-            "requested_by": args.by,
+            "requested_by": by,
             "linked_at": _now(),
             "parent_status_at_link": parent_state["status"],
             "parent_implementation_commit": parent_state.get("implementation_commit"),
@@ -3608,12 +3648,16 @@ def command_start_revision(args, root, config):
             artifact = parent_state["artifacts"].get(kind)
             if artifact:
                 state["artifacts"][kind] = _record_artifact(
-                    root, config, args.issue, kind, root / artifact["path"]
+                    root, config, issue, kind, root / artifact["path"]
                 )
         state["approved_scope"] = parent_scope
         state["approvals"]["plan"] = parent_state["approvals"].get("plan")
         state["approvals"]["tests"] = parent_state["approvals"].get("tests")
-        state["test_commit"] = target_head if parent_test_paths else parent_state.get("test_commit")
+        state["test_commit"] = (
+            parent_state.get("test_commit")
+            if inherit_parent_test_commit_verbatim and parent_test_paths
+            else target_head if parent_test_paths else parent_state.get("test_commit")
+        )
         state["test_implementation_status"] = parent_state.get("test_implementation_status")
         state["test_implementation_reason"] = parent_state.get("test_implementation_reason")
     elif revision_class == "test":
@@ -3626,7 +3670,7 @@ def command_start_revision(args, root, config):
             artifact = parent_state["artifacts"].get(kind)
             if artifact:
                 state["artifacts"][kind] = _record_artifact(
-                    root, config, args.issue, kind, root / artifact["path"]
+                    root, config, issue, kind, root / artifact["path"]
                 )
         state["approved_scope"] = parent_scope
         state["approvals"]["plan"] = parent_state["approvals"].get("plan")
@@ -3635,14 +3679,50 @@ def command_start_revision(args, root, config):
     # defines its own scope exactly like an ordinary new run, and every
     # downstream approval must be re-established from scratch.
 
-    _write_state(root, config, args.issue, state)
+    _write_state(root, config, issue, state)
     return {
         "ok": True,
-        "issue": args.issue,
+        "issue": issue,
         "status": state["status"],
         "run_dir": _relative(run, root),
         "parent_run": state["parent_run"],
     }
+
+
+def _next_revision_issue(root, config, parent_issue):
+    """Allocate the next deterministic workflow-local revision issue id."""
+    prefix = str(parent_issue)
+    used = set()
+    parents = [_artifact_root(root, config), _superseded_run_parent(root, config)]
+    for parent in parents:
+        if not parent.exists():
+            continue
+        for entry in parent.iterdir():
+            if not entry.is_dir():
+                continue
+            match = re.match(r"^issue-(\d+)(?:-|$)", entry.name)
+            if not match:
+                continue
+            candidate = match.group(1)
+            if candidate.startswith(prefix) and len(candidate) > len(prefix):
+                suffix = candidate[len(prefix) :]
+                if suffix.isdigit():
+                    used.add(int(suffix))
+    suffix = 1
+    while suffix in used:
+        suffix += 1
+    return int("%s%s" % (prefix, suffix))
+
+
+def command_start_revision(args, root, config):
+    return _start_revision_run(
+        root,
+        config,
+        args.issue,
+        args.parent_issue,
+        args.revision_class,
+        args.by,
+    )
 
 
 def command_status(args, root, config):
@@ -4855,6 +4935,65 @@ def _authoritative_repository(config):
     return "/".join(parts[-2:]) if len(parts) >= 3 else None
 
 
+def _recorded_draft_pr_identity(draft_pr, config, context, error_code):
+    """Return the complete recorded PR identity required for governed updates."""
+    draft_pr = draft_pr or {}
+    repository = (
+        draft_pr.get("repository")
+        or _repository_from_pr_url(draft_pr.get("url"))
+        or _authoritative_repository(config)
+    )
+    number = draft_pr.get("number")
+    branch = draft_pr.get("head_ref_name")
+    head = draft_pr.get("head_ref_oid")
+    _ensure(
+        number is not None and repository and branch and head,
+        error_code,
+        "%s requires a recorded draft PR identity (repository, number, branch, and head)"
+        % context,
+    )
+    return {
+        "number": number,
+        "repository": repository,
+        "head_ref_name": branch,
+        "head_ref_oid": head,
+        "url": draft_pr.get("url"),
+        "title": draft_pr.get("title"),
+        "created_at": draft_pr.get("created_at"),
+        "body_file": draft_pr.get("body_file"),
+    }
+
+
+def _require_revision_parent_state(root, config, parent_issue, context, require_required_tests=False):
+    """Load and validate a run that is eligible to act as a governed revision parent."""
+    parent_run_dir = _run_root(root, config, parent_issue)
+    _ensure(
+        parent_run_dir.exists(),
+        "no-parent-run",
+        "%s requires an existing run for parent issue %s" % (context, parent_issue),
+    )
+    parent_state = _read_state(root, config, parent_issue)
+    _ensure(
+        parent_state["status"] in REVISION_PARENT_ELIGIBLE_STATUSES,
+        "parent-run-not-eligible",
+        "%s requires the parent run to be in %s (current: %s)"
+        % (context, list(REVISION_PARENT_ELIGIBLE_STATUSES), parent_state["status"]),
+    )
+    _ensure(
+        parent_state.get("implementation_commit"),
+        "parent-run-missing-implementation-commit",
+        "%s requires the parent run to have an authoritative implementation commit"
+        % context,
+    )
+    if require_required_tests:
+        _ensure(
+            parent_state.get("test_implementation_status") == "REQUIRED",
+            "parent-run-tests-not-applicable",
+            "%s requires the parent run to have REQUIRED tests" % context,
+        )
+    return parent_state
+
+
 def _lookup_pr_identity(root, config, pr_reference, repository=None):
     """Independently look up a PR's number/branch/head/url via `gh pr view`."""
     github_limits = _effective_limits(config, "github")
@@ -5266,6 +5405,619 @@ def command_recover_pr_revision(args, root, config):
     )
 
 
+def _completed_run_reconciliation_journal_path(root, config, issue):
+    return _run_root(root, config, issue) / "completed-run-reconciliation-transition.json"
+
+
+def _completed_run_reconciliation_acknowledgment(config, confirm, by):
+    expected = config["workflow"]["approvals"].get(
+        "completed_run_reconciliation",
+        DEFAULT_COMPLETED_RUN_RECONCILIATION_CONFIRMATION,
+    )
+    _ensure(
+        confirm == expected,
+        "approval-confirmation-mismatch",
+        "Expected confirmation phrase for completed_run_reconciliation gate: %s"
+        % expected,
+    )
+    return {
+        "kind": LOCAL_ACKNOWLEDGMENT_KIND,
+        "asserted_by": by,
+        "confirmation": confirm,
+        "recorded_at": _now(),
+        "independent_authorization": False,
+    }
+
+
+def _completed_run_reconciliation_source(root, config, state, context):
+    _ensure(
+        state["status"] in REVISION_PARENT_ELIGIBLE_STATUSES,
+        "completed-run-not-eligible",
+        "%s requires status in %s (current: %s)"
+        % (context, list(REVISION_PARENT_ELIGIBLE_STATUSES), state["status"]),
+    )
+    implementation_commit = state.get("implementation_commit")
+    _ensure(
+        implementation_commit,
+        "parent-run-missing-implementation-commit",
+        "%s requires a recorded authoritative implementation commit" % context,
+    )
+    validation = state.get("validation") or {}
+    _ensure(
+        isinstance(validation, dict)
+        and validation.get("passed") is True
+        and isinstance(validation.get("profile"), str)
+        and validation.get("profile"),
+        "validation-missing",
+        "%s requires a previously passing recorded validation profile" % context,
+    )
+    draft_pr = _recorded_draft_pr_identity(
+        state.get("draft_pr"),
+        config,
+        context,
+        "completed-run-missing-pr-identity",
+    )
+    old_target = _state_target_head(state)
+    _require_direct_child(root, config, old_target, implementation_commit, context)
+    _require_single_commit(root, config, old_target, implementation_commit, context)
+    test_paths = _approved_test_paths(root, config, state, context)
+    approved_boundary = _journal_test_boundary(root, config, state)
+    final_names = _git_diff_names(
+        root, config, "%s..%s" % (old_target, implementation_commit)
+    )
+    candidate_paths = sorted(path for path in final_names if path not in test_paths)
+    expected_names = sorted(set(test_paths).union(candidate_paths))
+    _ensure(
+        final_names == expected_names,
+        "implementation-scope-drift",
+        "%s authoritative paths differ from the approved boundary" % context,
+    )
+    scope = state.get("approved_scope") or []
+    _require_production_only(candidate_paths, scope, context)
+    candidate_diff = _git_diff_text(
+        root, config, state["test_commit"], implementation_commit, candidate_paths
+    )
+    return {
+        "issue": state["issue"],
+        "source_status": state["status"],
+        "target_base": state.get("target_base"),
+        "target_head": old_target,
+        "test_commit": state.get("test_commit"),
+        "approved_scope": scope,
+        "approved_test_boundary": approved_boundary,
+        "approved_test_patch": (
+            _git_diff_text(
+                root,
+                config,
+                old_target,
+                state["test_commit"],
+                test_paths,
+            )
+            if test_paths
+            else ""
+        ),
+        "implementation_commit": implementation_commit,
+        "implementation_candidate": {
+            "test_commit": state["test_commit"],
+            "candidate_diff": candidate_diff,
+            "candidate_paths": candidate_paths,
+        },
+        "candidate_identity": _candidate_identity(
+            state["test_commit"], candidate_diff, candidate_paths
+        ),
+        "reviewed_commit_subject": _git_commit_subject(root, config, implementation_commit),
+        "validation_profile": validation["profile"],
+        "draft_pr": draft_pr,
+    }
+
+
+def _validate_completed_run_reconciliation_journal(
+        journal, config, state, context, source=None
+):
+        _ensure(
+            journal.get("format") == COMPLETED_RUN_RECONCILIATION_JOURNAL_FORMAT
+            and journal.get("version") == 1,
+            "invalid-completed-run-reconciliation-journal",
+            "%s requires the supported completed-run reconciliation journal format"
+            % context,
+        )
+        _ensure(
+            journal.get("issue") == state.get("issue")
+            and journal.get("operation") == "reconcile-completed-run"
+            and journal.get("status") in COMPLETED_RUN_RECONCILIATION_JOURNAL_STATUSES
+            and isinstance(journal.get("transition_id"), str)
+            and journal.get("transition_id"),
+            "invalid-completed-run-reconciliation-journal",
+            "%s completed-run reconciliation journal identity is invalid" % context,
+        )
+        _validate_journal_acknowledgment(
+            config,
+            journal.get("acknowledgment"),
+            "completed_run_reconciliation",
+            "invalid-completed-run-reconciliation-journal",
+        )
+        if source is None:
+            return
+        _ensure(
+            journal.get("previous_target_head") == source["target_head"]
+            and journal.get("previous_implementation_commit") == source["implementation_commit"]
+            and journal.get("test_commit") == source["test_commit"]
+            and journal.get("approved_scope") == source["approved_scope"]
+            and journal.get("approved_test_boundary") == source["approved_test_boundary"]
+            and journal.get("implementation_candidate") == source["implementation_candidate"]
+            and journal.get("candidate_identity") == source["candidate_identity"]
+            and journal.get("reviewed_commit_subject") == source["reviewed_commit_subject"]
+            and journal.get("validation_profile") == source["validation_profile"],
+            "completed-run-reconciliation-journal-mismatch",
+            "%s completed-run reconciliation journal does not match the recorded run evidence"
+            % context,
+        )
+        expected_draft = source["draft_pr"]
+        journal_draft = journal.get("draft_pr") or {}
+        _ensure(
+            journal_draft.get("number") == expected_draft["number"]
+            and journal_draft.get("repository") == expected_draft["repository"]
+            and journal_draft.get("head_ref_name") == expected_draft["head_ref_name"]
+            and journal_draft.get("head_ref_oid") == expected_draft["head_ref_oid"],
+            "completed-run-reconciliation-journal-mismatch",
+            "%s completed-run reconciliation journal PR identity drifted" % context,
+        )
+
+
+def _classify_completed_run_revision_boundary(
+        *,
+        approved_scope,
+        test_paths,
+        conflict_paths,
+        replay_clean,
+        validation_passed,
+):
+        if replay_clean:
+            return None if validation_passed else "test"
+        normalized = sorted(set(conflict_paths or []))
+        _ensure(
+            normalized,
+            "artifact-validity-undetermined",
+            "completed-run reconciliation requires deterministic conflict evidence",
+        )
+        if any(not _path_in_scope(path, approved_scope or []) for path in normalized):
+            return "plan"
+        if any(not _is_test_file(path) for path in normalized):
+            return "implementation"
+        return "test"
+
+
+def _completed_run_scratch_path(root, config, issue, transition_id, purpose):
+        return (
+            _run_root(root, config, issue)
+            / ".scratch"
+            / ("%s-%s" % (purpose, transition_id))
+        )
+
+
+def _cleanup_scratch_worktree(root, config, path):
+        if path.exists():
+            _run_bounded(
+                _git_command(config, "worktree", "remove", "--force", str(path)),
+                _effective_limits(config, "git"),
+                root,
+            )
+            _run_bounded(
+                _git_command(config, "worktree", "prune"),
+                _effective_limits(config, "git"),
+                root,
+            )
+        parent = path.parent
+        if parent.exists() and not any(parent.iterdir()):
+            parent.rmdir()
+
+
+def _create_scratch_worktree(root, config, path, target, context):
+        _cleanup_scratch_worktree(root, config, path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _run_checked(
+            _git_command(config, "worktree", "add", "--detach", str(path), target),
+            _effective_limits(config, "git"),
+            root,
+            "git-worktree-add-failed",
+            "%s could not create an isolated reconciliation worktree" % context,
+        )
+        return path
+
+
+def _verify_completed_run_reconciled_commit(
+        scratch_root, repo_root, config, source, new_target, reconciled, context
+):
+        _ensure(
+            _current_head(scratch_root, config) == reconciled,
+            "implementation-commit-mismatch",
+            "%s requires HEAD to match the reconciled commit" % context,
+        )
+        _require_direct_child(scratch_root, config, new_target, reconciled, context)
+        _require_single_commit(scratch_root, config, new_target, reconciled, context)
+        _require_clean_tree(scratch_root, config, context)
+        _ensure(
+            _git_commit_subject(scratch_root, config, reconciled)
+            == source["reviewed_commit_subject"],
+            "implementation-commit-subject-mismatch",
+            "%s reconciled subject differs from the approved implementation" % context,
+        )
+        candidate_paths = source["implementation_candidate"]["candidate_paths"]
+        test_paths = source["approved_test_boundary"]["paths"]
+        expected_names = sorted(set(test_paths).union(candidate_paths))
+        final_names = _git_diff_names(
+            scratch_root, config, "%s..%s" % (new_target, reconciled)
+        )
+        _ensure(
+            final_names == expected_names,
+            "implementation-scope-drift",
+            "%s reconciled paths differ from the approved implementation" % context,
+        )
+        _require_candidate_scope(final_names, source["approved_scope"], context)
+        _require_production_only(candidate_paths, source["approved_scope"], context)
+        for path in expected_names:
+            _ensure(
+                _git_tree_entry(scratch_root, config, reconciled, path)
+                == _git_tree_entry(
+                    repo_root, config, source["implementation_commit"], path
+                ),
+                "implementation-candidate-mismatch",
+                "%s reconciled content differs from the approved implementation at %s"
+                % (context, path),
+            )
+
+
+def _attempt_completed_run_reconciliation(root, config, source, new_target, transition_id):
+        context = "reconcile-completed-run"
+        scratch = _completed_run_scratch_path(
+            root, config, source["issue"], transition_id, "completed-run"
+        )
+        _create_scratch_worktree(root, config, scratch, new_target, context)
+        try:
+            boundary_attempt = _try_apply_reconciliation_patch(
+                scratch, config, scratch.parent, source["approved_test_patch"]
+            )
+            if not boundary_attempt["applied"]:
+                return {
+                    "replay_clean": False,
+                    "validation_passed": False,
+                    "conflict_paths": boundary_attempt["conflict_paths"],
+                    "checks": None,
+                }
+            candidate_attempt = _try_apply_reconciliation_patch(
+                scratch,
+                config,
+                scratch.parent,
+                source["implementation_candidate"]["candidate_diff"],
+            )
+            if not candidate_attempt["applied"]:
+                return {
+                    "replay_clean": False,
+                    "validation_passed": False,
+                    "conflict_paths": candidate_attempt["conflict_paths"],
+                    "checks": None,
+                }
+            checks = _run_validation_checks(
+                scratch, config, source["validation_profile"]
+            )
+            all_passed = all(check["passed"] for check in checks)
+            if not all_passed:
+                return {
+                    "replay_clean": True,
+                    "validation_passed": False,
+                    "conflict_paths": [],
+                    "checks": checks,
+                }
+            _run_checked(
+                _git_command(config, "commit", "-qm", source["reviewed_commit_subject"]),
+                _effective_limits(config, "git"),
+                scratch,
+                "git-commit-failed",
+                "%s could not create the reconciled completed-run commit" % context,
+            )
+            reconciled = _current_head(scratch, config)
+            _verify_completed_run_reconciled_commit(
+                scratch, root, config, source, new_target, reconciled, context
+            )
+            return {
+                "replay_clean": True,
+                "validation_passed": True,
+                "conflict_paths": [],
+                "checks": checks,
+                "reconciled_commit": reconciled,
+            }
+        finally:
+            _cleanup_scratch_worktree(root, config, scratch)
+
+
+def _start_completed_run_revision(
+        root, config, state, revision_class, by, target_head, revision_issue=None
+):
+        revision_issue = revision_issue or _next_revision_issue(root, config, state["issue"])
+        scratch = _completed_run_scratch_path(
+            root,
+            config,
+            state["issue"],
+            "%s-%s" % (state["issue"], revision_issue),
+            "completed-run-revision",
+        )
+        _create_scratch_worktree(root, config, scratch, target_head, "reconcile-completed-run")
+        try:
+            revision = _start_revision_run(
+                root,
+                config,
+                revision_issue,
+                state["issue"],
+                revision_class,
+                by,
+                git_root=scratch,
+                resolved_target_head=target_head,
+                context="reconcile-completed-run",
+                inherit_parent_test_commit_verbatim=(revision_class in ("cosmetic", "implementation")),
+            )
+        finally:
+            _cleanup_scratch_worktree(root, config, scratch)
+        revision["class"] = revision_class
+        return revision
+
+
+def command_reconcile_completed_run(args, root, config):
+        context = "reconcile-completed-run"
+        state = _read_state(root, config, args.issue)
+        _ensure((args.by or "").strip(), "missing-requester", "%s requires a requester" % context)
+        acknowledgment = _completed_run_reconciliation_acknowledgment(
+            config, args.confirm, args.by
+        )
+        journal_path = _completed_run_reconciliation_journal_path(root, config, args.issue)
+
+        if journal_path.exists():
+            journal = _read_json(
+                journal_path, "completed-run reconciliation transition journal"
+            )
+            _validate_completed_run_reconciliation_journal(journal, config, state, context)
+            if journal.get("status") == "finalized":
+                if journal.get("outcome") == "reconciled":
+                    live = _lookup_pr_identity(
+                        root,
+                        config,
+                        str(journal["draft_pr"]["number"]),
+                        repository=journal["draft_pr"]["repository"],
+                    )
+                    _require_pr_revision_identity(
+                        live,
+                        _pr_revision_expected_identity(
+                            journal["draft_pr"]["number"],
+                            journal["draft_pr"]["repository"],
+                            config["target_base"],
+                            journal["draft_pr"]["head_ref_name"],
+                        ),
+                        context,
+                    )
+                    _ensure(
+                        live.get("headRefOid") == journal.get("reconciled_commit"),
+                        "pr-revision-post-push-mismatch",
+                        "%s finalized PR head does not match the reconciled implementation"
+                        % context,
+                    )
+                    return {
+                        "ok": True,
+                        "status": state["status"],
+                        "implementation_commit": journal.get("reconciled_commit"),
+                        "draft_pr": state.get("draft_pr"),
+                    }
+                revision_issue = journal.get("revision_issue")
+                _ensure(
+                    revision_issue and _run_root(root, config, revision_issue).exists(),
+                    "completed-run-reconciliation-journal-mismatch",
+                    "%s finalized revision journal is missing its child revision run"
+                    % context,
+                )
+                return {
+                    "ok": True,
+                    "status": state["status"],
+                    "revision": {
+                        "issue": revision_issue,
+                        "class": journal.get("revision_class"),
+                        "status": _read_state(root, config, revision_issue)["status"],
+                    },
+                }
+
+        source = _completed_run_reconciliation_source(root, config, state, context)
+        _ensure(
+            _current_head(root, config) == source["implementation_commit"],
+            "implementation-commit-mismatch",
+            "%s requires HEAD to match the completed run's implementation_commit" % context,
+        )
+        _require_clean_tree(root, config, context)
+        new_target = _resolve_target_head(root, config, fetch=True)
+        _ensure(
+            new_target != source["target_head"],
+            "target-not-advanced",
+            "%s requires origin/%s to advance past the recorded target"
+            % (context, config["target_base"]),
+        )
+        _git_ancestor(root, config, source["target_head"], new_target, context)
+
+        if journal_path.exists():
+            journal = _read_json(
+                journal_path, "completed-run reconciliation transition journal"
+            )
+            _validate_completed_run_reconciliation_journal(
+                journal, config, state, context, source=source
+            )
+        else:
+            journal = {
+                "format": COMPLETED_RUN_RECONCILIATION_JOURNAL_FORMAT,
+                "version": 1,
+                "transition_id": uuid.uuid4().hex,
+                "issue": args.issue,
+                "operation": "reconcile-completed-run",
+                "created_at": _now(),
+                "status": "pending",
+                "acknowledgment": acknowledgment,
+                "requested_by": args.by,
+                "requested_at": _now(),
+                "source_status": source["source_status"],
+                "target_base": source["target_base"],
+                "previous_target_head": source["target_head"],
+                "new_target_head": new_target,
+                "previous_implementation_commit": source["implementation_commit"],
+                "test_commit": source["test_commit"],
+                "approved_scope": source["approved_scope"],
+                "approved_test_boundary": source["approved_test_boundary"],
+                "implementation_candidate": source["implementation_candidate"],
+                "candidate_identity": source["candidate_identity"],
+                "reviewed_commit_subject": source["reviewed_commit_subject"],
+                "validation_profile": source["validation_profile"],
+                "draft_pr": source["draft_pr"],
+                "outcome": None,
+                "reconciled_commit": None,
+                "revision_issue": None,
+                "revision_class": None,
+                "conflict_paths": [],
+                "validation": None,
+            }
+            _write_json(journal_path, journal)
+
+        attempt = _attempt_completed_run_reconciliation(
+            root, config, source, new_target, journal["transition_id"]
+        )
+        required_revision = _classify_completed_run_revision_boundary(
+            approved_scope=source["approved_scope"],
+            test_paths=source["approved_test_boundary"]["paths"],
+            conflict_paths=attempt["conflict_paths"],
+            replay_clean=attempt["replay_clean"],
+            validation_passed=attempt["validation_passed"],
+        )
+        journal["validation"] = attempt["checks"]
+        journal["conflict_paths"] = attempt["conflict_paths"]
+
+        if required_revision is None:
+            reconciled_commit = attempt["reconciled_commit"]
+            journal["status"] = "committed"
+            journal["outcome"] = "reconciled"
+            journal["reconciled_commit"] = reconciled_commit
+            journal["committed_at"] = journal.get("committed_at", _now())
+            _write_json(journal_path, journal)
+
+            draft_pr = source["draft_pr"]
+            live = _lookup_pr_identity(
+                root, config, str(draft_pr["number"]), repository=draft_pr["repository"]
+            )
+            expected_identity = _pr_revision_expected_identity(
+                draft_pr["number"],
+                draft_pr["repository"],
+                config["target_base"],
+                draft_pr["head_ref_name"],
+            )
+            _require_pr_revision_identity(live, expected_identity, context)
+            observed_head = live.get("headRefOid")
+            _ensure(
+                observed_head == draft_pr["head_ref_oid"],
+                "pr-head-diverged",
+                "%s requires PR #%s head to remain %s (observed: %s)"
+                % (context, draft_pr["number"], draft_pr["head_ref_oid"], observed_head),
+            )
+            push_command = _git_command(
+                config,
+                "push",
+                "origin",
+                "%s:refs/heads/%s" % (reconciled_commit, draft_pr["head_ref_name"]),
+                "--force-with-lease=refs/heads/%s:%s"
+                % (draft_pr["head_ref_name"], draft_pr["head_ref_oid"]),
+            )
+            _run_checked(
+                push_command,
+                _effective_limits(config, "github"),
+                root,
+                "pr-revision-push-failed",
+                "unable to publish completed-run reconciliation to PR #%s"
+                % draft_pr["number"],
+            )
+            published = _lookup_pr_identity(
+                root, config, str(draft_pr["number"]), repository=draft_pr["repository"]
+            )
+            _require_pr_revision_identity(
+                published, expected_identity, "%s post-push" % context
+            )
+            _ensure(
+                published.get("headRefOid") == reconciled_commit,
+                "pr-revision-post-push-mismatch",
+                "%s post-push head does not match the reconciled implementation"
+                % context,
+            )
+            state["target_head"] = new_target
+            state["base_head"] = new_target
+            state["implementation_commit"] = reconciled_commit
+            state["draft_pr"] = {
+                "created_at": draft_pr.get("created_at"),
+                "title": draft_pr.get("title"),
+                "body_file": draft_pr.get("body_file"),
+                "publication": {"command": [shlex.join(push_command)], "executed": True},
+                "number": draft_pr["number"],
+                "head_ref_name": draft_pr["head_ref_name"],
+                "head_ref_oid": reconciled_commit,
+                "repository": draft_pr["repository"],
+                "url": draft_pr.get("url"),
+            }
+            state.setdefault("completed_run_reconciliations", []).append(
+                {
+                    "previous_target_head": source["target_head"],
+                    "new_target_head": new_target,
+                    "previous_implementation_commit": source["implementation_commit"],
+                    "reconciled_commit": reconciled_commit,
+                    "requested_by": args.by,
+                    "requested_at": journal["requested_at"],
+                    "transition_id": journal["transition_id"],
+                }
+            )
+            state["status"] = "WORKFLOW_COMPLETED"
+            _write_state(root, config, args.issue, state)
+            journal["status"] = "finalized"
+            journal["finalized_at"] = _now()
+            _write_json(journal_path, journal)
+            return {
+                "ok": True,
+                "status": state["status"],
+                "implementation_commit": reconciled_commit,
+                "draft_pr": state["draft_pr"],
+            }
+
+        revision_issue = journal.get("revision_issue")
+        if revision_issue and _run_root(root, config, revision_issue).exists():
+            revision_state = _read_state(root, config, revision_issue)
+        else:
+            revision = _start_completed_run_revision(
+                root,
+                config,
+                state,
+                required_revision,
+                args.by,
+                new_target,
+                revision_issue=revision_issue,
+            )
+            revision_issue = revision["issue"]
+            revision_state = _read_state(root, config, revision_issue)
+        journal["status"] = "committed"
+        journal["outcome"] = "revision"
+        journal["revision_issue"] = revision_issue
+        journal["revision_class"] = required_revision
+        journal["committed_at"] = journal.get("committed_at", _now())
+        _write_json(journal_path, journal)
+        journal["status"] = "finalized"
+        journal["finalized_at"] = _now()
+        _write_json(journal_path, journal)
+        return {
+            "ok": True,
+            "status": state["status"],
+            "revision": {
+                "issue": revision_issue,
+                "class": required_revision,
+                "status": revision_state["status"],
+            },
+        }
+
+
 # ---------- argparse ----------
 
 
@@ -5403,6 +6155,11 @@ def build_parser():
     _add_issue(reconcile_implementation_target)
     _add_human(reconcile_implementation_target)
 
+    reconcile_completed_run = subparsers.add_parser("reconcile-completed-run")
+    _add_root(reconcile_completed_run)
+    _add_issue(reconcile_completed_run)
+    _add_human(reconcile_completed_run)
+
     submit_implementation = subparsers.add_parser("submit-implementation")
     _add_root(submit_implementation)
     _add_issue(submit_implementation)
@@ -5479,6 +6236,7 @@ COMMANDS = {
     "reanchor-target": command_reanchor_target,
     "reconcile-candidate": command_reconcile_candidate,
     "reconcile-implementation-target": command_reconcile_implementation_target,
+    "reconcile-completed-run": command_reconcile_completed_run,
     "submit-implementation": command_submit_implementation,
     "run-validation": command_run_validation,
     "review-implementation": command_review_implementation,
