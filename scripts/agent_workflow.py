@@ -2424,6 +2424,32 @@ def _verify_interrupted_candidate_commit(root, config, state, impl_journal, cand
     )
 
 
+def _reconciliation_source_candidate_commit(impl_journal, context):
+    """Return the interrupted candidate commit identity bound by source journal shape."""
+    status = impl_journal.get("status")
+    if status == "committed-but-not-persisted":
+        candidate_commit = impl_journal.get("authoritative_commit")
+        _ensure(
+            isinstance(candidate_commit, str) and candidate_commit,
+            "reconciliation-shape",
+            "%s requires a journaled interrupted candidate commit" % context,
+        )
+        return candidate_commit
+    _ensure(
+        status == "pending",
+        "reconciliation-shape",
+        "%s requires an implementation journal in pending or committed-but-not-persisted status"
+        % context,
+    )
+    _ensure(
+        impl_journal.get("authoritative_commit") is None
+        and impl_journal.get("implementation_commit") is None,
+        "reconciliation-shape",
+        "%s pending implementation journal must keep authoritative_commit null" % context,
+    )
+    return None
+
+
 def _build_reconciliation_journal(
     root, config, state, impl_journal, old_target, new_target, candidate_commit, args
 ):
@@ -2440,6 +2466,9 @@ def _build_reconciliation_journal(
         "status": "pending",
         "acknowledgment": _reconciliation_acknowledgment(args),
         "source_transition_id": impl_journal["transition_id"],
+        "source_journal_status": impl_journal.get("status"),
+        "source_authoritative_commit": impl_journal.get("authoritative_commit"),
+        "source_implementation_commit": impl_journal.get("implementation_commit"),
         "source_acknowledgment": impl_journal["acknowledgment"],
         "candidate_identity": impl_journal["candidate_identity"],
         "implementation_candidate": impl_journal["implementation_candidate"],
@@ -2477,6 +2506,12 @@ def _validate_reconciliation_journal(
         "%s reconciliation journal identity does not match the workflow" % context,
     )
     _ensure(
+        recon.get("from_status") == "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL"
+        and recon.get("to_status") == "DRAFT_PR_CREATION",
+        "invalid-reconciliation-journal",
+        "%s reconciliation journal transition is invalid" % context,
+    )
+    _ensure(
         recon.get("status") in RECONCILIATION_JOURNAL_STATUSES,
         "invalid-reconciliation-journal",
         "%s reconciliation journal status is invalid" % context,
@@ -2493,6 +2528,12 @@ def _validate_reconciliation_journal(
     )
     _ensure(
         recon.get("source_transition_id") == impl_journal.get("transition_id")
+        and recon.get("source_journal_status") == impl_journal.get("status")
+        and recon.get("source_authoritative_commit")
+        == impl_journal.get("authoritative_commit")
+        and recon.get("source_implementation_commit")
+        == impl_journal.get("implementation_commit")
+        and recon.get("source_acknowledgment") == impl_journal.get("acknowledgment")
         and recon.get("candidate_identity") == impl_journal.get("candidate_identity")
         and recon.get("implementation_candidate") == impl_journal.get("implementation_candidate")
         and recon.get("reviewed_commit_subject") == impl_journal.get("reviewed_commit_subject")
@@ -2634,6 +2675,11 @@ def _persist_reconciliation(root, config, state, recon, reconciled):
             "previous_target_head": recon["previous_target_head"],
             "new_target_head": recon["new_target_head"],
             "reconciled_commit": reconciled,
+            "source_journal_status": recon.get("source_journal_status"),
+            "source_authoritative_commit": recon.get("source_authoritative_commit"),
+            "source_implementation_commit": recon.get("source_implementation_commit"),
+            "source_acknowledgment": recon.get("source_acknowledgment"),
+            "reconciliation_acknowledgment": recon.get("acknowledgment"),
             "requested_by": recon["requested_by"],
             "requested_at": recon["requested_at"],
             "transition_id": recon["transition_id"],
@@ -2666,16 +2712,17 @@ def _persist_reconciliation(root, config, state, recon, reconciled):
 
 
 def command_reconcile_implementation_target(args, root, config):
-    """Governed reconciliation of a committed Gate 3 candidate onto an advanced target.
+    """Governed reconciliation of an interrupted Gate 3 candidate onto an advanced target.
 
     Recovers the narrow #276 shape the ordinary Gate 3 recovery cannot: the
-    implementation-approval journal is durable and committed-but-not-persisted,
-    HEAD is the exact interrupted candidate commit (one direct child of the
-    journal target), and `origin/<target_base>` has since advanced to a strict
-    descendant of that journal target. It re-applies the journal-bound approved
-    test boundary and accepted production candidate onto the advanced target as
-    exactly one new implementation commit, preserving the old target and old
-    commit as immutable provenance, and never reusing the ordinary
+    implementation-approval journal is durable in either
+    committed-but-not-persisted or pending form, HEAD is the exact interrupted
+    candidate commit (one direct child of the journal target), and
+    `origin/<target_base>` has since advanced to a strict descendant of that
+    journal target. It re-applies the journal-bound approved test boundary and
+    accepted production candidate onto the advanced target as exactly one new
+    implementation commit, preserving the old target and old commit as
+    immutable provenance, and never reusing the ordinary
     recovery/reanchor/reconcile-candidate commands or their journals.
     """
     context = "reconcile-implementation-target"
@@ -2694,16 +2741,12 @@ def command_reconcile_implementation_target(args, root, config):
         "implementation approval transition journal",
     )
     _ensure(
-        impl_journal.get("status") == "committed-but-not-persisted",
+        impl_journal.get("status") in ("pending", "committed-but-not-persisted"),
         "reconciliation-shape",
-        "%s requires a committed-but-not-persisted implementation approval journal" % context,
+        "%s requires a pending or committed-but-not-persisted implementation approval journal"
+        % context,
     )
-    candidate_commit = impl_journal.get("authoritative_commit")
-    _ensure(
-        isinstance(candidate_commit, str) and candidate_commit,
-        "reconciliation-shape",
-        "%s requires a journaled interrupted candidate commit" % context,
-    )
+    source_candidate_commit = _reconciliation_source_candidate_commit(impl_journal, context)
     old_target = impl_journal["target_head"]
     recon_path = _reconciliation_transition_journal_path(root, config, args.issue)
 
@@ -2718,8 +2761,17 @@ def command_reconcile_implementation_target(args, root, config):
         )
         recon = _read_json(recon_path, "reconciliation transition journal")
         new_target = _state_target_head(state)
+        candidate_commit = source_candidate_commit or recon.get("previous_candidate_commit")
+        _ensure(
+            isinstance(candidate_commit, str) and candidate_commit,
+            "reconciliation-shape",
+            "%s finalized reconciliation has no interrupted candidate provenance" % context,
+        )
         _validate_reconciliation_journal(
             root, config, state, recon, impl_journal, old_target, new_target, candidate_commit, context
+        )
+        _verify_interrupted_candidate_commit(
+            root, config, state, impl_journal, candidate_commit, context
         )
         reconciled = recon["reconciled_commit"]
         _verify_reconciled_implementation(root, config, state, recon, reconciled, context)
@@ -2750,15 +2802,27 @@ def command_reconcile_implementation_target(args, root, config):
         "%s requires origin/%s to advance past the recorded target" % (context, config["target_base"]),
     )
     _git_ancestor(root, config, old_target, new_target, context)
-
-    _verify_interrupted_candidate_commit(root, config, state, impl_journal, candidate_commit, context)
-
-    # Retry paths: an existing reconciliation journal binds the in-flight transition.
+    candidate_commit = source_candidate_commit
+    recon = None
     if recon_path.is_file():
         recon = _read_json(recon_path, "reconciliation transition journal")
+        if candidate_commit is None:
+            candidate_commit = recon.get("previous_candidate_commit")
+            _ensure(
+                isinstance(candidate_commit, str) and candidate_commit,
+                "reconciliation-shape",
+                "%s pending implementation journal retry has no interrupted candidate provenance"
+                % context,
+            )
         _validate_reconciliation_journal(
             root, config, state, recon, impl_journal, old_target, new_target, candidate_commit, context
         )
+    elif candidate_commit is None:
+        candidate_commit = _current_head(root, config)
+
+    _verify_interrupted_candidate_commit(root, config, state, impl_journal, candidate_commit, context)
+
+    if recon is not None:
         if recon["status"] in ("committed", "finalized"):
             reconciled = recon["reconciled_commit"]
             _verify_reconciled_implementation(root, config, state, recon, reconciled, context)
@@ -2770,11 +2834,19 @@ def command_reconcile_implementation_target(args, root, config):
                 "previous_target_head": old_target,
                 "new_target_head": new_target,
             }
-        _ensure(
-            _current_head(root, config) == candidate_commit,
-            "implementation-commit-mismatch",
-            "%s requires HEAD to match the interrupted candidate before retry" % context,
-        )
+        current_head = _current_head(root, config)
+        if current_head != candidate_commit:
+            _verify_reconciled_implementation(
+                root, config, state, recon, current_head, context
+            )
+            recon = _persist_reconciliation(root, config, state, recon, current_head)
+            return {
+                "ok": True,
+                "status": state["status"],
+                "implementation_commit": current_head,
+                "previous_target_head": old_target,
+                "new_target_head": new_target,
+            }
         _require_clean_tree(root, config, context)
     else:
         _ensure(

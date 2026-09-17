@@ -503,6 +503,58 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assert_clean_status()
         return candidate_commit
 
+    def bootstrap_to_pending_journal_committed_candidate_pending_target_advance(self):
+        """Create the pending-journal reconciliation shape introduced by issue #287.
+
+        The implementation-approval transition journal is durably written in
+        `pending` status, the authoritative Gate 3 commit is created, and then
+        persistence of the committed journal update fails before state
+        finalization. This leaves:
+          * state status at WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL
+          * implementation-approval journal status pending with
+            authoritative_commit == null
+          * HEAD at the exact interrupted candidate commit (direct child of
+            the journal target_head)
+        """
+        self.bootstrap_to_reviewed_implementation()
+        original_write_json = workflow._write_json
+        committed_journal_write_seen = False
+
+        def fail_committed_journal_write(path, payload):
+            nonlocal committed_journal_write_seen
+            if (
+                payload.get("status") == "committed-but-not-persisted"
+                and not committed_journal_write_seen
+            ):
+                committed_journal_write_seen = True
+                raise workflow.WorkflowError(
+                    "injected-transition-commit-journal-failure",
+                    "injected implementation transition commit-journal failure",
+                )
+            return original_write_json(path, payload)
+
+        with mock.patch.object(workflow, "_write_json", side_effect=fail_committed_journal_write):
+            code, payload, _ = self.approve_implementation()
+
+        self.assertEqual(1, code)
+        self.assertEqual(
+            "injected-transition-commit-journal-failure", payload["error"]["code"]
+        )
+        candidate_commit = self.git("rev-parse", "HEAD").stdout.strip()
+        self.assertEqual(
+            "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", self.state()["status"]
+        )
+        journal = self.assert_transition_journal_matches_state()
+        self.assertEqual("pending", journal["status"])
+        self.assertIsNone(journal["authoritative_commit"])
+        self.assertIsNone(journal["implementation_commit"])
+        self.assertEqual(
+            self.state()["target_head"],
+            self.git("rev-parse", f"{candidate_commit}^").stdout.strip(),
+        )
+        self.assert_clean_status()
+        return candidate_commit
+
     def checkout_unrelated_branch_ahead_of_target(self, branch="unrelated-work"):
         self.git("checkout", "-q", "-b", branch)
         (self.root / "src" / "test").mkdir(parents=True, exist_ok=True)
@@ -1802,6 +1854,12 @@ class AgentWorkflowTest(unittest.TestCase):
         self.git("update-ref", "refs/remotes/origin/main", remote_head)
         return remote_head
 
+    def amend_head_preserving_subject(self):
+        subject = self.git("show", "-s", "--format=%s", "HEAD").stdout.strip()
+        self.git("add", "-A")
+        self.git("commit", "--amend", "-qm", subject)
+        return self.git("rev-parse", "HEAD").stdout.strip()
+
     def assert_candidate_state_matches(self, test_commit, expected_diff, expected_paths):
         self.assertEqual(test_commit, self.git("rev-parse", "HEAD").stdout.strip())
         self.assertEqual(expected_diff, self.git_candidate_diff(test_commit))
@@ -2954,6 +3012,308 @@ class AgentWorkflowTest(unittest.TestCase):
             1,
             int(self.git("rev-list", "--count", f"{new_target}..{reconciled_commit}").stdout.strip()),
         )
+        self.assert_clean_status()
+
+    def test_reconcile_implementation_target_supports_pending_journal_with_null_authoritative_commit(self):
+        """Pending Gate 3 journals with a committed HEAD candidate reconcile successfully."""
+        candidate_commit = self.bootstrap_to_pending_journal_committed_candidate_pending_target_advance()
+        before_state = self.state()
+        original_target = before_state["target_head"]
+        candidate = before_state["implementation_candidate"]
+        original_journal = json.loads(self.transition_journal_path().read_text(encoding="utf-8"))
+        new_target = self.advance_remote_ref_past_commit(
+            candidate_commit,
+            {"downstream.txt": "downstream\n"},
+            name="authorized downstream merge",
+        )
+
+        code, payload, _ = self.reconcile_implementation_target()
+
+        self.assertEqual(0, code)
+        self.assertTrue(payload["ok"])
+        self.assertEqual("DRAFT_PR_CREATION", payload["status"])
+        after = self.state()
+        self.assertEqual(new_target, after["target_head"])
+        self.assertNotEqual(original_target, after["target_head"])
+        reconciled_commit = after["implementation_commit"]
+        self.assertIsNotNone(reconciled_commit)
+        self.assertNotEqual(candidate_commit, reconciled_commit)
+        self.assertEqual(reconciled_commit, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertEqual(new_target, self.git("rev-parse", f"{reconciled_commit}^").stdout.strip())
+        self.assertEqual(
+            1,
+            int(self.git("rev-list", "--count", f"{new_target}..{reconciled_commit}").stdout.strip()),
+        )
+        diff_names = sorted(
+            line.strip()
+            for line in self.git("diff", "--name-only", f"{new_target}..{reconciled_commit}").stdout.splitlines()
+            if line.strip()
+        )
+        self.assertEqual(sorted(candidate["candidate_paths"]), diff_names)
+        self.assertEqual(
+            original_journal,
+            json.loads(self.transition_journal_path().read_text(encoding="utf-8")),
+        )
+        provenance = after["implementation_target_reconciliations"][-1]
+        self.assertEqual("pending", provenance["source_journal_status"])
+        self.assertIsNone(provenance["source_authoritative_commit"])
+        self.assertEqual(candidate_commit, provenance["previous_candidate_commit"])
+        self.assertEqual(original_target, provenance["previous_target_head"])
+        self.assertEqual(new_target, provenance["new_target_head"])
+        self.assertEqual(reconciled_commit, provenance["reconciled_commit"])
+        self.assert_clean_status()
+
+    def test_reconcile_implementation_target_pending_journal_rejects_wrong_head(self):
+        """Pending-journal reconciliation fails closed when HEAD is not the interrupted candidate."""
+        candidate_commit = self.bootstrap_to_pending_journal_committed_candidate_pending_target_advance()
+        self.advance_remote_ref_past_commit(candidate_commit, {"downstream.txt": "downstream\n"})
+        before_state = self.state()
+        self.git("reset", "--hard", before_state["target_head"])
+        wrong_head = self.git("rev-parse", "HEAD").stdout.strip()
+
+        code, payload, _ = self.reconcile_implementation_target()
+
+        self.assertEqual(1, code)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(before_state, self.state())
+        self.assertEqual(wrong_head, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertFalse(self.reconciliation_journal_path().exists())
+
+    def test_reconcile_implementation_target_pending_journal_rejects_non_direct_child(self):
+        """Pending-journal reconciliation requires HEAD to be a direct child of the old target."""
+        candidate_commit = self.bootstrap_to_pending_journal_committed_candidate_pending_target_advance()
+        self.advance_remote_ref_past_commit(candidate_commit, {"downstream.txt": "downstream\n"})
+        before_state = self.state()
+        self.git("commit", "--allow-empty", "-qm", "extra local commit")
+        non_direct_head = self.git("rev-parse", "HEAD").stdout.strip()
+
+        code, payload, _ = self.reconcile_implementation_target()
+
+        self.assertEqual(1, code)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(before_state, self.state())
+        self.assertEqual(non_direct_head, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertFalse(self.reconciliation_journal_path().exists())
+
+    def test_reconcile_implementation_target_pending_journal_rejects_candidate_content_path_or_mode_drift(self):
+        """Pending-journal reconciliation rejects interrupted candidate content/path/mode drift."""
+        candidate_commit = self.bootstrap_to_pending_journal_committed_candidate_pending_target_advance()
+        self.advance_remote_ref_past_commit(candidate_commit, {"downstream.txt": "downstream\n"})
+        before_state = self.state()
+        journal_before = self.transition_journal_path().read_text(encoding="utf-8")
+        file_path = self.root / "src" / "Example.kt"
+
+        mutations = {
+            "content": lambda: file_path.write_text("tampered implementation\n", encoding="utf-8"),
+            "path": lambda: (self.root / "src" / "Unexpected.kt").write_text(
+                "unexpected file\n", encoding="utf-8"
+            ),
+            "mode": lambda: os.chmod(
+                file_path,
+                os.stat(file_path).st_mode | stat.S_IXUSR,
+            ),
+        }
+
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                self.git("reset", "--hard", candidate_commit)
+                if (self.root / "src" / "Unexpected.kt").exists():
+                    (self.root / "src" / "Unexpected.kt").unlink()
+                mutate()
+                drifted_head = self.amend_head_preserving_subject()
+                code, payload, _ = self.reconcile_implementation_target()
+                self.assertEqual(1, code)
+                self.assertFalse(payload["ok"])
+                self.assertEqual(before_state, self.state())
+                self.assertEqual(drifted_head, self.git("rev-parse", "HEAD").stdout.strip())
+                self.assertEqual(
+                    journal_before,
+                    self.transition_journal_path().read_text(encoding="utf-8"),
+                )
+                self.assertFalse(self.reconciliation_journal_path().exists())
+
+    def test_reconcile_implementation_target_pending_journal_rejects_test_boundary_mismatch(self):
+        """Pending-journal reconciliation rejects interrupted commits that alter approved test boundary."""
+        candidate_commit = self.bootstrap_to_pending_journal_committed_candidate_pending_target_advance()
+        self.advance_remote_ref_past_commit(candidate_commit, {"downstream.txt": "downstream\n"})
+        before_state = self.state()
+        (self.root / "src" / "test" / "ExampleTest.kt").write_text(
+            "tampered test boundary\n", encoding="utf-8"
+        )
+        drifted_head = self.amend_head_preserving_subject()
+
+        code, payload, _ = self.reconcile_implementation_target()
+
+        self.assertEqual(1, code)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(before_state, self.state())
+        self.assertEqual(drifted_head, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertFalse(self.reconciliation_journal_path().exists())
+
+    def test_reconcile_implementation_target_pending_journal_rejects_tampered_authorization(self):
+        """Pending-journal reconciliation requires untampered source authorization."""
+        candidate_commit = self.bootstrap_to_pending_journal_committed_candidate_pending_target_advance()
+        self.advance_remote_ref_past_commit(candidate_commit, {"downstream.txt": "downstream\n"})
+        journal_path = self.transition_journal_path()
+        original = json.loads(journal_path.read_text(encoding="utf-8"))
+        tampered = json.loads(journal_path.read_text(encoding="utf-8"))
+        tampered["acknowledgment"]["confirmation"] = "tampered-authorization"
+        journal_path.write_text(json.dumps(tampered, indent=2) + "\n", encoding="utf-8")
+        before_state = self.state()
+        before_head = self.git("rev-parse", "HEAD").stdout.strip()
+
+        code, payload, _ = self.reconcile_implementation_target()
+
+        self.assertEqual(1, code)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(before_state, self.state())
+        self.assertEqual(before_head, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertFalse(self.reconciliation_journal_path().exists())
+        journal_path.write_text(json.dumps(original, indent=2) + "\n", encoding="utf-8")
+
+    def test_reconcile_implementation_target_pending_journal_rejects_non_descendant_target(self):
+        """Pending-journal reconciliation rejects unrelated advanced targets."""
+        candidate_commit = self.bootstrap_to_pending_journal_committed_candidate_pending_target_advance()
+        before_state = self.state()
+        unrelated = self.unrelated_empty_tree_commit()
+        self.git("update-ref", "refs/remotes/origin/main", unrelated)
+
+        code, payload, _ = self.reconcile_implementation_target()
+
+        self.assertEqual(1, code)
+        self.assertFalse(payload["ok"])
+        self.assertEqual("invalid-git-ancestry", payload["error"]["code"])
+        self.assertEqual(before_state, self.state())
+        self.assertEqual(candidate_commit, self.git("rev-parse", "HEAD").stdout.strip())
+
+    def test_reconcile_implementation_target_pending_journal_recovers_when_reconciled_commit_persistence_crashes(self):
+        """Crash after creating reconciled commit but before commit persistence retries idempotently."""
+        candidate_commit = self.bootstrap_to_pending_journal_committed_candidate_pending_target_advance()
+        new_target = self.advance_remote_ref_past_commit(
+            candidate_commit, {"downstream.txt": "downstream\n"}
+        )
+        recon_path = self.reconciliation_journal_path()
+        original_write_json = workflow._write_json
+        committed_write_seen = False
+
+        def fail_reconciled_commit_persistence(path, payload):
+            nonlocal committed_write_seen
+            if (
+                payload.get("status") == "committed"
+                and not committed_write_seen
+            ):
+                committed_write_seen = True
+                raise workflow.WorkflowError(
+                    "injected-reconciled-commit-persistence-failure",
+                    "injected reconciliation commit persistence failure",
+                )
+            return original_write_json(path, payload)
+
+        with mock.patch.object(workflow, "_write_json", side_effect=fail_reconciled_commit_persistence):
+            code, payload, _ = self.reconcile_implementation_target()
+
+        self.assertEqual(1, code)
+        self.assertEqual(
+            "injected-reconciled-commit-persistence-failure", payload["error"]["code"]
+        )
+        reconciled_commit = self.git("rev-parse", "HEAD").stdout.strip()
+        self.assertNotEqual(candidate_commit, reconciled_commit)
+        self.assertEqual(
+            "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", self.state()["status"]
+        )
+        pending_recon = json.loads(recon_path.read_text(encoding="utf-8"))
+        self.assertEqual("pending", pending_recon["status"])
+        self.assertIsNone(pending_recon["reconciled_commit"])
+
+        code, payload, _ = self.reconcile_implementation_target()
+
+        self.assertEqual(0, code)
+        self.assertEqual("DRAFT_PR_CREATION", payload["status"])
+        self.assertEqual(reconciled_commit, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertEqual(new_target, self.git("rev-parse", f"{reconciled_commit}^").stdout.strip())
+        self.assertEqual(
+            1,
+            int(self.git("rev-list", "--count", f"{new_target}..{reconciled_commit}").stdout.strip()),
+        )
+        self.assertEqual(1, len(self.state()["implementation_target_reconciliations"]))
+        self.assert_clean_status()
+
+    def test_reconcile_implementation_target_pending_journal_recovers_when_provenance_persistence_crashes(self):
+        """Crash after reconciliation commit persistence but before provenance state write is recoverable."""
+        candidate_commit = self.bootstrap_to_pending_journal_committed_candidate_pending_target_advance()
+        new_target = self.advance_remote_ref_past_commit(
+            candidate_commit, {"downstream.txt": "downstream\n"}
+        )
+        original_write_state = workflow._write_state
+
+        def fail_provenance_state_write(root, config, issue, state):
+            if (
+                state.get("status") == "DRAFT_PR_CREATION"
+                and state.get("target_head") == new_target
+            ):
+                raise workflow.WorkflowError(
+                    "injected-provenance-state-write-failure",
+                    "injected provenance persistence failure",
+                )
+            return original_write_state(root, config, issue, state)
+
+        with mock.patch.object(workflow, "_write_state", side_effect=fail_provenance_state_write):
+            code, payload, _ = self.reconcile_implementation_target()
+
+        self.assertEqual(1, code)
+        self.assertEqual("injected-provenance-state-write-failure", payload["error"]["code"])
+        reconciled_commit = self.git("rev-parse", "HEAD").stdout.strip()
+        self.assertNotEqual(candidate_commit, reconciled_commit)
+        self.assertEqual(
+            "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", self.state()["status"]
+        )
+        committed_recon = json.loads(self.reconciliation_journal_path().read_text(encoding="utf-8"))
+        self.assertEqual("committed", committed_recon["status"])
+        self.assertEqual(reconciled_commit, committed_recon["reconciled_commit"])
+
+        code, payload, _ = self.reconcile_implementation_target()
+
+        self.assertEqual(0, code)
+        self.assertEqual("DRAFT_PR_CREATION", payload["status"])
+        self.assertEqual(reconciled_commit, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertEqual(
+            1,
+            int(self.git("rev-list", "--count", f"{new_target}..{reconciled_commit}").stdout.strip()),
+        )
+        self.assertEqual(1, len(self.state()["implementation_target_reconciliations"]))
+        self.assert_clean_status()
+
+    def test_reconcile_implementation_target_pending_journal_is_idempotent_after_success(self):
+        """Repeated pending-journal reconciliation invocations are verified no-ops after success."""
+        candidate_commit = self.bootstrap_to_pending_journal_committed_candidate_pending_target_advance()
+        new_target = self.advance_remote_ref_past_commit(
+            candidate_commit, {"downstream.txt": "downstream\n"}
+        )
+
+        first_code, first_payload, _ = self.reconcile_implementation_target()
+        self.assertEqual(0, first_code)
+        self.assertEqual("DRAFT_PR_CREATION", first_payload["status"])
+        reconciled_commit = self.git("rev-parse", "HEAD").stdout.strip()
+        state_after_first = self.state()
+        recon_after_first = json.loads(
+            self.reconciliation_journal_path().read_text(encoding="utf-8")
+        )
+
+        second_code, second_payload, _ = self.reconcile_implementation_target()
+
+        self.assertEqual(0, second_code)
+        self.assertEqual("DRAFT_PR_CREATION", second_payload["status"])
+        self.assertEqual(reconciled_commit, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertEqual(state_after_first, self.state())
+        self.assertEqual(
+            recon_after_first,
+            json.loads(self.reconciliation_journal_path().read_text(encoding="utf-8")),
+        )
+        self.assertEqual(
+            1,
+            int(self.git("rev-list", "--count", f"{new_target}..{reconciled_commit}").stdout.strip()),
+        )
+        self.assertEqual(1, len(self.state()["implementation_target_reconciliations"]))
         self.assert_clean_status()
 
     def test_recover_implementation_approval_still_fails_closed_when_target_advanced_past_candidate(self):

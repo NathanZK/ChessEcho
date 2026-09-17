@@ -242,10 +242,11 @@ has advanced past the interrupted candidate: it never reconciles a moved
 target, and `reconcile-candidate` only handles an accepted *uncommitted*
 candidate (`HEAD == test_commit`), not the committed authoritative commit.
 For the narrow post-Gate-3 shape where the implementation-approval journal is
-`committed-but-not-persisted`, `HEAD` is the exact journal-bound candidate
-commit (one direct child of the journal target), and `origin/<target_base>`
-has since advanced to a strict descendant of that journal target, use the
-explicit governed command:
+either `committed-but-not-persisted` (with a recorded `authoritative_commit`)
+or `pending` (with `authoritative_commit: null`), `HEAD` is independently
+verifiable as the exact interrupted candidate commit (one direct child of the
+journal target), and `origin/<target_base>` has since advanced to a strict
+descendant of that journal target, use the explicit governed command:
 
 ```bash
 python3 scripts/agent_workflow.py reconcile-implementation-target ISSUE --by REQUESTER --confirm implementation_target_reconciled
@@ -255,11 +256,13 @@ This is a distinct governed transition, not a reuse of the recovery,
 `reanchor-target`, or `reconcile-candidate` paths. It requires its own
 explicit authorization (`implementation_target_reconciled`) and never mutates
 or adopts the old commit. Preconditions, all revalidated before any Git
-mutation, are: the committed-but-not-persisted implementation-approval journal
-with unchanged authorization; the journal target is an ancestor of, and a
-strict descendant relationship holds to, the freshly resolved origin target;
-`HEAD` is exactly the journal-bound interrupted candidate commit (one direct
-child of the journal target); the approved test boundary and accepted
+mutation, are: the implementation-approval journal (pending or
+committed-but-not-persisted) with unchanged authorization and approved
+boundary; the journal target is an ancestor of, and a strict descendant
+relationship holds to, the freshly resolved origin target; the interrupted
+candidate commit is proven exact and direct-child journal topology (from the
+journaled authoritative commit for committed journals, or independently from
+current `HEAD` for pending journals); the approved test boundary and accepted
 candidate identity/tree/content/path are unchanged (issue #282 equivalence);
 and the worktree is clean.
 
