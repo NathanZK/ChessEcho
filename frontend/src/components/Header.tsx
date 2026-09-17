@@ -14,7 +14,6 @@ interface HeaderProps {
   weaknessCount?: number;
   onDisconnect?: () => void;
   sessionStatus?: HeaderSessionStatus;
-  onSignIn?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -24,7 +23,6 @@ export const Header: React.FC<HeaderProps> = ({
   weaknessCount = 0,
   onDisconnect,
   sessionStatus,
-  onSignIn,
 }) => {
   const isPuzzlesLayout = activeTab === 'puzzles';
   // Keep the selected Chess.com username separate from identity state. A guest
@@ -207,18 +205,18 @@ export const Header: React.FC<HeaderProps> = ({
                   isPuzzlesLayout ? 'shrink-0 max-w-full whitespace-normal 2xl:w-full 2xl:ml-0' : ''
                 }`}
               >
-                Disconnect
+                {sessionStatus === 'authenticated' ? 'Sign out' : 'Disconnect'}
               </button>
             )}
-            {showGuestSelection && onSignIn && (
-              <button
-                onClick={onSignIn}
+            {showGuestSelection && (
+              <a
+                href="/login"
                 className={`ml-2 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold rounded-lg transition cursor-pointer ${
                   isPuzzlesLayout ? 'shrink-0 max-w-full whitespace-normal 2xl:w-full 2xl:ml-0' : ''
                 }`}
               >
                 Sign In
-              </button>
+              </a>
             )}
           </div>
         ) : (
@@ -231,15 +229,25 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <User className={`w-4 h-4 text-slate-500 ${isPuzzlesLayout ? 'shrink-0' : ''}`} />
             <span className={isPuzzlesLayout ? 'min-w-0 break-words' : ''}>Not Connected</span>
-            {sessionStatus === 'unauthenticated' && onSignIn && (
-              <button
-                onClick={onSignIn}
+            {sessionStatus === 'unauthenticated' && (
+              <a
+                href="/login"
                 className={`ml-2 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold rounded-lg transition cursor-pointer ${
                   isPuzzlesLayout ? 'shrink-0 max-w-full whitespace-normal 2xl:w-full 2xl:ml-0' : ''
                 }`}
               >
                 Sign In
-              </button>
+              </a>
+            )}
+            {sessionStatus === 'unauthenticated' && (
+              <a
+                href="/register"
+                className={`ml-2 px-2.5 py-1 text-emerald-300 hover:text-emerald-200 text-[11px] font-bold rounded-lg transition ${
+                  isPuzzlesLayout ? 'shrink-0 max-w-full whitespace-normal 2xl:w-full 2xl:ml-0' : ''
+                }`}
+              >
+                Register
+              </a>
             )}
           </div>
         )}

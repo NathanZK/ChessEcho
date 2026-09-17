@@ -172,37 +172,6 @@ export default function Home() {
     void apiLogout();
   };
 
-  const handleSignIn = () => {
-    // No production provider is wired in this slice; re-check the session so a
-    // session established out-of-band (e.g. the dev endpoint) is picked up.
-    setSessionStatus('loading');
-    fetchCurrentSession().then(async (state) => {
-      if (state.status === 'authenticated') {
-        if (reconcileSessionIdentity(state.userId)) {
-          try {
-            const accounts = await fetchAccounts();
-            if (accounts.length === 0) {
-              clearAuthenticatedAccountState();
-              clearLiveJobState();
-            } else {
-              const selected = accounts[0];
-              activeAccountStore.set(selected);
-              activeUsernameStore.set(selected.username);
-            }
-          } catch {
-            clearAuthenticatedAccountState();
-            clearLiveJobState();
-          }
-        }
-      } else if (state.status === 'unauthenticated') {
-        reconcileSessionIdentity(undefined);
-      } else {
-        reconcileSessionIdentity(undefined);
-      }
-      setSessionStatus(state.status);
-    });
-  };
-
   // Explicit client initialization gate to prevent hydration mismatch and double-fetch
   const [isSettingsInitialized, setIsSettingsInitialized] = useState<boolean>(false);
   const [minEvalLoss, setMinEvalLoss] = useState<number>(0.8);
@@ -1379,7 +1348,6 @@ export default function Home() {
         weaknessCount={weaknessCount}
         onDisconnect={handleLogout}
         sessionStatus={sessionStatus}
-        onSignIn={handleSignIn}
       />
 
       {/* Main Content Area */}

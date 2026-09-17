@@ -37,6 +37,23 @@ Provisioning keys strictly on `(issuer, subject)`: the same pair always resolves
 the same `AppUser`; equal subjects under different issuers stay distinct; and an
 `email_snapshot` change never creates or merges an identity.
 
+### First-party local credentials (#276)
+
+Local registration and login do not introduce another identity model. The
+canonical email (Unicode surrounding whitespace trimmed, then lowercased with
+`Locale.ROOT`, without provider-specific rewriting) is persisted on `AppUser`.
+`LocalCredential` has a unique one-to-one foreign key to that `AppUser` and
+stores only an adaptive PBKDF2 verifier plus timestamps. It contains no email,
+provider subject, or duplicate owner identifier.
+
+`POST /api/register` and `POST /api/login` are covered by the same double-submit
+CSRF interceptor as logout and other state-changing APIs. Registration returns
+`409 REGISTRATION_CONFLICT` for a duplicate canonical email. Login returns the
+same `401 INVALID_CREDENTIALS` response for both unknown email and wrong
+password, without issuing a session on failure. Success uses
+`IdentitySessionService` and `SessionCookieWriter`; no raw session material is
+returned to JSON or persisted in the frontend.
+
 ## Opaque sessions
 
 `AuthSession` stores only the SHA-256 hex of a 256-bit opaque secret. The raw
@@ -75,7 +92,8 @@ concrete adapter and it exists only inside the development allowlist.
   never exposes the raw secret.
 - **`CsrfEnforcementInterceptor`** enforces double-submit CSRF on the
   state-changing endpoints (`POST /api/logout`, `POST /api/dev/session`,
-  `POST /api/accounts`, and `POST /api/games/import`), comparing the
+  `POST /api/accounts`, `POST /api/games/import`, `POST /api/register`, and
+  `POST /api/login`), comparing the
   `X-XSRF-TOKEN` header to the `XSRF-TOKEN` cookie in constant time
   (`MessageDigest.isEqual`). `GET`, `HEAD`, and `OPTIONS` (including CORS
   preflight) are safe and exempt.

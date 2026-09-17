@@ -453,6 +453,45 @@ Credentialed CORS (`Access-Control-Allow-Credentials: true`) is restricted to th
 configured explicit origins (`http://localhost:3000`, `http://127.0.0.1:3000`).
 Allowed request headers include `Content-Type` and `X-XSRF-TOKEN`.
 
+## Local email/password authentication (Issue #276)
+
+`AppUser` is the sole application identity. A `LocalCredential` is a one-to-one
+password factor attached to that user and stores only an adaptive PBKDF2
+password verifier; it has no email or provider identity field. Successful
+registration and login issue the same opaque `CHESSECHO_SESSION` cookie used by
+the rest of the application. Passwords, hashes, session identifiers, and raw
+session secrets are never returned.
+
+Email canonicalization is exactly: trim leading/trailing Unicode whitespace,
+then lowercase with `Locale.ROOT`. Provider-specific rewrites (including Gmail
+dot or plus-address handling) are not performed. The canonical value is stored
+on `AppUser` and is used for uniqueness, duplicate registration, and login.
+
+### `POST /api/register`
+
+Requires a matching `XSRF-TOKEN` cookie and `X-XSRF-TOKEN` header.
+
+```json
+{"email":" Alice@Example.COM ","password":"correct horse battery staple"}
+```
+
+`201 Created` returns `{ "userId": "...", "email": "alice@example.com" }` and
+sets an HttpOnly session cookie. `409 REGISTRATION_CONFLICT` is returned when
+the canonical email is already registered; validation failures are `400
+VALIDATION_ERROR`; missing or mismatched CSRF is `403 CSRF_FAILED`.
+
+### `POST /api/login`
+
+Uses the same CSRF contract and request shape. `200 OK` returns the safe user
+summary and sets an opaque session cookie. Unknown email and wrong password
+both return the identical `401` response:
+
+```json
+{"error":"INVALID_CREDENTIALS","details":["Invalid email or password"]}
+```
+
+Neither failure creates a session or reveals whether the email exists.
+
 ## Current Session
 
 Returns the current authenticated principal summary, or `401` when the session is
