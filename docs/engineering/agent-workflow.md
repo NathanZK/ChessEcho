@@ -143,6 +143,7 @@ stateDiagram-v2
     IMPLEMENTATION_REVIEW --> IMPLEMENTATION: review-implementation NEEDS_REVISION
     WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL --> DRAFT_PR_CREATION: approve-implementation creates implementation commit (Approval Gate 3)
     WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL --> DRAFT_PR_CREATION: reconcile-implementation-target re-applies a committed candidate onto an advanced target
+    DRAFT_PR_CREATION --> DRAFT_PR_CREATION: reconcile-implementation-target --confirm implementation_target_reconciliation_reanchored re-anchors a materialized reconciliation onto a further advance
     WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL --> IMPLEMENTATION: reject-implementation
 
     DRAFT_PR_CREATION --> WORKFLOW_COMPLETED: create-draft-pr verifies one-commit topology
@@ -297,6 +298,74 @@ non-advanced target, candidate/test-boundary tampering, or an unclean
 application all fail closed without advancing workflow state. Like the other
 journals it is crash-consistency evidence, not independent authorization, and
 never creates a PR or advances another gate.
+
+#### Re-anchoring a reconciliation after a further target advance
+
+`reconcile-implementation-target`'s base confirmation
+(`implementation_target_reconciled`) only ever reconciles the *original*
+interrupted candidate once. If `origin/<target_base>` advances again after a
+reconciliation has already been materialized (its journal is `pending` with
+`HEAD` moved past the candidate, `pending` still at the candidate, or already
+`committed`/`finalized`) but before `create-draft-pr` has run, the existing
+reconciliation journal's own `new_target_head` is now stale, and neither the
+base confirmation nor any other command re-targets it. This is the shape a
+reconciliation itself can be interrupted or overtaken in — for example when a
+downstream defect (such as issue #293's verification bug) causes
+`_verify_reconciled_implementation` to fail after the reconciliation commit
+was already materialized but before the journal or `state.json` recorded it
+as `committed`.
+
+The same command accepts a second, distinct confirmation phrase for exactly
+this case:
+
+```bash
+python3 scripts/agent_workflow.py reconcile-implementation-target ISSUE --by REQUESTER --confirm implementation_target_reconciliation_reanchored
+```
+
+This re-anchor transition requires an existing reconciliation journal (any of
+the shapes above) and independently re-verifies it against its own recorded
+`new_target_head` first — proving no tampering occurred before ever
+considering a further advance. It then resolves the current re-anchor
+evidence commit: the recorded `reconciled_commit` for a `committed`/
+`finalized` journal, the current `HEAD` for a `pending` journal whose
+materialize step already ran (the exact issue #276 discovery shape), or the
+interrupted candidate commit for a `pending` journal that never materialized.
+It fetches and resolves a fresh target, requires it to be a strict descendant
+of the journal's current `new_target_head` (`target-not-advanced` and
+`invalid-git-ancestry` fail closed otherwise), and appends a new pending entry
+to the journal's `reanchors` list — an ordered array of
+`{"from_reconciled_commit", "to_target_head", "status", ...}` hops, each
+progressing `pending` -> `committed` -> `finalized` — before any further Git
+mutation, so a crash at any point retries or resumes exactly that hop.
+
+It then re-applies the same journal-bound approved test boundary and
+production candidate onto the fresh target exactly as the base transition
+does, with one refinement: if the fresh target already contains that exact
+approved content (a pure fast-forward descendant of the prior evidence
+commit), no duplicate implementation commit is created — the empty diff is
+detected and, when a commit is still required to advance `HEAD`, made with
+`git commit --allow-empty` — and the scope proof accepts this trivial
+rebase-equivalent shape as a subset of, rather than requiring exact equality
+with, the approved paths. Per-path content equivalence against the original
+approved evidence is still proven unconditionally regardless of which mode
+applies, and no out-of-scope path is ever tolerated. On success it updates the
+reconciliation journal's top-level `new_target_head`, `expected_parent`, and
+`reconciled_commit`, marks the `reanchors` entry `committed` then
+`finalized`, and only then atomically advances `state.json` to
+`DRAFT_PR_CREATION` exactly as the base transition would — reusing the same
+single `implementation_target_reconciliations` provenance entry rather than
+appending a second one, since the state only ever transitions into
+`DRAFT_PR_CREATION` once regardless of how many re-anchor hops preceded it.
+
+Re-anchoring is crash-safe and idempotent across any number of chained hops:
+a crash before the re-anchor commit retries into exactly one new commit; a
+crash after the commit but before finalization independently re-verifies and
+persists the existing commit instead of creating a second one; and
+re-invoking after success is a pure verified no-op. An unadvanced or
+non-descendant fresh target, a tampered reconciliation journal, an incorrect
+confirmation phrase, or candidate/test-boundary/path drift all fail closed
+without mutating Git or advancing workflow state, identically to the base
+transition.
 
 
 The journal is written to `test-approval-transition.json` after the existing
@@ -480,6 +549,7 @@ python3 scripts/agent_workflow.py review-implementation ISSUE --status READY_FOR
 python3 scripts/agent_workflow.py approve-implementation ISSUE --by LOGIN --confirm implementation_approved
 python3 scripts/agent_workflow.py recover-implementation-approval ISSUE
 python3 scripts/agent_workflow.py reconcile-implementation-target ISSUE --by REQUESTER --confirm implementation_target_reconciled
+python3 scripts/agent_workflow.py reconcile-implementation-target ISSUE --by REQUESTER --confirm implementation_target_reconciliation_reanchored
 python3 scripts/agent_workflow.py reject-implementation ISSUE --by LOGIN --reason "..."
 python3 scripts/agent_workflow.py create-draft-pr ISSUE --title "..." --body-file PATH
 ```
