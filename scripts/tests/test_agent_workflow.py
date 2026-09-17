@@ -1897,6 +1897,132 @@ class AgentWorkflowTest(unittest.TestCase):
         self.git("update-ref", "refs/remotes/origin/main", remote_head)
         return remote_head
 
+    def advance_remote_ref_from(self, parent_commit, changes, name="authorized downstream remote merge"):
+        """Advance `origin/<target_base>` by committing `changes` directly onto `parent_commit`.
+
+        Unlike `advance_remote_ref_past_commit`, this never substitutes the
+        recorded `target_head` for the given parent: it is used for chained,
+        multi-hop advances (issue #295) where the caller needs explicit
+        control over which prior remote commit the next advance descends
+        from.
+        """
+        index_path = self.root / "alt-index"
+        if index_path.exists():
+            index_path.unlink()
+        env = os.environ.copy()
+        env["GIT_INDEX_FILE"] = str(index_path)
+        subprocess.run(
+            ["git", "read-tree", parent_commit],
+            cwd=self.root,
+            check=True,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for path, content in changes.items():
+            blob = subprocess.run(
+                ["git", "hash-object", "-w", "--stdin"],
+                cwd=self.root,
+                check=True,
+                env=env,
+                input=content,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            ).stdout.strip()
+            subprocess.run(
+                ["git", "update-index", "--add", "--cacheinfo", "100644", blob, path],
+                cwd=self.root,
+                check=True,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        tree = subprocess.run(
+            ["git", "write-tree"],
+            cwd=self.root,
+            check=True,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ).stdout.strip()
+        remote_head = subprocess.run(
+            ["git", "commit-tree", tree, "-p", parent_commit, "-m", name],
+            cwd=self.root,
+            check=True,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        ).stdout.strip()
+        if index_path.exists():
+            index_path.unlink()
+        self.git("update-ref", "refs/remotes/origin/main", remote_head)
+        return remote_head
+
+    def reconcile_implementation_target_reanchor(self, by="owner"):
+        return self.run_cli(
+            "reconcile-implementation-target",
+            str(ISSUE),
+            "--by",
+            by,
+            "--confirm",
+            "implementation_target_reconciliation_reanchored",
+        )
+
+    def bootstrap_to_materialized_reconciliation_pending_further_advance(
+        self, implementation_paths=None, candidate_setup=None
+    ):
+        """Reproduce the exact issue #295 shape on top of the #276 shape.
+
+        `reconcile-implementation-target` materializes a reconciliation commit
+        onto a first advanced target, but final state persistence is
+        interrupted immediately afterward -- leaving the reconciliation
+        journal durably `committed` (with its `reconciled_commit` recorded)
+        and `state.json` still at `WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL`.
+        The caller advances `origin/<target_base>` again, past the returned
+        reconciled commit, to exercise the governed re-anchor recovery.
+
+        Returns `(candidate_commit, first_target, reconciled_commit)`.
+        """
+        candidate_commit = self.bootstrap_to_committed_candidate_pending_target_advance(
+            implementation_paths=implementation_paths, candidate_setup=candidate_setup
+        )
+        first_target = self.advance_remote_ref_past_commit(
+            candidate_commit,
+            {"downstream.txt": "downstream\n"},
+            name="first authorized downstream merge",
+        )
+        original_write_state = workflow._write_state
+
+        def fail_final_state(root, config, issue, state):
+            if state.get("status") == "DRAFT_PR_CREATION":
+                raise workflow.WorkflowError(
+                    "injected-post-reconciliation-state-failure",
+                    "injected state persistence failure after reconciled commit",
+                )
+            return original_write_state(root, config, issue, state)
+
+        with mock.patch.object(workflow, "_write_state", side_effect=fail_final_state):
+            code, payload, _ = self.reconcile_implementation_target()
+
+        self.assertEqual(1, code)
+        self.assertEqual("injected-post-reconciliation-state-failure", payload["error"]["code"])
+        reconciled_commit = self.git("rev-parse", "HEAD").stdout.strip()
+        self.assertNotEqual(candidate_commit, reconciled_commit)
+        self.assertEqual(
+            "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", self.state()["status"]
+        )
+        recon = json.loads(self.reconciliation_journal_path().read_text(encoding="utf-8"))
+        self.assertEqual("committed", recon["status"])
+        self.assertEqual(reconciled_commit, recon["reconciled_commit"])
+        self.assertEqual(first_target, recon["new_target_head"])
+        self.assert_clean_status()
+        return candidate_commit, first_target, reconciled_commit
+
     def amend_head_preserving_subject(self):
         subject = self.git("show", "-s", "--format=%s", "HEAD").stdout.strip()
         self.git("add", "-A")
@@ -3566,6 +3692,420 @@ class AgentWorkflowTest(unittest.TestCase):
             int(self.git("rev-list", "--count", f"{new_target}..{reconciled_commit}").stdout.strip()),
         )
         self.assertEqual(1, len(self.state()["implementation_target_reconciliations"]))
+        self.assert_clean_status()
+
+    # ---- reconcile-implementation-target re-anchor (issue #295) ----
+    #
+    # `reconcile-implementation-target --confirm implementation_target_reconciled`
+    # requires the freshly resolved target to exactly equal the reconciliation
+    # journal's recorded `new_target_head`. These tests specify the required
+    # `--confirm implementation_target_reconciliation_reanchored` recovery for
+    # the narrow case where `origin/<target_base>` advances again *after* a
+    # reconciliation is materialized but *before* it is finalized -- the exact
+    # shape discovered while recovering issue #276. They are expected to fail
+    # until that capability is implemented.
+
+    def test_reconcile_implementation_target_reanchor_advances_past_materialized_commit(self):
+        """[A] A pure descendant advance re-anchors the materialized reconciliation cleanly."""
+        candidate_commit, first_target, reconciled_commit = (
+            self.bootstrap_to_materialized_reconciliation_pending_further_advance()
+        )
+        candidate = self.state()["implementation_candidate"]
+        second_target = self.advance_remote_ref_from(
+            first_target,
+            {"downstream2.txt": "downstream2\n"},
+            name="second authorized downstream merge",
+        )
+
+        code, payload, _ = self.reconcile_implementation_target_reanchor()
+
+        self.assertEqual(0, code)
+        self.assertTrue(payload["ok"])
+        self.assertEqual("DRAFT_PR_CREATION", payload["status"])
+        after = self.state()
+        self.assertEqual(second_target, after["target_head"])
+        reanchored_commit = after["implementation_commit"]
+        self.assertIsNotNone(reanchored_commit)
+        self.assertNotEqual(reconciled_commit, reanchored_commit)
+        self.assertNotEqual(candidate_commit, reanchored_commit)
+        self.assertEqual(reanchored_commit, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertEqual(
+            second_target, self.git("rev-parse", f"{reanchored_commit}^").stdout.strip()
+        )
+        self.assertEqual(
+            1,
+            int(
+                self.git(
+                    "rev-list", "--count", f"{second_target}..{reanchored_commit}"
+                ).stdout.strip()
+            ),
+        )
+        diff_names = sorted(
+            line.strip()
+            for line in self.git(
+                "diff", "--name-only", f"{second_target}..{reanchored_commit}"
+            ).stdout.splitlines()
+            if line.strip()
+        )
+        test_paths = json.loads(
+            self.transition_journal_path().read_text(encoding="utf-8")
+        )["approved_test_boundary"]["paths"]
+        self.assertEqual(
+            sorted(set(test_paths).union(candidate["candidate_paths"])), diff_names
+        )
+        self.assertEqual(
+            "implementation\n", self.git("show", f"{reanchored_commit}:src/Example.kt").stdout
+        )
+        self.assert_clean_status()
+
+        recon = json.loads(self.reconciliation_journal_path().read_text(encoding="utf-8"))
+        self.assertEqual(second_target, recon["new_target_head"])
+        self.assertEqual(reanchored_commit, recon["reconciled_commit"])
+        self.assertEqual("finalized", recon["status"])
+        self.assertEqual(1, len(recon["reanchors"]))
+        reanchor_entry = recon["reanchors"][0]
+        self.assertEqual(first_target, reanchor_entry["from_new_target_head"])
+        self.assertEqual(second_target, reanchor_entry["to_new_target_head"])
+        self.assertEqual(reconciled_commit, reanchor_entry["from_reconciled_commit"])
+        self.assertEqual(reanchored_commit, reanchor_entry["to_reconciled_commit"])
+        self.assertEqual("finalized", reanchor_entry["status"])
+        self.assertEqual("owner", reanchor_entry["requested_by"])
+        # The original Gate 3 evidence and authorization are untouched.
+        self.assertEqual(candidate_commit, recon["previous_candidate_commit"])
+        self.assertEqual(
+            "implementation_target_reconciled", recon["acknowledgment"]["confirmation"]
+        )
+        provenance = after["implementation_target_reconciliations"][-1]
+        self.assertEqual(second_target, provenance["new_target_head"])
+        self.assertEqual(reanchored_commit, provenance["reconciled_commit"])
+
+    def test_reconcile_implementation_target_reanchor_creates_no_duplicate_commit_when_unnecessary(self):
+        """[A] Re-anchoring never leaves two authoritative commits recorded as final."""
+        _candidate_commit, _first_target, reconciled_commit = (
+            self.bootstrap_to_materialized_reconciliation_pending_further_advance()
+        )
+        second_target = self.advance_remote_ref_from(
+            reconciled_commit, {"downstream2.txt": "downstream2\n"}
+        )
+
+        code, payload, _ = self.reconcile_implementation_target_reanchor()
+
+        self.assertEqual(0, code)
+        reanchored_commit = self.state()["implementation_commit"]
+        self.assertEqual(
+            1,
+            int(
+                self.git(
+                    "rev-list", "--count", f"{second_target}..{reanchored_commit}"
+                ).stdout.strip()
+            ),
+        )
+        # Exactly one implementation-target-reconciliation provenance entry:
+        # the re-anchor updates the existing entry in place, it does not add
+        # a second one for the same underlying candidate.
+        self.assertEqual(1, len(self.state()["implementation_target_reconciliations"]))
+
+    def test_reconcile_implementation_target_reanchor_retries_cleanly_after_crash_before_commit(self):
+        """[B] A crash before the re-anchor commit retries into exactly one new commit."""
+        _candidate_commit, first_target, reconciled_commit = (
+            self.bootstrap_to_materialized_reconciliation_pending_further_advance()
+        )
+        second_target = self.advance_remote_ref_from(
+            reconciled_commit, {"downstream2.txt": "downstream2\n"}
+        )
+
+        with self.fail_checked_git_command("commit", "injected-before-reanchor-commit"):
+            code, payload, _ = self.reconcile_implementation_target_reanchor()
+        self.assertEqual(1, code)
+        self.assertEqual("injected-before-reanchor-commit", payload["error"]["code"])
+        self.assertEqual(reconciled_commit, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertEqual(
+            "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", self.state()["status"]
+        )
+        recon = json.loads(self.reconciliation_journal_path().read_text(encoding="utf-8"))
+        self.assertEqual(1, len(recon["reanchors"]))
+        self.assertEqual("pending", recon["reanchors"][0]["status"])
+        self.assertEqual(first_target, recon["reanchors"][0]["from_new_target_head"])
+        self.assertEqual(second_target, recon["reanchors"][0]["to_new_target_head"])
+
+        code, payload, _ = self.reconcile_implementation_target_reanchor()
+
+        self.assertEqual(0, code)
+        self.assertEqual("DRAFT_PR_CREATION", payload["status"])
+        reanchored_commit = self.git("rev-parse", "HEAD").stdout.strip()
+        self.assertNotEqual(reconciled_commit, reanchored_commit)
+        self.assertEqual(
+            second_target, self.git("rev-parse", f"{reanchored_commit}^").stdout.strip()
+        )
+        self.assertEqual(
+            1,
+            int(
+                self.git(
+                    "rev-list", "--count", f"{second_target}..{reanchored_commit}"
+                ).stdout.strip()
+            ),
+        )
+        self.assert_clean_status()
+
+    def test_reconcile_implementation_target_reanchor_recovers_crash_after_commit_before_finalization(self):
+        """[B] A crash after the re-anchor commit recovers without a second commit."""
+        _candidate_commit, first_target, reconciled_commit = (
+            self.bootstrap_to_materialized_reconciliation_pending_further_advance()
+        )
+        second_target = self.advance_remote_ref_from(
+            reconciled_commit, {"downstream2.txt": "downstream2\n"}
+        )
+        original_write_state = workflow._write_state
+
+        def fail_after_reanchor_commit(root, config, issue, state):
+            if state.get("status") == "DRAFT_PR_CREATION" and state.get("target_head") == second_target:
+                raise workflow.WorkflowError(
+                    "injected-post-reanchor-state-failure",
+                    "injected state persistence failure after reanchored commit",
+                )
+            return original_write_state(root, config, issue, state)
+
+        with mock.patch.object(workflow, "_write_state", side_effect=fail_after_reanchor_commit):
+            code, payload, _ = self.reconcile_implementation_target_reanchor()
+
+        self.assertEqual(1, code)
+        self.assertEqual("injected-post-reanchor-state-failure", payload["error"]["code"])
+        reanchored_commit = self.git("rev-parse", "HEAD").stdout.strip()
+        self.assertNotEqual(reconciled_commit, reanchored_commit)
+        self.assertEqual(
+            "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", self.state()["status"]
+        )
+
+        code, payload, _ = self.reconcile_implementation_target_reanchor()
+
+        self.assertEqual(0, code)
+        self.assertEqual("DRAFT_PR_CREATION", payload["status"])
+        self.assertEqual(reanchored_commit, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertEqual(
+            1,
+            int(
+                self.git(
+                    "rev-list", "--count", f"{second_target}..{reanchored_commit}"
+                ).stdout.strip()
+            ),
+        )
+        self.assertEqual(1, len(self.state()["implementation_target_reconciliations"]))
+        self.assert_clean_status()
+
+    def test_reconcile_implementation_target_reanchor_is_idempotent_after_success(self):
+        """[B] Invoking the re-anchor again after success is a pure verified no-op."""
+        _candidate_commit, _first_target, reconciled_commit = (
+            self.bootstrap_to_materialized_reconciliation_pending_further_advance()
+        )
+        second_target = self.advance_remote_ref_from(
+            reconciled_commit, {"downstream2.txt": "downstream2\n"}
+        )
+
+        first_code, _first_payload, _ = self.reconcile_implementation_target_reanchor()
+        self.assertEqual(0, first_code)
+        reanchored_commit = self.git("rev-parse", "HEAD").stdout.strip()
+        state_after_first = self.state()
+
+        second_code, second_payload, _ = self.reconcile_implementation_target_reanchor()
+
+        self.assertEqual(0, second_code)
+        self.assertEqual("DRAFT_PR_CREATION", second_payload["status"])
+        self.assertEqual(reanchored_commit, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertEqual(state_after_first, self.state())
+        self.assertEqual(
+            1,
+            int(
+                self.git(
+                    "rev-list", "--count", f"{second_target}..{reanchored_commit}"
+                ).stdout.strip()
+            ),
+        )
+        self.assert_clean_status()
+
+    def test_reconcile_implementation_target_reanchor_rejects_non_descendant_target(self):
+        """[C] An unrelated remote target can never become the re-anchor base."""
+        _candidate_commit, _first_target, reconciled_commit = (
+            self.bootstrap_to_materialized_reconciliation_pending_further_advance()
+        )
+        before_state = self.state()
+        unrelated = self.unrelated_empty_tree_commit()
+        self.git("update-ref", "refs/remotes/origin/main", unrelated)
+
+        code, payload, _ = self.reconcile_implementation_target_reanchor()
+
+        self.assertEqual(1, code)
+        self.assertFalse(payload["ok"])
+        self.assertEqual("invalid-git-ancestry", payload["error"]["code"])
+        self.assertEqual(before_state, self.state())
+        self.assertEqual(reconciled_commit, self.git("rev-parse", "HEAD").stdout.strip())
+
+    def test_reconcile_implementation_target_reanchor_rejects_unadvanced_target(self):
+        """[C] Without a real further advance there is nothing to re-anchor."""
+        _candidate_commit, _first_target, reconciled_commit = (
+            self.bootstrap_to_materialized_reconciliation_pending_further_advance()
+        )
+        before_state = self.state()
+
+        code, payload, _ = self.reconcile_implementation_target_reanchor()
+
+        self.assertEqual(1, code)
+        self.assertFalse(payload["ok"])
+        self.assertEqual("target-not-advanced", payload["error"]["code"])
+        self.assertEqual(before_state, self.state())
+        self.assertEqual(reconciled_commit, self.git("rev-parse", "HEAD").stdout.strip())
+
+    def test_reconcile_implementation_target_reanchor_rejects_tampered_materialized_reconciliation(self):
+        """[D] A reconciliation journal whose recorded commit/content is tampered fails closed."""
+        _candidate_commit, _first_target, reconciled_commit = (
+            self.bootstrap_to_materialized_reconciliation_pending_further_advance()
+        )
+        self.advance_remote_ref_from(reconciled_commit, {"downstream2.txt": "downstream2\n"})
+        journal_path = self.reconciliation_journal_path()
+        original_text = journal_path.read_text(encoding="utf-8")
+        before_state = self.state()
+        mutations = {
+            "reconciled commit identity": lambda value: value.update(
+                {"reconciled_commit": "0" * 40}
+            ),
+            "candidate content": lambda value: value["implementation_candidate"].update(
+                {"candidate_diff": value["implementation_candidate"]["candidate_diff"].replace(
+                    "implementation", "tampered"
+                )}
+            ),
+            "candidate paths": lambda value: value["implementation_candidate"].update(
+                {"candidate_paths": ["unexpected.kt"]}
+            ),
+        }
+
+        for name, mutate in mutations.items():
+            with self.subTest(name=name):
+                mutated = json.loads(original_text)
+                mutate(mutated)
+                journal_path.write_text(
+                    json.dumps(mutated, indent=2) + "\n", encoding="utf-8"
+                )
+
+                code, payload, _ = self.reconcile_implementation_target_reanchor()
+
+                self.assertEqual(1, code)
+                self.assertFalse(payload["ok"])
+                self.assertEqual(reconciled_commit, self.git("rev-parse", "HEAD").stdout.strip())
+                self.assertEqual(before_state, self.state())
+                journal_path.write_text(original_text, encoding="utf-8")
+
+    def test_reconcile_implementation_target_reanchor_rejects_conflicting_target_path_drift(self):
+        """[E] A downstream change conflicting with an approved candidate path fails closed."""
+        _candidate_commit, _first_target, reconciled_commit = (
+            self.bootstrap_to_materialized_reconciliation_pending_further_advance()
+        )
+        before_state = self.state()
+        self.advance_remote_ref_from(
+            reconciled_commit,
+            {"src/Example.kt": "conflicting downstream implementation\n"},
+            name="authorized conflicting downstream merge",
+        )
+
+        code, payload, _ = self.reconcile_implementation_target_reanchor()
+
+        self.assertEqual(1, code)
+        self.assertFalse(payload["ok"])
+        self.assertIn(
+            payload["error"]["code"],
+            {
+                "patch-apply-conflict",
+                "git-apply-conflict",
+                "artifact-validity-undetermined",
+                "implementation-candidate-mismatch",
+            },
+        )
+        self.assertEqual(before_state, self.state())
+        self.assertEqual(reconciled_commit, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assert_clean_status()
+
+    def test_reconcile_implementation_target_reanchor_rejects_wrong_authorization(self):
+        """[E] An incorrect confirmation phrase never authorizes the base or re-anchor transition."""
+        _candidate_commit, _first_target, reconciled_commit = (
+            self.bootstrap_to_materialized_reconciliation_pending_further_advance()
+        )
+        self.advance_remote_ref_from(reconciled_commit, {"downstream2.txt": "downstream2\n"})
+        before_state = self.state()
+
+        code, payload, _ = self.reconcile_implementation_target(
+            confirm="not-a-real-confirmation"
+        )
+
+        self.assertEqual(1, code)
+        self.assertFalse(payload["ok"])
+        self.assertEqual("reconciliation-confirmation-mismatch", payload["error"]["code"])
+        self.assertEqual(before_state, self.state())
+        self.assertEqual(reconciled_commit, self.git("rev-parse", "HEAD").stdout.strip())
+
+    def test_reconcile_implementation_target_base_confirmation_still_rejects_further_advance(self):
+        """The unchanged base confirmation never silently re-anchors a further advance."""
+        _candidate_commit, _first_target, reconciled_commit = (
+            self.bootstrap_to_materialized_reconciliation_pending_further_advance()
+        )
+        self.advance_remote_ref_from(reconciled_commit, {"downstream2.txt": "downstream2\n"})
+        before_state = self.state()
+
+        code, payload, _ = self.reconcile_implementation_target()
+
+        self.assertEqual(1, code)
+        self.assertFalse(payload["ok"])
+        self.assertEqual("reconciliation-journal-mismatch", payload["error"]["code"])
+        self.assertEqual(before_state, self.state())
+        self.assertEqual(reconciled_commit, self.git("rev-parse", "HEAD").stdout.strip())
+
+    def test_reconcile_implementation_target_reanchor_synthetic_276_shape(self):
+        """[F] Synthetic fixture modeled on the real #276 shape; no #276 artifact is touched.
+
+        This mirrors the real discovery narrative -- a committed-but-not-
+        persisted candidate materialized against a first advanced target,
+        then an unrelated further merge (modeling PR #294's #293 fix landing)
+        advances `origin/<target_base>` again before finalization -- using
+        only synthetic, in-test Git history and workflow state for issue
+        %d. It never reads, writes, or references
+        `.agent-workflow/runs/issue-276/`.
+        """ % ISSUE
+        candidate_commit, first_target, reconciled_commit = (
+            self.bootstrap_to_materialized_reconciliation_pending_further_advance()
+        )
+        self.assertFalse(
+            (self.root / ".agent-workflow" / "runs" / "issue-276").exists(),
+            "synthetic #295 fixture must never create or touch issue-276 artifacts",
+        )
+        synthetic_further_target = self.advance_remote_ref_from(
+            reconciled_commit,
+            {"unrelated-infra-fix.txt": "unrelated infra fix landed after materialization\n"},
+            name="synthetic unrelated infra fix merge (models PR #294)",
+        )
+
+        code, payload, _ = self.reconcile_implementation_target_reanchor()
+
+        self.assertEqual(0, code)
+        self.assertTrue(payload["ok"])
+        self.assertEqual("DRAFT_PR_CREATION", payload["status"])
+        after = self.state()
+        self.assertEqual(synthetic_further_target, after["target_head"])
+        reanchored_commit = after["implementation_commit"]
+        self.assertEqual(
+            synthetic_further_target,
+            self.git("rev-parse", f"{reanchored_commit}^").stdout.strip(),
+        )
+        self.assertEqual(
+            1,
+            int(
+                self.git(
+                    "rev-list", "--count", f"{synthetic_further_target}..{reanchored_commit}"
+                ).stdout.strip()
+            ),
+        )
+        self.assertNotEqual(candidate_commit, reanchored_commit)
+        self.assertNotEqual(reconciled_commit, reanchored_commit)
+        self.assertFalse(
+            (self.root / ".agent-workflow" / "runs" / "issue-276").exists(),
+            "synthetic #295 fixture must never create or touch issue-276 artifacts",
+        )
         self.assert_clean_status()
 
     def test_recover_implementation_approval_still_fails_closed_when_target_advanced_past_candidate(self):

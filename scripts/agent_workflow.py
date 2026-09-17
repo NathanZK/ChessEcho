@@ -28,6 +28,7 @@ REVIEW_STATUSES = (READY, REVISION)
 DEFAULT_IMPLEMENTATION_CONFIRMATION = "implementation_approved"
 DEFAULT_SUPERSESSION_CONFIRMATION = "supersede_confirmed"
 RECONCILIATION_CONFIRMATION = "implementation_target_reconciled"
+RECONCILIATION_REANCHOR_CONFIRMATION = "implementation_target_reconciliation_reanchored"
 RECONCILIATION_JOURNAL_FORMAT = "chess-echo-implementation-target-reconciliation-transition-v1"
 RECONCILIATION_JOURNAL_STATUSES = ("pending", "committed", "finalized")
 LOCAL_ACKNOWLEDGMENT_KIND = "self-attested-local-acknowledgment"
@@ -2557,6 +2558,7 @@ def _build_reconciliation_journal(
         "requested_by": args.by,
         "requested_at": created_at,
         "reconciled_commit": None,
+        "reanchors": [],
     }
 
 
@@ -2661,8 +2663,24 @@ def _materialize_reconciliation(root, config, state, recon, candidate_commit, ne
         _apply_reconciliation_patch(
             root, config, issue, candidate["candidate_diff"], "implementation candidate"
         )
+        # A re-anchor hop may land on a target that already contains the
+        # approved boundary and candidate content verbatim (a pure
+        # fast-forward descendant of the prior reconciled commit): the
+        # patches then apply as a clean no-op, leaving nothing staged. An
+        # ordinary `git commit` would fail with "nothing to commit" in that
+        # case, so a trivial rebase-equivalent empty commit is used instead
+        # to preserve the required "direct child of new_target" topology
+        # without duplicating already-present content.
+        staged = _run_bounded(
+            _git_command(config, "diff", "--cached", "--quiet"),
+            _effective_limits(config, "git"),
+            root,
+        )
+        commit_args = ["commit", "-qm", subject]
+        if staged["result"].get("exit_code") == 0:
+            commit_args.append("--allow-empty")
         _run_checked(
-            _git_command(config, "commit", "-qm", subject),
+            _git_command(config, *commit_args),
             _effective_limits(config, "git"),
             root,
             "git-commit-failed",
@@ -2674,8 +2692,19 @@ def _materialize_reconciliation(root, config, state, recon, candidate_commit, ne
     return _current_head(root, config)
 
 
-def _verify_reconciled_implementation(root, config, state, recon, reconciled, context):
-    """Independently prove the reconciled commit realizes the journal-bound candidate."""
+def _verify_reconciled_implementation(root, config, state, recon, reconciled, context, require_exact_scope=True):
+    """Independently prove the reconciled commit realizes the journal-bound candidate.
+
+    `require_exact_scope` governs whether the diff against `new_target` must
+    equal exactly `test_paths ∪ candidate_paths` (the ordinary, single-hop
+    case) or may be a subset of it (`require_exact_scope=False`, used when
+    re-anchoring: `new_target` may already be a descendant of a prior
+    reconciled commit and therefore already contain some or all of the
+    approved content verbatim, producing a smaller -- but never wider --
+    diff). Either way, every approved path's content is independently
+    proven byte-for-byte against the original accepted candidate and test
+    boundary, and no path outside the approved scope is ever tolerated.
+    """
     new_target = recon["new_target_head"]
     candidate_commit = recon["previous_candidate_commit"]
     candidate = recon["implementation_candidate"]
@@ -2703,11 +2732,19 @@ def _verify_reconciled_implementation(root, config, state, recon, reconciled, co
     )
 
     final_names = _git_diff_names(root, config, "%s..%s" % (new_target, reconciled))
-    _ensure(
-        final_names == sorted(set(test_paths).union(candidate_paths)),
-        "implementation-scope-drift",
-        "%s reconciled paths differ from the accepted production candidate" % context,
-    )
+    approved_paths = set(test_paths).union(candidate_paths)
+    if require_exact_scope:
+        _ensure(
+            final_names == sorted(approved_paths),
+            "implementation-scope-drift",
+            "%s reconciled paths differ from the accepted production candidate" % context,
+        )
+    else:
+        _ensure(
+            set(final_names) <= approved_paths,
+            "implementation-scope-drift",
+            "%s reconciled paths differ from the accepted production candidate" % context,
+        )
     _require_candidate_scope(final_names, scope, context)
     _require_production_only(candidate_paths, scope, context)
 
@@ -2782,6 +2819,221 @@ def _persist_reconciliation(root, config, state, recon, reconciled):
     return recon
 
 
+def _reanchor_reference_commit(root, config, state, impl_journal, recon, candidate_commit, context):
+    """Independently prove and return the current re-anchor evidence commit.
+
+    Handles every durable shape a materialized-but-not-yet-finalized
+    reconciliation can be interrupted in, always proven against the
+    journal's own (pre-advance) `new_target_head`:
+
+    - `committed`/`finalized`: the recorded `reconciled_commit` is the
+      evidence and is independently re-verified.
+    - `pending` with HEAD already moved past the interrupted candidate: the
+      materialize step ran and produced a commit before verification or
+      persistence completed (the exact issue #276 discovery shape); HEAD
+      itself is the evidence and is independently re-verified.
+    - `pending` with HEAD still at the interrupted candidate: materialize
+      never ran; the interrupted candidate commit is the evidence.
+    """
+    status = recon.get("status")
+    require_exact_scope = not recon.get("reanchors")
+    if status in ("committed", "finalized"):
+        reconciled = recon.get("reconciled_commit")
+        _ensure(
+            isinstance(reconciled, str) and reconciled,
+            "reconciliation-shape",
+            "%s committed reconciliation journal has no reconciled commit" % context,
+        )
+        _verify_reconciled_implementation(
+            root, config, state, recon, reconciled, context, require_exact_scope=require_exact_scope
+        )
+        return reconciled
+    _ensure(
+        status == "pending",
+        "reconciliation-shape",
+        "%s reconciliation journal status is invalid" % context,
+    )
+    current_head = _current_head(root, config)
+    if current_head != candidate_commit:
+        _verify_reconciled_implementation(
+            root, config, state, recon, current_head, context, require_exact_scope=require_exact_scope
+        )
+        return current_head
+    _verify_interrupted_candidate_commit(root, config, state, impl_journal, candidate_commit, context)
+    return candidate_commit
+
+
+def _finalize_reanchor_hop(root, config, state, recon, reanchor_entry, reference_commit, fresh_target, context):
+    """Materialize (or idempotently adopt) one re-anchor hop, then finalize via `_persist_reconciliation`.
+
+    Reuses `_materialize_reconciliation` / `_verify_reconciled_implementation`
+    unchanged against a `new_target_head` temporarily set to `fresh_target`,
+    so every existing scope/topology/content/tree/mode/authorization check
+    applies automatically to the new target with zero duplicated
+    verification logic. Never trusts local process state on a retry: an
+    already-recorded `to_reconciled_commit`, or HEAD itself when it has
+    already moved past `reference_commit`, is independently re-verified
+    rather than assumed correct.
+    """
+    verify_recon = dict(recon)
+    verify_recon["new_target_head"] = fresh_target
+    verify_recon["expected_parent"] = fresh_target
+
+    current_head = _current_head(root, config)
+    if reanchor_entry.get("to_reconciled_commit"):
+        reconciled = reanchor_entry["to_reconciled_commit"]
+        _verify_reconciled_implementation(
+            root, config, state, verify_recon, reconciled, context, require_exact_scope=False
+        )
+    elif current_head != reference_commit:
+        reconciled = current_head
+        _verify_reconciled_implementation(
+            root, config, state, verify_recon, reconciled, context, require_exact_scope=False
+        )
+    else:
+        reconciled = _materialize_reconciliation(root, config, state, recon, reference_commit, fresh_target)
+        _verify_reconciled_implementation(
+            root, config, state, verify_recon, reconciled, context, require_exact_scope=False
+        )
+
+    recon["new_target_head"] = fresh_target
+    recon["expected_parent"] = fresh_target
+    recon["reconciled_commit"] = reconciled
+    recon["status"] = "committed"
+    reanchor_entry["to_reconciled_commit"] = reconciled
+    reanchor_entry["status"] = "committed"
+    reanchor_entry["committed_at"] = reanchor_entry.get("committed_at", _now())
+    recon_path = _reconciliation_transition_journal_path(root, config, state["issue"])
+    _write_json(recon_path, recon)
+
+    recon = _persist_reconciliation(root, config, state, recon, reconciled)
+    reanchor_entry["status"] = "finalized"
+    reanchor_entry["finalized_at"] = _now()
+    _write_json(recon_path, recon)
+
+    return {
+        "ok": True,
+        "status": state["status"],
+        "implementation_commit": reconciled,
+        "previous_target_head": recon["previous_target_head"],
+        "new_target_head": fresh_target,
+    }
+
+
+def _command_reanchor_implementation_target(args, root, config, state, context):
+    """Re-anchor an existing materialized-but-unfinalized reconciliation onto a further target advance.
+
+    Distinct from the ordinary resume/finalize paths of
+    `reconcile-implementation-target`: it is invoked only via
+    `--confirm implementation_target_reconciliation_reanchored`, requires a
+    reconciliation journal to already exist, and is the sole path that
+    tolerates `origin/<target_base>` having advanced *past* the journal's
+    own recorded `new_target_head` (issue #295). It never reinterprets or
+    recreates the original Gate 3 candidate authorization: the original
+    `previous_candidate_commit`, `implementation_candidate`,
+    `approved_test_boundary`, `approved_scope`, `test_commit`, and top-level
+    `acknowledgment` are never modified. Only `new_target_head`,
+    `expected_parent`, `reconciled_commit`, `status`, and the append-only
+    `reanchors` audit list advance to reflect the latest hop.
+    """
+    issue = args.issue
+    recon_path = _reconciliation_transition_journal_path(root, config, issue)
+    _ensure(
+        recon_path.is_file(),
+        "reconciliation-shape",
+        "%s re-anchor requires an existing reconciliation journal" % context,
+    )
+    impl_journal = _read_json(
+        _implementation_transition_journal_path(root, config, issue),
+        "implementation approval transition journal",
+    )
+    recon = _read_json(recon_path, "reconciliation transition journal")
+    old_target = impl_journal["target_head"]
+    candidate_commit = recon.get("previous_candidate_commit")
+    _ensure(
+        isinstance(candidate_commit, str) and candidate_commit,
+        "reconciliation-shape",
+        "%s reconciliation journal has no interrupted candidate provenance" % context,
+    )
+
+    # Re-validate the recon journal's self-consistency against its OWN
+    # recorded new_target_head: this proves the reconciliation itself has
+    # not been tampered with, independent of any further target advancement.
+    _validate_reconciliation_journal(
+        root, config, state, recon, impl_journal, old_target, recon["new_target_head"], candidate_commit, context
+    )
+
+    if state["status"] == "DRAFT_PR_CREATION":
+        # Already finalized: a re-anchor request against a finalized run is a
+        # pure verified no-op; it never reopens a completed reconciliation.
+        _ensure(
+            recon.get("status") == "finalized",
+            "reconciliation-shape",
+            "%s finalized workflow state has no finalized reconciliation journal" % context,
+        )
+        _verify_reconciled_implementation(
+            root,
+            config,
+            state,
+            recon,
+            recon["reconciled_commit"],
+            context,
+            require_exact_scope=not recon.get("reanchors"),
+        )
+        return {
+            "ok": True,
+            "status": state["status"],
+            "implementation_commit": recon["reconciled_commit"],
+            "previous_target_head": old_target,
+            "new_target_head": recon["new_target_head"],
+        }
+
+    _expect_status(state, "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", context)
+    _ensure(
+        old_target == _state_target_head(state),
+        "reconciliation-journal-mismatch",
+        "%s journal target does not match the recorded target_head" % context,
+    )
+
+    reference_commit = _reanchor_reference_commit(
+        root, config, state, impl_journal, recon, candidate_commit, context
+    )
+
+    reanchors = recon.setdefault("reanchors", [])
+    pending_entry = (
+        reanchors[-1] if reanchors and reanchors[-1].get("status") != "finalized" else None
+    )
+
+    if pending_entry is not None:
+        fresh_target = pending_entry["to_new_target_head"]
+    else:
+        fresh_target = _resolve_target_head(root, config, fetch=True)
+        _ensure(
+            fresh_target != recon["new_target_head"],
+            "target-not-advanced",
+            "%s requires origin/%s to advance past the reconciliation's recorded target"
+            % (context, config["target_base"]),
+        )
+        _git_ancestor(root, config, recon["new_target_head"], fresh_target, context)
+        pending_entry = {
+            "reanchor_id": uuid.uuid4().hex,
+            "from_new_target_head": recon["new_target_head"],
+            "to_new_target_head": fresh_target,
+            "from_reconciled_commit": reference_commit,
+            "to_reconciled_commit": None,
+            "status": "pending",
+            "acknowledgment": _reconciliation_acknowledgment(args),
+            "requested_by": args.by,
+            "requested_at": _now(),
+        }
+        reanchors.append(pending_entry)
+        _write_json(recon_path, recon)
+
+    return _finalize_reanchor_hop(
+        root, config, state, recon, pending_entry, reference_commit, fresh_target, context
+    )
+
+
 def command_reconcile_implementation_target(args, root, config):
     """Governed reconciliation of an interrupted Gate 3 candidate onto an advanced target.
 
@@ -2802,10 +3054,13 @@ def command_reconcile_implementation_target(args, root, config):
     # Explicit reconciliation authorization is required before any side effect.
     _ensure((args.by or "").strip(), "missing-requester", "%s requires a requester" % context)
     _ensure(
-        args.confirm == RECONCILIATION_CONFIRMATION,
+        args.confirm in (RECONCILIATION_CONFIRMATION, RECONCILIATION_REANCHOR_CONFIRMATION),
         "reconciliation-confirmation-mismatch",
-        "Expected confirmation phrase for reconciliation gate: %s" % RECONCILIATION_CONFIRMATION,
+        "Expected confirmation phrase for reconciliation gate: %s or %s"
+        % (RECONCILIATION_CONFIRMATION, RECONCILIATION_REANCHOR_CONFIRMATION),
     )
+    if args.confirm == RECONCILIATION_REANCHOR_CONFIRMATION:
+        return _command_reanchor_implementation_target(args, root, config, state, context)
 
     impl_journal = _read_json(
         _implementation_transition_journal_path(root, config, args.issue),
@@ -2845,7 +3100,15 @@ def command_reconcile_implementation_target(args, root, config):
             root, config, state, impl_journal, candidate_commit, context
         )
         reconciled = recon["reconciled_commit"]
-        _verify_reconciled_implementation(root, config, state, recon, reconciled, context)
+        _verify_reconciled_implementation(
+            root,
+            config,
+            state,
+            recon,
+            reconciled,
+            context,
+            require_exact_scope=not recon.get("reanchors"),
+        )
         recon = _persist_reconciliation(root, config, state, recon, reconciled)
         return {
             "ok": True,
@@ -2896,7 +3159,15 @@ def command_reconcile_implementation_target(args, root, config):
     if recon is not None:
         if recon["status"] in ("committed", "finalized"):
             reconciled = recon["reconciled_commit"]
-            _verify_reconciled_implementation(root, config, state, recon, reconciled, context)
+            _verify_reconciled_implementation(
+                root,
+                config,
+                state,
+                recon,
+                reconciled,
+                context,
+                require_exact_scope=not recon.get("reanchors"),
+            )
             recon = _persist_reconciliation(root, config, state, recon, reconciled)
             return {
                 "ok": True,
