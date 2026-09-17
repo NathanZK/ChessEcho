@@ -13,20 +13,20 @@ ends at draft pull request creation; merging remains a separate,
 human-controlled GitHub action.
 
 ```mermaid
-flowchart LR
-    H[Human] -->|issue and approvals| C[Workflow controller]
-    C --> S[(Workflow state)]
+flowchart TB
+    H[Human] -->|issue and approvals| C[Workflow<br/>controller]
+    C --> S[(Workflow<br/>state)]
     C --> P[Planner]
-    C --> T[Test implementer]
-    C --> I[Implementation implementer]
+    C --> T[Test<br/>implementer]
+    C --> I[Implementation<br/>implementer]
     C --> R[Reviewer]
-    C --> V[Validation tooling]
-    C --> J[(Journals and evidence)]
+    C --> V[Validation<br/>tooling]
+    C --> J[(Journals and<br/>evidence)]
     P --> R
     T --> R
     I --> R
     R -->|review result| C
-    V --> G[(Git repository)]
+    V --> G[(Git<br/>repository)]
     I --> G
     C --> G
     G -->|draft PR| H
@@ -58,12 +58,12 @@ These sources are complementary, not interchangeable:
 
 ```mermaid
 flowchart TB
-    C[Workflow controller] --> S[state.json: current position]
-    C --> J[Gate and reconciliation journals: durable evidence]
-    C --> G[Git: commits, ancestry, paths, content]
+    C[Workflow<br/>controller] --> S[state.json:<br/>current position]
+    C --> J[Gate and reconciliation<br/>journals: durable evidence]
+    C --> G[Git: commits,<br/>ancestry, paths, content]
     S -. binds .-> J
-    J -. describes and proves .-> G
-    G -. independently rechecked by .-> C
+    J -. describes and<br/>proves .-> G
+    G -. independently<br/>rechecked by .-> C
 ```
 
 `state.json` answers “where is the run now?” The per-gate journals,
@@ -96,14 +96,14 @@ documented in [`agent-workflow.md`](agent-workflow.md).
 Tests are intentionally separated from production implementation:
 
 ```mermaid
-flowchart LR
-    T[Test implementer] --> B[Reviewed and approved test boundary]
-    B --> I[Implementation implementer]
-    I --> C[Candidate checks preserve boundary]
-    C --> V[Validation and implementation approval]
-    X[Approved test defect] --> R[reopen-tests resets workflow state]
+flowchart TB
+    T[Test<br/>implementer] --> B[Reviewed and approved<br/>test boundary]
+    B --> I[Implementation<br/>implementer]
+    I --> C[Candidate checks<br/>preserve boundary]
+    C --> V[Validation and<br/>implementation approval]
+    X[Approved test<br/>defect] --> R[reopen-tests resets<br/>workflow state]
     R --> T
-    T -->|fresh submit → review → approval| B
+    T -->|fresh cycle:<br/>submit → review →<br/>approve| B
 ```
 
 The approved test paths and content are checked again during implementation
@@ -121,15 +121,15 @@ Normal execution is the primary path. When the target branch advances or a
 transition is interrupted, the workflow does not simply copy state forward:
 
 ```mermaid
-flowchart LR
-    N[Normal workflow] -->|target unchanged| P[Continue]
+flowchart TB
+    N[Normal<br/>workflow] -->|target unchanged| P[Continue]
     N -->|target advances| Q[Reconciliation]
-    Q -->|ancestry, scope, boundary, identity pass| P
+    Q -->|ancestry, scope, boundary,<br/>identity pass| P
     Q -->|proof fails| F[Fail closed]
-    A[Pre-implementation target movement] --> R[Re-anchor]
-    R -->|record new target and provenance| P
-    J[Interrupted transition] --> E[Journal-backed recovery]
-    E -->|re-verify evidence against Git| P
+    A[Pre-implementation<br/>target movement] --> R[Re-anchor]
+    R -->|record target + provenance| P
+    J[Interrupted<br/>transition] --> E[Journal-backed<br/>recovery]
+    E -->|re-verify Git evidence| P
     E -->|ambiguous evidence| F
 ```
 
