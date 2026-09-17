@@ -13,6 +13,11 @@ export type SessionState =
   | { status: 'unauthenticated' }
   | { status: 'error' };
 
+export type AuthResult =
+  | { status: 'authenticated'; userId?: string; email?: string }
+  | { status: 'unauthenticated'; error?: string }
+  | { status: 'error'; error?: string };
+
 /** Reads the readable double-submit CSRF token from the `XSRF-TOKEN` cookie. */
 function csrfToken(): string {
   if (typeof document === 'undefined') return '';
@@ -34,6 +39,37 @@ function jsonHeaders(): HeadersInit {
     'Content-Type': 'application/json',
     'X-XSRF-TOKEN': csrfToken(),
   };
+}
+
+async function authenticate(path: '/register' | '/login', email: string, password: string): Promise<AuthResult> {
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: jsonHeaders(),
+      body: JSON.stringify({ email, password }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (response.ok) {
+      return { status: 'authenticated', userId: body?.userId, email: body?.email };
+    }
+    if (response.status === 401) {
+      return { status: 'unauthenticated' };
+    }
+    return { status: 'error', error: body?.details?.join?.('\n') || body?.error || `Request failed: ${response.status}` };
+  } catch {
+    return { status: 'error', error: 'Unable to reach ChessEcho. Please try again.' };
+  }
+}
+
+/** Registers a first-party local account without persisting credentials in the browser. */
+export function register(email: string, password: string): Promise<AuthResult> {
+  return authenticate('/register', email, password);
+}
+
+/** Signs in through the HttpOnly session-cookie flow without persisting credentials. */
+export function login(email: string, password: string): Promise<AuthResult> {
+  return authenticate('/login', email, password);
 }
 
 function looksLikeUuid(value: string): boolean {

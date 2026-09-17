@@ -8,7 +8,10 @@ import com.chessecho.service.AccountSelectionRequiredException
 import com.chessecho.service.ActiveImportJobException
 import com.chessecho.service.ForbiddenAccountException
 import com.chessecho.web.CsrfException
+import com.chessecho.web.DuplicateRegistrationException
+import com.chessecho.web.InvalidCredentialsException
 import com.chessecho.web.UnauthenticatedException
+import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.MethodArgumentNotValidException
@@ -18,6 +21,24 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 
 @RestControllerAdvice
 class GlobalExceptionHandler {
+    @ExceptionHandler(InvalidCredentialsException::class)
+    fun handleInvalidCredentials(): ResponseEntity<ErrorResponse> =
+        ResponseEntity
+            .status(HttpStatus.UNAUTHORIZED)
+            .body(ErrorResponse(error = "INVALID_CREDENTIALS", details = listOf("Invalid email or password")))
+
+    @ExceptionHandler(DuplicateRegistrationException::class)
+    fun handleDuplicateRegistration(): ResponseEntity<ErrorResponse> =
+        ResponseEntity
+            .status(HttpStatus.CONFLICT)
+            .body(ErrorResponse(error = "REGISTRATION_CONFLICT", details = listOf("Email is already registered")))
+
+    @ExceptionHandler(DataIntegrityViolationException::class)
+    fun handleDataIntegrityViolation(): ResponseEntity<ErrorResponse> =
+        ResponseEntity
+            .status(HttpStatus.CONFLICT)
+            .body(ErrorResponse(error = "REGISTRATION_CONFLICT", details = listOf("Email is already registered")))
+
     @ExceptionHandler(UnauthenticatedException::class)
     fun handleUnauthenticated(ex: UnauthenticatedException): ResponseEntity<ErrorResponse> =
         ResponseEntity
