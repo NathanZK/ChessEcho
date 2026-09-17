@@ -1824,27 +1824,29 @@ class AgentWorkflowTest(unittest.TestCase):
     def advance_remote_ref_past_commit(
         self, base_commit, changes, name="authorized downstream remote merge"
     ):
-        """Advance `origin/<target_base>` past an interrupted local candidate commit.
+        """Advance `origin/<target_base>` after an interrupted local candidate commit.
 
-        The base is an explicit commit rather than the run's recorded
-        `target_head`, letting tests simulate the origin advancing past an
-        already-committed candidate (a strict descendant of that candidate, not
-        of the original target) for target-reconciliation scenarios.
-
-        The interrupted Gate 3 candidate was only committed locally and never
-        pushed, so an advanced origin retains the approved (mergeable) test
-        boundary the candidate carried but not its local production changes.
-        The advanced tree therefore drops the candidate's production paths,
-        leaving a genuine production candidate for reconciliation to
-        re-introduce on top of the advanced target.
+        An interrupted Gate 3 candidate and its approved test commit are local,
+        so reconciliation targets advance from the recorded target rather than
+        inheriting either private commit.
         """
         index_path = self.root / "alt-index"
         if index_path.exists():
             index_path.unlink()
         env = os.environ.copy()
         env["GIT_INDEX_FILE"] = str(index_path)
+        recorded_target = None
+        try:
+            recorded_target = self.state().get("target_head")
+        except Exception:
+            recorded_target = None
+        target_base = (
+            recorded_target
+            if recorded_target and base_commit != recorded_target
+            else base_commit
+        )
         subprocess.run(
-            ["git", "read-tree", base_commit],
+            ["git", "read-tree", target_base],
             cwd=self.root,
             check=True,
             env=env,
@@ -1852,43 +1854,6 @@ class AgentWorkflowTest(unittest.TestCase):
             stderr=subprocess.PIPE,
             text=True,
         )
-        parent = subprocess.run(
-            ["git", "rev-parse", "--verify", "--quiet", "%s^" % base_commit],
-            cwd=self.root,
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        ).stdout.strip()
-        recorded_target = None
-        try:
-            recorded_target = self.state().get("target_head")
-        except Exception:
-            recorded_target = None
-        # Only the reconciliation scenario advances past an interrupted local
-        # candidate commit; a plain target advance (base == recorded target)
-        # keeps every base change. Drop the never-pushed production the
-        # candidate carried while retaining its approved test boundary.
-        if parent and base_commit != recorded_target:
-            candidate_added = subprocess.run(
-                ["git", "diff", "--name-only", "%s..%s" % (parent, base_commit)],
-                cwd=self.root,
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-            ).stdout.split()
-            for path in candidate_added:
-                if path and not workflow._is_test_file(path):
-                    subprocess.run(
-                        ["git", "update-index", "--force-remove", path],
-                        cwd=self.root,
-                        check=True,
-                        env=env,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True,
-                    )
         for path, content in changes.items():
             blob = subprocess.run(
                 ["git", "hash-object", "-w", "--stdin"],
@@ -1919,7 +1884,7 @@ class AgentWorkflowTest(unittest.TestCase):
             text=True,
         ).stdout.strip()
         remote_head = subprocess.run(
-            ["git", "commit-tree", tree, "-p", base_commit, "-m", name],
+            ["git", "commit-tree", tree, "-p", target_base, "-m", name],
             cwd=self.root,
             check=True,
             env=env,
@@ -2798,7 +2763,12 @@ class AgentWorkflowTest(unittest.TestCase):
             for line in self.git("diff", "--name-only", f"{new_target}..{reconciled_commit}").stdout.splitlines()
             if line.strip()
         )
-        self.assertEqual(sorted(candidate["candidate_paths"]), diff_names)
+        test_paths = json.loads(
+            self.transition_journal_path().read_text(encoding="utf-8")
+        )["approved_test_boundary"]["paths"]
+        self.assertEqual(
+            sorted(set(test_paths).union(candidate["candidate_paths"])), diff_names
+        )
         self.assertEqual(
             "test\n", self.git("show", f"{reconciled_commit}:src/test/ExampleTest.kt").stdout
         )
@@ -2994,7 +2964,10 @@ class AgentWorkflowTest(unittest.TestCase):
             for line in self.git("diff", "--name-only", f"{new_target}..{reconciled_commit}").stdout.splitlines()
             if line.strip()
         )
-        self.assertEqual(sorted(candidate_paths), diff_names)
+        test_paths = json.loads(
+            self.transition_journal_path().read_text(encoding="utf-8")
+        )["approved_test_boundary"]["paths"]
+        self.assertEqual(sorted(set(test_paths).union(candidate_paths)), diff_names)
         self.assertEqual(
             "unrelated sibling implementation\n",
             self.git("show", f"{reconciled_commit}:src/Unrelated.kt").stdout,
@@ -3172,7 +3145,10 @@ class AgentWorkflowTest(unittest.TestCase):
             for line in self.git("diff", "--name-only", f"{new_target}..{reconciled_commit}").stdout.splitlines()
             if line.strip()
         )
-        self.assertEqual(sorted(candidate["candidate_paths"]), diff_names)
+        test_paths = original_journal["approved_test_boundary"]["paths"]
+        self.assertEqual(
+            sorted(set(test_paths).union(candidate["candidate_paths"])), diff_names
+        )
         self.assertEqual(
             original_journal,
             json.loads(self.transition_journal_path().read_text(encoding="utf-8")),
@@ -3184,6 +3160,159 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual(original_target, provenance["previous_target_head"])
         self.assertEqual(new_target, provenance["new_target_head"])
         self.assertEqual(reconciled_commit, provenance["reconciled_commit"])
+        self.assert_clean_status()
+
+    def test_reconcile_implementation_target_reapplies_missing_test_boundary(self):
+        """A target without the local test commit accepts the approved test and production union."""
+        candidate_commit = self.bootstrap_to_pending_journal_committed_candidate_pending_target_advance()
+        before_state = self.state()
+        candidate_paths = before_state["implementation_candidate"]["candidate_paths"]
+        test_paths = json.loads(
+            self.transition_journal_path().read_text(encoding="utf-8")
+        )["approved_test_boundary"]["paths"]
+        new_target = self.advance_remote_target_with_changes(
+            {"downstream.txt": "downstream\n"},
+            name="authorized target advance without local tests",
+        )
+
+        code, payload, _ = self.reconcile_implementation_target()
+
+        self.assertEqual(0, code)
+        self.assertTrue(payload["ok"])
+        self.assertEqual("DRAFT_PR_CREATION", payload["status"])
+        reconciled_commit = self.git("rev-parse", "HEAD").stdout.strip()
+        self.assertNotEqual(candidate_commit, reconciled_commit)
+        self.assertEqual(new_target, self.git("rev-parse", f"{reconciled_commit}^").stdout.strip())
+        diff_names = sorted(
+            line.strip()
+            for line in self.git(
+                "diff", "--name-only", f"{new_target}..{reconciled_commit}"
+            ).stdout.splitlines()
+            if line.strip()
+        )
+        self.assertEqual(sorted(set(test_paths).union(candidate_paths)), diff_names)
+        self.assert_clean_status()
+
+    def test_reconcile_implementation_target_rejects_existing_changed_test_boundary(self):
+        """A test path already changed on the advanced target still fails closed."""
+        candidate_commit = self.bootstrap_to_pending_journal_committed_candidate_pending_target_advance()
+        new_target = self.advance_remote_target_with_changes(
+            {"src/test/ExampleTest.kt": "conflicting downstream test\n"},
+            name="authorized target advance with changed test boundary",
+        )
+
+        code, payload, _ = self.reconcile_implementation_target()
+
+        self.assertEqual(1, code)
+        self.assertEqual("patch-apply-conflict", payload["error"]["code"])
+        recon = json.loads(
+            self.reconciliation_journal_path().read_text(encoding="utf-8")
+        )
+        self.assertEqual("pending", recon["status"])
+        candidate_paths = recon["implementation_candidate"]["candidate_paths"]
+        test_paths = recon["approved_test_boundary"]["paths"]
+        self.git("reset", "--hard", new_target)
+        self.git("checkout", candidate_commit, "--", *test_paths, *candidate_paths)
+        self.git("commit", "-qm", recon["reviewed_commit_subject"])
+        materialized_commit = self.git("rev-parse", "HEAD").stdout.strip()
+
+        code, payload, _ = self.reconcile_implementation_target()
+
+        self.assertEqual(1, code)
+        self.assertEqual("approved-test-boundary-mismatch", payload["error"]["code"])
+        self.assertEqual(materialized_commit, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertEqual(
+            "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", self.state()["status"]
+        )
+        self.assert_clean_status()
+
+    def test_reconcile_implementation_target_rejects_path_outside_approved_union(self):
+        """A materialized reconciliation with an extra path still fails closed."""
+        candidate_commit = self.bootstrap_to_pending_journal_committed_candidate_pending_target_advance()
+        self.advance_remote_target_with_changes(
+            {"downstream.txt": "downstream\n"},
+            name="authorized target advance without local tests",
+        )
+        original_write_json = workflow._write_json
+        committed_write_seen = False
+
+        def fail_reconciled_commit_persistence(path, payload):
+            nonlocal committed_write_seen
+            if payload.get("status") == "committed" and not committed_write_seen:
+                committed_write_seen = True
+                raise workflow.WorkflowError(
+                    "injected-reconciled-commit-persistence-failure",
+                    "injected reconciliation commit persistence failure",
+                )
+            return original_write_json(path, payload)
+
+        with mock.patch.object(workflow, "_write_json", side_effect=fail_reconciled_commit_persistence):
+            code, payload, _ = self.reconcile_implementation_target()
+
+        self.assertEqual(1, code)
+        self.assertEqual(
+            "injected-reconciled-commit-persistence-failure", payload["error"]["code"]
+        )
+        self.assertNotEqual(candidate_commit, self.git("rev-parse", "HEAD").stdout.strip())
+        (self.root / "unexpected.txt").write_text("unexpected\n", encoding="utf-8")
+        drifted_commit = self.amend_head_preserving_subject()
+
+        code, payload, _ = self.reconcile_implementation_target()
+
+        self.assertEqual(1, code)
+        self.assertEqual("implementation-scope-drift", payload["error"]["code"])
+        self.assertEqual(drifted_commit, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertEqual(
+            "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", self.state()["status"]
+        )
+        self.assert_clean_status()
+
+    def test_reconcile_implementation_target_resumes_materialized_missing_test_boundary(self):
+        """A pending materialized union commit is finalized without a duplicate commit."""
+        candidate_commit = self.bootstrap_to_pending_journal_committed_candidate_pending_target_advance()
+        new_target = self.advance_remote_target_with_changes(
+            {"downstream.txt": "downstream\n"},
+            name="authorized target advance without local tests",
+        )
+        original_write_json = workflow._write_json
+        committed_write_seen = False
+
+        def fail_reconciled_commit_persistence(path, payload):
+            nonlocal committed_write_seen
+            if payload.get("status") == "committed" and not committed_write_seen:
+                committed_write_seen = True
+                raise workflow.WorkflowError(
+                    "injected-reconciled-commit-persistence-failure",
+                    "injected reconciliation commit persistence failure",
+                )
+            return original_write_json(path, payload)
+
+        with mock.patch.object(workflow, "_write_json", side_effect=fail_reconciled_commit_persistence):
+            code, payload, _ = self.reconcile_implementation_target()
+
+        self.assertEqual(1, code)
+        self.assertEqual(
+            "injected-reconciled-commit-persistence-failure", payload["error"]["code"]
+        )
+        reconciled_commit = self.git("rev-parse", "HEAD").stdout.strip()
+        self.assertNotEqual(candidate_commit, reconciled_commit)
+        pending_recon = json.loads(
+            self.reconciliation_journal_path().read_text(encoding="utf-8")
+        )
+        self.assertEqual("pending", pending_recon["status"])
+        self.assertIsNone(pending_recon["reconciled_commit"])
+
+        code, payload, _ = self.reconcile_implementation_target()
+
+        self.assertEqual(0, code)
+        self.assertEqual("DRAFT_PR_CREATION", payload["status"])
+        self.assertEqual(reconciled_commit, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertEqual(new_target, self.git("rev-parse", f"{reconciled_commit}^").stdout.strip())
+        self.assertEqual(
+            1,
+            int(self.git("rev-list", "--count", f"{new_target}..{reconciled_commit}").stdout.strip()),
+        )
+        self.assertEqual(1, len(self.state()["implementation_target_reconciliations"]))
         self.assert_clean_status()
 
     def test_reconcile_implementation_target_pending_journal_rejects_wrong_head(self):

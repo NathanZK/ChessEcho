@@ -2704,7 +2704,7 @@ def _verify_reconciled_implementation(root, config, state, recon, reconciled, co
 
     final_names = _git_diff_names(root, config, "%s..%s" % (new_target, reconciled))
     _ensure(
-        final_names == candidate_paths,
+        final_names == sorted(set(test_paths).union(candidate_paths)),
         "implementation-scope-drift",
         "%s reconciled paths differ from the accepted production candidate" % context,
     )
@@ -2724,7 +2724,7 @@ def _verify_reconciled_implementation(root, config, state, recon, reconciled, co
         if path in test_paths:
             target_entry = _git_tree_entry(root, config, new_target, path)
             _ensure(
-                target_entry == candidate_entry,
+                target_entry is None or target_entry == candidate_entry,
                 "approved-test-boundary-mismatch",
                 "%s advanced target changed the approved test boundary at %s" % (context, path),
             )
