@@ -28,6 +28,10 @@ with:
   post-Gate-3 target-reconciliation transition journal, present only when a
   committed-but-not-persisted implementation approval is reconciled onto an
   advanced target)
+- `completed-run-reconciliation-transition.json` (the immutable
+  completed-run reconciliation transition journal, present only when an
+  already-published completed run is reconciled onto an advanced target or
+  escalated into an automatic governed revision)
 
 The transition journals are created only after each gate's existing
 preconditions pass and after the exact local acknowledgment is accepted, but
@@ -147,6 +151,14 @@ stateDiagram-v2
     WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL --> IMPLEMENTATION: reject-implementation
 
     DRAFT_PR_CREATION --> WORKFLOW_COMPLETED: create-draft-pr verifies one-commit topology
+    DRAFT_PR_CREATION --> WORKFLOW_COMPLETED: reconcile-completed-run cleanly replays onto a descendant target and updates the same draft PR
+    WORKFLOW_COMPLETED --> WORKFLOW_COMPLETED: reconcile-completed-run cleanly replays onto a descendant target and updates the same draft PR
+    DRAFT_PR_CREATION --> IMPLEMENTATION: reconcile-completed-run starts an implementation revision
+    WORKFLOW_COMPLETED --> IMPLEMENTATION: reconcile-completed-run starts an implementation revision
+    DRAFT_PR_CREATION --> TEST_IMPLEMENTATION: reconcile-completed-run starts a test revision
+    WORKFLOW_COMPLETED --> TEST_IMPLEMENTATION: reconcile-completed-run starts a test revision
+    DRAFT_PR_CREATION --> PLANNING: reconcile-completed-run starts a plan revision
+    WORKFLOW_COMPLETED --> PLANNING: reconcile-completed-run starts a plan revision
     WORKFLOW_COMPLETED --> [*]
     IMPLEMENTATION --> [*]: stop
 ```
@@ -616,6 +628,88 @@ python3 scripts/agent_workflow.py recover-pr-revision ISSUE
   post-push head is finalized; the exact pre-push head is retryable, and every
   other state fails closed rather than guessing whether publication occurred.
 
+## Reconciling a completed run onto an advanced target
+
+Once a run has already published a draft PR and later `main` advances, the
+problem is no longer an uncommitted candidate or an interrupted Gate 3 commit.
+The workflow provides a distinct governed command for that published shape:
+
+```bash
+python3 scripts/agent_workflow.py reconcile-completed-run ISSUE --by REQUESTER --confirm completed_run_reconciled
+```
+
+Preconditions:
+
+- the run must already exist and be in `DRAFT_PR_CREATION` or
+  `WORKFLOW_COMPLETED`
+- it must have a recorded `implementation_commit`
+- it must have the same recorded draft PR identity required by
+  `publish-pr-revision` (`repository`, `number`, `head_ref_name`,
+  `head_ref_oid`)
+- it must have a previously passing recorded validation profile
+- the newly fetched authoritative target must be a **strict descendant** of the
+  run's recorded `target_head`; otherwise the command fails closed with
+  `target-not-advanced` or the same ancestry failure used by the other
+  reconciliation commands
+
+The command reconstructs the approved evidence from the completed run itself:
+the approved test boundary, the production-only implementation delta recovered
+from the authoritative `implementation_commit`, the approved scope, the reviewed
+commit subject, the recorded validation profile, and the recorded PR identity.
+It never asks the agent to supply a patch, a path list, or a manual revision id.
+
+Replay is always performed in a workflow-owned scratch worktree under the run
+directory, never in the caller's live checkout. The workflow applies the
+approved test boundary and recovered production delta with the same three-way
+patch style used by `reconcile-implementation-target`, runs the already
+recorded validation profile against that isolated tree, and always removes the
+scratch worktree afterward whether the replay succeeds, conflicts, or fails
+validation.
+
+Deterministic outcomes:
+
+- **Clean replay + recorded validation passes**: the workflow proves per-path
+  content equivalence against the original approved `implementation_commit`,
+  creates exactly one new commit directly on the advanced target, and updates
+  the **same** draft PR via `git push --force-with-lease` bound to the
+  previously observed head. The existing PR number, repository, and branch are
+  preserved; no duplicate PR is created and no child revision run is opened.
+- **Replay clean + recorded validation fails**: the workflow deterministically
+  opens a governed `test` revision using the existing revision machinery with an
+  automatically allocated workflow-local child issue id.
+- **Replay conflicts only on in-scope non-test paths**: the workflow
+  deterministically opens a governed `implementation` revision.
+- **Replay conflicts include any out-of-scope path**: the workflow
+  deterministically opens a governed `plan` revision.
+- **Ambiguous evidence** (tampered run/journal/PR identity, dirty state, empty
+  conflict evidence for a failed apply, inability to prove equivalence, or any
+  unsupported partial shape) fails closed without mutating the completed run or
+  draft PR.
+
+### Completed-run reconciliation journal
+
+Before any Git mutation, the workflow writes
+`completed-run-reconciliation-transition.json` using the same crash-safe
+same-directory temp-file + `fsync` + atomic replace + directory `fsync`
+pattern as the other transition journals. The document uses the
+`chess-echo-completed-run-reconciliation-transition-v1` format and advances
+`pending` -> `committed` -> `finalized`.
+
+The journal binds the run identity, the old and new targets, the old approved
+implementation commit, the approved test boundary, the recovered production
+candidate and canonical candidate identity, the reused validation profile, the
+recorded draft PR identity, the exact local acknowledgment
+(`completed_run_reconciled`), and either:
+
+- the successful reconciliation result (`reconciled_commit`), or
+- the deterministic revision escalation result (`revision_issue`,
+  `revision_class`, conflict paths, and validation evidence)
+
+Like every other workflow journal, it is crash-consistency evidence for the
+local workflow only. It does not independently authenticate the asserted
+operator, and any mismatch between the journal, Git state, or live PR state
+fails closed instead of being repaired heuristically.
+
 ## Bounded execution
 
 All external commands run via `scripts/workflow_supervisor.py` with configured timeout, grace period, and output caps.
@@ -648,6 +742,7 @@ python3 scripts/agent_workflow.py approve-implementation ISSUE --by LOGIN --conf
 python3 scripts/agent_workflow.py recover-implementation-approval ISSUE
 python3 scripts/agent_workflow.py reconcile-implementation-target ISSUE --by REQUESTER --confirm implementation_target_reconciled
 python3 scripts/agent_workflow.py reconcile-implementation-target ISSUE --by REQUESTER --confirm implementation_target_reconciliation_reanchored
+python3 scripts/agent_workflow.py reconcile-completed-run ISSUE --by REQUESTER --confirm completed_run_reconciled
 python3 scripts/agent_workflow.py reject-implementation ISSUE --by LOGIN --reason "..."
 python3 scripts/agent_workflow.py create-draft-pr ISSUE --title "..." --body-file PATH
 python3 scripts/agent_workflow.py start-revision ISSUE --parent-issue PARENT_ISSUE --class cosmetic|implementation|test|plan --by REQUESTER

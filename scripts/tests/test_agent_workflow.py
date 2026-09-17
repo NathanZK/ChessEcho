@@ -319,6 +319,19 @@ class AgentWorkflowTest(unittest.TestCase):
             confirm,
         )
 
+    def reconcile_completed_run(
+        self, issue, by="owner", confirm="completed_run_reconciled", patches=None
+    ):
+        return self.run_cli(
+            "reconcile-completed-run",
+            str(issue),
+            "--by",
+            by,
+            "--confirm",
+            confirm,
+            patches=patches,
+        )
+
     def test_transition_journal_path(self):
         return (
             self.root
@@ -5466,6 +5479,47 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
 
         return mock.patch.object(workflow, "_run_checked", side_effect=injected)
 
+    def patch_gh_view_and_reflect_push(self, initial_pr):
+        original = workflow._run_checked
+        self.gh_view_calls = []
+        self.git_push_calls = []
+        pushed_head = None
+
+        def injected(command, limits, cwd, code, context, env=None):
+            nonlocal pushed_head
+            if command[:3] == ["gh", "pr", "view"]:
+                self.gh_view_calls.append(command)
+                response = dict(initial_pr)
+                if pushed_head is not None:
+                    response["headRefOid"] = pushed_head
+                return {
+                    "command": command,
+                    "result": {"outcome": "success", "exit_code": 0},
+                    "stdout_text": json.dumps(response),
+                    "stderr_text": "",
+                }
+            if command[:2] == ["git", "push"]:
+                self.git_push_calls.append(command)
+                pushed_head = command[3].split(":refs/heads/", 1)[0]
+                return {
+                    "command": command,
+                    "result": {"outcome": "success", "exit_code": 0},
+                    "stdout_text": "",
+                    "stderr_text": "",
+                }
+            return original(command, limits, cwd, code, context, env=env)
+
+        return mock.patch.object(workflow, "_run_checked", side_effect=injected)
+
+    def completed_run_reconciliation_journal_path(self, issue):
+        return (
+            self.root
+            / ".agent-workflow"
+            / "runs"
+            / ("issue-%s" % issue)
+            / "completed-run-reconciliation-transition.json"
+        )
+
     def bootstrap_completed_parent(self, issue):
         """Drive a small, real run through every gate to WORKFLOW_COMPLETED."""
         self.write_artifact("parent-plan.md", "parent plan")
@@ -6447,6 +6501,179 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
         )
         self.assertEqual(1, code)
         self.assertEqual("pr-revision-journal-mismatch", payload["error"]["code"])
+
+    def test_reconcile_completed_run_succeeds_and_preserves_pr_identity(self):
+        parent_state = self.bootstrap_completed_parent(self.PARENT_ISSUE)
+        original_target = parent_state["target_head"]
+        original_implementation = parent_state["implementation_commit"]
+        self.set_parent_draft_pr(
+            self.PARENT_ISSUE,
+            number=300,
+            head_ref_name="parent-branch",
+            head_ref_oid=original_implementation,
+            url="https://example.test/pr/300",
+            repository="owner/repo",
+        )
+        new_target = self.advance_remote_ref_past_commit(
+            original_target,
+            {"unrelated.txt": "downstream unrelated change\n"},
+            name="authorized unrelated downstream merge",
+        )
+        initial_pr = {
+            "number": 300,
+            "state": "OPEN",
+            "isDraft": True,
+            "baseRefName": "main",
+            "headRefName": "parent-branch",
+            "headRefOid": original_implementation,
+            "headRepository": {"nameWithOwner": "owner/repo"},
+            "url": "https://example.test/pr/300",
+        }
+
+        with self.patch_gh_view_and_reflect_push(initial_pr):
+            code, payload, _ = self.reconcile_completed_run(self.PARENT_ISSUE)
+
+        self.assertEqual(0, code)
+        self.assertTrue(payload["ok"])
+        self.assertEqual("WORKFLOW_COMPLETED", payload["status"])
+        after = self.state_for(self.PARENT_ISSUE)
+        self.assertEqual(new_target, after["target_head"])
+        self.assertEqual(300, after["draft_pr"]["number"])
+        self.assertEqual("parent-branch", after["draft_pr"]["head_ref_name"])
+        self.assertEqual("owner/repo", after["draft_pr"]["repository"])
+        self.assertNotEqual(original_implementation, after["implementation_commit"])
+        self.assertEqual(after["implementation_commit"], after["draft_pr"]["head_ref_oid"])
+        self.assertEqual(
+            1,
+            int(
+                self.git(
+                    "rev-list",
+                    "--count",
+                    "%s..%s" % (new_target, after["implementation_commit"]),
+                ).stdout.strip()
+            ),
+        )
+        journal = json.loads(
+            self.completed_run_reconciliation_journal_path(
+                self.PARENT_ISSUE
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual("finalized", journal["status"])
+        self.assertEqual(original_target, journal["previous_target_head"])
+        self.assertEqual(new_target, journal["new_target_head"])
+        self.assertEqual(300, journal["draft_pr"]["number"])
+        self.assertEqual("parent-branch", journal["draft_pr"]["head_ref_name"])
+        self.assertEqual(1, len(self.git_push_calls))
+        self.assertIn(
+            "--force-with-lease=refs/heads/parent-branch:%s" % original_implementation,
+            self.git_push_calls[0],
+        )
+        scratch_root = (
+            self.root
+            / ".agent-workflow"
+            / "runs"
+            / ("issue-%s" % self.PARENT_ISSUE)
+            / ".scratch"
+        )
+        self.assertFalse(
+            scratch_root.exists() and any(scratch_root.iterdir()),
+            "scratch reconciliation worktree must be cleaned up",
+        )
+
+    def test_reconcile_completed_run_starts_test_revision_when_validation_fails(self):
+        parent_state = self.bootstrap_completed_parent(self.PARENT_ISSUE)
+        self.set_parent_draft_pr(
+            self.PARENT_ISSUE,
+            number=300,
+            head_ref_name="parent-branch",
+            head_ref_oid=parent_state["implementation_commit"],
+            url="https://example.test/pr/300",
+            repository="owner/repo",
+        )
+        self.advance_remote_ref_past_commit(
+            parent_state["target_head"],
+            {"unrelated.txt": "downstream unrelated change\n"},
+        )
+        failed_checks = [
+            {
+                "name": "workflow-check",
+                "command": [sys.executable, "-c", "raise SystemExit(1)"],
+                "cwd": ".",
+                "passed": False,
+                "result": {"outcome": "nonzero-exit", "exit_code": 1},
+            }
+        ]
+        with mock.patch.object(
+            workflow, "_run_validation_checks", return_value=failed_checks
+        ):
+            code, payload, _ = self.reconcile_completed_run(self.PARENT_ISSUE)
+
+        self.assertEqual(0, code)
+        self.assertTrue(payload["ok"])
+        self.assertEqual("test", payload["revision"]["class"])
+        revision_issue = payload["revision"]["issue"]
+        self.assertNotEqual(self.PARENT_ISSUE, revision_issue)
+        revision_state = self.state_for(revision_issue)
+        self.assertEqual("TEST_IMPLEMENTATION", revision_state["status"])
+        self.assertEqual(self.PARENT_ISSUE, revision_state["parent_run"]["issue"])
+        self.assertEqual("test", revision_state["parent_run"]["class"])
+
+    def test_reconcile_completed_run_starts_implementation_revision_on_in_scope_conflict(self):
+        parent_state = self.bootstrap_completed_parent(self.PARENT_ISSUE)
+        self.set_parent_draft_pr(
+            self.PARENT_ISSUE,
+            number=300,
+            head_ref_name="parent-branch",
+            head_ref_oid=parent_state["implementation_commit"],
+            url="https://example.test/pr/300",
+            repository="owner/repo",
+        )
+        self.advance_remote_ref_past_commit(
+            parent_state["target_head"],
+            {"docs/example.md": "# Example\n\nconflicting downstream documentation\n"},
+            name="authorized conflicting downstream merge",
+        )
+
+        code, payload, _ = self.reconcile_completed_run(self.PARENT_ISSUE)
+
+        self.assertEqual(0, code)
+        self.assertTrue(payload["ok"])
+        self.assertEqual("implementation", payload["revision"]["class"])
+        revision_state = self.state_for(payload["revision"]["issue"])
+        self.assertEqual("IMPLEMENTATION", revision_state["status"])
+        self.assertEqual("implementation", revision_state["parent_run"]["class"])
+
+    def test_reconcile_completed_run_classifies_out_of_scope_conflict_as_plan(self):
+        self.assertEqual(
+            "plan",
+            workflow._classify_completed_run_revision_boundary(
+                approved_scope=["docs/example.md", "src/test/ExampleTest.kt"],
+                test_paths=["src/test/ExampleTest.kt"],
+                conflict_paths=["README.md"],
+                replay_clean=False,
+                validation_passed=True,
+            ),
+        )
+
+    def test_reconcile_completed_run_fails_closed_on_non_descendant_target(self):
+        parent_state = self.bootstrap_completed_parent(self.PARENT_ISSUE)
+        self.set_parent_draft_pr(
+            self.PARENT_ISSUE,
+            number=300,
+            head_ref_name="parent-branch",
+            head_ref_oid=parent_state["implementation_commit"],
+            url="https://example.test/pr/300",
+            repository="owner/repo",
+        )
+        before = self.state_for(self.PARENT_ISSUE)
+        unrelated = self.unrelated_empty_tree_commit()
+        self.git("update-ref", "refs/remotes/origin/main", unrelated)
+
+        code, payload, _ = self.reconcile_completed_run(self.PARENT_ISSUE)
+
+        self.assertEqual(1, code)
+        self.assertEqual("invalid-git-ancestry", payload["error"]["code"])
+        self.assertEqual(before, self.state_for(self.PARENT_ISSUE))
 
 
 if __name__ == "__main__":

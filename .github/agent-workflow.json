@@ -14,6 +14,7 @@
     "approvals": {
       "plan": "plan_approved",
       "tests": "tests_approved",
+      "completed_run_reconciliation": "completed_run_reconciled",
       "pr": "I approve this draft PR."
     },
     "execution": {
