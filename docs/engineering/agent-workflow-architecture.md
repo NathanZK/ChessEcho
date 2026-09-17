@@ -103,7 +103,7 @@ flowchart LR
     C --> V[Validation and implementation approval]
     X[Approved test defect] --> R[reopen-tests resets workflow state]
     R --> T
-    T -->|fresh submit → review → approval| B
+    T -->|fresh cycle:<br/>submit → review → approve| B
 ```
 
 The approved test paths and content are checked again during implementation
@@ -127,9 +127,9 @@ flowchart LR
     Q -->|ancestry, scope, boundary, identity pass| P
     Q -->|proof fails| F[Fail closed]
     A[Pre-implementation target movement] --> R[Re-anchor]
-    R -->|record new target and provenance| P
+    R -->|record target<br/>+ provenance| P
     J[Interrupted transition] --> E[Journal-backed recovery]
-    E -->|re-verify evidence against Git| P
+    E -->|re-verify<br/>Git evidence| P
     E -->|ambiguous evidence| F
 ```
 
