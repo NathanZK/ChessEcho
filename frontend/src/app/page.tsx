@@ -10,10 +10,13 @@ import { ImportGamesView } from '@/components/ImportGamesView';
 import { Puzzle } from '@/mock/mockData';
 import { fetchPuzzles, JobStatusResponse, ContinuationMode, ContinuationCandidate, ExplorationPlayMode, toWhitePerspective, fetchPuzzleContinuation, fetchCurrentSession, fetchAccounts, logout as apiLogout, type SessionState } from '@/services/api';
 import { soundService } from '@/services/soundService';
+import { createDeterministicSelectionPolicy, createStochasticSelectionPolicy } from '@/services/continuationService';
 import { usePuzzleContinuation } from '@/utils/usePuzzleContinuation';
 import { activeTabStore, activeUsernameStore, activeAccountStore, activeJobStore, clearAuthenticatedAccountState, puzzleSettingsStore, reconcileSessionStorageOwner } from '@/utils/browserStores';
 
 export const EXPLORATION_STEP_DELAY_MS = 800;
+const chessEchoSelectionPolicy = createStochasticSelectionPolicy();
+const deterministicSelectionPolicy = createDeterministicSelectionPolicy();
 
 type PuzzleFeedbackState = {
   status: 'IDLE' | 'CORRECT' | 'HISTORICAL_MISTAKE' | 'INCORRECT' | 'EXPLORING';
@@ -311,7 +314,15 @@ export default function Home() {
     return currentBoardFen.split(' ')[1] === 'w' ? 'White' : 'Black';
   }, [currentBoardFen, activePuzzle]);
 
-  const continuation = usePuzzleContinuation(requestedContinuationFen, continuationMode, undefined, opponentRatingBand);
+  const continuationSelectionPolicy = explorationPlayMode === 'CHESSECHO'
+    ? chessEchoSelectionPolicy
+    : deterministicSelectionPolicy;
+  const continuation = usePuzzleContinuation(
+    requestedContinuationFen,
+    continuationMode,
+    continuationSelectionPolicy,
+    opponentRatingBand
+  );
 
   // When ChessEcho turn is active and a candidate is selected, stage it for the board (only in CHESSECHO mode)
   const [trackedStaging, setTrackedStaging] = useState({

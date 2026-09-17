@@ -17,9 +17,13 @@ export type CandidateSelectionPolicy = (
   candidates: ContinuationCandidate[]
 ) => ContinuationCandidate | null;
 
+export const createDeterministicSelectionPolicy = (): CandidateSelectionPolicy => {
+  return (candidates) => candidates[0] || null;
+};
+
 /**
  * Creates a selection policy that uses a provided random function.
- * - ENGINE mode: deterministic, picks candidates[0]
+ * - ENGINE mode: uniformly samples from engine candidates
  * - HUMAN mode: stochastic, weighted by timesPlayed
  */
 export const createStochasticSelectionPolicy = (
@@ -28,11 +32,21 @@ export const createStochasticSelectionPolicy = (
   return (candidates) => {
     if (candidates.length === 0) return null;
 
-    // Verify all candidates have the same provider type before relying on candidates[0].
-    // If mixed (which shouldn't happen), or if not HUMAN, fallback to deterministic first.
+    // Mixed provider responses are invalid for stochastic selection, so use a safe fallback.
     const isHuman = candidates.every(c => c.providerType === 'HUMAN');
-    if (!isHuman) {
+    const isEngine = candidates.every(c => c.providerType === 'ENGINE');
+    if (!isHuman && !isEngine) {
       return candidates[0];
+    }
+
+    if (isEngine) {
+      // Engine providers are expected to return only candidates within the
+      // backend's strong-candidate threshold; keep malformed responses safe.
+      if (candidates.some(c => c.evalLoss != null && c.evalLoss > 0.5)) {
+        return candidates[0];
+      }
+      const index = Math.floor(randomFn() * candidates.length);
+      return candidates[index] || candidates[0];
     }
 
     // Weighted random selection for HUMAN
@@ -64,7 +78,7 @@ export const createStochasticSelectionPolicy = (
  * ENGINE -> picks the first candidate.
  * HUMAN -> picks stochastically weighted by timesPlayed.
  */
-export const defaultSelectionPolicy: CandidateSelectionPolicy = createStochasticSelectionPolicy();
+export const defaultSelectionPolicy: CandidateSelectionPolicy = createDeterministicSelectionPolicy();
 
 export class ContinuationCacheService {
   private cache: Map<string, ContinuationResponse> = new Map();
@@ -169,5 +183,3 @@ export class MoveEvaluationCacheService {
 }
 
 export const moveEvaluationService = new MoveEvaluationCacheService();
-
-
