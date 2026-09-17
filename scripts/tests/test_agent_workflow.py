@@ -73,7 +73,8 @@ class AgentWorkflowTest(unittest.TestCase):
         self.git("config", "user.email", "test@example.test")
         self.git("config", "user.name", "Workflow Test")
         (self.root / ".gitignore").write_text(
-            "artifacts-src/\n.agent-workflow/\n", encoding="utf-8"
+            "artifacts-src/\n.agent-workflow/\ngenerated/\nshould-not-run.marker\n",
+            encoding="utf-8",
         )
         self.git("add", ".")
         self.git("commit", "-qm", "baseline")
@@ -161,6 +162,51 @@ class AgentWorkflowTest(unittest.TestCase):
                             ],
                         }
                     ]
+                },
+                "with-setup": {
+                    "setup": [
+                        {
+                            "name": "provision-generated-dependency",
+                            "command": [
+                                sys.executable,
+                                "-c",
+                                "import pathlib\n"
+                                "d = pathlib.Path('generated')\n"
+                                "d.mkdir(exist_ok=True)\n"
+                                "(d / 'marker.txt').write_text('ok')\n",
+                            ],
+                        }
+                    ],
+                    "checks": [
+                        {
+                            "name": "requires-generated-dependency",
+                            "command": [
+                                sys.executable,
+                                "-c",
+                                "import pathlib, sys\n"
+                                "sys.exit(0 if pathlib.Path('generated/marker.txt').exists() else 1)\n",
+                            ],
+                        }
+                    ],
+                },
+                "with-failing-setup": {
+                    "setup": [
+                        {
+                            "name": "unavailable-tool",
+                            "command": [sys.executable, "-c", "raise SystemExit(1)"],
+                        }
+                    ],
+                    "checks": [
+                        {
+                            "name": "should-not-run",
+                            "command": [
+                                sys.executable,
+                                "-c",
+                                "import pathlib\n"
+                                "pathlib.Path('should-not-run.marker').write_text('ran')\n",
+                            ],
+                        }
+                    ],
                 },
             },
         }
@@ -4466,6 +4512,66 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual("invalid-transition", payload["error"]["code"])
         self.assertEqual("IMPLEMENTATION", self.state()["status"])
 
+    def test_run_validation_executes_setup_before_checks_and_persists_evidence(self):
+        self.bootstrap_to_validation()
+
+        code, payload, _ = self.run_cli(
+            "run-validation",
+            str(ISSUE),
+            "--profile",
+            "with-setup",
+        )
+
+        self.assertEqual(0, code)
+        self.assertTrue(payload["ok"])
+        self.assertEqual("IMPLEMENTATION_REVIEW", self.state()["status"])
+        validation = self.state()["validation"]
+        self.assertTrue(validation["passed"])
+        self.assertTrue(validation["setup_passed"])
+        self.assertEqual(1, len(validation["setup"]))
+        self.assertTrue(validation["setup"][0]["passed"])
+        self.assertEqual(
+            "provision-generated-dependency", validation["setup"][0]["name"]
+        )
+        self.assertEqual(1, len(validation["checks"]))
+        self.assertTrue(validation["checks"][0]["passed"])
+
+    def test_run_validation_setup_failure_fails_closed_without_running_checks(self):
+        self.bootstrap_to_validation()
+
+        code, payload, _ = self.run_cli(
+            "run-validation",
+            str(ISSUE),
+            "--profile",
+            "with-failing-setup",
+        )
+
+        self.assertEqual(1, code)
+        self.assertEqual("validation-setup-failed", payload["error"]["code"])
+        self.assertEqual("IMPLEMENTATION", self.state()["status"])
+        validation = self.state()["validation"]
+        self.assertFalse(validation["passed"])
+        self.assertFalse(validation["setup_passed"])
+        self.assertIsNone(validation["checks"])
+        self.assertFalse((self.root / "should-not-run.marker").exists())
+
+    def test_run_validation_without_setup_key_remains_backward_compatible(self):
+        self.bootstrap_to_validation()
+
+        code, payload, _ = self.run_cli(
+            "run-validation",
+            str(ISSUE),
+            "--profile",
+            "workflow-tooling",
+        )
+
+        self.assertEqual(0, code)
+        self.assertTrue(payload["ok"])
+        validation = self.state()["validation"]
+        self.assertTrue(validation["passed"])
+        self.assertIsNone(validation["setup"])
+        self.assertIsNone(validation["setup_passed"])
+
     def test_validation_failure_returns_to_implementation(self):
         self.bootstrap_to_validation()
 
@@ -5520,7 +5626,7 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
             / "completed-run-reconciliation-transition.json"
         )
 
-    def bootstrap_completed_parent(self, issue):
+    def bootstrap_completed_parent(self, issue, profile="workflow-tooling"):
         """Drive a small, real run through every gate to WORKFLOW_COMPLETED."""
         self.write_artifact("parent-plan.md", "parent plan")
         self.write_artifact("parent-plan-review.md", "parent plan review")
@@ -5617,7 +5723,7 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
         )
         self.assertEqual(
             0,
-            self.run_cli("run-validation", str(issue), "--profile", "workflow-tooling")[0],
+            self.run_cli("run-validation", str(issue), "--profile", profile)[0],
         )
         self.assertEqual(
             0,
@@ -6579,6 +6685,95 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
             scratch_root.exists() and any(scratch_root.iterdir()),
             "scratch reconciliation worktree must be cleaned up",
         )
+
+    def test_reconcile_completed_run_scratch_setup_provisions_dependency_and_reconciles(self):
+        parent_state = self.bootstrap_completed_parent(
+            self.PARENT_ISSUE, profile="with-setup"
+        )
+        self.set_parent_draft_pr(
+            self.PARENT_ISSUE,
+            number=300,
+            head_ref_name="parent-branch",
+            head_ref_oid=parent_state["implementation_commit"],
+            url="https://example.test/pr/300",
+            repository="owner/repo",
+        )
+        new_target = self.advance_remote_ref_past_commit(
+            parent_state["target_head"],
+            {"unrelated.txt": "downstream unrelated change\n"},
+        )
+        initial_pr = {
+            "number": 300,
+            "state": "OPEN",
+            "isDraft": True,
+            "baseRefName": "main",
+            "headRefName": "parent-branch",
+            "headRefOid": parent_state["implementation_commit"],
+            "headRepository": {"nameWithOwner": "owner/repo"},
+            "url": "https://example.test/pr/300",
+        }
+
+        with self.patch_gh_view_and_reflect_push(initial_pr):
+            code, payload, _ = self.reconcile_completed_run(self.PARENT_ISSUE)
+
+        self.assertEqual(0, code)
+        self.assertTrue(payload["ok"])
+        self.assertEqual("WORKFLOW_COMPLETED", payload["status"])
+        after = self.state_for(self.PARENT_ISSUE)
+        self.assertEqual(new_target, after["target_head"])
+        journal = json.loads(
+            self.completed_run_reconciliation_journal_path(
+                self.PARENT_ISSUE
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual("finalized", journal["status"])
+        self.assertEqual("reconciled", journal["outcome"])
+        self.assertIsNotNone(journal["setup"])
+        self.assertTrue(all(step["passed"] for step in journal["setup"]))
+
+    def test_reconcile_completed_run_scratch_setup_failure_fails_closed_without_test_revision(
+        self,
+    ):
+        parent_state = self.bootstrap_completed_parent(self.PARENT_ISSUE)
+        self.set_parent_draft_pr(
+            self.PARENT_ISSUE,
+            number=300,
+            head_ref_name="parent-branch",
+            head_ref_oid=parent_state["implementation_commit"],
+            url="https://example.test/pr/300",
+            repository="owner/repo",
+        )
+        self.advance_remote_ref_past_commit(
+            parent_state["target_head"],
+            {"unrelated.txt": "downstream unrelated change\n"},
+        )
+        failing_setup = [
+            {
+                "name": "unavailable-tool",
+                "command": [sys.executable, "-c", "raise SystemExit(1)"],
+                "cwd": ".",
+                "passed": False,
+                "result": {"outcome": "nonzero-exit", "exit_code": 1},
+            }
+        ]
+
+        with mock.patch.object(
+            workflow, "_run_validation_setup", return_value=failing_setup
+        ):
+            code, payload, _ = self.reconcile_completed_run(self.PARENT_ISSUE)
+
+        self.assertEqual(1, code)
+        self.assertEqual("validation-setup-failed", payload["error"]["code"])
+        after = self.state_for(self.PARENT_ISSUE)
+        self.assertEqual("WORKFLOW_COMPLETED", after["status"])
+        journal = json.loads(
+            self.completed_run_reconciliation_journal_path(
+                self.PARENT_ISSUE
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual("pending", journal["status"])
+        self.assertIsNone(journal.get("revision_issue"))
+        self.assertIsNone(journal.get("outcome"))
 
     def test_reconcile_completed_run_starts_test_revision_when_validation_fails(self):
         parent_state = self.bootstrap_completed_parent(self.PARENT_ISSUE)

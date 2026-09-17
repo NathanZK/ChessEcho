@@ -1847,6 +1847,55 @@ def _select_validation_profile(config, requested):
     return requested
 
 
+def _run_validation_setup(root, config, profile_name):
+    """Run a configured profile's bounded environment setup commands, if any.
+
+    Setup provisions ignored/generated dependencies (for example ``npm ci``)
+    that a fresh Git worktree does not carry, using the same governed
+    command/cwd/limits model as validation checks. Setup always runs against
+    ``root`` (the worktree supplied by the caller -- the normal workflow
+    worktree for ``run-validation`` or an isolated scratch worktree for
+    completed-run reconciliation) and never touches any other worktree.
+    Steps stop at the first failure so later steps are not attempted against
+    a known-bad environment.
+    """
+    profile = config["validation_profiles"][profile_name]
+    setup_commands = profile.get("setup", [])
+    _ensure(
+        isinstance(setup_commands, list),
+        "invalid-config",
+        "validation profile %s has an invalid setup list" % profile_name,
+    )
+    limits = _effective_limits(config, "validation")
+    results = []
+
+    for index, step in enumerate(setup_commands):
+        _ensure(
+            isinstance(step, dict) and isinstance(step.get("command"), list),
+            "invalid-config",
+            "validation setup step #%d in profile %s is invalid" % (index, profile_name),
+        )
+        name = step.get("name", "setup-%d" % (index + 1))
+        command = step["command"]
+        cwd = root / step.get("cwd", ".")
+        completed = _run_bounded(command, limits, cwd)
+        result = completed["result"]
+        passed = result.get("outcome") == "success" and result.get("exit_code") == 0
+        results.append(
+            {
+                "name": name,
+                "command": command,
+                "cwd": _relative(cwd, root),
+                "passed": passed,
+                "result": result,
+            }
+        )
+        if not passed:
+            break
+
+    return results
+
+
 def _run_validation_checks(root, config, profile_name):
     """Run every command in a configured profile under bounded supervision."""
     profile = config["validation_profiles"][profile_name]
@@ -1881,6 +1930,39 @@ def _run_validation_checks(root, config, profile_name):
             }
         )
     return results
+
+
+def _execute_validation_profile(root, config, profile_name):
+    """Run a profile's setup (if configured) and then its checks.
+
+    Setup failure -- or a profile whose setup never runs to completion -- is
+    a validation-environment/setup failure, not a check failure: checks are
+    skipped entirely (``checks`` is ``None``) so callers can never mistake an
+    unprovisioned environment for a deterministic TEST-boundary check
+    failure. Only when setup succeeds (or the profile has no setup) do the
+    approved validation commands themselves run and produce a pass/fail
+    signal eligible for TEST-revision classification.
+    """
+    setup_results = _run_validation_setup(root, config, profile_name)
+    setup_passed = all(step["passed"] for step in setup_results)
+    if setup_results and not setup_passed:
+        return {
+            "profile": profile_name,
+            "setup": setup_results,
+            "setup_passed": False,
+            "checks": None,
+            "passed": False,
+        }
+
+    checks = _run_validation_checks(root, config, profile_name)
+    all_passed = all(check["passed"] for check in checks)
+    return {
+        "profile": profile_name,
+        "setup": setup_results if setup_results else None,
+        "setup_passed": True if setup_results else None,
+        "checks": checks,
+        "passed": all_passed,
+    }
 
 
 def _approval_gate(gate, instruction, command):
@@ -4724,9 +4806,34 @@ def command_run_validation(args, root, config):
     _expect_status(state, "VALIDATION", "run-validation")
 
     profile_name = _select_validation_profile(config, args.profile)
-    checks = _run_validation_checks(root, config, profile_name)
+    execution = _execute_validation_profile(root, config, profile_name)
+    setup_results = execution["setup"]
+    checks = execution["checks"]
 
-    all_passed = all(check["passed"] for check in checks)
+    if checks is None:
+        # Setup (e.g. provisioning ignored/generated dependencies) never
+        # reached a state where the approved validation commands could run.
+        # This is a validation-environment/setup failure, not a check
+        # failure, so it must never be conflated with a deterministic TEST
+        # boundary result.
+        state["validation"] = {
+            "profile": profile_name,
+            "ran_at": _now(),
+            "setup": setup_results,
+            "setup_passed": False,
+            "checks": None,
+            "passed": False,
+        }
+        state["status"] = "IMPLEMENTATION"
+        state["implementation_review_ready"] = False
+        _write_state(root, config, args.issue, state)
+        _ensure(
+            False,
+            "validation-setup-failed",
+            "Validation environment setup failed for profile %s" % profile_name,
+        )
+
+    all_passed = execution["passed"]
     _require_implementation_candidate_matches(root, config, state, "run-validation")
     if all_passed:
         test_commit = state.get("test_commit")
@@ -4747,6 +4854,8 @@ def command_run_validation(args, root, config):
     state["validation"] = {
         "profile": profile_name,
         "ran_at": _now(),
+        "setup": setup_results,
+        "setup_passed": execution["setup_passed"],
         "checks": [
             {
                 "name": check["name"],
@@ -5681,7 +5790,9 @@ def _attempt_completed_run_reconciliation(root, config, source, new_target, tran
                 return {
                     "replay_clean": False,
                     "validation_passed": False,
+                    "setup_failed": False,
                     "conflict_paths": boundary_attempt["conflict_paths"],
+                    "setup": None,
                     "checks": None,
                 }
             candidate_attempt = _try_apply_reconciliation_patch(
@@ -5694,19 +5805,36 @@ def _attempt_completed_run_reconciliation(root, config, source, new_target, tran
                 return {
                     "replay_clean": False,
                     "validation_passed": False,
+                    "setup_failed": False,
                     "conflict_paths": candidate_attempt["conflict_paths"],
+                    "setup": None,
                     "checks": None,
                 }
-            checks = _run_validation_checks(
+            execution = _execute_validation_profile(
                 scratch, config, source["validation_profile"]
             )
-            all_passed = all(check["passed"] for check in checks)
+            if execution["checks"] is None:
+                # Setup (e.g. provisioning ignored/generated dependencies) failed
+                # in the isolated scratch worktree. This is a validation-
+                # environment/setup failure and must fail closed rather than
+                # ever being classified as a deterministic TEST revision.
+                return {
+                    "replay_clean": True,
+                    "validation_passed": False,
+                    "setup_failed": True,
+                    "conflict_paths": [],
+                    "setup": execution["setup"],
+                    "checks": None,
+                }
+            all_passed = execution["passed"]
             if not all_passed:
                 return {
                     "replay_clean": True,
                     "validation_passed": False,
+                    "setup_failed": False,
                     "conflict_paths": [],
-                    "checks": checks,
+                    "setup": execution["setup"],
+                    "checks": execution["checks"],
                 }
             _run_checked(
                 _git_command(config, "commit", "-qm", source["reviewed_commit_subject"]),
@@ -5722,8 +5850,10 @@ def _attempt_completed_run_reconciliation(root, config, source, new_target, tran
             return {
                 "replay_clean": True,
                 "validation_passed": True,
+                "setup_failed": False,
                 "conflict_paths": [],
-                "checks": checks,
+                "setup": execution["setup"],
+                "checks": execution["checks"],
                 "reconciled_commit": reconciled,
             }
         finally:
@@ -5876,12 +6006,30 @@ def command_reconcile_completed_run(args, root, config):
                 "revision_class": None,
                 "conflict_paths": [],
                 "validation": None,
+                "setup": None,
             }
             _write_json(journal_path, journal)
 
         attempt = _attempt_completed_run_reconciliation(
             root, config, source, new_target, journal["transition_id"]
         )
+        journal["validation"] = attempt["checks"]
+        journal["setup"] = attempt.get("setup")
+        journal["conflict_paths"] = attempt["conflict_paths"]
+        if attempt.get("setup_failed"):
+            # Setup (e.g. provisioning ignored/generated dependencies) failed in
+            # the isolated scratch worktree. Fail closed as a validation-
+            # environment/setup failure: never classify this as a deterministic
+            # TEST-boundary revision. The journal stays "pending" so a later
+            # retry (for example after fixing the setup command or tooling
+            # availability) can attempt reconciliation again from scratch.
+            _write_json(journal_path, journal)
+            _ensure(
+                False,
+                "validation-setup-failed",
+                "%s validation environment setup failed for profile %s"
+                % (context, source["validation_profile"]),
+            )
         required_revision = _classify_completed_run_revision_boundary(
             approved_scope=source["approved_scope"],
             test_paths=source["approved_test_boundary"]["paths"],
@@ -5889,8 +6037,6 @@ def command_reconcile_completed_run(args, root, config):
             replay_clean=attempt["replay_clean"],
             validation_passed=attempt["validation_passed"],
         )
-        journal["validation"] = attempt["checks"]
-        journal["conflict_paths"] = attempt["conflict_paths"]
 
         if required_revision is None:
             reconciled_commit = attempt["reconciled_commit"]

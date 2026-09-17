@@ -69,6 +69,13 @@
         "frontend/vitest.config.mts",
         "frontend/vitest.setup.ts"
       ],
+      "setup": [
+        {
+          "name": "frontend-dependencies",
+          "command": ["npm", "ci", "--no-audit", "--no-fund"],
+          "cwd": "frontend"
+        }
+      ],
       "checks": [
         {
           "name": "frontend-lint",
@@ -103,6 +110,13 @@
         "frontend/tests/**/*",
         "frontend/vitest.config.mts",
         "frontend/vitest.setup.ts"
+      ],
+      "setup": [
+        {
+          "name": "frontend-dependencies",
+          "command": ["npm", "ci", "--no-audit", "--no-fund"],
+          "cwd": "frontend"
+        }
       ],
       "checks": [
         {

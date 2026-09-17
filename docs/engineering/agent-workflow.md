@@ -662,21 +662,28 @@ Replay is always performed in a workflow-owned scratch worktree under the run
 directory, never in the caller's live checkout. The workflow applies the
 approved test boundary and recovered production delta with the same three-way
 patch style used by `reconcile-implementation-target`, runs the already
-recorded validation profile against that isolated tree, and always removes the
-scratch worktree afterward whether the replay succeeds, conflicts, or fails
-validation.
+recorded validation profile's setup and checks against that isolated tree (see
+"Validation setup" below), and always removes the scratch worktree afterward
+whether the replay succeeds, conflicts, fails setup, or fails validation.
 
 Deterministic outcomes:
 
-- **Clean replay + recorded validation passes**: the workflow proves per-path
-  content equivalence against the original approved `implementation_commit`,
-  creates exactly one new commit directly on the advanced target, and updates
-  the **same** draft PR via `git push --force-with-lease` bound to the
-  previously observed head. The existing PR number, repository, and branch are
-  preserved; no duplicate PR is created and no child revision run is opened.
-- **Replay clean + recorded validation fails**: the workflow deterministically
-  opens a governed `test` revision using the existing revision machinery with an
-  automatically allocated workflow-local child issue id.
+- **Clean replay + setup succeeds (or is not configured) + recorded validation
+  passes**: the workflow proves per-path content equivalence against the
+  original approved `implementation_commit`, creates exactly one new commit
+  directly on the advanced target, and updates the **same** draft PR via `git
+  push --force-with-lease` bound to the previously observed head. The
+  existing PR number, repository, and branch are preserved; no duplicate PR is
+  created and no child revision run is opened.
+- **Replay clean + setup succeeds + recorded validation fails**: the workflow
+  deterministically opens a governed `test` revision using the existing
+  revision machinery with an automatically allocated workflow-local child
+  issue id.
+- **Replay clean + setup fails**: the workflow fails closed with
+  `validation-setup-failed` and leaves the reconciliation journal `pending`
+  for retry. This is a validation-environment/setup failure, not a
+  deterministic TEST-boundary result, so it is never classified as a `test`
+  revision and never escalates any other revision class.
 - **Replay conflicts only on in-scope non-test paths**: the workflow
   deterministically opens a governed `implementation` revision.
 - **Replay conflicts include any out-of-scope path**: the workflow
@@ -685,6 +692,47 @@ Deterministic outcomes:
   conflict evidence for a failed apply, inability to prove equivalence, or any
   unsupported partial shape) fails closed without mutating the completed run or
   draft PR.
+
+### Validation setup
+
+A fresh Git worktree — whether the normal workflow worktree used by
+`run-validation` or the isolated scratch worktree used by
+`reconcile-completed-run` — contains only tracked files. It does not carry
+ignored or generated dependencies (for example `frontend/node_modules`), so a
+validation profile whose checks assume those dependencies exist (`npm run
+lint`, `npx tsc --noEmit`, `npm run test`, `npm run build`) can fail for
+environment reasons that have nothing to do with the approved implementation.
+
+A validation profile in `.github/agent-workflow.json` may declare an optional
+`setup` list, using the same `{"name", "command", "cwd"}` shape as `checks`.
+When present, setup commands run once, in order, before any check, always
+rooted at the worktree supplied to that validation run (never at any other
+worktree), and stop at the first failing step. The `frontend` and
+`full-stack` profiles configure `npm ci --no-audit --no-fund` with `cwd
+frontend` as their setup step, matching the repository's existing dependency
+install contract.
+
+Both `run-validation` and `reconcile-completed-run` execute setup through the
+same shared implementation before running checks, so the contract and its
+failure semantics are identical in both call paths:
+
+- If a profile has no `setup` entries, behavior is unchanged and fully
+  backward compatible.
+- If setup succeeds (or is absent), checks run exactly as before and their
+  pass/fail result is the only input to TEST-boundary classification.
+- If setup fails, or required tooling remains unavailable after setup
+  completes, the run fails closed as a **validation-environment/setup
+  failure** (`validation-setup-failed`). Checks are not executed. This is
+  never conflated with a check (test) failure: `run-validation` returns the
+  run to `IMPLEMENTATION` for a corrected resubmission, and
+  `reconcile-completed-run` leaves its transition journal `pending` for retry
+  instead of opening a `test` revision.
+
+Persisted validation evidence (`state["validation"]` and the completed-run
+reconciliation journal) records `setup` (the per-step results, or `null` when
+no setup is configured), `setup_passed`, and `checks` (`null` when setup
+failed and checks never ran) so audits can distinguish a setup/environment
+failure from an actual check/test failure.
 
 ### Completed-run reconciliation journal
 
@@ -704,6 +752,13 @@ recorded draft PR identity, the exact local acknowledgment
 - the successful reconciliation result (`reconciled_commit`), or
 - the deterministic revision escalation result (`revision_issue`,
   `revision_class`, conflict paths, and validation evidence)
+
+It also records `setup` (the setup step results from that attempt, or `null`)
+and `validation` (the check results, or `null` when setup failed) so a setup
+failure is distinguishable from a check failure in the persisted evidence. A
+setup failure leaves the journal `status` at `pending` rather than advancing
+it to `committed`/`finalized`, so the next `reconcile-completed-run` invocation
+retries reconciliation from scratch.
 
 Like every other workflow journal, it is crash-consistency evidence for the
 local workflow only. It does not independently authenticate the asserted
