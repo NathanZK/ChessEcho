@@ -4541,7 +4541,9 @@ class AgentWorkflowTest(unittest.TestCase):
                 "--agent",
                 "chess-echo-test-implementer",
                 "--failure-command",
-                "%s -c \"print('expected failure'); import sys; sys.exit(1)\"" % sys.executable,
+                "%s -c \"import sys; content = open('src/test/ExampleTest.kt').read(); "
+                "sys.exit(0) if 'corrected' in content else "
+                "(sys.stderr.write('expected failure'), sys.exit(1))\"" % sys.executable,
                 "--failure-contains",
                 "expected failure",
             )[0],
@@ -4549,6 +4551,11 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual("TEST_REVIEW", self.state()["status"])
         self.assertEqual(corrected_candidate, self.state()["test_commit"])
         self.assertEqual(corrected_candidate, self.state()["test_reopenings"][0]["corrected_test_candidate"])
+        recorded_failure = self.state()["test_failure"]
+        self.assertEqual(previous_test_commit, recorded_failure["result"]["previous_test_commit"])
+        self.assertEqual(corrected_candidate, recorded_failure["result"]["corrected_test_commit"])
+        self.assertEqual("nonzero-exit", recorded_failure["result"]["before"]["outcome"])
+        self.assertEqual("success", recorded_failure["result"]["after"]["outcome"])
         self.assertEqual(production_before, (self.root / "src" / "Example.kt").read_text(encoding="utf-8"))
 
         self.assertEqual(
@@ -4584,6 +4591,84 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual(approved["test_commit"], approved["test_reopenings"][0]["new_test_commit"])
         self.assertEqual(production_before, (self.root / "src" / "Example.kt").read_text(encoding="utf-8"))
         self.assertEqual("?? src/Example.kt", self.git("status", "--porcelain", "--untracked-files=all").stdout.strip())
+
+    def test_submit_tests_reopened_rejects_synthetic_failure_marker(self):
+        """A marker command that always exits nonzero cannot pass reopened evidence."""
+        self.bootstrap_to_implementation()
+        (self.root / "src" / "Example.kt").write_text("implementation candidate\n", encoding="utf-8")
+
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "reopen-tests",
+                str(ISSUE),
+                "--reason",
+                "approved-test-fixture-defect",
+            )[0],
+        )
+        (self.root / "src" / "test" / "ExampleTest.kt").write_text(
+            "corrected test\n", encoding="utf-8"
+        )
+        self.git("add", "src/test/ExampleTest.kt")
+        self.git("commit", "-qm", "correct test fixture")
+
+        code, payload, _ = self.run_cli(
+            "submit-tests",
+            str(ISSUE),
+            "--artifact",
+            "artifacts-src/test-report.md",
+            "--agent",
+            "chess-echo-test-implementer",
+            "--failure-command",
+            "%s -c \"import sys; sys.stderr.write('expected failure'); sys.exit(1)\""
+            % sys.executable,
+            "--failure-contains",
+            "expected failure",
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("test-did-not-pass-after-correction", payload["error"]["code"])
+        state = self.state()
+        self.assertEqual("TEST_IMPLEMENTATION", state["status"])
+        self.assertIsNone(state["test_commit"])
+
+    def test_submit_tests_reopened_requires_genuine_pre_correction_failure(self):
+        """A command that never fails cannot be accepted as pre-correction evidence."""
+        self.bootstrap_to_implementation()
+        (self.root / "src" / "Example.kt").write_text("implementation candidate\n", encoding="utf-8")
+
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "reopen-tests",
+                str(ISSUE),
+                "--reason",
+                "approved-test-fixture-defect",
+            )[0],
+        )
+        (self.root / "src" / "test" / "ExampleTest.kt").write_text(
+            "corrected test\n", encoding="utf-8"
+        )
+        self.git("add", "src/test/ExampleTest.kt")
+        self.git("commit", "-qm", "correct test fixture")
+
+        code, payload, _ = self.run_cli(
+            "submit-tests",
+            str(ISSUE),
+            "--artifact",
+            "artifacts-src/test-report.md",
+            "--agent",
+            "chess-echo-test-implementer",
+            "--failure-command",
+            "%s -c \"import sys; sys.stderr.write('expected failure'); sys.exit(0)\""
+            % sys.executable,
+            "--failure-contains",
+            "expected failure",
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("test-did-not-fail-before-correction", payload["error"]["code"])
+        state = self.state()
+        self.assertEqual("TEST_IMPLEMENTATION", state["status"])
+        self.assertIsNone(state["test_commit"])
 
     def test_reopen_tests_rejects_non_exceptional_states(self):
         self.bootstrap_to_implementation()
@@ -5283,7 +5368,9 @@ class AgentWorkflowTest(unittest.TestCase):
                 "--agent",
                 "chess-echo-test-implementer",
                 "--failure-command",
-                "%s -c \"print('expected failure'); import sys; sys.exit(1)\"" % sys.executable,
+                "%s -c \"import sys; content = open('src/test/ExampleTest.kt').read(); "
+                "sys.exit(0) if 'corrected' in content else "
+                "(sys.stderr.write('expected failure'), sys.exit(1))\"" % sys.executable,
                 "--failure-contains",
                 "expected failure",
             )[0],
