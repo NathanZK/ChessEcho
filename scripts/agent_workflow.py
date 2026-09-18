@@ -1622,7 +1622,7 @@ def command_reanchor_target(args, root, config):
         "requested_at": _now(),
         "validated_artifacts": validation["validated"],
         "target_drift": _target_drift_record(
-            "reanchor-target", "stale", "reanchor"
+            "reanchor-target", "preserved", "stale", "reanchor"
         ),
     }
     state.setdefault("target_reanchors", []).append(provenance)
@@ -1702,7 +1702,7 @@ def command_reconcile_candidate(args, root, config):
             "publication_artifacts_absent": True,
         },
         "target_drift": _target_drift_record(
-            "reconcile-candidate", "stale", "reconcile"
+            "reconcile-candidate", "preserved", "stale", "reconcile"
         ),
     }
     state.setdefault("candidate_reconciliations", []).append(provenance)
@@ -1842,6 +1842,7 @@ def _write_implementation_target_recovery_journal(
         ),
         "target_drift": _target_drift_record(
             "recover-implementation-target",
+            "preserved",
             "invalidated",
             "reenter-implementation" if test_plan["preserve"] else "reenter-tests",
             "implementation" if test_plan["preserve"] else "test",
@@ -2092,9 +2093,18 @@ TARGET_DRIFT_DISPOSITIONS = (
 
 
 def _target_drift_record(
-    transition, repository_realization, disposition, revision_class=None
+    transition,
+    product_intent,
+    repository_realization,
+    disposition,
+    revision_class=None,
 ):
-    """Return the canonical audit record for one resolved target-drift condition."""
+    """Return a canonical record separating intent from its realization."""
+    _ensure(
+        product_intent in ("preserved", "invalidated"),
+        "invalid-target-drift-classification",
+        "target drift product intent must be preserved or invalidated",
+    )
     _ensure(
         repository_realization in ("stale", "invalidated"),
         "invalid-target-drift-classification",
@@ -2110,7 +2120,15 @@ def _target_drift_record(
         "invalid-target-drift-classification",
         "target drift disposition is invalid",
     )
-    if repository_realization == "stale":
+    if product_intent == "invalidated":
+        _ensure(
+            repository_realization == "invalidated"
+            and disposition == "start-revision"
+            and revision_class == "plan",
+            "invalid-target-drift-classification",
+            "invalidated product intent requires a governed plan revision",
+        )
+    elif repository_realization == "stale":
         _ensure(
             disposition in ("reanchor", "reconcile") and revision_class is None,
             "invalid-target-drift-classification",
@@ -2124,7 +2142,6 @@ def _target_drift_record(
             "invalid-target-drift-classification",
             "invalidated target drift must re-enter a governed boundary",
         )
-    product_intent = "invalidated" if revision_class == "plan" else "preserved"
     return {
         "condition": "target-drift",
         "product_intent": product_intent,
@@ -3305,7 +3322,7 @@ def _build_reconciliation_journal(
         "reconciled_commit": None,
         "reanchors": [],
         "target_drift": _target_drift_record(
-            "reconcile-implementation-target", "stale", "reconcile"
+            "reconcile-implementation-target", "preserved", "stale", "reconcile"
         ),
     }
 
@@ -3527,7 +3544,7 @@ def _persist_reconciliation(root, config, state, recon, reconciled):
 
     if state["status"] != "DRAFT_PR_CREATION":
         target_drift = recon.get("target_drift") or _target_drift_record(
-            "reconcile-implementation-target", "stale", "reconcile"
+            "reconcile-implementation-target", "preserved", "stale", "reconcile"
         )
         provenance = {
             "previous_candidate_commit": recon["previous_candidate_commit"],
@@ -6673,7 +6690,7 @@ def command_reconcile_completed_run(args, root, config):
             journal["status"] = "committed"
             journal["outcome"] = "reconciled"
             journal["target_drift"] = _target_drift_record(
-                context, "stale", "reconcile"
+                context, "preserved", "stale", "reconcile"
             )
             journal["reconciled_commit"] = reconciled_commit
             journal["committed_at"] = journal.get("committed_at", _now())
@@ -6783,7 +6800,11 @@ def command_reconcile_completed_run(args, root, config):
         journal["revision_issue"] = revision_issue
         journal["revision_class"] = required_revision
         journal["target_drift"] = _target_drift_record(
-            context, "invalidated", "start-revision", required_revision
+            context,
+            "invalidated" if required_revision == "plan" else "preserved",
+            "invalidated",
+            "start-revision",
+            required_revision,
         )
         journal["committed_at"] = journal.get("committed_at", _now())
         _write_json(journal_path, journal)
