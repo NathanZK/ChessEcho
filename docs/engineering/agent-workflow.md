@@ -1018,6 +1018,14 @@ python3 scripts/agent_workflow.py recover-pr-revision ISSUE
 `create-draft-pr` enforces the governed PR body section headings exactly:
 `## What`, `## Why`, `## Testing`. This executable contract is independent of
 the reusable repository template and must not be relaxed or replaced by
-template guidance. The template's optional related-issue, scope,
+template guidance. In addition to the exact headings, the executable applies a
+minimum structural/readability boundary: `What` and `Why` cannot be empty,
+comment-only, or consist only of an issue reference, URL, or ticket
+identifier; `Testing` cannot be only a common test command or aggregate count.
+Testing-not-applicable is accepted only with explanatory text. These checks do
+not judge semantic prose quality, require a language, or make PR prose
+authoritative. Workflow state and artifacts remain the source of truth for
+intent, scope, tests, implementation evidence, validation, approvals,
+identity, topology, publication, and reconciliation. The template's optional related-issue, scope,
 migration/deployment, screenshot, and UI notes are author-facing guidance only;
 they are not additional universal requirements.
