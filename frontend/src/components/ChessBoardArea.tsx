@@ -11,6 +11,7 @@ import { ContinuationCandidate, ExplorationPlayMode } from '@/services/api';
 export const CHALLENGE_MAX_EVAL_LOSS = 0.20;
 
 interface ChessBoardAreaProps {
+  blindfoldMode?: boolean;
   initialFen: string;
   playerColor: 'WHITE' | 'BLACK';
   boardOrientation?: 'white' | 'black';
@@ -52,6 +53,7 @@ interface ChessBoardAreaProps {
 }
 
 export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
+  blindfoldMode = false,
   initialFen,
   playerColor,
   boardOrientation,
@@ -477,6 +479,8 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   };
 
   const orientation = boardOrientation ?? (playerColor === 'BLACK' ? 'black' : 'white');
+
+  if (blindfoldMode) return null;
 
   return (
     <div className="flex flex-col space-y-2.5 w-full max-w-[640px] 2xl:max-w-[760px] mx-auto">

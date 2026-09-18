@@ -4,6 +4,7 @@ import React, { useState, useSyncExternalStore } from 'react';
 import { Header, TabType } from '@/components/Header';
 import { EvalBar } from '@/components/EvalBar';
 import { ChessBoardArea } from '@/components/ChessBoardArea';
+import { BlinfoldContinuationPanel } from '@/components/BlinfoldContinuationPanel';
 import { PuzzleFeedbackPanel, type ChallengeSubmissionResult } from '@/components/PuzzleFeedbackPanel';
 import { WeaknessesList } from '@/components/WeaknessesList';
 import { ImportGamesView } from '@/components/ImportGamesView';
@@ -285,6 +286,7 @@ export default function Home() {
 
   // Continuation & Line Exploration turn-based state machine
   const [isExplorationActive, setIsExplorationActive] = useState<boolean>(false);
+  const [isBlindfoldMode, setIsBlindfoldMode] = useState<boolean>(false);
   const [explorationPlayMode, setExplorationPlayMode] = useState<ExplorationPlayMode | undefined>(undefined);
   const [explorationDecisionMove, setExplorationDecisionMove] = useState<string | null>(null);
   const [unacceptableMoveMessage, setUnacceptableMoveMessage] = useState<string | null>(null);
@@ -1446,7 +1448,27 @@ export default function Home() {
                   </button>
                 </div>
               ) : (
-              <div className="flex flex-col items-center justify-center gap-4 lg:flex-row lg:flex-wrap lg:items-start 2xl:flex-nowrap">
+              <>
+                <div className="flex w-full items-center justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setIsBlindfoldMode((value) => !value)}
+                    className="rounded-lg border border-emerald-700/60 px-3 py-2 text-xs font-bold text-emerald-300 hover:bg-emerald-950/40"
+                  >
+                    {isBlindfoldMode ? 'Exit blindfold mode' : 'Train blindfold'}
+                  </button>
+                </div>
+                {isBlindfoldMode ? (
+                  <BlinfoldContinuationPanel
+                    initialFen={activePuzzle.fen}
+                    onExit={() => setIsBlindfoldMode(false)}
+                    requestChessEchoMove={async (fen) => {
+                      const response = await fetchPuzzleContinuation(fen, 'ENGINE');
+                      return response?.candidates[0]?.move ?? null;
+                    }}
+                  />
+                ) : (
+                  <div className="flex flex-col items-center justify-center gap-4 lg:flex-row lg:flex-wrap lg:items-start 2xl:flex-nowrap">
                 {/* Left Stockfish Eval Bar */}
                 <div className="hidden sm:flex flex-col items-center pt-1">
                   <span className="text-[10px] font-bold text-slate-400 mb-1.5 uppercase tracking-wider">
@@ -1546,7 +1568,9 @@ export default function Home() {
                     onBackToCandidates={handleBackToCandidates}
                   />
                 </div>
-              </div>
+                  </div>
+                )}
+              </>
             )}
           </div>
           </div>
