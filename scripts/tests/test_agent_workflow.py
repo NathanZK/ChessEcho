@@ -4861,6 +4861,132 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertIsNone(revised["test_commit"])
         self.assertIsNone(revised["validation"])
 
+    def test_plan_revision_abandons_active_reopening_and_archives_its_journal(self):
+        """A revised plan retires recovery state without losing its audit trail."""
+        self.bootstrap_to_implementation()
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "reopen-tests",
+                str(ISSUE),
+                "--reason",
+                "approved-test-fixture-defect",
+            )[0],
+        )
+        prior_reopening = dict(self.state()["test_reopenings"][-1])
+        journal_path = self.test_transition_journal_path()
+        journal_before = journal_path.read_text(encoding="utf-8")
+
+        code, payload, _ = self.run_cli(
+            "request-plan-revision",
+            str(ISSUE),
+            "--by",
+            "test-implementer",
+            "--reason-code",
+            "approved-plan-defect",
+            "--reason",
+            "The approved recovery path no longer matches the revised plan.",
+        )
+
+        self.assertEqual(0, code)
+        self.assertEqual("PLANNING", payload["status"])
+        revised = self.state()
+        reopening = revised["test_reopenings"][-1]
+        self.assertFalse(reopening["active"])
+        self.assertEqual("request-plan-revision", reopening["abandoned_by"])
+        self.assertEqual(prior_reopening["previous_test_commit"], reopening["previous_test_commit"])
+        request = revised["plan_revision_requests"][-1]
+        self.assertEqual(prior_reopening, request["prior_active_test_reopening"])
+        archived_journal = self.root / request["prior_test_approval_transition"]
+        self.assertFalse(journal_path.exists())
+        self.assertEqual(journal_before, archived_journal.read_text(encoding="utf-8"))
+
+        code, payload, _ = self.recover_test_approval()
+        self.assertEqual(1, code)
+        self.assertEqual("missing-file", payload["error"]["code"])
+
+    def test_fresh_tests_after_plan_revision_do_not_use_old_reopening_protocol(self):
+        """Retired reopenings cannot require pre-correction evidence in a new test cycle."""
+        self.bootstrap_to_implementation()
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "reopen-tests",
+                str(ISSUE),
+                "--reason",
+                "approved-test-fixture-defect",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "request-plan-revision",
+                str(ISSUE),
+                "--by",
+                "test-implementer",
+                "--reason-code",
+                "approved-plan-defect",
+                "--reason",
+                "A new plan must establish a fresh test boundary.",
+            )[0],
+        )
+        self.write_artifact("revised-plan.md", "revised plan")
+        self.write_artifact("revised-plan-review.md", "revised plan review")
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "submit-plan",
+                str(ISSUE),
+                "--artifact",
+                "artifacts-src/revised-plan.md",
+                "--agent",
+                "chess-echo-planner",
+                "--scope",
+                "src/test/ExampleTest.kt",
+                "--scope",
+                "src/Example.kt",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "review-plan",
+                str(ISSUE),
+                "--status",
+                workflow.READY,
+                "--artifact",
+                "artifacts-src/revised-plan-review.md",
+                "--reviewer",
+                "chess-echo-reviewer",
+            )[0],
+        )
+        self.assertEqual(0, self.run_cli(
+            "approve-plan", str(ISSUE), "--by", "owner", "--confirm", "plan_approved"
+        )[0])
+        (self.root / "src" / "test" / "ExampleTest.kt").write_text(
+            "fresh test\n", encoding="utf-8"
+        )
+        self.git("add", "src/test/ExampleTest.kt")
+        self.git("commit", "-qm", "fresh test boundary")
+
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "submit-tests",
+                str(ISSUE),
+                "--artifact",
+                "artifacts-src/test-report.md",
+                "--agent",
+                "chess-echo-test-implementer",
+                "--failure-command",
+                "%s -c \"import sys; sys.stderr.write('fresh failure'); sys.exit(1)\""
+                % sys.executable,
+                "--failure-contains",
+                "fresh failure",
+            )[0],
+        )
+        self.assertEqual("TEST_REVIEW", self.state()["status"])
+
     def test_plan_revision_request_requires_structured_reason(self):
         self.bootstrap_to_test_implementation()
         for arguments, expected in (
