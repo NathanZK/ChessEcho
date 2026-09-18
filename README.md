@@ -216,7 +216,7 @@ Move-order transpositions that produce legally identical positions are grouped t
 
 **Kotlin/Spring Boot backend** — handles game import (via Chess.com's public API), PGN parsing, position detection, engine analysis orchestration, weakness calculation, and puzzle serving. Runs on port 8080.
 
-**PostgreSQL** — stores provider-neutral users/sessions, canonical chess accounts, imported games, board positions, position occurrences, engine analysis results, and owner-scoped import jobs. Schema is managed by one clean `V1__baseline.sql` migration; the unreleased V1/V2 history and any V3 upgrade/quarantine path are not used.
+**PostgreSQL** — stores provider-neutral users/sessions, canonical chess accounts, imported games, board positions, position occurrences, engine analysis results, and owner-scoped import jobs. Schema is managed by one clean `V1__baseline.sql` migration; the unreleased V1/V2 history and any V3 upgrade/quarantine path are not used. See [`docs/engineering/repository-conventions.md`](docs/engineering/repository-conventions.md) for the pre-deployment default this reflects and when it no longer applies.
 
 **Asynchronous import job** — when a game import is started, the backend creates a job record and executes the pipeline asynchronously. Live game progress is checkpointed after each archive. Game ingestion and the subsequent Stockfish analysis have independent statuses on the same job, and the frontend polls both every two seconds. Authenticated jobs are selected by account UUID and can be polled only by the owner; guest jobs are limited to unclaimed accounts.
 

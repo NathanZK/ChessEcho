@@ -2,6 +2,16 @@
 
 This repository uses a minimal, file-based issue workflow in `scripts/agent_workflow.py`.
 
+## Issue authoring contract
+
+New product issues should follow
+[`.github/ISSUE_TEMPLATE/product-issue.md`](../../.github/ISSUE_TEMPLATE/product-issue.md):
+product intent, acceptance criteria, repository constraints (including
+deployment/migration state), and validation. See
+[`repository-conventions.md`](repository-conventions.md) for the default
+pre-deployment assumption and the baseline-first migration convention that
+the planner role should apply unless an issue explicitly states otherwise.
+
 ## Roles
 
 - **Planner** (`chess-echo-planner`): writes the implementation plan using read-only tools.
