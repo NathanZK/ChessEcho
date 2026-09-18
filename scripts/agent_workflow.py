@@ -31,8 +31,13 @@ DEFAULT_COMPLETED_RUN_RECONCILIATION_CONFIRMATION = "completed_run_reconciled"
 DEFAULT_COMPLETED_RUN_RECOVERY_CONFIRMATION = "completed_run_recovery_confirmed"
 RECONCILIATION_CONFIRMATION = "implementation_target_reconciled"
 RECONCILIATION_REANCHOR_CONFIRMATION = "implementation_target_reconciliation_reanchored"
+IMPLEMENTATION_TARGET_RECOVERY_CONFIRMATION = "implementation_target_recovery_confirmed"
 RECONCILIATION_JOURNAL_FORMAT = "chess-echo-implementation-target-reconciliation-transition-v1"
 RECONCILIATION_JOURNAL_STATUSES = ("pending", "committed", "finalized")
+IMPLEMENTATION_TARGET_RECOVERY_JOURNAL_FORMAT = (
+    "chess-echo-implementation-target-recovery-transition-v1"
+)
+IMPLEMENTATION_TARGET_RECOVERY_JOURNAL_STATUSES = ("pending", "finalized")
 COMPLETED_RUN_RECONCILIATION_JOURNAL_FORMAT = (
     "chess-echo-completed-run-reconciliation-transition-v1"
 )
@@ -1690,6 +1695,336 @@ def command_reconcile_candidate(args, root, config):
     }
     state.setdefault("candidate_reconciliations", []).append(provenance)
     _write_state(root, config, args.issue, state)
+    return {
+        "ok": True,
+        "status": state["status"],
+        "previous_target_head": old_target,
+        "new_target_head": new_target,
+        "provenance": provenance,
+    }
+
+
+def _implementation_target_recovery_supported_status(state):
+    return state["status"] in (
+        "VALIDATION",
+        "IMPLEMENTATION_REVIEW",
+        "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL",
+    )
+
+
+def _implementation_target_recovery_journal_path(root, config, issue):
+    return _run_root(root, config, issue) / "implementation-target-recovery-transition.json"
+
+
+def _implementation_target_recovery_acknowledgment(args):
+    return {
+        "kind": LOCAL_ACKNOWLEDGMENT_KIND,
+        "asserted_by": args.by,
+        "confirmation": args.confirm,
+        "recorded_at": _now(),
+        "independent_authorization": False,
+    }
+
+
+def _implementation_target_recovery_test_plan(root, config, state, old_target, new_target, context):
+    applicability = state.get("test_implementation_status")
+    _ensure(
+        applicability in ("REQUIRED", "NOT_APPLICABLE"),
+        "invalid-test-applicability",
+        "%s requires valid test implementation applicability" % context,
+    )
+    if applicability == "NOT_APPLICABLE":
+        _ensure(
+            state.get("test_implementation_reason"),
+            "missing-test-applicability-reason",
+            "%s requires approved NOT_APPLICABLE rationale" % context,
+        )
+        return {
+            "preserve": True,
+            "test_paths": [],
+            "target_overlap_paths": [],
+            "test_diff_sha256_before": hashlib.sha256(b"").hexdigest(),
+            "invalidated": [],
+            "reason": "not_applicable_has_no_test_boundary",
+        }
+
+    test_commit = state.get("test_commit")
+    _ensure(test_commit, "missing-test-commit", "%s requires test_commit" % context)
+    _git_ancestor(root, config, old_target, test_commit, context)
+    test_paths = _approved_test_paths(root, config, state, context)
+    target_paths = _target_change_paths(root, config, old_target, new_target)
+    test_overlap = sorted(set(target_paths).intersection(test_paths))
+    if test_overlap:
+        return {
+            "preserve": False,
+            "test_paths": test_paths,
+            "target_overlap_paths": test_overlap,
+            "test_diff_sha256_before": None,
+            "invalidated": ["test_commit", "approvals.tests", "test_failure"],
+            "reason": "target_changed_approved_test_paths",
+        }
+
+    test_diff_before = _git_diff_text(root, config, old_target, test_commit, test_paths)
+    return {
+        "preserve": True,
+        "test_paths": test_paths,
+        "target_overlap_paths": [],
+        "test_diff_sha256_before": hashlib.sha256(test_diff_before.encode("utf-8")).hexdigest(),
+        "invalidated": [],
+        "reason": "approved_test_boundary_has_no_target_overlap",
+    }
+
+
+def _write_implementation_target_recovery_journal(
+    root, config, state, args, old_target, new_target, status_before, candidate, test_plan
+):
+    journal = {
+        "format": IMPLEMENTATION_TARGET_RECOVERY_JOURNAL_FORMAT,
+        "version": 1,
+        "transition_id": uuid.uuid4().hex,
+        "issue": state["issue"],
+        "operation": "recover-implementation-target",
+        "created_at": _now(),
+        "status": "pending",
+        "from_status": status_before,
+        "to_status": "IMPLEMENTATION" if test_plan["preserve"] else "TEST_IMPLEMENTATION",
+        "acknowledgment": _implementation_target_recovery_acknowledgment(args),
+        "requested_by": args.by,
+        "requested_at": _now(),
+        "target_base": config["target_base"],
+        "remote_ref": "origin/%s" % config["target_base"],
+        "previous_target_head": old_target,
+        "new_target_head": new_target,
+        "test_commit_before": state.get("test_commit"),
+        "approved_scope": state.get("approved_scope"),
+        "test_implementation_status": state.get("test_implementation_status"),
+        "test_implementation_reason": state.get("test_implementation_reason"),
+        "test_paths": test_plan["test_paths"],
+        "test_target_overlap_paths": test_plan["target_overlap_paths"],
+        "test_preservation": {
+            "preserved": test_plan["preserve"],
+            "reason": test_plan["reason"],
+            "diff_sha256_before": test_plan["test_diff_sha256_before"],
+            "diff_sha256_after": None,
+            "new_test_commit": None,
+        },
+        "implementation_candidate_before": state.get("implementation_candidate"),
+        "candidate_identity_before": _candidate_identity(
+            state.get("test_commit"),
+            candidate["candidate_diff"],
+            candidate["candidate_paths"],
+        ),
+        "validation_before": state.get("validation"),
+        "implementation_review_ready_before": state.get("implementation_review_ready"),
+        "implementation_approval_before": state.get("approvals", {}).get("implementation"),
+        "invalidated_evidence": sorted(
+            set(
+                [
+                    "implementation_candidate",
+                    "approvals.implementation",
+                    "validation",
+                    "implementation_review_ready",
+                ]
+                + test_plan["invalidated"]
+            )
+        ),
+    }
+    _write_json(_implementation_target_recovery_journal_path(root, config, state["issue"]), journal)
+    return journal
+
+
+def _materialize_implementation_target_recovery(root, config, state, journal, context):
+    old_target = journal["previous_target_head"]
+    new_target = journal["new_target_head"]
+    test_commit_before = journal.get("test_commit_before")
+    candidate_commit = None
+    if _current_head(root, config) == test_commit_before:
+        _run_checked(
+            _git_command(config, "add", "-A"),
+            _effective_limits(config, "git"),
+            root,
+            "git-add-failed",
+            "unable to checkpoint implementation candidate before target recovery",
+        )
+        _run_checked(
+            _git_command(config, "commit", "-qm", "workflow: checkpoint implementation target recovery"),
+            _effective_limits(config, "git"),
+            root,
+            "git-commit-failed",
+            "unable to checkpoint implementation candidate before target recovery",
+        )
+        candidate_commit = _current_head(root, config)
+    else:
+        candidate_commit = _current_head(root, config)
+
+    try:
+        _run_checked(
+            _git_command(config, "reset", "--hard", test_commit_before),
+            _effective_limits(config, "git"),
+            root,
+            "git-reset-failed",
+            "unable to clear stale implementation candidate during target recovery",
+        )
+        if journal["test_preservation"]["preserved"]:
+            if journal.get("test_implementation_status") == "NOT_APPLICABLE":
+                _run_checked(
+                    _git_command(config, "reset", "--hard", new_target),
+                    _effective_limits(config, "git"),
+                    root,
+                    "git-reset-failed",
+                    "unable to move NOT_APPLICABLE test boundary to the recovered target",
+                )
+                new_test_commit = new_target
+                test_diff_after = ""
+            else:
+                _run_checked(
+                    _git_command(config, "rebase", "--onto", new_target, old_target, test_commit_before),
+                    _effective_limits(config, "git"),
+                    root,
+                    "git-rebase-failed",
+                    "%s could not preserve the approved test boundary on the recovered target"
+                    % context,
+                )
+                new_test_commit = _current_head(root, config)
+                test_diff_after = _git_diff_text(
+                    root, config, new_target, new_test_commit, journal["test_paths"]
+                )
+                _ensure(
+                    hashlib.sha256(test_diff_after.encode("utf-8")).hexdigest()
+                    == journal["test_preservation"]["diff_sha256_before"],
+                    "artifact-validity-undetermined",
+                    "%s could not prove approved test-boundary equivalence on the recovered target"
+                    % context,
+                )
+            return {
+                "status": "IMPLEMENTATION",
+                "new_test_commit": new_test_commit,
+                "test_diff_sha256_after": hashlib.sha256(test_diff_after.encode("utf-8")).hexdigest(),
+            }
+
+        _run_checked(
+            _git_command(config, "reset", "--hard", new_target),
+            _effective_limits(config, "git"),
+            root,
+            "git-reset-failed",
+            "unable to move to the recovered target after invalidating tests",
+        )
+        return {
+            "status": "TEST_IMPLEMENTATION",
+            "new_test_commit": None,
+            "test_diff_sha256_after": None,
+        }
+    except WorkflowError:
+        _best_effort_rebase_abort(root, config)
+        if candidate_commit:
+            _restore_candidate_worktree(root, config, candidate_commit, test_commit_before)
+        raise
+
+
+def command_recover_implementation_target(args, root, config):
+    """Invalidate stale in-flight implementation evidence after overlapping target advancement."""
+    context = "recover-implementation-target"
+    state = _read_state(root, config, args.issue)
+    _ensure(
+        _implementation_target_recovery_supported_status(state),
+        "invalid-transition",
+        "%s is not safe in status %s" % (context, state["status"]),
+    )
+    _ensure((args.by or "").strip(), "missing-requester", "%s requires a requester" % context)
+    _ensure(
+        args.confirm == IMPLEMENTATION_TARGET_RECOVERY_CONFIRMATION,
+        "implementation-target-recovery-confirmation-mismatch",
+        "Expected confirmation phrase for implementation target recovery: %s"
+        % IMPLEMENTATION_TARGET_RECOVERY_CONFIRMATION,
+    )
+    _ensure(
+        not state.get("implementation_commit") and not state.get("draft_pr"),
+        "invalid-transition",
+        "%s is not allowed after publication artifacts exist" % context,
+    )
+    _ensure(
+        state.get("approvals", {}).get("plan") is not None
+        and state.get("approvals", {}).get("tests") is not None,
+        "missing-approval",
+        "%s requires approved plan and tests" % context,
+    )
+    scope = state.get("approved_scope")
+    _ensure(
+        isinstance(scope, list) and scope and all(isinstance(path, str) for path in scope),
+        "missing-approved-scope",
+        "%s requires approved plan scope" % context,
+    )
+
+    test_commit = state.get("test_commit")
+    _ensure(test_commit, "missing-test-commit", "%s requires test_commit" % context)
+    _ensure(
+        _current_head(root, config) == test_commit,
+        "implementation-commit-not-allowed",
+        "%s requires HEAD to match approved test_commit" % context,
+    )
+    _require_clean_index(root, config, context)
+    current_candidate = _require_implementation_candidate_matches(root, config, state, context)
+    _require_production_only(current_candidate["candidate_paths"], scope, context)
+
+    old_target = _state_target_head(state)
+    new_target = _resolve_target_head(root, config, fetch=True)
+    _ensure(
+        new_target != old_target,
+        "target-not-advanced",
+        "%s requires origin/%s to advance" % (context, config["target_base"]),
+    )
+    _git_ancestor(root, config, old_target, new_target, context)
+    test_plan = _implementation_target_recovery_test_plan(
+        root, config, state, old_target, new_target, context
+    )
+    status_before = state["status"]
+    journal = _write_implementation_target_recovery_journal(
+        root, config, state, args, old_target, new_target, status_before, current_candidate, test_plan
+    )
+    materialized = _materialize_implementation_target_recovery(root, config, state, journal, context)
+
+    state["target_head"] = new_target
+    state["base_head"] = new_target
+    state["implementation_candidate"] = None
+    state["validation"] = None
+    state["implementation_review_ready"] = False
+    state["approvals"]["implementation"] = None
+    state["draft_pr"] = None
+    state["status"] = materialized["status"]
+    if materialized["status"] == "IMPLEMENTATION":
+        state["test_commit"] = materialized["new_test_commit"]
+    else:
+        state["approvals"]["tests"] = None
+        state["test_commit"] = None
+        state["test_failure"] = None
+
+    provenance = {
+        "transition_id": journal["transition_id"],
+        "previous_target_head": old_target,
+        "new_target_head": new_target,
+        "target_base": config["target_base"],
+        "remote_ref": journal["remote_ref"],
+        "requested_by": args.by,
+        "requested_at": journal["requested_at"],
+        "status_before": status_before,
+        "status_after": state["status"],
+        "invalidated_evidence": journal["invalidated_evidence"],
+        "test_preservation": {
+            **journal["test_preservation"],
+            "new_test_commit": materialized["new_test_commit"],
+            "diff_sha256_after": materialized["test_diff_sha256_after"],
+        },
+        "test_target_overlap_paths": journal["test_target_overlap_paths"],
+    }
+    state.setdefault("implementation_target_recoveries", []).append(provenance)
+    _write_state(root, config, args.issue, state)
+
+    finalized = dict(journal)
+    finalized["status"] = "finalized"
+    finalized["finalized_at"] = _now()
+    finalized["test_preservation"] = provenance["test_preservation"]
+    finalized["to_status"] = state["status"]
+    _write_json(_implementation_target_recovery_journal_path(root, config, args.issue), finalized)
     return {
         "ok": True,
         "status": state["status"],
@@ -6525,6 +6860,11 @@ def build_parser():
     _add_issue(reconcile_candidate)
     reconcile_candidate.add_argument("--by", required=True)
 
+    recover_implementation_target = subparsers.add_parser("recover-implementation-target")
+    _add_root(recover_implementation_target)
+    _add_issue(recover_implementation_target)
+    _add_human(recover_implementation_target)
+
     reconcile_implementation_target = subparsers.add_parser("reconcile-implementation-target")
     _add_root(reconcile_implementation_target)
     _add_issue(reconcile_implementation_target)
@@ -6617,6 +6957,7 @@ COMMANDS = {
     "reopen-tests": command_reopen_tests,
     "reanchor-target": command_reanchor_target,
     "reconcile-candidate": command_reconcile_candidate,
+    "recover-implementation-target": command_recover_implementation_target,
     "reconcile-implementation-target": command_reconcile_implementation_target,
     "reconcile-completed-run": command_reconcile_completed_run,
     "recover-completed-run-reconciliation": command_recover_completed_run_reconciliation,
