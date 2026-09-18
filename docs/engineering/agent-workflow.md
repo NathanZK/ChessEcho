@@ -249,6 +249,47 @@ directly on `target_head`; `create-draft-pr` verifies that the final branch has 
 `HEAD^` is the target, and that changed paths remain within the approved scope. `create-draft-pr` is a
 workflow action, not an Approval Gate. PR review, CI, and merge remain external GitHub processes.
 
+### Target drift condition and decision model
+
+Target drift is a first-class workflow condition: the authoritative target is
+a strict descendant of the run's recorded `target_head`. Detecting drift does
+not by itself invalidate approved product intent, but it always makes the
+recorded repository realization stale until the workflow proves how the
+target delta affects that intent. Existing target-authenticity, ancestry,
+scope, candidate-identity, evidence-provenance, authorization, and clean-tree
+checks remain mandatory.
+
+Every successful target-drift transition records a canonical `target_drift`
+object in its append-only provenance or transition journal:
+
+| Field | Meaning |
+| --- | --- |
+| `condition` | Always `target-drift`. |
+| `product_intent` | `preserved` when the approved plan remains valid; `invalidated` when the target delta requires plan/scope reconsideration. |
+| `repository_realization` | `stale` when exact evidence can be mechanically replayed; `invalidated` when the affected implementation or test realization must be rebuilt. |
+| `disposition` | The deterministic next action: `reanchor`, `reconcile`, `reenter-implementation`, `reenter-tests`, or `start-revision`. |
+| `transition` | The workflow command that made and recorded the decision. |
+| `revision_class` | The smallest affected governed boundary (`implementation`, `test`, or `plan`), or `null` for safe mechanical reconciliation. |
+
+The decision path is deterministic:
+
+| Proven target effect | Intent | Realization | Governed disposition |
+| --- | --- | --- | --- |
+| Pre-implementation evidence is unchanged | preserved | stale | `reanchor-target` |
+| Approved tests and candidate replay exactly with no overlap | preserved | stale | `reconcile-candidate`, `reconcile-implementation-target`, or clean `reconcile-completed-run` |
+| In-scope production overlap invalidates the implementation | preserved | invalidated | `recover-implementation-target` re-enters implementation, or completed work starts an `implementation` revision |
+| Approved test overlap or replay validation failure invalidates tests | preserved | invalidated | re-enter tests or start a `test` revision |
+| Out-of-scope conflict changes the approved plan/scope assumptions | invalidated | invalidated | start a `plan` revision |
+| Evidence, ancestry, target identity, or classification is ambiguous | undetermined | undetermined | fail closed without changing state |
+
+Safe reconciliation never rewrites historical approvals or silently blesses
+new content: it reuses them only after exact equivalence is proved and records
+the transition. Invalidated realization clears the affected downstream
+evidence and returns to the smallest required gate. Invalidated product intent
+always requires a governed plan revision; no reconciliation command may
+silently continue the old plan. Supersession remains retirement for invalid
+run provenance, not a target-drift shortcut.
+
 Immediately after creating the authoritative commit, Gate 3 independently
 recomputes the accepted candidate and approved test boundary, checks the
 reviewed subject, approved scope, target freshness, direct-parent and
