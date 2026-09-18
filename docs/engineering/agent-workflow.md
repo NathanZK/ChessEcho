@@ -76,6 +76,22 @@ directory). The coordinator copies them into the run-local `artifacts/`
 directory; leaving a source staging directory such as `artifacts-src/` in the
 worktree makes the required clean-worktree gate fail.
 
+### Canonical artifact identity
+
+Each submitted plan, test report, implementation report, and review is stored
+at its one canonical run-local path. Its state record contains the SHA-256
+digest and byte length of the copied content; that pair, not a filename
+variant, identifies the exact artifact revision. Before each corresponding
+approval gate, the workflow re-reads every artifact reviewed at that gate and
+fails closed if its bytes, identity fields, or canonical location differ from
+the recorded identity. The existing approval transition journals retain these
+identity-bearing artifact records as their provenance.
+
+An artifact that needs different content must be resubmitted and re-reviewed
+through the applicable governed revision path. It cannot silently inherit an
+approval for earlier bytes, and names such as `plan-final.md` or
+`implementation-v2.md` are not a provenance mechanism.
+
 ## Gate sequence
 
 1. `init`

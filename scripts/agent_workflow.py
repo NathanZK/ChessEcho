@@ -280,7 +280,7 @@ def _resolve_file(root, supplied):
 
 
 def _record_artifact(root, config, issue, kind, supplied_path):
-    """Copy a submitted report into stable run-local storage without asserting trust."""
+    """Copy a submitted report into canonical storage with immutable content identity."""
     source = _resolve_file(root, supplied_path)
     destination = _artifacts_dir(root, config, issue) / ARTIFACT_FILES[kind]
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -291,7 +291,73 @@ def _record_artifact(root, config, issue, kind, supplied_path):
         "path": _relative(destination, root),
         "source": _relative(source, root),
         "recorded_at": _now(),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "byte_length": len(data),
     }
+
+
+def _verify_artifact_identity(root, config, issue, artifact, context):
+    """Fail closed when an approval subject differs from its recorded bytes."""
+    _ensure(
+        isinstance(artifact, dict),
+        "invalid-artifact-identity",
+        "%s requires a recorded artifact object" % context,
+    )
+    path = artifact.get("path")
+    digest = artifact.get("sha256")
+    byte_length = artifact.get("byte_length")
+    _ensure(
+        isinstance(path, str) and path,
+        "invalid-artifact-identity",
+        "%s artifact has no canonical path" % context,
+    )
+    _ensure(
+        isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest),
+        "invalid-artifact-identity",
+        "%s artifact has an invalid SHA-256 identity" % context,
+    )
+    _ensure(
+        isinstance(byte_length, int) and byte_length >= 0,
+        "invalid-artifact-identity",
+        "%s artifact has an invalid byte length" % context,
+    )
+    artifact_path = (root / path).resolve()
+    try:
+        artifact_path.relative_to(_artifacts_dir(root, config, issue).resolve())
+    except ValueError:
+        _raise(
+            "invalid-artifact-identity",
+            "%s artifact is outside canonical storage" % context,
+        )
+    _ensure(
+        artifact_path.is_file(),
+        "artifact-missing",
+        "%s recorded artifact is missing: %s" % (context, path),
+    )
+    data = artifact_path.read_bytes()
+    _ensure(
+        len(data) == byte_length and hashlib.sha256(data).hexdigest() == digest,
+        "artifact-identity-mismatch",
+        "%s recorded artifact content changed after submission" % context,
+    )
+
+
+def _verify_approval_artifacts(root, config, issue, state, kinds, context):
+    """Verify every exact artifact content revision reviewed at an approval gate."""
+    artifacts = state.get("artifacts")
+    _ensure(
+        isinstance(artifacts, dict),
+        "invalid-artifact-identity",
+        "%s requires an artifact collection" % context,
+    )
+    for kind in kinds:
+        artifact = artifacts.get(kind)
+        _ensure(
+            artifact is not None,
+            "artifact-missing",
+            "%s requires %s" % (context, kind),
+        )
+        _verify_artifact_identity(root, config, issue, artifact, context)
 
 
 def _artifact_text(root, config, issue, kind):
@@ -4393,6 +4459,9 @@ def command_approve_plan(args, root, config):
     """Advance after matching self-attested local plan acknowledgment."""
     state = _read_state(root, config, args.issue)
     _expect_status(state, "WAITING_FOR_PLAN_HUMAN_APPROVAL", "approve-plan")
+    _verify_approval_artifacts(
+        root, config, args.issue, state, ("plan", "plan_review"), "approve-plan"
+    )
     acknowledgment = _record_local_acknowledgment(config, state, "plan", args.confirm, args.by)
     state["status"] = "TEST_IMPLEMENTATION"
     _write_state(root, config, args.issue, state)
@@ -5055,6 +5124,9 @@ def command_approve_tests(args, root, config):
     """Approval Gate 2: durably journal, then create the empty test-approval commit."""
     state = _read_state(root, config, args.issue)
     _expect_status(state, "WAITING_FOR_TEST_HUMAN_APPROVAL", "approve-tests")
+    _verify_approval_artifacts(
+        root, config, args.issue, state, ("test_report", "test_review"), "approve-tests"
+    )
     acknowledgment = _record_local_acknowledgment(config, state, "tests", args.confirm, args.by)
 
     candidate_test_commit = state.get("test_commit")
@@ -5439,6 +5511,14 @@ def command_approve_implementation(args, root, config):
     """Approval Gate 3: durably journal, verify, and commit the candidate."""
     state = _read_state(root, config, args.issue)
     _expect_status(state, "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", "approve-implementation")
+    _verify_approval_artifacts(
+        root,
+        config,
+        args.issue,
+        state,
+        ("implementation_report", "implementation_review"),
+        "approve-implementation",
+    )
     _ensure(
         state.get("implementation_review_ready"),
         "implementation-review-not-ready",
