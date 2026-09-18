@@ -27,6 +27,6 @@ When a human asks to run the issue workflow:
 5. Never infer human approval. Only explicit `approve-plan`, `approve-tests`, and `approve-pr` commands advance human gates.
 6. Keep validation bounded by using `python3 scripts/agent_workflow.py run-validation ISSUE`.
 7. Never create a draft pull request directly; use `create-draft-pr`.
-8. Use exactly `## What`, `## Why`, and `## Testing` in draft PR bodies.
+8. Use exactly `## What`, `## Why`, and `## Testing` in governed draft PR bodies. The reusable human-facing scaffold for ordinary pull requests is `.github/PULL_REQUEST_TEMPLATE.md`; it does not replace workflow-owned evidence or controls.
 
 The workflow applies only when explicitly started for an issue; normal repository tasks do not need a workflow run.

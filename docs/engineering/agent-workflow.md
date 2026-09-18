@@ -88,6 +88,15 @@ worktree makes the required clean-worktree gate fail.
 8. `review-implementation`
 9. `create-draft-pr`
 
+The repository-level `.github/PULL_REQUEST_TEMPLATE.md` is reusable,
+human-facing scaffolding for ordinary pull requests. Its `What`, `Why`, and
+`Testing` guidance is intentionally separate from authoritative workflow
+evidence: workflow state and artifacts remain the source of truth for approved
+intent and scope, test and implementation artifacts, validation results,
+approvals, commit/tree/topology identity, PR head identity, and publication or
+reconciliation gates. Ordinary authors are not expected to provide those
+workflow artifacts in a PR description.
+
 An in-progress run may use `reanchor-target ISSUE --by REQUESTER` only before
 implementation artifacts exist (planning through test review). The command
 requires a clean worktree, fetches `origin/<target_base>`, and accepts only a
@@ -957,4 +966,9 @@ python3 scripts/agent_workflow.py publish-pr-revision ISSUE --target-pr NUMBER -
 python3 scripts/agent_workflow.py recover-pr-revision ISSUE
 ```
 
-`create-draft-pr` enforces the PR body section headings: `## What`, `## Why`, `## Testing`.
+`create-draft-pr` enforces the governed PR body section headings exactly:
+`## What`, `## Why`, `## Testing`. This executable contract is independent of
+the reusable repository template and must not be relaxed or replaced by
+template guidance. The template's optional related-issue, scope,
+migration/deployment, screenshot, and UI notes are author-facing guidance only;
+they are not additional universal requirements.
