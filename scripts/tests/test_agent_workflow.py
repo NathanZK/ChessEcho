@@ -1686,6 +1686,55 @@ class AgentWorkflowTest(unittest.TestCase):
         )
         self.assertEqual("TEST_IMPLEMENTATION", self.state()["status"])
 
+    def test_plan_approval_rejects_modified_recorded_artifact(self):
+        self.write_artifact("plan.md", "plan")
+        self.write_artifact("plan-review.md", "plan review")
+        self.assertEqual(0, self.run_cli("init", str(ISSUE))[0])
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "submit-plan",
+                str(ISSUE),
+                "--artifact",
+                "artifacts-src/plan.md",
+                "--agent",
+                "chess-echo-planner",
+                "--scope",
+                "src/test/ExampleTest.kt",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "review-plan",
+                str(ISSUE),
+                "--status",
+                workflow.READY,
+                "--artifact",
+                "artifacts-src/plan-review.md",
+                "--reviewer",
+                "chess-echo-reviewer",
+            )[0],
+        )
+        state = self.state()
+        self.assertRegex(state["artifacts"]["plan"]["sha256"], r"^[0-9a-f]{64}$")
+        (self.root / state["artifacts"]["plan"]["path"]).write_text(
+            "modified plan", encoding="utf-8"
+        )
+
+        code, payload, _ = self.run_cli(
+            "approve-plan",
+            str(ISSUE),
+            "--by",
+            "owner",
+            "--confirm",
+            "plan_approved",
+        )
+
+        self.assertEqual(1, code)
+        self.assertEqual("artifact-identity-mismatch", payload["error"]["code"])
+        self.assertEqual("WAITING_FOR_PLAN_HUMAN_APPROVAL", self.state()["status"])
+
     def test_local_plan_approval_is_self_attested_not_independent_authorization(self):
         """#122 regression: local CLI fields are assertions, not human authorization."""
         self.write_artifact("plan.md", "plan")
