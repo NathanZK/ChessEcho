@@ -48,6 +48,27 @@ class PgnHeaderTagReaderTest {
     }
 
     @Test
+    fun `reads optional opening metadata tags`() {
+        val result =
+            reader.read(
+                "[ECO \"B23\"]\n" +
+                    "[ECOUrl \"https://www.chess.com/openings/Sicilian-Defense\"]\n" +
+                    "[White \"alice\"]\n\n",
+            )
+
+        assertEquals("OK", result.status.name)
+        assertEquals("B23", result.eco)
+        assertEquals("https://www.chess.com/openings/Sicilian-Defense", result.ecoUrl)
+    }
+
+    @Test
+    fun `rejects duplicate opening metadata tags`() {
+        val result = reader.read("[ECO \"B23\"]\n[ECO \"B20\"]\n\n")
+
+        assertEquals("MALFORMED", result.status.name)
+    }
+
+    @Test
     fun `returns absent for a bounded prefix without a tag section`() {
         assertEquals("ABSENT", reader.read("1. e4 e5").status.name)
         assertEquals("ABSENT", reader.read("\uFEFF\n\n1. d4 d5").status.name)

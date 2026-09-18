@@ -224,6 +224,10 @@ export interface WeaknessResponse {
   acceptableMoves: Array<{ move: string; evalLoss: number }>;
   movesPlayed: Array<{ move: string; timesPlayed: number; averageLoss: number }>;
   gameUrls: string[];
+  openingContext?: {
+    eco: string;
+    ecoUrl: string;
+  } | null;
   evalCp?: number;
   lastSeenAt?: string;
 }

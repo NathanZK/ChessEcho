@@ -477,6 +477,20 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                           </span>
                         </div>
 
+                        {item.openingContext && (
+                          <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                            <span>Opening context: {item.openingContext.eco}</span>
+                            <a
+                              href={item.openingContext.ecoUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-emerald-400 hover:text-emerald-300 underline"
+                            >
+                              View Chess.com opening
+                            </a>
+                          </div>
+                        )}
+
                         {/* Stats Grid: Evidence Metrics Only */}
                         <div className="grid grid-cols-3 gap-2 text-center">
                           <div className="bg-slate-950/80 p-2 rounded-xl border border-slate-800">

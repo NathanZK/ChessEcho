@@ -4,6 +4,7 @@ import com.chessecho.domain.Platform
 import com.chessecho.domain.PlayerColor
 import com.chessecho.dto.AcceptableMove
 import com.chessecho.dto.MoveBreakdown
+import com.chessecho.dto.OpeningContext
 import com.chessecho.dto.PracticalEvidenceCohort
 import com.chessecho.dto.PracticalEvidenceResponse
 import com.chessecho.dto.PracticalEvidenceScopeType
@@ -33,6 +34,7 @@ class WeaknessCalculationService(
     @Autowired(required = false)
     private var accountOwnershipService: AccountOwnershipService? = null
     private val log = LoggerFactory.getLogger(javaClass)
+    private val pgnHeaderTagReader = PgnHeaderTagReader()
 
     companion object {
         const val DEFAULT_MIN_EVAL_LOSS = 0.8
@@ -145,6 +147,7 @@ class WeaknessCalculationService(
             var priorityScore = 0.0
             var mistakeCount = 0
             val mistakeUrls = mutableListOf<String>()
+            val mistakeGames = mutableListOf<com.chessecho.domain.Game>()
             val moveStats = mutableMapOf<String, Pair<Double, Int>>()
 
             for (occurrence in sortedOccurrences) {
@@ -168,6 +171,7 @@ class WeaknessCalculationService(
                     priorityScore += evalLoss * weight
                     mistakeCount++
                     mistakeUrls.add(gameUrl(account.platform, occurrence.game.platformGameId))
+                    mistakeGames.add(occurrence.game)
                 }
             }
 
@@ -222,6 +226,7 @@ class WeaknessCalculationService(
                     acceptableMoves = acceptableMoves,
                     movesPlayed = movesPlayed,
                     gameUrls = mistakeUrls.distinct().take(10),
+                    openingContext = openingContext(platform, mistakeGames),
                     evalCp = aggregation.baselineEvalCp,
                     lastSeenAt = lastSeenAt,
                 ),
@@ -299,6 +304,7 @@ class WeaknessCalculationService(
                         acceptableMoves = draft.acceptableMoves,
                         movesPlayed = movesPlayed,
                         gameUrls = draft.gameUrls,
+                        openingContext = draft.openingContext,
                         evalCp = draft.evalCp,
                         lastSeenAt = draft.lastSeenAt,
                         playerColor = draft.playerColor,
@@ -409,6 +415,34 @@ class WeaknessCalculationService(
             else -> platformGameId
         }
 
+    private fun openingContext(
+        platform: Platform,
+        mistakeGames: List<com.chessecho.domain.Game>,
+    ): OpeningContext? {
+        if (platform != Platform.CHESS_COM) return null
+
+        val metadata =
+            mistakeGames
+                .distinctBy { it.id }
+                .map { pgnHeaderTagReader.read(it.pgn) }
+                .mapNotNull { tags ->
+                    val eco = tags.eco?.trim()
+                    val ecoUrl = tags.ecoUrl?.trim()
+                    if (tags.status == PgnHeaderStatus.OK && !eco.isNullOrEmpty() && !ecoUrl.isNullOrEmpty()) {
+                        eco to ecoUrl
+                    } else {
+                        null
+                    }
+                }
+        if (metadata.size != mistakeGames.distinctBy { it.id }.size) return null
+        val first = metadata.firstOrNull() ?: return null
+        return if (metadata.all { it == first }) {
+            OpeningContext(eco = first.first, ecoUrl = first.second)
+        } else {
+            null
+        }
+    }
+
     private fun logCompletion(
         startTime: Long,
         accountId: String,
@@ -485,6 +519,7 @@ class WeaknessCalculationService(
         val acceptableMoves: List<AcceptableMove>,
         val movesPlayed: List<MoveBreakdown>,
         val gameUrls: List<String>,
+        val openingContext: OpeningContext?,
         val evalCp: Int?,
         val lastSeenAt: Instant?,
     ) {
