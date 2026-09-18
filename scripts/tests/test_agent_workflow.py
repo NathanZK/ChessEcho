@@ -408,6 +408,57 @@ class AgentWorkflowTest(unittest.TestCase):
             / "test-approval-transition.json"
         )
 
+    def test_target_drift_preserves_intent_when_realization_is_stale(self):
+        record = workflow._target_drift_record(
+            "reconcile-candidate",
+            "preserved",
+            "stale",
+            "reconcile",
+        )
+        self.assertEqual(
+            {
+                "condition": "target-drift",
+                "product_intent": "preserved",
+                "repository_realization": "stale",
+                "disposition": "reconcile",
+                "transition": "reconcile-candidate",
+                "revision_class": None,
+            },
+            record,
+        )
+
+    def test_target_drift_preserves_intent_when_realization_is_invalidated(self):
+        record = workflow._target_drift_record(
+            "recover-implementation-target",
+            "preserved",
+            "invalidated",
+            "reenter-implementation",
+            "implementation",
+        )
+        self.assertEqual("preserved", record["product_intent"])
+        self.assertEqual("invalidated", record["repository_realization"])
+        self.assertEqual("implementation", record["revision_class"])
+
+    def test_target_drift_invalidated_intent_requires_plan_revision(self):
+        record = workflow._target_drift_record(
+            "reconcile-completed-run",
+            "invalidated",
+            "invalidated",
+            "start-revision",
+            "plan",
+        )
+        self.assertEqual("invalidated", record["product_intent"])
+        self.assertEqual("plan", record["revision_class"])
+
+    def test_target_drift_rejects_ambiguous_intent_and_realization(self):
+        with self.assertRaises(workflow.WorkflowError):
+            workflow._target_drift_record(
+                "reconcile-candidate",
+                "invalidated",
+                "stale",
+                "reconcile",
+            )
+
     def approve_tests(self):
         return self.run_cli(
             "approve-tests",

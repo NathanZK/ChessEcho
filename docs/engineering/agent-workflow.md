@@ -268,6 +268,15 @@ target delta affects that intent. Existing target-authenticity, ancestry,
 scope, candidate-identity, evidence-provenance, authorization, and clean-tree
 checks remain mandatory.
 
+The approved evidence has two separate dimensions. **Product intent** is the
+behavioral outcome authorized by the issue and plan; **repository realization**
+is the target, paths, tests, candidate, and other concrete assumptions used to
+implement that outcome. A target change may invalidate the realization while
+preserving intent. It may invalidate intent only when the plan or scope must
+change, and that case always enters a governed plan revision. Historical
+artifacts and approvals remain bound to their exact recorded content; neither
+dimension is inferred from a changed filename or silently rewritten.
+
 Every successful target-drift transition records a canonical `target_drift`
 object in its append-only provenance or transition journal:
 
