@@ -109,6 +109,36 @@ Plan intent, approved scope, approved tests, applicability, and implementation
 evidence remain in place only when that proof succeeds; otherwise the command
 fails closed and leaves the run unchanged.
 
+If `reconcile-candidate` correctly fails closed because the advanced target
+genuinely overlaps the accepted uncommitted implementation candidate, use the
+operator-directed recovery command instead:
+
+```bash
+python3 scripts/agent_workflow.py recover-implementation-target ISSUE --by REQUESTER --confirm implementation_target_recovery_confirmed
+```
+
+This is an in-place pre-publication recovery for the same run, not a revision
+run and not a weakening of `reanchor-target` or `reconcile-candidate`. It is
+legal only in `VALIDATION`, `IMPLEMENTATION_REVIEW`, and
+`WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL`, requires the exact accepted
+uncommitted candidate to still be present, resolves `origin/<target_base>` via
+the existing target-authenticity checks, and accepts only a strict descendant
+of the recorded `target_head`. Before any Git mutation it writes a durable
+`implementation-target-recovery-transition.json` journal recording the
+requester, acknowledgment, old/new targets, candidate identity, test-boundary
+analysis, and every downstream evidence field invalidated by the recovery.
+
+The command never merges or rebases the stale implementation candidate. It
+clears `implementation_candidate`, `approvals.implementation`, `validation`,
+and `implementation_review_ready`, then returns the run to
+`IMPLEMENTATION` so a fresh `submit-implementation` → `run-validation` →
+`review-implementation` → `approve-implementation` cycle is required. If the
+advanced target also touched approved test paths, the approved test boundary
+can no longer be mechanically preserved; the command clears test approval and
+`test_commit` as well and returns to `TEST_IMPLEMENTATION`. Ambiguous
+ancestry, malformed scope/applicability, candidate drift, dirty index state,
+or inability to prove preserved test-boundary equivalence fails closed.
+
 At each Approval Gate, autonomous execution pauses until an approval operation
 is recorded. The current local operation compares an exact confirmation phrase
 from `.github/agent-workflow.json`; it does not authenticate the caller.

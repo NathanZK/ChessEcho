@@ -365,6 +365,27 @@ class AgentWorkflowTest(unittest.TestCase):
             confirm,
         )
 
+    def implementation_target_recovery_journal_path(self):
+        return (
+            self.root
+            / ".agent-workflow"
+            / "runs"
+            / f"issue-{ISSUE}"
+            / "implementation-target-recovery-transition.json"
+        )
+
+    def recover_implementation_target(
+        self, by="owner", confirm="implementation_target_recovery_confirmed"
+    ):
+        return self.run_cli(
+            "recover-implementation-target",
+            str(ISSUE),
+            "--by",
+            by,
+            "--confirm",
+            confirm,
+        )
+
     def reconcile_completed_run(
         self, issue, by="owner", confirm="completed_run_reconciled", patches=None
     ):
@@ -2359,6 +2380,177 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual(1, code)
         self.assertEqual("artifact-validity-undetermined", payload["error"]["code"])
         self.assertEqual(before, self.state())
+
+    def test_recover_implementation_target_invalidates_stale_candidate_after_overlap(self):
+        """Issue #318: overlapping target advancement reopens implementation without reusing approval."""
+        self.bootstrap_to_reviewed_implementation()
+        before = self.state()
+        old_candidate = before["implementation_candidate"]
+        remote_head = self.advance_remote_target_over_candidate(
+            content="remote overlap\n",
+            name="authorized conflicting remote merge",
+        )
+
+        code, payload, _ = self.run_cli(
+            "reconcile-candidate",
+            str(ISSUE),
+            "--by",
+            "owner",
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("artifact-validity-undetermined", payload["error"]["code"])
+        self.assertEqual(before, self.state())
+
+        code, payload, _ = self.recover_implementation_target()
+
+        self.assertEqual(0, code)
+        self.assertEqual("IMPLEMENTATION", payload["status"])
+        after = self.state()
+        self.assertEqual(remote_head, after["target_head"])
+        self.assertEqual(remote_head, after["base_head"])
+        self.assertNotEqual(before["test_commit"], after["test_commit"])
+        self.assertEqual(before["approvals"]["plan"], after["approvals"]["plan"])
+        self.assertEqual(before["approvals"]["tests"], after["approvals"]["tests"])
+        self.assertIsNone(after["implementation_candidate"])
+        self.assertIsNone(after["approvals"]["implementation"])
+        self.assertIsNone(after["validation"])
+        self.assertFalse(after["implementation_review_ready"])
+        self.assertEqual(after["test_commit"], self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertEqual("remote overlap\n", (self.root / "src" / "Example.kt").read_text(encoding="utf-8"))
+        self.assertEqual("test\n", (self.root / "src" / "test" / "ExampleTest.kt").read_text(encoding="utf-8"))
+
+        journal = json.loads(self.implementation_target_recovery_journal_path().read_text(encoding="utf-8"))
+        self.assertEqual("finalized", journal["status"])
+        self.assertEqual("recover-implementation-target", journal["operation"])
+        self.assertEqual("implementation_target_recovery_confirmed", journal["acknowledgment"]["confirmation"])
+        self.assertEqual(before["target_head"], journal["previous_target_head"])
+        self.assertEqual(remote_head, journal["new_target_head"])
+        self.assertEqual(old_candidate, journal["implementation_candidate_before"])
+        provenance = after["implementation_target_recoveries"][-1]
+        self.assertEqual(
+            [
+                "approvals.implementation",
+                "implementation_candidate",
+                "implementation_review_ready",
+                "validation",
+            ],
+            provenance["invalidated_evidence"],
+        )
+
+    def test_recover_implementation_target_requires_fresh_submission_and_approval(self):
+        """The old implementation approval cannot cross the recovery boundary."""
+        self.bootstrap_to_reviewed_implementation()
+        self.advance_remote_target_over_candidate(content="remote overlap\n")
+        self.assertEqual(0, self.recover_implementation_target()[0])
+        recovered = self.state()
+        self.assertEqual("IMPLEMENTATION", recovered["status"])
+        self.assertIsNone(recovered["approvals"]["implementation"])
+
+        code, payload, _ = self.run_cli(
+            "run-validation",
+            str(ISSUE),
+            "--profile",
+            "workflow-tooling",
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("invalid-transition", payload["error"]["code"])
+
+        (self.root / "src" / "Example.kt").write_text("regenerated implementation\n", encoding="utf-8")
+        evidence_path = self.write_evidence(
+            name="regenerated-evidence.json",
+            commit_subject="Regenerate recovered workflow implementation",
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "submit-implementation",
+                str(ISSUE),
+                "--artifact",
+                "artifacts-src/implementation-report.md",
+                "--agent",
+                "chess-echo-implementer",
+                "--evidence",
+                evidence_path,
+            )[0],
+        )
+        self.assertEqual(0, self.run_cli("run-validation", str(ISSUE), "--profile", "workflow-tooling")[0])
+        self.write_artifact("implementation-review.md", "fresh implementation review")
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "review-implementation",
+                str(ISSUE),
+                "--status",
+                workflow.READY,
+                "--artifact",
+                "artifacts-src/implementation-review.md",
+                "--reviewer",
+                "chess-echo-reviewer",
+            )[0],
+        )
+        self.assertEqual("WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", self.state()["status"])
+        self.assertIsNone(self.state()["approvals"]["implementation"])
+        code, payload, _ = self.approve_implementation()
+        self.assertEqual(0, code)
+        self.assertEqual("DRAFT_PR_CREATION", payload["status"])
+        self.assertEqual("Regenerate recovered workflow implementation", self.git("show", "-s", "--format=%s", "HEAD").stdout.strip())
+
+    def test_recover_implementation_target_reopens_tests_when_test_boundary_overlaps(self):
+        """Approved tests are invalidated, not guessed, when the new target touched them."""
+        self.bootstrap_to_reviewed_implementation()
+        before = self.state()
+        remote_head = self.advance_remote_target_with_changes(
+            {"src/test/ExampleTest.kt": "remote test change\n"},
+            name="authorized overlapping test merge",
+        )
+
+        code, payload, _ = self.recover_implementation_target()
+
+        self.assertEqual(0, code)
+        self.assertEqual("TEST_IMPLEMENTATION", payload["status"])
+        after = self.state()
+        self.assertEqual(remote_head, after["target_head"])
+        self.assertEqual(remote_head, after["base_head"])
+        self.assertEqual(before["approvals"]["plan"], after["approvals"]["plan"])
+        self.assertIsNone(after["approvals"]["tests"])
+        self.assertIsNone(after["test_commit"])
+        self.assertIsNone(after["test_failure"])
+        self.assertIsNone(after["implementation_candidate"])
+        self.assertIsNone(after["approvals"]["implementation"])
+        self.assertEqual(remote_head, self.git("rev-parse", "HEAD").stdout.strip())
+        provenance = after["implementation_target_recoveries"][-1]
+        self.assertIn("approvals.tests", provenance["invalidated_evidence"])
+        self.assertEqual(["src/test/ExampleTest.kt"], provenance["test_target_overlap_paths"])
+
+    def test_recover_implementation_target_fails_closed_for_non_descendant_target(self):
+        """Recovery uses the same strict target ancestry primitive as reconciliation."""
+        self.bootstrap_to_reviewed_implementation()
+        before = self.state()
+        unrelated = self.unrelated_empty_tree_commit()
+        self.git("update-ref", "refs/remotes/origin/main", unrelated)
+
+        code, payload, _ = self.recover_implementation_target()
+
+        self.assertEqual(1, code)
+        self.assertEqual("invalid-git-ancestry", payload["error"]["code"])
+        self.assertEqual(before, self.state())
+        self.assertFalse(self.implementation_target_recovery_journal_path().exists())
+
+    def test_recover_implementation_target_requires_explicit_authorization(self):
+        """Recovery has its own confirmation phrase distinct from reconciliation gates."""
+        self.bootstrap_to_reviewed_implementation()
+        before = self.state()
+        self.advance_remote_target_over_candidate(content="remote overlap\n")
+
+        code, payload, _ = self.recover_implementation_target(confirm="implementation_target_reconciled")
+
+        self.assertEqual(1, code)
+        self.assertEqual(
+            "implementation-target-recovery-confirmation-mismatch",
+            payload["error"]["code"],
+        )
+        self.assertEqual(before, self.state())
+        self.assertFalse(self.implementation_target_recovery_journal_path().exists())
 
     def test_reconcile_candidate_preserves_not_applicable_ci_candidate(self):
         """A synthetic #261-style CI-only candidate can reconcile after target advance."""
