@@ -6130,6 +6130,112 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
         self.assertEqual(0, code)
         self.assertEqual("VALIDATION", payload["status"])
 
+    def _prepare_reanchored_test_revision(self):
+        self.bootstrap_completed_parent(self.PARENT_ISSUE)
+        self.advance_main_past(self.PARENT_ISSUE)
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "start-revision", str(self.CHILD_ISSUE),
+                "--parent-issue", str(self.PARENT_ISSUE),
+                "--class", "test",
+                "--by", "tester",
+            )[0],
+        )
+        child_state = self.state_for(self.CHILD_ISSUE)
+        reanchored_target = self.advance_remote_ref_past_commit(
+            child_state["target_head"],
+            {"already-merged.txt": "unrelated target change\n"},
+            name="authorized unrelated merge before test revision",
+        )
+        code, payload, _ = self.run_cli(
+            "reanchor-target", str(self.CHILD_ISSUE), "--by", "tester"
+        )
+        self.assertEqual(0, code)
+        self.assertEqual(reanchored_target, payload["new_target_head"])
+        self.assertEqual(0, self.git("reset", "--hard", reanchored_target).returncode)
+
+        test_file = self.root / "src" / "test" / "ExampleTest.kt"
+        test_file.write_text("revised test\n", encoding="utf-8")
+        self.git("add", "src/test/ExampleTest.kt")
+        self.git("commit", "-qm", "revise example test")
+        self.write_artifact("child-test-report.md", "child tests")
+        self.write_artifact("child-test-review.md", "child test review")
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "submit-tests", str(self.CHILD_ISSUE),
+                "--artifact", "artifacts-src/child-test-report.md",
+                "--agent", "chess-echo-test-implementer",
+                "--failure-command",
+                "%s -c \"print('expected failure'); import sys; sys.exit(1)\"" % sys.executable,
+                "--failure-contains", "expected failure",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "review-tests", str(self.CHILD_ISSUE),
+                "--status", workflow.READY,
+                "--artifact", "artifacts-src/child-test-review.md",
+                "--reviewer", "chess-echo-reviewer",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "approve-tests", str(self.CHILD_ISSUE),
+                "--by", "owner", "--confirm", "tests_approved",
+            )[0],
+        )
+        return self.state_for(self.CHILD_ISSUE)
+
+    def test_test_revision_submit_implementation_ignores_unrelated_reanchored_target_changes(self):
+        child_state = self._prepare_reanchored_test_revision()
+        test_commit = child_state["test_commit"]
+        implementation_file = self.root / "src" / "main" / "Example.kt"
+        implementation_file.parent.mkdir(parents=True, exist_ok=True)
+        implementation_file.write_text("revised implementation\n", encoding="utf-8")
+        evidence_path = self.write_evidence(
+            name="child-evidence-reanchored.json",
+            test_scope=["src/test/ExampleTest.kt"],
+            test_commit=test_commit,
+            candidate_diff=self.git_candidate_diff(test_commit),
+            commit_subject="Revise example implementation for issue #%s" % self.CHILD_ISSUE,
+        )
+        code, payload, _ = self.run_cli(
+            "submit-implementation", str(self.CHILD_ISSUE),
+            "--artifact", "artifacts-src/parent-impl-report.md",
+            "--agent", "chess-echo-implementer",
+            "--evidence", evidence_path,
+        )
+        self.assertEqual(0, code)
+        self.assertEqual("VALIDATION", payload["status"])
+        self.assertEqual(
+            "implementation",
+            self.state_for(self.CHILD_ISSUE)["revision_classification"]["required"],
+        )
+
+    def test_test_revision_submit_implementation_escalates_genuine_out_of_scope_change(self):
+        child_state = self._prepare_reanchored_test_revision()
+        test_commit = child_state["test_commit"]
+        (self.root / "README.md").write_text("out of scope\n", encoding="utf-8")
+        evidence_path = self.write_evidence(
+            name="child-evidence-out-of-scope.json",
+            test_scope=["src/test/ExampleTest.kt"],
+            test_commit=test_commit,
+            candidate_diff=self.git_candidate_diff(test_commit),
+            commit_subject="Revise example implementation for issue #%s" % self.CHILD_ISSUE,
+        )
+        code, payload, _ = self.run_cli(
+            "submit-implementation", str(self.CHILD_ISSUE),
+            "--artifact", "artifacts-src/parent-impl-report.md",
+            "--agent", "chess-echo-implementer",
+            "--evidence", evidence_path,
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("revision-class-mismatch", payload["error"]["code"])
+
     def test_implementation_revision_rejects_changed_approved_test(self):
         self.bootstrap_completed_parent(self.PARENT_ISSUE)
         self.advance_main_past(self.PARENT_ISSUE)

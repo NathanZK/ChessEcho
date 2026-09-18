@@ -1090,7 +1090,13 @@ def _derive_revision_boundary(root, config, state):
         "parent-run-drift",
         "parent implementation identity changed after start-revision",
     )
-    changed_paths = _git_candidate_names(root, config, parent_commit)
+    test_commit = state.get("test_commit")
+    _ensure(
+        test_commit,
+        "missing-test-commit",
+        "revision classification requires the run's test commit",
+    )
+    changed_paths = _git_candidate_names(root, config, test_commit)
     changed_test_paths = [path for path in changed_paths if _is_test_file(path)]
     parent_plan = parent_state.get("artifacts", {}).get("plan")
     current_plan = state.get("artifacts", {}).get("plan")
