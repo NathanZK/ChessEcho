@@ -88,6 +88,30 @@ worktree makes the required clean-worktree gate fail.
 8. `review-implementation`
 9. `create-draft-pr`
 
+## Invocation modes
+
+The **issue** is the source of truth for *what is being done*. The
+**invocation mode** describes *how far the agent is authorized to proceed*;
+it does not change the workflow or its gates.
+
+### Self-attested through PR creation
+
+Given an issue number, run the existing sequence autonomously:
+`init` → plan review → `approve-plan` → test review → `approve-tests` →
+implementation → `run-validation` → implementation review →
+`approve-implementation` → `create-draft-pr`. Use the configured local
+self-attestation commands at the approval gates, create the PR against
+`main`, and stop at PR creation. Do not merge. Local acknowledgments are
+self-attested input; they are not authenticated or independently authorized
+human approval.
+
+### Human approval required
+
+Given an issue number, run the same governed sequence autonomously through
+planning, implementation, review, and validation. When any
+`WAITING_FOR_*_HUMAN_APPROVAL` state is reached, stop and wait for explicit
+human approval; do not self-attest past that gate. Do not merge.
+
 The repository-level `.github/PULL_REQUEST_TEMPLATE.md` is reusable,
 human-facing scaffolding for ordinary pull requests. Its `What`, `Why`, and
 `Testing` guidance is intentionally separate from authoritative workflow
