@@ -2487,13 +2487,91 @@ def _record_local_acknowledgment(config, state, gate, provided, by):
 
 
 def _validate_pr_body(body_path):
-    """Require the repository's three-section draft PR body format."""
+    """Require the repository's three-section draft PR body contract."""
     body = body_path.read_text(encoding="utf-8")
-    headings = re.findall(r"^##\s+(.+)\s*$", body, flags=re.MULTILINE)
+    heading_matches = list(re.finditer(r"^##\s+(.+?)\s*$", body, flags=re.MULTILINE))
+    headings = [match.group(1) for match in heading_matches]
     _ensure(
         headings == ["What", "Why", "Testing"],
         "invalid-pr-body-format",
         "Draft PR body must contain exactly ## What, ## Why, and ## Testing in order",
+    )
+
+    sections = {}
+    for index, match in enumerate(heading_matches):
+        end = heading_matches[index + 1].start() if index + 1 < len(heading_matches) else len(body)
+        sections[match.group(1)] = body[match.end() : end]
+
+    def normalized_section(name):
+        content = re.sub(r"<!--.*?-->", "", sections[name], flags=re.DOTALL)
+        return re.sub(r"\s+", " ", content).strip()
+
+    def reject_empty_or_reference_only(name):
+        content = normalized_section(name)
+        _ensure(
+            content,
+            "invalid-pr-body-content",
+            "Draft PR %s section must not be empty or comment-only" % name,
+        )
+        _ensure(
+            not re.fullmatch(
+                r"(?i)(?:(?:see|issue|ref(?:erence)?|related\s+to)\s+)?"
+                r"#\d+(?:\s*(?:,|and)\s*(?:(?:see|issue|ref(?:erence)?|related\s+to)\s+)?#\d+)*",
+                content,
+            ),
+            "invalid-pr-body-content",
+            "Draft PR %s section must contain more than issue references" % name,
+        )
+        _ensure(
+            not re.fullmatch(r"(?i)(?:https?|ftp)://\S+", content),
+            "invalid-pr-body-content",
+            "Draft PR %s section must contain more than a URL" % name,
+        )
+        _ensure(
+            not re.fullmatch(
+                r"(?i)(?:ticket\s*:\s*(?:\d+|[A-Z][A-Z0-9_]*-\d+)|[A-Z][A-Z0-9_]*-\d+)",
+                content,
+            ),
+            "invalid-pr-body-content",
+            "Draft PR %s section must contain more than an identifier" % name,
+        )
+
+    reject_empty_or_reference_only("What")
+    reject_empty_or_reference_only("Why")
+
+    testing = normalized_section("Testing")
+    _ensure(
+        testing,
+        "invalid-pr-body-content",
+        "Draft PR Testing section must not be empty or comment-only",
+    )
+    not_applicable = re.match(r"(?i)^not\s+applicable\b(?P<remainder>.*)$", testing)
+    if not_applicable:
+        remainder = not_applicable.group("remainder").strip()
+        remainder = re.sub(r"^[\s:;,\.\-—]+", "", remainder).strip()
+        _ensure(
+            remainder and remainder.lower().rstrip(".") not in {"blah", "n/a"},
+            "invalid-pr-body-content",
+            "Draft PR Testing Not applicable requires explanatory text",
+        )
+        return
+
+    command_only = re.sub(r"(?i)^(?:ran\s+|validation:\s*)", "", testing).strip()
+    _ensure(
+        not re.fullmatch(
+            r"(?i)(?!.*[;—])(?:\./gradlew\b.*|make\b.*|npm\s+run\b.*|pytest\b.*|python3?\b.*)",
+            command_only,
+        ),
+        "invalid-pr-body-content",
+        "Draft PR Testing section must contain coverage beyond a command",
+    )
+    _ensure(
+        not re.fullmatch(
+            r"(?i)(?:\d+\s+(?:tests?\s+)?(?:passed|passing)|tests?\s*:\s*\d+)",
+            testing,
+        ),
+        "invalid-pr-body-content",
+        "Draft PR Testing section must contain coverage beyond an aggregate count",
     )
 
 
