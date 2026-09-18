@@ -9,10 +9,11 @@ import { PuzzleFeedbackPanel, type ChallengeSubmissionResult } from '@/component
 import { WeaknessesList } from '@/components/WeaknessesList';
 import { ImportGamesView } from '@/components/ImportGamesView';
 import { Puzzle } from '@/mock/mockData';
-import { fetchPuzzles, JobStatusResponse, ContinuationMode, ContinuationCandidate, ExplorationPlayMode, toWhitePerspective, fetchPuzzleContinuation, fetchCurrentSession, fetchAccounts, logout as apiLogout, recordPuzzleEvent, type SessionState } from '@/services/api';
+import { fetchPuzzles, JobStatusResponse, ContinuationMode, ContinuationCandidate, ExplorationPlayMode, toWhitePerspective, fetchPuzzleContinuation, fetchCurrentSession, fetchAccounts, logout as apiLogout, recordPuzzleEvent, submitTrainingAttempt, type SessionState } from '@/services/api';
 import { soundService } from '@/services/soundService';
 import { createDeterministicSelectionPolicy, createStochasticSelectionPolicy } from '@/services/continuationService';
 import { usePuzzleContinuation } from '@/utils/usePuzzleContinuation';
+import { StopwatchTimer, CountdownTimer } from '@/utils/timedTraining';
 import { activeTabStore, activeUsernameStore, activeAccountStore, activeJobStore, clearAuthenticatedAccountState, puzzleSettingsStore, reconcileSessionStorageOwner } from '@/utils/browserStores';
 
 export const EXPLORATION_STEP_DELAY_MS = 800;
@@ -206,6 +207,99 @@ export default function Home() {
     presentedPuzzleRef.current = activePuzzle.puzzleId;
     recordPuzzleEventBestEffort('PRESENTED', activePuzzle);
   }, [activePuzzle, recordPuzzleEventBestEffort, sessionStatus]);
+
+  // Timed training state
+  const timerRef = React.useRef<StopwatchTimer | CountdownTimer | null>(null);
+  const [timerMode, setTimerMode] = useState<'STOPWATCH' | 'COUNTDOWN' | null>(null);
+  const [timerElapsedMs, setTimerElapsedMs] = useState<number>(0);
+  const [timerAllowedMs, setTimerAllowedMs] = useState<number>(30000);
+  const [timerExpired, setTimerExpired] = useState<boolean>(false);
+  const [timerSubmissionError, setTimerSubmissionError] = useState<string | null>(null);
+
+  // Submits the active attempt's timing telemetry. Fire-and-forget from
+  // event handlers / timer callbacks; surfaces failures via timerSubmissionError
+  // rather than silently discarding them.
+  const submitTimerAttempt = React.useCallback(
+    async (outcome: 'SUBMITTED' | 'EXPIRED') => {
+      const timer = timerRef.current;
+      const mode = timerMode;
+      if (!timer || !mode || !activePuzzle) return;
+      const attemptId = timer.getCurrentAttemptId();
+      if (!attemptId) return;
+
+      let elapsedMs: number;
+      let allowedMs: number | undefined;
+      if (timer instanceof StopwatchTimer) {
+        elapsedMs = timer.stop();
+      } else {
+        allowedMs = timerAllowedMs;
+        elapsedMs = timerAllowedMs - timer.getRemaining();
+      }
+
+      try {
+        await submitTrainingAttempt({
+          attemptId,
+          puzzleId: activePuzzle.puzzleId,
+          mode,
+          elapsedMs,
+          allowedMs,
+          outcome,
+        });
+        setTimerSubmissionError(null);
+      } catch {
+        setTimerSubmissionError('Failed to record timing for this attempt.');
+      }
+    },
+    [timerMode, timerAllowedMs, activePuzzle]
+  );
+
+  React.useEffect(() => {
+    if (!activePuzzle || !timerMode) {
+      timerRef.current = null;
+      return;
+    }
+
+    const timer: StopwatchTimer | CountdownTimer =
+      timerMode === 'STOPWATCH' ? new StopwatchTimer() : new CountdownTimer(timerAllowedMs);
+    timer.startNewAttempt(activePuzzle.puzzleId);
+    timer.start();
+    timerRef.current = timer;
+
+    let hasExpired = false;
+
+    // Update timer display; also detects countdown expiry as a terminal
+    // outcome and submits telemetry automatically.
+    const tick = () => {
+      const current = timerRef.current;
+      if (!current) return;
+      if (timerMode === 'STOPWATCH' && current instanceof StopwatchTimer) {
+        setTimerElapsedMs(current.getElapsed());
+      } else if (timerMode === 'COUNTDOWN' && current instanceof CountdownTimer) {
+        const remaining = current.getRemaining();
+        setTimerElapsedMs(timerAllowedMs - remaining);
+        if (remaining === 0 && !hasExpired) {
+          hasExpired = true;
+          setTimerExpired(true);
+          void submitTimerAttempt('EXPIRED');
+        }
+      }
+    };
+
+    // Defer the initial reset/tick outside the effect's synchronous body so
+    // state updates happen from a callback rather than directly in the effect.
+    const initId = setTimeout(() => {
+      setTimerElapsedMs(0);
+      setTimerExpired(false);
+      setTimerSubmissionError(null);
+      tick();
+    }, 0);
+    const intervalId = setInterval(tick, 100);
+
+    return () => {
+      clearTimeout(initId);
+      clearInterval(intervalId);
+    };
+  }, [activePuzzle, timerMode, timerAllowedMs, submitTimerAttempt]);
 
   // Flip board keyboard shortcut (x / X)
   React.useEffect(() => {
@@ -657,6 +751,17 @@ export default function Home() {
     setExplorationEvalMap({});
     setChallengeBranchesByFen({});
     setChallengeActiveCandidateByFen({});
+    // Reset timer on puzzle change
+    setTimerElapsedMs(0);
+    setTimerExpired(false);
+    setTimerSubmissionError(null);
+    if (timerRef.current) {
+      if (timerRef.current instanceof StopwatchTimer) {
+        timerRef.current.reset();
+      } else if (timerRef.current instanceof CountdownTimer) {
+        timerRef.current.reset();
+      }
+    }
   };
 
   const [puzzlePage, setPuzzlePage] = useState<number>(0);
@@ -1104,6 +1209,9 @@ export default function Home() {
 
       if (isCorrect) {
         newFeedbackState = { status: 'CORRECT', lastMove: moveSan };
+        if (timerMode && !timerExpired) {
+          void submitTimerAttempt('SUBMITTED');
+        }
       } else if (isHistoricalMistake) {
         newFeedbackState = { status: 'HISTORICAL_MISTAKE', lastMove: moveSan, historicalInfo };
       } else {
@@ -1566,6 +1674,13 @@ export default function Home() {
                     isCalculationLoading={isCalculationLoading}
                     onCalculationBack={handleCalculationBack}
                     onBackToCandidates={handleBackToCandidates}
+                    timerMode={timerMode}
+                    timerElapsedMs={timerElapsedMs}
+                    timerAllowedMs={timerAllowedMs}
+                    timerExpired={timerExpired}
+                    timerSubmissionError={timerSubmissionError}
+                    onTimerModeChange={setTimerMode}
+                    onTimerAllowedMsChange={setTimerAllowedMs}
                   />
                 </div>
                   </div>

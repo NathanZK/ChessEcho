@@ -6,8 +6,11 @@ import com.chessecho.domain.PlayerColor
 import com.chessecho.dto.ContinuationResponse
 import com.chessecho.dto.MoveEvaluationResponse
 import com.chessecho.dto.PuzzleResponse
+import com.chessecho.dto.TrainingAttemptRequest
+import com.chessecho.dto.TrainingAttemptResponse
 import com.chessecho.service.AccountOwnershipService
 import com.chessecho.service.MoveEvaluationService
+import com.chessecho.service.TrainingAttemptService
 import com.chessecho.service.WeaknessCalculationService
 import com.chessecho.service.auth.AuthenticatedPrincipal
 import com.chessecho.service.continuation.ContinuationService
@@ -17,7 +20,9 @@ import io.swagger.v3.oas.annotations.Parameter
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestAttribute
+import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
@@ -25,9 +30,10 @@ import org.springframework.web.bind.annotation.RestController
 @RestController
 @RequestMapping("/api")
 class PuzzleController(
-    private val weaknessCalculationService: WeaknessCalculationService,
-    private val continuationService: ContinuationService,
-    private val moveEvaluationService: MoveEvaluationService,
+    private val weaknessCalculationService: WeaknessCalculationService? = null,
+    private val continuationService: ContinuationService? = null,
+    private val moveEvaluationService: MoveEvaluationService? = null,
+    private val trainingAttemptService: TrainingAttemptService? = null,
 ) {
     @Autowired(required = false)
     private var accountOwnershipService: AccountOwnershipService? = null
@@ -58,7 +64,7 @@ class PuzzleController(
         }
 
         val weaknesses =
-            weaknessCalculationService.getWeaknesses(
+            requireNotNull(weaknessCalculationService).getWeaknesses(
                 platform = platform ?: Platform.CHESS_COM,
                 username = username.orEmpty(),
                 playerColor = playerColor,
@@ -104,7 +110,7 @@ class PuzzleController(
         @RequestParam(defaultValue = "ENGINE") mode: ContinuationMode,
         @RequestParam(required = false) ratingBand: String? = null,
     ): ResponseEntity<ContinuationResponse> {
-        val result = continuationService.getContinuation(fen = fen, mode = mode, ratingBand = ratingBand)
+        val result = requireNotNull(continuationService).getContinuation(fen = fen, mode = mode, ratingBand = ratingBand)
         if (result.candidates.isEmpty()) {
             return ResponseEntity.notFound().build()
         }
@@ -124,7 +130,18 @@ class PuzzleController(
         @RequestParam fen: String,
         @RequestParam move: String,
     ): ResponseEntity<MoveEvaluationResponse> {
-        val response = moveEvaluationService.evaluateMove(fen = fen, move = move)
+        val response = requireNotNull(moveEvaluationService).evaluateMove(fen = fen, move = move)
+        return ResponseEntity.ok(response)
+    }
+
+    @PostMapping("/puzzles/attempt")
+    fun submitTrainingAttempt(
+        @RequestBody request: TrainingAttemptRequest,
+        @OptionalAuthenticatedPrincipal
+        @RequestAttribute(name = SessionAuthenticationFilter.PRINCIPAL_ATTRIBUTE, required = false)
+        principal: AuthenticatedPrincipal?,
+    ): ResponseEntity<TrainingAttemptResponse> {
+        val response = requireNotNull(trainingAttemptService).submitAttempt(principal, request)
         return ResponseEntity.ok(response)
     }
 }

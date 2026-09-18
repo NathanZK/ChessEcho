@@ -192,6 +192,82 @@ class OwnerScopedBaselineMigrationTest : PostgresMigrationTestFixture() {
     }
 
     @Test
+    fun `consolidates the schema into a single baseline migration with training attempt telemetry`() {
+        applyCurrentMigrations()
+
+        val migrationVersions =
+            query("SELECT version FROM flyway_schema_history WHERE success = true")
+                .map { it["version"].toString() }
+        assertEquals(
+            1,
+            migrationVersions.size,
+            "expected exactly one successful Flyway migration version, got $migrationVersions",
+        )
+        assertEquals(listOf("1"), migrationVersions)
+
+        val consolidatedTables =
+            setOf("local_credential", "puzzle_scheduling_event", "training_attempt")
+        val tables =
+            query(
+                """
+                SELECT table_name
+                FROM information_schema.tables
+                WHERE table_schema = 'public'
+                  AND table_name IN ('local_credential', 'puzzle_scheduling_event', 'training_attempt')
+                """.trimIndent(),
+            ).map { it["table_name"].toString() }.toSet()
+        assertEquals(consolidatedTables, tables, "consolidated baseline must retain all merged schemas")
+
+        assertForeignKey("local_credential", "app_user_id", "app_user", "id")
+        assertIndex("local_credential", "app_user_id")
+
+        assertForeignKey("puzzle_scheduling_event", "chess_account_id", "chess_account", "id")
+        assertForeignKey("puzzle_scheduling_event", "position_id", "position", "id")
+        assertIndex("puzzle_scheduling_event", "chess_account_id, position_id, player_color, occurred_at")
+
+        val trainingColumns =
+            query(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public'
+                  AND table_name = 'training_attempt'
+                  AND column_name IN (
+                    'id', 'puzzle_id', 'mode', 'elapsed_ms', 'allowed_ms',
+                    'outcome', 'chess_account_id', 'created_at'
+                  )
+                """.trimIndent(),
+            ).map { it["column_name"].toString() }.toSet()
+        val expectedTrainingColumns =
+            setOf(
+                "id",
+                "puzzle_id",
+                "mode",
+                "elapsed_ms",
+                "allowed_ms",
+                "outcome",
+                "chess_account_id",
+                "created_at",
+            )
+        assertEquals(
+            expectedTrainingColumns,
+            trainingColumns,
+            "training_attempt must retain the required timing telemetry columns",
+        )
+        assertColumnNullable("training_attempt", "allowed_ms", true)
+        assertColumnNullable("training_attempt", "chess_account_id", true)
+        assertForeignKey("training_attempt", "chess_account_id", "chess_account", "id")
+        assertIndex("training_attempt", "puzzle_id")
+        assertIndex("training_attempt", "chess_account_id")
+        assertIndex("training_attempt", "created_at")
+
+        val constraints = constraintDefinitions("training_attempt")
+        assertConstraint(constraints, "mode", "stopwatch", "countdown")
+        assertConstraint(constraints, "outcome", "submitted", "expired", "cancelled")
+        assertConstraint(constraints, "elapsed_ms", "0")
+    }
+
+    @Test
     fun `deleting an account retains its READY job as unresolved and accountless`() {
         applyCurrentMigrations()
 
