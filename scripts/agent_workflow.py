@@ -1621,6 +1621,9 @@ def command_reanchor_target(args, root, config):
         "requested_by": args.by,
         "requested_at": _now(),
         "validated_artifacts": validation["validated"],
+        "target_drift": _target_drift_record(
+            "reanchor-target", "stale", "reanchor"
+        ),
     }
     state.setdefault("target_reanchors", []).append(provenance)
     state["target_head"] = new_target
@@ -1698,6 +1701,9 @@ def command_reconcile_candidate(args, root, config):
             "candidate_equivalence_proved": True,
             "publication_artifacts_absent": True,
         },
+        "target_drift": _target_drift_record(
+            "reconcile-candidate", "stale", "reconcile"
+        ),
     }
     state.setdefault("candidate_reconciliations", []).append(provenance)
     _write_state(root, config, args.issue, state)
@@ -1833,6 +1839,12 @@ def _write_implementation_target_recovery_journal(
                 ]
                 + test_plan["invalidated"]
             )
+        ),
+        "target_drift": _target_drift_record(
+            "recover-implementation-target",
+            "invalidated",
+            "reenter-implementation" if test_plan["preserve"] else "reenter-tests",
+            "implementation" if test_plan["preserve"] else "test",
         ),
     }
     _write_json(_implementation_target_recovery_journal_path(root, config, state["issue"]), journal)
@@ -2021,6 +2033,7 @@ def command_recover_implementation_target(args, root, config):
             "diff_sha256_after": materialized["test_diff_sha256_after"],
         },
         "test_target_overlap_paths": journal["test_target_overlap_paths"],
+        "target_drift": journal["target_drift"],
     }
     state.setdefault("implementation_target_recoveries", []).append(provenance)
     _write_state(root, config, args.issue, state)
@@ -2069,6 +2082,57 @@ REVISION_CLASS_ORDER = {
     "test": 2,
     "plan": 3,
 }
+TARGET_DRIFT_DISPOSITIONS = (
+    "reanchor",
+    "reconcile",
+    "reenter-implementation",
+    "reenter-tests",
+    "start-revision",
+)
+
+
+def _target_drift_record(
+    transition, repository_realization, disposition, revision_class=None
+):
+    """Return the canonical audit record for one resolved target-drift condition."""
+    _ensure(
+        repository_realization in ("stale", "invalidated"),
+        "invalid-target-drift-classification",
+        "target drift repository realization must be stale or invalidated",
+    )
+    _ensure(
+        revision_class is None or revision_class in REVISION_CLASSES,
+        "invalid-target-drift-classification",
+        "target drift revision class is invalid",
+    )
+    _ensure(
+        disposition in TARGET_DRIFT_DISPOSITIONS,
+        "invalid-target-drift-classification",
+        "target drift disposition is invalid",
+    )
+    if repository_realization == "stale":
+        _ensure(
+            disposition in ("reanchor", "reconcile") and revision_class is None,
+            "invalid-target-drift-classification",
+            "stale target drift must use mechanical reconciliation",
+        )
+    else:
+        _ensure(
+            disposition
+            in ("reenter-implementation", "reenter-tests", "start-revision")
+            and revision_class in ("implementation", "test", "plan"),
+            "invalid-target-drift-classification",
+            "invalidated target drift must re-enter a governed boundary",
+        )
+    product_intent = "invalidated" if revision_class == "plan" else "preserved"
+    return {
+        "condition": "target-drift",
+        "product_intent": product_intent,
+        "repository_realization": repository_realization,
+        "disposition": disposition,
+        "transition": transition,
+        "revision_class": revision_class,
+    }
 
 
 def _is_cosmetic_allowlisted_path(path):
@@ -3240,6 +3304,9 @@ def _build_reconciliation_journal(
         "requested_at": created_at,
         "reconciled_commit": None,
         "reanchors": [],
+        "target_drift": _target_drift_record(
+            "reconcile-implementation-target", "stale", "reconcile"
+        ),
     }
 
 
@@ -3459,6 +3526,9 @@ def _persist_reconciliation(root, config, state, recon, reconciled):
         _write_json(recon_path, recon)
 
     if state["status"] != "DRAFT_PR_CREATION":
+        target_drift = recon.get("target_drift") or _target_drift_record(
+            "reconcile-implementation-target", "stale", "reconcile"
+        )
         provenance = {
             "previous_candidate_commit": recon["previous_candidate_commit"],
             "previous_target_head": recon["previous_target_head"],
@@ -3475,6 +3545,7 @@ def _persist_reconciliation(root, config, state, recon, reconciled):
             "source_transition_id": recon["source_transition_id"],
             "candidate_identity": recon["candidate_identity"],
             "approved_test_boundary": recon["approved_test_boundary"],
+            "target_drift": target_drift,
         }
         state["target_head"] = recon["new_target_head"]
         state["base_head"] = recon["new_target_head"]
@@ -6601,6 +6672,9 @@ def command_reconcile_completed_run(args, root, config):
             reconciled_commit = attempt["reconciled_commit"]
             journal["status"] = "committed"
             journal["outcome"] = "reconciled"
+            journal["target_drift"] = _target_drift_record(
+                context, "stale", "reconcile"
+            )
             journal["reconciled_commit"] = reconciled_commit
             journal["committed_at"] = journal.get("committed_at", _now())
             _write_json(journal_path, journal)
@@ -6674,6 +6748,7 @@ def command_reconcile_completed_run(args, root, config):
                     "requested_by": args.by,
                     "requested_at": journal["requested_at"],
                     "transition_id": journal["transition_id"],
+                    "target_drift": journal["target_drift"],
                 }
             )
             state["status"] = "WORKFLOW_COMPLETED"
@@ -6707,6 +6782,9 @@ def command_reconcile_completed_run(args, root, config):
         journal["outcome"] = "revision"
         journal["revision_issue"] = revision_issue
         journal["revision_class"] = required_revision
+        journal["target_drift"] = _target_drift_record(
+            context, "invalidated", "start-revision", required_revision
+        )
         journal["committed_at"] = journal.get("committed_at", _now())
         _write_json(journal_path, journal)
         journal["status"] = "finalized"

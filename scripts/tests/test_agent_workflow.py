@@ -2247,6 +2247,17 @@ class AgentWorkflowTest(unittest.TestCase):
             provenance["candidate_after"]["candidate_diff_sha256"],
         )
         self.assertEqual([], provenance["target_overlap_paths"])
+        self.assertEqual(
+            {
+                "condition": "target-drift",
+                "product_intent": "preserved",
+                "repository_realization": "stale",
+                "disposition": "reconcile",
+                "transition": "reconcile-candidate",
+                "revision_class": None,
+            },
+            provenance["target_drift"],
+        )
 
     def test_reconcile_candidate_rejects_non_descendant_remote(self):
         """Candidate reconciliation rejects unrelated target ancestry."""
@@ -2435,6 +2446,17 @@ class AgentWorkflowTest(unittest.TestCase):
                 "validation",
             ],
             provenance["invalidated_evidence"],
+        )
+        self.assertEqual(
+            {
+                "condition": "target-drift",
+                "product_intent": "preserved",
+                "repository_realization": "invalidated",
+                "disposition": "reenter-implementation",
+                "transition": "recover-implementation-target",
+                "revision_class": "implementation",
+            },
+            provenance["target_drift"],
         )
 
     def test_recover_implementation_target_requires_fresh_submission_and_approval(self):
@@ -7054,6 +7076,17 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
         self.assertEqual(new_target, journal["new_target_head"])
         self.assertEqual(300, journal["draft_pr"]["number"])
         self.assertEqual("parent-branch", journal["draft_pr"]["head_ref_name"])
+        self.assertEqual(
+            {
+                "condition": "target-drift",
+                "product_intent": "preserved",
+                "repository_realization": "stale",
+                "disposition": "reconcile",
+                "transition": "reconcile-completed-run",
+                "revision_class": None,
+            },
+            journal["target_drift"],
+        )
         self.assertEqual(1, len(self.git_push_calls))
         self.assertIn(
             "--force-with-lease=refs/heads/parent-branch:%s" % original_implementation,
@@ -7364,6 +7397,22 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
         revision_state = self.state_for(payload["revision"]["issue"])
         self.assertEqual("IMPLEMENTATION", revision_state["status"])
         self.assertEqual("implementation", revision_state["parent_run"]["class"])
+        journal = json.loads(
+            self.completed_run_reconciliation_journal_path(
+                self.PARENT_ISSUE
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            {
+                "condition": "target-drift",
+                "product_intent": "preserved",
+                "repository_realization": "invalidated",
+                "disposition": "start-revision",
+                "transition": "reconcile-completed-run",
+                "revision_class": "implementation",
+            },
+            journal["target_drift"],
+        )
 
     def test_reconcile_completed_run_classifies_out_of_scope_conflict_as_plan(self):
         self.assertEqual(
