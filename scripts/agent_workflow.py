@@ -4509,6 +4509,27 @@ def command_request_plan_revision(args, root, config):
             destination.write_bytes(source.read_bytes())
             archived[kind] = _relative(destination, root)
 
+    prior_active_test_reopening = (
+        dict(state["test_reopenings"][-1]) if _test_reopen_active(state) else None
+    )
+    if prior_active_test_reopening is not None:
+        state["test_reopenings"][-1]["active"] = False
+        state["test_reopenings"][-1]["abandoned_by"] = "request-plan-revision"
+        state["test_reopenings"][-1]["abandoned_at"] = _now()
+        state["test_reopenings"][-1]["abandonment_reason"] = args.reason_code
+
+    journal_path = _test_transition_journal_path(root, config, args.issue)
+    archived_test_approval_transition = None
+    if journal_path.exists():
+        _ensure(
+            journal_path.is_file(),
+            "invalid-test-approval-journal",
+            "request-plan-revision requires a regular test approval journal",
+        )
+        destination = history_dir / journal_path.name
+        journal_path.replace(destination)
+        archived_test_approval_transition = _relative(destination, root)
+
     request = {
         "requested_by": args.by,
         "requested_at": _now(),
@@ -4520,6 +4541,8 @@ def command_request_plan_revision(args, root, config):
         "prior_artifacts": archived,
         "prior_test_commit": state.get("test_commit"),
         "prior_test_failure": state.get("test_failure"),
+        "prior_active_test_reopening": prior_active_test_reopening,
+        "prior_test_approval_transition": archived_test_approval_transition,
     }
     state.setdefault("plan_revision_requests", []).append(request)
     state["approvals"]["plan"] = None
