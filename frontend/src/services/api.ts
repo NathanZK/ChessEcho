@@ -34,6 +34,34 @@ export interface AccountSummary {
   username: string;
 }
 
+export interface PracticalEvidenceResponse {
+  scope: 'POSITION' | 'DECISION';
+  decisionSan: string | null;
+  candidateGames: number;
+  eligibleGames: number;
+  ineligibleGames: number;
+  excludedGames: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  sideCorroborationConflictGames: number;
+  scoreRate: number | null;
+  comparatorMethod: string;
+  comparatorScoreRate: number | null;
+  confidenceMethod: string;
+  confidenceLowerBound: number | null;
+  confidenceUpperBound: number | null;
+  confidenceState: 'INSUFFICIENT' | 'INCONCLUSIVE' | 'RANKING_ELIGIBLE';
+  practicalAssessment: string | null;
+  sampleFloor: number | null;
+  meaningfulDifference: number | null;
+  observationWindowDays: number | null;
+  cohort: 'STANDARD_ALL_IMPORTED_TIME_CONTROLS';
+  policyVersion: string;
+  configurationState: string;
+  rankingApplied: boolean;
+}
+
 function jsonHeaders(): HeadersInit {
   return {
     'Content-Type': 'application/json',
@@ -230,6 +258,7 @@ export interface WeaknessResponse {
   } | null;
   evalCp?: number;
   lastSeenAt?: string;
+  practicalEvidence?: PracticalEvidenceResponse | null;
 }
 
 export type ContinuationMode = 'ENGINE' | 'HUMAN';

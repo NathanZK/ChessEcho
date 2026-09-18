@@ -45,6 +45,33 @@ const mockWeaknessItem: WeaknessResponse = {
     'https://www.chess.com/game/live/10002',
   ],
   evalCp: 35,
+  practicalEvidence: {
+    scope: 'POSITION',
+    decisionSan: null,
+    candidateGames: 4,
+    eligibleGames: 4,
+    ineligibleGames: 0,
+    excludedGames: 0,
+    wins: 2,
+    draws: 1,
+    losses: 1,
+    sideCorroborationConflictGames: 0,
+    scoreRate: 0.625,
+    comparatorMethod: 'NONE',
+    comparatorScoreRate: null,
+    confidenceMethod: 'DISABLED',
+    confidenceLowerBound: null,
+    confidenceUpperBound: null,
+    confidenceState: 'INSUFFICIENT',
+    practicalAssessment: 'MIXED',
+    sampleFloor: 10,
+    meaningfulDifference: null,
+    observationWindowDays: null,
+    cohort: 'STANDARD_ALL_IMPORTED_TIME_CONTROLS',
+    policyVersion: 'v1',
+    configurationState: 'ENABLED',
+    rankingApplied: false,
+  },
 };
 
 describe('Weaknesses Tab MVP', () => {
@@ -178,11 +205,38 @@ describe('Weaknesses Tab MVP', () => {
         expect(screen.queryByText('4.20')).not.toBeInTheDocument();
         expect(screen.getByText(/Your Decisions in Source Games:/i)).toBeInTheDocument();
         expect(screen.getByText(/Bc5 \(4x, -1\.30 pawns\)/i)).toBeInTheDocument();
+        expect(screen.getByText(/Actual-game results at this exact position/i)).toBeInTheDocument();
+        expect(screen.getByText(/Wins 2 · Draws 1 · Losses 1/i)).toBeInTheDocument();
+        expect(screen.getByText(/62\.5% score rate/i)).toBeInTheDocument();
+        expect(screen.getByText(/4 eligible games/i)).toBeInTheDocument();
       });
 
       await waitFor(() => {
         expect(onWeaknessCountChange).toHaveBeenCalledWith(1);
       });
+    });
+
+    it('shows an insufficient practical-evidence state without fabricating a score', async () => {
+      const itemWithoutUsableEvidence: WeaknessResponse = {
+        ...mockWeaknessItem,
+        practicalEvidence: {
+          ...mockWeaknessItem.practicalEvidence!,
+          wins: 0,
+          draws: 0,
+          losses: 0,
+          eligibleGames: 0,
+          scoreRate: null,
+          confidenceState: 'INSUFFICIENT',
+        },
+      };
+      vi.mocked(api.fetchWeaknesses).mockResolvedValue([itemWithoutUsableEvidence]);
+
+      render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/Practical evidence is insufficient/i)).toBeInTheDocument();
+      });
+      expect(screen.queryByText(/score rate/i)).not.toBeInTheDocument();
     });
 
     it('refetches and resets page 0 when color filter, min mistake count, or minEvalLoss threshold changes', async () => {

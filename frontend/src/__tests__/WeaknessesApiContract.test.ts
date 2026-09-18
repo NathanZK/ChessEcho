@@ -24,6 +24,33 @@ describe('Weaknesses API Contract – failure signalling', () => {
     movesPlayed: [{ move: 'Bc5', timesPlayed: 4, averageLoss: 1.3 }],
     gameUrls: ['https://www.chess.com/game/live/10001'],
     evalCp: 35,
+    practicalEvidence: {
+      scope: 'POSITION',
+      decisionSan: null,
+      candidateGames: 7,
+      eligibleGames: 6,
+      ineligibleGames: 1,
+      excludedGames: 0,
+      wins: 3,
+      draws: 2,
+      losses: 1,
+      sideCorroborationConflictGames: 0,
+      scoreRate: 0.6667,
+      comparatorMethod: 'NONE',
+      comparatorScoreRate: null,
+      confidenceMethod: 'DISABLED',
+      confidenceLowerBound: null,
+      confidenceUpperBound: null,
+      confidenceState: 'INSUFFICIENT',
+      practicalAssessment: 'MIXED',
+      sampleFloor: 10,
+      meaningfulDifference: null,
+      observationWindowDays: null,
+      cohort: 'STANDARD_ALL_IMPORTED_TIME_CONTROLS',
+      policyVersion: 'v1',
+      configurationState: 'ENABLED',
+      rankingApplied: false,
+    },
   };
 
   beforeEach(() => {
@@ -42,6 +69,14 @@ describe('Weaknesses API Contract – failure signalling', () => {
 
     const res = await fetchWeaknesses('hikaru', 'chess_com', 'both', 0.8, 3, 0, 20);
     expect(res).toEqual([mockWeakness]);
+    expect(res[0].practicalEvidence).toMatchObject({
+      wins: 3,
+      draws: 2,
+      losses: 1,
+      scoreRate: 0.6667,
+      eligibleGames: 6,
+      confidenceState: 'INSUFFICIENT',
+    });
   });
 
   it('still resolves [] on a successful 2xx empty array body (empty success is not an error)', async () => {
