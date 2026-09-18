@@ -4375,6 +4375,78 @@ def command_request_plan_revision(args, root, config):
     return {"ok": True, "status": state["status"], "plan_revision": request}
 
 
+def _verify_reopened_test_evidence(root, config, args, state, test_head):
+    """Prove a reopened test correction against the real pre- and post-correction states.
+
+    A synthetic marker command (e.g. ``echo X; exit 1``) cannot pass this check:
+    it is executed against two different, git-addressable checkouts of the
+    actual test tree (the defective tests before correction, and the corrected
+    tests after), each with the same uncommitted implementation candidate
+    applied. A command that does not genuinely exercise the tests will not
+    reliably fail on the first checkout and pass on the second, so this
+    structurally rejects markers while accepting real test invocations.
+    """
+    reopening = (state.get("test_reopenings") or [None])[-1]
+    previous_test_commit = (reopening or {}).get("previous_test_commit")
+    _ensure(
+        isinstance(previous_test_commit, str) and previous_test_commit,
+        "missing-previous-test-commit",
+        "reopened submit-tests requires a recorded pre-correction test commit",
+    )
+    candidate_diff = _git_candidate_diff(root, config, test_head)
+    context = "submit-tests reopened-test evidence"
+    scratch = _completed_run_scratch_path(
+        root, config, args.issue, uuid.uuid4().hex, "submit-tests-reopened-evidence"
+    )
+    try:
+        _create_scratch_worktree(root, config, scratch, previous_test_commit, context)
+        if candidate_diff:
+            attempt = _try_apply_reconciliation_patch(scratch, config, scratch, candidate_diff)
+            _ensure(
+                attempt["applied"],
+                "candidate-apply-conflict",
+                "%s could not apply the current implementation candidate onto the "
+                "pre-correction tests" % context,
+            )
+        before = _run_bounded(
+            shlex.split(args.failure_command),
+            _effective_limits(config, "validation"),
+            scratch,
+        )
+    finally:
+        _cleanup_scratch_worktree(root, config, scratch)
+    before_result = before["result"]
+    before_output = before["stdout_text"] + before["stderr_text"]
+    _ensure(
+        before_result.get("outcome") == "nonzero-exit" and before_result.get("exit_code") != 0,
+        "test-did-not-fail-before-correction",
+        "targeted command did not genuinely fail against the pre-correction tests",
+    )
+    _ensure(
+        args.failure_contains in before_output,
+        "unexpected-test-failure-before-correction",
+        "pre-correction failure did not contain the expected behavioral message",
+    )
+
+    after = _run_bounded(
+        shlex.split(args.failure_command),
+        _effective_limits(config, "validation"),
+        root,
+    )
+    after_result = after["result"]
+    _ensure(
+        after_result.get("outcome") == "success" and after_result.get("exit_code") == 0,
+        "test-did-not-pass-after-correction",
+        "targeted command did not genuinely pass against the corrected tests",
+    )
+    return {
+        "before": before_result,
+        "after": after_result,
+        "previous_test_commit": previous_test_commit,
+        "corrected_test_commit": test_head,
+    }
+
+
 def command_submit_tests(args, root, config):
     """Verify and record a committed tests-only change plus its targeted failure."""
     state = _read_state(root, config, args.issue)
@@ -4431,24 +4503,29 @@ def command_submit_tests(args, root, config):
         "missing-test-failure-check",
         "submit-tests requires a targeted failure command",
     )
-    failure = _run_bounded(
-        shlex.split(args.failure_command),
-        _effective_limits(config, "validation"),
-        root,
-    )
-    failure_result = failure["result"]
-    failure_output = failure["stdout_text"] + failure["stderr_text"]
-    _ensure(
-        failure_result.get("outcome") == "nonzero-exit"
-        and failure_result.get("exit_code") != 0,
-        "test-did-not-fail",
-        "targeted test command did not fail before implementation",
-    )
-    _ensure(
-        args.failure_contains in failure_output,
-        "unexpected-test-failure",
-        "targeted test failed without the expected behavioral message",
-    )
+    if _test_reopen_active(state):
+        failure_result = _verify_reopened_test_evidence(
+            root, config, args, state, test_head
+        )
+    else:
+        failure = _run_bounded(
+            shlex.split(args.failure_command),
+            _effective_limits(config, "validation"),
+            root,
+        )
+        failure_result = failure["result"]
+        failure_output = failure["stdout_text"] + failure["stderr_text"]
+        _ensure(
+            failure_result.get("outcome") == "nonzero-exit"
+            and failure_result.get("exit_code") != 0,
+            "test-did-not-fail",
+            "targeted test command did not fail before implementation",
+        )
+        _ensure(
+            args.failure_contains in failure_output,
+            "unexpected-test-failure",
+            "targeted test failed without the expected behavioral message",
+        )
     if _test_reopen_active(state):
         _require_no_uncommitted_test_changes(root, config, "submit-tests after failure check")
     else:
