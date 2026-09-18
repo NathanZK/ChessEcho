@@ -7012,6 +7012,136 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
         self.assertEqual("invalid-git-ancestry", payload["error"]["code"])
         self.assertEqual(before, self.state_for(self.PARENT_ISSUE))
 
+    def test_recover_completed_run_reconciliation_retries_superseded_tooling_failure(self):
+        parent_state = self.bootstrap_completed_parent(self.PARENT_ISSUE)
+        self.set_parent_draft_pr(
+            self.PARENT_ISSUE,
+            number=300,
+            head_ref_name="parent-branch",
+            head_ref_oid=parent_state["implementation_commit"],
+            url="https://example.test/pr/300",
+            repository="owner/repo",
+        )
+        first_target = self.advance_remote_ref_past_commit(
+            parent_state["target_head"],
+            {"unrelated.txt": "first downstream change\n"},
+        )
+        unavailable_tool = [
+            {
+                "name": "frontend lint",
+                "command": ["eslint"],
+                "cwd": ".",
+                "passed": False,
+                "result": {
+                    "outcome": "nonzero-exit",
+                    "exit_code": 127,
+                    "stderr": "sh: eslint: command not found\n",
+                },
+            }
+        ]
+        with mock.patch.object(
+            workflow, "_run_validation_checks", return_value=unavailable_tool
+        ):
+            code, payload, _ = self.reconcile_completed_run(self.PARENT_ISSUE)
+        self.assertEqual(0, code)
+        original_revision = payload["revision"]["issue"]
+        original_journal_path = self.completed_run_reconciliation_journal_path(
+            self.PARENT_ISSUE
+        )
+        original_journal = json.loads(original_journal_path.read_text(encoding="utf-8"))
+        self.assertEqual("finalized", original_journal["status"])
+        self.assertEqual("revision", original_journal["outcome"])
+
+        authoritative_config = json.loads(
+            (self.root / ".github" / "agent-workflow.json").read_text(encoding="utf-8")
+        )
+        authoritative_config["validation_profiles"]["workflow-tooling"]["setup"] = [
+            {
+                "name": "provision-eslint",
+                "command": [sys.executable, "-c", "print('setup ok')"],
+            }
+        ]
+        new_target = self.advance_remote_ref_from(
+            first_target,
+            {".github/agent-workflow.json": json.dumps(authoritative_config, indent=2) + "\n"},
+        )
+        live_pr = {
+            "number": 300,
+            "state": "OPEN",
+            "isDraft": True,
+            "baseRefName": "main",
+            "headRefName": "parent-branch",
+            "headRefOid": parent_state["implementation_commit"],
+            "headRepository": {"nameWithOwner": "owner/repo"},
+            "url": "https://example.test/pr/300",
+        }
+        with self.patch_gh_view_and_reflect_push(live_pr):
+            code, payload, _ = self.run_cli(
+                "recover-completed-run-reconciliation",
+                str(self.PARENT_ISSUE),
+                "--by",
+                "owner",
+                "--confirm",
+                "completed_run_recovery_confirmed",
+            )
+        self.assertEqual(0, code)
+        self.assertTrue(payload["ok"])
+        self.assertEqual("WORKFLOW_COMPLETED", self.state_for(self.PARENT_ISSUE)["status"])
+        self.assertEqual(first_target, original_journal["new_target_head"])
+        self.assertEqual("TEST_IMPLEMENTATION", self.state_for(original_revision)["status"])
+        recovery = json.loads(
+            (
+                self.root
+                / ".agent-workflow"
+                / "runs"
+                / ("issue-%s" % self.PARENT_ISSUE)
+                / "completed-run-reconciliation-recovery-transition.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(new_target, recovery["new_target_head"])
+        self.assertEqual("reconciled", recovery["outcome"])
+
+    def test_recover_completed_run_reconciliation_rejects_ordinary_finalized_revision(self):
+        parent_state = self.bootstrap_completed_parent(self.PARENT_ISSUE)
+        self.set_parent_draft_pr(
+            self.PARENT_ISSUE,
+            number=300,
+            head_ref_name="parent-branch",
+            head_ref_oid=parent_state["implementation_commit"],
+            url="https://example.test/pr/300",
+            repository="owner/repo",
+        )
+        self.advance_remote_ref_past_commit(
+            parent_state["target_head"],
+            {"unrelated.txt": "downstream change\n"},
+        )
+        with mock.patch.object(
+            workflow,
+            "_run_validation_checks",
+            return_value=[
+                {
+                    "name": "workflow-check",
+                    "command": [sys.executable, "-c", "raise SystemExit(1)"],
+                    "cwd": ".",
+                    "passed": False,
+                    "result": {"outcome": "nonzero-exit", "exit_code": 1, "stderr": ""},
+                }
+            ],
+        ):
+            self.assertEqual(0, self.reconcile_completed_run(self.PARENT_ISSUE)[0])
+        before = self.state_for(self.PARENT_ISSUE)
+        code, payload, _ = self.run_cli(
+            "recover-completed-run-reconciliation",
+            str(self.PARENT_ISSUE),
+            "--by",
+            "owner",
+            "--confirm",
+            "completed_run_recovery_confirmed",
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("completed-run-recovery-not-eligible", payload["error"]["code"])
+        self.assertEqual(before, self.state_for(self.PARENT_ISSUE))
+
 
 if __name__ == "__main__":
     unittest.main()

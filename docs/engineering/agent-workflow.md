@@ -798,6 +798,43 @@ local workflow only. It does not independently authenticate the asserted
 operator, and any mismatch between the journal, Git state, or live PR state
 fails closed instead of being repaired heuristically.
 
+### Recovering a superseded false revision classification
+
+A finalized completed-run reconciliation journal is ordinarily terminal.
+`reconcile-completed-run` returns its recorded result rather than rerunning
+the replay because the journal is immutable evidence of a completed governed
+transition; allowing an arbitrary retry could silently replace a revision
+decision and its audit trail.
+
+The separate recovery command is available only for the narrow infrastructure
+false-classification shape:
+
+```bash
+python3 scripts/agent_workflow.py recover-completed-run-reconciliation ISSUE --by REQUESTER --confirm completed_run_recovery_confirmed
+```
+
+It never edits or deletes the original finalized journal. It requires that
+the original journal records a finalized `test` revision whose immutable
+validation output contains an unavailable-tool failure (`command not found`
+or `no such file or directory`), with no failed setup step; that its
+auto-created child revision is still at its original `TEST_IMPLEMENTATION`
+entry state with no approvals, tests, candidate, validation, implementation,
+or publication progress; and that the authoritative target has advanced
+strictly beyond the original replay target and now declares a non-empty setup
+for the recorded validation profile. Every malformed, incomplete, progressed,
+ordinary-test-failure, unchanged-target, or configuration-ambiguous shape
+fails closed.
+
+Recovery writes a new immutable recovery transition journal that binds the
+digest of the old journal, the old child revision identity, the later target,
+and both self-attested acknowledgments. It then runs the same completed-run
+source reconstruction, scratch replay, authoritative configuration loading,
+setup, validation, equivalence verification, PR lease, and revision
+classifier as `reconcile-completed-run`; it does not inherit the old child
+revision's approvals, artifacts, validation evidence, or implementation
+state. Genuine test, implementation, and plan revisions remain governed by
+their own `start-revision` workflow and are not recoverable by this command.
+
 ## Bounded execution
 
 All external commands run via `scripts/workflow_supervisor.py` with configured timeout, grace period, and output caps.
@@ -831,6 +868,7 @@ python3 scripts/agent_workflow.py recover-implementation-approval ISSUE
 python3 scripts/agent_workflow.py reconcile-implementation-target ISSUE --by REQUESTER --confirm implementation_target_reconciled
 python3 scripts/agent_workflow.py reconcile-implementation-target ISSUE --by REQUESTER --confirm implementation_target_reconciliation_reanchored
 python3 scripts/agent_workflow.py reconcile-completed-run ISSUE --by REQUESTER --confirm completed_run_reconciled
+python3 scripts/agent_workflow.py recover-completed-run-reconciliation ISSUE --by REQUESTER --confirm completed_run_recovery_confirmed
 python3 scripts/agent_workflow.py reject-implementation ISSUE --by LOGIN --reason "..."
 python3 scripts/agent_workflow.py create-draft-pr ISSUE --title "..." --body-file PATH
 python3 scripts/agent_workflow.py start-revision ISSUE --parent-issue PARENT_ISSUE --class cosmetic|implementation|test|plan --by REQUESTER

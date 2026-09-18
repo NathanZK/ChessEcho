@@ -28,6 +28,7 @@ REVIEW_STATUSES = (READY, REVISION)
 DEFAULT_IMPLEMENTATION_CONFIRMATION = "implementation_approved"
 DEFAULT_SUPERSESSION_CONFIRMATION = "supersede_confirmed"
 DEFAULT_COMPLETED_RUN_RECONCILIATION_CONFIRMATION = "completed_run_reconciled"
+DEFAULT_COMPLETED_RUN_RECOVERY_CONFIRMATION = "completed_run_recovery_confirmed"
 RECONCILIATION_CONFIRMATION = "implementation_target_reconciled"
 RECONCILIATION_REANCHOR_CONFIRMATION = "implementation_target_reconciliation_reanchored"
 RECONCILIATION_JOURNAL_FORMAT = "chess-echo-implementation-target-reconciliation-transition-v1"
@@ -5518,6 +5519,13 @@ def _completed_run_reconciliation_journal_path(root, config, issue):
     return _run_root(root, config, issue) / "completed-run-reconciliation-transition.json"
 
 
+def _completed_run_reconciliation_recovery_journal_path(root, config, issue):
+    return (
+        _run_root(root, config, issue)
+        / "completed-run-reconciliation-recovery-transition.json"
+    )
+
+
 def _completed_run_reconciliation_acknowledgment(config, confirm, by):
     expected = config["workflow"]["approvals"].get(
         "completed_run_reconciliation",
@@ -5694,6 +5702,99 @@ def _classify_completed_run_revision_boundary(
         if any(not _is_test_file(path) for path in normalized):
             return "implementation"
         return "test"
+
+
+def _validation_has_unavailable_tool_failure(validation):
+    if not isinstance(validation, list):
+        return False
+    for check in validation:
+        if not isinstance(check, dict) or check.get("passed") is not False:
+            continue
+        result = check.get("result") or {}
+        text = []
+        for stream in ("stdout", "stderr"):
+            value = result.get(stream)
+            if isinstance(value, str):
+                text.append(value)
+            elif isinstance(value, dict) and isinstance(value.get("base64"), str):
+                try:
+                    text.append(base64.b64decode(value["base64"]).decode("utf-8", "replace"))
+                except ValueError:
+                    continue
+        output = "\n".join(text).lower()
+        if "command not found" in output or "no such file or directory" in output:
+            return True
+    return False
+
+
+def _completed_run_recovery_eligible(root, config, state, journal, new_target):
+    _ensure(
+        journal.get("status") == "finalized"
+        and journal.get("outcome") == "revision"
+        and journal.get("revision_class") == "test",
+        "completed-run-recovery-not-eligible",
+        "completed-run recovery requires a finalized test revision outcome",
+    )
+    _ensure(
+        journal.get("setup") in (None, [])
+        and _validation_has_unavailable_tool_failure(journal.get("validation")),
+        "completed-run-recovery-not-eligible",
+        "completed-run recovery requires immutable unavailable-tool validation evidence",
+    )
+    revision_issue = journal.get("revision_issue")
+    _ensure(
+        revision_issue and _run_root(root, config, revision_issue).exists(),
+        "completed-run-recovery-not-eligible",
+        "completed-run recovery requires the recorded child revision run",
+    )
+    revision = _read_state(root, config, revision_issue)
+    parent = revision.get("parent_run") or {}
+    _ensure(
+        revision.get("status") == "TEST_IMPLEMENTATION"
+        and parent.get("issue") == state.get("issue")
+        and parent.get("class") == "test"
+        and revision.get("test_commit") is None
+        and revision.get("implementation_candidate") is None
+        and revision.get("implementation_commit") is None
+        and revision.get("validation") is None
+        and revision.get("draft_pr") is None
+        and (revision.get("approvals") or {}).get("plan")
+        and (revision.get("approvals") or {}).get("tests") is None
+        and (revision.get("approvals") or {}).get("implementation") is None,
+        "completed-run-recovery-not-eligible",
+        "completed-run recovery refuses a child revision with governed progress",
+    )
+    prior_target = journal.get("new_target_head")
+    _ensure(
+        isinstance(prior_target, str) and prior_target and prior_target != new_target,
+        "completed-run-recovery-not-eligible",
+        "completed-run recovery requires a later authoritative target",
+    )
+    _git_ancestor(root, config, prior_target, new_target, "recover-completed-run-reconciliation")
+    scratch = _completed_run_scratch_path(
+        root, config, state["issue"], uuid.uuid4().hex, "completed-run-recovery-eligibility"
+    )
+    try:
+        _create_scratch_worktree(
+            root, config, scratch, new_target, "recover-completed-run-reconciliation"
+        )
+        target_config = _load_authoritative_validation_config(
+            scratch, "recover-completed-run-reconciliation"
+        )
+        profile = target_config["validation_profiles"][journal["validation_profile"]]
+        setup = profile.get("setup")
+    except (KeyError, TypeError, WorkflowError):
+        _raise(
+            "completed-run-recovery-not-eligible",
+            "completed-run recovery requires a verifiable authoritative validation profile",
+        )
+    finally:
+        _cleanup_scratch_worktree(root, config, scratch)
+    _ensure(
+        isinstance(setup, list) and setup,
+        "completed-run-recovery-not-eligible",
+        "completed-run recovery requires a later authoritative setup fix",
+    )
 
 
 def _completed_run_scratch_path(root, config, issue, transition_id, purpose):
@@ -5934,7 +6035,11 @@ def command_reconcile_completed_run(args, root, config):
         acknowledgment = _completed_run_reconciliation_acknowledgment(
             config, args.confirm, args.by
         )
-        journal_path = _completed_run_reconciliation_journal_path(root, config, args.issue)
+        journal_path = getattr(
+            args,
+            "_recovery_journal_path",
+            _completed_run_reconciliation_journal_path(root, config, args.issue),
+        )
 
         if journal_path.exists():
             journal = _read_json(
@@ -6200,6 +6305,94 @@ def command_reconcile_completed_run(args, root, config):
         }
 
 
+def command_recover_completed_run_reconciliation(args, root, config):
+    context = "recover-completed-run-reconciliation"
+    state = _read_state(root, config, args.issue)
+    _ensure((args.by or "").strip(), "missing-requester", "%s requires a requester" % context)
+    expected = config["workflow"]["approvals"].get(
+        "completed_run_recovery", DEFAULT_COMPLETED_RUN_RECOVERY_CONFIRMATION
+    )
+    _ensure(
+        args.confirm == expected,
+        "approval-confirmation-mismatch",
+        "Expected confirmation phrase for completed_run_recovery gate: %s" % expected,
+    )
+    original_path = _completed_run_reconciliation_journal_path(root, config, args.issue)
+    _ensure(
+        original_path.exists(),
+        "completed-run-recovery-not-eligible",
+        "completed-run recovery requires the original reconciliation journal",
+    )
+    original = _read_json(original_path, "completed-run reconciliation transition journal")
+    _validate_completed_run_reconciliation_journal(original, config, state, context)
+    source = _completed_run_reconciliation_source(root, config, state, context)
+    _ensure(
+        _current_head(root, config) == source["implementation_commit"],
+        "implementation-commit-mismatch",
+        "%s requires HEAD to match the completed run's implementation_commit" % context,
+    )
+    _require_clean_tree(root, config, context)
+    new_target = _resolve_target_head(root, config, fetch=True)
+    _completed_run_recovery_eligible(root, config, state, original, new_target)
+    recovery_path = _completed_run_reconciliation_recovery_journal_path(root, config, args.issue)
+    _ensure(
+        not recovery_path.exists(),
+        "completed-run-recovery-already-attempted",
+        "completed-run recovery is already journaled for this run",
+    )
+    recovery = {
+        "format": COMPLETED_RUN_RECONCILIATION_JOURNAL_FORMAT,
+        "version": 1,
+        "transition_id": uuid.uuid4().hex,
+        "issue": args.issue,
+        "operation": "reconcile-completed-run",
+        "recovery_operation": "recover-completed-run-reconciliation",
+        "created_at": _now(),
+        "status": "pending",
+        "acknowledgment": _completed_run_reconciliation_acknowledgment(
+            config, config["workflow"]["approvals"].get(
+                "completed_run_reconciliation",
+                DEFAULT_COMPLETED_RUN_RECONCILIATION_CONFIRMATION,
+            ), args.by
+        ),
+        "recovery_acknowledgment": {
+            "kind": LOCAL_ACKNOWLEDGMENT_KIND,
+            "asserted_by": args.by,
+            "confirmation": args.confirm,
+            "recorded_at": _now(),
+            "independent_authorization": False,
+        },
+        "requested_by": args.by,
+        "requested_at": _now(),
+        "source_journal_sha256": hashlib.sha256(original_path.read_bytes()).hexdigest(),
+        "source_revision_issue": original["revision_issue"],
+        "source_status": source["source_status"],
+        "target_base": source["target_base"],
+        "previous_target_head": source["target_head"],
+        "new_target_head": new_target,
+        "previous_implementation_commit": source["implementation_commit"],
+        "test_commit": source["test_commit"],
+        "approved_scope": source["approved_scope"],
+        "approved_test_boundary": source["approved_test_boundary"],
+        "implementation_candidate": source["implementation_candidate"],
+        "candidate_identity": source["candidate_identity"],
+        "reviewed_commit_subject": source["reviewed_commit_subject"],
+        "validation_profile": source["validation_profile"],
+        "draft_pr": source["draft_pr"],
+        "outcome": None,
+        "reconciled_commit": None,
+        "revision_issue": None,
+        "revision_class": None,
+        "conflict_paths": [],
+        "validation": None,
+        "setup": None,
+    }
+    _write_json(recovery_path, recovery)
+    args._recovery_journal_path = recovery_path
+    args.confirm = recovery["acknowledgment"]["confirmation"]
+    return command_reconcile_completed_run(args, root, config)
+
+
 # ---------- argparse ----------
 
 
@@ -6342,6 +6535,13 @@ def build_parser():
     _add_issue(reconcile_completed_run)
     _add_human(reconcile_completed_run)
 
+    recover_completed_run = subparsers.add_parser(
+        "recover-completed-run-reconciliation"
+    )
+    _add_root(recover_completed_run)
+    _add_issue(recover_completed_run)
+    _add_human(recover_completed_run)
+
     submit_implementation = subparsers.add_parser("submit-implementation")
     _add_root(submit_implementation)
     _add_issue(submit_implementation)
@@ -6419,6 +6619,7 @@ COMMANDS = {
     "reconcile-candidate": command_reconcile_candidate,
     "reconcile-implementation-target": command_reconcile_implementation_target,
     "reconcile-completed-run": command_reconcile_completed_run,
+    "recover-completed-run-reconciliation": command_recover_completed_run_reconciliation,
     "submit-implementation": command_submit_implementation,
     "run-validation": command_run_validation,
     "review-implementation": command_review_implementation,
