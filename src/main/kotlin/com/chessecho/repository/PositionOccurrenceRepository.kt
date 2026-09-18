@@ -9,6 +9,22 @@ import java.util.UUID
 interface PositionOccurrenceRepository : JpaRepository<PositionOccurrence, UUID> {
     fun findByPositionId(positionId: UUID): List<PositionOccurrence>
 
+    @Query(
+        """
+        SELECT po FROM PositionOccurrence po
+        JOIN FETCH po.game
+        WHERE po.chessAccount.id = :chessAccountId
+          AND po.position.id = :positionId
+          AND po.playerColor = :playerColor
+        ORDER BY COALESCE(po.game.playedAt, po.createdAt) ASC, po.createdAt ASC, po.id ASC
+        """,
+    )
+    fun findProgressOccurrences(
+        @Param("chessAccountId") chessAccountId: UUID,
+        @Param("positionId") positionId: UUID,
+        @Param("playerColor") playerColor: String,
+    ): List<PositionOccurrence>
+
     fun findByChessAccountIdAndPlayerColor(
         chessAccountId: UUID,
         playerColor: String,
