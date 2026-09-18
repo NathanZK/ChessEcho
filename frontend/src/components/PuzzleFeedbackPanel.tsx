@@ -13,6 +13,7 @@ import {
   Settings2,
   Sparkles,
   LogOut,
+  Timer,
 } from 'lucide-react';
 import { Puzzle } from '../mock/mockData';
 import { HistoricalGamesModal } from './HistoricalGamesModal';
@@ -20,6 +21,14 @@ import { ContinuationMode, ContinuationCandidate, ExplorationPlayMode } from '..
 
 export function formatDecimal(val: number, decimals: number = 2): string {
   return (val ?? 0).toFixed(decimals).replace(',', '.');
+}
+
+export function formatTimerMs(ms: number): string {
+  const clamped = Math.max(0, Math.round(ms));
+  const totalSeconds = Math.floor(clamped / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
 interface FeedbackState {
@@ -118,6 +127,14 @@ interface PuzzleFeedbackPanelProps {
   onCalculationSubmit?: (e: React.FormEvent) => void;
   onCalculationBack?: () => void;
   onFinishChallenge?: () => void;
+  // Timed training props
+  timerMode?: 'STOPWATCH' | 'COUNTDOWN' | null;
+  timerElapsedMs?: number;
+  timerAllowedMs?: number;
+  timerExpired?: boolean;
+  timerSubmissionError?: string | null;
+  onTimerModeChange?: (mode: 'STOPWATCH' | 'COUNTDOWN' | null) => void;
+  onTimerAllowedMsChange?: (ms: number) => void;
 }
 
 export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
@@ -168,6 +185,13 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
   calculationFeedback,
   isCalculationLoading = false,
   onCalculationBack,
+  timerMode = null,
+  timerElapsedMs = 0,
+  timerAllowedMs = 30000,
+  timerExpired = false,
+  timerSubmissionError = null,
+  onTimerModeChange,
+  onTimerAllowedMsChange,
 }) => {
   const [showGameModal, setShowGameModal] = React.useState<boolean>(false);
 
@@ -250,6 +274,56 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
                 Apply
               </button>
             </div>
+
+            {/* Timed Training */}
+            <div className="flex flex-col gap-2 bg-slate-950 px-3 py-2 rounded-xl border border-slate-800">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                  Timed Training
+                </span>
+                <div className="flex bg-slate-900 p-0.5 rounded-xl border border-slate-800">
+                  {(
+                    [
+                      { key: null, label: 'Off' },
+                      { key: 'STOPWATCH', label: 'Stopwatch' },
+                      { key: 'COUNTDOWN', label: 'Countdown' },
+                    ] as const
+                  ).map((option) => (
+                    <button
+                      key={option.label}
+                      type="button"
+                      onClick={() => onTimerModeChange?.(option.key)}
+                      className={`px-2 py-0.5 text-[11px] font-bold rounded-lg transition cursor-pointer ${
+                        timerMode === option.key
+                          ? 'bg-emerald-600 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {timerMode === 'COUNTDOWN' && (
+                <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-300">
+                  <span>Allowed time:</span>
+                  <select
+                    value={timerAllowedMs}
+                    onChange={(e) => onTimerAllowedMsChange?.(Number(e.target.value))}
+                    aria-label="Countdown allowed time"
+                    className="bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-emerald-400 font-mono text-[11px] outline-none focus:border-emerald-500"
+                  >
+                    <option value={15000}>15s</option>
+                    <option value={30000}>30s</option>
+                    <option value={60000}>60s</option>
+                    <option value={120000}>120s</option>
+                  </select>
+                </label>
+              )}
+              {timerSubmissionError && (
+                <span className="text-[11px] font-semibold text-red-400">{timerSubmissionError}</span>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -275,6 +349,26 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
           </button>
         )}
       </div>
+
+      {/* Timed Training live badge */}
+      {timerMode && (
+        <div
+          className={`flex items-center justify-center gap-1.5 py-1.5 rounded-xl border text-sm font-mono font-bold ${
+            timerExpired
+              ? 'bg-red-950/60 border-red-800 text-red-400'
+              : 'bg-slate-950 border-slate-800 text-emerald-400'
+          }`}
+        >
+          <Timer className="w-3.5 h-3.5" />
+          <span>{formatTimerMs(timerElapsedMs)}</span>
+          {timerMode === 'COUNTDOWN' && (
+            <span className="text-slate-500 font-sans font-normal text-[11px]">
+              / {formatTimerMs(timerAllowedMs)}
+            </span>
+          )}
+          {timerExpired && <span className="ml-1 text-[11px]">Time&apos;s up</span>}
+        </div>
+      )}
 
       {/* Dynamic Feedback / Success Card */}
       {feedback.status === 'CORRECT' ? (

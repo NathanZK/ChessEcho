@@ -494,3 +494,33 @@ export async function pollJobStatus(jobId: string): Promise<JobStatusResponse> {
 
   return await response.json();
 }
+
+export async function submitTrainingAttempt(payload: {
+  attemptId: string;
+  puzzleId: string;
+  mode: string;
+  elapsedMs: number;
+  allowedMs?: number;
+  outcome: string;
+}): Promise<{
+  attemptId: string;
+  puzzleId: string;
+  mode: string;
+  elapsedMs: number;
+  allowedMs?: number;
+  outcome: string;
+  recordedAt: string;
+}> {
+  const response = await fetch(`${API_BASE_URL}/puzzles/attempt`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: jsonHeaders(),
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to submit training attempt: ${response.statusText}`);
+  }
+
+  return await response.json();
+}
