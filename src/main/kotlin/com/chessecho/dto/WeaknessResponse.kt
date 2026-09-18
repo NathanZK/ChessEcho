@@ -19,6 +19,7 @@ data class WeaknessResponse(
     val acceptableMoves: List<AcceptableMove>,
     val movesPlayed: List<MoveBreakdown>,
     val gameUrls: List<String> = emptyList(),
+    val openingContext: OpeningContext? = null,
     val evalCp: Int? = null,
     val lastSeenAt: Instant? = null,
     val playerColor: String,
@@ -26,4 +27,9 @@ data class WeaknessResponse(
     val objectiveEvidenceState: ObjectiveEvidenceState,
     val evidenceCombination: EvidenceCombination?,
     val practicalEvidence: PracticalEvidenceResponse,
+)
+
+data class OpeningContext(
+    val eco: String,
+    val ecoUrl: String,
 )
