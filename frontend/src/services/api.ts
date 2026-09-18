@@ -292,6 +292,26 @@ export interface MoveEvaluationResponse {
   acceptable: boolean;
 }
 
+export type PuzzleSchedulingEventType = 'PRESENTED' | 'STARTED' | 'SOLVED' | 'FAILED' | 'SKIPPED';
+
+export interface PuzzleEventRequest {
+  positionId: string;
+  playerColor: 'WHITE' | 'BLACK';
+  eventType: PuzzleSchedulingEventType;
+}
+
+export async function recordPuzzleEvent(request: PuzzleEventRequest): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/puzzles/events`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: jsonHeaders(),
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to record puzzle event: ${response.status}`);
+  }
+}
+
 /**
  * Converts a side-to-move centipawn evaluation into absolute White-perspective centipawns.
  *

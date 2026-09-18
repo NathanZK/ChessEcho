@@ -12,6 +12,7 @@ import com.chessecho.dto.WeaknessResponse
 import com.chessecho.repository.ChessAccountRepository
 import com.chessecho.repository.EngineAnalysisRepository
 import com.chessecho.repository.PositionOccurrenceRepository
+import com.chessecho.repository.PuzzleSchedulingEventRepository
 import com.chessecho.service.auth.AuthenticatedPrincipal
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
@@ -33,6 +34,12 @@ class WeaknessCalculationService(
 ) {
     @Autowired(required = false)
     private var accountOwnershipService: AccountOwnershipService? = null
+
+    @Autowired(required = false)
+    private var puzzleSchedulingEventRepository: PuzzleSchedulingEventRepository? = null
+
+    @Autowired(required = false)
+    private var adaptivePuzzleSchedulingPolicy: AdaptivePuzzleSchedulingPolicy? = null
     private val log = LoggerFactory.getLogger(javaClass)
     private val pgnHeaderTagReader = PgnHeaderTagReader()
 
@@ -255,7 +262,7 @@ class WeaknessCalculationService(
                 )
             }
 
-        val result =
+        val baselineResult =
             drafts
                 .map { draft ->
                     val positionScope = draft.positionScope(account.id)
@@ -313,12 +320,62 @@ class WeaknessCalculationService(
                         evidenceCombination = priorityDecision.evidenceCombination,
                         practicalEvidence = positionEvidence,
                     )
-                }.sortedWith(
+                }
+
+        val eventRepository = puzzleSchedulingEventRepository
+        val schedulingPolicy = adaptivePuzzleSchedulingPolicy
+        val schedulingHistory =
+            if (account.user != null && eventRepository != null) {
+                eventRepository
+                    .findHistory(account.id, positionIds, color)
+                    .groupBy { it.position.id to it.playerColor }
+            } else {
+                emptyMap()
+            }
+        val now = Instant.now()
+        val result =
+            if (account.user == null) {
+                baselineResult.sortedWith(
                     compareByDescending<WeaknessResponse> { it.recommendationPriority }
                         .thenByDescending { it.priority }
                         .thenBy { it.positionId.toString() }
                         .thenBy { it.playerColor },
                 )
+            } else if (schedulingPolicy == null) {
+                baselineResult.sortedWith(
+                    compareByDescending<WeaknessResponse> { it.recommendationPriority }
+                        .thenByDescending { it.priority }
+                        .thenBy { it.positionId.toString() }
+                        .thenBy { it.playerColor },
+                )
+            } else {
+                baselineResult
+                    .map { weakness ->
+                        val events =
+                            schedulingHistory[weakness.positionId to weakness.playerColor]
+                                .orEmpty()
+                                .map { event ->
+                                    SchedulingEvent(
+                                        type = event.eventType,
+                                        occurredAt = event.occurredAt,
+                                        sourceOccurrenceId = event.sourceOccurrence?.id,
+                                    )
+                                }
+                        weakness to
+                            schedulingPolicy.schedule(
+                                weakness.recommendationPriority,
+                                weakness.positionId,
+                                events,
+                                now,
+                            )
+                    }.sortedWith(
+                        compareByDescending<Pair<WeaknessResponse, Double>> { it.second }
+                            .thenByDescending { it.first.recommendationPriority }
+                            .thenByDescending { it.first.priority }
+                            .thenBy { it.first.positionId.toString() }
+                            .thenBy { it.first.playerColor },
+                    ).map { it.first }
+            }
 
         logCompletion(
             startTime = startTime,
