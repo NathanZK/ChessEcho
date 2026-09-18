@@ -8,7 +8,7 @@ import { PuzzleFeedbackPanel, type ChallengeSubmissionResult } from '@/component
 import { WeaknessesList } from '@/components/WeaknessesList';
 import { ImportGamesView } from '@/components/ImportGamesView';
 import { Puzzle } from '@/mock/mockData';
-import { fetchPuzzles, JobStatusResponse, ContinuationMode, ContinuationCandidate, ExplorationPlayMode, toWhitePerspective, fetchPuzzleContinuation, fetchCurrentSession, fetchAccounts, logout as apiLogout, type SessionState } from '@/services/api';
+import { fetchPuzzles, JobStatusResponse, ContinuationMode, ContinuationCandidate, ExplorationPlayMode, toWhitePerspective, fetchPuzzleContinuation, fetchCurrentSession, fetchAccounts, logout as apiLogout, recordPuzzleEvent, type SessionState } from '@/services/api';
 import { soundService } from '@/services/soundService';
 import { createDeterministicSelectionPolicy, createStochasticSelectionPolicy } from '@/services/continuationService';
 import { usePuzzleContinuation } from '@/utils/usePuzzleContinuation';
@@ -124,6 +124,7 @@ export default function Home() {
   const [puzzlesList, setPuzzlesList] = useState<Puzzle[]>([]);
   const [currentPuzzleIndex, setCurrentPuzzleIndex] = useState<number>(0);
   const [activePuzzle, setActivePuzzle] = useState<Puzzle | null>(null);
+  const presentedPuzzleRef = React.useRef<string | null>(null);
   const [isLoadingPuzzles, setIsLoadingPuzzles] = useState<boolean>(true);
   const [puzzleLoadError, setPuzzleLoadError] = useState<boolean>(false);
   const [puzzleReloadToken, setPuzzleReloadToken] = useState<number>(0);
@@ -183,6 +184,27 @@ export default function Home() {
   const [showPuzzleSettings, setShowPuzzleSettings] = useState<boolean>(false);
   const [isBoardFlipped, setIsBoardFlipped] = useState<boolean>(false);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
+
+  const recordPuzzleEventBestEffort = React.useCallback(
+    (eventType: 'PRESENTED' | 'STARTED' | 'SOLVED' | 'FAILED' | 'SKIPPED', puzzle: Puzzle | null = activePuzzle) => {
+      if (!puzzle || sessionStatus !== 'authenticated') return;
+      void recordPuzzleEvent({
+        positionId: puzzle.puzzleId,
+        playerColor: puzzle.playerColor,
+        eventType,
+      }).catch((error) => {
+        console.warn('Unable to record puzzle scheduling event', error);
+      });
+    },
+    [activePuzzle, sessionStatus],
+  );
+
+  React.useEffect(() => {
+    if (!activePuzzle || sessionStatus !== 'authenticated') return;
+    if (presentedPuzzleRef.current === activePuzzle.puzzleId) return;
+    presentedPuzzleRef.current = activePuzzle.puzzleId;
+    recordPuzzleEventBestEffort('PRESENTED', activePuzzle);
+  }, [activePuzzle, recordPuzzleEventBestEffort, sessionStatus]);
 
   // Flip board keyboard shortcut (x / X)
   React.useEffect(() => {
@@ -856,6 +878,9 @@ export default function Home() {
 
   const handlePreviousPuzzle = () => {
     if (puzzlesList.length === 0) return;
+    if (activePuzzle && feedback.status === 'IDLE' && historyIndex === 0) {
+      recordPuzzleEventBestEffort('SKIPPED', activePuzzle);
+    }
     const prevIndex = (currentPuzzleIndex - 1 + puzzlesList.length) % puzzlesList.length;
     const prevPuzzle = puzzlesList[prevIndex];
 
@@ -869,6 +894,9 @@ export default function Home() {
 
   const handleNextPuzzle = async () => {
     if (puzzlesList.length === 0) return;
+    if (activePuzzle && feedback.status === 'IDLE' && historyIndex === 0) {
+      recordPuzzleEventBestEffort('SKIPPED', activePuzzle);
+    }
     const nextIndex = (currentPuzzleIndex + 1) % puzzlesList.length;
     const nextPuzzle = puzzlesList[nextIndex];
 
@@ -1030,6 +1058,10 @@ export default function Home() {
     isInitialDecision: boolean = true
   ) => {
     if (!activePuzzle) return;
+    if (isInitialDecision) {
+      recordPuzzleEventBestEffort('STARTED', activePuzzle);
+      recordPuzzleEventBestEffort(isCorrect ? 'SOLVED' : 'FAILED', activePuzzle);
+    }
     setMoveHistory((prev) => [...prev, moveSan]);
     setHintSquare(undefined);
 

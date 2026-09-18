@@ -6,18 +6,24 @@ import com.chessecho.domain.Game
 import com.chessecho.domain.ImportedArchive
 import com.chessecho.domain.Platform
 import com.chessecho.domain.PlayerColor
+import com.chessecho.domain.PuzzleSchedulingEvent
+import com.chessecho.domain.SchedulingEventType
 import com.chessecho.domain.TimeControl
 import com.chessecho.domain.UserPositionStats
 import com.chessecho.dto.ImportGamesRequest
 import com.chessecho.repository.AsyncJobRepository
 import com.chessecho.repository.ChessAccountRepository
+import com.chessecho.repository.EngineAnalysisRepository
 import com.chessecho.repository.GameRepository
 import com.chessecho.repository.ImportedArchiveRepository
 import com.chessecho.repository.PositionOccurrenceRepository
 import com.chessecho.repository.PositionRepository
+import com.chessecho.repository.PuzzleSchedulingEventRepository
 import com.chessecho.repository.UserPositionStatsRepository
+import com.chessecho.repository.UserPositionWeaknessRepository
 import com.chessecho.service.auth.AuthenticatedPrincipal
 import org.slf4j.LoggerFactory
+import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.scheduling.annotation.Async
 import org.springframework.stereotype.Service
 import org.springframework.transaction.support.TransactionTemplate
@@ -40,6 +46,9 @@ class GameImportService(
     private val engineAnalysisOrchestrator: EngineAnalysisOrchestrator,
     private val transactionTemplate: TransactionTemplate,
     private val accountOwnershipService: AccountOwnershipService,
+    private val engineAnalysisRepository: EngineAnalysisRepository,
+    private val userPositionWeaknessRepository: UserPositionWeaknessRepository,
+    private val puzzleSchedulingEventRepository: PuzzleSchedulingEventRepository,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -376,11 +385,14 @@ class GameImportService(
                 val ids =
                     transactionTemplate.execute {
                         val savedGames = gameRepository.saveAll(gamesToSave)
-                        gameParserService.parseAndSavePositions(savedGames)
+                        val result = gameParserService.parseAndSavePositions(savedGames)
+                        emitSchedulingEvents(savedGames, result)
+                        result
                     } ?: emptySet()
                 if (ids.isNotEmpty()) {
                     updateUserPositionStats(account, ids)
                 }
+
                 ids
             } else {
                 emptySet()
@@ -408,6 +420,84 @@ class GameImportService(
             games.size,
             affectedPositionIds,
         )
+    }
+
+    private fun emitSchedulingEvents(
+        savedGames: List<Game>,
+        affectedPositionIds: Set<UUID>,
+    ) {
+        if (savedGames.isEmpty() || affectedPositionIds.isEmpty()) return
+        val savedGameIds = savedGames.map { it.id }.toSet()
+        val occurrences =
+            positionOccurrenceRepository
+                .findByChessAccountIdAndPlayerColorAndPositionIdIn(
+                    savedGames.first().chessAccount.id,
+                    "WHITE",
+                    affectedPositionIds,
+                ) +
+                positionOccurrenceRepository
+                    .findByChessAccountIdAndPlayerColorAndPositionIdIn(
+                        savedGames.first().chessAccount.id,
+                        "BLACK",
+                        affectedPositionIds,
+                    )
+        occurrences
+            .filter { it.game.id in savedGameIds }
+            .forEach { occurrence ->
+                if (userPositionWeaknessRepository.findByChessAccountIdAndPositionIdAndPlayerColor(
+                        occurrence.chessAccount.id,
+                        occurrence.position.id,
+                        occurrence.playerColor,
+                    ) == null
+                ) {
+                    return@forEach
+                }
+                val analysis = engineAnalysisRepository.findByPositionIdWithMoveEvaluations(occurrence.position.id)
+                val moveEvaluation = analysis?.moveEvaluations?.firstOrNull { it.move == occurrence.movePlayed }
+                val loss =
+                    moveEvaluation?.evalLossFromBest
+                        ?: analysis?.let {
+                            val best = it.bestMoveEvalCp
+                            val move = moveEvaluation?.evalCp
+                            if (best != null && move != null) ((best - move).coerceAtLeast(0) / 100.0) else 0.0
+                        }
+                        ?: 0.0
+                val occurredAt = occurrence.game.playedAt ?: occurrence.game.createdAt
+                claimSchedulingEvent(
+                    PuzzleSchedulingEvent(
+                        chessAccount = occurrence.chessAccount,
+                        position = occurrence.position,
+                        playerColor = occurrence.playerColor,
+                        eventType = SchedulingEventType.GAME_REENCOUNTERED,
+                        sourceOccurrence = occurrence,
+                        occurredAt = occurredAt,
+                    ),
+                )
+                claimSchedulingEvent(
+                    PuzzleSchedulingEvent(
+                        chessAccount = occurrence.chessAccount,
+                        position = occurrence.position,
+                        playerColor = occurrence.playerColor,
+                        eventType =
+                            if (loss >= WeaknessCalculationService.DEFAULT_MIN_EVAL_LOSS) {
+                                SchedulingEventType.GAME_MISTAKE
+                            } else {
+                                SchedulingEventType.GAME_HANDLED_SUCCESSFULLY
+                            },
+                        sourceOccurrence = occurrence,
+                        occurredAt = occurredAt,
+                    ),
+                )
+            }
+    }
+
+    private fun claimSchedulingEvent(event: PuzzleSchedulingEvent) {
+        try {
+            puzzleSchedulingEventRepository.saveAndFlush(event)
+        } catch (ex: DataIntegrityViolationException) {
+            val sourceOccurrence = requireNotNull(event.sourceOccurrence)
+            puzzleSchedulingEventRepository.findExistingClaim(sourceOccurrence.id, event.eventType) ?: throw ex
+        }
     }
 
     private fun updateUserPositionStats(

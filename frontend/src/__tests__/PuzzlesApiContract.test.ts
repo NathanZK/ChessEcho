@@ -114,3 +114,45 @@ describe('Puzzles API Contract Serialization', () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 });
+
+describe('Puzzle scheduling event API contract', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('records authenticated training events with exact position identity', async () => {
+    vi.mocked(global.fetch).mockResolvedValueOnce({ ok: true, json: async () => ({}) } as Response);
+
+    const { recordPuzzleEvent } = await import('../services/api');
+    await recordPuzzleEvent({ positionId: 'position-1', playerColor: 'WHITE', eventType: 'PRESENTED' });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/puzzles/events'),
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+        body: JSON.stringify({ positionId: 'position-1', playerColor: 'WHITE', eventType: 'PRESENTED' }),
+      }),
+    );
+  });
+
+  it.each(['PRESENTED', 'STARTED', 'SOLVED', 'FAILED', 'SKIPPED'] as const)(
+    'supports %s without conflating outcomes',
+    async (eventType) => {
+      vi.mocked(global.fetch).mockResolvedValueOnce({ ok: true, json: async () => ({}) } as Response);
+      const { recordPuzzleEvent } = await import('../services/api');
+      await recordPuzzleEvent({ positionId: 'position-1', playerColor: 'WHITE', eventType });
+      expect(global.fetch).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('surfaces rejected requests without inventing a persisted guest event', async () => {
+    vi.mocked(global.fetch).mockResolvedValueOnce({ ok: false, status: 401 } as Response);
+    const { recordPuzzleEvent } = await import('../services/api');
+    await expect(recordPuzzleEvent({ positionId: 'position-1', playerColor: 'WHITE', eventType: 'SOLVED' })).rejects.toThrow();
+  });
+});
