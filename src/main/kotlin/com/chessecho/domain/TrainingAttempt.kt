@@ -2,6 +2,7 @@ package com.chessecho.domain
 
 import jakarta.persistence.Column
 import jakarta.persistence.Entity
+import jakarta.persistence.EnumType
 import jakarta.persistence.Enumerated
 import jakarta.persistence.FetchType
 import jakarta.persistence.GeneratedValue
@@ -33,14 +34,14 @@ class TrainingAttempt(
     @Column(nullable = false)
     val puzzleId: String,
     @Column(nullable = false)
-    @Enumerated
+    @Enumerated(EnumType.STRING)
     val mode: TrainingAttemptMode,
     @Column(nullable = false)
     val elapsedMs: Long,
     @Column(nullable = true)
     val allowedMs: Long? = null,
     @Column(nullable = false)
-    @Enumerated
+    @Enumerated(EnumType.STRING)
     val outcome: TrainingAttemptOutcome,
     @ManyToOne(fetch = FetchType.LAZY, optional = true)
     @JoinColumn(name = "chess_account_id", nullable = true)

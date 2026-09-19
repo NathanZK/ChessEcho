@@ -260,6 +260,8 @@ class OwnerScopedBaselineMigrationTest : PostgresMigrationTestFixture() {
         assertIndex("training_attempt", "puzzle_id")
         assertIndex("training_attempt", "chess_account_id")
         assertIndex("training_attempt", "created_at")
+        assertColumnDataType("training_attempt", "mode", "character varying")
+        assertColumnDataType("training_attempt", "outcome", "character varying")
 
         val constraints = constraintDefinitions("training_attempt")
         assertConstraint(constraints, "mode", "stopwatch", "countdown")
@@ -354,6 +356,22 @@ class OwnerScopedBaselineMigrationTest : PostgresMigrationTestFixture() {
                 """.trimIndent(),
             ).singleOrNull()
         assertEquals(length, row?.get("character_maximum_length"), "$table.$column length")
+    }
+
+    private fun assertColumnDataType(
+        table: String,
+        column: String,
+        expectedType: String,
+    ) {
+        val row =
+            query(
+                """
+                SELECT data_type
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = '$table' AND column_name = '$column'
+                """.trimIndent(),
+            ).singleOrNull()
+        assertEquals(expectedType, row?.get("data_type"), "$table.$column data type")
     }
 
     private fun assertForeignKey(
