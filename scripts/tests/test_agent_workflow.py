@@ -7803,5 +7803,74 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
         self.assertEqual(before, self.state_for(self.PARENT_ISSUE))
 
 
+    def validate_pr_body(self, content):
+        body = self.root / "pr-body.md"
+        body.write_text(content, encoding="utf-8")
+        return workflow._validate_pr_body(body)
+
+    def assert_invalid_pr_body(self, content):
+        with self.assertRaises(workflow.WorkflowError):
+            self.validate_pr_body(content)
+
+    def test_governed_pr_body_enforces_structural_readability_boundaries(self):
+        """PR prose checks reject unusable references and command-only testing."""
+        self.assert_invalid_pr_body(
+            "## What\nA concise change.\n\n## Why\nSee #345\n\n## Testing\nCovered the regression.\n"
+        )
+        self.assert_invalid_pr_body(
+            "## What\nA concise change.\n\n## Why\nhttps://example.test/345\n\n## Testing\nCovered the regression.\n"
+        )
+        self.assert_invalid_pr_body(
+            "## What\nA concise change.\n\n## Why\nABC-123\n\n## Testing\nCovered the regression.\n"
+        )
+        self.assert_invalid_pr_body(
+            "## What\n\n## Why\nA concise reason.\n\n## Testing\nCovered the regression.\n"
+        )
+        self.assert_invalid_pr_body(
+            "## What\nA concise change.\n\n## Why\nA concise reason.\n\n## Testing\n./gradlew test\n"
+        )
+        self.assert_invalid_pr_body(
+            "## What\nA concise change.\n\n## Why\nA concise reason.\n\n"
+            "## Testing\nRan make agent-workflow-test\n"
+        )
+        self.assert_invalid_pr_body(
+            "## What\nA concise change.\n\n## Why\nA concise reason.\n\n"
+            "## Testing\nValidation: npm run lint\n"
+        )
+        for testing in ("383 tests passed", "383 passing", "Tests: 383"):
+            self.assert_invalid_pr_body(
+                "## What\nA concise change.\n\n## Why\nA concise reason.\n\n"
+                "## Testing\n%s\n" % testing
+            )
+        self.assert_invalid_pr_body(
+            "## What\nA concise change.\n\n## Why\nA concise reason.\n\n"
+            "## Testing\nNot applicable.\n"
+        )
+        self.assert_invalid_pr_body(
+            "## What\nA concise change.\n\n## Why\nA concise reason.\n\n"
+            "## Testing\nNot applicable: blah.\n"
+        )
+
+    def test_governed_pr_body_accepts_ordinary_structural_content(self):
+        """Ordinary concise, non-ASCII, and command-led explanatory prose remains valid."""
+        self.validate_pr_body(
+            "## What\nAdd the governed body check.\n\n"
+            "## Why\nKeep published descriptions usable.\n\n"
+            "## Testing\nRan make agent-workflow-test; regression cases passed.\n"
+        )
+        self.validate_pr_body(
+            "## What\n修正 PR の説明形式。\n\n"
+            "## Why\nレビュー時に意図を読みやすくするため。\n\n"
+            "## Testing\nNot applicable — this documentation-only change has no executable behavior.\n"
+        )
+
+    def test_governed_pr_body_preserves_exact_heading_contract(self):
+        """Structural content checks do not relax the exact heading contract."""
+        self.assert_invalid_pr_body(
+            "## What\nA change.\n\n## Why\nA reason.\n\n## Notes\n"
+            "## Testing\nA scenario was covered.\n"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
