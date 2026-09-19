@@ -4,6 +4,7 @@ import com.chessecho.domain.HumanMoveDistribution
 import com.chessecho.domain.Position
 import com.chessecho.domain.RatingBand
 import com.chessecho.dto.HumanMoveBfsRequest
+import com.chessecho.dto.HumanMovePopulationDiscoveryRequest
 import com.chessecho.repository.HumanMoveBfsClaimConflictException
 import com.chessecho.repository.HumanMoveBfsSeenGameClaimer
 import com.chessecho.repository.HumanMoveBfsSeenGameRepository
@@ -699,6 +700,74 @@ class HumanMoveBfsServiceTest {
             )
 
         assertEquals(2, response.playersVisited)
+    }
+
+    @Test
+    fun `population discovery traverses out of band players and returns distinct qualifying opponents without persistence`() {
+        val firstArchive = "https://api.chess.com/pub/player/p1/games/2021/01"
+        val secondArchive = "https://api.chess.com/pub/player/p2/games/2021/01"
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(firstArchive))
+        whenever(chessComClient.fetchArchiveUrls("p2")).thenReturn(listOf(secondArchive))
+        whenever(chessComClient.fetchMonthlyGames(firstArchive)).thenReturn(
+            listOf(rapidGame("http://out-of-band", "p1", 1100, "p2", 2000)),
+        )
+        whenever(chessComClient.fetchMonthlyGames(secondArchive)).thenReturn(
+            listOf(
+                rapidGame("http://qualifying-1", "p2", 2000, "p3", 1150),
+                rapidGame("http://qualifying-1-duplicate", "p2", 2000, "p3", 1150),
+            ),
+        )
+        whenever(chessComClient.fetchArchiveUrls("p3")).thenReturn(emptyList())
+
+        val response =
+            service.discoverPopulation(
+                HumanMovePopulationDiscoveryRequest(
+                    ratingBand = RatingBand.BAND_1000_1200.value,
+                    seedPlayers = listOf("p1"),
+                    targetQualifyingPlayers = 1,
+                    maxPlayers = 10,
+                    maxDepth = 2,
+                ),
+            )
+
+        assertEquals(listOf("p3"), response.qualifyingPlayers)
+        assertEquals(1, response.qualifyingPlayerCount)
+        assertEquals("TARGET_QUALIFYING_PLAYERS", response.stopReason)
+        assertEquals(3, response.playersVisited)
+        verify(humanMoveDistributionRepository, never()).saveAll(anyList())
+        verify(positionRepository, never()).saveAll(any<Iterable<Position>>())
+        verify(humanMoveBfsSeenGameRepository, never()).findExistingGameUrls(any())
+        verify(humanMoveBfsSeenGameClaimer, never()).claimGameUrls(any())
+    }
+
+    @Test
+    fun `population discovery excludes players and does not count out of band or non rapid games`() {
+        val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
+        whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(
+            listOf(
+                rapidGame("http://excluded", "p1", 1100, "excluded", 1150),
+                rapidGame("http://out-of-band", "p1", 1100, "p2", 1300),
+                blitzGame("http://blitz", "p1", 1100, "p3", 1150),
+            ),
+        )
+
+        val response =
+            service.discoverPopulation(
+                HumanMovePopulationDiscoveryRequest(
+                    ratingBand = RatingBand.BAND_1000_1200.value,
+                    seedPlayers = listOf("p1"),
+                    excludedPlayers = listOf("excluded"),
+                    targetQualifyingPlayers = 5,
+                    maxDepth = 0,
+                ),
+            )
+
+        assertTrue(response.qualifyingPlayers.isEmpty())
+        assertEquals("MAX_DEPTH", response.stopReason)
+        assertEquals(1, response.playersVisited)
+        verify(chessComClient, never()).fetchArchiveUrls("excluded")
+        verify(humanMoveDistributionRepository, never()).saveAll(anyList())
     }
 
     // ── Global accumulator semantics (no per-batch threshold) ──────────────

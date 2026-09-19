@@ -6,6 +6,8 @@ import com.chessecho.domain.RatingBand
 import com.chessecho.domain.TimeControl
 import com.chessecho.dto.HumanMoveBfsRequest
 import com.chessecho.dto.HumanMoveBfsResponse
+import com.chessecho.dto.HumanMovePopulationDiscoveryRequest
+import com.chessecho.dto.HumanMovePopulationDiscoveryResponse
 import com.chessecho.repository.HumanMoveBfsSeenGameClaimer
 import com.chessecho.repository.HumanMoveBfsSeenGameRepository
 import com.chessecho.repository.HumanMoveDistributionRepository
@@ -351,6 +353,112 @@ class HumanMoveBfsService(
             uniqueGamesProcessed = seenGameUrls.size,
             uniquePositions = cumulativeUniquePositions,
             totalObservations = cumulativeTotalObservations,
+            stopReason = stopReason,
+        )
+    }
+
+    fun discoverPopulation(request: HumanMovePopulationDiscoveryRequest): HumanMovePopulationDiscoveryResponse {
+        val targetBand =
+            RatingBand.fromValue(request.ratingBand)
+                ?: throw IllegalArgumentException("Invalid rating band: ${request.ratingBand}")
+        require(request.targetQualifyingPlayers > 0) { "targetQualifyingPlayers must be positive" }
+
+        val excluded = request.excludedPlayers.map(String::lowercase).toSet()
+        val visited = mutableSetOf<String>()
+        val queued = mutableSetOf<String>()
+        var frontier = request.seedPlayers.map(String::lowercase).filterNot(excluded::contains).distinct()
+        queued.addAll(frontier)
+        val qualifying = linkedSetOf<String>()
+        val seenUrls = mutableSetOf<String>()
+        var depth = 0
+        var gamesInspected = 0
+        var rapidGames = 0
+        var stopReason = ""
+
+        while (frontier.isNotEmpty() && depth <= request.maxDepth && stopReason.isEmpty()) {
+            val next = linkedSetOf<String>()
+            for (player in frontier) {
+                if (visited.size >= request.maxPlayers) {
+                    stopReason = "MAX_PLAYERS"
+                    break
+                }
+                if (!visited.add(player)) continue
+                val archives =
+                    try {
+                        chessComClient.fetchArchiveUrls(player)
+                    } catch (e: Exception) {
+                        log.warn("Failed to fetch archives for $player: ${e.message}")
+                        continue
+                    }
+                if (qualifying.size >= request.targetQualifyingPlayers) {
+                    stopReason = "TARGET_QUALIFYING_PLAYERS"
+                    break
+                }
+                var newRapidGames = 0
+                for (archive in archives.reversed()) {
+                    if (qualifying.size >= request.targetQualifyingPlayers ||
+                        newRapidGames >= request.maxGamesPerPlayer
+                    ) {
+                        break
+                    }
+                    val games =
+                        try {
+                            chessComClient.fetchMonthlyGames(archive) ?: emptyList()
+                        } catch (e: Exception) {
+                            log.warn("Failed to fetch games from $archive: ${e.message}")
+                            continue
+                        }
+                    for (game in games.reversed()) {
+                        if (qualifying.size >= request.targetQualifyingPlayers ||
+                            newRapidGames >= request.maxGamesPerPlayer
+                        ) {
+                            break
+                        }
+                        gamesInspected++
+                        if ((game["rules"] as? String)?.equals("chess", true) == false) continue
+                        if (TimeControl.fromExternal(game["time_class"] as? String) != TimeControl.RAPID) continue
+                        rapidGames++
+                        val url = game["url"] as? String ?: continue
+                        if (!seenUrls.add(url)) continue
+                        newRapidGames++
+                        val white = game["white"] as? Map<*, *> ?: continue
+                        val black = game["black"] as? Map<*, *> ?: continue
+                        val whiteName = (white["username"] as? String)?.lowercase() ?: continue
+                        val blackName = (black["username"] as? String)?.lowercase() ?: continue
+                        val playerIsWhite = whiteName == player
+                        val opponent = if (playerIsWhite) blackName else whiteName
+                        val opponentRating =
+                            ((if (playerIsWhite) black["rating"] else white["rating"]) as? Number)?.toInt() ?: 0
+                        if (opponent in excluded) continue
+                        if (!visited.contains(opponent) && queued.add(opponent)) next.add(opponent)
+                        if (isRatingInBand(opponentRating, targetBand)) qualifying.add(opponent)
+                    }
+                }
+            }
+            if (stopReason.isNotEmpty()) break
+            if (depth == request.maxDepth) {
+                stopReason = "MAX_DEPTH"
+                break
+            }
+            frontier = next.toList()
+            depth++
+        }
+        if (stopReason.isEmpty()) stopReason = "EMPTY_FRONTIER"
+        return HumanMovePopulationDiscoveryResponse(
+            ratingBand = targetBand.value,
+            seedPlayers = request.seedPlayers,
+            excludedPlayers = request.excludedPlayers,
+            targetQualifyingPlayers = request.targetQualifyingPlayers,
+            qualifyingPlayers = qualifying.toList(),
+            qualifyingPlayerCount = qualifying.size,
+            maxPlayers = request.maxPlayers,
+            maxGamesPerPlayer = request.maxGamesPerPlayer,
+            maxDepth = request.maxDepth,
+            playersVisited = visited.size,
+            gamesInspected = gamesInspected,
+            rapidGames = rapidGames,
+            uniqueGamesProcessed = seenUrls.size,
+            maxDepthReached = depth,
             stopReason = stopReason,
         )
     }

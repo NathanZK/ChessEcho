@@ -4,6 +4,8 @@ import com.chessecho.dto.HumanMoveBfsRequest
 import com.chessecho.dto.HumanMoveBfsResponse
 import com.chessecho.dto.HumanMoveFinalizeRequest
 import com.chessecho.dto.HumanMoveFinalizeResponse
+import com.chessecho.dto.HumanMovePopulationDiscoveryRequest
+import com.chessecho.dto.HumanMovePopulationDiscoveryResponse
 import com.chessecho.service.HumanMoveBfsService
 import com.chessecho.service.HumanMoveDistributionFinalizationService
 import org.springframework.http.ResponseEntity
@@ -25,6 +27,11 @@ class HumanMoveBfsController(
         val response = humanMoveBfsService.runBfs(request)
         return ResponseEntity.ok(response)
     }
+
+    @PostMapping("/population/discover")
+    fun discoverPopulation(
+        @RequestBody request: HumanMovePopulationDiscoveryRequest,
+    ): ResponseEntity<HumanMovePopulationDiscoveryResponse> = ResponseEntity.ok(humanMoveBfsService.discoverPopulation(request))
 
     @PostMapping("/finalize")
     fun finalize(
