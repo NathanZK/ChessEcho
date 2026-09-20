@@ -4612,6 +4612,11 @@ class AgentWorkflowTest(unittest.TestCase):
 
     def test_reopen_tests_preserves_production_candidate_and_requires_gate_two_again(self):
         """Exceptional test-fixture recovery preserves production and repeats Gate 2."""
+        (self.root / "src").mkdir(parents=True, exist_ok=True)
+        (self.root / "src" / "Example.kt").write_text("historical implementation\n", encoding="utf-8")
+        self.git("add", "src/Example.kt")
+        self.git("commit", "-qm", "historical implementation")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
         self.bootstrap_to_implementation()
         previous_test_commit = self.state()["test_commit"]
         previous_test_approval = self.state()["approvals"]["tests"]
@@ -4638,7 +4643,7 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertNotIn("test_review", reopened["artifacts"])
         self.assertEqual(head_before, self.git("rev-parse", "HEAD").stdout.strip())
         self.assertEqual(production_before, (self.root / "src" / "Example.kt").read_text(encoding="utf-8"))
-        self.assertEqual("?? src/Example.kt", self.git("status", "--porcelain", "--untracked-files=all").stdout.strip())
+        self.assertEqual("M src/Example.kt", self.git("status", "--porcelain", "--untracked-files=all").stdout.strip())
         self.assertEqual(1, len(reopened["test_reopenings"]))
         reopening = reopened["test_reopenings"][0]
         self.assertTrue(reopening["active"])
@@ -4648,7 +4653,10 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual(previous_test_approval, reopening["previous_test_approval"])
 
         (self.root / "src" / "test" / "ExampleTest.kt").write_text(
-            "corrected test\n", encoding="utf-8"
+            "from pathlib import Path\n"
+            "assert Path('src/Example.kt').read_text() == 'implementation candidate\\n', "
+            "'expected failure'\n",
+            encoding="utf-8",
         )
         self.git("add", "src/test/ExampleTest.kt")
         self.git("commit", "-qm", "correct test fixture")
@@ -4663,9 +4671,8 @@ class AgentWorkflowTest(unittest.TestCase):
                 "--agent",
                 "chess-echo-test-implementer",
                 "--failure-command",
-                "%s -c \"import sys; content = open('src/test/ExampleTest.kt').read(); "
-                "sys.exit(0) if 'corrected' in content else "
-                "(sys.stderr.write('expected failure'), sys.exit(1))\"" % sys.executable,
+                "%s -c \"exec(compile(open('src/test/ExampleTest.kt').read(), "
+                "'src/test/ExampleTest.kt', 'exec'))\"" % sys.executable,
                 "--failure-contains",
                 "expected failure",
             )[0],
@@ -4676,6 +4683,18 @@ class AgentWorkflowTest(unittest.TestCase):
         recorded_failure = self.state()["test_failure"]
         self.assertEqual(previous_test_commit, recorded_failure["result"]["previous_test_commit"])
         self.assertEqual(corrected_candidate, recorded_failure["result"]["corrected_test_commit"])
+        fixture_manifest = recorded_failure["result"]["fixtures"]
+        self.assertEqual(["src/test/ExampleTest.kt"], [item["path"] for item in fixture_manifest])
+        self.assertEqual([corrected_candidate], [item["commit"] for item in fixture_manifest])
+        self.assertRegex(fixture_manifest[0]["blob"], r"^[0-9a-f]{40}$")
+        self.assertEqual(
+            fixture_manifest,
+            recorded_failure["result"]["before"]["fixtures"],
+        )
+        self.assertEqual(
+            fixture_manifest,
+            recorded_failure["result"]["after"]["fixtures"],
+        )
         self.assertEqual("nonzero-exit", recorded_failure["result"]["before"]["outcome"])
         self.assertEqual("success", recorded_failure["result"]["after"]["outcome"])
         self.assertEqual(production_before, (self.root / "src" / "Example.kt").read_text(encoding="utf-8"))
@@ -4712,7 +4731,7 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertFalse(approved["test_reopenings"][0]["active"])
         self.assertEqual(approved["test_commit"], approved["test_reopenings"][0]["new_test_commit"])
         self.assertEqual(production_before, (self.root / "src" / "Example.kt").read_text(encoding="utf-8"))
-        self.assertEqual("?? src/Example.kt", self.git("status", "--porcelain", "--untracked-files=all").stdout.strip())
+        self.assertEqual("M src/Example.kt", self.git("status", "--porcelain", "--untracked-files=all").stdout.strip())
 
     def test_submit_tests_reopened_rejects_synthetic_failure_marker(self):
         """A marker command that always exits nonzero cannot pass reopened evidence."""
@@ -5593,7 +5612,17 @@ class AgentWorkflowTest(unittest.TestCase):
 
     def test_approve_tests_reopening_metadata_preserved_through_journal_and_recovery(self):
         """Reopened-test acknowledgment/reopening metadata survives a crash and recovery."""
+        (self.root / "src").mkdir(parents=True, exist_ok=True)
+        (self.root / "src" / "Example.kt").write_text(
+            "historical implementation\n", encoding="utf-8"
+        )
+        self.git("add", "src/Example.kt")
+        self.git("commit", "-qm", "historical implementation")
+        self.git("update-ref", "refs/remotes/origin/main", "HEAD")
         self.bootstrap_to_implementation()
+        (self.root / "src" / "Example.kt").write_text(
+            "implementation candidate\n", encoding="utf-8"
+        )
         code, payload, _ = self.run_cli(
             "reopen-tests",
             str(ISSUE),
@@ -5602,7 +5631,10 @@ class AgentWorkflowTest(unittest.TestCase):
         )
         self.assertEqual(0, code)
         (self.root / "src" / "test" / "ExampleTest.kt").write_text(
-            "corrected test\n", encoding="utf-8"
+            "from pathlib import Path\n"
+            "assert Path('src/Example.kt').read_text() == 'implementation candidate\\n', "
+            "'expected failure'\n",
+            encoding="utf-8"
         )
         self.git("add", "src/test/ExampleTest.kt")
         self.git("commit", "-qm", "correct test fixture")
@@ -5616,9 +5648,8 @@ class AgentWorkflowTest(unittest.TestCase):
                 "--agent",
                 "chess-echo-test-implementer",
                 "--failure-command",
-                "%s -c \"import sys; content = open('src/test/ExampleTest.kt').read(); "
-                "sys.exit(0) if 'corrected' in content else "
-                "(sys.stderr.write('expected failure'), sys.exit(1))\"" % sys.executable,
+                "%s -c \"exec(compile(open('src/test/ExampleTest.kt').read(), "
+                "'src/test/ExampleTest.kt', 'exec'))\"" % sys.executable,
                 "--failure-contains",
                 "expected failure",
             )[0],
