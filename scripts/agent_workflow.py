@@ -4651,21 +4651,69 @@ def _verify_reopened_test_evidence(root, config, args, state, test_head):
         "missing-previous-test-commit",
         "reopened submit-tests requires a recorded pre-correction test commit",
     )
-    candidate_diff = _git_candidate_diff(root, config, test_head)
     context = "submit-tests reopened-test evidence"
+    target_head = _state_target_head(state)
+    fixture_paths = [
+        path
+        for path in _git_diff_names(root, config, "%s..%s" % (target_head, test_head))
+        if _is_test_file(path)
+    ]
+    _ensure(
+        fixture_paths,
+        "missing-reopened-fixture",
+        "%s requires at least one corrected test fixture" % context,
+    )
+    fixtures = []
+    for path in fixture_paths:
+        _ensure(
+            not pathlib.PurePosixPath(path).is_absolute()
+            and ".." not in pathlib.PurePosixPath(path).parts,
+            "invalid-reopened-fixture-path",
+            "%s fixture path is not repository-relative: %s" % (context, path),
+        )
+        entry = _git_tree_entry(root, config, test_head, path)
+        _ensure(
+            entry is not None and entry.split()[1] == "blob",
+            "missing-reopened-fixture",
+            "%s fixture is absent from corrected test commit: %s" % (context, path),
+        )
+        blob_sha = entry.split()[2]
+        fixtures.append({"path": path, "commit": test_head, "blob": blob_sha})
+
+    def materialize_fixtures(worktree):
+        for fixture in fixtures:
+            path = worktree / fixture["path"]
+            path.parent.mkdir(parents=True, exist_ok=True)
+            blob = _run_checked(
+                _git_command(config, "cat-file", "blob", fixture["blob"]),
+                _effective_limits(config, "git"),
+                root,
+                "git-fixture-read-failed",
+                "%s could not read immutable fixture %s" % (context, fixture["path"]),
+            )
+            raw = base64.b64decode(blob["result"]["stdout"]["base64"])
+            path.write_bytes(raw)
+            observed = _run_checked(
+                _git_command(config, "hash-object", "--", fixture["path"]),
+                _effective_limits(config, "git"),
+                worktree,
+                "git-fixture-hash-failed",
+                "%s could not verify materialized fixture %s"
+                % (context, fixture["path"]),
+            )["stdout_text"].strip()
+            _ensure(
+                observed == fixture["blob"],
+                "reopened-fixture-integrity-mismatch",
+                "%s materialized fixture differs from corrected test commit: %s"
+                % (context, fixture["path"]),
+            )
+
     scratch = _completed_run_scratch_path(
         root, config, args.issue, uuid.uuid4().hex, "submit-tests-reopened-evidence"
     )
     try:
         _create_scratch_worktree(root, config, scratch, previous_test_commit, context)
-        if candidate_diff:
-            attempt = _try_apply_reconciliation_patch(scratch, config, scratch, candidate_diff)
-            _ensure(
-                attempt["applied"],
-                "candidate-apply-conflict",
-                "%s could not apply the current implementation candidate onto the "
-                "pre-correction tests" % context,
-            )
+        materialize_fixtures(scratch)
         before = _run_bounded(
             shlex.split(args.failure_command),
             _effective_limits(config, "validation"),
@@ -4674,6 +4722,7 @@ def _verify_reopened_test_evidence(root, config, args, state, test_head):
     finally:
         _cleanup_scratch_worktree(root, config, scratch)
     before_result = before["result"]
+    before_result["fixtures"] = fixtures
     before_output = before["stdout_text"] + before["stderr_text"]
     _ensure(
         before_result.get("outcome") == "nonzero-exit" and before_result.get("exit_code") != 0,
@@ -4686,12 +4735,14 @@ def _verify_reopened_test_evidence(root, config, args, state, test_head):
         "pre-correction failure did not contain the expected behavioral message",
     )
 
+    materialize_fixtures(root)
     after = _run_bounded(
         shlex.split(args.failure_command),
         _effective_limits(config, "validation"),
         root,
     )
     after_result = after["result"]
+    after_result["fixtures"] = fixtures
     _ensure(
         after_result.get("outcome") == "success" and after_result.get("exit_code") == 0,
         "test-did-not-pass-after-correction",
@@ -4702,6 +4753,7 @@ def _verify_reopened_test_evidence(root, config, args, state, test_head):
         "after": after_result,
         "previous_test_commit": previous_test_commit,
         "corrected_test_commit": test_head,
+        "fixtures": fixtures,
     }
 
 
