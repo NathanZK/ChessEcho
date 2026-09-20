@@ -556,6 +556,19 @@ There is no `approve-pr`, `reject-pr`, `WAITING_FOR_PR`, or `PR_APPROVED` state.
 approved-test fixture defect before the implementation Approval Gate or draft PR creation; it preserves any
 uncommitted production candidate and requires Approval Gate 2 to run again.
 
+Fixture repair and contract revision are closed, distinct reopening semantics.
+`approved-test-fixture-defect` retains the immutable historical test boundary
+and requires RED-to-GREEN evidence through `_verify_reopened_test_evidence`.
+`approved-contract-revision` is available only through
+`reclassify-test-reopening` for one active fixture-repair reopening in
+`TEST_IMPLEMENTATION`: it requires explicit confirmation, no downstream
+candidate or publication state, and recorded `reanchor-target` evidence bound
+to the current target. The original reopening reason and historical approval
+remain unchanged; the effective semantic and authorization are recorded
+separately. Contract replacement tests use the ordinary genuine expected-RED
+protocol and become authoritative only after Approval Gate 2; their GREEN
+evidence is supplied later by implementation validation.
+
 When an approved plan is discovered to be defective during `TEST_IMPLEMENTATION`,
 `request-plan-revision` is the only governed recovery to planning. It requires
 `--reason-code approved-plan-defect`, a non-empty explanation, and an asserted
