@@ -518,6 +518,42 @@ def _test_reopen_active(state):
     return bool(reopenings and reopenings[-1].get("active"))
 
 
+TEST_REOPENING_SEMANTICS = (
+    "approved-test-fixture-defect",
+    "approved-contract-revision",
+)
+
+
+def _active_test_reopening_semantic(state, context):
+    reopening = (state.get("test_reopenings") or [None])[-1]
+    _ensure(
+        reopening is not None and reopening.get("active"),
+        "test-reopening-not-active",
+        "%s requires an active test reopening" % context,
+    )
+    semantic = reopening.get("effective_semantic") or reopening.get("reason")
+    _ensure(
+        semantic in TEST_REOPENING_SEMANTICS,
+        "invalid-test-reopening-semantic",
+        "%s has missing or unknown reopening semantics" % context,
+    )
+    return semantic
+
+
+def _test_boundary_base(state):
+    """Return the recorded pre-reanchor boundary for contract replacements."""
+    reopening = (state.get("test_reopenings") or [None])[-1]
+    if (
+        reopening
+        and reopening.get("active")
+        and reopening.get("effective_semantic") == "approved-contract-revision"
+    ):
+        reanchors = state.get("target_reanchors") or []
+        if reanchors and reanchors[-1].get("new_target_head") == state.get("target_head"):
+            return reanchors[-1].get("previous_target_head")
+    return _state_target_head(state)
+
+
 def _clear_post_tests(state):
     """Invalidate implementation and publication state after revised tests."""
     for key in ("implementation_report", "implementation_review"):
@@ -4887,15 +4923,39 @@ def command_submit_tests(args, root, config):
         "missing-test-commit",
         "submit-tests requires a committed test change",
     )
-    test_paths = _git_diff_names(root, config, "%s..%s" % (target_head, test_head))
-    _git_ancestor(root, config, target_head, test_head, "submit-tests")
-    _require_test_only(test_paths, scope, "submit-tests")
+    test_base = _test_boundary_base(state)
+    test_paths = _git_diff_names(root, config, "%s..%s" % (test_base, test_head))
+    _git_ancestor(root, config, test_base, test_head, "submit-tests")
+    contract_revision = (
+        _test_reopen_active(state)
+        and _active_test_reopening_semantic(state, "submit-tests")
+        == "approved-contract-revision"
+    )
+    if contract_revision:
+        _ensure(
+            test_paths and all(_is_test_file(path) for path in test_paths),
+            "test-scope-drift",
+            "submit-tests contract replacement may change only test files: %s"
+            % ", ".join(test_paths),
+        )
+    else:
+        _require_test_only(test_paths, scope, "submit-tests")
     _ensure(
         args.failure_command and shlex.split(args.failure_command),
         "missing-test-failure-check",
         "submit-tests requires a targeted failure command",
     )
-    if _test_reopen_active(state):
+    if contract_revision:
+        _ensure(
+            any(path in args.failure_command for path in test_paths),
+            "synthetic-test-failure",
+            "submit-tests contract replacement must execute a changed test path",
+        )
+    if (
+        _test_reopen_active(state)
+        and _active_test_reopening_semantic(state, "submit-tests")
+        == "approved-test-fixture-defect"
+    ):
         failure_result = _verify_reopened_test_evidence(
             root, config, args, state, test_head
         )
@@ -4913,11 +4973,12 @@ def command_submit_tests(args, root, config):
             "test-did-not-fail",
             "targeted test command did not fail before implementation",
         )
-        _ensure(
-            args.failure_contains in failure_output,
-            "unexpected-test-failure",
-            "targeted test failed without the expected behavioral message",
-        )
+        if not contract_revision:
+            _ensure(
+                args.failure_contains in failure_output,
+                "unexpected-test-failure",
+                "targeted test failed without the expected behavioral message",
+            )
     if _test_reopen_active(state):
         _require_no_uncommitted_test_changes(root, config, "submit-tests after failure check")
     else:
@@ -5001,7 +5062,7 @@ def _build_test_transition_journal(root, config, state, acknowledgment):
         test_paths = []
     else:
         test_paths = _git_diff_names(
-            root, config, "%s..%s" % (target_head, candidate_test_commit)
+            root, config, "%s..%s" % (_test_boundary_base(state), candidate_test_commit)
         )
     reopening = dict(state["test_reopenings"][-1]) if _test_reopen_active(state) else None
     return {
@@ -5016,6 +5077,7 @@ def _build_test_transition_journal(root, config, state, acknowledgment):
         "status": "pending",
         "acknowledgment": acknowledgment,
         "target_head": target_head,
+        "test_boundary_base": _test_boundary_base(state),
         "candidate_test_commit": candidate_test_commit,
         "expected_parent": candidate_test_commit,
         "approved_scope": state.get("approved_scope"),
@@ -5073,6 +5135,11 @@ def _validate_test_transition_journal(root, config, state, journal, context):
         "test-approval-journal-mismatch",
         "%s target does not match the workflow" % context,
     )
+    _ensure(
+        journal.get("test_boundary_base"),
+        "test-approval-journal-mismatch",
+        "%s journal has no test boundary base" % context,
+    )
     if state.get("status") == "WAITING_FOR_TEST_HUMAN_APPROVAL":
         _ensure(
             journal.get("candidate_test_commit") == state.get("test_commit"),
@@ -5096,7 +5163,8 @@ def _validate_test_transition_journal(root, config, state, journal, context):
             _git_diff_names(
                 root,
                 config,
-                "%s..%s" % (journal["target_head"], journal["candidate_test_commit"]),
+                "%s..%s"
+                % (journal["test_boundary_base"], journal["candidate_test_commit"]),
             )
         )
     _ensure(
@@ -5192,11 +5260,11 @@ def _verify_authoritative_test_approval(
     )
     if not _tests_not_applicable(state):
         candidate_test_commit = journal["candidate_test_commit"]
-        target_head = journal["target_head"]
-        _git_ancestor(root, config, target_head, candidate_test_commit, context)
+        test_boundary_base = journal["test_boundary_base"]
+        _git_ancestor(root, config, test_boundary_base, candidate_test_commit, context)
         current_test_paths = sorted(
             _git_diff_names(
-                root, config, "%s..%s" % (target_head, candidate_test_commit)
+                root, config, "%s..%s" % (test_boundary_base, candidate_test_commit)
             )
         )
         _ensure(
@@ -5381,9 +5449,21 @@ def command_approve_tests(args, root, config):
         _ensure(target_head, "missing-target-head", "approve-tests requires target_head")
 
         # Verify that only approved test files changed in the candidate commit
-        test_paths = _git_diff_names(root, config, "%s..%s" % (target_head, candidate_test_commit))
-        _git_ancestor(root, config, target_head, candidate_test_commit, "approve-tests")
-        _require_test_only(test_paths, scope, "approve-tests")
+        test_base = _test_boundary_base(state)
+        test_paths = _git_diff_names(root, config, "%s..%s" % (test_base, candidate_test_commit))
+        _git_ancestor(root, config, test_base, candidate_test_commit, "approve-tests")
+        if (
+            reopened_tests
+            and _active_test_reopening_semantic(state, "approve-tests")
+            == "approved-contract-revision"
+        ):
+            _ensure(
+                test_paths and all(_is_test_file(path) for path in test_paths),
+                "test-scope-drift",
+                "approve-tests contract replacement may change only test files",
+            )
+        else:
+            _require_test_only(test_paths, scope, "approve-tests")
         _ensure(
             _current_head(root, config) == candidate_test_commit,
             "test-commit-mismatch",
@@ -5470,6 +5550,7 @@ def command_reopen_tests(args, root, config):
             "active": True,
             "initiated_by": "reopen-tests",
             "reason": args.reason,
+            "effective_semantic": args.reason,
             "reopened_at": _now(),
             "previous_test_commit": previous_test_commit,
             "previous_test_approval": previous_test_approval,
@@ -5490,6 +5571,80 @@ def command_reopen_tests(args, root, config):
         "status": state["status"],
         "reason": args.reason,
         "previous_test_commit": previous_test_commit,
+    }
+
+
+def command_reclassify_test_reopening(args, root, config):
+    """Authorize the sole fixture-repair to contract-revision semantic change."""
+    state = _read_state(root, config, args.issue)
+    _expect_status(state, "TEST_IMPLEMENTATION", "reclassify-test-reopening")
+    _ensure(
+        args.semantic == "approved-contract-revision",
+        "invalid-test-reopening-semantic",
+        "reclassify-test-reopening requires approved-contract-revision",
+    )
+    _ensure(args.by.strip(), "missing-requester", "reclassify-test-reopening requires --by")
+    _ensure(
+        args.confirm == "contract_revision_approved",
+        "approval-confirmation-mismatch",
+        "Expected confirmation phrase for contract revision: contract_revision_approved",
+    )
+    semantic = _active_test_reopening_semantic(state, "reclassify-test-reopening")
+    _ensure(
+        semantic == "approved-test-fixture-defect",
+        "invalid-test-reopening-semantic",
+        "only an approved-test-fixture-defect reopening may be reclassified",
+    )
+    _ensure(
+        not state.get("test_commit")
+        and not state.get("implementation_candidate")
+        and not state.get("implementation_commit")
+        and not state.get("validation")
+        and not state.get("draft_pr"),
+        "reopening-artifacts-exist",
+        "reclassification requires pre-implementation state with no candidate artifacts",
+    )
+    reanchors = state.get("target_reanchors")
+    _ensure(
+        isinstance(reanchors, list) and reanchors,
+        "missing-target-reconciliation",
+        "reclassification requires recorded target reconciliation",
+    )
+    target = _state_target_head(state)
+    reconciliation = reanchors[-1]
+    _ensure(
+        isinstance(reconciliation, dict)
+        and reconciliation.get("new_target_head") == target
+        and reconciliation.get("previous_target_head")
+        and reconciliation.get("target_base") == config["target_base"]
+        and reconciliation.get("remote_ref") == "origin/%s" % config["target_base"]
+        and reconciliation.get("target_drift", {}).get("transition") == "reanchor-target"
+        and reconciliation.get("target_drift", {}).get("disposition") == "reanchor"
+        and reconciliation.get("target_drift", {}).get("product_intent") == "preserved"
+        and reconciliation.get("target_drift", {}).get("repository_realization") == "stale",
+        "invalid-target-reconciliation",
+        "reclassification requires valid reconciliation evidence for the recorded target",
+    )
+    reopening = state["test_reopenings"][-1]
+    prior = dict(reopening)
+    reopening["effective_semantic"] = args.semantic
+    reopening["semantic_reclassification"] = {
+        "from": semantic,
+        "to": args.semantic,
+        "authorized_by": args.by,
+        "authorized_at": _now(),
+        "confirmation": args.confirm,
+        "target_reconciliation": {
+            "previous_target_head": reconciliation["previous_target_head"],
+            "new_target_head": reconciliation["new_target_head"],
+        },
+    }
+    _write_state(root, config, args.issue, state)
+    return {
+        "ok": True,
+        "status": state["status"],
+        "semantic": args.semantic,
+        "previous_reopening": prior,
     }
 
 
@@ -7350,6 +7505,13 @@ def build_parser():
     _add_issue(reopen_tests)
     reopen_tests.add_argument("--reason", required=True)
 
+    reclassify_test_reopening = subparsers.add_parser("reclassify-test-reopening")
+    _add_root(reclassify_test_reopening)
+    _add_issue(reclassify_test_reopening)
+    reclassify_test_reopening.add_argument("--semantic", required=True)
+    reclassify_test_reopening.add_argument("--by", required=True)
+    reclassify_test_reopening.add_argument("--confirm", required=True)
+
     reanchor_target = subparsers.add_parser("reanchor-target")
     _add_root(reanchor_target)
     _add_issue(reanchor_target)
@@ -7455,6 +7617,7 @@ COMMANDS = {
     "recover-test-approval": command_recover_test_approval,
     "reject-tests": command_reject_tests,
     "reopen-tests": command_reopen_tests,
+    "reclassify-test-reopening": command_reclassify_test_reopening,
     "reanchor-target": command_reanchor_target,
     "reconcile-candidate": command_reconcile_candidate,
     "recover-implementation-target": command_recover_implementation_target,

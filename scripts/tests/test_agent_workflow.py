@@ -4928,6 +4928,229 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual(1, code)
         self.assertEqual("draft-pr-already-created", payload["error"]["code"])
 
+    def _seed_reconciled_reopening(self):
+        """Create an active fixture reopening with a recorded target reanchor."""
+        self.bootstrap_to_implementation()
+        prior = self.state()
+        previous_target = prior["target_head"]
+        current_target = self.advance_remote_ref_from(
+            previous_target,
+            {"reconciliation-marker.txt": "target reconciled\n"},
+            name="advance reconciliation target",
+        )
+        state = dict(prior)
+        state["target_head"] = current_target
+        state["base_head"] = current_target
+        state["target_reanchors"] = [
+            {
+                "previous_target_head": previous_target,
+                "new_target_head": current_target,
+                "target_base": "main",
+                "remote_ref": "origin/main",
+                "requested_by": "owner",
+                "requested_at": "2026-09-21T00:00:00+00:00",
+                "validated_artifacts": ["plan", "plan_review", "test_report", "test_review"],
+                "target_drift": {
+                    "condition": "target-drift",
+                    "product_intent": "preserved",
+                    "repository_realization": "stale",
+                    "disposition": "reanchor",
+                    "transition": "reanchor-target",
+                    "revision_class": None,
+                },
+            }
+        ]
+        self.write_state(state)
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "reopen-tests",
+                str(ISSUE),
+                "--reason",
+                "approved-test-fixture-defect",
+            )[0],
+        )
+        return prior, current_target
+
+    def _reclassify_reconciled_reopening(self):
+        prior, current_target = self._seed_reconciled_reopening()
+        code, payload, _ = self.run_cli(
+            "reclassify-test-reopening",
+            str(ISSUE),
+            "--semantic",
+            "approved-contract-revision",
+            "--by",
+            "owner",
+            "--confirm",
+            "contract_revision_approved",
+        )
+        self.assertEqual(0, code, payload)
+        return prior, current_target
+
+    def test_contract_revision_reclassification_accepts_expected_red_test_boundary(self):
+        """A reconciled replacement contract remains RED until implementation."""
+        prior, current_target = self._reclassify_reconciled_reopening()
+        state = self.state()
+        reopening = state["test_reopenings"][-1]
+        self.assertEqual("approved-test-fixture-defect", reopening["reason"])
+        self.assertEqual("approved-contract-revision", reopening["effective_semantic"])
+        self.assertEqual(prior["test_commit"], reopening["previous_test_commit"])
+        self.assertEqual(current_target, state["target_head"])
+
+        test_path = self.root / "src" / "test" / "ContractReplacementTest.py"
+        test_path.write_text(
+            "from pathlib import Path\n"
+            "assert Path('src/Example.kt').read_text() == 'contract behavior\\n'\n",
+            encoding="utf-8",
+        )
+        self.git("add", "src/test/ContractReplacementTest.py")
+        self.git("commit", "-qm", "add contract replacement test")
+
+        code, payload, _ = self.run_cli(
+            "submit-tests",
+            str(ISSUE),
+            "--artifact",
+            "artifacts-src/test-report.md",
+            "--agent",
+            "chess-echo-test-implementer",
+            "--failure-command",
+            "%s -c \"exec(compile(open('src/test/ContractReplacementTest.py').read(), "
+            "'src/test/ContractReplacementTest.py', 'exec'))\"" % sys.executable,
+            "--failure-contains",
+            "AssertionError",
+        )
+        self.assertEqual(0, code, payload)
+        self.assertEqual("TEST_REVIEW", self.state()["status"])
+
+    def test_contract_revision_reclassification_requires_bound_reconciliation(self):
+        """The semantic change fails closed without valid target evidence."""
+        self.bootstrap_to_implementation()
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "reopen-tests",
+                str(ISSUE),
+                "--reason",
+                "approved-test-fixture-defect",
+            )[0],
+        )
+
+        code, payload, _ = self.run_cli(
+            "reclassify-test-reopening",
+            str(ISSUE),
+            "--semantic",
+            "approved-contract-revision",
+            "--by",
+            "owner",
+            "--confirm",
+            "contract_revision_approved",
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("missing-target-reconciliation", payload["error"]["code"])
+        self.assertEqual("TEST_IMPLEMENTATION", self.state()["status"])
+
+    def test_contract_revision_reclassification_preserves_fixture_provenance(self):
+        """Reclassification records a new semantic without rewriting approval history."""
+        prior, _current_target = self._reclassify_reconciled_reopening()
+        reopening = self.state()["test_reopenings"][-1]
+        self.assertEqual(prior["test_commit"], reopening["previous_test_commit"])
+        self.assertEqual(prior["approvals"]["tests"], reopening["previous_test_approval"])
+        self.assertEqual("approved-test-fixture-defect", reopening["reason"])
+        self.assertEqual("approved-contract-revision", reopening["effective_semantic"])
+        self.assertEqual(
+            "approved-test-fixture-defect",
+            reopening["semantic_reclassification"]["from"],
+        )
+        self.assertEqual(
+            "approved-contract-revision",
+            reopening["semantic_reclassification"]["to"],
+        )
+        self.assertEqual(1, len(self.state()["test_reopenings"]))
+
+    def test_contract_revision_replacement_rejects_out_of_scope_changes(self):
+        """Replacement contracts retain the test-only approved-scope boundary."""
+        self._reclassify_reconciled_reopening()
+        (self.root / "src" / "Example.kt").write_text(
+            "production change\n", encoding="utf-8"
+        )
+        self.git("add", "src/Example.kt")
+        self.git("commit", "-qm", "change production during test stage")
+
+        code, payload, _ = self.run_cli(
+            "submit-tests",
+            str(ISSUE),
+            "--artifact",
+            "artifacts-src/test-report.md",
+            "--agent",
+            "chess-echo-test-implementer",
+            "--failure-command",
+            "%s -c \"import sys; sys.exit(1)\"" % sys.executable,
+            "--failure-contains",
+            "expected failure",
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("test-scope-drift", payload["error"]["code"])
+
+    def test_contract_revision_replacement_rejects_synthetic_failure_marker(self):
+        """Expected-RED evidence must execute the replacement test, not a marker."""
+        self._reclassify_reconciled_reopening()
+        test_path = self.root / "src" / "test" / "ContractReplacementTest.py"
+        test_path.write_text(
+            "raise AssertionError('expected contract failure')\n", encoding="utf-8"
+        )
+        self.git("add", "src/test/ContractReplacementTest.py")
+        self.git("commit", "-qm", "add contract replacement test")
+
+        code, payload, _ = self.run_cli(
+            "submit-tests",
+            str(ISSUE),
+            "--artifact",
+            "artifacts-src/test-report.md",
+            "--agent",
+            "chess-echo-test-implementer",
+            "--failure-command",
+            "%s -c \"import sys; sys.stderr.write('expected contract failure'); "
+            "sys.exit(1)\"" % sys.executable,
+            "--failure-contains",
+            "expected contract failure",
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("synthetic-test-failure", payload["error"]["code"])
+
+    def test_fixture_repair_still_requires_green_after_reclassification_support(self):
+        """Fixture repair remains on the existing RED-to-GREEN verifier."""
+        self.bootstrap_to_implementation()
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "reopen-tests",
+                str(ISSUE),
+                "--reason",
+                "approved-test-fixture-defect",
+            )[0],
+        )
+        (self.root / "src" / "test" / "ExampleTest.kt").write_text(
+            "corrected fixture\n", encoding="utf-8"
+        )
+        self.git("add", "src/test/ExampleTest.kt")
+        self.git("commit", "-qm", "correct test fixture")
+
+        code, payload, _ = self.run_cli(
+            "submit-tests",
+            str(ISSUE),
+            "--artifact",
+            "artifacts-src/test-report.md",
+            "--agent",
+            "chess-echo-test-implementer",
+            "--failure-command",
+            "%s -c \"import sys; sys.stderr.write('fixture failure'); sys.exit(1)\""
+            % sys.executable,
+            "--failure-contains",
+            "fixture failure",
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("test-did-not-pass-after-correction", payload["error"]["code"])
+
     def test_plan_revision_request_returns_to_planning_with_audit_history(self):
         self.bootstrap_to_test_implementation()
         prior = self.state()
