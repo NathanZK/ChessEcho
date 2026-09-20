@@ -91,6 +91,7 @@ ARTIFACT_FILES = {
     "test_review": "test-review.md",
     "implementation_report": "implementation-report.md",
     "implementation_review": "implementation-review.md",
+    "draft_pr_body": "draft-pr-body.md",
 }
 
 class WorkflowError(Exception):
@@ -2573,6 +2574,87 @@ def _validate_pr_body(body_path):
         "invalid-pr-body-content",
         "Draft PR Testing section must contain coverage beyond an aggregate count",
     )
+
+
+def _generate_pr_body(root, config, issue, state):
+    """Persist a draft PR body derived only from verified workflow evidence."""
+    _verify_approval_artifacts(
+        root,
+        config,
+        issue,
+        state,
+        (
+            "plan",
+            "plan_review",
+            "test_report",
+            "test_review",
+            "implementation_report",
+            "implementation_review",
+        ),
+        "generate-pr-body",
+    )
+    candidate = state.get("implementation_candidate")
+    _ensure(
+        isinstance(candidate, dict)
+        and isinstance(candidate.get("commit_subject"), str)
+        and candidate["commit_subject"].strip()
+        and isinstance(candidate.get("candidate_paths"), list)
+        and candidate["candidate_paths"],
+        "missing-implementation-candidate",
+        "generate-pr-body requires an accepted implementation candidate",
+    )
+    validation = state.get("validation")
+    _ensure(
+        isinstance(validation, dict)
+        and validation.get("passed") is True
+        and isinstance(validation.get("profile"), str)
+        and validation["profile"]
+        and isinstance(validation.get("checks"), list)
+        and validation["checks"],
+        "validation-missing",
+        "generate-pr-body requires successful recorded validation",
+    )
+    check_names = []
+    for check in validation["checks"]:
+        _ensure(
+            isinstance(check, dict)
+            and isinstance(check.get("name"), str)
+            and check["name"]
+            and check.get("passed") is True,
+            "validation-missing",
+            "generate-pr-body requires every recorded validation check to pass",
+        )
+        check_names.append(check["name"])
+
+    paths = ", ".join("`%s`" % path for path in candidate["candidate_paths"])
+    checks = ", ".join("`%s`" % name for name in check_names)
+    body = (
+        "## What\n"
+        "%s across %s.\n\n"
+        "## Why\n"
+        "Publish the approved workflow implementation for issue #%s from its "
+        "recorded evidence.\n\n"
+        "## Testing\n"
+        "The `%s` validation scenario passed %s for the approved implementation "
+        "candidate.\n"
+        % (candidate["commit_subject"].strip(), paths, issue, validation["profile"], checks)
+    )
+    destination = _artifacts_dir(root, config, issue) / ARTIFACT_FILES["draft_pr_body"]
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(body, encoding="utf-8")
+    return destination
+
+
+def _generated_artifact_identity(root, path, kind):
+    """Describe a workflow-generated artifact at its canonical path."""
+    data = path.read_bytes()
+    return {
+        "kind": kind,
+        "path": _relative(path, root),
+        "recorded_at": _now(),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "byte_length": len(data),
+    }
 
 
 def _validate_implementation_commit_subject(subject, issue):
@@ -5886,13 +5968,13 @@ def command_create_draft_pr(args, root, config):
         "implementation-commit-mismatch",
         "create-draft-pr requires HEAD to match approved implementation_commit",
     )
-    body_path = _resolve_file(root, args.body_file)
-    _validate_pr_body(body_path)
     if args.skip_github:
         _require_publication_topology(root, config, state, head, "create-draft-pr")
     if not args.skip_github:
         _require_clean_tree(root, config, "create-draft-pr")
         _require_publication_topology(root, config, state, head, "create-draft-pr")
+    body_path = _generate_pr_body(root, config, args.issue, state)
+    _validate_pr_body(body_path)
 
     github_limits = _effective_limits(config, "github")
     command = _github_command(
@@ -5944,6 +6026,9 @@ def command_create_draft_pr(args, root, config):
         or _repository_from_pr_url(pr_identity.get("url")),
         "url": pr_identity.get("url"),
     }
+    state["artifacts"]["draft_pr_body"] = _generated_artifact_identity(
+        root, body_path, "draft_pr_body"
+    )
     state["status"] = "WORKFLOW_COMPLETED"
     _write_state(root, config, args.issue, state)
     return {"ok": True, "status": state["status"], "draft_pr": state["draft_pr"]}
@@ -7336,7 +7421,7 @@ def build_parser():
     _add_root(create_draft_pr)
     _add_issue(create_draft_pr)
     create_draft_pr.add_argument("--title", required=True)
-    create_draft_pr.add_argument("--body-file", required=True)
+    create_draft_pr.add_argument("--body-file")
     create_draft_pr.add_argument("--head")
     create_draft_pr.add_argument("--skip-github", action="store_true")
 

@@ -2847,18 +2847,6 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assert_clean_status()
 
         # Create draft PR completes workflow without redundant approval gate
-        code, payload, _ = self.run_cli(
-            "create-draft-pr",
-            str(ISSUE),
-            "--title",
-            "Issue 321",
-            "--body-file",
-            "artifacts-src/plan.md",
-            "--skip-github",
-        )
-        self.assertEqual(1, code)
-        self.assertEqual("invalid-pr-body-format", payload["error"]["code"])
-
         self.assertEqual(
             0,
             self.run_cli(
@@ -2866,8 +2854,6 @@ class AgentWorkflowTest(unittest.TestCase):
                 str(ISSUE),
                 "--title",
                 "Issue 321",
-                "--body-file",
-                "artifacts-src/pr-body.md",
                 "--skip-github",
             )[0],
         )
@@ -4562,6 +4548,100 @@ class AgentWorkflowTest(unittest.TestCase):
 
         self.assertEqual(1, code)
         self.assertEqual("invalid-implementation-topology", payload["error"]["code"])
+
+    def test_generated_pr_body_is_evidence_grounded_and_validator_approved(self):
+        """The workflow generator renders publication prose from recorded evidence."""
+        self.bootstrap_to_draft_pr_creation()
+
+        body_path = workflow._generate_pr_body(
+            self.root, workflow._load_config(self.root), ISSUE, self.state()
+        )
+
+        body = body_path.read_text(encoding="utf-8")
+        self.assertEqual(
+            ["What", "Why", "Testing"],
+            re.findall(r"^##\s+(.+?)\s*$", body, flags=re.MULTILINE),
+        )
+        self.assertIn("src/Example.kt", body)
+        self.assertIn("workflow-tooling", body)
+        self.assertIn("workflow-check", body)
+        self.assertIn("scenario", body.lower())
+        workflow._validate_pr_body(body_path)
+
+    def test_generated_pr_body_fails_closed_without_successful_validation(self):
+        """Missing workflow validation cannot be replaced by generic success prose."""
+        self.bootstrap_to_draft_pr_creation()
+        state = self.state()
+        state["validation"] = None
+
+        with self.assertRaisesRegex(workflow.WorkflowError, "validation"):
+            workflow._generate_pr_body(
+                self.root, workflow._load_config(self.root), ISSUE, state
+            )
+
+    def test_create_draft_pr_publishes_generated_body_not_external_body_file(self):
+        """A valid external compatibility body cannot control publication content."""
+        self.bootstrap_to_draft_pr_creation()
+        external_body = self.write_artifact(
+            "misleading-pr-body.md",
+            "## What\nMisleading external change.\n\n"
+            "## Why\nMisleading external reason.\n\n"
+            "## Testing\nMeaningful but external scenario prose.\n",
+        )
+        commands = []
+
+        def capture_github(command, limits, cwd, code, context, env=None):
+            if command[:3] == ["gh", "pr", "create"]:
+                commands.append(command)
+                return {
+                    "command": command,
+                    "result": {"outcome": "success", "exit_code": 0},
+                    "stdout_text": "https://example.test/owner/repo/pull/321\n",
+                    "stderr_text": "",
+                }
+            if command[:3] == ["gh", "pr", "view"]:
+                return {
+                    "command": command,
+                    "result": {"outcome": "success", "exit_code": 0},
+                    "stdout_text": json.dumps(
+                        {
+                            "number": 321,
+                            "headRefName": "workflow-branch",
+                            "headRefOid": self.state()["implementation_commit"],
+                            "headRepository": {"nameWithOwner": "owner/repo"},
+                            "baseRefName": "main",
+                            "state": "OPEN",
+                            "isDraft": True,
+                            "url": "https://example.test/owner/repo/pull/321",
+                        }
+                    ),
+                    "stderr_text": "",
+                }
+            return original(command, limits, cwd, code, context, env=env)
+
+        original = workflow._run_checked
+        with mock.patch.object(workflow, "_run_checked", side_effect=capture_github):
+            code, payload, _ = self.run_cli(
+                "create-draft-pr",
+                str(ISSUE),
+                "--title",
+                "Issue 321",
+                "--body-file",
+                str(external_body),
+            )
+
+        self.assertEqual(0, code, payload)
+        self.assertEqual(1, len(commands))
+        published_body = pathlib.Path(
+            commands[0][commands[0].index("--body-file") + 1]
+        )
+        self.assertNotEqual(external_body.resolve(), published_body.resolve())
+        self.assertNotIn("Misleading external change", published_body.read_text(encoding="utf-8"))
+        self.assertEqual(
+            str(published_body.resolve().relative_to(self.root.resolve())),
+            self.state()["draft_pr"]["body_file"],
+        )
+        workflow._validate_pr_body(published_body)
 
     def test_reject_implementation_returns_to_implementation_without_restart(self):
         self.bootstrap_to_validation()
