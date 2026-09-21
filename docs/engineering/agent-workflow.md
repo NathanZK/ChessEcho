@@ -137,6 +137,19 @@ approvals, commit/tree/topology identity, PR head identity, and publication or
 reconciliation gates. Ordinary authors are not expected to provide those
 workflow artifacts in a PR description.
 
+Governed draft PR descriptions are workflow-controlled and are generated from
+approved implementation evidence. That evidence may provide a `pr_prose`
+object with human-facing `what`, `why`, and `testing` fields. `What` explains
+the behavioral or product change, `Why` explains its engineering or product
+rationale, and `Testing` is rendered as a Markdown bullet list of meaningful
+scenarios, regressions, or edge cases. Approved evidence should provide
+`testing` as a list; legacy sentence-form evidence is normalized into bullets
+without adding validation claims. The generator does not use mutable issue text or an agent-supplied
+`--body-file` as publication authority, and it fails closed when semantic
+evidence is missing or invalid. Existing artifact identity, approval,
+validation, topology, and publication checks remain authoritative; prose never
+establishes workflow evidence or authorization.
+
 An in-progress run may use `reanchor-target ISSUE --by REQUESTER` only before
 implementation artifacts exist (planning through test review). The command
 requires a clean worktree, fetches `origin/<target_base>`, and accepts only a

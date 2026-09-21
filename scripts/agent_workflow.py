@@ -2663,6 +2663,55 @@ def _generate_pr_body(root, config, issue, state):
         "missing-implementation-candidate",
         "generate-pr-body requires an accepted implementation candidate",
     )
+    implementation_report = state["artifacts"]["implementation_report"]
+    report_path = (root / implementation_report["path"]).resolve()
+    report_text = report_path.read_text(encoding="utf-8")
+    report_prose = None
+    try:
+        parsed_report = json.loads(report_text)
+    except ValueError:
+        parsed_report = None
+    if isinstance(parsed_report, dict):
+        report_prose = parsed_report.get("pr_prose")
+        _ensure(
+            isinstance(report_prose, dict),
+            "semantic-pr-body-evidence-missing",
+            "approved implementation report must contain semantic pr_prose",
+        )
+    else:
+        report_prose = candidate.get("pr_prose")
+        if not isinstance(report_prose, dict):
+            paths = ", ".join("`%s`" % path for path in candidate["candidate_paths"])
+            report_prose = {
+                "what": "%s, with the approved behavior implemented in %s."
+                % (candidate["commit_subject"].strip(), paths),
+                "why": "Keep governed publication workflow-owned so approved evidence remains authoritative and external body input cannot replace it.",
+                "testing": "Covered the approved implementation scenario and the configured validation checks for the candidate.",
+            }
+    _ensure(
+        isinstance(report_prose, dict),
+        "semantic-pr-body-evidence-missing",
+        "approved implementation evidence must contain semantic pr_prose",
+    )
+    prose = {}
+    for field in ("what", "why", "testing"):
+        value = report_prose.get(field)
+        if isinstance(value, list):
+            values = [item.strip() for item in value if isinstance(item, str) and item.strip()]
+            value = "\n".join("- %s" % item for item in values)
+        elif field == "testing" and isinstance(value, str):
+            values = [
+                item.strip()
+                for item in re.split(r"(?<=[.!?])\s+|,\s+(?=(?:and|or)\b)", value)
+                if item.strip()
+            ]
+            value = "\n".join("- %s" % item for item in values)
+        _ensure(
+            isinstance(value, str) and value.strip(),
+            "semantic-pr-body-evidence-missing",
+            "approved implementation evidence pr_prose requires %s" % field,
+        )
+        prose[field] = value.strip()
     validation = state.get("validation")
     _ensure(
         isinstance(validation, dict)
@@ -2674,7 +2723,6 @@ def _generate_pr_body(root, config, issue, state):
         "validation-missing",
         "generate-pr-body requires successful recorded validation",
     )
-    check_names = []
     for check in validation["checks"]:
         _ensure(
             isinstance(check, dict)
@@ -2684,20 +2732,14 @@ def _generate_pr_body(root, config, issue, state):
             "validation-missing",
             "generate-pr-body requires every recorded validation check to pass",
         )
-        check_names.append(check["name"])
-
-    paths = ", ".join("`%s`" % path for path in candidate["candidate_paths"])
-    checks = ", ".join("`%s`" % name for name in check_names)
     body = (
         "## What\n"
-        "%s across %s.\n\n"
+        "%s\n\n"
         "## Why\n"
-        "Publish the approved workflow implementation for issue #%s from its "
-        "recorded evidence.\n\n"
+        "%s\n\n"
         "## Testing\n"
-        "The `%s` validation scenario passed %s for the approved implementation "
-        "candidate.\n"
-        % (candidate["commit_subject"].strip(), paths, issue, validation["profile"], checks)
+        "%s\n"
+        % (prose["what"], prose["why"], prose["testing"])
     )
     destination = _artifacts_dir(root, config, issue) / ARTIFACT_FILES["draft_pr_body"]
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -5797,6 +5839,7 @@ def command_submit_implementation(args, root, config):
         "candidate_paths": changed_names,
         "candidate_tree": candidate_tree,
         "commit_subject": commit_subject,
+        "pr_prose": evidence.get("pr_prose"),
         "accepted_at": _now(),
     }
     state["validation"] = None
