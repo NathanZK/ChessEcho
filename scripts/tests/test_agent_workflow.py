@@ -83,6 +83,32 @@ class AgentWorkflowTest(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
+    def test_reviewer_contract_requires_direct_acceptance_criterion_evidence(self):
+        reviewer_contract = (
+            pathlib.Path(__file__).resolve().parents[2]
+            / ".github"
+            / "agents"
+            / "chess-echo-reviewer.md"
+        )
+        text = reviewer_contract.read_text(encoding="utf-8").lower()
+
+        required_clauses = {
+            "acceptance criterion": "criterion-by-criterion review",
+            "direct evidence": "direct evidence requirement",
+            "structural evidence": "structural evidence distinction",
+            "behavioral evidence": "behavioral evidence distinction",
+            "base/candidate": "BASE/CANDIDATE comparison evidence",
+            "approved base": "approved base revision binding",
+            "required environment": "environment-specific evidence",
+            "postgresql/testcontainers": "PostgreSQL/Testcontainers evidence",
+            "deterministic coordination": "deterministic coordination evidence",
+            "conflict safe position inserts use deterministic hash order": "#380 mocked unit test example",
+            "not a postgresql deadlock reproducer": "#380 PostgreSQL deadlock distinction",
+        }
+        for phrase, requirement in required_clauses.items():
+            with self.subTest(requirement=requirement):
+                self.assertIn(phrase, text)
+
     def git(self, *arguments):
         return subprocess.run(
             ["git", *arguments],
