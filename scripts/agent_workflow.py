@@ -6193,6 +6193,71 @@ def _lookup_pr_identity(root, config, pr_reference, repository=None):
     return identity
 
 
+def _text_digest(text):
+    """Compute the sha256 hex digest and byte length of UTF-8 text."""
+    data = text.encode("utf-8")
+    return hashlib.sha256(data).hexdigest(), len(data)
+
+
+def _lookup_pr_body(root, config, pr_reference, repository=None):
+    """Independently look up a PR's live body text via `gh pr view --json body`."""
+    github_limits = _effective_limits(config, "github")
+    command = _github_command(
+        config,
+        "pr",
+        "view",
+        pr_reference,
+        "--json",
+        "body",
+    )
+    if repository:
+        command.extend(["--repo", repository])
+    completed = _run_checked(
+        command,
+        github_limits,
+        root,
+        "pr-body-lookup-failed",
+        "unable to independently verify PR %s body" % pr_reference,
+    )
+    try:
+        payload = json.loads(completed["stdout_text"])
+    except ValueError:
+        _raise("pr-body-lookup-invalid", "gh pr view returned malformed JSON body for %s" % pr_reference)
+    return payload.get("body")
+
+
+def _update_pr_body(root, config, pr_reference, body_path, repository=None):
+    """Publish a governed body onto an existing PR via `gh pr edit --body-file`."""
+    github_limits = _effective_limits(config, "github")
+    command = _github_command(
+        config,
+        "pr",
+        "edit",
+        pr_reference,
+        "--body-file",
+        str(body_path),
+    )
+    if repository:
+        command.extend(["--repo", repository])
+    _run_checked(
+        command,
+        github_limits,
+        root,
+        "pr-revision-body-update-failed",
+        "unable to update PR %s body" % pr_reference,
+    )
+
+
+def _verify_live_pr_body(root, config, pr_reference, expected_text, repository, error_code):
+    """Re-read the live PR body and fail closed if it does not match exactly."""
+    live_body = _lookup_pr_body(root, config, pr_reference, repository=repository)
+    _ensure(
+        live_body == expected_text,
+        error_code,
+        "live PR %s body does not match the governed revised body" % pr_reference,
+    )
+
+
 def command_create_draft_pr(args, root, config):
     """Publish only an approved one-commit branch rooted at the fresh target."""
     state = _read_state(root, config, args.issue)
@@ -6482,6 +6547,18 @@ def command_publish_pr_revision(args, root, config):
         "publish-pr-revision requires a non-empty --by identity",
     )
 
+    # Generate and validate the canonical revised PR body from the approved
+    # candidate's evidence before any external call or journal write. The
+    # body must never be sourced from caller-supplied text: it is always
+    # regenerated from workflow-approved evidence, exactly like
+    # create-draft-pr, so a revision's PR body stays governed even when the
+    # revised evidence changed the approved prose (e.g. #345/#3451/#375).
+    body_path = _generate_pr_body(root, config, args.issue, state)
+    _validate_pr_body(body_path)
+    body_text = body_path.read_text(encoding="utf-8")
+    body_sha256, body_byte_length = _text_digest(body_text)
+    body_relative_path = _relative(body_path, root)
+
     # Independently re-fetch live PR state; never trust the journal or a
     # prior lookup for the divergence check itself.
     expected_identity = _pr_revision_expected_identity(
@@ -6517,6 +6594,9 @@ def command_publish_pr_revision(args, root, config):
         "target_branch": expected_branch,
         "expected_head": expected_head,
         "new_head": implementation_commit,
+        "body_relative_path": body_relative_path,
+        "body_sha256": body_sha256,
+        "body_byte_length": body_byte_length,
         "parent_issue": parent_run.get("issue"),
         "parent_implementation_commit": parent_run.get("parent_implementation_commit"),
         "requested_by": args.by,
@@ -6558,6 +6638,24 @@ def command_publish_pr_revision(args, root, config):
             "post-push PR verification failed: %s" % error.message,
         ) from error
 
+    # Update the existing PR's body through the governed revision path, then
+    # independently re-read the live body to verify it now matches exactly
+    # what was just published. GitHub does not offer an atomic transaction
+    # across the Git push and PR-body update, so both the push and this
+    # body update are modeled as recoverable, journaled steps: the journal
+    # stays "pending" until the live body has been independently verified.
+    _update_pr_body(
+        root, config, str(args.target_pr), body_path, repository=expected_repository
+    )
+    _verify_live_pr_body(
+        root,
+        config,
+        str(args.target_pr),
+        body_text,
+        expected_repository,
+        "pr-revision-post-edit-body-mismatch",
+    )
+
     journal["status"] = "finalized"
     journal["finalized_at"] = _now()
     _write_json(journal_path, journal)
@@ -6565,7 +6663,7 @@ def command_publish_pr_revision(args, root, config):
     state["draft_pr"] = {
         "created_at": parent_draft_pr.get("created_at"),
         "title": parent_draft_pr.get("title"),
-        "body_file": parent_draft_pr.get("body_file"),
+        "body_file": body_relative_path,
         "publication": {"command": [shlex.join(push_command)], "executed": True},
         "number": expected_number,
         "head_ref_name": expected_branch,
@@ -6574,6 +6672,9 @@ def command_publish_pr_revision(args, root, config):
         "url": parent_draft_pr.get("url"),
         "revision_of": {"target_pr": args.target_pr, "previous_head": expected_head},
     }
+    state["artifacts"]["draft_pr_body"] = _generated_artifact_identity(
+        root, body_path, "draft_pr_body"
+    )
     state["status"] = "WORKFLOW_COMPLETED"
     _write_state(root, config, args.issue, state)
     return {"ok": True, "status": state["status"], "draft_pr": state["draft_pr"]}
@@ -6619,6 +6720,32 @@ def command_recover_pr_revision(args, root, config):
         "pr-revision-journal-mismatch",
         "pr-revision journal is not bound to the current revision run and parent PR",
     )
+    _ensure(
+        isinstance(journal.get("body_relative_path"), str)
+        and journal["body_relative_path"]
+        and isinstance(journal.get("body_sha256"), str)
+        and journal["body_sha256"]
+        and isinstance(journal.get("body_byte_length"), int),
+        "pr-revision-journal-mismatch",
+        "pr-revision journal is missing required body binding fields",
+    )
+    # The revised body is regenerated fresh from the same immutable approved
+    # evidence used at publish time. Since generation is deterministic, the
+    # journal's recorded digest must match this fresh regeneration exactly;
+    # any mismatch means the journal was tampered with or is stale relative
+    # to the current run's evidence, and recovery must fail closed rather
+    # than reconcile toward an unverified claim.
+    fresh_body_path = _generate_pr_body(root, config, args.issue, state)
+    _validate_pr_body(fresh_body_path)
+    fresh_body_text = fresh_body_path.read_text(encoding="utf-8")
+    fresh_body_sha256, fresh_body_byte_length = _text_digest(fresh_body_text)
+    _ensure(
+        fresh_body_sha256 == journal["body_sha256"]
+        and fresh_body_byte_length == journal["body_byte_length"],
+        "pr-revision-journal-mismatch",
+        "pr-revision journal body binding does not match a freshly regenerated "
+        "body from the current approved evidence",
+    )
     if journal.get("status") == "finalized" and state.get("status") == "WORKFLOW_COMPLETED":
         return {"ok": True, "status": state["status"], "recovered": False, "already_finalized": True}
 
@@ -6647,7 +6774,33 @@ def command_recover_pr_revision(args, root, config):
     observed_head = live.get("headRefOid")
     if observed_head == journal["new_head"]:
         # The push landed but the local state update did not persist before
-        # an interruption; finalize now using only journaled evidence.
+        # an interruption. The PR body update is a separate, unordered step
+        # relative to the head push (GitHub offers no atomic transaction
+        # across a Git push and a PR-body update), so verify the live body
+        # independently and only issue the missing update if it does not
+        # already match the governed revised body.
+        live_body = _lookup_pr_body(
+            root,
+            config,
+            str(journal["target_pr"]),
+            repository=journal["target_repository"],
+        )
+        if live_body != fresh_body_text:
+            _update_pr_body(
+                root,
+                config,
+                str(journal["target_pr"]),
+                fresh_body_path,
+                repository=journal["target_repository"],
+            )
+            _verify_live_pr_body(
+                root,
+                config,
+                str(journal["target_pr"]),
+                fresh_body_text,
+                journal["target_repository"],
+                "pr-revision-recovery-body-mismatch",
+            )
         journal["status"] = "finalized"
         journal["finalized_at"] = _now()
         _write_json(journal_path, journal)
@@ -6656,11 +6809,15 @@ def command_recover_pr_revision(args, root, config):
             "head_ref_name": journal["target_branch"],
             "head_ref_oid": journal["new_head"],
             "repository": journal["target_repository"],
+            "body_file": journal["body_relative_path"],
             "revision_of": {
                 "target_pr": journal["target_pr"],
                 "previous_head": journal["expected_head"],
             },
         }
+        state["artifacts"]["draft_pr_body"] = _generated_artifact_identity(
+            root, fresh_body_path, "draft_pr_body"
+        )
         state["status"] = "WORKFLOW_COMPLETED"
         _write_state(root, config, args.issue, state)
         return {"ok": True, "status": state["status"], "recovered": True}

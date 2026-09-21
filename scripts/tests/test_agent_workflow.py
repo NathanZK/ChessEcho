@@ -6723,6 +6723,70 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
 
         return mock.patch.object(workflow, "_run_checked", side_effect=injected)
 
+    def patch_full_revision_publication(
+        self,
+        identity_sequence,
+        body_sequence=None,
+        edit_error=None,
+        push_error=None,
+    ):
+        """Mock `gh pr view` (identity and body-only), `gh pr edit`, and `git push`.
+
+        `identity_sequence` supplies successive responses to full-identity
+        `gh pr view --json number,...` calls (pre-push, then post-push).
+        `body_sequence` supplies successive body strings to body-only
+        `gh pr view --json body` calls (post-edit verification, and any
+        subsequent recovery re-read). Every external call actually issued is
+        recorded so tests can assert exactly what publication attempted.
+        """
+        original = workflow._run_checked
+        identity_iter = iter(identity_sequence)
+        body_iter = iter(body_sequence or [])
+        self.gh_view_calls = []
+        self.gh_edit_calls = []
+        self.git_push_calls = []
+
+        def injected(command, limits, cwd, code, context, env=None):
+            if command[:3] == ["gh", "pr", "view"]:
+                self.gh_view_calls.append(command)
+                json_index = command.index("--json") + 1
+                if command[json_index] == "body":
+                    return {
+                        "command": command,
+                        "result": {"outcome": "success", "exit_code": 0},
+                        "stdout_text": json.dumps({"body": next(body_iter)}),
+                        "stderr_text": "",
+                    }
+                return {
+                    "command": command,
+                    "result": {"outcome": "success", "exit_code": 0},
+                    "stdout_text": json.dumps(next(identity_iter)),
+                    "stderr_text": "",
+                }
+            if command[:3] == ["gh", "pr", "edit"]:
+                self.gh_edit_calls.append(command)
+                if edit_error:
+                    raise workflow.WorkflowError(edit_error, "injected edit failure")
+                return {
+                    "command": command,
+                    "result": {"outcome": "success", "exit_code": 0},
+                    "stdout_text": "",
+                    "stderr_text": "",
+                }
+            if command[:2] == ["git", "push"]:
+                self.git_push_calls.append(command)
+                if push_error:
+                    raise workflow.WorkflowError(push_error, "injected push failure")
+                return {
+                    "command": command,
+                    "result": {"outcome": "success", "exit_code": 0},
+                    "stdout_text": "",
+                    "stderr_text": "",
+                }
+            return original(command, limits, cwd, code, context, env=env)
+
+        return mock.patch.object(workflow, "_run_checked", side_effect=injected)
+
     def completed_run_reconciliation_journal_path(self, issue):
         return (
             self.root
@@ -7382,7 +7446,7 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
         self.assertFalse(workflow._revision_claim_covers("test", "plan"))
         self.assertTrue(workflow._revision_claim_covers("plan", "implementation"))
 
-    def bootstrap_child_at_draft_pr_creation(self, revision_class="implementation"):
+    def bootstrap_child_at_draft_pr_creation(self, revision_class="implementation", pr_prose=None):
         self.bootstrap_completed_parent(self.PARENT_ISSUE)
         self.advance_main_past(self.PARENT_ISSUE)
         self.set_parent_draft_pr(
@@ -7410,6 +7474,7 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
             test_commit=test_commit,
             candidate_diff=self.git_candidate_diff(test_commit),
             commit_subject="Add cosmetic documentation fix for issue #%s" % self.CHILD_ISSUE,
+            pr_prose=pr_prose,
         )
         self.assertEqual(
             0,
@@ -7493,6 +7558,10 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
     def test_publish_pr_revision_success_pushes_and_completes(self):
         self.bootstrap_child_at_draft_pr_creation()
         child_state = self.state_for(self.CHILD_ISSUE)
+        expected_body_identity, expected_body_path = self.expected_body_identity_for(
+            self.CHILD_ISSUE
+        )
+        expected_body_text = expected_body_path.read_text(encoding="utf-8")
         live_pr_before = {
             "number": 300,
             "state": "OPEN",
@@ -7506,8 +7575,9 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
         live_pr_after = dict(
             live_pr_before, headRefOid=child_state["implementation_commit"]
         )
-        with self.patch_gh_and_push(
-            pr_json_sequence=[live_pr_before, live_pr_after]
+        with self.patch_full_revision_publication(
+            identity_sequence=[live_pr_before, live_pr_after],
+            body_sequence=[expected_body_text],
         ):
             code, payload, _ = self.run_cli(
                 "publish-pr-revision", str(self.CHILD_ISSUE),
@@ -7528,11 +7598,253 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
         )
         journal = json.loads(journal_path.read_text(encoding="utf-8"))
         self.assertEqual("finalized", journal["status"])
-        self.assertEqual(2, len(self.gh_view_calls))
+        # Pre-push identity, post-push identity, and the post-edit body-only
+        # verification are three distinct `gh pr view` calls.
+        self.assertEqual(3, len(self.gh_view_calls))
         self.assertIn(
             "--force-with-lease=refs/heads/parent-branch:%s" % ("0" * 40),
             self.git_push_calls[0],
         )
+        # The governed revision body update/verify steps must also have run.
+        self.assertEqual(1, len(self.gh_edit_calls))
+        self.assertEqual(expected_body_identity["sha256"], journal["body_sha256"])
+        self.assertEqual(
+            expected_body_identity["byte_length"], journal["body_byte_length"]
+        )
+        self.assertEqual(
+            expected_body_identity["sha256"],
+            child_state["artifacts"]["draft_pr_body"]["sha256"],
+        )
+        published_body_path = self.root / child_state["draft_pr"]["body_file"]
+        self.assertEqual(expected_body_text, published_body_path.read_text(encoding="utf-8"))
+
+    def expected_body_identity_for(self, issue):
+        """Compute the exact body a governed publish/recover should generate.
+
+        Calls the same production body-generation primitives directly so
+        tests can assert against ground truth without duplicating or
+        hardcoding the semantic-prose-to-Markdown rendering logic.
+        """
+        state = self.state_for(issue)
+        config = workflow._load_config(self.root)
+        body_path = workflow._generate_pr_body(self.root, config, issue, state)
+        identity = workflow._generated_artifact_identity(self.root, body_path, "draft_pr_body")
+        return identity, body_path
+
+    def test_publish_pr_revision_regenerates_body_for_revised_evidence(self):
+        """Regression for #345/#3451/#375: revised Testing prose must publish
+        as the governed body, not the parent's stale paragraph."""
+        self.bootstrap_child_at_draft_pr_creation(
+            pr_prose={
+                "what": "Generate governed semantic PR prose and require Markdown bullet Testing formatting.",
+                "why": "Reviewers need the Testing section rendered as a bulleted list of concrete scenarios.",
+                "testing": [
+                    "Covered generated semantic PR prose and required Markdown bullet formatting for Testing.",
+                    "Failed closed for metadata-only reports and missing validation evidence.",
+                    "Preserved external body-file isolation and the existing structural validator contract.",
+                ],
+            }
+        )
+        child_state = self.state_for(self.CHILD_ISSUE)
+        expected_identity, expected_body_path = self.expected_body_identity_for(self.CHILD_ISSUE)
+        expected_text = expected_body_path.read_text(encoding="utf-8")
+        # The regenerated body must be the revised Markdown bullet list, not
+        # the parent PR's original one-paragraph Testing section (#375).
+        self.assertIn(
+            "- Covered generated semantic PR prose and required Markdown bullet formatting for Testing.",
+            expected_text,
+        )
+        self.assertNotIn(
+            "Covered semantic generation from approved evidence, failed closed for "
+            "metadata-only reports",
+            expected_text,
+        )
+        live_pr_before = {
+            "number": 300,
+            "state": "OPEN",
+            "isDraft": True,
+            "baseRefName": "main",
+            "headRefName": "parent-branch",
+            "headRefOid": "0" * 40,
+            "headRepository": {"nameWithOwner": "owner/repo"},
+            "url": "https://example.test/pr/300",
+        }
+        live_pr_after = dict(live_pr_before, headRefOid=child_state["implementation_commit"])
+        with self.patch_full_revision_publication(
+            identity_sequence=[live_pr_before, live_pr_after],
+            body_sequence=[expected_text],
+        ):
+            code, payload, _ = self.run_cli(
+                "publish-pr-revision", str(self.CHILD_ISSUE),
+                "--target-pr", "300",
+                "--by", "owner",
+                "--confirm", "pr_revision_confirmed",
+            )
+        self.assertEqual(0, code)
+        self.assertEqual(1, len(self.gh_edit_calls))
+        edit_body_file = self.gh_edit_calls[0][self.gh_edit_calls[0].index("--body-file") + 1]
+        self.assertEqual(expected_text, pathlib.Path(edit_body_file).read_text(encoding="utf-8"))
+
+    def test_publish_pr_revision_records_new_body_artifact_and_digest(self):
+        self.bootstrap_child_at_draft_pr_creation()
+        parent_body_identity = self.expected_body_identity_for(self.PARENT_ISSUE)[0]
+        child_state = self.state_for(self.CHILD_ISSUE)
+        expected_identity, _ = self.expected_body_identity_for(self.CHILD_ISSUE)
+        live_pr_before = {
+            "number": 300,
+            "state": "OPEN",
+            "isDraft": True,
+            "baseRefName": "main",
+            "headRefName": "parent-branch",
+            "headRefOid": "0" * 40,
+            "headRepository": {"nameWithOwner": "owner/repo"},
+            "url": "https://example.test/pr/300",
+        }
+        live_pr_after = dict(live_pr_before, headRefOid=child_state["implementation_commit"])
+        expected_body_path = self.root / expected_identity["path"]
+        expected_text = expected_body_path.read_text(encoding="utf-8")
+        with self.patch_full_revision_publication(
+            identity_sequence=[live_pr_before, live_pr_after],
+            body_sequence=[expected_text],
+        ):
+            code, payload, _ = self.run_cli(
+                "publish-pr-revision", str(self.CHILD_ISSUE),
+                "--target-pr", "300",
+                "--by", "owner",
+                "--confirm", "pr_revision_confirmed",
+            )
+        self.assertEqual(0, code)
+        recorded = self.state_for(self.CHILD_ISSUE)["artifacts"]["draft_pr_body"]
+        self.assertEqual(expected_identity["sha256"], recorded["sha256"])
+        self.assertEqual(expected_identity["byte_length"], recorded["byte_length"])
+        # The child's own body provenance must be recorded, not the parent's
+        # inherited artifact identity.
+        self.assertNotEqual(parent_body_identity["sha256"], recorded["sha256"])
+
+    def test_publish_pr_revision_verifies_live_body_after_publish(self):
+        self.bootstrap_child_at_draft_pr_creation()
+        child_state = self.state_for(self.CHILD_ISSUE)
+        expected_identity, expected_body_path = self.expected_body_identity_for(self.CHILD_ISSUE)
+        expected_text = expected_body_path.read_text(encoding="utf-8")
+        live_pr_before = {
+            "number": 300,
+            "state": "OPEN",
+            "isDraft": True,
+            "baseRefName": "main",
+            "headRefName": "parent-branch",
+            "headRefOid": "0" * 40,
+            "headRepository": {"nameWithOwner": "owner/repo"},
+            "url": "https://example.test/pr/300",
+        }
+        live_pr_after = dict(live_pr_before, headRefOid=child_state["implementation_commit"])
+        with self.patch_full_revision_publication(
+            identity_sequence=[live_pr_before, live_pr_after],
+            body_sequence=[expected_text],
+        ):
+            code, payload, _ = self.run_cli(
+                "publish-pr-revision", str(self.CHILD_ISSUE),
+                "--target-pr", "300",
+                "--by", "owner",
+                "--confirm", "pr_revision_confirmed",
+            )
+        self.assertEqual(0, code)
+        # A body-json gh pr view call (independent of the identity calls)
+        # must have been issued to verify the live body post-edit.
+        body_view_calls = [
+            call for call in self.gh_view_calls
+            if call[call.index("--json") + 1] == "body"
+        ]
+        self.assertEqual(1, len(body_view_calls))
+
+    def test_publish_pr_revision_fails_closed_before_push_when_body_evidence_invalid(self):
+        self.bootstrap_child_at_draft_pr_creation(
+            pr_prose={"what": "Only a what, no why or testing."}
+        )
+        code, payload, _ = self.run_cli(
+            "publish-pr-revision", str(self.CHILD_ISSUE),
+            "--target-pr", "300",
+            "--by", "owner",
+            "--confirm", "pr_revision_confirmed",
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("semantic-pr-body-evidence-missing", payload["error"]["code"])
+        journal_path = (
+            self.root / ".agent-workflow" / "runs" / ("issue-%s" % self.CHILD_ISSUE)
+            / "pr-revision-transition.json"
+        )
+        self.assertFalse(journal_path.exists())
+        self.assertEqual("DRAFT_PR_CREATION", self.state_for(self.CHILD_ISSUE)["status"])
+
+    def test_publish_pr_revision_leaves_recoverable_state_when_body_update_fails_after_push(self):
+        self.bootstrap_child_at_draft_pr_creation()
+        child_state = self.state_for(self.CHILD_ISSUE)
+        live_pr_before = {
+            "number": 300,
+            "state": "OPEN",
+            "isDraft": True,
+            "baseRefName": "main",
+            "headRefName": "parent-branch",
+            "headRefOid": "0" * 40,
+            "headRepository": {"nameWithOwner": "owner/repo"},
+            "url": "https://example.test/pr/300",
+        }
+        live_pr_after = dict(live_pr_before, headRefOid=child_state["implementation_commit"])
+        with self.patch_full_revision_publication(
+            identity_sequence=[live_pr_before, live_pr_after],
+            edit_error="pr-revision-body-update-failed",
+        ):
+            code, payload, _ = self.run_cli(
+                "publish-pr-revision", str(self.CHILD_ISSUE),
+                "--target-pr", "300",
+                "--by", "owner",
+                "--confirm", "pr_revision_confirmed",
+            )
+        self.assertEqual(1, code)
+        self.assertEqual("pr-revision-body-update-failed", payload["error"]["code"])
+        self.assertEqual("DRAFT_PR_CREATION", self.state_for(self.CHILD_ISSUE)["status"])
+        journal_path = (
+            self.root / ".agent-workflow" / "runs" / ("issue-%s" % self.CHILD_ISSUE)
+            / "pr-revision-transition.json"
+        )
+        journal = json.loads(journal_path.read_text(encoding="utf-8"))
+        self.assertEqual("pending", journal["status"])
+        # The HEAD did land -- only the body update remains outstanding.
+        self.assertEqual(1, len(self.git_push_calls))
+        self.assertEqual(child_state["implementation_commit"], journal["new_head"])
+
+    def test_publish_pr_revision_fails_closed_on_post_edit_body_tampering(self):
+        self.bootstrap_child_at_draft_pr_creation()
+        child_state = self.state_for(self.CHILD_ISSUE)
+        live_pr_before = {
+            "number": 300,
+            "state": "OPEN",
+            "isDraft": True,
+            "baseRefName": "main",
+            "headRefName": "parent-branch",
+            "headRefOid": "0" * 40,
+            "headRepository": {"nameWithOwner": "owner/repo"},
+            "url": "https://example.test/pr/300",
+        }
+        live_pr_after = dict(live_pr_before, headRefOid=child_state["implementation_commit"])
+        with self.patch_full_revision_publication(
+            identity_sequence=[live_pr_before, live_pr_after],
+            body_sequence=["## What\ntampered\n\n## Why\ntampered\n\n## Testing\n- tampered\n"],
+        ):
+            code, payload, _ = self.run_cli(
+                "publish-pr-revision", str(self.CHILD_ISSUE),
+                "--target-pr", "300",
+                "--by", "owner",
+                "--confirm", "pr_revision_confirmed",
+            )
+        self.assertEqual(1, code)
+        self.assertEqual("pr-revision-post-edit-body-mismatch", payload["error"]["code"])
+        self.assertEqual("DRAFT_PR_CREATION", self.state_for(self.CHILD_ISSUE)["status"])
+        journal_path = (
+            self.root / ".agent-workflow" / "runs" / ("issue-%s" % self.CHILD_ISSUE)
+            / "pr-revision-transition.json"
+        )
+        journal = json.loads(journal_path.read_text(encoding="utf-8"))
+        self.assertEqual("pending", journal["status"])
 
     def test_publish_pr_revision_rejects_non_draft_pr(self):
         self.bootstrap_child_at_draft_pr_creation()
@@ -7612,35 +7924,53 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
         self.assertEqual("DRAFT_PR_CREATION", self.state_for(self.CHILD_ISSUE)["status"])
         self.assertEqual(child_state["implementation_commit"], journal["new_head"])
 
+    def write_pr_revision_journal(self, run_issue, **overrides):
+        """Write a hand-crafted pr-revision transition journal for recovery
+        tests, defaulting to a fully consistent, correctly body-bound
+        journal that a real publish-pr-revision would have produced.
+
+        `run_issue` selects which run directory to write into and whose
+        state/body identity to derive defaults from; pass `issue=...` in
+        `overrides` to make the journal's own recorded `issue` field diverge
+        from `run_issue` (e.g. to simulate a journal bound to another run).
+        """
+        child_state = self.state_for(run_issue)
+        body_identity, _ = self.expected_body_identity_for(run_issue)
+        journal = {
+            "format": workflow.PR_REVISION_JOURNAL_FORMAT,
+            "version": 1,
+            "transition_id": "abc",
+            "issue": run_issue,
+            "operation": "publish-pr-revision",
+            "created_at": "2020-01-01T00:00:00+00:00",
+            "status": "pending",
+            "target_pr": 300,
+            "target_repository": "owner/repo",
+            "target_base": "main",
+            "target_branch": "parent-branch",
+            "expected_head": "0" * 40,
+            "new_head": child_state["implementation_commit"],
+            "body_relative_path": body_identity["path"],
+            "body_sha256": body_identity["sha256"],
+            "body_byte_length": body_identity["byte_length"],
+            "requested_by": "owner",
+            "confirmation": "pr_revision_confirmed",
+        }
+        journal.update(overrides)
+        journal_path = (
+            self.root / ".agent-workflow" / "runs" / ("issue-%s" % run_issue)
+            / "pr-revision-transition.json"
+        )
+        journal_path.write_text(json.dumps(journal), encoding="utf-8")
+        return journal_path, journal
+
     def test_recover_pr_revision_finalizes_after_interrupted_push(self):
         self.bootstrap_child_at_draft_pr_creation()
         child_state = self.state_for(self.CHILD_ISSUE)
         new_head = child_state["implementation_commit"]
-        journal_path = (
-            self.root / ".agent-workflow" / "runs" / ("issue-%s" % self.CHILD_ISSUE)
-            / "pr-revision-transition.json"
-        )
-        journal_path.write_text(
-            json.dumps(
-                {
-                    "format": workflow.PR_REVISION_JOURNAL_FORMAT,
-                    "version": 1,
-                    "transition_id": "abc",
-                    "issue": self.CHILD_ISSUE,
-                    "operation": "publish-pr-revision",
-                    "created_at": "2020-01-01T00:00:00+00:00",
-                    "status": "pending",
-                    "target_pr": 300,
-                    "target_repository": "owner/repo",
-                    "target_base": "main",
-                    "target_branch": "parent-branch",
-                    "expected_head": "0" * 40,
-                    "new_head": new_head,
-                    "requested_by": "owner",
-                    "confirmation": "pr_revision_confirmed",
-                }
-            ),
-            encoding="utf-8",
+        journal_path, journal = self.write_pr_revision_journal(self.CHILD_ISSUE)
+        expected_text = (self.root / journal["body_relative_path"]).read_text(
+            encoding="utf-8"
         )
         live_pr = {
             "number": 300,
@@ -7652,42 +7982,74 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
             "headRepository": {"nameWithOwner": "owner/repo"},
             "url": "https://example.test/pr/300",
         }
-        with self.patch_gh_and_push(pr_json=live_pr):
+        with self.patch_full_revision_publication(
+            identity_sequence=[live_pr], body_sequence=[expected_text]
+        ):
             code, payload, _ = self.run_cli("recover-pr-revision", str(self.CHILD_ISSUE))
         self.assertEqual(0, code)
         self.assertTrue(payload["recovered"])
         self.assertEqual("WORKFLOW_COMPLETED", self.state_for(self.CHILD_ISSUE)["status"])
+        # Body already matched the approved evidence; no edit was required.
+        self.assertEqual(0, len(self.gh_edit_calls))
+        self.assertEqual(
+            journal["body_sha256"],
+            self.state_for(self.CHILD_ISSUE)["artifacts"]["draft_pr_body"]["sha256"],
+        )
 
-    def test_recover_pr_revision_retry_required_when_push_never_happened(self):
+    def test_recover_pr_revision_reconciles_body_only_gap_after_head_already_published(self):
+        """The push landed but the body update did not; recovery must
+        update the body and finalize, not merely accept the pushed head."""
         self.bootstrap_child_at_draft_pr_creation()
         child_state = self.state_for(self.CHILD_ISSUE)
-        new_head = child_state["implementation_commit"]
+        live_pr_before = {
+            "number": 300,
+            "state": "OPEN",
+            "isDraft": True,
+            "baseRefName": "main",
+            "headRefName": "parent-branch",
+            "headRefOid": "0" * 40,
+            "headRepository": {"nameWithOwner": "owner/repo"},
+            "url": "https://example.test/pr/300",
+        }
+        live_pr_after = dict(live_pr_before, headRefOid=child_state["implementation_commit"])
+        with self.patch_full_revision_publication(
+            identity_sequence=[live_pr_before, live_pr_after],
+            edit_error="pr-revision-body-update-failed",
+        ):
+            code, _, _ = self.run_cli(
+                "publish-pr-revision", str(self.CHILD_ISSUE),
+                "--target-pr", "300",
+                "--by", "owner",
+                "--confirm", "pr_revision_confirmed",
+            )
+        self.assertEqual(1, code)
         journal_path = (
             self.root / ".agent-workflow" / "runs" / ("issue-%s" % self.CHILD_ISSUE)
             / "pr-revision-transition.json"
         )
-        journal_path.write_text(
-            json.dumps(
-                {
-                    "format": workflow.PR_REVISION_JOURNAL_FORMAT,
-                    "version": 1,
-                    "transition_id": "abc",
-                    "issue": self.CHILD_ISSUE,
-                    "operation": "publish-pr-revision",
-                    "created_at": "2020-01-01T00:00:00+00:00",
-                    "status": "pending",
-                    "target_pr": 300,
-                    "target_repository": "owner/repo",
-                    "target_base": "main",
-                    "target_branch": "parent-branch",
-                    "expected_head": "0" * 40,
-                    "new_head": new_head,
-                    "requested_by": "owner",
-                    "confirmation": "pr_revision_confirmed",
-                }
-            ),
-            encoding="utf-8",
+        journal = json.loads(journal_path.read_text(encoding="utf-8"))
+        self.assertEqual("pending", journal["status"])
+        expected_text = (self.root / journal["body_relative_path"]).read_text(
+            encoding="utf-8"
         )
+        stale_text = "## What\nstale\n\n## Why\nstale\n\n## Testing\n- stale\n"
+        live_pr_recovery = dict(live_pr_after)
+        with self.patch_full_revision_publication(
+            identity_sequence=[live_pr_recovery],
+            body_sequence=[stale_text, expected_text],
+        ):
+            code, payload, _ = self.run_cli("recover-pr-revision", str(self.CHILD_ISSUE))
+        self.assertEqual(0, code)
+        self.assertTrue(payload["recovered"])
+        self.assertEqual("WORKFLOW_COMPLETED", self.state_for(self.CHILD_ISSUE)["status"])
+        # Recovery had to actually issue the missing body update.
+        self.assertEqual(1, len(self.gh_edit_calls))
+        recorded = self.state_for(self.CHILD_ISSUE)["artifacts"]["draft_pr_body"]
+        self.assertEqual(journal["body_sha256"], recorded["sha256"])
+
+    def test_recover_pr_revision_retry_required_when_push_never_happened(self):
+        self.bootstrap_child_at_draft_pr_creation()
+        journal_path, journal = self.write_pr_revision_journal(self.CHILD_ISSUE)
         live_pr = {
             "number": 300,
             "state": "OPEN",
@@ -7698,42 +8060,17 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
             "headRepository": {"nameWithOwner": "owner/repo"},
             "url": "https://example.test/pr/300",
         }
-        with self.patch_gh_and_push(pr_json=live_pr):
+        with self.patch_full_revision_publication(identity_sequence=[live_pr]):
             code, payload, _ = self.run_cli("recover-pr-revision", str(self.CHILD_ISSUE))
         self.assertEqual(0, code)
         self.assertTrue(payload["retry_required"])
         self.assertNotEqual("WORKFLOW_COMPLETED", self.state_for(self.CHILD_ISSUE)["status"])
+        # Nothing external ran yet, so no body call should have been made.
+        self.assertEqual(0, len(self.gh_edit_calls))
 
     def test_recover_pr_revision_fails_closed_on_ambiguous_head(self):
         self.bootstrap_child_at_draft_pr_creation()
-        child_state = self.state_for(self.CHILD_ISSUE)
-        new_head = child_state["implementation_commit"]
-        journal_path = (
-            self.root / ".agent-workflow" / "runs" / ("issue-%s" % self.CHILD_ISSUE)
-            / "pr-revision-transition.json"
-        )
-        journal_path.write_text(
-            json.dumps(
-                {
-                    "format": workflow.PR_REVISION_JOURNAL_FORMAT,
-                    "version": 1,
-                    "transition_id": "abc",
-                    "issue": self.CHILD_ISSUE,
-                    "operation": "publish-pr-revision",
-                    "created_at": "2020-01-01T00:00:00+00:00",
-                    "status": "pending",
-                    "target_pr": 300,
-                    "target_repository": "owner/repo",
-                    "target_base": "main",
-                    "target_branch": "parent-branch",
-                    "expected_head": "0" * 40,
-                    "new_head": new_head,
-                    "requested_by": "owner",
-                    "confirmation": "pr_revision_confirmed",
-                }
-            ),
-            encoding="utf-8",
-        )
+        journal_path, journal = self.write_pr_revision_journal(self.CHILD_ISSUE)
         live_pr = {
             "number": 300,
             "state": "OPEN",
@@ -7744,7 +8081,7 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
             "headRepository": {"nameWithOwner": "owner/repo"},
             "url": "https://example.test/pr/300",
         }
-        with self.patch_gh_and_push(pr_json=live_pr):
+        with self.patch_full_revision_publication(identity_sequence=[live_pr]):
             code, payload, _ = self.run_cli("recover-pr-revision", str(self.CHILD_ISSUE))
         self.assertEqual(1, code)
         self.assertEqual("pr-revision-recovery-ambiguous", payload["error"]["code"])
@@ -7753,32 +8090,7 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
         self.bootstrap_child_at_draft_pr_creation()
         child_state = self.state_for(self.CHILD_ISSUE)
         new_head = child_state["implementation_commit"]
-        journal_path = (
-            self.root / ".agent-workflow" / "runs" / ("issue-%s" % self.CHILD_ISSUE)
-            / "pr-revision-transition.json"
-        )
-        journal_path.write_text(
-            json.dumps(
-                {
-                    "format": workflow.PR_REVISION_JOURNAL_FORMAT,
-                    "version": 1,
-                    "transition_id": "abc",
-                    "issue": self.CHILD_ISSUE,
-                    "operation": "publish-pr-revision",
-                    "created_at": "2020-01-01T00:00:00+00:00",
-                    "status": "pending",
-                    "target_pr": 300,
-                    "target_repository": "owner/repo",
-                    "target_base": "main",
-                    "target_branch": "parent-branch",
-                    "expected_head": "0" * 40,
-                    "new_head": new_head,
-                    "requested_by": "owner",
-                    "confirmation": "pr_revision_confirmed",
-                }
-            ),
-            encoding="utf-8",
-        )
+        journal_path, journal = self.write_pr_revision_journal(self.CHILD_ISSUE)
         closed_pr_at_new_head = {
             "number": 300,
             "state": "CLOSED",
@@ -7789,7 +8101,7 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
             "headRepository": {"nameWithOwner": "owner/repo"},
             "url": "https://example.test/pr/300",
         }
-        with self.patch_gh_and_push(pr_json=closed_pr_at_new_head):
+        with self.patch_full_revision_publication(identity_sequence=[closed_pr_at_new_head]):
             code, payload, _ = self.run_cli(
                 "recover-pr-revision", str(self.CHILD_ISSUE)
             )
@@ -7800,38 +8112,27 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
 
     def test_recover_pr_revision_rejects_journal_bound_to_other_run(self):
         self.bootstrap_child_at_draft_pr_creation()
-        child_state = self.state_for(self.CHILD_ISSUE)
-        journal_path = (
-            self.root / ".agent-workflow" / "runs" / ("issue-%s" % self.CHILD_ISSUE)
-            / "pr-revision-transition.json"
+        self.write_pr_revision_journal(self.CHILD_ISSUE, issue=9999)
+        code, payload, _ = self.run_cli(
+            "recover-pr-revision", str(self.CHILD_ISSUE)
         )
-        journal_path.write_text(
-            json.dumps(
-                {
-                    "format": workflow.PR_REVISION_JOURNAL_FORMAT,
-                    "version": 1,
-                    "transition_id": "abc",
-                    "issue": 9999,
-                    "operation": "publish-pr-revision",
-                    "created_at": "2020-01-01T00:00:00+00:00",
-                    "status": "pending",
-                    "target_pr": 300,
-                    "target_repository": "owner/repo",
-                    "target_base": "main",
-                    "target_branch": "parent-branch",
-                    "expected_head": "0" * 40,
-                    "new_head": child_state["implementation_commit"],
-                    "requested_by": "owner",
-                    "confirmation": "pr_revision_confirmed",
-                }
-            ),
-            encoding="utf-8",
+        self.assertEqual(1, code)
+        self.assertEqual("pr-revision-journal-mismatch", payload["error"]["code"])
+
+    def test_recover_pr_revision_rejects_body_digest_tampering(self):
+        """A journal whose recorded body digest no longer matches what the
+        current approved evidence would produce must fail closed rather
+        than reconciling toward a possibly tampered/stale claimed body."""
+        self.bootstrap_child_at_draft_pr_creation()
+        self.write_pr_revision_journal(
+            self.CHILD_ISSUE, body_sha256="f" * 64, body_byte_length=999999
         )
         code, payload, _ = self.run_cli(
             "recover-pr-revision", str(self.CHILD_ISSUE)
         )
         self.assertEqual(1, code)
         self.assertEqual("pr-revision-journal-mismatch", payload["error"]["code"])
+        self.assertEqual("DRAFT_PR_CREATION", self.state_for(self.CHILD_ISSUE)["status"])
 
     def test_reconcile_completed_run_succeeds_and_preserves_pr_identity(self):
         parent_state = self.bootstrap_completed_parent(self.PARENT_ISSUE)
