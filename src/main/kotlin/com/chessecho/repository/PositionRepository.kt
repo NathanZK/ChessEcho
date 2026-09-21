@@ -2,11 +2,29 @@ package com.chessecho.repository
 
 import com.chessecho.domain.Position
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
+import java.time.Instant
 import java.util.UUID
 
 interface PositionRepository : JpaRepository<Position, UUID> {
     fun findByHash(hash: String): Position?
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+        value = """
+            INSERT INTO position (id, hash, fen, created_at)
+            VALUES (:id, :hash, :fen, :createdAt)
+            ON CONFLICT (hash) DO NOTHING
+        """,
+        nativeQuery = true,
+    )
+    fun insertIfAbsent(
+        id: UUID,
+        hash: String,
+        fen: String,
+        createdAt: Instant,
+    ): Int
 
     @Query("SELECT p FROM Position p WHERE p.hash IN :hashes")
     fun findByHashIn(hashes: List<String>): List<Position>
