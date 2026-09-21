@@ -29,6 +29,9 @@ DEFAULT_IMPLEMENTATION_CONFIRMATION = "implementation_approved"
 DEFAULT_SUPERSESSION_CONFIRMATION = "supersede_confirmed"
 DEFAULT_COMPLETED_RUN_RECONCILIATION_CONFIRMATION = "completed_run_reconciled"
 DEFAULT_COMPLETED_RUN_RECOVERY_CONFIRMATION = "completed_run_recovery_confirmed"
+DEFAULT_SKIPPED_PUBLICATION_RECOVERY_CONFIRMATION = (
+    "skipped_publication_recovery_confirmed"
+)
 RECONCILIATION_CONFIRMATION = "implementation_target_reconciled"
 RECONCILIATION_REANCHOR_CONFIRMATION = "implementation_target_reconciliation_reanchored"
 IMPLEMENTATION_TARGET_RECOVERY_CONFIRMATION = "implementation_target_recovery_confirmed"
@@ -93,6 +96,7 @@ ARTIFACT_FILES = {
     "implementation_review": "implementation-review.md",
     "draft_pr_body": "draft-pr-body.md",
 }
+POST_APPROVAL_DERIVED_ARTIFACTS = frozenset(("draft_pr_body",))
 
 class WorkflowError(Exception):
     def __init__(self, code, message):
@@ -361,6 +365,15 @@ def _verify_approval_artifacts(root, config, issue, state, kinds, context):
         _verify_artifact_identity(root, config, issue, artifact, context)
 
 
+def _approval_bound_artifacts(artifacts):
+    """Return only artifacts whose identity was covered by implementation approval."""
+    return {
+        kind: artifact
+        for kind, artifact in (artifacts or {}).items()
+        if kind not in POST_APPROVAL_DERIVED_ARTIFACTS
+    }
+
+
 def _artifact_text(root, config, issue, kind):
     """Read the exact run-local report for human inspection at an approval gate."""
     artifact = _artifacts_dir(root, config, issue) / ARTIFACT_FILES[kind]
@@ -446,6 +459,17 @@ def _load_config(root):
     else:
         approvals["completed_run_reconciliation"] = (
             DEFAULT_COMPLETED_RUN_RECONCILIATION_CONFIRMATION
+        )
+    if "skipped_publication_recovery" in approvals:
+        _ensure(
+            isinstance(approvals.get("skipped_publication_recovery"), str)
+            and approvals["skipped_publication_recovery"],
+            "invalid-config",
+            "workflow.approvals.skipped_publication_recovery must be a non-empty string",
+        )
+    else:
+        approvals["skipped_publication_recovery"] = (
+            DEFAULT_SKIPPED_PUBLICATION_RECOVERY_CONFIRMATION
         )
 
     _ensure(
@@ -2942,7 +2966,8 @@ def _validate_implementation_transition_journal(root, config, state, journal, co
             "plan": state["approvals"].get("plan"),
             "tests": state["approvals"].get("tests"),
         }
-        and journal.get("artifacts") == state.get("artifacts")
+        and _approval_bound_artifacts(journal.get("artifacts"))
+        == _approval_bound_artifacts(state.get("artifacts"))
         and journal.get("validation") == state.get("validation")
         and journal.get("evidence") == state.get("validation")
         and journal.get("implementation_review_ready")
@@ -2988,11 +3013,24 @@ def _validate_implementation_transition_journal(root, config, state, journal, co
             "%s committed journal has an invalid workflow state" % context,
         )
     else:
+        legacy_skipped_publication = (
+            context == "recover-skipped-publication"
+            and state.get("status") == "WORKFLOW_COMPLETED"
+            and (state.get("draft_pr") or {}).get("publication", {}).get("executed")
+            is False
+            and not any(
+                (state.get("draft_pr") or {}).get(field)
+                for field in ("number", "url", "head_ref_name", "head_ref_oid")
+            )
+        )
         _ensure(
             isinstance(authoritative_commit, str)
             and authoritative_commit
             and implementation_commit == authoritative_commit
-            and state.get("status") == "DRAFT_PR_CREATION"
+            and (
+                state.get("status") == "DRAFT_PR_CREATION"
+                or legacy_skipped_publication
+            )
             and state.get("implementation_commit") == implementation_commit,
             "implementation-approval-journal-mismatch",
             "%s finalized journal does not match final workflow state" % context,
@@ -6184,9 +6222,115 @@ def command_create_draft_pr(args, root, config):
     state["artifacts"]["draft_pr_body"] = _generated_artifact_identity(
         root, body_path, "draft_pr_body"
     )
+    if args.skip_github:
+        state["status"] = "DRAFT_PR_CREATION"
+        _write_state(root, config, args.issue, state)
+        return {"ok": True, "status": state["status"], "draft_pr": state["draft_pr"]}
+    _ensure(
+        state["draft_pr"]["publication"]["executed"] is True
+        and state["draft_pr"]["number"] is not None
+        and state["draft_pr"]["url"]
+        and state["draft_pr"]["head_ref_name"]
+        and state["draft_pr"]["head_ref_oid"],
+        "invalid-draft-pr-identity",
+        "create-draft-pr requires executed publication and a complete GitHub PR identity",
+    )
     state["status"] = "WORKFLOW_COMPLETED"
     _write_state(root, config, args.issue, state)
     return {"ok": True, "status": state["status"], "draft_pr": state["draft_pr"]}
+
+
+def _skipped_publication_recovery_acknowledgment(config, confirm, by):
+    expected = config["workflow"]["approvals"]["skipped_publication_recovery"]
+    _ensure(
+        confirm == expected,
+        "approval-confirmation-mismatch",
+        "Expected confirmation phrase for skipped_publication_recovery gate: %s"
+        % expected,
+    )
+    return {
+        "kind": LOCAL_ACKNOWLEDGMENT_KIND,
+        "asserted_by": by,
+        "confirmation": confirm,
+        "recorded_at": _now(),
+        "independent_authorization": False,
+    }
+
+
+def command_recover_skipped_publication(args, root, config):
+    """Re-enter the governed publication gate for a legacy skipped publication."""
+    context = "recover-skipped-publication"
+    state = _read_state(root, config, args.issue)
+    _ensure(
+        state["status"] == "WORKFLOW_COMPLETED",
+        "completed-run-not-eligible",
+        "%s requires WORKFLOW_COMPLETED (current: %s)"
+        % (context, state["status"]),
+    )
+    draft_pr = state.get("draft_pr") or {}
+    publication = draft_pr.get("publication") or {}
+    _ensure(
+        publication.get("executed") is False,
+        "publication-not-skipped",
+        "%s requires publication.executed == false" % context,
+    )
+    _ensure(
+        not any(draft_pr.get(field) for field in ("number", "url", "head_ref_name", "head_ref_oid")),
+        "pr-identity-already-recorded",
+        "%s refuses a run with an existing PR identity" % context,
+    )
+    _ensure(
+        state.get("implementation_commit")
+        and _current_head(root, config) == state["implementation_commit"],
+        "implementation-commit-mismatch",
+        "%s requires HEAD to match the approved implementation commit" % context,
+    )
+    _require_clean_tree(root, config, context)
+    _ensure(
+        isinstance(state.get("validation"), dict)
+        and state["validation"].get("passed") is True,
+        "validation-missing",
+        "%s requires successful validation evidence" % context,
+    )
+    _verify_approval_artifacts(
+        root,
+        config,
+        args.issue,
+        state,
+        ("plan", "plan_review", "test_report", "test_review",
+         "implementation_report", "implementation_review"),
+        context,
+    )
+    _require_implementation_candidate_matches(root, config, state, context)
+    journal_path = _implementation_transition_journal_path(root, config, args.issue)
+    journal = _read_json(journal_path, "implementation approval journal")
+    _validate_implementation_transition_journal(root, config, state, journal, context)
+    _verify_artifact_identity(
+        root,
+        config,
+        args.issue,
+        state.get("artifacts", {}).get("draft_pr_body"),
+        context,
+    )
+    body_path = root / state["artifacts"]["draft_pr_body"]["path"]
+    _validate_pr_body(body_path)
+    _require_publication_topology(
+        root, config, state, state["implementation_commit"], context
+    )
+    _skipped_publication_recovery_acknowledgment(
+        config, args.confirm, args.by
+    )
+    state["status"] = "DRAFT_PR_CREATION"
+    state["recovery"] = {
+        "operation": context,
+        "acknowledgment": _skipped_publication_recovery_acknowledgment(
+            config, args.confirm, args.by
+        ),
+        "preserved": True,
+        "recorded_at": _now(),
+    }
+    _write_state(root, config, args.issue, state)
+    return {"ok": True, "status": state["status"], "recovered": True}
 
 
 def _pr_revision_journal_path(root, config, issue):
@@ -7544,6 +7688,13 @@ def build_parser():
     _add_issue(recover_completed_run)
     _add_human(recover_completed_run)
 
+    recover_skipped_publication = subparsers.add_parser(
+        "recover-skipped-publication"
+    )
+    _add_root(recover_skipped_publication)
+    _add_issue(recover_skipped_publication)
+    _add_human(recover_skipped_publication)
+
     submit_implementation = subparsers.add_parser("submit-implementation")
     _add_root(submit_implementation)
     _add_issue(submit_implementation)
@@ -7624,6 +7775,7 @@ COMMANDS = {
     "reconcile-implementation-target": command_reconcile_implementation_target,
     "reconcile-completed-run": command_reconcile_completed_run,
     "recover-completed-run-reconciliation": command_recover_completed_run_reconciliation,
+    "recover-skipped-publication": command_recover_skipped_publication,
     "submit-implementation": command_submit_implementation,
     "run-validation": command_run_validation,
     "review-implementation": command_review_implementation,

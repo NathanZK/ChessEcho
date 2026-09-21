@@ -2857,7 +2857,7 @@ class AgentWorkflowTest(unittest.TestCase):
                 "--skip-github",
             )[0],
         )
-        self.assertEqual("WORKFLOW_COMPLETED", self.state()["status"])
+        self.assertEqual("DRAFT_PR_CREATION", self.state()["status"])
 
     def test_approve_implementation_rejects_target_advance(self):
         """Implementation approval fails closed when the target branch advances."""
@@ -4642,6 +4642,194 @@ class AgentWorkflowTest(unittest.TestCase):
             self.state()["draft_pr"]["body_file"],
         )
         workflow._validate_pr_body(published_body)
+
+    def test_skip_github_remains_publication_pending(self):
+        """Skipping GitHub publication cannot satisfy the terminal workflow state."""
+        self.bootstrap_to_draft_pr_creation()
+
+        code, payload, _ = self.run_cli(
+            "create-draft-pr",
+            str(ISSUE),
+            "--title",
+            "Issue 321",
+            "--skip-github",
+        )
+
+        self.assertEqual(0, code, payload)
+        state = self.state()
+        self.assertNotEqual("WORKFLOW_COMPLETED", state["status"])
+        self.assertEqual("DRAFT_PR_CREATION", state["status"])
+        self.assertEqual(
+            False,
+            state.get("draft_pr", {}).get("publication", {}).get("executed", False),
+        )
+        self.assertIsNone(state.get("draft_pr", {}).get("number"))
+
+    def _prepare_legacy_skipped_publication(self):
+        self.bootstrap_to_draft_pr_creation()
+        code, payload, _ = self.run_cli(
+            "create-draft-pr",
+            str(ISSUE),
+            "--title",
+            "Issue 321",
+            "--skip-github",
+        )
+        self.assertEqual(0, code, payload)
+        state = self.state()
+        state["status"] = "WORKFLOW_COMPLETED"
+        self.write_state(state)
+        return state
+
+    def test_recover_skipped_publication_reenters_governed_creation_and_preserves_evidence(self):
+        """Legacy skipped publication recovers without replacing approved evidence."""
+        before = self._prepare_legacy_skipped_publication()
+        preserved = {
+            "approvals": before["approvals"],
+            "artifacts": before["artifacts"],
+            "candidate": before["implementation_candidate"],
+            "commit": before["implementation_commit"],
+        }
+
+        code, payload, _ = self.run_cli(
+            "recover-skipped-publication",
+            str(ISSUE),
+            "--by",
+            "owner",
+            "--confirm",
+            "skipped_publication_recovery_confirmed",
+        )
+
+        self.assertEqual(0, code, payload)
+        after = self.state()
+        self.assertEqual("DRAFT_PR_CREATION", after["status"])
+        self.assertEqual(preserved["approvals"], after["approvals"])
+        self.assertEqual(preserved["artifacts"], after["artifacts"])
+        self.assertEqual(preserved["candidate"], after["implementation_candidate"])
+        self.assertEqual(preserved["commit"], after["implementation_commit"])
+
+    def test_recover_skipped_publication_validates_before_any_github_invocation(self):
+        """Every recovery invariant fails before the governed publisher is called."""
+        invalid_cases = (
+            ("wrong status", lambda state: state.update(status="DRAFT_PR_CREATION")),
+            ("already executed", lambda state: state["draft_pr"]["publication"].update(executed=True)),
+            ("existing PR", lambda state: state["draft_pr"].update(number=9)),
+            ("malformed PR", lambda state: state["draft_pr"].update(head_ref_name="branch")),
+            (
+                "approval artifact",
+                lambda state: (
+                    self.root
+                    / ".agent-workflow"
+                    / "runs"
+                    / f"issue-{ISSUE}"
+                    / "artifacts"
+                    / "plan.md"
+                ).write_text("tampered", encoding="utf-8"),
+            ),
+            ("candidate identity", lambda state: state["implementation_candidate"].update(candidate_diff="changed")),
+            ("topology", lambda state: state.update(target_head="0" * 40)),
+            ("validation", lambda state: state["validation"].update(passed=False)),
+            ("PR body digest", lambda state: state["artifacts"]["draft_pr_body"].update(sha256="0" * 64)),
+            ("approved HEAD", lambda state: state.update(implementation_commit="0" * 40)),
+        )
+        for name, mutate in invalid_cases:
+            with self.subTest(name=name):
+                self.setUp()
+                self._prepare_legacy_skipped_publication()
+                state = self.state()
+                mutate(state)
+                self.write_state(state)
+                github_commands = []
+                original = workflow._run_checked
+
+                def capture(command, limits, cwd, error_code, context, env=None):
+                    if command[:2] == ["gh", "pr"]:
+                        github_commands.append(command)
+                    return original(command, limits, cwd, error_code, context, env=env)
+
+                with mock.patch.object(workflow, "_run_checked", side_effect=capture):
+                    code, payload, _ = self.run_cli(
+                        "recover-skipped-publication",
+                        str(ISSUE),
+                        "--by",
+                        "owner",
+                        "--confirm",
+                        "skipped_publication_recovery_confirmed",
+                    )
+                self.assertEqual(1, code, (name, payload))
+                self.assertEqual([], github_commands)
+
+    def test_recover_skipped_publication_then_normal_publication_completes(self):
+        """Recovery enters DRAFT_PR_CREATION and uses the existing publisher."""
+        self._prepare_legacy_skipped_publication()
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "recover-skipped-publication",
+                str(ISSUE),
+                "--by",
+                "owner",
+                "--confirm",
+                "skipped_publication_recovery_confirmed",
+            )[0],
+        )
+        commands = []
+        original = workflow._run_checked
+
+        def publish(command, limits, cwd, error_code, context, env=None):
+            if command[:3] == ["gh", "pr", "create"]:
+                commands.append(command)
+                return {"stdout_text": "https://github.com/owner/repo/pull/321", "stderr_text": ""}
+            if command[:3] == ["gh", "pr", "view"]:
+                return {
+                    "stdout_text": json.dumps({
+                        "number": 321,
+                        "headRefName": "workflow-branch",
+                        "headRefOid": self.state()["implementation_commit"],
+                        "headRepository": {"nameWithOwner": "owner/repo"},
+                        "url": "https://github.com/owner/repo/pull/321",
+                    }),
+                    "stderr_text": "",
+                }
+            return original(command, limits, cwd, error_code, context, env=env)
+
+        with mock.patch.object(workflow, "_run_checked", side_effect=publish):
+            code, payload, _ = self.run_cli(
+                "create-draft-pr",
+                str(ISSUE),
+                "--title",
+                "Issue 321",
+            )
+        self.assertEqual(0, code, payload)
+        self.assertEqual(1, len(commands))
+        state = self.state()
+        self.assertEqual("WORKFLOW_COMPLETED", state["status"])
+        self.assertTrue(state["draft_pr"]["publication"]["executed"])
+        self.assertEqual(321, state["draft_pr"]["number"])
+        self.assertEqual("workflow-branch", state["draft_pr"]["head_ref_name"])
+        self.assertEqual(state["implementation_commit"], state["draft_pr"]["head_ref_oid"])
+
+    def test_create_draft_pr_rejects_incomplete_pr_identity(self):
+        """Publication cannot complete when GitHub returns a malformed identity."""
+        self.bootstrap_to_draft_pr_creation()
+        original = workflow._run_checked
+
+        def malformed(command, limits, cwd, error_code, context, env=None):
+            if command[:3] == ["gh", "pr", "create"]:
+                return {"stdout_text": "https://github.com/owner/repo/pull/321", "stderr_text": ""}
+            if command[:3] == ["gh", "pr", "view"]:
+                return {"stdout_text": json.dumps({"number": 321}), "stderr_text": ""}
+            return original(command, limits, cwd, error_code, context, env=env)
+
+        with mock.patch.object(workflow, "_run_checked", side_effect=malformed):
+            code, payload, _ = self.run_cli(
+                "create-draft-pr",
+                str(ISSUE),
+                "--title",
+                "Issue 321",
+            )
+        self.assertEqual(1, code)
+        self.assertEqual("invalid-draft-pr-identity", payload["error"]["code"])
+        self.assertNotEqual("WORKFLOW_COMPLETED", self.state()["status"])
 
     def test_reject_implementation_returns_to_implementation_without_restart(self):
         self.bootstrap_to_validation()
@@ -6611,10 +6799,23 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
                 "--skip-github",
             )[0],
         )
-        self.assertEqual("WORKFLOW_COMPLETED", self.state_for(issue)["status"])
-        # --skip-github never calls gh, so identity is populated explicitly
-        # by callers that need publish-pr-revision's parent linkage.
-        return self.state_for(issue)
+        state = self.state_for(issue)
+        # This fixture represents a legacy stranded run for revision tests.
+        # Give it the recorded identity those tests need without exercising
+        # GitHub publication in every dependent scenario.
+        state["status"] = "WORKFLOW_COMPLETED"
+        state["draft_pr"]["publication"]["executed"] = True
+        state["draft_pr"].update(
+            {
+                "number": 300,
+                "head_ref_name": "parent-branch",
+                "head_ref_oid": state["implementation_commit"],
+                "repository": "owner/repo",
+                "url": "https://github.com/owner/repo/pull/300",
+            }
+        )
+        self.write_state_for(issue, state)
+        return state
 
     def advance_main_past(self, issue):
         """Simulate the parent run's PR having merged: fast-forward origin/main."""
