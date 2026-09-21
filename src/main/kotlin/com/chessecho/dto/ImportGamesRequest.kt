@@ -7,6 +7,7 @@ import jakarta.validation.constraints.AssertTrue
 import jakarta.validation.constraints.NotEmpty
 import jakarta.validation.constraints.NotNull
 import jakarta.validation.constraints.Pattern
+import jakarta.validation.constraints.Positive
 import java.time.YearMonth
 import java.util.UUID
 
@@ -38,6 +39,8 @@ data class ImportGamesRequest(
         message = "toDate must be in YYYY-MM format",
     )
     val toDate: String? = null,
+    @field:Positive(message = "multiPv must be positive")
+    val multiPv: Int? = null,
 ) {
     /**
      * Bean validation runs before the controller can inspect the request. This

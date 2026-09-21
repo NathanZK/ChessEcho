@@ -12,6 +12,7 @@ import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import java.util.UUID
+import kotlin.reflect.full.memberFunctions
 
 class EngineAnalysisOrchestratorTest {
     private lateinit var positionRepository: PositionRepository
@@ -93,5 +94,31 @@ class EngineAnalysisOrchestratorTest {
 
         verify(positionRepository, never()).findQualifyingPositions(any(), any())
         verify(engineAnalysisService, never()).analyzePosition(any())
+    }
+
+    @Test
+    fun `analysis orchestration accepts a nullable per-job MultiPV override`() {
+        val position = Position(id = UUID.randomUUID(), hash = "h1", fen = "f1")
+        whenever(positionRepository.findQualifyingPositions(setOf(position.id), 5L)).thenReturn(listOf(position))
+        val analyzeWithOverride =
+            requireNotNull(
+                EngineAnalysisOrchestrator::class.memberFunctions.singleOrNull {
+                    it.name == "analyzeAffectedPositions" && it.parameters.size == 3
+                },
+            ) {
+                "analyzeAffectedPositions must accept the persisted MultiPV override"
+            }
+        val positionAnalysis =
+            requireNotNull(
+                EngineAnalysisService::class.memberFunctions.singleOrNull {
+                    it.name == "analyzePosition" && it.parameters.size == 3
+                },
+            ) {
+                "analyzePosition must accept an optional per-call MultiPV override"
+            }
+
+        analyzeWithOverride.call(orchestrator, setOf(position.id), 1)
+
+        positionAnalysis.call(verify(engineAnalysisService), position, 1)
     }
 }

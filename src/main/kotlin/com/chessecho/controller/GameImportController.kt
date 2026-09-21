@@ -97,6 +97,7 @@ class GameImportController(
                 toDate = job.toDate,
                 timeControls = job.timeControlsCsv?.split(','),
                 playerColor = job.playerColor,
+                multiPv = job.analysisMultiPv,
                 configurationState = job.configurationState.takeIf { job.chessAccount != null },
             ),
         )
@@ -113,6 +114,7 @@ class GameImportController(
             toDate = toDate,
             timeControls = timeControlsCsv?.split(','),
             playerColor = playerColor,
+            multiPv = analysisMultiPv,
             configurationState = configurationState.takeIf { chessAccount != null },
         )
 }

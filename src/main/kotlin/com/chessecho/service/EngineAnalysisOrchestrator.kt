@@ -26,6 +26,13 @@ class EngineAnalysisOrchestrator(
      * @param affectedPositionIds Set of distinct position IDs affected by the game import.
      */
     fun analyzeAffectedPositions(affectedPositionIds: Set<UUID>) {
+        analyzeAffectedPositions(affectedPositionIds, null)
+    }
+
+    fun analyzeAffectedPositions(
+        affectedPositionIds: Set<UUID>,
+        analysisMultiPv: Int?,
+    ) {
         if (affectedPositionIds.isEmpty()) return
 
         val batchSize = 1000
@@ -43,7 +50,11 @@ class EngineAnalysisOrchestrator(
 
         for (position in qualifyingPositions) {
             try {
-                engineAnalysisService.analyzePosition(position)
+                if (analysisMultiPv == null) {
+                    engineAnalysisService.analyzePosition(position)
+                } else {
+                    engineAnalysisService.analyzePosition(position, analysisMultiPv)
+                }
             } catch (ex: Exception) {
                 log.error("Failed to perform engine analysis for position ${position.id}", ex)
             }

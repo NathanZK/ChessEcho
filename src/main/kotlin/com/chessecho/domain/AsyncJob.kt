@@ -56,6 +56,8 @@ class AsyncJob(
     var timeControlsCsv: String? = null,
     @Column(name = "player_color")
     var playerColor: String? = null,
+    @Column(name = "analysis_multi_pv")
+    val analysisMultiPv: Int? = null,
     @Column(name = "configuration_state", nullable = false)
     var configurationState: String = CONFIGURATION_UNRESOLVED,
     @Column(name = "created_at", nullable = false)
@@ -105,6 +107,9 @@ class AsyncJob(
         if (fromDate != null && toDate != null) {
             require(fromDate!! <= toDate!!) { "fromDate must not be after toDate" }
         }
+        require(analysisMultiPv == null || analysisMultiPv > 0) {
+            "analysisMultiPv must be positive"
+        }
         if (configurationState == CONFIGURATION_READY) {
             require(chessAccount != null) { "READY jobs require a chess account" }
             require(username == username.trim() && username.isNotBlank()) { "READY jobs require a canonical username" }
@@ -143,6 +148,7 @@ class AsyncJob(
             toDate = toDate,
             timeControlsCsv = timeControlsCsv,
             playerColor = playerColor,
+            analysisMultiPv = analysisMultiPv,
             configurationState = configurationState,
         )
 
@@ -154,6 +160,7 @@ class AsyncJob(
         val toDate: String?,
         val timeControlsCsv: String?,
         val playerColor: String?,
+        val analysisMultiPv: Int?,
         val configurationState: String,
     )
 

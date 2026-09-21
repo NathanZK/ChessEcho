@@ -52,6 +52,14 @@ class EngineAnalysisService(
      */
     @Transactional
     fun analyzePosition(position: Position) {
+        analyzePosition(position, null)
+    }
+
+    @Transactional
+    fun analyzePosition(
+        position: Position,
+        analysisMultiPv: Int?,
+    ) {
         val totalStart = System.currentTimeMillis()
         val positionId = position.id
         val historicalMoves = positionOccurrenceRepository.findDistinctMovesByPositionId(positionId)
@@ -62,18 +70,19 @@ class EngineAnalysisService(
         // Fetch existing analysis with moveEvaluations in a single query via LEFT JOIN FETCH
         val existingAnalysis = engineAnalysisRepository.findByPositionIdWithMoveEvaluations(positionId)
         val depth = 16
+        val effectiveMultiPv = analysisMultiPv ?: multiPv
 
         // 1. BEFORE MultiPV analysis
         log.info(
             "BEFORE MultiPV analysis: positionId={} multiPv={} depth={}",
             positionId,
-            multiPv,
+            effectiveMultiPv,
             depth,
         )
         log.debug("MultiPV analysis position FEN: positionId={} fen='{}'", positionId, position.fen)
 
         val multiPvStart = System.currentTimeMillis()
-        val engineCandidates = stockfishService.analyzeMultiPv(position.fen, depth, multiPv)
+        val engineCandidates = stockfishService.analyzeMultiPv(position.fen, depth, effectiveMultiPv)
         val multiPvDurationMs = System.currentTimeMillis() - multiPvStart
 
         val engineCandidateMoves = engineCandidates.map { it.move }

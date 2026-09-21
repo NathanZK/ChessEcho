@@ -25,6 +25,7 @@ import org.springframework.test.web.servlet.get
 import org.springframework.test.web.servlet.post
 import java.util.Optional
 import java.util.UUID
+import kotlin.reflect.full.primaryConstructor
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -109,6 +110,43 @@ class GameImportControllerTest {
         mockMvc.post("/api/games/import") {
             contentType = MediaType.APPLICATION_JSON
             content = objectMapper.writeValueAsString(request)
+        }.andExpect {
+            status { isBadRequest() }
+            jsonPath("$.error") { value("VALIDATION_ERROR") }
+        }
+    }
+
+    @Test
+    fun `POST games import accepts positive multiPv and exposes it in the queued job`() {
+        val constructor = requireNotNull(AsyncJob::class.primaryConstructor)
+        val multiPvParameter =
+            requireNotNull(constructor.parameters.singleOrNull { it.name == "analysisMultiPv" }) {
+                "AsyncJob must expose analysisMultiPv as durable configuration"
+            }
+        val job =
+            constructor.callBy(
+                mapOf(
+                    requireNotNull(constructor.parameters.single { it.name == "username" }) to "hikaru",
+                    requireNotNull(constructor.parameters.single { it.name == "platform" }) to "CHESS_COM",
+                    multiPvParameter to 1,
+                ),
+            )
+        whenever(gameImportService.createImportJob(any())).thenReturn(job)
+
+        mockMvc.post("/api/games/import") {
+            contentType = MediaType.APPLICATION_JSON
+            content = objectMapper.writeValueAsString(validRequest + ("multiPv" to 1))
+        }.andExpect {
+            status { isAccepted() }
+            jsonPath("$.multiPv") { value(1) }
+        }
+    }
+
+    @Test
+    fun `POST games import rejects non-positive multiPv`() {
+        mockMvc.post("/api/games/import") {
+            contentType = MediaType.APPLICATION_JSON
+            content = objectMapper.writeValueAsString(validRequest + ("multiPv" to 0))
         }.andExpect {
             status { isBadRequest() }
             jsonPath("$.error") { value("VALIDATION_ERROR") }
