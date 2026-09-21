@@ -134,7 +134,7 @@ class GameParserService(
         if (supportsConflictSafeInsert()) {
             // Let PostgreSQL arbitrate concurrent creation without replacing the canonical winner.
             val fallbackPositions = mutableListOf<Position>()
-            newPositions.forEach { position ->
+            newPositions.sortedBy { it.hash }.forEach { position ->
                 existingPositions[position.hash] = position
                 val inserted = positionRepository.insertIfAbsent(position.id, position.hash, position.fen, position.createdAt)
                 if (inserted == 0 && positionRepository.findByHash(position.hash) == null) {

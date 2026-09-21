@@ -197,6 +197,32 @@ class GameParserServiceTest {
         // Total unique White positions = 2 shared + 1 unique G1 + 1 unique G2 = 4.
         assertEquals(4, savedPositions.size, "Different castling rights must generate different hashes")
     }
+
+    @Test
+    fun `conflict safe position inserts use deterministic hash order`() {
+        whenever(positionRepository.findByHashIn(any())).thenReturn(emptyList())
+        whenever(positionRepository.findByHash(any())).thenReturn(null)
+        whenever(positionRepository.insertIfAbsent(any(), any(), any(), any())).thenReturn(1)
+
+        val appUser = AppUser(email = "test@example.com")
+        val chessAccount = ChessAccount(user = appUser, platform = "CHESS_COM", username = "tester")
+        val game =
+            Game(
+                chessAccount = chessAccount,
+                platformGameId = "ordered-inserts",
+                whiteUsername = "tester",
+                blackUsername = "opponent",
+                pgn = "1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 1/2-1/2",
+                timeControl = "600",
+                playedAt = Instant.now(),
+            )
+
+        gameParserService.parseAndSavePositions(listOf(game))
+
+        val hashCaptor = argumentCaptor<String>()
+        verify(positionRepository, times(3)).insertIfAbsent(any(), hashCaptor.capture(), any(), any())
+        assertEquals(hashCaptor.allValues.sorted(), hashCaptor.allValues)
+    }
 }
 
 @SpringBootTest
@@ -313,6 +339,78 @@ class GameParserServiceConcurrencyTest {
         }
     }
 
+    @Test
+    fun `concurrent parsers resolve opposite overlapping position order`() {
+        val accountOne = chessAccountRepository.saveAndFlush(ChessAccount(platform = "CHESS_COM", username = "order-one"))
+        val accountTwo = chessAccountRepository.saveAndFlush(ChessAccount(platform = "CHESS_COM", username = "order-two"))
+        val gameOne =
+            gameRepository.saveAndFlush(
+                transposedBlackGame(accountOne, "order-one-game", "order-one", "1. Nf3 Nf6 1/2-1/2"),
+            )
+        val gameTwo =
+            gameRepository.saveAndFlush(
+                transposedBlackGame(accountTwo, "order-two-game", "order-two", "1. Nc3 Nc6 1/2-1/2"),
+            )
+        val insertBarrier = CountDownLatch(2)
+        val insertCounts = ThreadLocal.withInitial { 0 }
+        val repositorySpy =
+            mock<PositionRepository>(
+                defaultAnswer = AdditionalAnswers.delegatesTo(positionRepository),
+            )
+        doAnswer {
+            val count = insertCounts.get() + 1
+            insertCounts.set(count)
+            if (count == 1) {
+                insertBarrier.countDown()
+                assertTrue(insertBarrier.await(10, TimeUnit.SECONDS), "Both transactions must reach their first black position")
+            }
+            positionRepository.insertIfAbsent(
+                it.getArgument(0),
+                it.getArgument(1),
+                it.getArgument(2),
+                it.getArgument(3),
+            )
+        }.whenever(repositorySpy).insertIfAbsent(any(), any(), any(), any())
+
+        val parser = GameParserService(repositorySpy, positionOccurrenceRepository)
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val futures =
+                listOf(gameOne to listOf(gameOne, gameTwo), gameTwo to listOf(gameTwo, gameOne)).map { (game, games) ->
+                    executor.submit {
+                        transactionTemplate.execute {
+                            val account = chessAccountRepository.findById(game.chessAccount.id).orElseThrow()
+                            parser.parseAndSavePositions(
+                                games.map {
+                                    Game(
+                                        id = it.id,
+                                        chessAccount = account,
+                                        platformGameId = it.platformGameId,
+                                        pgn = it.pgn,
+                                        timeControl = it.timeControl,
+                                        playedAt = it.playedAt,
+                                        result = it.result,
+                                        whiteUsername = it.whiteUsername,
+                                        blackUsername = account.username,
+                                    )
+                                },
+                            )
+                        }
+                    }
+                }
+
+            val failures =
+                futures.map { future ->
+                    runCatching { future.get(20, TimeUnit.SECONDS) }.exceptionOrNull()
+                }
+            assertTrue(failures.all { it == null }, "Unexpected PostgreSQL contention failure: ${failures.joinToString()}")
+            assertEquals(2, positionRepository.count())
+            assertEquals(4, positionOccurrenceRepository.count())
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
     private fun game(
         account: ChessAccount,
         id: String,
@@ -330,6 +428,52 @@ class GameParserServiceConcurrencyTest {
                 [Black "opponent"]
 
                 1. e4 e5 1/2-1/2
+                """.trimIndent(),
+            timeControl = "600",
+            playedAt = Instant.now(),
+        )
+
+    private fun transposedGame(
+        account: ChessAccount,
+        id: String,
+        username: String,
+        pgnMoves: String,
+    ): Game =
+        Game(
+            chessAccount = account,
+            platformGameId = id,
+            whiteUsername = username,
+            blackUsername = "opponent",
+            pgn =
+                """
+                [Event "Concurrent ordering import"]
+                [White "$username"]
+                [Black "opponent"]
+
+                $pgnMoves
+                """.trimIndent(),
+            timeControl = "600",
+            playedAt = Instant.now(),
+        )
+
+    private fun transposedBlackGame(
+        account: ChessAccount,
+        id: String,
+        username: String,
+        pgnMoves: String,
+    ): Game =
+        Game(
+            chessAccount = account,
+            platformGameId = id,
+            whiteUsername = "opponent",
+            blackUsername = username,
+            pgn =
+                """
+                [Event "Concurrent ordering import"]
+                [White "opponent"]
+                [Black "$username"]
+
+                $pgnMoves
                 """.trimIndent(),
             timeControl = "600",
             playedAt = Instant.now(),
