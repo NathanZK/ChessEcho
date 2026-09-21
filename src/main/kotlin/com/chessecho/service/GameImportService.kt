@@ -88,6 +88,7 @@ class GameImportService(
                     toDate = request.normalizedToDate(),
                     timeControlsCsv = request.canonicalTimeControls(),
                     playerColor = request.playerColor!!.name,
+                    analysisMultiPv = request.multiPv,
                     configurationState = AsyncJob.CONFIGURATION_READY,
                 )
             try {
@@ -181,7 +182,11 @@ class GameImportService(
             )
 
             try {
-                engineAnalysisOrchestrator.analyzeAffectedPositions(allAffectedPositionIds)
+                if (request.multiPv == null) {
+                    engineAnalysisOrchestrator.analyzeAffectedPositions(allAffectedPositionIds)
+                } else {
+                    engineAnalysisOrchestrator.analyzeAffectedPositions(allAffectedPositionIds, request.multiPv)
+                }
                 transactionTemplate.executeWithoutResult {
                     job.analysisStatus = "COMPLETED"
                     job.updatedAt = Instant.now()
@@ -253,6 +258,7 @@ class GameImportService(
             playerColor = runCatching { PlayerColor.valueOf(job.playerColor ?: "") }.getOrNull(),
             fromDate = job.fromDate,
             toDate = job.toDate,
+            multiPv = job.analysisMultiPv,
         )
 
     private fun isExecutable(job: AsyncJob): Boolean =

@@ -15,6 +15,7 @@ import com.chessecho.repository.UserPositionStatsRepository
 import com.chessecho.service.ChessComClient
 import com.chessecho.service.EngineAnalysisOrchestrator
 import com.chessecho.service.GameImportService
+import com.fasterxml.jackson.databind.ObjectMapper
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -34,6 +35,7 @@ import org.springframework.transaction.support.TransactionTemplate
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import kotlin.reflect.full.memberProperties
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
@@ -74,6 +76,9 @@ class GameImportServiceIntegrationTest {
 
     @Autowired
     private lateinit var transactionTemplate: TransactionTemplate
+
+    @Autowired
+    private lateinit var objectMapper: ObjectMapper
 
     @MockBean
     private lateinit var chessComClient: ChessComClient
@@ -207,6 +212,25 @@ class GameImportServiceIntegrationTest {
 
         val positionsInDb = positionRepository.findAllById(affectedIds)
         assertEquals(affectedIds.size, positionsInDb.size)
+    }
+
+    @Test
+    fun `created import jobs expose durable analysis MultiPV configuration`() {
+        val request =
+            objectMapper.readValue(
+                """{"username":"multi-pv-player","platform":"CHESS_COM","timeControls":["BLITZ"],"playerColor":"BOTH","multiPv":1}""",
+                ImportGamesRequest::class.java,
+            )
+
+        val job = gameImportService.createImportJob(request)
+
+        val analysisMultiPv =
+            requireNotNull(AsyncJob::class.memberProperties.singleOrNull { it.name == "analysisMultiPv" }) {
+                "AsyncJob must retain the requested MultiPV value across repository reload"
+            }
+        assertEquals(1, analysisMultiPv.get(job))
+        val reloaded = assertNotNull(asyncJobRepository.findById(job.id).orElse(null))
+        assertEquals(1, analysisMultiPv.get(reloaded))
     }
 
     @Test

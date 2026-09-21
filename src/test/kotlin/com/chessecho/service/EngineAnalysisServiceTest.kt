@@ -15,6 +15,7 @@ import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import java.util.UUID
+import kotlin.reflect.full.memberFunctions
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 
@@ -401,5 +402,29 @@ class EngineAnalysisServiceTest {
         assertEquals(2.00, qh5Eval.evalLossFromBest)
         assertEquals(0.05, bb5Eval.evalLossFromBest)
         assertEquals(0.10, d4Eval.evalLossFromBest)
+    }
+
+    @Test
+    fun `analyzePosition accepts a nullable per-call MultiPV override`() {
+        val positionId = UUID.randomUUID()
+        val fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
+        val position = Position(id = positionId, hash = "override", fen = fen)
+        whenever(positionOccurrenceRepository.findDistinctMovesByPositionId(positionId)).thenReturn(listOf("e4"))
+        whenever(engineAnalysisRepository.findByPositionIdWithMoveEvaluations(positionId)).thenReturn(null)
+        whenever(stockfishService.analyzeMultiPv(fen, 16, 1))
+            .thenReturn(listOf(EngineCandidate("e4", EvalScore(cp = 40, mate = null))))
+
+        val analyzeWithOverride =
+            requireNotNull(
+                EngineAnalysisService::class.memberFunctions.singleOrNull {
+                    it.name == "analyzePosition" && it.parameters.size == 3
+                },
+            ) {
+                "analyzePosition must accept an optional per-call MultiPV override"
+            }
+
+        analyzeWithOverride.call(engineAnalysisService, position, 1)
+
+        verify(stockfishService).analyzeMultiPv(fen, 16, 1)
     }
 }

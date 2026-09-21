@@ -14,6 +14,7 @@ data class ImportJobResponse(
     val toDate: String? = null,
     val timeControls: List<String>? = null,
     val playerColor: String? = null,
+    val multiPv: Int? = null,
     val configurationState: String? = null,
 )
 
@@ -34,5 +35,6 @@ data class JobStatusResponse(
     val toDate: String? = null,
     val timeControls: List<String>? = null,
     val playerColor: String? = null,
+    val multiPv: Int? = null,
     val configurationState: String? = null,
 )
