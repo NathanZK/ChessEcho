@@ -271,6 +271,7 @@ class AgentWorkflowTest(unittest.TestCase):
         commit_subject="Update example workflow implementation",
         stdout="tests ok\n",
         stderr="",
+        pr_prose=None,
     ):
         if test_command is None:
             test_command = "%s -c \"print('tests ok')\"" % sys.executable
@@ -292,6 +293,12 @@ class AgentWorkflowTest(unittest.TestCase):
             "commit_subject": commit_subject,
             "stdout": stdout,
             "stderr": stderr,
+            "pr_prose": pr_prose
+            or {
+                "what": "Add semantic workflow evidence to governed PR descriptions.",
+                "why": "Reviewers need the behavioral change and engineering rationale without reconstructing them from repository metadata.",
+                "testing": "Covered generated prose, missing semantic evidence, and the existing structural validator regression cases.",
+            },
         }
         path = self.root / "artifacts-src" / name
         path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -4562,11 +4569,61 @@ class AgentWorkflowTest(unittest.TestCase):
             ["What", "Why", "Testing"],
             re.findall(r"^##\s+(.+?)\s*$", body, flags=re.MULTILINE),
         )
-        self.assertIn("src/Example.kt", body)
-        self.assertIn("workflow-tooling", body)
-        self.assertIn("workflow-check", body)
-        self.assertIn("scenario", body.lower())
+        self.assertIn("Add semantic workflow evidence", body)
+        self.assertIn("Reviewers need the behavioral change", body)
+        self.assertIn("missing semantic evidence", body)
+        testing_section = re.search(
+            r"^## Testing\n(?P<content>.+?)(?=^## |\Z)",
+            body,
+            flags=re.MULTILINE | re.DOTALL,
+        )
+        self.assertIsNotNone(testing_section)
+        testing_lines = [
+            line
+            for line in testing_section.group("content").splitlines()
+            if line.strip()
+        ]
+        self.assertGreaterEqual(len(testing_lines), 2)
+        self.assertTrue(all(line.startswith("- ") for line in testing_lines))
+        self.assertNotIn("src/Example.kt", body)
+        self.assertNotIn("workflow-tooling", body)
+        self.assertNotIn("workflow-check", body)
         workflow._validate_pr_body(body_path)
+
+    def test_generated_pr_body_rejects_metadata_only_implementation_evidence(self):
+        """The #368/#369-shaped metadata cannot silently restore mechanical prose."""
+        self.bootstrap_to_draft_pr_creation()
+        metadata_only = self.write_artifact(
+            "metadata-only-implementation.json",
+            json.dumps(
+                {
+                    "test_command": "make agent-workflow-test",
+                    "test_scope": ["scripts/tests/test_agent_workflow.py"],
+                    "exit_code": 0,
+                    "result": "PASS",
+                    "test_commit": self.state()["test_commit"],
+                    "candidate_diff": self.state()["implementation_candidate"]["candidate_diff"],
+                    "commit_subject": "Update example workflow implementation",
+                    "stdout": "workflow checks passed",
+                    "stderr": "",
+                }
+            )
+            + "\n",
+        )
+        state = self.state()
+        state["artifacts"]["implementation_report"] = workflow._record_artifact(
+            self.root,
+            workflow._load_config(self.root),
+            ISSUE,
+            "implementation_report",
+            metadata_only,
+        )
+        self.write_state(state)
+
+        with self.assertRaisesRegex(workflow.WorkflowError, "semantic"):
+            workflow._generate_pr_body(
+                self.root, workflow._load_config(self.root), ISSUE, self.state()
+            )
 
     def test_generated_pr_body_fails_closed_without_successful_validation(self):
         """Missing workflow validation cannot be replaced by generic success prose."""
