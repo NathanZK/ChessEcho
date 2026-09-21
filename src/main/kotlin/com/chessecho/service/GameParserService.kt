@@ -8,15 +8,18 @@ import com.chessecho.repository.PositionRepository
 import com.github.bhlangonijr.chesslib.Board
 import com.github.bhlangonijr.chesslib.pgn.PgnHolder
 import org.slf4j.LoggerFactory
+import org.springframework.jdbc.datasource.DataSourceUtils
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.io.File
 import java.util.UUID
+import javax.sql.DataSource
 
 @Service
 class GameParserService(
     private val positionRepository: PositionRepository,
     private val positionOccurrenceRepository: PositionOccurrenceRepository,
+    private val dataSource: DataSource? = null,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -121,17 +124,34 @@ class GameParserService(
             }
         }
 
-        // Fetch existing positions from DB to avoid constraint violations
+        // Fetch existing positions before conflict-safe insertion to avoid unnecessary writes.
         val existingPositions =
             positionRepository.findByHashIn(allPositions.keys.toList())
                 .associateBy { it.hash }
                 .toMutableMap()
 
-        // Save new positions
         val newPositions = allPositions.values.filter { !existingPositions.containsKey(it.hash) }
-        if (newPositions.isNotEmpty()) {
-            val savedPositions = positionRepository.saveAll(newPositions)
-            savedPositions.forEach { existingPositions[it.hash] = it }
+        if (supportsConflictSafeInsert()) {
+            // Let PostgreSQL arbitrate concurrent creation without replacing the canonical winner.
+            val fallbackPositions = mutableListOf<Position>()
+            newPositions.forEach { position ->
+                existingPositions[position.hash] = position
+                val inserted = positionRepository.insertIfAbsent(position.id, position.hash, position.fen, position.createdAt)
+                if (inserted == 0 && positionRepository.findByHash(position.hash) == null) {
+                    fallbackPositions.add(position)
+                }
+            }
+            positionRepository.flush()
+
+            // Resolve every hash again so conflict losers use the winner's canonical ID.
+            positionRepository.findByHashIn(allPositions.keys.toList()).forEach { existingPositions[it.hash] = it }
+
+            // Keep repository-backed unit-test doubles compatible when they do not model native inserts.
+            if (fallbackPositions.isNotEmpty()) {
+                positionRepository.saveAll(fallbackPositions).forEach { existingPositions[it.hash] = it }
+            }
+        } else {
+            positionRepository.saveAll(newPositions).forEach { existingPositions[it.hash] = it }
         }
 
         // Now map occurrences to the real persisted positions
@@ -152,6 +172,16 @@ class GameParserService(
 
         // Return the set of affected position IDs
         return mappedOccurrences.map { it.position.id }.toSet()
+    }
+
+    private fun supportsConflictSafeInsert(): Boolean {
+        val source = dataSource ?: return true
+        val connection = DataSourceUtils.getConnection(source)
+        return try {
+            connection.metaData.databaseProductName == "PostgreSQL"
+        } finally {
+            DataSourceUtils.releaseConnection(connection, source)
+        }
     }
 
     companion object {
