@@ -96,6 +96,7 @@ ARTIFACT_FILES = {
     "plan_review": "plan-review.md",
     "test_report": "test-report.md",
     "test_review": "test-review.md",
+    "adversarial_test_contract_review": "adversarial-test-contract-review.json",
     "implementation_report": "implementation-report.md",
     "implementation_review": "implementation-review.md",
     "draft_pr_body": "draft-pr-body.md",
@@ -549,6 +550,7 @@ def _test_reopen_active(state):
 TEST_REOPENING_SEMANTICS = (
     "approved-test-fixture-defect",
     "approved-contract-revision",
+    "adversarial-test-contract-insufficiency",
 )
 
 
@@ -5710,6 +5712,250 @@ def command_reopen_tests(args, root, config):
     }
 
 
+TEST_CONTRACT_REOPENING_JOURNAL_FORMAT = (
+    "chess-echo-test-contract-reopening-transition-v1"
+)
+TEST_CONTRACT_REOPENING_JOURNAL_STATUSES = ("pending", "finalized")
+TEST_CONTRACT_REOPENING_FROM_STATUSES = (
+    "IMPLEMENTATION",
+    "IMPLEMENTATION_REVIEW",
+    "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL",
+)
+ADVERSARIAL_TEST_CONTRACT_REVIEW_FORMAT = (
+    "chess-echo-adversarial-test-contract-review-v1"
+)
+
+
+def _test_contract_reopening_journal_path(root, config, issue):
+    return _run_root(root, config, issue) / "test-contract-reopening-transition.json"
+
+
+def _validate_adversarial_test_contract_review(review):
+    """Require a concrete, non-reclassification adversarial insufficiency finding."""
+    _ensure(
+        review.get("format") == ADVERSARIAL_TEST_CONTRACT_REVIEW_FORMAT
+        and review.get("version") == 1,
+        "invalid-adversarial-test-contract-review",
+        "adversarial review must use the supported test-contract format",
+    )
+    for field in ("insufficient_behavioral_assertions", "missing_invariants"):
+        value = review.get(field)
+        _ensure(
+            isinstance(value, list)
+            and value
+            and all(isinstance(item, str) and item.strip() for item in value),
+            "invalid-adversarial-test-contract-review",
+            "adversarial review requires non-empty %s" % field,
+        )
+    classification = review.get("classification")
+    _ensure(
+        isinstance(classification, dict)
+        and set(classification) == {
+            "fixture_defect",
+            "target_drift",
+            "plan_revision",
+            "approval_revocation",
+        }
+        and all(value is False for value in classification.values()),
+        "invalid-adversarial-test-contract-review",
+        "adversarial review must explicitly exclude other reopening classifications",
+    )
+
+
+def _build_test_contract_reopening_journal(state, adversarial_review, prior_journal):
+    previous_test_commit = state.get("test_commit")
+    previous_approval = state.get("approvals", {}).get("tests")
+    return {
+        "format": TEST_CONTRACT_REOPENING_JOURNAL_FORMAT,
+        "version": 1,
+        "transition_id": uuid.uuid4().hex,
+        "issue": state["issue"],
+        "operation": "reopen-test-contract",
+        "created_at": _now(),
+        "from_status": state["status"],
+        "to_status": "TEST_IMPLEMENTATION",
+        "status": "pending",
+        "target_head": state.get("target_head"),
+        "approved_scope": state.get("approved_scope"),
+        "publication_branch": state.get("publication_branch"),
+        "previous_test_commit": previous_test_commit,
+        "previous_test_approval": previous_approval,
+        "previous_test_report": state.get("artifacts", {}).get("test_report"),
+        "previous_test_review": state.get("artifacts", {}).get("test_review"),
+        "previous_test_approval_transition": prior_journal,
+        "previous_implementation_authority": {
+            "candidate": state.get("implementation_candidate"),
+            "validation": state.get("validation"),
+            "review_ready": state.get("implementation_review_ready"),
+            "report": state.get("artifacts", {}).get("implementation_report"),
+            "review": state.get("artifacts", {}).get("implementation_review"),
+            "approval": state.get("approvals", {}).get("implementation"),
+        },
+        "adversarial_review": adversarial_review,
+    }
+
+
+def _validate_test_contract_reopening_journal(root, config, state, journal, context):
+    _ensure(
+        journal.get("format") == TEST_CONTRACT_REOPENING_JOURNAL_FORMAT
+        and journal.get("version") == 1
+        and journal.get("operation") == "reopen-test-contract"
+        and journal.get("issue") == state.get("issue")
+        and isinstance(journal.get("transition_id"), str)
+        and journal.get("transition_id"),
+        "invalid-test-contract-reopening-journal",
+        "%s requires a supported test-contract reopening journal" % context,
+    )
+    _ensure(
+        journal.get("from_status") in TEST_CONTRACT_REOPENING_FROM_STATUSES
+        and journal.get("to_status") == "TEST_IMPLEMENTATION"
+        and journal.get("status") in TEST_CONTRACT_REOPENING_JOURNAL_STATUSES,
+        "invalid-test-contract-reopening-journal",
+        "%s journal transition is invalid" % context,
+    )
+    _ensure(
+        journal.get("target_head")
+        and isinstance(journal.get("approved_scope"), list)
+        and journal.get("publication_branch")
+        and journal.get("previous_test_commit")
+        and isinstance(journal.get("previous_test_approval"), dict),
+        "invalid-test-contract-reopening-journal",
+        "%s journal lacks historical test authority" % context,
+    )
+    _verify_artifact_identity(
+        root,
+        config,
+        state["issue"],
+        journal.get("adversarial_review"),
+        context,
+    )
+    review_path = root / journal["adversarial_review"]["path"]
+    _validate_adversarial_test_contract_review(
+        _read_json(review_path, "adversarial test-contract review")
+    )
+
+    if journal["status"] == "pending":
+        _ensure(
+            state.get("status") == journal["from_status"]
+            and state.get("target_head") == journal["target_head"]
+            and state.get("approved_scope") == journal["approved_scope"]
+            and state.get("publication_branch") == journal["publication_branch"]
+            and state.get("test_commit") == journal["previous_test_commit"]
+            and state.get("approvals", {}).get("tests")
+            == journal["previous_test_approval"],
+            "test-contract-reopening-journal-mismatch",
+            "%s pending journal does not match the active authority" % context,
+        )
+    else:
+        reopening = (state.get("test_reopenings") or [None])[-1]
+        _ensure(
+            state.get("status") == "TEST_IMPLEMENTATION"
+            and state.get("target_head") == journal["target_head"]
+            and state.get("approved_scope") == journal["approved_scope"]
+            and state.get("test_commit") is None
+            and state.get("approvals", {}).get("tests") is None
+            and isinstance(reopening, dict)
+            and reopening.get("transition_id") == journal["transition_id"]
+            and reopening.get("test_authority_superseded") is True,
+            "test-contract-reopening-journal-mismatch",
+            "%s finalized journal does not match the reopened state" % context,
+        )
+
+
+def _finalize_test_contract_reopening(root, config, state, journal):
+    reopening = {
+        "active": True,
+        "initiated_by": "reopen-test-contract",
+        "reason": "adversarial-test-contract-insufficiency",
+        "effective_semantic": "adversarial-test-contract-insufficiency",
+        "transition_id": journal["transition_id"],
+        "reopened_at": _now(),
+        "previous_test_commit": journal["previous_test_commit"],
+        "previous_test_approval": journal["previous_test_approval"],
+        "previous_test_report": journal["previous_test_report"],
+        "previous_test_review": journal["previous_test_review"],
+        "previous_test_approval_transition": journal[
+            "previous_test_approval_transition"
+        ],
+        "previous_implementation_authority": journal[
+            "previous_implementation_authority"
+        ],
+        "adversarial_review": journal["adversarial_review"],
+        "test_authority_superseded": True,
+    }
+    state.setdefault("test_reopenings", []).append(reopening)
+    state["artifacts"].pop("test_report", None)
+    state["artifacts"].pop("test_review", None)
+    state.pop("test_failure", None)
+    state["approvals"]["tests"] = None
+    state["test_commit"] = None
+    _clear_post_tests(state)
+    state["status"] = "TEST_IMPLEMENTATION"
+    _write_state(root, config, state["issue"], state)
+
+    finalized = dict(journal)
+    finalized["status"] = "finalized"
+    finalized["finalized_at"] = _now()
+    _write_json(_test_contract_reopening_journal_path(root, config, state["issue"]), finalized)
+    return finalized
+
+
+def command_reopen_test_contract(args, root, config):
+    """Journal an adversarially proven test-contract insufficiency before reset."""
+    state = _read_state(root, config, args.issue)
+    _ensure(
+        state["status"] in TEST_CONTRACT_REOPENING_FROM_STATUSES,
+        "invalid-transition",
+        "reopen-test-contract requires a pre-Gate-3 implementation state",
+    )
+    _ensure(
+        not state.get("implementation_commit"),
+        "implementation-already-approved",
+        "reopen-test-contract is not allowed after an implementation commit exists",
+    )
+    _ensure(
+        not state.get("draft_pr"),
+        "draft-pr-already-created",
+        "reopen-test-contract is not allowed after a draft PR exists",
+    )
+    _ensure(
+        state.get("test_commit") and state.get("approvals", {}).get("tests"),
+        "tests-not-approved",
+        "reopen-test-contract requires approved tests",
+    )
+    review = _read_json(_resolve_file(root, args.artifact), "adversarial test-contract review")
+    _validate_adversarial_test_contract_review(review)
+    adversarial_review = _record_artifact(
+        root, config, args.issue, "adversarial_test_contract_review", args.artifact
+    )
+    prior_journal = _read_json(
+        _test_transition_journal_path(root, config, args.issue),
+        "prior test approval transition journal",
+    )
+    journal = _build_test_contract_reopening_journal(
+        state, adversarial_review, prior_journal
+    )
+    _write_json(_test_contract_reopening_journal_path(root, config, args.issue), journal)
+    _finalize_test_contract_reopening(root, config, state, journal)
+    return {"ok": True, "status": "TEST_IMPLEMENTATION", "reason": journal["operation"]}
+
+
+def command_recover_test_contract_reopening(args, root, config):
+    """Replay only the exact durable test-contract reopening transition."""
+    state = _read_state(root, config, args.issue)
+    journal = _read_json(
+        _test_contract_reopening_journal_path(root, config, args.issue),
+        "test-contract reopening transition journal",
+    )
+    _validate_test_contract_reopening_journal(
+        root, config, state, journal, "recover-test-contract-reopening"
+    )
+    if journal["status"] == "finalized":
+        return {"ok": True, "status": state["status"], "recovered": False}
+    _finalize_test_contract_reopening(root, config, state, journal)
+    return {"ok": True, "status": "TEST_IMPLEMENTATION", "recovered": True}
+
+
 def command_reclassify_test_reopening(args, root, config):
     """Authorize the sole fixture-repair to contract-revision semantic change."""
     state = _read_state(root, config, args.issue)
@@ -8231,6 +8477,17 @@ def build_parser():
     _add_issue(reopen_tests)
     reopen_tests.add_argument("--reason", required=True)
 
+    reopen_test_contract = subparsers.add_parser("reopen-test-contract")
+    _add_root(reopen_test_contract)
+    _add_issue(reopen_test_contract)
+    _add_artifact(reopen_test_contract)
+
+    recover_test_contract_reopening = subparsers.add_parser(
+        "recover-test-contract-reopening"
+    )
+    _add_root(recover_test_contract_reopening)
+    _add_issue(recover_test_contract_reopening)
+
     reclassify_test_reopening = subparsers.add_parser("reclassify-test-reopening")
     _add_root(reclassify_test_reopening)
     _add_issue(reclassify_test_reopening)
@@ -8356,6 +8613,8 @@ COMMANDS = {
     "recover-test-approval": command_recover_test_approval,
     "reject-tests": command_reject_tests,
     "reopen-tests": command_reopen_tests,
+    "reopen-test-contract": command_reopen_test_contract,
+    "recover-test-contract-reopening": command_recover_test_contract_reopening,
     "reclassify-test-reopening": command_reclassify_test_reopening,
     "reanchor-target": command_reanchor_target,
     "reconcile-candidate": command_reconcile_candidate,
