@@ -2075,6 +2075,42 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual(0, code)
         self.assertEqual(target_head, self.state()["target_head"])
 
+    def test_repository_identities_match_ignores_owner_repo_casing(self):
+        """A representation-only casing difference is not a repository mismatch."""
+        self.assertTrue(
+            workflow._repository_identities_match("nathanzk/chessecho", "NathanZK/ChessEcho")
+        )
+        self.assertTrue(
+            workflow._repository_identities_match("NathanZK/ChessEcho", "nathanzk/chessecho")
+        )
+        self.assertTrue(
+            workflow._repository_identities_match("NaThAnZk/ChEssEcHo", "nathanzk/chessecho")
+        )
+        self.assertTrue(workflow._repository_identities_match("owner/repo", "owner/repo"))
+
+    def test_repository_identities_match_rejects_different_owner_or_repository(self):
+        """A genuinely different owner or repository must still fail closed."""
+        self.assertFalse(
+            workflow._repository_identities_match("attacker/chessecho", "nathanzk/chessecho")
+        )
+        self.assertFalse(
+            workflow._repository_identities_match("nathanzk/fork", "nathanzk/chessecho")
+        )
+
+    def test_repository_identities_match_rejects_malformed_identities(self):
+        """A malformed owner/repo identity on either side is never treated as a match."""
+        self.assertFalse(workflow._repository_identities_match(None, "nathanzk/chessecho"))
+        self.assertFalse(workflow._repository_identities_match("nathanzk/chessecho", None))
+        self.assertFalse(workflow._repository_identities_match("", "nathanzk/chessecho"))
+        self.assertFalse(workflow._repository_identities_match("nathanzk", "nathanzk/chessecho"))
+        self.assertFalse(
+            workflow._repository_identities_match("nathanzk/che/ss", "nathanzk/che/ss")
+        )
+        self.assertFalse(
+            workflow._repository_identities_match("/chessecho", "nathanzk/chessecho")
+        )
+        self.assertFalse(workflow._repository_identities_match("nathanzk/", "nathanzk/chessecho"))
+
     def test_reanchor_target_rejects_origin_redirected_by_instead_of(self):
         """Target-freshness resolution also fails closed on a substituted origin."""
         bare_path = self.remotes_dir() / "authoritative-origin.git"
@@ -5039,6 +5075,132 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual("draft-pr-create-existing", payload["error"]["code"])
 
         with mock.patch.object(workflow, "_run_checked", side_effect=existing_pr):
+            code, payload, _ = self.run_cli("recover-draft-pr-publication", str(ISSUE))
+
+        self.assertEqual(1, code)
+        self.assertEqual("draft-pr-publication-recovery-ambiguous", payload["error"]["code"])
+        self.assertEqual("DRAFT_PR_CREATION", self.state()["status"])
+        self.assertIsNone(self.state()["draft_pr"])
+
+    def test_recover_draft_pr_publication_succeeds_with_case_only_repository_difference(self):
+        """A lowercased journal identity plus GitHub's canonical PR casing recovers cleanly."""
+        self.bootstrap_to_draft_pr_creation()
+        implementation_commit = self.state()["implementation_commit"]
+        original = workflow._run_checked
+
+        def existing_pr(command, limits, cwd, code, context, env=None):
+            if command[:3] == ["gh", "pr", "create"]:
+                raise workflow.WorkflowError("draft-pr-create-existing", "recoverable existing PR")
+            if command[:3] == ["gh", "pr", "view"] and "body" in command:
+                body_path = (
+                    self.root
+                    / ".agent-workflow"
+                    / "runs"
+                    / f"issue-{ISSUE}"
+                    / "artifacts"
+                    / "draft-pr-body.md"
+                )
+                return {
+                    "command": command,
+                    "result": {"outcome": "success", "exit_code": 0},
+                    "stdout_text": json.dumps({"body": body_path.read_text(encoding="utf-8")}),
+                    "stderr_text": "",
+                }
+            if command[:3] == ["gh", "pr", "list"]:
+                return {
+                    "command": command,
+                    "result": {"outcome": "success", "exit_code": 0},
+                    "stdout_text": json.dumps(
+                        [
+                            {
+                                "number": 321,
+                                "headRefName": "workflow-branch",
+                                "headRefOid": implementation_commit,
+                                "headRepository": {"nameWithOwner": "NathanZK/ChessEcho"},
+                                "baseRefName": "main",
+                                "state": "OPEN",
+                                "isDraft": True,
+                                "url": "https://example.test/NathanZK/ChessEcho/pull/321",
+                            }
+                        ]
+                    ),
+                    "stderr_text": "",
+                }
+            return original(command, limits, cwd, code, context, env=env)
+
+        authoritative_repository = mock.patch.object(
+            workflow, "_authoritative_repository", return_value="nathanzk/chessecho"
+        )
+        with authoritative_repository, mock.patch.object(
+            workflow, "_run_checked", side_effect=existing_pr
+        ):
+            code, payload, _ = self.run_cli(
+                "create-draft-pr",
+                str(ISSUE),
+                "--title",
+                "Issue 321",
+            )
+        self.assertEqual(1, code)
+        self.assertEqual("draft-pr-create-existing", payload["error"]["code"])
+
+        with authoritative_repository, mock.patch.object(
+            workflow, "_run_checked", side_effect=existing_pr
+        ):
+            code, payload, _ = self.run_cli("recover-draft-pr-publication", str(ISSUE))
+
+        self.assertEqual(0, code, payload)
+        self.assertEqual("WORKFLOW_COMPLETED", self.state()["status"])
+        self.assertEqual("NathanZK/ChessEcho", self.state()["draft_pr"]["repository"])
+
+    def test_recover_draft_pr_publication_fails_closed_on_wrong_repository(self):
+        """A genuinely different repository must still fail closed, not just a casing difference."""
+        self.bootstrap_to_draft_pr_creation()
+        implementation_commit = self.state()["implementation_commit"]
+        original = workflow._run_checked
+
+        def existing_pr(command, limits, cwd, code, context, env=None):
+            if command[:3] == ["gh", "pr", "create"]:
+                raise workflow.WorkflowError("draft-pr-create-existing", "recoverable existing PR")
+            if command[:3] == ["gh", "pr", "list"]:
+                return {
+                    "command": command,
+                    "result": {"outcome": "success", "exit_code": 0},
+                    "stdout_text": json.dumps(
+                        [
+                            {
+                                "number": 321,
+                                "headRefName": "workflow-branch",
+                                "headRefOid": implementation_commit,
+                                "headRepository": {"nameWithOwner": "attacker/ChessEcho"},
+                                "baseRefName": "main",
+                                "state": "OPEN",
+                                "isDraft": True,
+                                "url": "https://example.test/attacker/ChessEcho/pull/321",
+                            }
+                        ]
+                    ),
+                    "stderr_text": "",
+                }
+            return original(command, limits, cwd, code, context, env=env)
+
+        authoritative_repository = mock.patch.object(
+            workflow, "_authoritative_repository", return_value="nathanzk/chessecho"
+        )
+        with authoritative_repository, mock.patch.object(
+            workflow, "_run_checked", side_effect=existing_pr
+        ):
+            code, payload, _ = self.run_cli(
+                "create-draft-pr",
+                str(ISSUE),
+                "--title",
+                "Issue 321",
+            )
+        self.assertEqual(1, code)
+        self.assertEqual("draft-pr-create-existing", payload["error"]["code"])
+
+        with authoritative_repository, mock.patch.object(
+            workflow, "_run_checked", side_effect=existing_pr
+        ):
             code, payload, _ = self.run_cli("recover-draft-pr-publication", str(ISSUE))
 
         self.assertEqual(1, code)
@@ -8404,6 +8566,99 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
         self.assertEqual(1, code)
         self.assertEqual("pr-repository-mismatch", payload["error"]["code"])
         self.assertEqual([], self.git_push_calls)
+
+    def test_publish_pr_revision_succeeds_with_case_only_repository_difference(self):
+        """A recorded lowercase parent PR repository plus GitHub's canonical live casing succeeds."""
+        self.bootstrap_completed_parent(self.PARENT_ISSUE)
+        self.advance_main_past(self.PARENT_ISSUE)
+        self.set_parent_draft_pr(
+            self.PARENT_ISSUE, number=300, head_ref_name="parent-branch",
+            head_ref_oid="0" * 40, repository="nathanzk/chessecho",
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "start-revision", str(self.CHILD_ISSUE),
+                "--parent-issue", str(self.PARENT_ISSUE),
+                "--class", "implementation",
+                "--by", "tester",
+            )[0],
+        )
+        child_state = self.state_for(self.CHILD_ISSUE)
+        test_commit = child_state["test_commit"]
+        (self.root / "docs").mkdir(parents=True, exist_ok=True)
+        doc_file = self.root / "docs" / "example.md"
+        doc_file.write_text("# Example\nCosmetic wording fix.\n", encoding="utf-8")
+        evidence_path = self.write_evidence(
+            name="child-evidence-case-only.json",
+            test_scope=["src/test/ExampleTest.kt"],
+            test_commit=test_commit,
+            candidate_diff=self.git_candidate_diff(test_commit),
+            commit_subject="Add cosmetic documentation fix for issue #%s" % self.CHILD_ISSUE,
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "submit-implementation", str(self.CHILD_ISSUE),
+                "--artifact", "artifacts-src/parent-impl-report.md",
+                "--agent", "chess-echo-implementer",
+                "--evidence", evidence_path,
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli("run-validation", str(self.CHILD_ISSUE), "--profile", "workflow-tooling")[0],
+        )
+        self.write_artifact("child-impl-review-case-only.md", "child implementation review")
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "review-implementation", str(self.CHILD_ISSUE),
+                "--status", workflow.READY,
+                "--artifact", "artifacts-src/child-impl-review-case-only.md",
+                "--reviewer", "chess-echo-reviewer",
+            )[0],
+        )
+        self.assertEqual(
+            0,
+            self.run_cli(
+                "approve-implementation", str(self.CHILD_ISSUE), "--by", "owner",
+                "--confirm", "implementation_approved",
+            )[0],
+        )
+        self.assertEqual("DRAFT_PR_CREATION", self.state_for(self.CHILD_ISSUE)["status"])
+
+        child_state = self.state_for(self.CHILD_ISSUE)
+        expected_body_identity, expected_body_path = self.expected_body_identity_for(
+            self.CHILD_ISSUE
+        )
+        expected_body_text = expected_body_path.read_text(encoding="utf-8")
+        live_pr_before = {
+            "number": 300,
+            "state": "OPEN",
+            "isDraft": True,
+            "baseRefName": "main",
+            "headRefName": "parent-branch",
+            "headRefOid": "0" * 40,
+            "headRepository": {"nameWithOwner": "NathanZK/ChessEcho"},
+            "url": "https://example.test/pr/300",
+        }
+        live_pr_after = dict(live_pr_before, headRefOid=child_state["implementation_commit"])
+        with self.patch_full_revision_publication(
+            identity_sequence=[live_pr_before, live_pr_after],
+            body_sequence=[expected_body_text],
+        ):
+            code, payload, _ = self.run_cli(
+                "publish-pr-revision", str(self.CHILD_ISSUE),
+                "--target-pr", "300",
+                "--by", "owner",
+                "--confirm", "pr_revision_confirmed",
+            )
+        self.assertEqual(0, code, payload)
+        self.assertEqual("WORKFLOW_COMPLETED", self.state_for(self.CHILD_ISSUE)["status"])
+        self.assertEqual(
+            "nathanzk/chessecho", self.state_for(self.CHILD_ISSUE)["draft_pr"]["repository"]
+        )
 
     def test_publish_pr_revision_keeps_pending_journal_on_post_push_divergence(self):
         self.bootstrap_child_at_draft_pr_creation()
