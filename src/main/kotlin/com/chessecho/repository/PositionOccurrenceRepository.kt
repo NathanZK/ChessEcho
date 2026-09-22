@@ -2,11 +2,37 @@ package com.chessecho.repository
 
 import com.chessecho.domain.PositionOccurrence
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
+import java.time.Instant
 import java.util.UUID
 
 interface PositionOccurrenceRepository : JpaRepository<PositionOccurrence, UUID> {
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+        value = """
+            INSERT INTO position_occurrence
+              (id, game_id, position_id, chess_account_id, ply_number, move_played, player_color, created_at)
+            VALUES
+              (:id, :gameId, :positionId, :chessAccountId, :plyNumber, :movePlayed, :playerColor, :createdAt)
+            ON CONFLICT (game_id, position_id, ply_number, player_color) DO NOTHING
+        """,
+        nativeQuery = true,
+    )
+    fun insertIfAbsent(
+        @Param("id") id: UUID,
+        @Param("gameId") gameId: UUID,
+        @Param("positionId") positionId: UUID,
+        @Param("chessAccountId") chessAccountId: UUID,
+        @Param("plyNumber") plyNumber: Int,
+        @Param("movePlayed") movePlayed: String,
+        @Param("playerColor") playerColor: String,
+        @Param("createdAt") createdAt: Instant,
+    ): Int
+
+    fun findByGameIdIn(gameIds: Collection<UUID>): List<PositionOccurrence>
+
     fun findByPositionId(positionId: UUID): List<PositionOccurrence>
 
     @Query(

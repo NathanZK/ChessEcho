@@ -80,6 +80,9 @@ CREATE TABLE async_job
     player_color         VARCHAR(10),
     analysis_multi_pv    INT,
     configuration_state  VARCHAR(20) NOT NULL DEFAULT 'UNRESOLVED',
+    worker_token         UUID,
+    lease_expires_at     TIMESTAMP WITH TIME ZONE,
+    started_at           TIMESTAMP WITH TIME ZONE,
     created_at           TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at           TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT ck_async_job_status
@@ -139,6 +142,7 @@ CREATE TABLE async_job
 CREATE INDEX idx_async_job_chess_account_id ON async_job (chess_account_id);
 CREATE INDEX idx_async_job_username_status ON async_job (lower(platform), lower(username), status);
 CREATE INDEX idx_async_job_updated_at ON async_job (updated_at);
+CREATE INDEX idx_async_job_processing_lease ON async_job (status, lease_expires_at);
 CREATE UNIQUE INDEX uk_async_job_active_account
     ON async_job (chess_account_id)
     WHERE status IN ('QUEUED', 'PROCESSING');
@@ -200,6 +204,7 @@ CREATE TABLE position_occurrence
     player_color     VARCHAR(10) NOT NULL,
     created_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT ck_position_occurrence_ply CHECK (ply_number >= 0),
+    CONSTRAINT uk_position_occurrence_identity UNIQUE (game_id, position_id, ply_number, player_color),
     CONSTRAINT ck_position_occurrence_player_color CHECK (player_color IN ('WHITE', 'BLACK'))
 );
 
@@ -288,6 +293,31 @@ CREATE TABLE imported_archive
 );
 
 CREATE INDEX idx_imported_archive_chess_account_id ON imported_archive (chess_account_id);
+
+ALTER TABLE game
+    ADD COLUMN imported_archive_id UUID REFERENCES imported_archive (id) ON DELETE SET NULL;
+
+CREATE INDEX idx_game_imported_archive_id ON game (imported_archive_id);
+
+CREATE TABLE archive_derived_processing
+(
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    imported_archive_id UUID NOT NULL REFERENCES imported_archive (id) ON DELETE CASCADE,
+    status              VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+    attempt_count       INT NOT NULL DEFAULT 0,
+    last_error          TEXT,
+    worker_token        UUID,
+    started_at          TIMESTAMP WITH TIME ZONE,
+    lease_expires_at    TIMESTAMP WITH TIME ZONE,
+    completed_at        TIMESTAMP WITH TIME ZONE,
+    updated_at          TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uk_archive_derived_processing_archive UNIQUE (imported_archive_id),
+    CONSTRAINT ck_archive_derived_processing_status CHECK (status IN ('PENDING', 'PROCESSING', 'COMPLETED', 'FAILED')),
+    CONSTRAINT ck_archive_derived_processing_attempts CHECK (attempt_count >= 0)
+);
+
+CREATE INDEX idx_archive_derived_processing_status ON archive_derived_processing (status, updated_at);
+CREATE INDEX idx_archive_derived_processing_archive ON archive_derived_processing (imported_archive_id);
 
 CREATE TABLE human_move_distribution
 (

@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Lock
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
+import java.time.Instant
 import java.util.UUID
 
 interface AsyncJobRepository : JpaRepository<AsyncJob, UUID> {
@@ -34,6 +35,19 @@ interface AsyncJobRepository : JpaRepository<AsyncJob, UUID> {
     fun findByIdForUpdate(
         @Param("id") id: UUID,
     ): AsyncJob?
+
+    /**
+     * Ids of PROCESSING jobs whose worker lease has lapsed, i.e. jobs left behind
+     * by a crashed or killed worker. Selected without a lock so the recovery sweep
+     * can lock each candidate individually and re-verify staleness.
+     */
+    @Query(
+        "SELECT j.id FROM AsyncJob j " +
+            "WHERE j.status = 'PROCESSING' AND (j.leaseExpiresAt IS NULL OR j.leaseExpiresAt < :now)",
+    )
+    fun findStaleProcessingJobIds(
+        @Param("now") now: Instant,
+    ): List<UUID>
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT j FROM AsyncJob j WHERE j.id = :id")

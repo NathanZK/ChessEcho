@@ -23,4 +23,8 @@ interface GameRepository : JpaRepository<Game, UUID> {
         chessAccount: com.chessecho.domain.ChessAccount,
         pageable: Pageable,
     ): Page<Game>
+
+    fun findAllByChessAccountOrderByPlayedAtDesc(chessAccount: com.chessecho.domain.ChessAccount): List<Game>
+
+    fun findAllByImportedArchiveIdOrderByPlayedAtAsc(id: UUID): List<Game>
 }

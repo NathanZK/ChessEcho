@@ -10,7 +10,7 @@ import com.github.bhlangonijr.chesslib.pgn.PgnHolder
 import org.slf4j.LoggerFactory
 import org.springframework.jdbc.datasource.DataSourceUtils
 import org.springframework.stereotype.Service
-import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionTemplate
 import java.io.File
 import java.util.UUID
 import javax.sql.DataSource
@@ -20,6 +20,7 @@ class GameParserService(
     private val positionRepository: PositionRepository,
     private val positionOccurrenceRepository: PositionOccurrenceRepository,
     private val dataSource: DataSource? = null,
+    private val transactionTemplate: TransactionTemplate? = null,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -30,8 +31,14 @@ class GameParserService(
      * @param games The list of [Game] entities whose PGNs should be parsed and processed.
      * @return Set of position IDs that were affected by this import
      */
-    @Transactional
     fun parseAndSavePositions(games: List<Game>): Set<UUID> {
+        if (transactionTemplate != null) {
+            return transactionTemplate.execute { parseAndSavePositionsInternal(games) } ?: emptySet()
+        }
+        return parseAndSavePositionsInternal(games)
+    }
+
+    private fun parseAndSavePositionsInternal(games: List<Game>): Set<UUID> {
         if (games.isEmpty()) return emptySet()
 
         val allPositions = mutableMapOf<String, Position>()
@@ -117,8 +124,8 @@ class GameParserService(
                     }
                 }
             } catch (e: Exception) {
-                // Log and skip if a game fails to parse
-                println("Failed to parse game ${dbGame.id}: ${e.message}")
+                log.error("Failed to parse game ${dbGame.id}", e)
+                throw IllegalStateException("Failed to derive positions for game ${dbGame.id}", e)
             } finally {
                 file.delete()
             }
@@ -167,21 +174,84 @@ class GameParserService(
                     playerColor = occurrence.playerColor,
                 )
             }
-
-        positionOccurrenceRepository.saveAll(mappedOccurrences)
+        // The durable guarantee for occurrence identity is the
+        // uk_position_occurrence_identity unique constraint on
+        // (game_id, position_id, ply_number, player_color); both write paths
+        // below only decide how a replay avoids provoking it.
+        if (supportsConflictSafeInsert()) {
+            mappedOccurrences
+                .sortedWith(
+                    compareBy<PositionOccurrence> { it.game.id.toString() }
+                        .thenBy { it.position.id.toString() }
+                        .thenBy { it.plyNumber }
+                        .thenBy { it.playerColor },
+                )
+                .forEach { occurrence ->
+                    positionOccurrenceRepository.insertIfAbsent(
+                        occurrence.id,
+                        occurrence.game.id,
+                        occurrence.position.id,
+                        occurrence.chessAccount.id,
+                        occurrence.plyNumber,
+                        occurrence.movePlayed,
+                        occurrence.playerColor,
+                        occurrence.createdAt,
+                    )
+                }
+        } else {
+            // Non-PostgreSQL fallback: reload the already-persisted identities for
+            // these games and skip them. This keeps sequential retries idempotent;
+            // a genuinely concurrent duplicate is still rejected by the unique
+            // constraint, which fails the derived unit so it can be retried.
+            val newOccurrences =
+                if (mappedOccurrences.isEmpty()) {
+                    positionOccurrenceRepository.saveAll(emptyList())
+                    emptyList()
+                } else {
+                    val existingOccurrences =
+                        positionOccurrenceRepository
+                            .findByGameIdIn(mappedOccurrences.map { it.game.id }.distinct())
+                            .associateBy { occurrenceKey(it.game.id, it.position.id, it.plyNumber, it.playerColor) }
+                    mappedOccurrences.filter { occurrence ->
+                        val key = occurrenceKey(occurrence.game.id, occurrence.position.id, occurrence.plyNumber, occurrence.playerColor)
+                        key !in existingOccurrences
+                    }
+                }
+            if (newOccurrences.isNotEmpty()) {
+                positionOccurrenceRepository.saveAll(newOccurrences)
+            }
+        }
 
         // Return the set of affected position IDs
         return mappedOccurrences.map { it.position.id }.toSet()
     }
 
+    private fun occurrenceKey(
+        gameId: UUID,
+        positionId: UUID,
+        plyNumber: Int,
+        playerColor: String,
+    ): String = "$gameId:$positionId:$plyNumber:$playerColor"
+
+    /**
+     * `ON CONFLICT ... DO NOTHING` is PostgreSQL-specific, so the native
+     * insert-if-absent statements are only issued when the live connection
+     * reports PostgreSQL. Every other datasource (and the repository-double
+     * unit tests, which supply no datasource at all) keeps the pre-existing
+     * JPA `saveAll` path. The probe result is cached because the datasource of
+     * a running application never changes product mid-flight, and the probe
+     * would otherwise borrow a connection once per batch.
+     */
     private fun supportsConflictSafeInsert(): Boolean {
-        val source = dataSource ?: return true
+        val source = dataSource ?: return false
         val connection = DataSourceUtils.getConnection(source)
-        return try {
-            connection.metaData.databaseProductName == "PostgreSQL"
-        } finally {
-            DataSourceUtils.releaseConnection(connection, source)
-        }
+        val supported =
+            try {
+                connection.metaData.databaseProductName == "PostgreSQL"
+            } finally {
+                DataSourceUtils.releaseConnection(connection, source)
+            }
+        return supported
     }
 
     companion object {
