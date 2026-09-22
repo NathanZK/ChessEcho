@@ -1071,6 +1071,8 @@ python3 scripts/agent_workflow.py reconcile-completed-run ISSUE --by REQUESTER -
 python3 scripts/agent_workflow.py recover-completed-run-reconciliation ISSUE --by REQUESTER --confirm completed_run_recovery_confirmed
 python3 scripts/agent_workflow.py reject-implementation ISSUE --by LOGIN --reason "..."
 python3 scripts/agent_workflow.py create-draft-pr ISSUE --title "..." --body-file PATH
+python3 scripts/agent_workflow.py adopt-legacy-draft-pr-publication ISSUE --pr NUMBER --title "..." --by LOGIN --confirm legacy_draft_pr_adoption_confirmed
+python3 scripts/agent_workflow.py reconcile-historical-legacy-draft-pr ISSUE --historical-pr NUMBER --fresh-pr NUMBER --by LOGIN --confirm historical_legacy_pr_reconciliation_confirmed
 python3 scripts/agent_workflow.py start-revision ISSUE --parent-issue PARENT_ISSUE --class cosmetic|implementation|test|plan --by REQUESTER
 python3 scripts/agent_workflow.py publish-pr-revision ISSUE --target-pr NUMBER --by REQUESTER --confirm pr_revision_confirmed
 python3 scripts/agent_workflow.py recover-pr-revision ISSUE
@@ -1090,3 +1092,25 @@ intent, scope, tests, implementation evidence, validation, approvals,
 identity, topology, publication, and reconciliation. The template's optional related-issue, scope,
 migration/deployment, screenshot, and UI notes are author-facing guidance only;
 they are not additional universal requirements.
+
+### Historical legacy draft reconciliation
+
+`reconcile-historical-legacy-draft-pr` is a separate post-publication
+operation for the bounded #384 legacy-orphan lineage. It requires a completed
+fresh run with a finalized normal draft-publication journal and caller-selected
+historical and fresh PR numbers. It never discovers candidates or treats a
+matching historical PR as proof that the fresh run created it.
+
+Before any remote mutation, the command records complete PR observations, the
+fresh approved implementation, the historical branch and old head, the
+governed body identity, and the self-attested local request
+(`independent_authorization: false`). It records that original historical PR
+creation causality is unrecoverable and not claimed. It re-observes the
+historical PR immediately before an exact `--force-with-lease` update of the
+selected historical branch, then updates the body from the fresh governed
+artifact and independently verifies the final PR observation.
+
+The transition journal remains durable through push, body update, and final
+state recording. Any changed repository, base, branch, head, state, draft
+flag, title, body, URL, or snapshot version fails closed. Reconciliation is
+recorded only in the fresh run; parent-run provenance is not rewritten.

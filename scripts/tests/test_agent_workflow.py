@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import io
+import inspect
 import json
 import os
 import pathlib
@@ -7274,6 +7275,101 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
 
     PARENT_ISSUE = 9001
     CHILD_ISSUE = 9002
+
+    def test_historical_legacy_pr_reconciliation_requires_explicit_command(self):
+        self.assertIn(
+            "reconcile-historical-legacy-draft-pr",
+            workflow.COMMANDS,
+        )
+
+    def test_historical_legacy_pr_reconciliation_requires_explicit_prs(self):
+        parser = workflow.build_parser()
+        with self.assertRaises(SystemExit):
+            parser.parse_args(
+                [
+                    "reconcile-historical-legacy-draft-pr",
+                    "3842",
+                    "--by",
+                    "operator",
+                    "--confirm",
+                    "historical_legacy_pr_reconciliation_confirmed",
+                ]
+            )
+        parsed = parser.parse_args(
+            [
+                "reconcile-historical-legacy-draft-pr",
+                "3842",
+                "--historical-pr",
+                "385",
+                "--fresh-pr",
+                "400",
+                "--by",
+                "operator",
+                "--confirm",
+                "historical_legacy_pr_reconciliation_confirmed",
+            ]
+        )
+        self.assertEqual(385, parsed.historical_pr)
+        self.assertEqual(400, parsed.fresh_pr)
+
+    def test_historical_snapshot_repository_identity_uses_live_github_semantics(self):
+        first = {
+            "repository": "NathanZK/ChessEcho",
+            "number": 385,
+            "baseRefName": "main",
+            "baseRefOid": "a" * 40,
+            "headRefName": "legacy",
+            "headRefOid": "b" * 40,
+            "state": "OPEN",
+            "isDraft": True,
+            "title": "Legacy",
+            "url": "https://github.com/NathanZK/ChessEcho/pull/385",
+            "updatedAt": "2026-09-22T00:00:00Z",
+            "body_sha256": "c" * 64,
+            "body_byte_length": 1,
+        }
+        second = dict(first, repository="nathanzk/chessecho")
+        self.assertTrue(workflow._legacy_snapshot_matches(first, second))
+
+    def test_reconciliation_state_machine_declares_durable_mutation_phases(self):
+        required = {
+            "intent-authorized",
+            "remote-mutation",
+            "remote-result-observed",
+            "mutation-finalized",
+        }
+        self.assertTrue(
+            required.issubset(set(workflow.HISTORICAL_LEGACY_PR_RECONCILIATION_STATUSES))
+        )
+
+    def test_reconciliation_source_binds_exact_lease_and_body_publication_evidence(self):
+        source = inspect.getsource(workflow.command_reconcile_historical_legacy_draft_pr)
+        for marker in (
+            "authorized_historical_snapshot",
+            "lease_repository",
+            "remote_result_observation",
+            "body_mutation_intent",
+            "fresh_publication_body_sha256",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, source)
+
+    def test_reconciliation_does_not_accept_fresh_head_as_historical_precondition(self):
+        source = inspect.getsource(workflow.command_reconcile_historical_legacy_draft_pr)
+        self.assertNotIn(
+            'historical["headRefOid"] in (old_commit, state["implementation_commit"])',
+            source,
+        )
+
+    def test_reconciliation_verifies_git_remote_against_authoritative_repository(self):
+        source = inspect.getsource(workflow.command_reconcile_historical_legacy_draft_pr)
+        self.assertIn("_repository_identities_match", source)
+        self.assertIn("remote", source)
+
+    def test_reconciliation_replay_has_explicit_finalized_noop_path(self):
+        source = inspect.getsource(workflow.command_reconcile_historical_legacy_draft_pr)
+        self.assertIn('journal["status"] == "finalized"', source)
+        self.assertIn("return", source)
 
     def state_for(self, issue):
         path = self.root / ".agent-workflow" / "runs" / ("issue-%s" % issue) / "state.json"
