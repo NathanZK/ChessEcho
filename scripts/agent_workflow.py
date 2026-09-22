@@ -71,6 +71,10 @@ REVISION_ENTRY_STATUS = {
 DEFAULT_PR_REVISION_CONFIRMATION = "pr_revision_confirmed"
 PR_REVISION_JOURNAL_FORMAT = "chess-echo-pr-revision-transition-v1"
 PR_REVISION_JOURNAL_STATUSES = ("pending", "finalized")
+DRAFT_PR_PUBLICATION_JOURNAL_FORMAT = (
+    "chess-echo-draft-pr-publication-transition-v1"
+)
+DRAFT_PR_PUBLICATION_JOURNAL_STATUSES = ("pending", "finalized")
 
 STATUS_SEQUENCE = (
     "PLANNING",
@@ -690,6 +694,17 @@ def _current_head(root, config):
         "unable to read HEAD",
     )
     return completed["stdout_text"].strip()
+
+
+def _current_branch(root, config):
+    completed = _run_checked(
+        _git_command(config, "branch", "--show-current"),
+        _effective_limits(config, "git"),
+        root,
+        "git-branch-failed",
+        "unable to read current branch",
+    )
+    return completed["stdout_text"].strip() or None
 
 
 def _git_status(root, config):
@@ -6258,6 +6273,223 @@ def _verify_live_pr_body(root, config, pr_reference, expected_text, repository, 
     )
 
 
+def _draft_pr_publication_journal_path(root, config, issue):
+    return _run_root(root, config, issue) / "draft-pr-publication-transition.json"
+
+
+def _draft_pr_journal_body_identity(root, body_path, body_identity):
+    return {
+        "path": _relative(body_path, root),
+        "sha256": body_identity["sha256"],
+        "byte_length": body_identity["byte_length"],
+    }
+
+
+def _build_draft_pr_publication_journal(
+    root, config, state, title, body_path, body_identity, command, head_ref_name
+):
+    return {
+        "format": DRAFT_PR_PUBLICATION_JOURNAL_FORMAT,
+        "version": 1,
+        "transition_id": uuid.uuid4().hex,
+        "issue": state["issue"],
+        "operation": "create-draft-pr",
+        "created_at": _now(),
+        "status": "pending",
+        "target_repository": _authoritative_repository(config),
+        "target_base": config["target_base"],
+        "head_ref_name": head_ref_name,
+        "implementation_commit": state.get("implementation_commit"),
+        "title": title,
+        "body": _draft_pr_journal_body_identity(root, body_path, body_identity),
+        "command": [shlex.join(command)],
+        "publication_stdout": None,
+        "draft_pr": None,
+    }
+
+
+def _validate_draft_pr_publication_journal(root, config, state, journal, context):
+    _ensure(
+        journal.get("format") == DRAFT_PR_PUBLICATION_JOURNAL_FORMAT
+        and journal.get("version") == 1,
+        "draft-pr-publication-journal-mismatch",
+        "%s requires the supported draft PR publication journal format" % context,
+    )
+    _ensure(
+        journal.get("issue") == state.get("issue")
+        and journal.get("operation") == "create-draft-pr"
+        and isinstance(journal.get("transition_id"), str)
+        and journal.get("transition_id"),
+        "draft-pr-publication-journal-mismatch",
+        "%s journal identity does not match the workflow" % context,
+    )
+    _ensure(
+        journal.get("status") in DRAFT_PR_PUBLICATION_JOURNAL_STATUSES,
+        "draft-pr-publication-journal-mismatch",
+        "%s journal status is invalid" % context,
+    )
+    _ensure(
+        journal.get("target_base") == config["target_base"]
+        and journal.get("implementation_commit") == state.get("implementation_commit"),
+        "draft-pr-publication-journal-mismatch",
+        "%s journal target or implementation commit differs from workflow state"
+        % context,
+    )
+    body = journal.get("body") or {}
+    body_path = root / body.get("path", "")
+    _ensure(
+        body_path.is_file(),
+        "draft-pr-publication-journal-mismatch",
+        "%s journal body artifact is missing" % context,
+    )
+    digest, length = _text_digest(body_path.read_text(encoding="utf-8"))
+    _ensure(
+        body.get("sha256") == digest and body.get("byte_length") == length,
+        "draft-pr-publication-journal-mismatch",
+        "%s journal body identity does not match the generated artifact" % context,
+    )
+    return body_path
+
+
+def _pr_repository(identity):
+    head_repository = identity.get("headRepository")
+    if isinstance(head_repository, dict):
+        repository = head_repository.get("nameWithOwner")
+    else:
+        repository = identity.get("repository")
+    return repository or _repository_from_pr_url(identity.get("url"))
+
+
+def _verified_draft_pr_from_identity(identity, journal, context):
+    repository = _pr_repository(identity) or journal.get("target_repository")
+    head_ref_name = identity.get("headRefName")
+    head_ref_oid = identity.get("headRefOid")
+    _ensure(
+        identity.get("number") is not None
+        and repository
+        and identity.get("url")
+        and head_ref_name
+        and head_ref_oid,
+        "invalid-draft-pr-identity",
+        "%s requires a complete GitHub PR identity" % context,
+    )
+    expected_head = journal.get("head_ref_name")
+    if expected_head:
+        _ensure(
+            head_ref_name == expected_head,
+            "draft-pr-publication-recovery-ambiguous",
+            "%s PR head branch does not match the journal" % context,
+        )
+    _ensure(
+        repository == journal.get("target_repository") or not journal.get("target_repository"),
+        "draft-pr-publication-recovery-ambiguous",
+        "%s PR repository does not match the journal" % context,
+    )
+    _ensure(
+        identity.get("baseRefName") == journal.get("target_base")
+        and identity.get("state") == "OPEN"
+        and identity.get("isDraft") is True
+        and head_ref_oid == journal.get("implementation_commit"),
+        "draft-pr-publication-recovery-ambiguous",
+        "%s PR identity does not match the journal-bound publication" % context,
+    )
+    return {
+        "number": identity.get("number"),
+        "head_ref_name": head_ref_name,
+        "head_ref_oid": head_ref_oid,
+        "repository": repository,
+        "url": identity.get("url"),
+    }
+
+
+def _lookup_matching_draft_prs(root, config, journal):
+    command = _github_command(
+        config,
+        "pr",
+        "list",
+        "--state",
+        "all",
+        "--base",
+        journal["target_base"],
+        "--json",
+        "number,headRefName,headRefOid,headRepository,baseRefName,state,isDraft,url",
+    )
+    if journal.get("head_ref_name"):
+        command.extend(["--head", journal["head_ref_name"]])
+    if journal.get("target_repository"):
+        command.extend(["--repo", journal["target_repository"]])
+    completed = _run_checked(
+        command,
+        _effective_limits(config, "github"),
+        root,
+        "draft-pr-publication-recovery-lookup-failed",
+        "unable to search for journal-bound draft PR publication",
+    )
+    try:
+        matches = json.loads(completed["stdout_text"])
+    except ValueError:
+        _raise(
+            "draft-pr-publication-recovery-lookup-invalid",
+            "gh pr list returned malformed JSON",
+        )
+    _ensure(
+        isinstance(matches, list),
+        "draft-pr-publication-recovery-lookup-invalid",
+        "gh pr list returned a non-list payload",
+    )
+    return matches
+
+
+def _finalize_draft_pr_publication(root, config, issue, state, journal, identity, publication):
+    body_path = _validate_draft_pr_publication_journal(
+        root, config, state, journal, "draft PR publication finalization"
+    )
+    draft_pr_identity = _verified_draft_pr_from_identity(
+        identity, journal, "draft PR publication finalization"
+    )
+    expected_body = body_path.read_text(encoding="utf-8")
+    _verify_live_pr_body(
+        root,
+        config,
+        str(draft_pr_identity["number"]),
+        expected_body,
+        draft_pr_identity["repository"],
+        "draft-pr-publication-body-mismatch",
+    )
+    state["draft_pr"] = {
+        "created_at": _now(),
+        "title": journal["title"],
+        "body_file": journal["body"]["path"],
+        "publication": publication,
+        **draft_pr_identity,
+    }
+    state["artifacts"]["draft_pr_body"] = {
+        "kind": "draft_pr_body",
+        "path": journal["body"]["path"],
+        "recorded_at": _now(),
+        "sha256": journal["body"]["sha256"],
+        "byte_length": journal["body"]["byte_length"],
+    }
+    state["status"] = "WORKFLOW_COMPLETED"
+    _write_state(root, config, issue, state)
+    finalized = dict(journal)
+    finalized["status"] = "finalized"
+    finalized["finalized_at"] = _now()
+    finalized["draft_pr"] = draft_pr_identity
+    _write_json(_draft_pr_publication_journal_path(root, config, issue), finalized)
+    return state["draft_pr"]
+
+
+def _is_existing_pr_create_error(error):
+    message = (error.message or "").lower()
+    return (
+        error.code == "draft-pr-create-existing"
+        or "already exists" in message
+        or "a pull request already exists" in message
+        or "pull request for branch" in message and "already" in message
+    )
+
+
 def command_create_draft_pr(args, root, config):
     """Publish only an approved one-commit branch rooted at the fresh target."""
     state = _read_state(root, config, args.issue)
@@ -6294,8 +6526,37 @@ def command_create_draft_pr(args, root, config):
         command.extend(["--head", args.head])
 
     publication = {"command": [shlex.join(command)], "executed": not args.skip_github}
-    pr_identity = {}
-    if not args.skip_github:
+    body_identity = _generated_artifact_identity(root, body_path, "draft_pr_body")
+    if args.skip_github:
+        state["draft_pr"] = {
+            "created_at": _now(),
+            "title": args.title,
+            "body_file": _relative(body_path, root),
+            "publication": publication,
+            "number": None,
+            "head_ref_name": None,
+            "head_ref_oid": None,
+            "repository": _authoritative_repository(config),
+            "url": None,
+        }
+        state["artifacts"]["draft_pr_body"] = body_identity
+        state["status"] = "DRAFT_PR_CREATION"
+        _write_state(root, config, args.issue, state)
+        return {"ok": True, "status": state["status"], "draft_pr": state["draft_pr"]}
+    head_ref_name = args.head or _current_branch(root, config)
+    journal = _build_draft_pr_publication_journal(
+        root,
+        config,
+        state,
+        args.title,
+        body_path,
+        body_identity,
+        command,
+        head_ref_name,
+    )
+    _write_json(_draft_pr_publication_journal_path(root, config, args.issue), journal)
+
+    try:
         completed = _run_checked(
             command,
             github_limits,
@@ -6303,49 +6564,120 @@ def command_create_draft_pr(args, root, config):
             "draft-pr-failed",
             "unable to create draft PR",
         )
-        publication["stdout"] = completed["stdout_text"].strip()
-        # Independently look up the created PR's identity/head rather than
-        # trusting `gh pr create`'s text output, so a future governed
-        # revision can verify this exact PR before publishing to it.
-        pr_identity = _lookup_pr_identity(
-            root,
-            config,
-            publication["stdout"],
-            repository=_authoritative_repository(config),
-        )
+    except WorkflowError as error:
+        if _is_existing_pr_create_error(error):
+            _raise(
+                "draft-pr-create-existing",
+                "draft PR already exists for the journal-bound head/base; run recover-draft-pr-publication",
+            )
+        raise
+    publication["stdout"] = completed["stdout_text"].strip()
+    # Independently look up the created PR's identity/head rather than
+    # trusting `gh pr create`'s text output, so a future governed
+    # revision can verify this exact PR before publishing to it.
+    pr_identity = _lookup_pr_identity(
+        root,
+        config,
+        publication["stdout"],
+        repository=_authoritative_repository(config),
+    )
+    journal = dict(journal)
+    journal["publication_stdout"] = publication["stdout"]
+    journal["head_ref_name"] = pr_identity.get("headRefName") or journal.get("head_ref_name")
+    journal["draft_pr"] = _verified_draft_pr_from_identity(
+        pr_identity, journal, "create-draft-pr"
+    )
+    _write_json(_draft_pr_publication_journal_path(root, config, args.issue), journal)
+    draft_pr = _finalize_draft_pr_publication(
+        root, config, args.issue, state, journal, pr_identity, publication
+    )
+    return {"ok": True, "status": state["status"], "draft_pr": draft_pr}
 
-    state["draft_pr"] = {
-        "created_at": _now(),
-        "title": args.title,
-        "body_file": _relative(body_path, root),
-        "publication": publication,
-        "number": pr_identity.get("number"),
-        "head_ref_name": pr_identity.get("headRefName"),
-        "head_ref_oid": pr_identity.get("headRefOid"),
-        "repository": pr_identity.get("repository")
-        or _authoritative_repository(config)
-        or _repository_from_pr_url(pr_identity.get("url")),
-        "url": pr_identity.get("url"),
-    }
-    state["artifacts"]["draft_pr_body"] = _generated_artifact_identity(
-        root, body_path, "draft_pr_body"
-    )
-    if args.skip_github:
-        state["status"] = "DRAFT_PR_CREATION"
-        _write_state(root, config, args.issue, state)
-        return {"ok": True, "status": state["status"], "draft_pr": state["draft_pr"]}
+
+def command_recover_draft_pr_publication(args, root, config):
+    context = "recover-draft-pr-publication"
+    state = _read_state(root, config, args.issue)
+    _expect_status(state, "DRAFT_PR_CREATION", context)
     _ensure(
-        state["draft_pr"]["publication"]["executed"] is True
-        and state["draft_pr"]["number"] is not None
-        and state["draft_pr"]["url"]
-        and state["draft_pr"]["head_ref_name"]
-        and state["draft_pr"]["head_ref_oid"],
-        "invalid-draft-pr-identity",
-        "create-draft-pr requires executed publication and a complete GitHub PR identity",
+        state.get("draft_pr") is None,
+        "draft-pr-already-recorded",
+        "%s requires no recorded draft_pr identity" % context,
     )
-    state["status"] = "WORKFLOW_COMPLETED"
-    _write_state(root, config, args.issue, state)
-    return {"ok": True, "status": state["status"], "draft_pr": state["draft_pr"]}
+    _ensure(
+        state.get("implementation_commit")
+        and _current_head(root, config) == state["implementation_commit"],
+        "implementation-commit-mismatch",
+        "%s requires HEAD to match approved implementation_commit" % context,
+    )
+    _require_clean_tree(root, config, context)
+    journal = _read_json(
+        _draft_pr_publication_journal_path(root, config, args.issue),
+        "draft PR publication transition journal",
+    )
+    body_path = _validate_draft_pr_publication_journal(
+        root, config, state, journal, context
+    )
+    if journal.get("status") == "finalized":
+        draft_pr = journal.get("draft_pr") or {}
+        live = _lookup_pr_identity(
+            root, config, str(draft_pr.get("number")), repository=draft_pr.get("repository")
+        )
+        publication = {
+            "command": journal.get("command") or [],
+            "executed": True,
+            "stdout": journal.get("publication_stdout") or "",
+            "recovered": True,
+        }
+        draft_pr = _finalize_draft_pr_publication(
+            root, config, args.issue, state, journal, live, publication
+        )
+        return {"ok": True, "status": state["status"], "recovered": True, "draft_pr": draft_pr}
+
+    if journal.get("draft_pr") and journal["draft_pr"].get("number"):
+        candidates = [
+            _lookup_pr_identity(
+                root,
+                config,
+                str(journal["draft_pr"]["number"]),
+                repository=journal["draft_pr"].get("repository"),
+            )
+        ]
+    else:
+        candidates = _lookup_matching_draft_prs(root, config, journal)
+
+    if not candidates:
+        return {
+            "ok": True,
+            "status": state["status"],
+            "retry_required": True,
+            "draft_pr": None,
+        }
+
+    exact = []
+    for candidate in candidates:
+        try:
+            exact.append(
+                (candidate, _verified_draft_pr_from_identity(candidate, journal, context))
+            )
+        except WorkflowError as error:
+            if error.code != "draft-pr-publication-recovery-ambiguous":
+                raise
+    _ensure(
+        len(exact) == 1,
+        "draft-pr-publication-recovery-ambiguous",
+        "%s requires exactly one matching journal-bound PR" % context,
+    )
+    identity = dict(exact[0][0])
+    publication = {
+        "command": journal.get("command") or [],
+        "executed": True,
+        "stdout": journal.get("publication_stdout") or exact[0][1].get("url") or "",
+        "recovered": True,
+    }
+    draft_pr = _finalize_draft_pr_publication(
+        root, config, args.issue, state, journal, identity, publication
+    )
+    return {"ok": True, "status": state["status"], "recovered": True, "draft_pr": draft_pr}
 
 
 def _skipped_publication_recovery_acknowledgment(config, confirm, by):
@@ -7938,6 +8270,12 @@ def build_parser():
     create_draft_pr.add_argument("--head")
     create_draft_pr.add_argument("--skip-github", action="store_true")
 
+    recover_draft_pr_publication = subparsers.add_parser(
+        "recover-draft-pr-publication"
+    )
+    _add_root(recover_draft_pr_publication)
+    _add_issue(recover_draft_pr_publication)
+
     publish_pr_revision = subparsers.add_parser("publish-pr-revision")
     _add_root(publish_pr_revision)
     _add_issue(publish_pr_revision)
@@ -7983,6 +8321,7 @@ COMMANDS = {
     "recover-implementation-approval": command_recover_implementation_approval,
     "reject-implementation": command_reject_implementation,
     "create-draft-pr": command_create_draft_pr,
+    "recover-draft-pr-publication": command_recover_draft_pr_publication,
     "publish-pr-revision": command_publish_pr_revision,
     "recover-pr-revision": command_recover_pr_revision,
 }
