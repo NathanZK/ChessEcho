@@ -12,6 +12,7 @@ import pathlib
 import re
 import shlex
 import tempfile
+import time
 import uuid
 
 if __package__:
@@ -98,6 +99,13 @@ HISTORICAL_LEGACY_PR_RECONCILIATION_STATUSES = (
     "remote-result-observed",
     "mutation-finalized",
 )
+# Bounded re-observation tolerates GitHub API eventual consistency after a
+# remote mutation (push or body edit): a transient stale read must not be
+# treated as a durable observation failure. The bound is small and fixed so
+# a genuinely conflicting or topology-drifted remote state still fails
+# closed promptly rather than retrying indefinitely.
+LEGACY_RECONCILIATION_OBSERVATION_ATTEMPTS = 3
+LEGACY_RECONCILIATION_OBSERVATION_DELAY_SECONDS = 2.0
 
 STATUS_SEQUENCE = (
     "PLANNING",
@@ -6767,6 +6775,90 @@ def _validate_legacy_snapshot(snapshot, journal, context):
     return identity
 
 
+_COMMAND_RESULT_TEXT_LIMIT = 4000
+
+
+def _capture_command_result(completed):
+    """Project an already-succeeded `_run_checked` result into durable journal evidence.
+
+    Persisting the raw/structured push result (not just the derived boolean
+    success/failure) lets a crashed or fail-closed run be diagnosed and
+    reconstructed later without guessing at what the remote command actually did.
+    """
+    result = completed.get("result") or {}
+    return {
+        "outcome": result.get("outcome"),
+        "exit_code": result.get("exit_code"),
+        "stdout": (completed.get("stdout_text") or "")[:_COMMAND_RESULT_TEXT_LIMIT],
+        "stderr": (completed.get("stderr_text") or "")[:_COMMAND_RESULT_TEXT_LIMIT],
+        "captured_at": _now(),
+    }
+
+
+_LEGACY_TOPOLOGY_FIELDS = (
+    "repository",
+    "number",
+    "baseRefName",
+    "baseRefOid",
+    "headRefName",
+    "state",
+    "isDraft",
+)
+
+
+def _legacy_topology_matches(expected, observed, expected_head_ref_oid):
+    """Bind and validate the complete authorized historical PR topology.
+
+    Matching `headRefOid` alone is never sufficient evidence that an authorized
+    remote mutation completed: repository, PR number, base branch *and SHA*,
+    head branch, PR state, and draft status must all still match the
+    pre-mutation authorized snapshot, and only `headRefOid` is allowed (and
+    required) to have advanced to `expected_head_ref_oid`.
+    """
+    return (
+        all(
+            (
+                _repository_identities_match(expected.get(field), observed.get(field))
+                if field == "repository"
+                else expected.get(field) == observed.get(field)
+            )
+            for field in _LEGACY_TOPOLOGY_FIELDS
+        )
+        and observed.get("headRefOid") == expected_head_ref_oid
+    )
+
+
+def _observe_legacy_snapshot_until(
+    root,
+    config,
+    pr_number,
+    repository,
+    matches,
+    attempts=LEGACY_RECONCILIATION_OBSERVATION_ATTEMPTS,
+    delay=LEGACY_RECONCILIATION_OBSERVATION_DELAY_SECONDS,
+):
+    """Re-observe a legacy PR snapshot with bounded retries.
+
+    Tolerates GitHub API eventual consistency: a transient stale read after a
+    successful remote mutation is retried a small, fixed number of times
+    before giving up. Every attempt's snapshot is returned so the caller can
+    persist durable, reconstructable observation evidence regardless of
+    whether the final attempt matched.
+    """
+    observed = None
+    raw_snapshot = None
+    observations = []
+    for attempt in range(1, attempts + 1):
+        raw_snapshot = _lookup_legacy_draft_pr_snapshot(root, config, pr_number, repository)
+        observed = _legacy_snapshot_identity(raw_snapshot)
+        observations.append({"attempt": attempt, "snapshot": observed})
+        if matches(observed):
+            return observed, raw_snapshot, True, observations
+        if attempt < attempts:
+            time.sleep(delay)
+    return observed, raw_snapshot, False, observations
+
+
 def _build_legacy_adoption_journal(root, config, state, args, body_path, body_identity):
     return {
         "format": LEGACY_DRAFT_PR_ADOPTION_JOURNAL_FORMAT,
@@ -7093,6 +7185,11 @@ def command_reconcile_historical_legacy_draft_pr(args, root, config):
             "remote_result_observation": None,
             "body_mutation_intent": None,
             "fresh_publication_body_sha256": body_sha256,
+            "push_command_result": None,
+            "push_observations": None,
+            "push_recovery_command_result": None,
+            "push_recovery_observations": None,
+            "push_recovery_reobservations": None,
         }
         _write_json(path, journal)
 
@@ -7152,6 +7249,11 @@ def command_reconcile_historical_legacy_draft_pr(args, root, config):
                 and historical["headRefOid"] == state["implementation_commit"]
             )
         )
+        and (
+            journal.get("authorized_historical_snapshot") is None
+            or historical["baseRefOid"]
+            == journal["authorized_historical_snapshot"].get("baseRefOid")
+        )
         and historical["state"] == "OPEN"
         and historical["isDraft"] is True,
         "historical-legacy-pr-observation-mismatch",
@@ -7190,7 +7292,7 @@ def command_reconcile_historical_legacy_draft_pr(args, root, config):
         journal["status"] = "remote-mutation"
         journal["mutation"] = "branch-push"
         _write_json(path, journal)
-        _run_checked(
+        push_completed = _run_checked(
             _git_command(
                 config, "push", "origin",
                 "%s:refs/heads/%s"
@@ -7202,44 +7304,56 @@ def command_reconcile_historical_legacy_draft_pr(args, root, config):
             "historical-legacy-pr-push-failed",
             "%s could not lease-update the historical PR branch" % context,
         )
+        # Persist the raw push result and every bounded re-observation attempt
+        # before the topology `_ensure` below can possibly raise, so a crash
+        # or fail-closed error still leaves durable, reconstructable evidence.
         journal = dict(journal)
-        post_push = _legacy_snapshot_identity(
-            _lookup_legacy_draft_pr_snapshot(root, config, args.historical_pr, repository)
+        journal["push_command_result"] = _capture_command_result(push_completed)
+        _write_json(path, journal)
+        post_push, post_push_raw, matched, observations = _observe_legacy_snapshot_until(
+            root, config, args.historical_pr, repository,
+            lambda snap: _legacy_topology_matches(second, snap, state["implementation_commit"]),
         )
+        journal = dict(journal)
+        journal["push_observations"] = observations
+        _write_json(path, journal)
         _ensure(
-            _repository_identities_match(post_push["repository"], second["repository"])
-            and post_push["number"] == second["number"]
-            and post_push["baseRefName"] == second["baseRefName"]
-            and post_push["headRefName"] == second["headRefName"]
-            and post_push["headRefOid"] == state["implementation_commit"]
-            and post_push["state"] == second["state"]
-            and post_push["isDraft"] == second["isDraft"],
+            matched,
             "historical-legacy-pr-push-observation-mismatch",
-            "%s push result does not match the authorized mutation" % context,
+            "%s push result does not match the authorized mutation after bounded re-observation"
+            % context,
         )
+        journal = dict(journal)
         journal["remote_result_observation"] = post_push
         journal["status"] = "remote-result-observed"
         journal["pushed_at"] = _now()
         _write_json(path, journal)
 
     if journal.get("status") == "remote-mutation" and journal.get("mutation") == "branch-push":
-        live = _legacy_snapshot_identity(
-            _lookup_legacy_draft_pr_snapshot(root, config, args.historical_pr, repository)
-        )
         authorized = journal.get("authorized_historical_snapshot") or {}
-        if live["headRefOid"] == state["implementation_commit"]:
+        live, live_raw, matched, observations = _observe_legacy_snapshot_until(
+            root, config, args.historical_pr, repository,
+            lambda snap: _legacy_topology_matches(
+                authorized, snap, state["implementation_commit"]
+            ),
+        )
+        journal = dict(journal)
+        journal["push_recovery_observations"] = observations
+        _write_json(path, journal)
+        if matched:
+            # The full authorized topology (not head SHA alone) is proven to
+            # match: the push already landed and recovery can proceed.
             journal = dict(journal)
             journal["remote_result_observation"] = live
             journal["status"] = "remote-result-observed"
             _write_json(path, journal)
-        else:
-            _ensure(
-                _legacy_snapshot_matches(authorized, live)
-                and live["headRefOid"] == journal.get("lease_sha"),
-                "historical-legacy-pr-push-recovery-ambiguous",
-                "%s cannot distinguish an unapplied push from conflicting remote state" % context,
-            )
-            _run_checked(
+        elif live.get("headRefOid") == journal.get("lease_sha") and _legacy_topology_matches(
+            authorized, live, journal.get("lease_sha")
+        ):
+            # Head is still at the pre-push value and every other topology
+            # field is unchanged: the push genuinely never landed (or was
+            # rolled back). Safe to retry the exact leased push.
+            push_completed = _run_checked(
                 _git_command(
                     config, "push", "origin",
                     "%s:refs/heads/%s" % (state["implementation_commit"], journal["lease_branch"]),
@@ -7250,11 +7364,22 @@ def command_reconcile_historical_legacy_draft_pr(args, root, config):
                 "historical-legacy-pr-push-failed",
                 "%s could not recover the leased historical PR branch" % context,
             )
-            recovered = _legacy_snapshot_identity(
-                _lookup_legacy_draft_pr_snapshot(root, config, args.historical_pr, repository)
+            journal = dict(journal)
+            journal["push_recovery_command_result"] = _capture_command_result(push_completed)
+            _write_json(path, journal)
+            recovered, recovered_raw, recovered_matched, recovered_observations = (
+                _observe_legacy_snapshot_until(
+                    root, config, args.historical_pr, repository,
+                    lambda snap: _legacy_topology_matches(
+                        authorized, snap, state["implementation_commit"]
+                    ),
+                )
             )
+            journal = dict(journal)
+            journal["push_recovery_reobservations"] = recovered_observations
+            _write_json(path, journal)
             _ensure(
-                recovered["headRefOid"] == state["implementation_commit"],
+                recovered_matched,
                 "historical-legacy-pr-push-recovery-mismatch",
                 "%s recovered push result is not authorized" % context,
             )
@@ -7262,6 +7387,29 @@ def command_reconcile_historical_legacy_draft_pr(args, root, config):
             journal["remote_result_observation"] = recovered
             journal["status"] = "remote-result-observed"
             _write_json(path, journal)
+        else:
+            _ensure(
+                live.get("headRefOid") != state["implementation_commit"],
+                "historical-legacy-pr-topology-drifted",
+                "%s observed the authorized head SHA with a topology that no longer matches "
+                "the pre-push authorized snapshot; a matching head SHA alone is never "
+                "sufficient recovery evidence" % context,
+            )
+            # Head SHA matches neither the pre-push lease value nor the
+            # authorized target commit, or the pre-push topology itself no
+            # longer matches: this is genuinely ambiguous/conflicting remote
+            # state that must fail closed rather than guess at a retry.
+            # This is a structural fail-closed backstop: the coarse gate above
+            # and the full-identity `validated_historical_snapshot` binding
+            # already restrict any snapshot reaching this point to headRefOid
+            # in {lease_sha, implementation_commit}, so in practice this path
+            # is unreachable today; it is kept so a future loosening of those
+            # upstream checks still fails closed instead of guessing.
+            _raise(
+                "historical-legacy-pr-push-recovery-ambiguous",
+                "%s observed remote state that neither matches the authorized topology "
+                "nor an unapplied lease push; refusing to guess" % context,
+            )
 
     if journal.get("status") == "remote-result-observed":
         journal = dict(journal)
@@ -7303,14 +7451,16 @@ def command_reconcile_historical_legacy_draft_pr(args, root, config):
             _update_pr_body(root, config, str(args.historical_pr), body_path, repository=repository)
     final_snapshot = _lookup_legacy_draft_pr_snapshot(root, config, args.historical_pr, repository)
     final = _legacy_snapshot_identity(final_snapshot)
+    final_authorized = journal.get("authorized_historical_snapshot") or {}
     _ensure(
         _repository_identities_match(final["repository"], repository)
         and final["number"] == args.historical_pr
         and final["baseRefName"] == config["target_base"]
+        and final["baseRefOid"] == final_authorized.get("baseRefOid")
         and final["headRefName"] == journal.get("lease_branch")
         and final["headRefOid"] == state["implementation_commit"]
-        and final["title"] == (journal.get("authorized_historical_snapshot") or {}).get("title")
-        and final["url"] == (journal.get("authorized_historical_snapshot") or {}).get("url")
+        and final["title"] == final_authorized.get("title")
+        and final["url"] == final_authorized.get("url")
         and final["body_sha256"] == body_sha256
         and final["body_byte_length"] == body_byte_length
         and final["state"] == "OPEN"
