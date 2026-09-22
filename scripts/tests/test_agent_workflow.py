@@ -78,6 +78,8 @@ class AgentWorkflowTest(unittest.TestCase):
         )
         self.git("add", ".")
         self.git("commit", "-qm", "baseline")
+        self.git("branch", "workflow-branch")
+        self.git("checkout", "-q", "workflow-branch")
         self.git("update-ref", "refs/remotes/origin/main", "HEAD")
 
     def tearDown(self):
@@ -1830,6 +1832,104 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual(1, code)
         self.assertEqual("workflow-start-not-at-target", payload["error"]["code"])
 
+    def test_init_rejects_detached_head_even_at_target_without_state(self):
+        """A detached target commit is not a publishable workflow head."""
+        target_head = self.git("rev-parse", "origin/main").stdout.strip()
+        self.git("checkout", "-q", "--detach", target_head)
+
+        code, payload, _ = self.run_cli("init", str(ISSUE))
+
+        self.assertEqual(1, code)
+        self.assertEqual("invalid-publication-head", payload["error"]["code"])
+        self.assertFalse(
+            (self.root / ".agent-workflow" / "runs" / f"issue-{ISSUE}").exists()
+        )
+
+    def test_init_rejects_target_branch_and_records_non_target_binding(self):
+        """Only an attached non-target branch can bind a workflow run."""
+        self.git("checkout", "-q", "main")
+        code, payload, _ = self.run_cli("init", str(ISSUE))
+        self.assertEqual(1, code)
+        self.assertEqual("invalid-publication-head", payload["error"]["code"])
+        self.assertFalse(
+            (self.root / ".agent-workflow" / "runs" / f"issue-{ISSUE}").exists()
+        )
+
+        self.git("checkout", "-q", "workflow-branch")
+        code, payload, _ = self.run_cli("init", str(ISSUE))
+        self.assertEqual(0, code)
+        self.assertEqual("workflow-branch", self.state()["publication_branch"])
+
+    def test_implementation_approval_rejects_detached_head_before_journal(self):
+        """Gate 3 must not commit or journal from a detached checkout."""
+        self.bootstrap_to_reviewed_implementation()
+        target_head = self.state()["target_head"]
+        self.git("checkout", "-q", "--detach", target_head)
+        before_head = self.git("rev-parse", "HEAD").stdout.strip()
+
+        code, payload, _ = self.approve_implementation()
+
+        self.assertEqual(1, code)
+        self.assertEqual("invalid-publication-head", payload["error"]["code"])
+        self.assertEqual(before_head, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertFalse(self.transition_journal_path().exists())
+        self.assertEqual(
+            "WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL", self.state()["status"]
+        )
+
+    def test_create_draft_pr_rejects_detached_head_before_publication_journal(self):
+        """Live publication must reject a detached bound implementation head."""
+        self.bootstrap_to_draft_pr_creation()
+        implementation_commit = self.state()["implementation_commit"]
+        self.git("checkout", "-q", "--detach", implementation_commit)
+
+        code, payload, _ = self.run_cli(
+            "create-draft-pr",
+            str(ISSUE),
+            "--title",
+            "Issue 392",
+            "--skip-github",
+        )
+
+        self.assertEqual(1, code)
+        self.assertEqual("invalid-publication-head", payload["error"]["code"])
+        self.assertFalse(
+            (
+                self.root
+                / ".agent-workflow"
+                / "runs"
+                / f"issue-{ISSUE}"
+                / "draft-pr-publication-transition.json"
+            ).exists()
+        )
+
+    def test_create_draft_pr_rejects_changed_publication_branch_binding(self):
+        """Live publication must reject a branch different from the binding."""
+        self.bootstrap_to_draft_pr_creation()
+        implementation_commit = self.state()["implementation_commit"]
+        self.git("checkout", "-q", "-b", "different-publication-branch")
+
+        code, payload, _ = self.run_cli(
+            "create-draft-pr",
+            str(ISSUE),
+            "--title",
+            "Issue 392",
+            "--skip-github",
+        )
+
+        self.assertEqual(1, code)
+        self.assertEqual("invalid-publication-head", payload["error"]["code"])
+        self.assertEqual(implementation_commit, self.git("rev-parse", "HEAD").stdout.strip())
+        self.assertFalse(
+            (
+                self.root
+                / ".agent-workflow"
+                / "runs"
+                / f"issue-{ISSUE}"
+                / "draft-pr-publication-transition.json"
+            ).exists()
+        )
+
     def set_authoritative_remote(self, identity):
         config_path = self.root / ".github" / "agent-workflow.json"
         config = json.loads(config_path.read_text(encoding="utf-8"))
@@ -2600,6 +2700,8 @@ class AgentWorkflowTest(unittest.TestCase):
         recovered = self.state()
         self.assertEqual("IMPLEMENTATION", recovered["status"])
         self.assertIsNone(recovered["approvals"]["implementation"])
+        self.git("branch", "-f", recovered["publication_branch"], "HEAD")
+        self.git("checkout", "-q", recovered["publication_branch"])
 
         code, payload, _ = self.run_cli(
             "run-validation",
@@ -2750,7 +2852,7 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual("workflow-start-not-at-target", payload["error"]["code"])
         self.assertFalse((self.root / ".agent-workflow" / "runs" / f"issue-{ISSUE}" / "state.json").exists())
 
-        self.git("checkout", "-q", "main")
+        self.git("checkout", "-q", "workflow-branch")
         self.assertEqual(0, self.run_cli("init", str(ISSUE))[0])
         state = self.state()
         self.git("checkout", "-q", target_head)
@@ -2778,7 +2880,7 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual(1, code)
         self.assertEqual("invalid-implementation-topology", payload["error"]["code"])
 
-        self.git("checkout", "-q", "main")
+        self.git("checkout", "-q", "workflow-branch")
         stale_path = self.root / "src" / "test" / "kotlin" / "com" / "chessecho" / "service"
         stale_path.mkdir(parents=True, exist_ok=True)
         (stale_path / "HumanMoveBfsServiceTest.kt").write_text(
@@ -4525,7 +4627,7 @@ class AgentWorkflowTest(unittest.TestCase):
         (self.root / "side.txt").write_text("side\n", encoding="utf-8")
         self.git("add", "side.txt")
         self.git("commit", "-qm", "side branch")
-        self.git("checkout", "-q", "main")
+        self.git("checkout", "-q", "workflow-branch")
         self.git("merge", "--no-ff", "-qm", "merge unrelated side", "side")
         head = self.git("rev-parse", "HEAD").stdout.strip()
         self.assertEqual(target_head, self.git("rev-parse", f"{head}^").stdout.strip())
@@ -6812,8 +6914,8 @@ class AgentWorkflowTest(unittest.TestCase):
         self.assertEqual(0, code, payload)
 
         # The workflow's own HEAD is the current authoritative target base;
-        # init requires HEAD to already sit at the resolved target.
-        self.git("checkout", "-q", "main")
+        # init requires an attached non-target branch at the resolved target.
+        self.git("checkout", "-q", "workflow-branch")
         current_head = self.git("rev-parse", "HEAD").stdout.strip()
         self.git("update-ref", "refs/remotes/origin/main", current_head)
 
@@ -7218,6 +7320,65 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
         self.assertEqual(1, code)
         self.assertEqual("parent-run-not-eligible", payload["error"]["code"])
 
+    def test_start_revision_rejects_detached_target_head_without_child_state(self):
+        """A detached target commit cannot start a governed revision."""
+        self.bootstrap_completed_parent(self.PARENT_ISSUE)
+        self.advance_main_past(self.PARENT_ISSUE)
+        current_head = self.git("rev-parse", "HEAD").stdout.strip()
+        self.git("checkout", "-q", "--detach", current_head)
+
+        code, payload, _ = self.run_cli(
+            "start-revision",
+            str(self.CHILD_ISSUE),
+            "--parent-issue",
+            str(self.PARENT_ISSUE),
+            "--class",
+            "implementation",
+            "--by",
+            "tester",
+        )
+
+        self.assertEqual(1, code)
+        self.assertEqual("invalid-publication-head", payload["error"]["code"])
+        self.assertFalse(
+            (
+                self.root
+                / ".agent-workflow"
+                / "runs"
+                / f"issue-{self.CHILD_ISSUE}"
+            ).exists()
+        )
+
+    def test_start_revision_rejects_target_branch_without_child_state(self):
+        """The configured target branch cannot be a revision publication head."""
+        self.bootstrap_completed_parent(self.PARENT_ISSUE)
+        self.advance_main_past(self.PARENT_ISSUE)
+        current_head = self.git("rev-parse", "HEAD").stdout.strip()
+        self.git("branch", "-f", "main", current_head)
+        self.git("checkout", "-q", "main")
+
+        code, payload, _ = self.run_cli(
+            "start-revision",
+            str(self.CHILD_ISSUE),
+            "--parent-issue",
+            str(self.PARENT_ISSUE),
+            "--class",
+            "implementation",
+            "--by",
+            "tester",
+        )
+
+        self.assertEqual(1, code)
+        self.assertEqual("invalid-publication-head", payload["error"]["code"])
+        self.assertFalse(
+            (
+                self.root
+                / ".agent-workflow"
+                / "runs"
+                / f"issue-{self.CHILD_ISSUE}"
+            ).exists()
+        )
+
     def test_start_revision_cosmetic_inherits_plan_and_tests_and_enters_implementation(self):
         self.bootstrap_completed_parent(self.PARENT_ISSUE)
         self.advance_main_past(self.PARENT_ISSUE)
@@ -7287,7 +7448,6 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
         )
         child_state = self.state_for(self.CHILD_ISSUE)
         test_commit = child_state["test_commit"]
-        self.assertEqual(0, self.git("checkout", "-q", test_commit).returncode)
 
         # An in-scope but non-documentation change while claiming a cosmetic
         # revision must fail closed, independent of the agent's claimed class.
@@ -7330,7 +7490,6 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
         )
         child_state = self.state_for(self.CHILD_ISSUE)
         test_commit = child_state["test_commit"]
-        self.assertEqual(0, self.git("checkout", "-q", test_commit).returncode)
 
         (self.root / "docs").mkdir(parents=True, exist_ok=True)
         doc_file = self.root / "docs" / "example.md"
@@ -7475,7 +7634,6 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
         )
         child_state = self.state_for(self.CHILD_ISSUE)
         test_commit = child_state["test_commit"]
-        self.assertEqual(0, self.git("checkout", "-q", test_commit).returncode)
         (self.root / "src" / "main").mkdir(parents=True, exist_ok=True)
         (self.root / "src" / "main" / "Example.kt").write_text(
             "class Example\n", encoding="utf-8"
@@ -7513,7 +7671,6 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
         )
         child_state = self.state_for(self.CHILD_ISSUE)
         test_commit = child_state["test_commit"]
-        self.assertEqual(0, self.git("checkout", "-q", test_commit).returncode)
         (self.root / "src" / "main").mkdir(parents=True, exist_ok=True)
         (self.root / "src" / "main" / "Example.kt").write_text(
             "class Example\n", encoding="utf-8"
@@ -7551,7 +7708,6 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
         )
         child_state = self.state_for(self.CHILD_ISSUE)
         test_commit = child_state["test_commit"]
-        self.assertEqual(0, self.git("checkout", "-q", test_commit).returncode)
         (self.root / "src" / "main").mkdir(parents=True, exist_ok=True)
         (self.root / "src" / "main" / "Example.kt").write_text(
             "class Example\n", encoding="utf-8"
@@ -7698,7 +7854,6 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
         )
         child_state = self.state_for(self.CHILD_ISSUE)
         test_commit = child_state["test_commit"]
-        self.assertEqual(0, self.git("checkout", "-q", test_commit).returncode)
         (self.root / "docs").mkdir(parents=True, exist_ok=True)
         doc_file = self.root / "docs" / "example.md"
         doc_file.write_text("# Example\nCosmetic wording fix.\n", encoding="utf-8")

@@ -1061,6 +1061,38 @@ def _require_authoritative_remote(root, config, context):
     return resolved_identity
 
 
+def _require_publishable_head(root, config, context, expected_branch=None):
+    """Require an attached, non-target branch suitable for PR publication."""
+    branch = _current_branch(root, config)
+    _ensure(
+        branch,
+        "invalid-publication-head",
+        "%s requires an attached publication branch" % context,
+    )
+    _ensure(
+        branch != config["target_base"],
+        "invalid-publication-head",
+        "%s cannot use target branch %s as the publication head"
+        % (context, config["target_base"]),
+    )
+    if expected_branch is not None:
+        _ensure(
+            branch == expected_branch,
+            "invalid-publication-head",
+            "%s requires publication branch %s, found %s"
+            % (context, expected_branch, branch),
+        )
+    if _authoritative_remote_expectation(config) is not None:
+        _ensure(
+            _remote_exists(root, config),
+            "invalid-publication-head",
+            "%s requires an origin remote configured as authoritative"
+            % context,
+        )
+        _require_authoritative_remote(root, config, context)
+    return branch
+
+
 def _resolve_target_head(root, config, fetch=False):
     if fetch and _remote_exists(root, config):
         _require_authoritative_remote(root, config, "resolve-target-head")
@@ -2890,6 +2922,7 @@ def _build_implementation_transition_journal(root, config, state, acknowledgment
         "reviewed_commit_subject": candidate.get("commit_subject"),
         "target_base": state.get("target_base"),
         "target_head": state.get("target_head"),
+        "publication_branch": state.get("publication_branch"),
         "expected_parent": state.get("target_head"),
         "test_commit": test_commit,
         "approved_scope": state.get("approved_scope"),
@@ -2971,6 +3004,7 @@ def _validate_implementation_transition_journal(root, config, state, journal, co
     _ensure(
         journal.get("target_base") == state.get("target_base")
         and journal.get("target_head") == state.get("target_head")
+        and journal.get("publication_branch") == state.get("publication_branch")
         and journal.get("expected_parent") == state.get("target_head")
         and journal.get("test_commit") == state.get("test_commit"),
         "implementation-approval-journal-mismatch",
@@ -4347,6 +4381,7 @@ def command_init(args, root, config):
     """Create run state only when HEAD matches the resolved target_head."""
     run = _run_root(root, config, args.issue)
     _ensure(not run.exists(), "already-initialized", "Workflow run already exists for issue %s" % args.issue)
+    publication_branch = _require_publishable_head(root, config, "init")
     initial_head = _current_head(root, config)
     target_head = _resolve_target_head(root, config, fetch=True)
     _ensure(
@@ -4368,6 +4403,7 @@ def command_init(args, root, config):
         "initial_head": initial_head,
         "base_head": target_head,
         "target_head": target_head,
+        "publication_branch": publication_branch,
         "approved_scope": None,
         "test_commit": None,
         "test_implementation_status": "REQUIRED",
@@ -4426,6 +4462,10 @@ def _start_revision_run(
 
     run = _run_root(root, config, issue)
     _ensure(not run.exists(), "already-initialized", "Workflow run already exists for issue %s" % issue)
+    # Completed-run reconciliation validates its temporary detached scratch
+    # checkout separately; the durable publication binding belongs to the
+    # caller's authoritative checkout.
+    publication_branch = _require_publishable_head(root, config, context)
     initial_head = _current_head(git_root, config)
     target_head = resolved_target_head or _resolve_target_head(git_root, config, fetch=True)
     _ensure(
@@ -4486,6 +4526,7 @@ def _start_revision_run(
         "initial_head": initial_head,
         "base_head": target_head,
         "target_head": target_head,
+        "publication_branch": publication_branch,
         "approved_scope": None,
         "test_commit": None,
         "test_implementation_status": "REQUIRED",
@@ -6014,6 +6055,9 @@ def command_approve_implementation(args, root, config):
         config, state, "implementation", args.confirm, args.by
     )
 
+    _require_publishable_head(
+        root, config, "approve-implementation", state.get("publication_branch")
+    )
     test_commit = state.get("test_commit")
     scope = state.get("approved_scope") or []
     _ensure(test_commit, "missing-test-commit", "approve-implementation requires test_commit")
@@ -6040,6 +6084,9 @@ def command_approve_implementation(args, root, config):
 
     journal = _build_implementation_transition_journal(
         root, config, state, acknowledgment
+    )
+    _require_publishable_head(
+        root, config, "approve-implementation", state.get("publication_branch")
     )
     _write_json(
         _implementation_transition_journal_path(root, config, args.issue),
@@ -6506,6 +6553,9 @@ def command_create_draft_pr(args, root, config):
     if not args.skip_github:
         _require_clean_tree(root, config, "create-draft-pr")
         _require_publication_topology(root, config, state, head, "create-draft-pr")
+    _require_publishable_head(
+        root, config, "create-draft-pr", state.get("publication_branch")
+    )
     body_path = _generate_pr_body(root, config, args.issue, state)
     _validate_pr_body(body_path)
 
