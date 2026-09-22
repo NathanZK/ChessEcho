@@ -239,6 +239,9 @@ stateDiagram-v2
     WAITING_FOR_TEST_HUMAN_APPROVAL --> TEST_IMPLEMENTATION: reject-tests
 
     IMPLEMENTATION --> TEST_IMPLEMENTATION: reopen-tests --reason approved-test-fixture-defect
+    IMPLEMENTATION --> TEST_IMPLEMENTATION: reopen-test-contract after adversarial insufficiency
+    IMPLEMENTATION_REVIEW --> TEST_IMPLEMENTATION: reopen-test-contract after adversarial insufficiency
+    WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL --> TEST_IMPLEMENTATION: reopen-test-contract after adversarial insufficiency
     IMPLEMENTATION --> VALIDATION: submit-implementation binds uncommitted candidate to Git evidence
     VALIDATION --> VALIDATION: reconcile-candidate rebases preserved candidate to descendant target
     IMPLEMENTATION_REVIEW --> VALIDATION: reconcile-candidate clears stale validation/review after target advance
@@ -581,6 +584,36 @@ remain unchanged; the effective semantic and authorization are recorded
 separately. Contract replacement tests use the ordinary genuine expected-RED
 protocol and become authoritative only after Approval Gate 2; their GREEN
 evidence is supplied later by implementation validation.
+
+An adversarial finding that the approved behavioral test contract is
+insufficient is a third, separate reopening path:
+
+```bash
+python3 scripts/agent_workflow.py reopen-test-contract ISSUE --artifact PATH
+```
+
+It is legal only from `IMPLEMENTATION`, `IMPLEMENTATION_REVIEW`, and
+`WAITING_FOR_IMPLEMENTATION_HUMAN_APPROVAL`, before an implementation commit
+or draft PR exists. The artifact must be structured JSON using
+`chess-echo-adversarial-test-contract-review-v1`, identify non-empty
+insufficient behavioral assertions and missing invariants, and explicitly
+classify the finding as not a fixture defect, target drift, plan revision, or
+approval revocation. The transition keeps target identity, approved production
+scope, publication branch, and all previous Gate-2 evidence unchanged in
+historical provenance. It supersedes the old active test authority, clears
+active tests and all downstream implementation authority, and returns to
+`TEST_IMPLEMENTATION`.
+
+The transition is journal-first: the workflow copies and identity-binds the
+adversarial artifact, writes
+`test-contract-reopening-transition.json`, and only then persists the cleared
+active state. Use `recover-test-contract-reopening ISSUE` after a persistence
+interruption. Recovery validates the exact target, scope, prior approval,
+prior test commit, and artifact identity before finalizing; a finalized replay
+is a verified no-op. Missing, malformed, or ambiguous journal/state shapes
+fail closed. Replacement tests follow the ordinary RED submission flow and
+require fresh Gate-2 approval before implementation resumes; Gate 3 remains a
+separate approval gate.
 
 When an approved plan is discovered to be defective during `TEST_IMPLEMENTATION`,
 `request-plan-revision` is the only governed recovery to planning. It requires
@@ -1025,6 +1058,8 @@ python3 scripts/agent_workflow.py approve-tests ISSUE --by LOGIN --confirm tests
 python3 scripts/agent_workflow.py recover-test-approval ISSUE
 python3 scripts/agent_workflow.py reject-tests ISSUE --by LOGIN --reason "..."
 python3 scripts/agent_workflow.py reopen-tests ISSUE --reason approved-test-fixture-defect
+python3 scripts/agent_workflow.py reopen-test-contract ISSUE --artifact PATH
+python3 scripts/agent_workflow.py recover-test-contract-reopening ISSUE
 python3 scripts/agent_workflow.py submit-implementation ISSUE --artifact PATH --agent chess-echo-implementer --evidence PATH
 python3 scripts/agent_workflow.py run-validation ISSUE --profile PROFILE
 python3 scripts/agent_workflow.py review-implementation ISSUE --status READY_FOR_HUMAN_APPROVAL|NEEDS_REVISION --artifact PATH --reviewer chess-echo-reviewer

@@ -443,6 +443,34 @@ class AgentWorkflowTest(unittest.TestCase):
             / "test-approval-transition.json"
         )
 
+    def test_contract_reopening_journal_path(self):
+        return (
+            self.root
+            / ".agent-workflow"
+            / "runs"
+            / f"issue-{ISSUE}"
+            / "test-contract-reopening-transition.json"
+        )
+
+    def write_adversarial_contract_review(self, name="adversarial-review.json"):
+        payload = {
+            "format": "chess-echo-adversarial-test-contract-review-v1",
+            "version": 1,
+            "insufficient_behavioral_assertions": [
+                "The approved test checks a successful transition but omits the rejected transition."
+            ],
+            "missing_invariants": [
+                "A rejected transition must leave the workflow state unchanged."
+            ],
+            "classification": {
+                "fixture_defect": False,
+                "target_drift": False,
+                "plan_revision": False,
+                "approval_revocation": False,
+            },
+        }
+        return self.write_artifact(name, json.dumps(payload, indent=2) + "\n")
+
     def test_target_drift_preserves_intent_when_realization_is_stale(self):
         record = workflow._target_drift_record(
             "reconcile-candidate",
@@ -5508,6 +5536,102 @@ class AgentWorkflowTest(unittest.TestCase):
         )
         self.assertEqual(1, code)
         self.assertEqual("draft-pr-already-created", payload["error"]["code"])
+
+    def test_reopen_test_contract_supersedes_authority_without_rewriting_provenance(self):
+        """Adversarial insufficiency restarts tests without changing intent or history."""
+        self.bootstrap_to_implementation()
+        prior = self.state()
+        evidence = self.write_adversarial_contract_review()
+
+        code, payload, _ = self.run_cli(
+            "reopen-test-contract",
+            str(ISSUE),
+            "--artifact",
+            str(evidence.relative_to(self.root)),
+        )
+
+        self.assertEqual(0, code, payload)
+        self.assertEqual("TEST_IMPLEMENTATION", payload["status"])
+        reopened = self.state()
+        self.assertEqual(prior["target_head"], reopened["target_head"])
+        self.assertEqual(prior["approved_scope"], reopened["approved_scope"])
+        self.assertEqual(prior["publication_branch"], reopened["publication_branch"])
+        self.assertIsNone(reopened["approvals"]["tests"])
+        self.assertIsNone(reopened["test_commit"])
+        self.assertIsNone(reopened["implementation_candidate"])
+        self.assertIsNone(reopened["validation"])
+        self.assertFalse(reopened["implementation_review_ready"])
+        self.assertNotIn("test_report", reopened["artifacts"])
+        self.assertNotIn("implementation_report", reopened["artifacts"])
+        reopening = reopened["test_reopenings"][-1]
+        self.assertEqual("adversarial-test-contract-insufficiency", reopening["reason"])
+        self.assertEqual(prior["test_commit"], reopening["previous_test_commit"])
+        self.assertEqual(prior["approvals"]["tests"], reopening["previous_test_approval"])
+        self.assertEqual(prior["artifacts"]["test_report"], reopening["previous_test_report"])
+        self.assertTrue(reopening["test_authority_superseded"])
+        self.assertEqual(
+            "adversarial_test_contract_review",
+            reopening["adversarial_review"]["kind"],
+        )
+        journal = json.loads(self.test_contract_reopening_journal_path().read_text())
+        self.assertEqual("finalized", journal["status"])
+        self.assertEqual(prior["test_commit"], journal["previous_test_commit"])
+
+    def test_reopen_test_contract_rejects_malformed_evidence_and_disallowed_states(self):
+        """Only a structured adversarial review may reopen the test contract."""
+        self.bootstrap_to_implementation()
+        malformed = self.write_artifact("invalid-adversarial-review.json", "{}\n")
+        code, payload, _ = self.run_cli(
+            "reopen-test-contract",
+            str(ISSUE),
+            "--artifact",
+            str(malformed.relative_to(self.root)),
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("invalid-adversarial-test-contract-review", payload["error"]["code"])
+        self.assertEqual("IMPLEMENTATION", self.state()["status"])
+
+        evidence = self.write_adversarial_contract_review()
+        state = self.state()
+        state["implementation_commit"] = "already-published"
+        self.write_state(state)
+        code, payload, _ = self.run_cli(
+            "reopen-test-contract",
+            str(ISSUE),
+            "--artifact",
+            str(evidence.relative_to(self.root)),
+        )
+        self.assertEqual(1, code)
+        self.assertEqual("implementation-already-approved", payload["error"]["code"])
+
+    def test_recover_test_contract_reopening_is_crash_safe_and_idempotent(self):
+        """A journaled reopening finalizes exactly once after state-write interruption."""
+        self.bootstrap_to_implementation()
+        evidence = self.write_adversarial_contract_review()
+        original = workflow._write_state
+
+        with mock.patch.object(
+            workflow,
+            "_write_state",
+            side_effect=workflow.WorkflowError("persistence-failed", "simulated"),
+        ):
+            code, payload, _ = self.run_cli(
+                "reopen-test-contract",
+                str(ISSUE),
+                "--artifact",
+                str(evidence.relative_to(self.root)),
+            )
+        self.assertEqual(1, code)
+        self.assertEqual("persistence-failed", payload["error"]["code"])
+        self.assertEqual("pending", json.loads(self.test_contract_reopening_journal_path().read_text())["status"])
+        self.assertEqual("IMPLEMENTATION", self.state()["status"])
+
+        code, payload, _ = self.run_cli("recover-test-contract-reopening", str(ISSUE))
+        self.assertEqual(0, code, payload)
+        finalized = self.test_contract_reopening_journal_path().read_text()
+        self.assertEqual("TEST_IMPLEMENTATION", self.state()["status"])
+        self.assertEqual(0, self.run_cli("recover-test-contract-reopening", str(ISSUE))[0])
+        self.assertEqual(finalized, self.test_contract_reopening_journal_path().read_text())
 
     def _seed_reconciled_reopening(self):
         """Create an active fixture reopening with a recorded target reanchor."""
