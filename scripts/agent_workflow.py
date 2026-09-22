@@ -6410,6 +6410,49 @@ def _authoritative_repository(config):
     return "/".join(parts[-2:]) if len(parts) >= 3 else None
 
 
+_REPOSITORY_IDENTITY_SEGMENT = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$")
+
+
+def _parse_repository_identity(identity):
+    """Parse a strict GitHub `owner/repo` identity into its two segments.
+
+    Returns `None` for anything that is not exactly two non-empty owner and
+    repository segments matching GitHub's allowed identity characters, so a
+    malformed identity is rejected rather than partially matched.
+    """
+    if not isinstance(identity, str):
+        return None
+    parts = identity.split("/")
+    if len(parts) != 2:
+        return None
+    owner, repo = parts
+    if not _REPOSITORY_IDENTITY_SEGMENT.match(owner) or not _REPOSITORY_IDENTITY_SEGMENT.match(
+        repo
+    ):
+        return None
+    return owner, repo
+
+
+def _repository_identities_match(observed, expected):
+    """Compare two GitHub `owner/repo` identities case-insensitively.
+
+    GitHub repository-name casing (e.g. a lowercased authoritative-remote
+    configuration versus GitHub's canonical `headRepository.nameWithOwner`
+    casing) is not a significant identity difference; only a genuinely
+    different owner or repository segment is a mismatch. Either identity
+    failing strict `owner/repo` validation is treated as a mismatch, so
+    malformed identities continue to fail closed rather than being partially
+    matched.
+    """
+    parsed_observed = _parse_repository_identity(observed)
+    parsed_expected = _parse_repository_identity(expected)
+    if parsed_observed is None or parsed_expected is None:
+        return False
+    return tuple(part.lower() for part in parsed_observed) == tuple(
+        part.lower() for part in parsed_expected
+    )
+
+
 def _recorded_draft_pr_identity(draft_pr, config, context, error_code):
     """Return the complete recorded PR identity required for governed updates."""
     draft_pr = draft_pr or {}
@@ -6674,7 +6717,8 @@ def _verified_draft_pr_from_identity(identity, journal, context):
             "%s PR head branch does not match the journal" % context,
         )
     _ensure(
-        repository == journal.get("target_repository") or not journal.get("target_repository"),
+        not journal.get("target_repository")
+        or _repository_identities_match(repository, journal.get("target_repository")),
         "draft-pr-publication-recovery-ambiguous",
         "%s PR repository does not match the journal" % context,
     )
@@ -7076,7 +7120,6 @@ def _pr_revision_journal_path(root, config, issue):
 def _require_pr_revision_identity(live, expected, context):
     checks = (
         ("number", "pr-identity-mismatch"),
-        ("repository", "pr-repository-mismatch"),
         ("baseRefName", "pr-base-mismatch"),
         ("headRefName", "pr-branch-mismatch"),
     )
@@ -7087,6 +7130,12 @@ def _require_pr_revision_identity(live, expected, context):
             "%s requires %s=%s (observed: %s)"
             % (context, field, expected.get(field), live.get(field)),
         )
+    _ensure(
+        _repository_identities_match(live.get("repository"), expected.get("repository")),
+        "pr-repository-mismatch",
+        "%s requires repository=%s (observed: %s)"
+        % (context, expected.get("repository"), live.get("repository")),
+    )
     _ensure(
         live.get("state") == "OPEN",
         "pr-not-open" if context == "publish-pr-revision" else "pr-revision-recovery-state-mismatch",
