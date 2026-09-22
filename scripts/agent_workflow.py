@@ -32,6 +32,9 @@ DEFAULT_COMPLETED_RUN_RECOVERY_CONFIRMATION = "completed_run_recovery_confirmed"
 DEFAULT_SKIPPED_PUBLICATION_RECOVERY_CONFIRMATION = (
     "skipped_publication_recovery_confirmed"
 )
+DEFAULT_LEGACY_DRAFT_PR_ADOPTION_CONFIRMATION = (
+    "legacy_draft_pr_adoption_confirmed"
+)
 RECONCILIATION_CONFIRMATION = "implementation_target_reconciled"
 RECONCILIATION_REANCHOR_CONFIRMATION = "implementation_target_reconciliation_reanchored"
 IMPLEMENTATION_TARGET_RECOVERY_CONFIRMATION = "implementation_target_recovery_confirmed"
@@ -75,6 +78,26 @@ DRAFT_PR_PUBLICATION_JOURNAL_FORMAT = (
     "chess-echo-draft-pr-publication-transition-v1"
 )
 DRAFT_PR_PUBLICATION_JOURNAL_STATUSES = ("pending", "finalized")
+LEGACY_DRAFT_PR_ADOPTION_JOURNAL_FORMAT = (
+    "chess-echo-legacy-draft-pr-adoption-transition-v1"
+)
+LEGACY_DRAFT_PR_ADOPTION_JOURNAL_STATUSES = (
+    "pending-local-intent",
+    "pending-validated-snapshot",
+    "finalized",
+)
+HISTORICAL_LEGACY_PR_RECONCILIATION_FORMAT = (
+    "chess-echo-historical-legacy-pr-reconciliation-v1"
+)
+HISTORICAL_LEGACY_PR_RECONCILIATION_STATUSES = (
+    "pending-observations",
+    "pushed",
+    "finalized",
+    "intent-authorized",
+    "remote-mutation",
+    "remote-result-observed",
+    "mutation-finalized",
+)
 
 STATUS_SEQUENCE = (
     "PLANNING",
@@ -6609,6 +6632,708 @@ def _verify_live_pr_body(root, config, pr_reference, expected_text, repository, 
     )
 
 
+def _legacy_draft_pr_adoption_journal_path(root, config, issue):
+    return _run_root(root, config, issue) / "legacy-draft-pr-adoption-transition.json"
+
+
+def _lookup_legacy_draft_pr_snapshot(root, config, pr_number, repository):
+    """Read all adoption-critical PR fields in one GitHub observation."""
+    command = _github_command(
+        config,
+        "pr",
+        "view",
+        str(pr_number),
+        "--json",
+        "number,title,body,state,isDraft,baseRefName,baseRefOid,"
+        "headRefName,headRefOid,headRepository,url,createdAt,updatedAt",
+        "--repo",
+        repository,
+    )
+    completed = _run_checked(
+        command,
+        _effective_limits(config, "github"),
+        root,
+        "legacy-draft-pr-adoption-snapshot-lookup-failed",
+        "unable to read complete legacy draft PR snapshot",
+    )
+    try:
+        snapshot = json.loads(completed["stdout_text"])
+    except ValueError:
+        _raise(
+            "legacy-draft-pr-adoption-snapshot-invalid",
+            "gh pr view returned malformed legacy adoption JSON",
+        )
+    _ensure(
+        isinstance(snapshot, dict),
+        "legacy-draft-pr-adoption-snapshot-invalid",
+        "gh pr view returned a non-object legacy adoption snapshot",
+    )
+    return snapshot
+
+
+def _legacy_snapshot_identity(snapshot):
+    head_repository = snapshot.get("headRepository")
+    repository = (
+        head_repository.get("nameWithOwner")
+        if isinstance(head_repository, dict)
+        else _repository_from_pr_url(snapshot.get("url"))
+    )
+    body = snapshot.get("body")
+    _ensure(
+        isinstance(body, str),
+        "legacy-draft-pr-adoption-snapshot-invalid",
+        "legacy adoption snapshot must include a string PR body",
+    )
+    digest, length = _text_digest(body)
+    return {
+        "repository": repository,
+        "number": snapshot.get("number"),
+        "baseRefName": snapshot.get("baseRefName"),
+        "baseRefOid": snapshot.get("baseRefOid"),
+        "headRefName": snapshot.get("headRefName"),
+        "headRefOid": snapshot.get("headRefOid"),
+        "state": snapshot.get("state"),
+        "isDraft": snapshot.get("isDraft"),
+        "title": snapshot.get("title"),
+        "url": snapshot.get("url"),
+        "createdAt": snapshot.get("createdAt"),
+        "updatedAt": snapshot.get("updatedAt"),
+        "body_sha256": digest,
+        "body_byte_length": length,
+    }
+
+
+def _legacy_snapshot_matches(first, second):
+    fields = (
+        "repository",
+        "number",
+        "baseRefName",
+        "baseRefOid",
+        "headRefName",
+        "headRefOid",
+        "state",
+        "isDraft",
+        "title",
+        "url",
+        "updatedAt",
+        "body_sha256",
+        "body_byte_length",
+    )
+    return all(
+        (
+            _repository_identities_match(first.get(field), second.get(field))
+            if field == "repository"
+            else first.get(field) == second.get(field)
+        )
+        for field in fields
+    )
+
+
+def _validate_legacy_snapshot(snapshot, journal, context):
+    identity = _legacy_snapshot_identity(snapshot)
+    expected = journal["expected"]
+    required = (
+        "repository",
+        "number",
+        "baseRefName",
+        "baseRefOid",
+        "headRefName",
+        "headRefOid",
+        "state",
+        "isDraft",
+        "title",
+        "url",
+    )
+    _ensure(
+        all(identity.get(field) is not None for field in required),
+        "legacy-draft-pr-adoption-snapshot-invalid",
+        "%s snapshot is missing adoption-critical identity fields" % context,
+    )
+    _ensure(
+        _repository_identities_match(identity["repository"], expected["repository"])
+        and identity["number"] == expected["number"]
+        and identity["baseRefName"] == expected["base"]
+        and identity["baseRefOid"] == expected["base_head"]
+        and identity["headRefName"] == expected["head_branch"]
+        and identity["headRefOid"] == expected["implementation_commit"]
+        and identity["state"] == "OPEN"
+        and identity["isDraft"] is True
+        and identity["title"] == expected["title"]
+        and identity["body_sha256"] == expected["body"]["sha256"]
+        and identity["body_byte_length"] == expected["body"]["byte_length"],
+        "legacy-draft-pr-adoption-snapshot-mismatch",
+        "%s snapshot does not match the journal-bound adoption intent" % context,
+    )
+    return identity
+
+
+def _build_legacy_adoption_journal(root, config, state, args, body_path, body_identity):
+    return {
+        "format": LEGACY_DRAFT_PR_ADOPTION_JOURNAL_FORMAT,
+        "version": 1,
+        "transition_id": uuid.uuid4().hex,
+        "issue": state["issue"],
+        "operation": "adopt-legacy-draft-pr-publication",
+        "status": "pending-local-intent",
+        "created_at": _now(),
+        "legacy_post_hoc_adoption": True,
+        "causality_statement": (
+            "Original external PR creation causality is unrecoverable and not claimed."
+        ),
+        "acknowledgment": {
+            "kind": LOCAL_ACKNOWLEDGMENT_KIND,
+            "asserted_by": args.by,
+            "confirmation": args.confirm,
+            "recorded_at": _now(),
+            "independent_authorization": False,
+        },
+        "expected": {
+            "repository": _authoritative_repository(config),
+            "number": args.pr,
+            "title": args.title,
+            "base": config["target_base"],
+            "base_head": state["target_head"],
+            "head_branch": _current_branch(root, config),
+            "implementation_commit": state["implementation_commit"],
+            "body": _draft_pr_journal_body_identity(root, body_path, body_identity),
+        },
+        "validated_snapshot": None,
+        "validated_observed_snapshot": None,
+        "final_observed_snapshot": None,
+    }
+
+
+def _validate_legacy_adoption_journal(root, config, state, journal, args, context):
+    _ensure(
+        journal.get("format") == LEGACY_DRAFT_PR_ADOPTION_JOURNAL_FORMAT
+        and journal.get("version") == 1
+        and journal.get("issue") == state.get("issue")
+        and journal.get("operation") == "adopt-legacy-draft-pr-publication"
+        and journal.get("status") in LEGACY_DRAFT_PR_ADOPTION_JOURNAL_STATUSES,
+        "legacy-draft-pr-adoption-journal-mismatch",
+        "%s requires a valid legacy adoption journal" % context,
+    )
+    expected = journal.get("expected") or {}
+    _ensure(
+        expected.get("number") == args.pr
+        and expected.get("title") == args.title
+        and expected.get("repository") == _authoritative_repository(config)
+        and expected.get("base") == config["target_base"]
+        and expected.get("base_head") == state.get("target_head")
+        and expected.get("head_branch") == _current_branch(root, config)
+        and expected.get("implementation_commit") == state.get("implementation_commit"),
+        "legacy-draft-pr-adoption-journal-mismatch",
+        "%s arguments or local intent differ from pending adoption" % context,
+    )
+    acknowledgment = journal.get("acknowledgment") or {}
+    _ensure(
+        acknowledgment.get("kind") == LOCAL_ACKNOWLEDGMENT_KIND
+        and acknowledgment.get("independent_authorization") is False
+        and acknowledgment.get("asserted_by") == args.by
+        and acknowledgment.get("confirmation") == args.confirm,
+        "legacy-draft-pr-adoption-journal-mismatch",
+        "%s acknowledgment differs from pending adoption" % context,
+    )
+    body = expected.get("body") or {}
+    body_path = root / body.get("path", "")
+    _ensure(
+        body_path.is_file(),
+        "legacy-draft-pr-adoption-journal-mismatch",
+        "%s governed body artifact is missing" % context,
+    )
+    digest, length = _text_digest(body_path.read_text(encoding="utf-8"))
+    _ensure(
+        digest == body.get("sha256") and length == body.get("byte_length"),
+        "legacy-draft-pr-adoption-journal-mismatch",
+        "%s governed body differs from pending adoption" % context,
+    )
+    return body_path
+
+
+def command_adopt_legacy_draft_pr_publication(args, root, config):
+    """Associate one explicit legacy PR after two matching complete observations."""
+    context = "adopt-legacy-draft-pr-publication"
+    state = _read_state(root, config, args.issue)
+    _expect_status(state, "DRAFT_PR_CREATION", context)
+    _ensure(
+        state.get("draft_pr") is None,
+        "legacy-draft-pr-adoption-already-recorded",
+        "%s requires draft_pr to be null" % context,
+    )
+    _ensure(
+        state.get("implementation_commit")
+        and _current_head(root, config) == state["implementation_commit"],
+        "implementation-commit-mismatch",
+        "%s requires HEAD to match approved implementation_commit" % context,
+    )
+    _require_clean_tree(root, config, context)
+    _require_publication_topology(root, config, state, state["implementation_commit"], context)
+    _ensure(
+        not _draft_pr_publication_journal_path(root, config, args.issue).exists(),
+        "legacy-draft-pr-adoption-normal-journal-present",
+        "%s cannot bypass normal journal-only recovery" % context,
+    )
+    expected_confirmation = config["workflow"]["approvals"].get(
+        "legacy_draft_pr_adoption", DEFAULT_LEGACY_DRAFT_PR_ADOPTION_CONFIRMATION
+    )
+    _ensure(
+        args.confirm == expected_confirmation and (args.by or "").strip(),
+        "approval-confirmation-mismatch",
+        "%s requires the configured self-attested acknowledgment" % context,
+    )
+
+    journal_path = _legacy_draft_pr_adoption_journal_path(root, config, args.issue)
+    if journal_path.exists():
+        journal = _read_json(journal_path, "legacy draft PR adoption transition journal")
+        _validate_legacy_adoption_journal(root, config, state, journal, args, context)
+    else:
+        body_path = _generate_pr_body(root, config, args.issue, state)
+        _validate_pr_body(body_path)
+        journal = _build_legacy_adoption_journal(
+            root,
+            config,
+            state,
+            args,
+            body_path,
+            _generated_artifact_identity(root, body_path, "draft_pr_body"),
+        )
+        _write_json(journal_path, journal)
+
+    first_snapshot = _lookup_legacy_draft_pr_snapshot(
+        root, config, args.pr, journal["expected"]["repository"]
+    )
+    first = _validate_legacy_snapshot(first_snapshot, journal, context)
+    if journal["status"] == "pending-local-intent":
+        journal = dict(journal)
+        journal["status"] = "pending-validated-snapshot"
+        journal["validated_snapshot"] = first
+        journal["validated_observed_snapshot"] = first_snapshot
+        journal["validated_at"] = _now()
+        _write_json(journal_path, journal)
+    else:
+        _ensure(
+            _legacy_snapshot_matches(journal.get("validated_snapshot") or {}, first),
+            "legacy-draft-pr-adoption-snapshot-mismatch",
+            "%s snapshot changed after pending validation" % context,
+        )
+
+    second_snapshot = _lookup_legacy_draft_pr_snapshot(
+        root, config, args.pr, journal["expected"]["repository"]
+    )
+    second = _validate_legacy_snapshot(second_snapshot, journal, context)
+    _ensure(
+        _legacy_snapshot_matches(journal.get("validated_snapshot") or {}, second),
+        "legacy-draft-pr-adoption-snapshot-mismatch",
+        "%s final snapshot differs from validated snapshot" % context,
+    )
+
+    body = journal["expected"]["body"]
+    state["draft_pr"] = {
+        "created_at": _now(),
+        "title": args.title,
+        "body_file": body["path"],
+        "publication": {"executed": True, "legacy_adopted": True},
+        "number": second["number"],
+        "head_ref_name": second["headRefName"],
+        "head_ref_oid": second["headRefOid"],
+        "repository": second["repository"],
+        "url": second["url"],
+        "legacy_adopted": True,
+        "legacy_adoption_journal": _relative(journal_path, root),
+    }
+    state["artifacts"]["draft_pr_body"] = {
+        "kind": "draft_pr_body",
+        "path": body["path"],
+        "recorded_at": _now(),
+        "sha256": body["sha256"],
+        "byte_length": body["byte_length"],
+    }
+    state["status"] = "WORKFLOW_COMPLETED"
+    _write_state(root, config, args.issue, state)
+    journal = dict(journal)
+    journal["status"] = "finalized"
+    journal["final_observed_snapshot"] = second_snapshot
+    journal["finalized_at"] = _now()
+    _write_json(journal_path, journal)
+    return {"ok": True, "status": state["status"], "draft_pr": state["draft_pr"]}
+
+
+def command_reconcile_historical_legacy_draft_pr(args, root, config):
+    """Reconcile one explicit pre-journal orphan to a fresh governed realization."""
+    context = "reconcile-historical-legacy-draft-pr"
+    state = _read_state(root, config, args.issue)
+    _expect_status(state, "WORKFLOW_COMPLETED", context)
+    _ensure(
+        args.historical_pr != args.fresh_pr,
+        "historical-legacy-pr-identity-mismatch",
+        "%s requires distinct historical and fresh PR numbers" % context,
+    )
+    fresh = state.get("draft_pr") or {}
+    _ensure(
+        fresh.get("number") == args.fresh_pr,
+        "historical-legacy-pr-fresh-identity-mismatch",
+        "%s fresh PR must match the completed run's recorded draft PR" % context,
+    )
+    _ensure(
+        (args.by or "").strip()
+        and args.confirm == "historical_legacy_pr_reconciliation_confirmed",
+        "approval-confirmation-mismatch",
+        "%s requires the configured self-attested acknowledgment" % context,
+    )
+    repository = _authoritative_repository(config)
+    _ensure(repository, "missing-authoritative-repository", "%s requires an authoritative repository" % context)
+    fresh_journal = _read_json(
+        _draft_pr_publication_journal_path(root, config, args.issue),
+        "fresh draft PR publication journal",
+    )
+    fresh_body_path = _validate_draft_pr_publication_journal(
+        root, config, state, fresh_journal, context
+    )
+    _ensure(
+        fresh_journal.get("status") == "finalized"
+        and fresh_journal.get("draft_pr", {}).get("number") == args.fresh_pr,
+        "historical-legacy-pr-fresh-publication-mismatch",
+        "%s requires the finalized normal publication journal for the explicit fresh PR" % context,
+    )
+    parent = state.get("parent_run") or {}
+    _ensure(
+        parent.get("issue") == 3841 and parent.get("class") == "plan",
+        "historical-legacy-pr-parent-chain-mismatch",
+        "%s is restricted to the #3841 legacy-adoption realization" % context,
+    )
+    prior = _read_state(root, config, 3841)
+    prior_parent = prior.get("parent_run") or {}
+    _ensure(
+        prior_parent.get("issue") == 384
+        and prior.get("implementation_commit")
+        and prior.get("draft_pr") is None,
+        "historical-legacy-pr-parent-chain-mismatch",
+        "%s requires immutable #3841/#384 orphan provenance" % context,
+    )
+    historical_parent = _read_state(root, config, 384)
+    old_commit = historical_parent.get("implementation_commit")
+    _ensure(
+        old_commit,
+        "historical-legacy-pr-parent-chain-mismatch",
+        "%s requires #384's recorded historical implementation" % context,
+    )
+
+    path = _run_root(root, config, args.issue) / "historical-legacy-draft-pr-reconciliation-transition.json"
+    body_path = fresh_body_path
+    body_text = body_path.read_text(encoding="utf-8")
+    body_sha256, body_byte_length = _text_digest(body_text)
+    publication_body = fresh_journal.get("body") or {}
+    _ensure(
+        fresh.get("body_file") == publication_body.get("path")
+        and body_sha256 == publication_body.get("sha256")
+        and body_byte_length == publication_body.get("byte_length"),
+        "historical-legacy-pr-fresh-publication-mismatch",
+        "%s fresh body does not match finalized publication evidence" % context,
+    )
+    _require_authoritative_remote(root, config, context)
+    if path.exists():
+        journal = _read_json(path, "historical legacy PR reconciliation journal")
+        _ensure(
+            journal.get("format") == HISTORICAL_LEGACY_PR_RECONCILIATION_FORMAT
+            and journal.get("issue") == args.issue
+            and journal.get("historical_pr") == args.historical_pr
+            and journal.get("fresh_pr") == args.fresh_pr
+            and journal.get("fresh_implementation_commit") == state.get("implementation_commit")
+            and journal.get("status") in HISTORICAL_LEGACY_PR_RECONCILIATION_STATUSES,
+            "historical-legacy-pr-journal-mismatch",
+            "%s requires a journal bound to this exact reconciliation" % context,
+        )
+    else:
+        journal = {
+            "format": HISTORICAL_LEGACY_PR_RECONCILIATION_FORMAT,
+            "version": 1,
+            "transition_id": uuid.uuid4().hex,
+            "issue": args.issue,
+            "operation": context,
+            "status": "pending-observations",
+            "created_at": _now(),
+            "historical_pr": args.historical_pr,
+            "fresh_pr": args.fresh_pr,
+            "repository": repository,
+            "fresh_implementation_commit": state["implementation_commit"],
+            "fresh_publication_branch": state.get("publication_branch"),
+            "historical_old_commit": old_commit,
+            "acknowledgment": {
+                "kind": LOCAL_ACKNOWLEDGMENT_KIND,
+                "asserted_by": args.by,
+                "confirmation": args.confirm,
+                "recorded_at": _now(),
+                "independent_authorization": False,
+            },
+            "causality_statement": (
+                "PR historical creation causality is unrecoverable and not claimed; "
+                "this run created only the fresh governed realization."
+            ),
+            "fresh_publication_journal": {
+                "path": _relative(
+                    _draft_pr_publication_journal_path(root, config, args.issue), root
+                ),
+                "status": fresh_journal.get("status"),
+                "transition_id": fresh_journal.get("transition_id"),
+                "body": publication_body,
+                "draft_pr": fresh_journal.get("draft_pr"),
+            },
+            "fresh_body": {
+                "path": body_path.relative_to(root).as_posix(),
+                "sha256": body_sha256,
+                "byte_length": body_byte_length,
+            },
+            "validated_historical_snapshot": None,
+            "validated_fresh_snapshot": None,
+            "final_observed_snapshot": None,
+            "authorized_historical_snapshot": None,
+            "lease_repository": None,
+            "lease_branch": None,
+            "lease_sha": None,
+            "remote_result_observation": None,
+            "body_mutation_intent": None,
+            "fresh_publication_body_sha256": body_sha256,
+        }
+        _write_json(path, journal)
+
+    if journal["status"] == "finalized":
+        replay_snapshot = _legacy_snapshot_identity(
+            _lookup_legacy_draft_pr_snapshot(root, config, args.historical_pr, repository)
+        )
+        recorded_final = _legacy_snapshot_identity(
+            journal.get("final_observed_snapshot") or {}
+        )
+        _ensure(
+            _legacy_snapshot_matches(recorded_final, replay_snapshot)
+            and replay_snapshot["headRefOid"] == state["implementation_commit"]
+            and replay_snapshot["body_sha256"] == body_sha256
+            and replay_snapshot["body_byte_length"] == body_byte_length,
+            "historical-legacy-pr-final-replay-mismatch",
+            "%s finalized replay observed conflicting remote state" % context,
+        )
+        return {
+            "ok": True,
+            "status": state["status"],
+            "historical_pr": args.historical_pr,
+            "replayed": False,
+        }
+
+    historical_snapshot = _lookup_legacy_draft_pr_snapshot(
+        root, config, args.historical_pr, repository
+    )
+    fresh_snapshot = _lookup_legacy_draft_pr_snapshot(root, config, args.fresh_pr, repository)
+    historical = _legacy_snapshot_identity(historical_snapshot)
+    observed_fresh = _legacy_snapshot_identity(fresh_snapshot)
+    _ensure(
+        observed_fresh["number"] == args.fresh_pr
+        and observed_fresh["headRefOid"] == state["implementation_commit"]
+        and _repository_identities_match(observed_fresh["repository"], repository)
+        and observed_fresh["state"] == "OPEN"
+        and observed_fresh["isDraft"] is True,
+        "historical-legacy-pr-fresh-observation-mismatch",
+        "%s fresh PR does not match its approved normal publication" % context,
+    )
+    _ensure(
+        observed_fresh["body_sha256"] == body_sha256
+        and observed_fresh["body_byte_length"] == body_byte_length,
+        "historical-legacy-pr-fresh-body-mismatch",
+        "%s fresh PR body does not match finalized publication artifact" % context,
+    )
+    _ensure(
+        historical["number"] == args.historical_pr
+        and historical["number"] != args.fresh_pr
+        and _repository_identities_match(historical["repository"], repository)
+        and historical["baseRefName"] == config["target_base"]
+        and (
+            historical["headRefOid"] == old_commit
+            or (
+                journal.get("mutation") == "branch-push"
+                and journal.get("status") in ("remote-mutation", "remote-result-observed", "finalized")
+                and historical["headRefOid"] == state["implementation_commit"]
+            )
+        )
+        and historical["state"] == "OPEN"
+        and historical["isDraft"] is True,
+        "historical-legacy-pr-observation-mismatch",
+        "%s historical PR is not the journal-bound draft orphan" % context,
+    )
+    if journal["status"] == "pending-observations":
+        journal = dict(journal)
+        journal["validated_historical_snapshot"] = historical
+        journal["validated_fresh_snapshot"] = observed_fresh
+        journal["validated_at"] = _now()
+        _write_json(path, journal)
+    else:
+        _ensure(
+            _legacy_snapshot_matches(journal.get("validated_historical_snapshot") or {}, historical)
+            or historical["headRefOid"] == state["implementation_commit"],
+            "historical-legacy-pr-snapshot-mismatch",
+            "%s historical PR changed outside the journaled reconciliation" % context,
+        )
+
+    if journal["status"] == "pending-observations":
+        second = _legacy_snapshot_identity(
+            _lookup_legacy_draft_pr_snapshot(root, config, args.historical_pr, repository)
+        )
+        _ensure(
+            _legacy_snapshot_matches(journal["validated_historical_snapshot"], second),
+            "historical-legacy-pr-snapshot-mismatch",
+            "%s historical PR changed before leased push" % context,
+        )
+        branch = second["headRefName"]
+        _ensure(branch, "historical-legacy-pr-observation-mismatch", "%s historical PR has no head branch" % context)
+        journal = dict(journal)
+        journal["authorized_historical_snapshot"] = second
+        journal["lease_repository"] = second["repository"]
+        journal["lease_branch"] = branch
+        journal["lease_sha"] = second["headRefOid"]
+        journal["status"] = "remote-mutation"
+        journal["mutation"] = "branch-push"
+        _write_json(path, journal)
+        _run_checked(
+            _git_command(
+                config, "push", "origin",
+                "%s:refs/heads/%s"
+                % (state["implementation_commit"], journal["lease_branch"]),
+                "--force-with-lease=refs/heads/%s:%s"
+                % (journal["lease_branch"], journal["lease_sha"]),
+            ),
+            _effective_limits(config, "github"), root,
+            "historical-legacy-pr-push-failed",
+            "%s could not lease-update the historical PR branch" % context,
+        )
+        journal = dict(journal)
+        post_push = _legacy_snapshot_identity(
+            _lookup_legacy_draft_pr_snapshot(root, config, args.historical_pr, repository)
+        )
+        _ensure(
+            _repository_identities_match(post_push["repository"], second["repository"])
+            and post_push["number"] == second["number"]
+            and post_push["baseRefName"] == second["baseRefName"]
+            and post_push["headRefName"] == second["headRefName"]
+            and post_push["headRefOid"] == state["implementation_commit"]
+            and post_push["state"] == second["state"]
+            and post_push["isDraft"] == second["isDraft"],
+            "historical-legacy-pr-push-observation-mismatch",
+            "%s push result does not match the authorized mutation" % context,
+        )
+        journal["remote_result_observation"] = post_push
+        journal["status"] = "remote-result-observed"
+        journal["pushed_at"] = _now()
+        _write_json(path, journal)
+
+    if journal.get("status") == "remote-mutation" and journal.get("mutation") == "branch-push":
+        live = _legacy_snapshot_identity(
+            _lookup_legacy_draft_pr_snapshot(root, config, args.historical_pr, repository)
+        )
+        authorized = journal.get("authorized_historical_snapshot") or {}
+        if live["headRefOid"] == state["implementation_commit"]:
+            journal = dict(journal)
+            journal["remote_result_observation"] = live
+            journal["status"] = "remote-result-observed"
+            _write_json(path, journal)
+        else:
+            _ensure(
+                _legacy_snapshot_matches(authorized, live)
+                and live["headRefOid"] == journal.get("lease_sha"),
+                "historical-legacy-pr-push-recovery-ambiguous",
+                "%s cannot distinguish an unapplied push from conflicting remote state" % context,
+            )
+            _run_checked(
+                _git_command(
+                    config, "push", "origin",
+                    "%s:refs/heads/%s" % (state["implementation_commit"], journal["lease_branch"]),
+                    "--force-with-lease=refs/heads/%s:%s"
+                    % (journal["lease_branch"], journal["lease_sha"]),
+                ),
+                _effective_limits(config, "github"), root,
+                "historical-legacy-pr-push-failed",
+                "%s could not recover the leased historical PR branch" % context,
+            )
+            recovered = _legacy_snapshot_identity(
+                _lookup_legacy_draft_pr_snapshot(root, config, args.historical_pr, repository)
+            )
+            _ensure(
+                recovered["headRefOid"] == state["implementation_commit"],
+                "historical-legacy-pr-push-recovery-mismatch",
+                "%s recovered push result is not authorized" % context,
+            )
+            journal = dict(journal)
+            journal["remote_result_observation"] = recovered
+            journal["status"] = "remote-result-observed"
+            _write_json(path, journal)
+
+    if journal.get("status") == "remote-result-observed":
+        journal = dict(journal)
+        journal["body_mutation_intent"] = {
+            "repository": repository,
+            "historical_pr": args.historical_pr,
+            "body": {
+                "path": body_path.relative_to(root).as_posix(),
+                "sha256": body_sha256,
+                "byte_length": body_byte_length,
+            },
+        }
+        journal["status"] = "remote-mutation"
+        journal["mutation"] = "body-edit"
+        _write_json(path, journal)
+
+    if journal.get("status") == "remote-mutation" and journal.get("mutation") == "body-edit":
+        current_body_snapshot = _legacy_snapshot_identity(
+            _lookup_legacy_draft_pr_snapshot(root, config, args.historical_pr, repository)
+        )
+        if (
+            current_body_snapshot["headRefOid"] == state["implementation_commit"]
+            and current_body_snapshot["body_sha256"] == body_sha256
+            and current_body_snapshot["body_byte_length"] == body_byte_length
+        ):
+            journal = dict(journal)
+            journal["remote_result_observation"] = current_body_snapshot
+            journal["status"] = "remote-result-observed"
+            _write_json(path, journal)
+        else:
+            authorized = journal.get("authorized_historical_snapshot") or {}
+            _ensure(
+                current_body_snapshot["headRefOid"] == state["implementation_commit"]
+                and current_body_snapshot["body_sha256"] == authorized.get("body_sha256")
+                and current_body_snapshot["body_byte_length"] == authorized.get("body_byte_length"),
+                "historical-legacy-pr-body-recovery-ambiguous",
+                "%s cannot distinguish an unapplied body edit from conflicting remote state" % context,
+            )
+            _update_pr_body(root, config, str(args.historical_pr), body_path, repository=repository)
+    final_snapshot = _lookup_legacy_draft_pr_snapshot(root, config, args.historical_pr, repository)
+    final = _legacy_snapshot_identity(final_snapshot)
+    _ensure(
+        _repository_identities_match(final["repository"], repository)
+        and final["number"] == args.historical_pr
+        and final["baseRefName"] == config["target_base"]
+        and final["headRefName"] == journal.get("lease_branch")
+        and final["headRefOid"] == state["implementation_commit"]
+        and final["title"] == (journal.get("authorized_historical_snapshot") or {}).get("title")
+        and final["url"] == (journal.get("authorized_historical_snapshot") or {}).get("url")
+        and final["body_sha256"] == body_sha256
+        and final["body_byte_length"] == body_byte_length
+        and final["state"] == "OPEN"
+        and final["isDraft"] is True,
+        "historical-legacy-pr-final-observation-mismatch",
+        "%s final historical PR does not match the fresh governed realization" % context,
+    )
+    journal = dict(journal)
+    journal["status"] = "finalized"
+    journal["final_observed_snapshot"] = final_snapshot
+    journal["finalized_at"] = _now()
+    _write_json(path, journal)
+    state["historical_legacy_pr_reconciliation"] = {
+        "journal": _relative(path, root),
+        "historical_pr": args.historical_pr,
+        "fresh_pr": args.fresh_pr,
+        "historical_creation_causality": "unrecoverable-and-not-claimed",
+        "reconciled_at": _now(),
+    }
+    _write_state(root, config, args.issue, state)
+    return {"ok": True, "status": state["status"], "historical_pr": args.historical_pr}
+
+
 def _draft_pr_publication_journal_path(root, config, issue):
     return _run_root(root, config, issue) / "draft-pr-publication-transition.json"
 
@@ -8626,6 +9351,24 @@ def build_parser():
     create_draft_pr.add_argument("--head")
     create_draft_pr.add_argument("--skip-github", action="store_true")
 
+    adopt_legacy_draft_pr = subparsers.add_parser("adopt-legacy-draft-pr-publication")
+    _add_root(adopt_legacy_draft_pr)
+    _add_issue(adopt_legacy_draft_pr)
+    adopt_legacy_draft_pr.add_argument("--pr", required=True, type=int)
+    adopt_legacy_draft_pr.add_argument("--title", required=True)
+    adopt_legacy_draft_pr.add_argument("--by", required=True)
+    adopt_legacy_draft_pr.add_argument("--confirm", required=True)
+
+    reconcile_historical_legacy_draft_pr = subparsers.add_parser(
+        "reconcile-historical-legacy-draft-pr"
+    )
+    _add_root(reconcile_historical_legacy_draft_pr)
+    _add_issue(reconcile_historical_legacy_draft_pr)
+    reconcile_historical_legacy_draft_pr.add_argument("--historical-pr", required=True, type=int)
+    reconcile_historical_legacy_draft_pr.add_argument("--fresh-pr", required=True, type=int)
+    reconcile_historical_legacy_draft_pr.add_argument("--by", required=True)
+    reconcile_historical_legacy_draft_pr.add_argument("--confirm", required=True)
+
     recover_draft_pr_publication = subparsers.add_parser(
         "recover-draft-pr-publication"
     )
@@ -8679,6 +9422,8 @@ COMMANDS = {
     "recover-implementation-approval": command_recover_implementation_approval,
     "reject-implementation": command_reject_implementation,
     "create-draft-pr": command_create_draft_pr,
+    "adopt-legacy-draft-pr-publication": command_adopt_legacy_draft_pr_publication,
+    "reconcile-historical-legacy-draft-pr": command_reconcile_historical_legacy_draft_pr,
     "recover-draft-pr-publication": command_recover_draft_pr_publication,
     "publish-pr-revision": command_publish_pr_revision,
     "recover-pr-revision": command_recover_pr_revision,
