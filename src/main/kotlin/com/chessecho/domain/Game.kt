@@ -9,6 +9,8 @@ import jakarta.persistence.Id
 import jakarta.persistence.JoinColumn
 import jakarta.persistence.ManyToOne
 import jakarta.persistence.Table
+import org.hibernate.annotations.OnDelete
+import org.hibernate.annotations.OnDeleteAction
 import java.time.Instant
 import java.util.UUID
 
@@ -21,6 +23,10 @@ class Game(
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "chess_account_id", nullable = false)
     val chessAccount: ChessAccount,
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "imported_archive_id")
+    @OnDelete(action = OnDeleteAction.SET_NULL)
+    var importedArchive: ImportedArchive? = null,
     @Column(name = "platform_game_id", nullable = false)
     val platformGameId: String,
     @Column(nullable = false, columnDefinition = "TEXT")

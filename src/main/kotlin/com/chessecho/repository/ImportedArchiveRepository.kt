@@ -14,4 +14,9 @@ interface ImportedArchiveRepository : JpaRepository<ImportedArchive, UUID> {
         chessAccount: ChessAccount,
         archiveUrl: String,
     ): Boolean
+
+    fun findByChessAccountAndArchiveUrl(
+        chessAccount: ChessAccount,
+        archiveUrl: String,
+    ): ImportedArchive?
 }

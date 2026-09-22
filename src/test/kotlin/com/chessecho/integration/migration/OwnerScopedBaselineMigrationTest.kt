@@ -24,6 +24,7 @@ class OwnerScopedBaselineMigrationTest : PostgresMigrationTestFixture() {
                 "user_position_weakness",
                 "user_position_stats",
                 "imported_archive",
+                "archive_derived_processing",
                 "human_move_distribution",
                 "human_move_bfs_seen_game",
                 "async_job",
@@ -38,7 +39,8 @@ class OwnerScopedBaselineMigrationTest : PostgresMigrationTestFixture() {
                     'app_user', 'auth_identity', 'auth_session', 'chess_account',
                     'game', 'position', 'position_occurrence', 'engine_analysis',
                     'engine_move_evaluation', 'user_position_weakness', 'user_position_stats',
-                    'imported_archive', 'human_move_distribution', 'human_move_bfs_seen_game',
+                    'imported_archive', 'archive_derived_processing',
+                    'human_move_distribution', 'human_move_bfs_seen_game',
                     'async_job'
                   )
                 """.trimIndent(),
@@ -78,12 +80,22 @@ class OwnerScopedBaselineMigrationTest : PostgresMigrationTestFixture() {
                   AND table_name = 'async_job'
                   AND column_name IN (
                     'chess_account_id', 'from_date', 'to_date', 'time_controls_csv',
-                    'player_color', 'configuration_state'
+                    'player_color', 'configuration_state', 'worker_token', 'lease_expires_at', 'started_at'
                   )
                 """.trimIndent(),
             )
         assertEquals(
-            setOf("chess_account_id", "from_date", "to_date", "time_controls_csv", "player_color", "configuration_state"),
+            setOf(
+                "chess_account_id",
+                "from_date",
+                "to_date",
+                "time_controls_csv",
+                "player_color",
+                "configuration_state",
+                "worker_token",
+                "lease_expires_at",
+                "started_at",
+            ),
             jobColumns.map { it["column_name"].toString() }.toSet(),
         )
 
@@ -139,6 +151,10 @@ class OwnerScopedBaselineMigrationTest : PostgresMigrationTestFixture() {
             predicate = "queued",
             alsoPredicate = "processing",
         )
+        assertIndex("async_job", "status, lease_expires_at")
+        assertUniqueConstraint("position_occurrence", "game_id", "position_id", "ply_number", "player_color")
+        assertForeignKey("archive_derived_processing", "imported_archive_id", "imported_archive", "id")
+        assertIndex("archive_derived_processing", "imported_archive_id", unique = true)
 
         assertEquals(
             0,
@@ -443,5 +459,30 @@ class OwnerScopedBaselineMigrationTest : PostgresMigrationTestFixture() {
                     (expression == null || definition.contains(expression.lowercase()))
             }
         assertTrue(matching != null, "expected index on $table($columns), got $indexes")
+    }
+
+    private fun assertUniqueConstraint(
+        table: String,
+        vararg columns: String,
+    ) {
+        val matches =
+            query(
+                """
+                SELECT 1
+                FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu
+                  ON kcu.constraint_name = tc.constraint_name
+                 AND kcu.constraint_schema = tc.constraint_schema
+                 AND kcu.table_name = tc.table_name
+                WHERE tc.table_schema = 'public'
+                  AND tc.table_name = '$table'
+                  AND tc.constraint_type = 'UNIQUE'
+                GROUP BY tc.constraint_name
+                HAVING array_agg(kcu.column_name::text ORDER BY kcu.ordinal_position) = ARRAY[${
+                    columns.joinToString(", ") { "'$it'" }
+                }]::text[]
+                """.trimIndent(),
+            )
+        assertFalse(matches.isEmpty(), "$table must have unique constraint on ${columns.toList()}")
     }
 }

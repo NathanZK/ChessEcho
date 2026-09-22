@@ -16,6 +16,13 @@ data class ImportJobResponse(
     val playerColor: String? = null,
     val multiPv: Int? = null,
     val configurationState: String? = null,
+    /**
+     * Derived position/occurrence processing status for the archives this job
+     * requested, or absent when the request covers no durable archive unit yet
+     * (for example a current-month-only import, whose derived outcome is carried
+     * by `status`). See `GameImportController.derivedStatusFor`.
+     */
+    val derivedStatus: String? = null,
 )
 
 @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -37,4 +44,11 @@ data class JobStatusResponse(
     val playerColor: String? = null,
     val multiPv: Int? = null,
     val configurationState: String? = null,
+    /**
+     * Derived position/occurrence processing status for the archives this job
+     * requested, or absent when the request covers no durable archive unit yet
+     * (for example a current-month-only import, whose derived outcome is carried
+     * by `status`). See `GameImportController.derivedStatusFor`.
+     */
+    val derivedStatus: String? = null,
 )

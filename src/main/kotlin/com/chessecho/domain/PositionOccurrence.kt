@@ -10,9 +10,14 @@ import jakarta.persistence.Index
 import jakarta.persistence.JoinColumn
 import jakarta.persistence.ManyToOne
 import jakarta.persistence.Table
+import jakarta.persistence.UniqueConstraint
 import java.time.Instant
 import java.util.UUID
 
+/**
+ * One semantic decision point: the canonical position before a player's move.
+ * SAN is payload; game, position, ply, and player color form the retry identity.
+ */
 @Entity
 @Table(
     name = "position_occurrence",
@@ -20,6 +25,12 @@ import java.util.UUID
         Index(
             name = "idx_pos_occ_account_color_pos",
             columnList = "chess_account_id, player_color, position_id",
+        ),
+    ],
+    uniqueConstraints = [
+        UniqueConstraint(
+            name = "uk_position_occurrence_identity",
+            columnNames = ["game_id", "position_id", "ply_number", "player_color"],
         ),
     ],
 )

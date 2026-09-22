@@ -60,6 +60,12 @@ class AsyncJob(
     val analysisMultiPv: Int? = null,
     @Column(name = "configuration_state", nullable = false)
     var configurationState: String = CONFIGURATION_UNRESOLVED,
+    @Column(name = "worker_token")
+    var workerToken: UUID? = null,
+    @Column(name = "lease_expires_at")
+    var leaseExpiresAt: Instant? = null,
+    @Column(name = "started_at")
+    var startedAt: Instant? = null,
     @Column(name = "created_at", nullable = false)
     val createdAt: Instant = Instant.now(),
     @Column(name = "updated_at", nullable = false)

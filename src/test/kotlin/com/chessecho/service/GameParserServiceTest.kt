@@ -15,8 +15,10 @@ import org.junit.jupiter.api.Test
 import org.mockito.AdditionalAnswers
 import org.mockito.kotlin.any
 import org.mockito.kotlin.argumentCaptor
+import org.mockito.kotlin.atLeastOnce
 import org.mockito.kotlin.doAnswer
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.never
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
@@ -30,11 +32,13 @@ import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
 import java.time.Instant
-import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import javax.sql.DataSource
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
@@ -203,6 +207,8 @@ class GameParserServiceTest {
         whenever(positionRepository.findByHashIn(any())).thenReturn(emptyList())
         whenever(positionRepository.findByHash(any())).thenReturn(null)
         whenever(positionRepository.insertIfAbsent(any(), any(), any(), any())).thenReturn(1)
+        whenever(positionOccurrenceRepository.insertIfAbsent(any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(1)
+        val nativeParser = GameParserService(positionRepository, positionOccurrenceRepository, postgresqlMetadataDataSource())
 
         val appUser = AppUser(email = "test@example.com")
         val chessAccount = ChessAccount(user = appUser, platform = "CHESS_COM", username = "tester")
@@ -217,11 +223,181 @@ class GameParserServiceTest {
                 playedAt = Instant.now(),
             )
 
-        gameParserService.parseAndSavePositions(listOf(game))
+        nativeParser.parseAndSavePositions(listOf(game))
 
         val hashCaptor = argumentCaptor<String>()
         verify(positionRepository, times(3)).insertIfAbsent(any(), hashCaptor.capture(), any(), any())
         assertEquals(hashCaptor.allValues.sorted(), hashCaptor.allValues)
+    }
+
+    @Test
+    fun `the native occurrence insert is reserved for PostgreSQL datasources`() {
+        whenever(positionRepository.findByHashIn(any())).thenReturn(emptyList())
+        whenever(positionRepository.saveAll(any<List<Position>>())).thenAnswer { it.getArgument<List<Position>>(0) }
+        whenever(positionOccurrenceRepository.findByGameIdIn(any())).thenReturn(emptyList())
+        val h2Parser = GameParserService(positionRepository, positionOccurrenceRepository, metadataDataSource("H2"))
+
+        h2Parser.parseAndSavePositions(listOf(sampleGame("h2-game")))
+
+        verify(positionOccurrenceRepository, never())
+            .insertIfAbsent(any(), any(), any(), any(), any(), any(), any(), any())
+        verify(positionRepository, never()).insertIfAbsent(any(), any(), any(), any())
+        verify(positionOccurrenceRepository).saveAll(any<List<PositionOccurrence>>())
+    }
+
+    @Test
+    fun `a PostgreSQL datasource uses the conflict-safe occurrence insert`() {
+        whenever(positionRepository.findByHashIn(any())).thenReturn(emptyList())
+        whenever(positionRepository.findByHash(any())).thenReturn(null)
+        whenever(positionRepository.insertIfAbsent(any(), any(), any(), any())).thenReturn(1)
+        whenever(positionOccurrenceRepository.insertIfAbsent(any(), any(), any(), any(), any(), any(), any(), any()))
+            .thenReturn(1)
+        val postgresParser =
+            GameParserService(positionRepository, positionOccurrenceRepository, metadataDataSource("PostgreSQL"))
+
+        postgresParser.parseAndSavePositions(listOf(sampleGame("pg-game")))
+
+        verify(positionOccurrenceRepository, atLeastOnce())
+            .insertIfAbsent(any(), any(), any(), any(), any(), any(), any(), any())
+        verify(positionOccurrenceRepository, never()).saveAll(any<List<PositionOccurrence>>())
+    }
+
+    private fun sampleGame(id: String): Game =
+        Game(
+            chessAccount = ChessAccount(user = AppUser(email = "branch@example.com"), platform = "CHESS_COM", username = "tester"),
+            platformGameId = id,
+            whiteUsername = "tester",
+            blackUsername = "opponent",
+            pgn = "1. e4 e5 2. Nf3 Nc6 1/2-1/2",
+            timeControl = "600",
+            playedAt = Instant.now(),
+        )
+
+    private fun metadataDataSource(productName: String): DataSource {
+        val dataSource = mock<DataSource>()
+        val connection = mock<java.sql.Connection>()
+        val metadata = mock<java.sql.DatabaseMetaData>()
+        whenever(dataSource.connection).thenReturn(connection)
+        whenever(connection.metaData).thenReturn(metadata)
+        whenever(metadata.databaseProductName).thenReturn(productName)
+        return dataSource
+    }
+
+    @Test
+    fun `occurrence candidate key records game position ply and color semantics`() {
+        whenever(positionRepository.findByHashIn(any())).thenReturn(emptyList())
+        whenever(positionRepository.saveAll(any<List<Position>>())).thenAnswer { it.getArgument<List<Position>>(0) }
+
+        val account = ChessAccount(user = AppUser(email = "identity@example.com"), platform = "CHESS_COM", username = "tester")
+        val firstGame =
+            Game(
+                chessAccount = account,
+                platformGameId = "identity-game-1",
+                whiteUsername = "tester",
+                blackUsername = "opponent",
+                pgn = "1. e4 e5 2. Nf3 Nc6 1/2-1/2",
+                timeControl = "600",
+                playedAt = Instant.now(),
+            )
+        val secondGame =
+            Game(
+                chessAccount = account,
+                platformGameId = "identity-game-2",
+                whiteUsername = "tester",
+                blackUsername = "opponent",
+                pgn = "1. e4 e5 2. Nf3 Nc6 1/2-1/2",
+                timeControl = "600",
+                playedAt = Instant.now(),
+            )
+
+        gameParserService.parseAndSavePositions(listOf(firstGame, secondGame))
+
+        val occurrences = argumentCaptor<List<PositionOccurrence>>()
+        verify(positionOccurrenceRepository).saveAll(occurrences.capture())
+        val samePlyOccurrences = occurrences.firstValue.filter { it.plyNumber == 1 && it.playerColor == "WHITE" }
+        assertEquals(2, samePlyOccurrences.size)
+
+        // Candidate key: (game_id, position_id, ply_number, player_color).
+        // move_played is descriptive; account_id is derivable from game_id.
+        val candidateKeys =
+            samePlyOccurrences.map {
+                listOf(
+                    it.game.id,
+                    it.position.id,
+                    it.plyNumber,
+                    it.playerColor,
+                )
+            }
+        assertEquals(2, candidateKeys.distinct().size)
+        assertEquals(
+            setOf("identity-game-1", "identity-game-2"),
+            samePlyOccurrences.map { it.game.platformGameId }.toSet(),
+            "the candidate key carries the game identity, not only canonical position, ply, and color",
+        )
+        assertTrue(
+            samePlyOccurrences.map { it.game.platformGameId }.distinct().size == samePlyOccurrences.size,
+            "distinct semantic games have distinct platform identities, which map to distinct game_id values",
+        )
+        assertNotEquals(
+            samePlyOccurrences[0].game.id,
+            samePlyOccurrences[1].game.id,
+            "distinct platform game identities must resolve to distinct database game_id values",
+        )
+        assertTrue(
+            samePlyOccurrences.map { it.position.hash }.distinct().size == 1,
+            "the fixture proves the games share the same canonical position while remaining distinct occurrences",
+        )
+    }
+
+    @Test
+    fun `reprocessing the same game is expected to reconcile rather than duplicate occurrences`() {
+        val persistedPositions = mutableListOf<Position>()
+        whenever(positionRepository.findByHashIn(any())).thenAnswer {
+            val hashes = it.getArgument<List<String>>(0)
+            persistedPositions.filter { position -> position.hash in hashes }
+        }
+        whenever(positionRepository.findByHash(any())).thenAnswer {
+            val hash = it.getArgument<String>(0)
+            persistedPositions.singleOrNull { position -> position.hash == hash }
+        }
+        whenever(positionRepository.saveAll(any<List<Position>>())).thenAnswer {
+            it.getArgument<List<Position>>(0).also(persistedPositions::addAll)
+        }
+        val persistedOccurrences = mutableListOf<PositionOccurrence>()
+        whenever(positionOccurrenceRepository.findByGameIdIn(any())).thenAnswer {
+            val gameIds = it.getArgument<Collection<UUID>>(0)
+            persistedOccurrences.filter { occurrence -> occurrence.game.id in gameIds }
+        }
+        whenever(positionOccurrenceRepository.saveAll(any<List<PositionOccurrence>>())).thenAnswer {
+            it.getArgument<List<PositionOccurrence>>(0).also(persistedOccurrences::addAll)
+        }
+
+        val account = ChessAccount(user = AppUser(email = "retry@example.com"), platform = "CHESS_COM", username = "tester")
+        val game =
+            Game(
+                chessAccount = account,
+                platformGameId = "retry-game",
+                whiteUsername = "tester",
+                blackUsername = "opponent",
+                pgn = "1. e4 e5 2. Nf3 Nc6 1/2-1/2",
+                timeControl = "600",
+                playedAt = Instant.now(),
+            )
+
+        gameParserService.parseAndSavePositions(listOf(game))
+        gameParserService.parseAndSavePositions(listOf(game))
+
+        verify(positionOccurrenceRepository, times(1)).saveAll(any<List<PositionOccurrence>>())
+    }
+
+    private fun postgresqlMetadataDataSource(): DataSource {
+        val dataSource = mock<DataSource>()
+        val connection = mock<java.sql.Connection>()
+        val metadata = mock<java.sql.DatabaseMetaData>()
+        whenever(dataSource.connection).thenReturn(connection)
+        whenever(connection.metaData).thenReturn(metadata)
+        whenever(metadata.databaseProductName).thenReturn("PostgreSQL")
+        return dataSource
     }
 }
 
@@ -243,6 +419,12 @@ class GameParserServiceConcurrencyTest {
 
     @Autowired
     private lateinit var transactionTemplate: TransactionTemplate
+
+    @Autowired
+    private lateinit var postgresBackedParser: GameParserService
+
+    @Autowired
+    private lateinit var dataSource: DataSource
 
     companion object {
         @Container
@@ -277,25 +459,6 @@ class GameParserServiceConcurrencyTest {
         val parserAccountTwo = ChessAccount(id = accountTwo.id, platform = accountTwo.platform, username = accountTwo.username)
 
         val startBarrier = CountDownLatch(2)
-        val repositorySpy =
-            mock<PositionRepository>(
-                defaultAnswer = AdditionalAnswers.delegatesTo(positionRepository),
-            )
-        val capturedOccurrences = ConcurrentLinkedQueue<List<PositionOccurrence>>()
-        val occurrenceRepositorySpy = mock<PositionOccurrenceRepository>()
-        doAnswer {
-            positionRepository.findByHashIn(it.getArgument<List<String>>(0))
-        }.whenever(repositorySpy).findByHashIn(any<List<String>>())
-        doAnswer {
-            positionRepository.saveAll(it.getArgument<List<Position>>(0))
-        }.whenever(repositorySpy).saveAll(any<List<Position>>())
-        whenever(occurrenceRepositorySpy.saveAll(any<List<PositionOccurrence>>())).thenAnswer {
-            val occurrences = it.getArgument<List<PositionOccurrence>>(0)
-            capturedOccurrences.add(occurrences)
-            occurrences
-        }
-
-        val parser = GameParserService(repositorySpy, occurrenceRepositorySpy)
         val executor = Executors.newFixedThreadPool(2)
         try {
             val futures =
@@ -303,11 +466,12 @@ class GameParserServiceConcurrencyTest {
                     executor.submit<Set<java.util.UUID>> {
                         startBarrier.countDown()
                         assertTrue(startBarrier.await(10, TimeUnit.SECONDS), "Both parser transactions must start together")
-                        transactionTemplate.execute {
-                            val parserGame =
+                        val account = if (game.id == gameOne.id) parserAccountOne else parserAccountTwo
+                        postgresBackedParser.parseAndSavePositions(
+                            listOf(
                                 Game(
                                     id = game.id,
-                                    chessAccount = if (game.id == gameOne.id) parserAccountOne else parserAccountTwo,
+                                    chessAccount = account,
                                     platformGameId = game.platformGameId,
                                     pgn = game.pgn,
                                     timeControl = game.timeControl,
@@ -315,9 +479,9 @@ class GameParserServiceConcurrencyTest {
                                     result = game.result,
                                     whiteUsername = game.whiteUsername,
                                     blackUsername = game.blackUsername,
-                                )
-                            parser.parseAndSavePositions(listOf(parserGame))
-                        } ?: error("Parser transaction returned no result")
+                                ),
+                            ),
+                        )
                     }
                 }
 
@@ -327,12 +491,11 @@ class GameParserServiceConcurrencyTest {
             val positions = positionRepository.findAll()
             assertEquals(1, positions.size)
 
-            val occurrences = capturedOccurrences.flatten()
+            val occurrences = positionOccurrenceRepository.findAll()
             assertEquals(2, occurrences.size)
             assertEquals(setOf(positions.single().id), occurrences.map { it.position.id }.toSet())
             assertEquals(1, occurrences.count { it.game.id == gameOne.id })
             assertEquals(1, occurrences.count { it.game.id == gameTwo.id })
-            positionOccurrenceRepository.saveAll(occurrences)
             assertNotNull(positions.single().id)
         } finally {
             executor.shutdownNow()
@@ -372,7 +535,7 @@ class GameParserServiceConcurrencyTest {
             )
         }.whenever(repositorySpy).insertIfAbsent(any(), any(), any(), any())
 
-        val parser = GameParserService(repositorySpy, positionOccurrenceRepository)
+        val parser = GameParserService(repositorySpy, positionOccurrenceRepository, dataSource)
         val executor = Executors.newFixedThreadPool(2)
         try {
             val futures =
@@ -405,7 +568,37 @@ class GameParserServiceConcurrencyTest {
                 }
             assertTrue(failures.all { it == null }, "Unexpected PostgreSQL contention failure: ${failures.joinToString()}")
             assertEquals(2, positionRepository.count())
-            assertEquals(4, positionOccurrenceRepository.count())
+            assertEquals(2, positionOccurrenceRepository.count(), "concurrent replay must reconcile semantic occurrences")
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `concurrent PostgreSQL parsers insert one semantic occurrence for the same game position`() {
+        val account = chessAccountRepository.saveAndFlush(ChessAccount(platform = "CHESS_COM", username = "same-game"))
+        val persistedGame = gameRepository.saveAndFlush(game(account, "same-game-id", "same-game"))
+        val startBarrier = CountDownLatch(2)
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val futures =
+                (1..2).map {
+                    executor.submit {
+                        startBarrier.countDown()
+                        assertTrue(startBarrier.await(10, TimeUnit.SECONDS), "Both parsers must start together")
+                        val reloaded = gameRepository.findById(persistedGame.id).orElseThrow()
+                        postgresBackedParser.parseAndSavePositions(listOf(reloaded))
+                    }
+                }
+
+            val failures = futures.map { runCatching { it.get(20, TimeUnit.SECONDS) }.exceptionOrNull() }
+            assertTrue(failures.all { it == null }, "Unexpected PostgreSQL occurrence conflict failure: $failures")
+            assertEquals(1, positionRepository.count())
+            assertEquals(
+                1,
+                positionOccurrenceRepository.count(),
+                "the database identity (game, position, ply, color) must collapse concurrent replays",
+            )
         } finally {
             executor.shutdownNow()
         }

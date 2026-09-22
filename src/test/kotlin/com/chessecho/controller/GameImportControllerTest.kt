@@ -1,6 +1,10 @@
 package com.chessecho.controller
 
+import com.chessecho.domain.ArchiveDerivedStatus
 import com.chessecho.domain.AsyncJob
+import com.chessecho.domain.ChessAccount
+import com.chessecho.repository.ArchiveDerivedProcessingRepository
+import com.chessecho.repository.ArchiveDerivedStatusView
 import com.chessecho.repository.AsyncJobRepository
 import com.chessecho.service.ActiveImportJobException
 import com.chessecho.service.GameImportService
@@ -23,6 +27,8 @@ import org.springframework.http.MediaType
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.get
 import org.springframework.test.web.servlet.post
+import java.time.YearMonth
+import java.time.ZoneOffset
 import java.util.Optional
 import java.util.UUID
 import kotlin.reflect.full.primaryConstructor
@@ -46,6 +52,9 @@ class GameImportControllerTest {
 
     @MockBean
     lateinit var asyncJobRepository: AsyncJobRepository
+
+    @MockBean
+    lateinit var archiveDerivedProcessingRepository: ArchiveDerivedProcessingRepository
 
     @MockBean
     lateinit var identitySessionService: IdentitySessionService
@@ -263,6 +272,140 @@ class GameImportControllerTest {
             ),
             responseFields,
         )
+    }
+
+    @Test
+    fun `GET jobs id derives archive status only from requested job range`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "scoped")
+        val jobId = stubJob(account, fromDate = "2024-02", toDate = "2024-02")
+        stubDerivedStatuses(
+            account,
+            // In scope for this job.
+            "2024-02" to ArchiveDerivedStatus.COMPLETED,
+            // Older archives from earlier, differently scoped imports. A failure
+            // there says nothing about this job and must not be reported.
+            "2023-05" to ArchiveDerivedStatus.FAILED,
+            "2024-01" to ArchiveDerivedStatus.PROCESSING,
+            // Newer than the requested range.
+            "2024-03" to ArchiveDerivedStatus.PENDING,
+        )
+
+        mockMvc.get("/api/jobs/$jobId")
+            .andExpect {
+                status { isOk() }
+                jsonPath("$.derivedStatus") { value("COMPLETED") }
+            }
+    }
+
+    @Test
+    fun `GET jobs id reports the least complete status among in-range archives`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "scoped")
+        val jobId = stubJob(account, fromDate = "2024-01", toDate = "2024-02")
+        stubDerivedStatuses(
+            account,
+            "2024-01" to ArchiveDerivedStatus.COMPLETED,
+            "2024-02" to ArchiveDerivedStatus.FAILED,
+        )
+
+        mockMvc.get("/api/jobs/$jobId")
+            .andExpect {
+                status { isOk() }
+                jsonPath("$.derivedStatus") { value("FAILED") }
+            }
+    }
+
+    @Test
+    fun `GET jobs id omits derived status for a current-month-only import`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "scoped")
+        val currentMonth = YearMonth.now(ZoneOffset.UTC).toString()
+        val jobId = stubJob(account, fromDate = currentMonth, toDate = currentMonth)
+        stubDerivedStatuses(
+            account,
+            // A durable archive exists, but it belongs to an earlier month than
+            // the one this job requested.
+            "2024-02" to ArchiveDerivedStatus.FAILED,
+        )
+
+        mockMvc.get("/api/jobs/$jobId")
+            .andExpect {
+                status { isOk() }
+                jsonPath("$.derivedStatus") { doesNotExist() }
+            }
+    }
+
+    @Test
+    fun `GET jobs id omits derived status when an unbounded import has no archives yet`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "scoped")
+        val jobId = stubJob(account, fromDate = null, toDate = null)
+        stubDerivedStatuses(account)
+
+        mockMvc.get("/api/jobs/$jobId")
+            .andExpect {
+                status { isOk() }
+                jsonPath("$.derivedStatus") { doesNotExist() }
+            }
+    }
+
+    @Test
+    fun `GET jobs id reports every archive of an unbounded import`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "scoped")
+        val jobId = stubJob(account, fromDate = null, toDate = null)
+        stubDerivedStatuses(
+            account,
+            "2023-05" to ArchiveDerivedStatus.COMPLETED,
+            "2024-02" to ArchiveDerivedStatus.PENDING,
+        )
+
+        mockMvc.get("/api/jobs/$jobId")
+            .andExpect {
+                status { isOk() }
+                jsonPath("$.derivedStatus") { value("PENDING") }
+            }
+    }
+
+    @Test
+    fun `GET jobs id omits derived status for a job that has not started`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "scoped")
+        val jobId = stubJob(account, fromDate = "2024-02", toDate = "2024-02", status = "QUEUED")
+        stubDerivedStatuses(account, "2024-02" to ArchiveDerivedStatus.COMPLETED)
+
+        mockMvc.get("/api/jobs/$jobId")
+            .andExpect {
+                status { isOk() }
+                jsonPath("$.derivedStatus") { doesNotExist() }
+            }
+    }
+
+    private fun stubJob(
+        account: ChessAccount,
+        fromDate: String?,
+        toDate: String?,
+        status: String = "COMPLETED",
+    ): UUID {
+        val jobId = UUID.randomUUID()
+        val job =
+            AsyncJob(
+                id = jobId,
+                chessAccount = account,
+                username = account.username,
+                platform = account.platform,
+                status = status,
+                fromDate = fromDate,
+                toDate = toDate,
+                timeControlsCsv = "BLITZ",
+                playerColor = "BOTH",
+                configurationState = AsyncJob.CONFIGURATION_READY,
+            )
+        whenever(asyncJobRepository.findByIdWithAccount(eq(jobId))).thenReturn(job)
+        return jobId
+    }
+
+    private fun stubDerivedStatuses(
+        account: ChessAccount,
+        vararg archives: Pair<String, ArchiveDerivedStatus>,
+    ) {
+        whenever(archiveDerivedProcessingRepository.findDerivedStatusesByChessAccountId(eq(account.id)))
+            .thenReturn(archives.map { (yearMonth, status) -> ArchiveDerivedStatusView(yearMonth, status) })
     }
 
     @Test
