@@ -4683,6 +4683,16 @@ class AgentWorkflowTest(unittest.TestCase):
                     "stderr_text": "",
                 }
             if command[:3] == ["gh", "pr", "view"]:
+                if "body" in command:
+                    published_body = pathlib.Path(commands[0][commands[0].index("--body-file") + 1])
+                    return {
+                        "command": command,
+                        "result": {"outcome": "success", "exit_code": 0},
+                        "stdout_text": json.dumps(
+                            {"body": published_body.read_text(encoding="utf-8")}
+                        ),
+                        "stderr_text": "",
+                    }
                 return {
                     "command": command,
                     "result": {"outcome": "success", "exit_code": 0},
@@ -4725,6 +4735,186 @@ class AgentWorkflowTest(unittest.TestCase):
             self.state()["draft_pr"]["body_file"],
         )
         workflow._validate_pr_body(published_body)
+
+    def test_recover_draft_pr_publication_finalizes_after_interrupted_create(self):
+        """A journaled first-time PR create can be recovered after final state persistence is interrupted."""
+        self.bootstrap_to_draft_pr_creation()
+        implementation_commit = self.state()["implementation_commit"]
+        live_pr = {
+            "number": 321,
+            "headRefName": "workflow-branch",
+            "headRefOid": implementation_commit,
+            "headRepository": {"nameWithOwner": "owner/repo"},
+            "baseRefName": "main",
+            "state": "OPEN",
+            "isDraft": True,
+            "url": "https://example.test/owner/repo/pull/321",
+        }
+        original_run_checked = workflow._run_checked
+        original_write_state = workflow._write_state
+
+        def create_then_interrupt(command, limits, cwd, code, context, env=None):
+            if command[:3] == ["gh", "pr", "create"]:
+                return {
+                    "command": command,
+                    "result": {"outcome": "success", "exit_code": 0},
+                    "stdout_text": live_pr["url"],
+                    "stderr_text": "",
+                }
+            if command[:3] == ["gh", "pr", "view"]:
+                if "body" in command:
+                    body_path = (
+                        self.root
+                        / ".agent-workflow"
+                        / "runs"
+                        / f"issue-{ISSUE}"
+                        / "artifacts"
+                        / "draft-pr-body.md"
+                    )
+                    return {
+                        "command": command,
+                        "result": {"outcome": "success", "exit_code": 0},
+                        "stdout_text": json.dumps({"body": body_path.read_text(encoding="utf-8")}),
+                        "stderr_text": "",
+                    }
+                return {
+                    "command": command,
+                    "result": {"outcome": "success", "exit_code": 0},
+                    "stdout_text": json.dumps(live_pr),
+                    "stderr_text": "",
+                }
+            return original_run_checked(command, limits, cwd, code, context, env=env)
+
+        def fail_completed_state(root, config, issue, state):
+            if state.get("status") == "WORKFLOW_COMPLETED":
+                raise workflow.WorkflowError(
+                    "injected-post-create-state-failure",
+                    "injected state persistence failure after GitHub PR creation",
+                )
+            return original_write_state(root, config, issue, state)
+
+        with mock.patch.object(workflow, "_run_checked", side_effect=create_then_interrupt), mock.patch.object(
+            workflow, "_write_state", side_effect=fail_completed_state
+        ):
+            code, payload, _ = self.run_cli(
+                "create-draft-pr",
+                str(ISSUE),
+                "--title",
+                "Issue 321",
+            )
+
+        self.assertEqual(1, code)
+        self.assertEqual("injected-post-create-state-failure", payload["error"]["code"])
+        self.assertEqual("DRAFT_PR_CREATION", self.state()["status"])
+        self.assertIsNone(self.state()["draft_pr"])
+        journal_path = (
+            self.root
+            / ".agent-workflow"
+            / "runs"
+            / f"issue-{ISSUE}"
+            / "draft-pr-publication-transition.json"
+        )
+        self.assertTrue(journal_path.is_file())
+        journal = json.loads(journal_path.read_text(encoding="utf-8"))
+        self.assertEqual("pending", journal["status"])
+        self.assertEqual(implementation_commit, journal["implementation_commit"])
+
+        with mock.patch.object(workflow, "_run_checked", side_effect=create_then_interrupt):
+            code, payload, _ = self.run_cli("recover-draft-pr-publication", str(ISSUE))
+
+        self.assertEqual(0, code, payload)
+        self.assertTrue(payload["recovered"])
+        after = self.state()
+        self.assertEqual("WORKFLOW_COMPLETED", after["status"])
+        self.assertEqual(321, after["draft_pr"]["number"])
+        self.assertEqual("workflow-branch", after["draft_pr"]["head_ref_name"])
+        self.assertEqual(implementation_commit, after["draft_pr"]["head_ref_oid"])
+        finalized = json.loads(journal_path.read_text(encoding="utf-8"))
+        self.assertEqual("finalized", finalized["status"])
+
+    def test_recover_draft_pr_publication_no_match_requires_retry_without_adoption(self):
+        """A journal without a matching external PR is retryable and does not invent PR identity."""
+        self.bootstrap_to_draft_pr_creation()
+        original = workflow._run_checked
+
+        def create_failure(command, limits, cwd, code, context, env=None):
+            if command[:3] == ["gh", "pr", "create"]:
+                raise workflow.WorkflowError("draft-pr-create-existing", "recoverable existing PR")
+            if command[:3] == ["gh", "pr", "list"]:
+                return {
+                    "command": command,
+                    "result": {"outcome": "success", "exit_code": 0},
+                    "stdout_text": "[]",
+                    "stderr_text": "",
+                }
+            return original(command, limits, cwd, code, context, env=env)
+
+        with mock.patch.object(workflow, "_run_checked", side_effect=create_failure):
+            code, payload, _ = self.run_cli(
+                "create-draft-pr",
+                str(ISSUE),
+                "--title",
+                "Issue 321",
+            )
+        self.assertEqual(1, code)
+        self.assertEqual("draft-pr-create-existing", payload["error"]["code"])
+
+        with mock.patch.object(workflow, "_run_checked", side_effect=create_failure):
+            code, payload, _ = self.run_cli("recover-draft-pr-publication", str(ISSUE))
+
+        self.assertEqual(0, code, payload)
+        self.assertTrue(payload["retry_required"])
+        state = self.state()
+        self.assertEqual("DRAFT_PR_CREATION", state["status"])
+        self.assertIsNone(state["draft_pr"])
+
+    def test_recover_draft_pr_publication_fails_closed_on_wrong_head(self):
+        """Recovery never adopts a PR whose authoritative head SHA differs from the journal."""
+        self.bootstrap_to_draft_pr_creation()
+        original = workflow._run_checked
+
+        def existing_pr(command, limits, cwd, code, context, env=None):
+            if command[:3] == ["gh", "pr", "create"]:
+                raise workflow.WorkflowError("draft-pr-create-existing", "recoverable existing PR")
+            if command[:3] == ["gh", "pr", "list"]:
+                return {
+                    "command": command,
+                    "result": {"outcome": "success", "exit_code": 0},
+                    "stdout_text": json.dumps(
+                        [
+                            {
+                                "number": 321,
+                                "headRefName": "workflow-branch",
+                                "headRefOid": "f" * 40,
+                                "headRepository": {"nameWithOwner": "owner/repo"},
+                                "baseRefName": "main",
+                                "state": "OPEN",
+                                "isDraft": True,
+                                "url": "https://example.test/owner/repo/pull/321",
+                            }
+                        ]
+                    ),
+                    "stderr_text": "",
+                }
+            return original(command, limits, cwd, code, context, env=env)
+
+        with mock.patch.object(workflow, "_run_checked", side_effect=existing_pr):
+            code, payload, _ = self.run_cli(
+                "create-draft-pr",
+                str(ISSUE),
+                "--title",
+                "Issue 321",
+            )
+        self.assertEqual(1, code)
+        self.assertEqual("draft-pr-create-existing", payload["error"]["code"])
+
+        with mock.patch.object(workflow, "_run_checked", side_effect=existing_pr):
+            code, payload, _ = self.run_cli("recover-draft-pr-publication", str(ISSUE))
+
+        self.assertEqual(1, code)
+        self.assertEqual("draft-pr-publication-recovery-ambiguous", payload["error"]["code"])
+        self.assertEqual("DRAFT_PR_CREATION", self.state()["status"])
+        self.assertIsNone(self.state()["draft_pr"])
 
     def test_skip_github_remains_publication_pending(self):
         """Skipping GitHub publication cannot satisfy the terminal workflow state."""
@@ -4863,12 +5053,30 @@ class AgentWorkflowTest(unittest.TestCase):
                 commands.append(command)
                 return {"stdout_text": "https://github.com/owner/repo/pull/321", "stderr_text": ""}
             if command[:3] == ["gh", "pr", "view"]:
+                if "body" in command:
+                    body_path = (
+                        self.root
+                        / ".agent-workflow"
+                        / "runs"
+                        / f"issue-{ISSUE}"
+                        / "artifacts"
+                        / "draft-pr-body.md"
+                    )
+                    return {
+                        "stdout_text": json.dumps(
+                            {"body": body_path.read_text(encoding="utf-8")}
+                        ),
+                        "stderr_text": "",
+                    }
                 return {
                     "stdout_text": json.dumps({
                         "number": 321,
                         "headRefName": "workflow-branch",
                         "headRefOid": self.state()["implementation_commit"],
                         "headRepository": {"nameWithOwner": "owner/repo"},
+                        "baseRefName": "main",
+                        "state": "OPEN",
+                        "isDraft": True,
                         "url": "https://github.com/owner/repo/pull/321",
                     }),
                     "stderr_text": "",
