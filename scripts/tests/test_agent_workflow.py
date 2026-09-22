@@ -9629,5 +9629,488 @@ class RevisionAndPrRevisionTest(AgentWorkflowTest):
         )
 
 
+class HistoricalLegacyPrReconciliationCrashSafetyTest(AgentWorkflowTest):
+    """Regression tests for issue #399: crash-safe post-push observation and
+    recovery for `reconcile-historical-legacy-draft-pr`.
+
+    These exercise real CLI invocations against a full 384 -> 3841 -> 3842
+    parent chain and a mocked `_run_checked`, asserting genuine on-disk
+    journal state and behavior rather than merely checking that certain
+    identifiers appear in the command's source text.
+    """
+
+    HISTORICAL_PARENT_ISSUE = 384
+    LEGACY_ADOPTION_ISSUE = 3841
+    RECONCILIATION_ISSUE = 3842
+    HISTORICAL_PR = 385
+    FRESH_PR = 398
+    REPOSITORY = "NathanZK/ChessEcho"
+    OLD_COMMIT = "1111111111111111111111111111111111111a"
+    IMPLEMENTATION_COMMIT = "2222222222222222222222222222222222222b"
+    BASE_OID = "3333333333333333333333333333333333333c"
+    DRIFTED_BASE_OID = "4444444444444444444444444444444444444d"
+    LEGACY_BRANCH = "legacy-branch"
+
+    def _prepare_fixture(self):
+        """Seed the 384 -> 3841 -> 3842 parent chain and fresh publication
+        journal, and make bounded re-observation retries instant.
+
+        Deliberately not done in `setUp`: this class inherits every test from
+        `AgentWorkflowTest`, and mutating shared config/state for all of them
+        would be an unrelated, invisible side effect on tests that never
+        touch this command.
+        """
+        self.set_authoritative_remote("github.com/%s" % self.REPOSITORY)
+        # Patch the real stdlib `time` module's `sleep` directly (by string
+        # path) rather than `workflow.time.sleep`, so this fixture works
+        # whether or not the module under test currently imports `time`
+        # (the pre-fix baseline does not).
+        sleep_patch = mock.patch("time.sleep")
+        sleep_patch.start()
+        self.addCleanup(sleep_patch.stop)
+        self._seed_parent_chain()
+        self._seed_fresh_publication_journal()
+
+    # -- fixture construction -------------------------------------------------
+
+    def _write_run_state(self, issue, state):
+        directory = self.root / ".agent-workflow" / "runs" / ("issue-%s" % issue)
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "state.json").write_text(
+            json.dumps(state, indent=2) + "\n", encoding="utf-8"
+        )
+
+    def _seed_parent_chain(self):
+        self._write_run_state(
+            self.HISTORICAL_PARENT_ISSUE,
+            {
+                "format": workflow.STATE_FORMAT,
+                "issue": self.HISTORICAL_PARENT_ISSUE,
+                "status": "WORKFLOW_COMPLETED",
+                "implementation_commit": self.OLD_COMMIT,
+                "draft_pr": None,
+                "parent_run": None,
+            },
+        )
+        self._write_run_state(
+            self.LEGACY_ADOPTION_ISSUE,
+            {
+                "format": workflow.STATE_FORMAT,
+                "issue": self.LEGACY_ADOPTION_ISSUE,
+                "status": "WORKFLOW_COMPLETED",
+                "implementation_commit": self.OLD_COMMIT,
+                "draft_pr": None,
+                "parent_run": {"issue": self.HISTORICAL_PARENT_ISSUE, "class": "plan"},
+            },
+        )
+        self._write_run_state(
+            self.RECONCILIATION_ISSUE,
+            {
+                "format": workflow.STATE_FORMAT,
+                "issue": self.RECONCILIATION_ISSUE,
+                "status": "WORKFLOW_COMPLETED",
+                "implementation_commit": self.IMPLEMENTATION_COMMIT,
+                "draft_pr": {
+                    "number": self.FRESH_PR,
+                    "body_file": "generated/fresh-pr-body.md",
+                },
+                "parent_run": {"issue": self.LEGACY_ADOPTION_ISSUE, "class": "plan"},
+                "publication_branch": "workflow-branch",
+            },
+        )
+
+    def _seed_fresh_publication_journal(self):
+        body_path = self.root / "generated" / "fresh-pr-body.md"
+        body_path.parent.mkdir(parents=True, exist_ok=True)
+        self.fresh_body_text = (
+            "## What\nReconcile the historical draft PR.\n\n"
+            "## Why\nBind the fresh governed realization.\n\n"
+            "## Testing\nRan the governed test suite.\n"
+        )
+        body_path.write_text(self.fresh_body_text, encoding="utf-8")
+        digest, length = workflow._text_digest(self.fresh_body_text)
+        self.fresh_body_sha256 = digest
+        self.fresh_body_byte_length = length
+        journal = {
+            "format": workflow.DRAFT_PR_PUBLICATION_JOURNAL_FORMAT,
+            "version": 1,
+            "transition_id": "fresh-publication-transition",
+            "issue": self.RECONCILIATION_ISSUE,
+            "operation": "create-draft-pr",
+            "created_at": "2026-01-01T00:00:00Z",
+            "status": "finalized",
+            "target_repository": self.REPOSITORY,
+            "target_base": "main",
+            "head_ref_name": "workflow-branch",
+            "implementation_commit": self.IMPLEMENTATION_COMMIT,
+            "title": "Reconcile historical legacy draft PR",
+            "body": {
+                "path": "generated/fresh-pr-body.md",
+                "sha256": digest,
+                "byte_length": length,
+            },
+            "command": ["gh pr create ..."],
+            "publication_stdout": None,
+            "draft_pr": {"number": self.FRESH_PR},
+        }
+        directory = (
+            self.root / ".agent-workflow" / "runs" / ("issue-%s" % self.RECONCILIATION_ISSUE)
+        )
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "draft-pr-publication-transition.json").write_text(
+            json.dumps(journal, indent=2) + "\n", encoding="utf-8"
+        )
+
+    def historical_reconciliation_journal_path(self):
+        return (
+            self.root
+            / ".agent-workflow"
+            / "runs"
+            / ("issue-%s" % self.RECONCILIATION_ISSUE)
+            / "historical-legacy-draft-pr-reconciliation-transition.json"
+        )
+
+    def _historical_snapshot(self, head_ref_oid, base_ref_oid, branch=None, body_text="legacy body\n", **overrides):
+        snapshot = {
+            "number": self.HISTORICAL_PR,
+            "title": "Legacy PR",
+            "body": body_text,
+            "state": "OPEN",
+            "isDraft": True,
+            "baseRefName": "main",
+            "baseRefOid": base_ref_oid,
+            "headRefName": branch or self.LEGACY_BRANCH,
+            "headRefOid": head_ref_oid,
+            "headRepository": {"nameWithOwner": self.REPOSITORY},
+            "url": "https://github.com/%s/pull/%s" % (self.REPOSITORY, self.HISTORICAL_PR),
+            "createdAt": "2025-01-01T00:00:00Z",
+            "updatedAt": "2026-01-01T00:00:00Z",
+        }
+        snapshot.update(overrides)
+        return snapshot
+
+    def _fresh_snapshot(self):
+        return {
+            "number": self.FRESH_PR,
+            "title": "Reconcile historical legacy draft PR",
+            "body": self.fresh_body_text,
+            "state": "OPEN",
+            "isDraft": True,
+            "baseRefName": "main",
+            "baseRefOid": self.BASE_OID,
+            "headRefName": "workflow-branch",
+            "headRefOid": self.IMPLEMENTATION_COMMIT,
+            "headRepository": {"nameWithOwner": self.REPOSITORY},
+            "url": "https://github.com/%s/pull/%s" % (self.REPOSITORY, self.FRESH_PR),
+            "createdAt": "2025-06-01T00:00:00Z",
+            "updatedAt": "2026-01-01T00:00:00Z",
+        }
+
+    def _pre_push_snapshot(self):
+        return self._historical_snapshot(self.OLD_COMMIT, self.BASE_OID)
+
+    def _seed_reconciliation_journal(self, status, mutation="branch-push", authorized=None):
+        """Pre-seed a reconciliation journal as if a prior invocation crashed
+        after recording the lease but before (or while) mutating the remote."""
+        authorized = authorized if authorized is not None else workflow._legacy_snapshot_identity(
+            self._pre_push_snapshot()
+        )
+        journal = {
+            "format": workflow.HISTORICAL_LEGACY_PR_RECONCILIATION_FORMAT,
+            "version": 1,
+            "transition_id": "seeded-transition",
+            "issue": self.RECONCILIATION_ISSUE,
+            "operation": "reconcile-historical-legacy-draft-pr",
+            "status": status,
+            "created_at": "2026-01-01T00:00:00Z",
+            "historical_pr": self.HISTORICAL_PR,
+            "fresh_pr": self.FRESH_PR,
+            "repository": self.REPOSITORY,
+            "fresh_implementation_commit": self.IMPLEMENTATION_COMMIT,
+            "fresh_publication_branch": "workflow-branch",
+            "historical_old_commit": self.OLD_COMMIT,
+            "acknowledgment": {
+                "kind": workflow.LOCAL_ACKNOWLEDGMENT_KIND,
+                "asserted_by": "operator",
+                "confirmation": "historical_legacy_pr_reconciliation_confirmed",
+                "recorded_at": "2026-01-01T00:00:00Z",
+                "independent_authorization": False,
+            },
+            "causality_statement": (
+                "PR historical creation causality is unrecoverable and not claimed; "
+                "this run created only the fresh governed realization."
+            ),
+            "fresh_publication_journal": {
+                "path": "issue-%s/draft-pr-publication-transition.json" % self.RECONCILIATION_ISSUE,
+                "status": "finalized",
+                "transition_id": "fresh-publication-transition",
+                "body": {
+                    "path": "generated/fresh-pr-body.md",
+                    "sha256": self.fresh_body_sha256,
+                    "byte_length": self.fresh_body_byte_length,
+                },
+                "draft_pr": {"number": self.FRESH_PR},
+            },
+            "fresh_body": {
+                "path": "generated/fresh-pr-body.md",
+                "sha256": self.fresh_body_sha256,
+                "byte_length": self.fresh_body_byte_length,
+            },
+            "validated_historical_snapshot": authorized,
+            "validated_fresh_snapshot": workflow._legacy_snapshot_identity(self._fresh_snapshot()),
+            "final_observed_snapshot": None,
+            "authorized_historical_snapshot": authorized,
+            "lease_repository": authorized["repository"],
+            "lease_branch": authorized["headRefName"],
+            "lease_sha": authorized["headRefOid"],
+            "remote_result_observation": None,
+            "body_mutation_intent": None,
+            "fresh_publication_body_sha256": self.fresh_body_sha256,
+            "mutation": mutation,
+            "push_command_result": None,
+            "push_observations": None,
+            "push_recovery_command_result": None,
+            "push_recovery_observations": None,
+            "push_recovery_reobservations": None,
+        }
+        self.historical_reconciliation_journal_path().parent.mkdir(parents=True, exist_ok=True)
+        self.historical_reconciliation_journal_path().write_text(
+            json.dumps(journal, indent=2) + "\n", encoding="utf-8"
+        )
+        return journal
+
+    def patch_legacy_reconciliation(
+        self, historical_sequence, push_error=None, edit_error=None
+    ):
+        """Mock `_run_checked` for `gh pr view`/`git push`/`gh pr edit`.
+
+        `historical_sequence` supplies, in order, the snapshot returned by
+        each successive `gh pr view` call for the historical PR; the last
+        entry repeats for any call beyond the sequence's length. Every call
+        actually issued is recorded so tests can assert exactly what the
+        command attempted.
+        """
+        original = workflow._run_checked
+        self.historical_view_calls = []
+        self.fresh_view_calls = []
+        self.git_push_calls = []
+        self.body_edit_calls = []
+
+        def next_historical():
+            index = min(len(self.historical_view_calls), len(historical_sequence) - 1)
+            return historical_sequence[index]
+
+        def injected(command, limits, cwd, code, context, env=None):
+            if command[:3] == ["gh", "pr", "view"]:
+                pr_number = int(command[3])
+                if pr_number == self.HISTORICAL_PR:
+                    snapshot = next_historical()
+                    self.historical_view_calls.append(snapshot)
+                elif pr_number == self.FRESH_PR:
+                    snapshot = self._fresh_snapshot()
+                    self.fresh_view_calls.append(snapshot)
+                else:
+                    raise AssertionError("unexpected gh pr view for #%s" % pr_number)
+                return {
+                    "command": command,
+                    "result": {"outcome": "success", "exit_code": 0},
+                    "stdout_text": json.dumps(snapshot),
+                    "stderr_text": "",
+                }
+            if command[:2] == ["git", "push"]:
+                self.git_push_calls.append(command)
+                if push_error:
+                    raise workflow.WorkflowError(push_error, "injected push failure")
+                return {
+                    "command": command,
+                    "result": {"outcome": "success", "exit_code": 0},
+                    "stdout_text": "pushed\n",
+                    "stderr_text": "",
+                }
+            if command[:3] == ["gh", "pr", "edit"]:
+                self.body_edit_calls.append(command)
+                if edit_error:
+                    raise workflow.WorkflowError(edit_error, "injected edit failure")
+                return {
+                    "command": command,
+                    "result": {"outcome": "success", "exit_code": 0},
+                    "stdout_text": "",
+                    "stderr_text": "",
+                }
+            return original(command, limits, cwd, code, context, env=env)
+
+        return mock.patch.object(workflow, "_run_checked", side_effect=injected)
+
+    def run_reconciliation(self):
+        return self.run_cli(
+            "reconcile-historical-legacy-draft-pr",
+            str(self.RECONCILIATION_ISSUE),
+            "--historical-pr", str(self.HISTORICAL_PR),
+            "--fresh-pr", str(self.FRESH_PR),
+            "--by", "operator",
+            "--confirm", "historical_legacy_pr_reconciliation_confirmed",
+        )
+
+    def read_journal(self):
+        return json.loads(self.historical_reconciliation_journal_path().read_text(encoding="utf-8"))
+
+    # -- tests ----------------------------------------------------------------
+
+    def test_bounded_retry_tolerates_transient_stale_post_push_observation(self):
+        """A single stale post-push read must not fail closed if a bounded
+        retry then observes the full authorized topology at the new head."""
+        self._prepare_fixture()
+        pre_push = self._pre_push_snapshot()
+        post_push_old_body = self._historical_snapshot(self.IMPLEMENTATION_COMMIT, self.BASE_OID)
+        post_push_new_body = self._historical_snapshot(
+            self.IMPLEMENTATION_COMMIT, self.BASE_OID, body_text=self.fresh_body_text
+        )
+        sequence = [
+            pre_push,               # call 1: initial identity
+            pre_push,               # call 2: pending-observations pre-push validation
+            pre_push,               # call 3: post-push observation attempt 1 (stale)
+            post_push_old_body,     # call 4: post-push observation attempt 2 (matches)
+            post_push_old_body,     # call 5: body-edit precheck
+            post_push_new_body,     # call 6: final validation
+        ]
+        with self.patch_legacy_reconciliation(sequence):
+            code, payload, _ = self.run_reconciliation()
+
+        self.assertEqual(0, code)
+        self.assertTrue(payload["ok"])
+        journal = self.read_journal()
+        self.assertEqual("finalized", journal["status"])
+        self.assertEqual(2, len(journal["push_observations"]))
+        self.assertEqual(1, len(self.git_push_calls))
+        self.assertEqual(1, len(self.body_edit_calls))
+
+    def test_push_evidence_persists_even_when_observation_never_matches(self):
+        """Crash-recoverable evidence: `push_command_result`/`push_observations`
+        must be durably journaled even when the run ultimately fails closed."""
+        self._prepare_fixture()
+        pre_push = self._pre_push_snapshot()
+        sequence = [pre_push] * 5  # never advances to the new head
+        with self.patch_legacy_reconciliation(sequence):
+            code, payload, _ = self.run_reconciliation()
+
+        self.assertEqual(1, code)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(
+            "historical-legacy-pr-push-observation-mismatch", payload["error"]["code"]
+        )
+        self.assertEqual(1, len(self.git_push_calls))
+        journal = self.read_journal()
+        self.assertIsNotNone(journal["push_command_result"])
+        self.assertEqual("success", journal["push_command_result"]["outcome"])
+        self.assertEqual(3, len(journal["push_observations"]))
+        self.assertNotEqual("finalized", journal["status"])
+
+    def test_coarse_gate_rejects_matching_head_with_drifted_base_on_resume(self):
+        """A resumed run must not accept a matching head SHA whose base has
+        drifted; this is the exact production incident issue #399 reports."""
+        self._prepare_fixture()
+        self._seed_reconciliation_journal("remote-mutation")
+        live = self._historical_snapshot(self.IMPLEMENTATION_COMMIT, self.DRIFTED_BASE_OID)
+        with self.patch_legacy_reconciliation([live]):
+            code, payload, _ = self.run_reconciliation()
+
+        self.assertEqual(1, code)
+        self.assertEqual("historical-legacy-pr-observation-mismatch", payload["error"]["code"])
+        self.assertEqual(0, len(self.git_push_calls))
+        self.assertEqual("remote-mutation", self.read_journal()["status"])
+
+    def test_recovery_rejects_branch_identity_drift_despite_matching_head(self):
+        """A matching head SHA alone must never authorize recovery: if every
+        other bound topology field (here, the head branch name) has drifted,
+        recovery must fail closed with the dedicated topology-drift code."""
+        self._prepare_fixture()
+        self._seed_reconciliation_journal("remote-mutation")
+        live = self._historical_snapshot(
+            self.IMPLEMENTATION_COMMIT, self.BASE_OID, branch="renamed-branch"
+        )
+        with self.patch_legacy_reconciliation([live]):
+            code, payload, _ = self.run_reconciliation()
+
+        self.assertEqual(1, code)
+        self.assertEqual("historical-legacy-pr-topology-drifted", payload["error"]["code"])
+        self.assertEqual(0, len(self.git_push_calls))
+        journal = self.read_journal()
+        self.assertEqual(3, len(journal["push_recovery_observations"]))
+        self.assertNotEqual("finalized", journal["status"])
+
+    def test_recovery_retries_genuinely_unapplied_push_and_succeeds(self):
+        """A crash before the push visibly landed must retry the exact leased
+        push and require full topology re-confirmation, not just head SHA."""
+        self._prepare_fixture()
+        self._seed_reconciliation_journal("remote-mutation")
+        pre_push = self._pre_push_snapshot()
+        post_push_old_body = self._historical_snapshot(self.IMPLEMENTATION_COMMIT, self.BASE_OID)
+        post_push_new_body = self._historical_snapshot(
+            self.IMPLEMENTATION_COMMIT, self.BASE_OID, body_text=self.fresh_body_text
+        )
+        sequence = [
+            pre_push, pre_push, pre_push, pre_push,  # call 1 + 3 bounded recovery attempts (all stale)
+            post_push_old_body,                        # re-observation after retried push (matches)
+            post_push_old_body,                        # body-edit precheck
+            post_push_new_body,                         # final validation
+        ]
+        with self.patch_legacy_reconciliation(sequence):
+            code, payload, _ = self.run_reconciliation()
+
+        self.assertEqual(0, code)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(1, len(self.git_push_calls))
+        journal = self.read_journal()
+        self.assertEqual("finalized", journal["status"])
+        self.assertEqual(3, len(journal["push_recovery_observations"]))
+        self.assertEqual(1, len(journal["push_recovery_reobservations"]))
+
+    def test_full_happy_path_finalizes_and_binds_base_ref_oid(self):
+        """A clean end-to-end run finalizes and the terminal validation binds
+        `baseRefOid`, not just `headRefOid`, to the authorized snapshot."""
+        self._prepare_fixture()
+        pre_push = self._pre_push_snapshot()
+        post_push_old_body = self._historical_snapshot(self.IMPLEMENTATION_COMMIT, self.BASE_OID)
+        post_push_new_body = self._historical_snapshot(
+            self.IMPLEMENTATION_COMMIT, self.BASE_OID, body_text=self.fresh_body_text
+        )
+        sequence = [pre_push, pre_push, post_push_old_body, post_push_old_body, post_push_new_body]
+        with self.patch_legacy_reconciliation(sequence):
+            code, payload, _ = self.run_reconciliation()
+
+        self.assertEqual(0, code)
+        self.assertTrue(payload["ok"])
+        journal = self.read_journal()
+        self.assertEqual("finalized", journal["status"])
+        self.assertEqual(self.BASE_OID, journal["final_observed_snapshot"]["baseRefOid"])
+        self.assertEqual(
+            self.BASE_OID, journal["authorized_historical_snapshot"]["baseRefOid"]
+        )
+
+    def test_finalized_run_is_idempotent_on_replay(self):
+        """Replaying an already-finalized reconciliation must be a pure
+        read-only no-op: no additional push, edit, or state mutation."""
+        self._prepare_fixture()
+        pre_push = self._pre_push_snapshot()
+        post_push_old_body = self._historical_snapshot(self.IMPLEMENTATION_COMMIT, self.BASE_OID)
+        post_push_new_body = self._historical_snapshot(
+            self.IMPLEMENTATION_COMMIT, self.BASE_OID, body_text=self.fresh_body_text
+        )
+        sequence = [pre_push, pre_push, post_push_old_body, post_push_old_body, post_push_new_body]
+        with self.patch_legacy_reconciliation(sequence):
+            first_code, first_payload, _ = self.run_reconciliation()
+        self.assertEqual(0, first_code)
+        finalized_journal = self.read_journal()
+
+        with self.patch_legacy_reconciliation([post_push_new_body]):
+            second_code, second_payload, _ = self.run_reconciliation()
+
+        self.assertEqual(0, second_code)
+        self.assertTrue(second_payload["ok"])
+        self.assertEqual(0, len(self.git_push_calls))
+        self.assertEqual(0, len(self.body_edit_calls))
+        self.assertEqual(finalized_journal, self.read_journal())
+
+
 if __name__ == "__main__":
     unittest.main()

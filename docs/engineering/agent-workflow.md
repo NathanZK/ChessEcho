@@ -1114,3 +1114,37 @@ The transition journal remains durable through push, body update, and final
 state recording. Any changed repository, base, branch, head, state, draft
 flag, title, body, URL, or snapshot version fails closed. Reconciliation is
 recorded only in the fresh run; parent-run provenance is not rewritten.
+
+#### Crash-safe post-push observation and recovery
+
+The push command result and every post-push observation attempt are persisted
+to the journal *before* any gate that could raise, so a crash mid-observation
+never loses evidence of what was actually pushed or seen. Post-push topology
+confirmation uses a bounded retry (`LEGACY_RECONCILIATION_OBSERVATION_ATTEMPTS`
+attempts, `LEGACY_RECONCILIATION_OBSERVATION_DELAY_SECONDS` apart) instead of a
+single-shot check, tolerating transient remote-observation staleness without
+weakening the eventual pass/fail decision.
+
+On resume after a crash, recovery never trusts a bare head-SHA match as a
+shortcut. It re-observes the live PR (also bounded-retry) and requires full
+topology agreement — repository, base ref, base ref OID, branch identity, and
+draft state — not just the head commit. Three outcomes are distinguished:
+
+- If the observed topology fully matches the target, recovery proceeds.
+- If the push was evidently never applied (the live snapshot still matches the
+  originally validated pre-push snapshot), the command safely retries the
+  force-with-lease push and re-observes before proceeding.
+- If the head already matches the target commit but any other topology field
+  drifted (for example the branch name), recovery fails closed with the
+  dedicated `historical-legacy-pr-topology-drifted` code rather than folding
+  it into a generic ambiguous failure.
+
+A final `historical-legacy-pr-push-recovery-ambiguous` fail-closed backstop
+remains for any topology shape not covered by the above, defense-in-depth
+against future gate changes; today it is unreachable given the upstream
+coarse-gate and identity checks, and is intentionally kept rather than removed.
+
+The coarse historical-PR gate also binds `baseRefOid` once an authorized
+pre-push snapshot exists, and the final validation additionally asserts the
+finalized PR's `baseRefOid` still matches that authorized snapshot — closing a
+gap where only the head commit, not the base, was previously checked.
