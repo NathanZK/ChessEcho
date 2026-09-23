@@ -163,6 +163,60 @@ class GameImportControllerTest {
     }
 
     @Test
+    fun `POST games import accepts positive maxEligibleGames and exposes it in the queued job`() {
+        val constructor = requireNotNull(AsyncJob::class.primaryConstructor)
+        val maxEligibleGamesParameter =
+            requireNotNull(constructor.parameters.singleOrNull { it.name == "maxEligibleGames" }) {
+                "AsyncJob must expose maxEligibleGames as durable configuration"
+            }
+        val job =
+            constructor.callBy(
+                mapOf(
+                    requireNotNull(constructor.parameters.single { it.name == "username" }) to "hikaru",
+                    requireNotNull(constructor.parameters.single { it.name == "platform" }) to "CHESS_COM",
+                    maxEligibleGamesParameter to 500,
+                ),
+            )
+        whenever(gameImportService.createImportJob(any())).thenReturn(job)
+
+        mockMvc.post("/api/games/import") {
+            contentType = MediaType.APPLICATION_JSON
+            content = objectMapper.writeValueAsString(validRequest + ("maxEligibleGames" to 500))
+        }.andExpect {
+            status { isAccepted() }
+            jsonPath("$.maxEligibleGames") { value(500) }
+        }
+    }
+
+    @Test
+    fun `POST games import omits maxEligibleGames from the response when not supplied`() {
+        val job = AsyncJob(username = "hikaru", platform = "CHESS_COM")
+        whenever(gameImportService.createImportJob(any())).thenReturn(job)
+
+        val result =
+            mockMvc.post("/api/games/import") {
+                contentType = MediaType.APPLICATION_JSON
+                content = objectMapper.writeValueAsString(validRequest)
+            }.andExpect {
+                status { isAccepted() }
+            }.andReturn()
+
+        val response = objectMapper.readTree(result.response.contentAsString)
+        assertTrue(response.path("maxEligibleGames").isMissingNode)
+    }
+
+    @Test
+    fun `POST games import rejects non-positive maxEligibleGames`() {
+        mockMvc.post("/api/games/import") {
+            contentType = MediaType.APPLICATION_JSON
+            content = objectMapper.writeValueAsString(validRequest + ("maxEligibleGames" to 0))
+        }.andExpect {
+            status { isBadRequest() }
+            jsonPath("$.error") { value("VALIDATION_ERROR") }
+        }
+    }
+
+    @Test
     fun `POST games import returns 400 when playerColor is invalid`() {
         val request = validRequest + ("playerColor" to "invalid_color")
 
@@ -406,6 +460,50 @@ class GameImportControllerTest {
     ) {
         whenever(archiveDerivedProcessingRepository.findDerivedStatusesByChessAccountId(eq(account.id)))
             .thenReturn(archives.map { (yearMonth, status) -> ArchiveDerivedStatusView(yearMonth, status) })
+    }
+
+    @Test
+    fun `GET jobs id exposes the eligible-game cap and selection progress`() {
+        val jobId = UUID.randomUUID()
+        val job =
+            AsyncJob(
+                id = jobId,
+                username = "hikaru",
+                platform = "CHESS_COM",
+                status = "COMPLETED",
+                maxEligibleGames = 500,
+                eligibleGamesSelected = 120,
+            )
+        whenever(asyncJobRepository.findById(eq(jobId))).thenReturn(Optional.of(job))
+
+        mockMvc.get("/api/jobs/$jobId")
+            .andExpect {
+                status { isOk() }
+                jsonPath("$.maxEligibleGames") { value(500) }
+                jsonPath("$.eligibleGamesSelected") { value(120) }
+            }
+    }
+
+    @Test
+    fun `GET jobs id omits maxEligibleGames when the job has no cap`() {
+        val jobId = UUID.randomUUID()
+        val job =
+            AsyncJob(
+                id = jobId,
+                username = "hikaru",
+                platform = "CHESS_COM",
+                status = "COMPLETED",
+            )
+        whenever(asyncJobRepository.findById(eq(jobId))).thenReturn(Optional.of(job))
+
+        val result =
+            mockMvc.get("/api/jobs/$jobId")
+                .andExpect { status { isOk() } }
+                .andReturn()
+
+        val response = objectMapper.readTree(result.response.contentAsString)
+        assertTrue(response.path("maxEligibleGames").isMissingNode)
+        assertEquals(0, response.path("eligibleGamesSelected").asInt())
     }
 
     @Test

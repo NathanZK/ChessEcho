@@ -2,6 +2,7 @@ package com.chessecho.service
 
 import com.chessecho.domain.AsyncJob
 import org.junit.jupiter.api.Assertions.assertDoesNotThrow
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import kotlin.reflect.full.primaryConstructor
@@ -79,5 +80,64 @@ class AsyncJobConfigurationInvariantTest {
         field.set(job, 1)
 
         assertThrows(IllegalStateException::class.java) { job.validateBeforeUpdate() }
+    }
+
+    @Test
+    fun `maxEligibleGames rejects non-positive values`() {
+        val constructor = requireNotNull(AsyncJob::class.primaryConstructor)
+        val maxEligibleGamesParameter =
+            requireNotNull(constructor.parameters.singleOrNull { it.name == "maxEligibleGames" }) {
+                "AsyncJob must persist an optional maxEligibleGames cap"
+            }
+        val job =
+            constructor.callBy(
+                mapOf(
+                    requireNotNull(constructor.parameters.single { it.name == "username" }) to "player",
+                    requireNotNull(constructor.parameters.single { it.name == "platform" }) to "CHESS_COM",
+                    maxEligibleGamesParameter to 0,
+                ),
+            )
+
+        assertThrows(IllegalArgumentException::class.java) { job.validateConfiguration() }
+    }
+
+    @Test
+    fun `omitted maxEligibleGames remains valid, preserving current behavior`() {
+        val job =
+            AsyncJob(
+                username = "player",
+                platform = "CHESS_COM",
+            )
+
+        assertDoesNotThrow { job.validateConfiguration() }
+    }
+
+    @Test
+    fun `maxEligibleGames participates in immutable persisted configuration`() {
+        val field =
+            requireNotNull(AsyncJob::class.java.declaredFields.singleOrNull { it.name == "maxEligibleGames" }) {
+                "AsyncJob must persist an immutable maxEligibleGames cap"
+            }
+        val job = AsyncJob(username = "player", platform = "CHESS_COM")
+        job.capturePersistedConfiguration()
+        field.isAccessible = true
+        field.set(job, 500)
+
+        assertThrows(IllegalStateException::class.java) { job.validateBeforeUpdate() }
+    }
+
+    @Test
+    fun `eligibleGamesSelected progress is mutable and excluded from the immutable configuration snapshot`() {
+        val job =
+            AsyncJob(
+                username = "player",
+                platform = "CHESS_COM",
+                maxEligibleGames = 500,
+            )
+        job.capturePersistedConfiguration()
+        job.eligibleGamesSelected = 120
+
+        assertDoesNotThrow { job.validateBeforeUpdate() }
+        assertEquals(120, job.eligibleGamesSelected)
     }
 }

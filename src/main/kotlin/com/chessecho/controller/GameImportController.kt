@@ -105,6 +105,8 @@ class GameImportController(
                 multiPv = job.analysisMultiPv,
                 configurationState = job.configurationState.takeIf { job.chessAccount != null },
                 derivedStatus = derivedStatusFor(job),
+                maxEligibleGames = job.maxEligibleGames,
+                eligibleGamesSelected = job.maxEligibleGames?.let { job.eligibleGamesSelected },
             ),
         )
     }
@@ -123,6 +125,7 @@ class GameImportController(
             multiPv = analysisMultiPv,
             configurationState = configurationState.takeIf { chessAccount != null },
             derivedStatus = derivedStatusFor(this),
+            maxEligibleGames = maxEligibleGames,
         )
 
     /**

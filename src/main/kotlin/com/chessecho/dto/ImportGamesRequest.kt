@@ -41,6 +41,8 @@ data class ImportGamesRequest(
     val toDate: String? = null,
     @field:Positive(message = "multiPv must be positive")
     val multiPv: Int? = null,
+    @field:Positive(message = "maxEligibleGames must be positive")
+    val maxEligibleGames: Int? = null,
 ) {
     /**
      * Bean validation runs before the controller can inspect the request. This

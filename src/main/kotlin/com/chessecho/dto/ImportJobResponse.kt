@@ -23,6 +23,7 @@ data class ImportJobResponse(
      * by `status`). See `GameImportController.derivedStatusFor`.
      */
     val derivedStatus: String? = null,
+    val maxEligibleGames: Int? = null,
 )
 
 @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -51,4 +52,12 @@ data class JobStatusResponse(
      * by `status`). See `GameImportController.derivedStatusFor`.
      */
     val derivedStatus: String? = null,
+    /**
+     * The optional per-import eligible-game cap and how much of it this job has
+     * spent so far. Both are omitted when the job has no cap, so that jobs
+     * created before/without this feature keep their exact existing response
+     * shape.
+     */
+    val maxEligibleGames: Int? = null,
+    val eligibleGamesSelected: Int? = null,
 )
