@@ -79,6 +79,8 @@ CREATE TABLE async_job
     time_controls_csv    VARCHAR(64),
     player_color         VARCHAR(10),
     analysis_multi_pv    INT,
+    max_eligible_games      INT,
+    eligible_games_selected INT         NOT NULL DEFAULT 0,
     configuration_state  VARCHAR(20) NOT NULL DEFAULT 'UNRESOLVED',
     worker_token         UUID,
     lease_expires_at     TIMESTAMP WITH TIME ZONE,
@@ -95,6 +97,8 @@ CREATE TABLE async_job
         CHECK (player_color IS NULL OR player_color IN ('WHITE', 'BLACK', 'BOTH')),
     CONSTRAINT ck_async_job_analysis_multi_pv
         CHECK (analysis_multi_pv IS NULL OR analysis_multi_pv > 0),
+    CONSTRAINT ck_async_job_max_eligible_games
+        CHECK (max_eligible_games IS NULL OR max_eligible_games > 0),
     CONSTRAINT ck_async_job_from_date
         CHECK (from_date IS NULL OR from_date ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'),
     CONSTRAINT ck_async_job_to_date

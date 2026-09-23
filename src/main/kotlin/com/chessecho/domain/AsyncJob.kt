@@ -58,6 +58,10 @@ class AsyncJob(
     var playerColor: String? = null,
     @Column(name = "analysis_multi_pv")
     val analysisMultiPv: Int? = null,
+    @Column(name = "max_eligible_games")
+    val maxEligibleGames: Int? = null,
+    @Column(name = "eligible_games_selected", nullable = false)
+    var eligibleGamesSelected: Int = 0,
     @Column(name = "configuration_state", nullable = false)
     var configurationState: String = CONFIGURATION_UNRESOLVED,
     @Column(name = "worker_token")
@@ -116,6 +120,9 @@ class AsyncJob(
         require(analysisMultiPv == null || analysisMultiPv > 0) {
             "analysisMultiPv must be positive"
         }
+        require(maxEligibleGames == null || maxEligibleGames > 0) {
+            "maxEligibleGames must be positive"
+        }
         if (configurationState == CONFIGURATION_READY) {
             require(chessAccount != null) { "READY jobs require a chess account" }
             require(username == username.trim() && username.isNotBlank()) { "READY jobs require a canonical username" }
@@ -155,6 +162,7 @@ class AsyncJob(
             timeControlsCsv = timeControlsCsv,
             playerColor = playerColor,
             analysisMultiPv = analysisMultiPv,
+            maxEligibleGames = maxEligibleGames,
             configurationState = configurationState,
         )
 
@@ -167,6 +175,7 @@ class AsyncJob(
         val timeControlsCsv: String?,
         val playerColor: String?,
         val analysisMultiPv: Int?,
+        val maxEligibleGames: Int?,
         val configurationState: String,
     )
 

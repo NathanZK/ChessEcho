@@ -142,6 +142,7 @@ class GameImportService(
                     timeControlsCsv = request.canonicalTimeControls(),
                     playerColor = request.playerColor!!.name,
                     analysisMultiPv = request.multiPv,
+                    maxEligibleGames = request.maxEligibleGames,
                     configurationState = AsyncJob.CONFIGURATION_READY,
                 )
             try {
@@ -184,9 +185,13 @@ class GameImportService(
             var imported = 0
             var skipped = 0
             var processed = 0
+            var eligibleSelected = job.eligibleGamesSelected
+            val maxEligible = job.maxEligibleGames
             val allAffectedPositionIds = mutableSetOf<UUID>()
 
             for (archiveUrl in archiveUrls) {
+                if (maxEligible != null && eligibleSelected >= maxEligible) break
+
                 val parts = archiveUrl.split("/")
                 val yearMonth =
                     if (parts.size >= 2) "${parts[parts.size - 2]}-${parts[parts.size - 1]}" else ""
@@ -205,18 +210,20 @@ class GameImportService(
                     processed += importedArchive.gameCount
                     allAffectedPositionIds.addAll(processDerivedArchive(account, importedArchive))
                     transactionTemplate.executeWithoutResult {
-                        persistImportProgress(claim, imported, skipped, processed)
+                        persistImportProgress(claim, imported, skipped, processed, eligibleSelected)
                     }
                     continue
                 }
 
-                val res = importMonth(account, archiveUrl, yearMonth, isPastMonth, request)
+                val remainingCap = maxEligible?.let { (it - eligibleSelected).coerceAtLeast(0) }
+                val res = importMonth(account, archiveUrl, yearMonth, isPastMonth, request, remainingCap)
                 imported += res.imported
                 skipped += res.skipped
                 processed += res.processed
+                eligibleSelected += res.imported
                 allAffectedPositionIds.addAll(res.affectedPositionIds)
                 transactionTemplate.executeWithoutResult {
-                    persistImportProgress(claim, imported, skipped, processed)
+                    persistImportProgress(claim, imported, skipped, processed, eligibleSelected)
                 }
             }
 
@@ -225,6 +232,7 @@ class GameImportService(
                 current.gamesImported = imported
                 current.gamesSkipped = skipped
                 current.gamesProcessed = processed
+                current.eligibleGamesSelected = eligibleSelected
                 current.analysisStatus = "ANALYZING"
                 updateJobStatus(current, "COMPLETED")
             }
@@ -384,6 +392,7 @@ class GameImportService(
             fromDate = job.fromDate,
             toDate = job.toDate,
             multiPv = job.analysisMultiPv,
+            maxEligibleGames = job.maxEligibleGames,
         )
 
     private fun isExecutable(job: AsyncJob): Boolean =
@@ -407,6 +416,22 @@ class GameImportService(
         job.gamesImported = imported
         job.gamesSkipped = skipped
         job.gamesProcessed = processed
+        renewJobLease(job)
+        asyncJobRepository.save(job)
+    }
+
+    private fun persistImportProgress(
+        claim: AsyncJobClaim,
+        imported: Int,
+        skipped: Int,
+        processed: Int,
+        eligibleSelected: Int,
+    ) {
+        val job = claimLockedJob(claim) ?: return
+        job.gamesImported = imported
+        job.gamesSkipped = skipped
+        job.gamesProcessed = processed
+        job.eligibleGamesSelected = eligibleSelected
         renewJobLease(job)
         asyncJobRepository.save(job)
     }
@@ -457,6 +482,7 @@ class GameImportService(
         val skipped: Int,
         val processed: Int,
         val affectedPositionIds: Set<UUID>,
+        val wasCapTruncated: Boolean,
     )
 
     private fun importMonth(
@@ -465,6 +491,7 @@ class GameImportService(
         yearMonth: String,
         isPastMonth: Boolean,
         request: ImportGamesRequest,
+        remainingCap: Int? = null,
     ): ImportMonthResult {
         val username = request.username.ifBlank { account.username }
         val requestedTimeControls = request.timeControls.toSet()
@@ -472,7 +499,7 @@ class GameImportService(
         log.debug("Fetching games from $archiveUrl")
 
         // External HTTP request executed outside any DB transaction
-        val games = chessComClient.fetchMonthlyGames(archiveUrl) ?: return ImportMonthResult(0, 0, 0, emptySet())
+        val games = chessComClient.fetchMonthlyGames(archiveUrl) ?: return ImportMonthResult(0, 0, 0, emptySet(), false)
 
         val allUrls = games.mapNotNull { it["url"] as? String }
         val existingUrls =
@@ -484,6 +511,8 @@ class GameImportService(
         val gamesToSave = mutableListOf<Game>()
 
         var skipped = 0
+        var wasCapTruncated = false
+        var totalEligibleThisMonth = 0
 
         for (game in games) {
             val rules = game["rules"] as? String
@@ -524,8 +553,20 @@ class GameImportService(
             val playedAtUnix = (game["end_time"] as? Number)?.toLong()
             val whiteResult = (game["white"] as? Map<*, *>)?.get("result") as? String
 
-            if (existingUrls.contains(url) || !seenBatchUrls.add(url)) {
+            if (!seenBatchUrls.add(url)) {
                 skipped++
+                continue
+            }
+
+            totalEligibleThisMonth++
+
+            if (existingUrls.contains(url)) {
+                skipped++
+                continue
+            }
+
+            if (remainingCap != null && gamesToSave.size >= remainingCap) {
+                wasCapTruncated = true
                 continue
             }
 
@@ -549,14 +590,14 @@ class GameImportService(
         val savedGamesAndArchive =
             transactionTemplate.execute {
                 val archive =
-                    if (isPastMonth) {
+                    if (isPastMonth && !wasCapTruncated) {
                         importedArchiveRepository.findByChessAccountAndArchiveUrl(account, archiveUrl)
                             ?: importedArchiveRepository.save(
                                 ImportedArchive(
                                     chessAccount = account,
                                     archiveUrl = archiveUrl,
                                     yearMonth = yearMonth,
-                                    gameCount = gamesToSave.size,
+                                    gameCount = totalEligibleThisMonth,
                                 ),
                             )
                     } else {
@@ -575,6 +616,7 @@ class GameImportService(
             skipped,
             games.size,
             affectedPositionIds,
+            wasCapTruncated,
         )
     }
 
