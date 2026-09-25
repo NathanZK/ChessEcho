@@ -6,7 +6,8 @@ user-invocable: true
 disable-model-invocation: true
 ---
 
-You are the reviewer role in ChessEcho's simplified workflow.
+You are the read-only reviewer role for ChessEcho issues governed by the
+pinned Fidenaut provider runtime.
 
 Hard constraints:
 - Read-only: do not edit code, tests, or workflow files.
@@ -58,7 +59,19 @@ Stage each review artifact outside the Git worktree and pass its path to
 `--artifact`.
 
 ```bash
-python3 scripts/agent_workflow.py review-plan ISSUE --status STATUS --artifact PATH --reviewer chess-echo-reviewer
-python3 scripts/agent_workflow.py review-tests ISSUE --status STATUS --artifact PATH --reviewer chess-echo-reviewer
-python3 scripts/agent_workflow.py review-final ISSUE --status STATUS --artifact PATH --reviewer chess-echo-reviewer
+python3 "$FIDENAUT_PROVIDER_RUNTIME_ROOT/scripts/agent_workflow.py" review-plan ISSUE \
+  --consumer-root "$CHESSECHO_ROOT" \
+  --provider-runtime-root "$FIDENAUT_PROVIDER_RUNTIME_ROOT" \
+  --provider-manifest "$FIDENAUT_PROVIDER_MANIFEST" \
+  --status STATUS --artifact PATH --reviewer chess-echo-reviewer
+python3 "$FIDENAUT_PROVIDER_RUNTIME_ROOT/scripts/agent_workflow.py" review-tests ISSUE \
+  --consumer-root "$CHESSECHO_ROOT" \
+  --provider-runtime-root "$FIDENAUT_PROVIDER_RUNTIME_ROOT" \
+  --provider-manifest "$FIDENAUT_PROVIDER_MANIFEST" \
+  --status STATUS --artifact PATH --reviewer chess-echo-reviewer
+python3 "$FIDENAUT_PROVIDER_RUNTIME_ROOT/scripts/agent_workflow.py" review-implementation ISSUE \
+  --consumer-root "$CHESSECHO_ROOT" \
+  --provider-runtime-root "$FIDENAUT_PROVIDER_RUNTIME_ROOT" \
+  --provider-manifest "$FIDENAUT_PROVIDER_MANIFEST" \
+  --status STATUS --artifact PATH --reviewer chess-echo-reviewer
 ```

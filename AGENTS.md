@@ -17,7 +17,7 @@
 When a human asks to run the issue workflow:
 
 1. Read `docs/engineering/agent-workflow.md`.
-2. Use `scripts/agent_workflow.py` as the only workflow state authority.
+2. Use the pinned Fidenaut provider runtime as the only workflow state authority; ChessEcho is the consumer.
 3. Store artifacts in `.agent-workflow/runs/issue-<number>/artifacts/`.
 4. Use the four role profiles in `.github/agents/`:
    - `chess-echo-planner`
@@ -25,7 +25,7 @@ When a human asks to run the issue workflow:
    - `chess-echo-test-implementer`
    - `chess-echo-implementer`
 5. Never infer human approval. Only explicit `approve-plan`, `approve-tests`, and `approve-implementation` commands advance human gates.
-6. Keep validation bounded by using `python3 scripts/agent_workflow.py run-validation ISSUE`.
+6. Invoke Fidenaut directly with separate `--consumer-root`, `--provider-runtime-root`, and `--provider-manifest` arguments on every command, as documented in `docs/engineering/agent-workflow.md`.
 7. Never create a draft pull request directly; use `create-draft-pr`.
 8. Use exactly `## What`, `## Why`, and `## Testing` in governed draft PR bodies. The reusable human-facing scaffold for ordinary pull requests is `.github/PULL_REQUEST_TEMPLATE.md`; it does not replace workflow-owned evidence or controls.
 
