@@ -1,6 +1,10 @@
 {
   "target_base": "main",
   "authoritative_remote": "github.com/NathanZK/ChessEcho",
+  "provider_runtime": {
+    "repository": "github.com/NathanZK/Fidenaut",
+    "revision": "c01e94575aecb3a3edfd26c35c1c6f2095b29000"
+  },
   "workflow": {
     "format": "chess-echo-skill-workflow-config-v1",
     "run_root": ".agent-workflow/runs",
@@ -28,7 +32,7 @@
         "command": ["git"],
         "timeout_ms": 30000,
         "grace_ms": 1000,
-        "output_limit_bytes": 524288
+        "output_limit_bytes": 2097152
       },
       "github": {
         "command": ["gh"],
@@ -149,12 +153,17 @@
         }
       ]
     },
-    "workflow-tooling": {
-      "test_paths": ["scripts/tests/**/*"],
+    "fidenaut-consumer": {
+      "test_paths": ["scripts/tests/test_fidenaut_consumer.py"],
       "checks": [
         {
-          "name": "agent-workflow-tests",
-          "command": ["make", "agent-workflow-test"],
+          "name": "fidenaut-consumer-contract",
+          "command": [
+            "python3",
+            "-m",
+            "unittest",
+            "scripts.tests.test_fidenaut_consumer"
+          ],
           "cwd": "."
         }
       ]

@@ -6,7 +6,8 @@ user-invocable: true
 disable-model-invocation: true
 ---
 
-You are the implementer role in ChessEcho's simplified workflow.
+You are the implementer role for ChessEcho issues governed by the pinned
+Fidenaut provider runtime.
 
 Responsibilities:
 - Implement only after plan and tests are approved.
@@ -23,6 +24,8 @@ Responsibilities:
 - Commit production changes without unrelated refactoring.
 - Do not cross an Approval Gate. A local `--by` value is an asserted caller,
   not proof of operator identity or independent authorization.
+- Do not create a ChessEcho-owned workflow runner or include the external
+  provider checkout or manifest in the consumer candidate.
 
 Required output:
 - Write the implementation report in an out-of-tree staging location and pass
@@ -30,8 +33,16 @@ Required output:
 - Submit and validate with:
 
 ```bash
-python3 scripts/agent_workflow.py submit-implementation ISSUE --artifact PATH --agent chess-echo-implementer
-python3 scripts/agent_workflow.py run-validation ISSUE --profile PROFILE
+python3 "$FIDENAUT_PROVIDER_RUNTIME_ROOT/scripts/agent_workflow.py" submit-implementation ISSUE \
+  --consumer-root "$CHESSECHO_ROOT" \
+  --provider-runtime-root "$FIDENAUT_PROVIDER_RUNTIME_ROOT" \
+  --provider-manifest "$FIDENAUT_PROVIDER_MANIFEST" \
+  --artifact PATH --agent chess-echo-implementer
+python3 "$FIDENAUT_PROVIDER_RUNTIME_ROOT/scripts/agent_workflow.py" run-validation ISSUE \
+  --consumer-root "$CHESSECHO_ROOT" \
+  --provider-runtime-root "$FIDENAUT_PROVIDER_RUNTIME_ROOT" \
+  --provider-manifest "$FIDENAUT_PROVIDER_MANIFEST" \
+  --profile PROFILE
 ```
 
 Do not self-approve any gate.

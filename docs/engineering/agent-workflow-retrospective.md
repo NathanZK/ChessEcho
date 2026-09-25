@@ -1,5 +1,11 @@
 # ChessEcho governed-agent workflow retrospective
 
+> **Historical record:** this retrospective describes ChessEcho's former
+> embedded workflow implementation and its development. Fidenaut now owns
+> governed workflow mechanics. For current consumer responsibilities and the
+> pinned external invocation, see [`agent-workflow.md`](agent-workflow.md) and
+> [`agent-workflow-architecture.md`](agent-workflow-architecture.md).
+
 ## Executive summary
 
 ChessEcho's workflow did not become trustworthy by adding more approval
@@ -50,8 +56,9 @@ remove a check merely because it is inconvenient.
 
 This retrospective was reconstructed from:
 
-* the current `scripts/agent_workflow.py`, `scripts/tests/test_agent_workflow.py`,
-  `.github/agent-workflow.json`, and `docs/engineering/agent-workflow*.md`;
+* the former `scripts/agent_workflow.py` and
+  `scripts/tests/test_agent_workflow.py`, together with
+  `.github/agent-workflow.json` and `docs/engineering/agent-workflow*.md`;
 * Git history and diffs for the workflow milestones, including `3bdfde8`
   (#99), `c9fedba` (the later simplification), `a0bc542`, `94d7d75`,
   `d3069ae`, `d795899`, `38f894e`, `5258a9a`, `b995ee8`, `b222c5f`,
@@ -59,7 +66,7 @@ This retrospective was reconstructed from:
 * GitHub issues #99, #198, #237, #252, #262, #266, #309, #311, #313,
   #315, #316, #317, #318, #319, #320, and #109, together with the merged
   PRs that implement them; and
-* the current regression suite, especially the reconciliation, recovery,
+* the former regression suite, especially the reconciliation, recovery,
   revision-boundary, validation-setup, PR-race, and target-authenticity
   tests.
 
