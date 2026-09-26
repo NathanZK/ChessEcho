@@ -1,6 +1,9 @@
 package com.chessecho.domain
 
+import jakarta.persistence.AttributeConverter
 import jakarta.persistence.Column
+import jakarta.persistence.Convert
+import jakarta.persistence.Converter
 import jakarta.persistence.Entity
 import jakarta.persistence.FetchType
 import jakarta.persistence.GeneratedValue
@@ -48,6 +51,9 @@ class AsyncJob(
     var analysisStatus: String = "NOT_STARTED",
     @Column(name = "error_message")
     var errorMessage: String? = null,
+    @Convert(converter = FailedPositionIdsConverter::class)
+    @Column(name = "failed_position_ids", columnDefinition = "TEXT")
+    var failedPositionIds: Set<UUID> = emptySet(),
     @Column(name = "from_date")
     var fromDate: String? = null,
     @Column(name = "to_date")
@@ -82,6 +88,21 @@ class AsyncJob(
     fun validateBeforeInsert() {
         validateConfiguration()
         persistedConfiguration = currentConfiguration()
+    }
+
+    @Converter
+    class FailedPositionIdsConverter : AttributeConverter<Set<UUID>, String> {
+        override fun convertToDatabaseColumn(attribute: Set<UUID>?): String {
+            return attribute.orEmpty().joinToString(",") { it.toString() }
+        }
+
+        override fun convertToEntityAttribute(dbData: String?): Set<UUID> =
+            dbData
+                ?.split(',')
+                ?.filter { it.isNotBlank() }
+                ?.map(UUID::fromString)
+                ?.toSet()
+                ?: emptySet()
     }
 
     @PreUpdate
