@@ -7,13 +7,19 @@ import com.chessecho.repository.EngineAnalysisRepository
 import com.chessecho.repository.PositionOccurrenceRepository
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 import org.mockito.kotlin.any
+import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.argumentCaptor
+import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.SimpleTransactionStatus
+import org.springframework.transaction.support.TransactionTemplate
 import java.util.UUID
 import kotlin.reflect.full.memberFunctions
 import kotlin.test.assertEquals
@@ -30,11 +36,15 @@ class EngineAnalysisServiceTest {
         positionOccurrenceRepository = mock()
         engineAnalysisRepository = mock()
         stockfishService = mock()
+        val transactionManager = mock<PlatformTransactionManager>()
+        whenever(transactionManager.getTransaction(any())).thenReturn(SimpleTransactionStatus())
+        val transactionTemplate = TransactionTemplate(transactionManager)
         engineAnalysisService =
             EngineAnalysisService(
                 positionOccurrenceRepository,
                 engineAnalysisRepository,
                 stockfishService,
+                transactionTemplate,
             )
     }
 
@@ -58,7 +68,7 @@ class EngineAnalysisServiceTest {
         engineAnalysisService.analyzePosition(position)
 
         val captor = argumentCaptor<EngineAnalysis>()
-        verify(engineAnalysisRepository, times(1)).save(captor.capture())
+        verify(engineAnalysisRepository, times(1)).saveAndFlush(captor.capture())
 
         val saved = captor.firstValue
         assertEquals("e4", saved.bestMove)
@@ -87,7 +97,7 @@ class EngineAnalysisServiceTest {
         engineAnalysisService.analyzePosition(position)
 
         val captor = argumentCaptor<EngineAnalysis>()
-        verify(engineAnalysisRepository, times(1)).save(captor.capture())
+        verify(engineAnalysisRepository, times(1)).saveAndFlush(captor.capture())
 
         val saved = captor.firstValue
         // Both e4 and severe blunder a3 must be persisted for historical weakness tracking
@@ -101,11 +111,13 @@ class EngineAnalysisServiceTest {
     @Test
     fun `analyzePosition performs incremental analysis for missing moves on existing position reusing baseline`() {
         val positionId = UUID.randomUUID()
+        val analysisId = UUID.randomUUID()
         val fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
         val position = Position(id = positionId, hash = "hash1", fen = fen)
 
         val existingAnalysis =
             EngineAnalysis(
+                id = analysisId,
                 position = position,
                 depth = 16,
                 baselineEvalCp = 40,
@@ -119,6 +131,26 @@ class EngineAnalysisServiceTest {
         whenever(positionOccurrenceRepository.findDistinctMovesByPositionId(positionId)).thenReturn(listOf("e4", "c4"))
         whenever(engineAnalysisRepository.findByPositionIdWithMoveEvaluations(positionId)).thenReturn(existingAnalysis)
 
+        // Authoritative re-read after the conflict-safe insert: both the pre-existing "e4" and the newly
+        // inserted "c4" are now persisted (whether this worker's own insert won the race or a concurrent
+        // writer's did is irrelevant - the re-read only cares that the row now exists).
+        val persistedAfterInsert =
+            EngineAnalysis(
+                id = analysisId,
+                position = position,
+                depth = 16,
+                baselineEvalCp = 40,
+                bestMove = "e4",
+                bestMoveEvalCp = 40,
+            )
+        persistedAfterInsert.moveEvaluations.add(
+            MoveEvaluation(engineAnalysis = persistedAfterInsert, move = "e4", evalCp = 40, evalLossFromBest = 0.0),
+        )
+        persistedAfterInsert.moveEvaluations.add(
+            MoveEvaluation(engineAnalysis = persistedAfterInsert, move = "c4", evalCp = 10, evalLossFromBest = 0.30),
+        )
+        whenever(engineAnalysisRepository.findByIdWithMoveEvaluations(analysisId)).thenReturn(persistedAfterInsert)
+
         val missingAnalysisMap =
             mapOf(
                 "c4" to PositionAnalysis(bestMove = "e5", score = EvalScore(cp = 10, mate = null)),
@@ -130,13 +162,61 @@ class EngineAnalysisServiceTest {
         // Only missing move "c4" should be sent to Stockfish, baseline is NOT recomputed
         verify(stockfishService, times(1)).analyze(fen, 16, listOf("c4"))
 
-        val captor = argumentCaptor<EngineAnalysis>()
-        verify(engineAnalysisRepository, times(1)).save(captor.capture())
+        // The existing analysis's fetched moveEvaluations collection must never be reassigned/cascaded
+        // (that would risk orphan-removing a concurrently-inserted sibling row); only the missing move is
+        // inserted, individually and idempotently, against the reused (not recomputed) baseline.
+        verify(engineAnalysisRepository, never()).save(any())
+        verify(engineAnalysisRepository, never()).saveAndFlush(any())
+        val idCaptor = argumentCaptor<UUID>()
+        verify(engineAnalysisRepository, times(1)).insertMoveEvaluationIfAbsent(
+            idCaptor.capture(),
+            eq(analysisId),
+            eq("c4"),
+            eq(10),
+            eq(0.30),
+        )
+        // The write transaction must re-read authoritative persisted state after the idempotent insert
+        // rather than trusting ON CONFLICT's own return value.
+        verify(engineAnalysisRepository, times(1)).findByIdWithMoveEvaluations(analysisId)
+    }
 
-        val saved = captor.firstValue
-        assertEquals(2, saved.moveEvaluations.size)
-        assertNotNull(saved.moveEvaluations.find { it.move == "c4" })
-        assertEquals(0.30, saved.moveEvaluations.find { it.move == "c4" }?.evalLossFromBest)
+    @Test
+    fun `analyzePosition fails fast if a required move is still absent after the authoritative re-read`() {
+        val positionId = UUID.randomUUID()
+        val analysisId = UUID.randomUUID()
+        val fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
+        val position = Position(id = positionId, hash = "hash1", fen = fen)
+
+        val existingAnalysis =
+            EngineAnalysis(
+                id = analysisId,
+                position = position,
+                depth = 16,
+                baselineEvalCp = 40,
+                bestMove = "e4",
+                bestMoveEvalCp = 40,
+            )
+        existingAnalysis.moveEvaluations.add(
+            MoveEvaluation(engineAnalysis = existingAnalysis, move = "e4", evalCp = 40, evalLossFromBest = 0.0),
+        )
+
+        whenever(positionOccurrenceRepository.findDistinctMovesByPositionId(positionId)).thenReturn(listOf("e4", "c4"))
+        whenever(engineAnalysisRepository.findByPositionIdWithMoveEvaluations(positionId)).thenReturn(existingAnalysis)
+
+        // Simulate a defensive-invariant break: despite the idempotent insert being issued, the
+        // authoritative re-read still does not show "c4" as persisted. This must surface loudly rather
+        // than being silently accepted as "probably fine because ON CONFLICT ran".
+        whenever(engineAnalysisRepository.findByIdWithMoveEvaluations(analysisId)).thenReturn(existingAnalysis)
+
+        val missingAnalysisMap =
+            mapOf(
+                "c4" to PositionAnalysis(bestMove = "e5", score = EvalScore(cp = 10, mate = null)),
+            )
+        whenever(stockfishService.analyze(fen, 16, listOf("c4"))).thenReturn(missingAnalysisMap)
+
+        assertThrows<IllegalStateException> {
+            engineAnalysisService.analyzePosition(position)
+        }
     }
 
     @Test
@@ -164,6 +244,8 @@ class EngineAnalysisServiceTest {
 
         verify(stockfishService, never()).analyze(any(), any(), any())
         verify(engineAnalysisRepository, never()).save(any())
+        verify(engineAnalysisRepository, never()).saveAndFlush(any())
+        verify(engineAnalysisRepository, never()).insertMoveEvaluationIfAbsent(any(), any(), any(), anyOrNull(), anyOrNull())
     }
 
     @Test
@@ -190,7 +272,7 @@ class EngineAnalysisServiceTest {
         engineAnalysisService.analyzePosition(position)
 
         val captor = argumentCaptor<EngineAnalysis>()
-        verify(engineAnalysisRepository, times(1)).save(captor.capture())
+        verify(engineAnalysisRepository, times(1)).saveAndFlush(captor.capture())
 
         val saved = captor.firstValue
         val qh4Eval = saved.moveEvaluations.find { it.move == "Qh4" }
@@ -234,7 +316,7 @@ class EngineAnalysisServiceTest {
         engineAnalysisService.analyzePosition(position)
 
         val captor = argumentCaptor<EngineAnalysis>()
-        verify(engineAnalysisRepository, times(1)).save(captor.capture())
+        verify(engineAnalysisRepository, times(1)).saveAndFlush(captor.capture())
 
         val saved = captor.firstValue
         val nf6Eval = saved.moveEvaluations.find { it.move == "Nf6" }
@@ -280,7 +362,7 @@ class EngineAnalysisServiceTest {
         engineAnalysisService.analyzePosition(position)
 
         val captor = argumentCaptor<EngineAnalysis>()
-        verify(engineAnalysisRepository, times(1)).save(captor.capture())
+        verify(engineAnalysisRepository, times(1)).saveAndFlush(captor.capture())
 
         val saved = captor.firstValue
         // 4 MoveEvaluations persisted: Bc4, Qh5, Bb5, d4 (Bc4 is deduplicated)
@@ -330,7 +412,7 @@ class EngineAnalysisServiceTest {
         verify(stockfishService, never()).analyze(any(), any(), any())
 
         val captor = argumentCaptor<EngineAnalysis>()
-        verify(engineAnalysisRepository, times(1)).save(captor.capture())
+        verify(engineAnalysisRepository, times(1)).saveAndFlush(captor.capture())
 
         val saved = captor.firstValue
         assertEquals("Bc4", saved.bestMove)
@@ -381,7 +463,7 @@ class EngineAnalysisServiceTest {
         verify(stockfishService, times(1)).analyze(fen, 16, listOf("Qh5"))
 
         val captor = argumentCaptor<EngineAnalysis>()
-        verify(engineAnalysisRepository, times(1)).save(captor.capture())
+        verify(engineAnalysisRepository, times(1)).saveAndFlush(captor.capture())
 
         val saved = captor.firstValue
         assertEquals("Bc4", saved.bestMove)
