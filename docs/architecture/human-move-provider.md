@@ -91,6 +91,8 @@ Batching is retained purely to bound application memory: the service aggregates 
 
 The BFS request accepts an optional `excludedPlayers` array of Chess.com player identifiers/usernames. Matching is case-insensitive under the service's lowercase normalization. Excluded seeds are removed before processing, and excluded discovered opponents are neither queued nor processed; games in which an excluded opponent would otherwise be attributed contribute no observations and are not claimed. Omitting the field or passing `[]` preserves the existing traversal semantics. The BFS request DTO deliberately does not carry `minObservations`. Thresholding is not a gathering-time concern in this model.
 
+The BFS request's `maxPlayers`, `maxDepth`, and `maxQualifyingGames` bounds are independently optional. Omission or explicit JSON `null` leaves that bound inactive; at least one must be supplied or the endpoint returns HTTP 400 with `VALIDATION_ERROR` before traversal begins. Supplied bounds retain their existing stop behavior, and traversal stops at the first applicable bound or when the frontier is empty. A depth-only bound can permit a large frontier, while a qualifying-game-only bound may allow substantial traversal when few games qualify; this is a resource-risk tradeoff, not an additional implicit limit. `maxGamesPerPlayer` and batching remain unchanged.
+
 ### Finalization
 `POST /api/admin/human-move-distribution/finalize` applies the observation-count threshold globally, once the corpus is considered sufficiently populated:
 
