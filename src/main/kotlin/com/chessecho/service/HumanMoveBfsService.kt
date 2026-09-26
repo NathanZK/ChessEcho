@@ -31,6 +31,9 @@ class HumanMoveBfsService(
     private val log = LoggerFactory.getLogger(javaClass)
 
     fun runBfs(request: HumanMoveBfsRequest): HumanMoveBfsResponse {
+        require(request.maxPlayers != null || request.maxDepth != null || request.maxQualifyingGames != null) {
+            "At least one BFS bound must be supplied"
+        }
         val targetBand =
             RatingBand.fromValue(request.ratingBand)
                 ?: throw IllegalArgumentException("Invalid rating band: ${request.ratingBand}")
@@ -138,16 +141,16 @@ class HumanMoveBfsService(
             batchQualifyingGames = 0
         }
 
-        while (currentFrontier.isNotEmpty() && depth <= request.maxDepth) {
+        while (currentFrontier.isNotEmpty() && (request.maxDepth == null || depth <= request.maxDepth)) {
             log.info("--- BFS Depth: $depth, Frontier Size: ${currentFrontier.size} ---")
             val nextFrontier = mutableSetOf<String>()
 
             for (player in currentFrontier) {
-                if (totalPlayersVisited >= request.maxPlayers) {
+                if (request.maxPlayers != null && totalPlayersVisited >= request.maxPlayers) {
                     stopReason = "MAX_PLAYERS"
                     break
                 }
-                if (totalQualifyingGames >= request.maxQualifyingGames) {
+                if (request.maxQualifyingGames != null && totalQualifyingGames >= request.maxQualifyingGames) {
                     stopReason = "MAX_QUALIFYING_GAMES"
                     break
                 }
@@ -178,7 +181,7 @@ class HumanMoveBfsService(
 
                 // Process archives from newest to oldest
                 for (archiveUrl in archiveUrls.reversed()) {
-                    if (totalQualifyingGames >= request.maxQualifyingGames) break
+                    if (request.maxQualifyingGames != null && totalQualifyingGames >= request.maxQualifyingGames) break
                     if (playerNewRapidGamesInspected >= request.maxGamesPerPlayer) break
 
                     val games =
@@ -205,7 +208,7 @@ class HumanMoveBfsService(
 
                     // Process games from newest to oldest in the archive
                     for (game in games.reversed()) {
-                        if (totalQualifyingGames >= request.maxQualifyingGames) break
+                        if (request.maxQualifyingGames != null && totalQualifyingGames >= request.maxQualifyingGames) break
                         if (playerNewRapidGamesInspected >= request.maxGamesPerPlayer) break
 
                         totalGamesInspected++
@@ -306,7 +309,7 @@ class HumanMoveBfsService(
                 break
             }
 
-            if (depth == request.maxDepth && stopReason.isEmpty()) {
+            if (request.maxDepth != null && depth == request.maxDepth && stopReason.isEmpty()) {
                 stopReason = "MAX_DEPTH"
                 break
             }

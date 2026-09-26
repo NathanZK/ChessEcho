@@ -132,6 +132,215 @@ class HumanMoveBfsServiceTest {
     }
 
     @Test
+    fun `every non-empty combination of BFS bounds is accepted`() {
+        val maxPlayersOnly =
+            service.runBfs(
+                HumanMoveBfsRequest(
+                    ratingBand = RatingBand.BAND_1000_1200.value,
+                    seedPlayers = listOf("players-single-a", "players-single-b"),
+                    maxPlayers = 1,
+                ),
+            )
+        assertEquals("MAX_PLAYERS", maxPlayersOnly.stopReason)
+
+        val maxDepthOnly =
+            service.runBfs(
+                HumanMoveBfsRequest(
+                    ratingBand = RatingBand.BAND_1000_1200.value,
+                    seedPlayers = listOf("depth-single"),
+                    maxDepth = 0,
+                ),
+            )
+        assertEquals("MAX_DEPTH", maxDepthOnly.stopReason)
+
+        val qualifyingGameArchive = "https://api.chess.com/pub/player/qual-single/games/2021/01"
+        whenever(chessComClient.fetchArchiveUrls("qual-single")).thenReturn(listOf(qualifyingGameArchive))
+        whenever(chessComClient.fetchMonthlyGames(qualifyingGameArchive)).thenReturn(
+            listOf(rapidGame("http://qual-single-game", "qual-single", 1100, "qual-single-opponent", 1150)),
+        )
+        val maxQualifyingGamesOnly =
+            service.runBfs(
+                HumanMoveBfsRequest(
+                    ratingBand = RatingBand.BAND_1000_1200.value,
+                    seedPlayers = listOf("qual-single"),
+                    maxQualifyingGames = 1,
+                ),
+            )
+        assertEquals("MAX_QUALIFYING_GAMES", maxQualifyingGamesOnly.stopReason)
+
+        val maxPlayersAndDepth =
+            service.runBfs(
+                HumanMoveBfsRequest(
+                    ratingBand = RatingBand.BAND_1000_1200.value,
+                    seedPlayers = listOf("players-depth-a", "players-depth-b"),
+                    maxPlayers = 1,
+                    maxDepth = 0,
+                ),
+            )
+        assertEquals("MAX_PLAYERS", maxPlayersAndDepth.stopReason)
+
+        val playersQualifyingArchive = "https://api.chess.com/pub/player/players-qual/games/2021/01"
+        whenever(chessComClient.fetchArchiveUrls("players-qual")).thenReturn(listOf(playersQualifyingArchive))
+        whenever(chessComClient.fetchMonthlyGames(playersQualifyingArchive)).thenReturn(
+            listOf(rapidGame("http://players-qual-game", "players-qual", 1100, "players-qual-opponent", 1150)),
+        )
+        val maxPlayersAndQualifyingGames =
+            service.runBfs(
+                HumanMoveBfsRequest(
+                    ratingBand = RatingBand.BAND_1000_1200.value,
+                    seedPlayers = listOf("players-qual"),
+                    maxPlayers = 10,
+                    maxQualifyingGames = 1,
+                ),
+            )
+        assertEquals("MAX_QUALIFYING_GAMES", maxPlayersAndQualifyingGames.stopReason)
+
+        val depthQualifyingArchive = "https://api.chess.com/pub/player/depth-qual/games/2021/01"
+        whenever(chessComClient.fetchArchiveUrls("depth-qual")).thenReturn(listOf(depthQualifyingArchive))
+        whenever(chessComClient.fetchMonthlyGames(depthQualifyingArchive)).thenReturn(
+            listOf(rapidGame("http://depth-qual-game", "depth-qual", 1100, "depth-qual-opponent", 1150)),
+        )
+        val maxDepthAndQualifyingGames =
+            service.runBfs(
+                HumanMoveBfsRequest(
+                    ratingBand = RatingBand.BAND_1000_1200.value,
+                    seedPlayers = listOf("depth-qual"),
+                    maxDepth = 1,
+                    maxQualifyingGames = 1,
+                ),
+            )
+        assertEquals("MAX_QUALIFYING_GAMES", maxDepthAndQualifyingGames.stopReason)
+
+        val allBoundsArchive = "https://api.chess.com/pub/player/all-bounds/games/2021/01"
+        whenever(chessComClient.fetchArchiveUrls("all-bounds")).thenReturn(listOf(allBoundsArchive))
+        whenever(chessComClient.fetchMonthlyGames(allBoundsArchive)).thenReturn(
+            listOf(rapidGame("http://all-bounds-game", "all-bounds", 1100, "all-bounds-opponent", 1150)),
+        )
+        val allBounds =
+            service.runBfs(
+                HumanMoveBfsRequest(
+                    ratingBand = RatingBand.BAND_1000_1200.value,
+                    seedPlayers = listOf("all-bounds"),
+                    maxPlayers = 10,
+                    maxDepth = 1,
+                    maxQualifyingGames = 1,
+                ),
+            )
+        assertEquals("MAX_QUALIFYING_GAMES", allBounds.stopReason)
+    }
+
+    @Test
+    fun `all omitted BFS bounds are rejected before fetching or persisting`() {
+        val request =
+            HumanMoveBfsRequest(
+                ratingBand = RatingBand.BAND_1000_1200.value,
+                seedPlayers = listOf("p1"),
+            )
+
+        assertThrows(IllegalArgumentException::class.java) { service.runBfs(request) }
+
+        verify(chessComClient, never()).fetchArchiveUrls(anyString())
+        verify(humanMoveBfsSeenGameRepository, never()).findExistingGameUrls(any())
+        verify(humanMoveBfsSeenGameClaimer, never()).claimGameUrls(any<Collection<String>>())
+        verify(positionRepository, never()).saveAll(anyList())
+        verify(humanMoveDistributionRepository, never()).saveAll(anyList())
+    }
+
+    @Test
+    fun `depth-only bound does not apply former player-count default`() {
+        whenever(chessComClient.fetchArchiveUrls(anyString())).thenReturn(emptyList())
+
+        val response =
+            service.runBfs(
+                HumanMoveBfsRequest(
+                    ratingBand = RatingBand.BAND_1000_1200.value,
+                    seedPlayers = (1..101).map { "player$it" },
+                    maxDepth = 0,
+                ),
+            )
+
+        assertEquals(101, response.playersVisited)
+        assertEquals("MAX_DEPTH", response.stopReason)
+    }
+
+    @Test
+    fun `depth-only bound does not apply former qualifying-game default`() {
+        val archiveUrl = "https://api.chess.com/pub/player/p1/games/2021/01"
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
+        whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(
+            (1..2001).map { rapidGame("http://qualifying-$it", "p1", 1100, "p2", 1150) },
+        )
+
+        val response =
+            service.runBfs(
+                HumanMoveBfsRequest(
+                    ratingBand = RatingBand.BAND_1000_1200.value,
+                    seedPlayers = listOf("p1"),
+                    maxDepth = 0,
+                    maxGamesPerPlayer = 2001,
+                    batchSize = 5000,
+                ),
+            )
+
+        assertEquals(2001, response.qualifyingGames)
+        assertEquals("MAX_DEPTH", response.stopReason)
+    }
+
+    @Test
+    fun `maxPlayers-only bound does not apply former depth default`() {
+        for (index in 1..5) {
+            val player = "depth-chain-$index"
+            val archiveUrl = "https://api.chess.com/pub/player/$player/games/2021/01"
+            whenever(chessComClient.fetchArchiveUrls(player)).thenReturn(
+                if (index == 5) emptyList() else listOf(archiveUrl),
+            )
+            if (index < 5) {
+                whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(
+                    listOf(
+                        rapidGame(
+                            "http://depth-chain-game-$index",
+                            player,
+                            1100,
+                            "depth-chain-${index + 1}",
+                            1150,
+                        ),
+                    ),
+                )
+            }
+        }
+
+        val response =
+            service.runBfs(
+                HumanMoveBfsRequest(
+                    ratingBand = RatingBand.BAND_1000_1200.value,
+                    seedPlayers = listOf("depth-chain-1"),
+                    maxPlayers = 10,
+                ),
+            )
+
+        assertEquals(5, response.playersVisited)
+        assertEquals(5, response.maxDepthReached)
+        assertEquals("EMPTY_FRONTIER", response.stopReason)
+    }
+
+    @Test
+    fun `supplied maxPlayers bound returns frontier exhaustion stop reason`() {
+        whenever(chessComClient.fetchArchiveUrls("empty-frontier")).thenReturn(emptyList())
+
+        val response =
+            service.runBfs(
+                HumanMoveBfsRequest(
+                    ratingBand = RatingBand.BAND_1000_1200.value,
+                    seedPlayers = listOf("empty-frontier"),
+                    maxPlayers = 10,
+                ),
+            )
+
+        assertEquals(1, response.playersVisited)
+        assertEquals("EMPTY_FRONTIER", response.stopReason)
+    }
+
+    @Test
     fun `excluded seed is not visited or fetched`() {
         whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(emptyList())
 
@@ -220,6 +429,7 @@ class HumanMoveBfsServiceTest {
             HumanMoveBfsRequest(
                 ratingBand = RatingBand.BAND_1000_1200.value,
                 seedPlayers = seeds,
+                maxPlayers = 10,
             ),
         )
 
@@ -890,6 +1100,34 @@ class HumanMoveBfsServiceTest {
 
         // 5 games / batchSize 2 => batches of 2, 2, 1 => 3 flushes
         verify(humanMoveDistributionRepository, times(3)).saveAll(anyList())
+    }
+
+    @Test
+    fun `optional traversal bound preserves per-player budget and batch flushing`() {
+        val archiveUrl = "https://api.chess.com/pub/player/optional-bound/games/2021/01"
+        whenever(chessComClient.fetchArchiveUrls("optional-bound")).thenReturn(listOf(archiveUrl))
+        whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(
+            (1..5).map {
+                rapidGame("http://optional-bound-game-$it", "optional-bound", 1100, "opponent$it", 1150)
+            },
+        )
+
+        val response =
+            service.runBfs(
+                HumanMoveBfsRequest(
+                    ratingBand = RatingBand.BAND_1000_1200.value,
+                    seedPlayers = listOf("optional-bound"),
+                    maxDepth = 0,
+                    maxGamesPerPlayer = 3,
+                    batchSize = 2,
+                ),
+            )
+
+        assertEquals(3, response.gamesInspected)
+        assertEquals(3, response.rapidGames)
+        assertEquals(3, response.qualifyingGames)
+        assertEquals("MAX_DEPTH", response.stopReason)
+        verify(humanMoveDistributionRepository, times(2)).saveAll(anyList())
     }
 
     @Test

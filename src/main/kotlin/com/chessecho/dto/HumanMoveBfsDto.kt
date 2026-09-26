@@ -4,10 +4,10 @@ data class HumanMoveBfsRequest(
     val ratingBand: String,
     val seedPlayers: List<String>,
     val excludedPlayers: List<String> = emptyList(),
-    val maxQualifyingGames: Int = 2000,
+    val maxQualifyingGames: Int? = null,
     val maxGamesPerPlayer: Int = 100,
-    val maxPlayers: Int = 100,
-    val maxDepth: Int = 3,
+    val maxPlayers: Int? = null,
+    val maxDepth: Int? = null,
     val batchSize: Int = 5000,
 )
 
