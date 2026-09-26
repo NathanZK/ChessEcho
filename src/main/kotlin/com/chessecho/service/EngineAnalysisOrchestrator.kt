@@ -25,15 +25,15 @@ class EngineAnalysisOrchestrator(
      *
      * @param affectedPositionIds Set of distinct position IDs affected by the game import.
      */
-    fun analyzeAffectedPositions(affectedPositionIds: Set<UUID>) {
-        analyzeAffectedPositions(affectedPositionIds, null)
+    fun analyzeAffectedPositions(affectedPositionIds: Set<UUID>): AnalysisOutcome {
+        return analyzeAffectedPositions(affectedPositionIds, null)
     }
 
     fun analyzeAffectedPositions(
         affectedPositionIds: Set<UUID>,
         analysisMultiPv: Int?,
-    ) {
-        if (affectedPositionIds.isEmpty()) return
+    ): AnalysisOutcome {
+        if (affectedPositionIds.isEmpty()) return AnalysisOutcome()
 
         val batchSize = 1000
         val qualifyingPositions = mutableListOf<com.chessecho.domain.Position>()
@@ -43,11 +43,12 @@ class EngineAnalysisOrchestrator(
 
         if (qualifyingPositions.isEmpty()) {
             log.info("No affected positions met the minimum occurrence threshold of $minOccurrences")
-            return
+            return AnalysisOutcome()
         }
 
         log.info("Found ${qualifyingPositions.size} qualifying positions for engine analysis")
 
+        val failedPositionIds = mutableSetOf<UUID>()
         for (position in qualifyingPositions) {
             try {
                 if (analysisMultiPv == null) {
@@ -56,8 +57,14 @@ class EngineAnalysisOrchestrator(
                     engineAnalysisService.analyzePosition(position, analysisMultiPv)
                 }
             } catch (ex: Exception) {
+                failedPositionIds += position.id
                 log.error("Failed to perform engine analysis for position ${position.id}", ex)
             }
         }
+        return AnalysisOutcome(failedPositionIds)
     }
 }
+
+data class AnalysisOutcome(
+    val failedPositionIds: Set<UUID> = emptySet(),
+)

@@ -244,14 +244,16 @@ class GameImportService(
             )
 
             try {
-                if (request.multiPv == null) {
-                    engineAnalysisOrchestrator.analyzeAffectedPositions(allAffectedPositionIds)
-                } else {
-                    engineAnalysisOrchestrator.analyzeAffectedPositions(allAffectedPositionIds, request.multiPv)
-                }
+                val outcome =
+                    if (request.multiPv == null) {
+                        engineAnalysisOrchestrator.analyzeAffectedPositions(allAffectedPositionIds)
+                    } else {
+                        engineAnalysisOrchestrator.analyzeAffectedPositions(allAffectedPositionIds, request.multiPv)
+                    }
                 transactionTemplate.executeWithoutResult {
                     val current = claimLockedJob(claim) ?: return@executeWithoutResult
-                    current.analysisStatus = "COMPLETED"
+                    current.failedPositionIds = outcome.failedPositionIds
+                    current.analysisStatus = if (outcome.failedPositionIds.isEmpty()) "COMPLETED" else "FAILED"
                     current.workerToken = null
                     current.leaseExpiresAt = null
                     current.updatedAt = Instant.now()

@@ -74,6 +74,7 @@ CREATE TABLE async_job
     games_processed      INT         NOT NULL DEFAULT 0,
     analysis_status      VARCHAR(20) NOT NULL DEFAULT 'NOT_STARTED',
     error_message        TEXT,
+    failed_position_ids  TEXT,
     from_date            VARCHAR(7),
     to_date              VARCHAR(7),
     time_controls_csv    VARCHAR(64),

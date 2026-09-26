@@ -407,7 +407,7 @@ describe('Issue 98 — import job restore and polling', () => {
     expect(screen.queryByText(/^Filtered$/i)).not.toBeInTheDocument();
   });
 
-  it('distinguishes analyzing, completed, and failed analysis from completed import', async () => {
+  it('keeps partial-data navigation available while clearly distinguishing incomplete analysis', async () => {
     const analyzingJob = {
       jobId: 'job-analysis-ui',
       status: 'COMPLETED' as const,
@@ -418,16 +418,21 @@ describe('Issue 98 — import job restore and polling', () => {
     localStorage.setItem('chessecho_username', 'hikaru');
     localStorage.setItem('chessecho_active_job', JSON.stringify(analyzingJob));
     const { activeJobStore } = await loadBrowserStores();
+    const onNavigateTab = vi.fn();
 
-    render(<ImportGamesView connectedUsername="hikaru" />);
+    render(<ImportGamesView connectedUsername="hikaru" onNavigateTab={onNavigateTab} />);
 
     expect(screen.getByText(/Import Completed Successfully!/i)).toBeInTheDocument();
     expect(screen.getByText(/Stockfish is analyzing/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Analysis complete/i)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Practice Puzzles/i }));
+    expect(onNavigateTab).toHaveBeenLastCalledWith('puzzles');
 
     act(() => {
       activeJobStore.set({ ...analyzingJob, analysisStatus: 'COMPLETED' });
     });
     expect(screen.getByText(/Analysis complete/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Stockfish is analyzing/i)).not.toBeInTheDocument();
 
     act(() => {
       activeJobStore.set({
@@ -437,5 +442,8 @@ describe('Issue 98 — import job restore and polling', () => {
     });
     expect(screen.getByText(/Analysis failed/i)).toBeInTheDocument();
     expect(screen.getByText(/Import Completed Successfully!/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Analysis complete/i)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /View Weaknesses/i }));
+    expect(onNavigateTab).toHaveBeenLastCalledWith('weaknesses');
   });
 });
