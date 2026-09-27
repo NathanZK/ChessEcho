@@ -16,6 +16,11 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+  servlet:
+    multipart:
+      file-size-threshold: 0B
+      max-file-size: ${CHESSECHO_CORPUS_MULTIPART_MAX_FILE_SIZE:2GB}
+      max-request-size: ${CHESSECHO_CORPUS_MULTIPART_MAX_REQUEST_SIZE:3GB}
 
 chessecho:
   auth:
@@ -32,6 +37,13 @@ chessecho:
       absolute-timeout: ${CHESSECHO_AUTH_SESSION_ABSOLUTE_TIMEOUT:P30D}
     dev-mode:
       enabled: ${CHESSECHO_AUTH_DEV_MODE_ENABLED:false}
+  corpus:
+    archive-root: ${CHESSECHO_CORPUS_ARCHIVE_ROOT:/var/lib/chessecho/corpus-archive}
+    max-archive-bytes: ${CHESSECHO_CORPUS_MAX_ARCHIVE_BYTES:2147483648}
+    max-expanded-bytes: ${CHESSECHO_CORPUS_MAX_EXPANDED_BYTES:4294967296}
+    max-games: ${CHESSECHO_CORPUS_MAX_GAMES:100000}
+    max-observations: ${CHESSECHO_CORPUS_MAX_OBSERVATIONS:10000000}
+    max-record-bytes: ${CHESSECHO_CORPUS_MAX_RECORD_BYTES:4194304}
 
 chess:
   stockfish:
@@ -66,7 +78,6 @@ engine:
   exploration:
     # exploration.max-eval-loss controls how much evaluation loss we allow from the user during interactive exploration.
     max-eval-loss: ${ENGINE_EXPLORATION_MAX_EVAL_LOSS:0.80}
-
 
 
 
