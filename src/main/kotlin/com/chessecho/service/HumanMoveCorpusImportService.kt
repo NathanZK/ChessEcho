@@ -33,6 +33,7 @@ data class HumanMoveCorpusImportReceipt(
 class HumanMoveCorpusImportService(
     private val jdbcTemplate: JdbcTemplate,
     private val artifactService: HumanMoveCorpusArtifactService,
+    private val occurrenceService: HumanMoveCorpusOccurrenceService,
     transactionManager: PlatformTransactionManager,
 ) {
     private val namedJdbcTemplate = NamedParameterJdbcTemplate(jdbcTemplate)
@@ -66,6 +67,7 @@ class HumanMoveCorpusImportService(
         val requestSha256 = manifest.sourceRunMetadata.path("requestSha256").asText()
         val now = OffsetDateTime.now(ZoneOffset.UTC)
         lockSource(jdbcTemplate, sourceRunId)
+        occurrenceService.verifyImportEvidence(verified, archive)
 
         val existingImport =
             jdbcTemplate.query(
@@ -157,6 +159,7 @@ class HumanMoveCorpusImportService(
         artifact: VerifiedCorpusArtifact,
     ) {
         verifyOverlap(artifact.manifest.sourceRunId, archive, artifact.manifest.coveredPrefix)
+        occurrenceService.verifyImportEvidence(artifact, archive)
     }
 
     private fun prefixFingerprint(

@@ -27,6 +27,7 @@ class HumanMoveCorpusPurgeService(
     private val artifactService: HumanMoveCorpusArtifactService,
     private val importService: HumanMoveCorpusImportService,
     private val finalizationService: HumanMoveCorpusProjectionFinalizationService,
+    private val occurrenceService: HumanMoveCorpusOccurrenceService,
 ) {
     @Transactional
     fun purge(
@@ -49,6 +50,14 @@ class HumanMoveCorpusPurgeService(
         val verified = artifactService.verifyArchive(archive, contentDigest)
         if (verified.manifest.sourceRunId != runId) {
             throw CorpusArtifactConflict("Archived artifact does not belong to corpus run $runId")
+        }
+        occurrenceService.verifyImportEvidence(verified, archive)
+        if (verified.manifest.e6Eligible && occurrenceService.hasSourceRun(runId)) {
+            occurrenceService.verifyExpandedE6Eligibility(
+                runId,
+                contentDigest,
+                verified.manifest.coveredPrefix,
+            )
         }
         val rawCount =
             jdbcTemplate.queryForObject(
