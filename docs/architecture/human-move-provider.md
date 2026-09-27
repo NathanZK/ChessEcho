@@ -112,3 +112,63 @@ There is intentionally no reset endpoint. Rebuilding a band is a manual admin/da
 
 ### Known limitation
 BFS deduplicates games in-memory per invocation only. Overlapping player sets across separate invocations may double-count observations from the same game. This is a pre-existing property of the BFS traversal and is not addressed by finalization; if it becomes material, add a persistent `seen_game_url` table separately.
+
+## 5. Reference-Corpus Runs and Nested Checkpoints (Issue #423, for #75 E6)
+
+The global accumulator above cannot answer "what does a corpus of exactly N
+qualifying games look like?", and it can't reproduce that answer later. Issue #423 adds a
+separate, run-scoped reference-corpus path that shares BFS traversal and
+qualification with `/bfs` (`HumanMoveBfsTraversal`) but shares none of its state.
+
+### Runs (`POST /api/admin/human-move-distribution/corpus-runs`)
+
+- Each run is a row in `human_move_corpus_run`. It holds an immutable identity and
+  configuration: band, seeds, exclusions, bounds, `source_revision`,
+  `algorithm_version`, the canonical `request_json`, and its `request_sha256`.
+- Every accepted game is committed in **one transaction**. That transaction writes the
+  `human_move_corpus_game` row, all of its `human_move_corpus_observation` rows, and
+  advances `committed_frontier` by exactly one. Qualifying ordinals are therefore
+  contiguous (`1..committed_frontier`). A crash either leaves no trace of a game or leaves
+  the whole game.
+- Transient commit failures (`TransientDataAccessException`) are retried up to 3
+  times. After that, or on any other commit error, the run ends `FAILED`, and the game
+  URL is recorded in `failure_details`. Fetch failures are logged, and the run ends
+  `INCOMPLETE`. Otherwise it ends `COMPLETED`. Each run is finished exactly once.
+- Membership is scoped to the run. A corpus run neither reads nor writes
+  `human_move_bfs_seen_game`, nor does it touch `human_move_distribution`, so it
+  never changes `/bfs`, `/finalize`, or provider behavior (#73/#421). Two runs may
+  contain the same game.
+- `GET /corpus-runs` and `GET /corpus-runs/{runId}` report a run's provenance, status, and frontier.
+
+### Checkpoints (`POST /corpus-runs/{runId}/checkpoints`)
+
+- A checkpoint is a read-only calculation over ordinals `1..N` of one run,
+  where `N <= committed_frontier`. It applies the same position-retention rule as
+  `/finalize`: a position is kept when its summed count is at least `minObservations`.
+  It never deletes, writes, or calls the finalizer.
+- Before aggregating, it verifies three things: the prefix is contiguous; each game's
+  observation rows match its recorded `distinct_move_count` and `observation_total`;
+  and every `position.hash` still matches the hash snapshot. A violation returns
+  `409 CORPUS_INTEGRITY_VIOLATION`.
+- Prefixes are nested by construction: checkpoint `N1 < N2` over the same run uses a
+  subset of the games. Results carry a `distributionSha256` over rows sorted by hash
+  and then move, plus `calculationVersion`. Checkpoint results are not persisted.
+- Checkpoint sizes such as 2k/5k/10k are examples only. The E6 cohort, target size,
+  schedule, plateau criterion, and budget are governed by #75.
+
+### Schema boundary
+
+`V1__baseline.sql` has not been deployed, so the corpus tables, constraints, and
+guard triggers are added directly to V1. There is no V2 migration. The triggers
+enforce the following:
+- identity and configuration are immutable;
+- a terminal run cannot change;
+- the frontier advances only by +1, and only onto an existing game whose observations
+  match its declared totals;
+- a game may only be inserted at `frontier + 1`, and a deferred commit-time check
+  prevents a game from committing unless it has its complete observations and the
+  frontier advance;
+- observations may only be inserted for uncommitted games, while holding the run row lock;
+- corpus games and observations cannot be updated or deleted.
+
+Legacy tables are unchanged, and existing E1–E5 results are not migrated or altered.

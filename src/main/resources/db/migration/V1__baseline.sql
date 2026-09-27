@@ -343,6 +343,242 @@ CREATE TABLE human_move_bfs_seen_game
     seen_at  TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Issue #423: run-scoped, immutable reference-corpus provenance for E6 nested
+-- checkpoints. Independent of human_move_distribution and
+-- human_move_bfs_seen_game, which keep their legacy semantics.
+CREATE TABLE human_move_corpus_run
+(
+    id                          UUID PRIMARY KEY,
+    rating_band                 VARCHAR(20)  NOT NULL,
+    seed_players                TEXT         NOT NULL,
+    excluded_players            TEXT         NOT NULL,
+    max_qualifying_games        INT,
+    max_games_per_player        INT          NOT NULL,
+    max_players                 INT,
+    max_depth                   INT,
+    batch_size                  INT          NOT NULL,
+    algorithm_version           VARCHAR(64)  NOT NULL,
+    source_revision             VARCHAR(255) NOT NULL,
+    request_json                TEXT         NOT NULL,
+    request_sha256              VARCHAR(64)  NOT NULL,
+    status                      VARCHAR(20)  NOT NULL,
+    committed_frontier          INT          NOT NULL DEFAULT 0,
+    rejected_game_count         INT          NOT NULL DEFAULT 0,
+    archive_fetch_failure_count INT          NOT NULL DEFAULT 0,
+    stop_reason                 VARCHAR(64),
+    failure_details             TEXT,
+    created_at                  TIMESTAMP WITH TIME ZONE NOT NULL,
+    updated_at                  TIMESTAMP WITH TIME ZONE NOT NULL,
+    finished_at                 TIMESTAMP WITH TIME ZONE,
+    CONSTRAINT ck_human_move_corpus_run_rating_band CHECK (rating_band IN (
+        '400-600', '600-800', '800-1000', '1000-1200', '1200-1400',
+        '1400-1600', '1600-1800', '1800-2000', '2000-2200', '2200+')),
+    CONSTRAINT ck_human_move_corpus_run_status CHECK (status IN ('RUNNING', 'COMPLETED', 'INCOMPLETE', 'FAILED')),
+    CONSTRAINT ck_human_move_corpus_run_committed_frontier CHECK (committed_frontier >= 0),
+    CONSTRAINT ck_human_move_corpus_run_counts CHECK (rejected_game_count >= 0 AND archive_fetch_failure_count >= 0),
+    CONSTRAINT ck_human_move_corpus_run_request_sha256 CHECK (request_sha256 ~ '^[0-9a-f]{64}$'),
+    CONSTRAINT ck_human_move_corpus_run_source_revision CHECK (length(trim(source_revision)) > 0),
+    CONSTRAINT ck_human_move_corpus_run_finished CHECK ((status = 'RUNNING') = (finished_at IS NULL))
+);
+
+CREATE TABLE human_move_corpus_game
+(
+    id                  UUID PRIMARY KEY,
+    run_id              UUID          NOT NULL REFERENCES human_move_corpus_run (id) ON DELETE RESTRICT,
+    qualifying_ordinal  INT           NOT NULL,
+    provider_game_id    VARCHAR(2048) NOT NULL,
+    traversed_player    VARCHAR(255)  NOT NULL,
+    opponent            VARCHAR(255)  NOT NULL,
+    opponent_side       VARCHAR(5)    NOT NULL,
+    opponent_rating     INT           NOT NULL,
+    rules               VARCHAR(64),
+    time_class          VARCHAR(32)   NOT NULL,
+    bfs_depth           INT           NOT NULL,
+    pgn                 TEXT          NOT NULL,
+    pgn_sha256          VARCHAR(64)   NOT NULL,
+    observation_total   INT           NOT NULL,
+    distinct_move_count INT           NOT NULL,
+    committed_at        TIMESTAMP WITH TIME ZONE NOT NULL,
+    CONSTRAINT uk_human_move_corpus_game_provider UNIQUE (run_id, provider_game_id),
+    CONSTRAINT uk_human_move_corpus_game_ordinal UNIQUE (run_id, qualifying_ordinal),
+    CONSTRAINT ck_human_move_corpus_game_qualifying_ordinal CHECK (qualifying_ordinal >= 1),
+    CONSTRAINT ck_human_move_corpus_game_opponent_side CHECK (opponent_side IN ('WHITE', 'BLACK')),
+    CONSTRAINT ck_human_move_corpus_game_bfs_depth CHECK (bfs_depth >= 0),
+    CONSTRAINT ck_human_move_corpus_game_observation_total CHECK (observation_total >= 1),
+    CONSTRAINT ck_human_move_corpus_game_distinct_move_count CHECK (distinct_move_count >= 1)
+);
+
+-- uk_human_move_corpus_observation_move (leading game_id) also serves per-game lookups.
+CREATE TABLE human_move_corpus_observation
+(
+    id                UUID PRIMARY KEY,
+    game_id           UUID         NOT NULL REFERENCES human_move_corpus_game (id) ON DELETE RESTRICT,
+    position_id       UUID         NOT NULL REFERENCES position (id) ON DELETE RESTRICT,
+    position_hash     VARCHAR(255) NOT NULL,
+    move_played       VARCHAR(20)  NOT NULL,
+    observation_count INT          NOT NULL,
+    CONSTRAINT uk_human_move_corpus_observation_move UNIQUE (game_id, position_hash, move_played),
+    CONSTRAINT ck_human_move_corpus_observation_observation_count CHECK (observation_count >= 1)
+);
+
+CREATE INDEX idx_human_move_corpus_observation_position ON human_move_corpus_observation (position_id);
+
+CREATE FUNCTION guard_human_move_corpus_run_update()
+RETURNS TRIGGER AS
+$$
+BEGIN
+    IF NEW.id IS DISTINCT FROM OLD.id
+        OR NEW.rating_band IS DISTINCT FROM OLD.rating_band
+        OR NEW.seed_players IS DISTINCT FROM OLD.seed_players
+        OR NEW.excluded_players IS DISTINCT FROM OLD.excluded_players
+        OR NEW.max_qualifying_games IS DISTINCT FROM OLD.max_qualifying_games
+        OR NEW.max_games_per_player IS DISTINCT FROM OLD.max_games_per_player
+        OR NEW.max_players IS DISTINCT FROM OLD.max_players
+        OR NEW.max_depth IS DISTINCT FROM OLD.max_depth
+        OR NEW.batch_size IS DISTINCT FROM OLD.batch_size
+        OR NEW.algorithm_version IS DISTINCT FROM OLD.algorithm_version
+        OR NEW.source_revision IS DISTINCT FROM OLD.source_revision
+        OR NEW.request_json IS DISTINCT FROM OLD.request_json
+        OR NEW.request_sha256 IS DISTINCT FROM OLD.request_sha256
+        OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+        RAISE EXCEPTION 'human_move_corpus_run % identity and configuration are immutable', OLD.id;
+    END IF;
+    IF OLD.status <> 'RUNNING' THEN
+        RAISE EXCEPTION 'human_move_corpus_run % is terminal (%) and immutable', OLD.id, OLD.status;
+    END IF;
+    IF NEW.committed_frontier < OLD.committed_frontier THEN
+        RAISE EXCEPTION 'human_move_corpus_run % committed_frontier cannot decrease', OLD.id;
+    END IF;
+    IF NEW.committed_frontier > OLD.committed_frontier AND (
+        NEW.committed_frontier <> OLD.committed_frontier + 1
+            OR NOT EXISTS (SELECT 1
+                           FROM human_move_corpus_game g
+                           WHERE g.run_id = NEW.id
+                             AND g.qualifying_ordinal = NEW.committed_frontier
+                             AND g.distinct_move_count = (SELECT count(*)
+                                                          FROM human_move_corpus_observation o
+                                                          WHERE o.game_id = g.id)
+                             AND g.observation_total = (SELECT coalesce(sum(o.observation_count), 0)
+                                                        FROM human_move_corpus_observation o
+                                                        WHERE o.game_id = g.id))) THEN
+        RAISE EXCEPTION 'human_move_corpus_run % committed_frontier may only advance onto its next complete game', OLD.id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_human_move_corpus_run_update
+    BEFORE UPDATE ON human_move_corpus_run
+    FOR EACH ROW
+    EXECUTE FUNCTION guard_human_move_corpus_run_update();
+
+CREATE FUNCTION reject_human_move_corpus_mutation()
+RETURNS TRIGGER AS
+$$
+BEGIN
+    RAISE EXCEPTION '% on % is not permitted: corpus rows are immutable', TG_OP, TG_TABLE_NAME;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_human_move_corpus_run_delete
+    BEFORE DELETE ON human_move_corpus_run
+    FOR EACH ROW
+    EXECUTE FUNCTION reject_human_move_corpus_mutation();
+
+CREATE TRIGGER trg_human_move_corpus_game_immutable
+    BEFORE UPDATE OR DELETE ON human_move_corpus_game
+    FOR EACH ROW
+    EXECUTE FUNCTION reject_human_move_corpus_mutation();
+
+CREATE TRIGGER trg_human_move_corpus_observation_immutable
+    BEFORE UPDATE OR DELETE ON human_move_corpus_observation
+    FOR EACH ROW
+    EXECUTE FUNCTION reject_human_move_corpus_mutation();
+
+CREATE FUNCTION guard_human_move_corpus_game_insert()
+RETURNS TRIGGER AS
+$$
+DECLARE
+    run_status   VARCHAR(20);
+    run_frontier INT;
+BEGIN
+    SELECT r.status, r.committed_frontier
+    INTO run_status, run_frontier
+    FROM human_move_corpus_run r
+    WHERE r.id = NEW.run_id
+    FOR UPDATE;
+    IF NOT FOUND OR run_status <> 'RUNNING' THEN
+        RAISE EXCEPTION 'human_move_corpus_run % is not RUNNING', NEW.run_id;
+    END IF;
+    IF NEW.qualifying_ordinal <> run_frontier + 1 THEN
+        RAISE EXCEPTION 'qualifying_ordinal % is not the next contiguous ordinal % of run %',
+            NEW.qualifying_ordinal, run_frontier + 1, NEW.run_id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_human_move_corpus_game_insert
+    BEFORE INSERT ON human_move_corpus_game
+    FOR EACH ROW
+    EXECUTE FUNCTION guard_human_move_corpus_game_insert();
+
+CREATE FUNCTION guard_human_move_corpus_observation_insert()
+RETURNS TRIGGER AS
+$$
+DECLARE
+    game_ordinal INT;
+    run_status   VARCHAR(20);
+    run_frontier INT;
+BEGIN
+    SELECT g.qualifying_ordinal, r.status, r.committed_frontier
+    INTO game_ordinal, run_status, run_frontier
+    FROM human_move_corpus_game g
+             JOIN human_move_corpus_run r ON r.id = g.run_id
+    WHERE g.id = NEW.game_id
+    FOR UPDATE OF r;
+    IF NOT FOUND OR run_status <> 'RUNNING' OR game_ordinal <= run_frontier THEN
+        RAISE EXCEPTION 'observations may only be added to the uncommitted game being written (game %)', NEW.game_id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_human_move_corpus_observation_insert
+    BEFORE INSERT ON human_move_corpus_observation
+    FOR EACH ROW
+    EXECUTE FUNCTION guard_human_move_corpus_observation_insert();
+
+-- Commit-time check: a game row may only become durable together with its
+-- complete observation set and the frontier advance onto its ordinal.
+CREATE FUNCTION verify_human_move_corpus_game_committed()
+RETURNS TRIGGER AS
+$$
+BEGIN
+    IF NOT EXISTS (SELECT 1
+                   FROM human_move_corpus_game g
+                            JOIN human_move_corpus_run r ON r.id = g.run_id
+                   WHERE g.id = NEW.id
+                     AND g.qualifying_ordinal <= r.committed_frontier
+                     AND g.distinct_move_count = (SELECT count(*)
+                                                  FROM human_move_corpus_observation o
+                                                  WHERE o.game_id = g.id)
+                     AND g.observation_total = (SELECT coalesce(sum(o.observation_count), 0)
+                                                FROM human_move_corpus_observation o
+                                                WHERE o.game_id = g.id)) THEN
+        RAISE EXCEPTION 'human_move_corpus_game % must commit with its complete observations and frontier advance',
+            NEW.id;
+    END IF;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE CONSTRAINT TRIGGER trg_human_move_corpus_game_committed
+    AFTER INSERT ON human_move_corpus_game
+    DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW
+    EXECUTE FUNCTION verify_human_move_corpus_game_committed();
+
 CREATE UNIQUE INDEX uk_app_user_email_canonical
     ON app_user (lower(email))
     WHERE email IS NOT NULL;
