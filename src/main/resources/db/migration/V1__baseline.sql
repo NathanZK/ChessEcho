@@ -423,6 +423,88 @@ CREATE TABLE human_move_corpus_observation
 
 CREATE INDEX idx_human_move_corpus_observation_position ON human_move_corpus_observation (position_id);
 
+-- Issue #426: independent, imported research evidence and scoped operational projections.
+-- These never contribute to the legacy band-wide distribution.
+CREATE TABLE human_move_corpus_import
+(
+    source_run_id      UUID PRIMARY KEY,
+    rating_band        VARCHAR(20) NOT NULL,
+    algorithm_version  VARCHAR(64) NOT NULL,
+    source_revision    VARCHAR(255) NOT NULL,
+    request_sha256     VARCHAR(64) NOT NULL,
+    request_json       TEXT NOT NULL,
+    raw_available      BOOLEAN NOT NULL DEFAULT TRUE,
+    imported_at        TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE human_move_corpus_artifact_snapshot
+(
+    content_digest    VARCHAR(64) PRIMARY KEY,
+    source_run_id     UUID NOT NULL REFERENCES human_move_corpus_import (source_run_id),
+    covered_prefix    INT NOT NULL CHECK (covered_prefix >= 1),
+    manifest_json     TEXT NOT NULL,
+    verified_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX idx_corpus_snapshot_run ON human_move_corpus_artifact_snapshot (source_run_id);
+
+CREATE TABLE human_move_corpus_imported_game
+(
+    id                  UUID PRIMARY KEY,
+    source_run_id       UUID NOT NULL REFERENCES human_move_corpus_import (source_run_id),
+    qualifying_ordinal  INT NOT NULL CHECK (qualifying_ordinal >= 1),
+    provider_game_id    VARCHAR(2048) NOT NULL,
+    traversed_player    VARCHAR(255) NOT NULL,
+    opponent            VARCHAR(255) NOT NULL,
+    opponent_side       VARCHAR(5) NOT NULL,
+    opponent_rating     INT NOT NULL,
+    rules               VARCHAR(64),
+    time_class          VARCHAR(32) NOT NULL,
+    bfs_depth           INT NOT NULL,
+    pgn                 TEXT NOT NULL,
+    pgn_sha256          VARCHAR(64) NOT NULL,
+    observation_total   INT NOT NULL,
+    distinct_move_count INT NOT NULL,
+    committed_at        TIMESTAMP WITH TIME ZONE NOT NULL,
+    CONSTRAINT uk_corpus_imported_game_ordinal UNIQUE (source_run_id, qualifying_ordinal),
+    CONSTRAINT uk_corpus_imported_game_provider UNIQUE (source_run_id, provider_game_id)
+);
+
+CREATE TABLE human_move_corpus_imported_observation
+(
+    id                UUID PRIMARY KEY,
+    game_id           UUID NOT NULL REFERENCES human_move_corpus_imported_game (id) ON DELETE CASCADE,
+    position_id       UUID NOT NULL REFERENCES position (id),
+    position_hash     VARCHAR(255) NOT NULL,
+    move_played       VARCHAR(20) NOT NULL,
+    observation_count INT NOT NULL CHECK (observation_count > 0),
+    CONSTRAINT uk_corpus_imported_observation UNIQUE (game_id, position_hash, move_played)
+);
+
+CREATE TABLE human_move_corpus_projection
+(
+    id                   UUID PRIMARY KEY,
+    content_digest       VARCHAR(64) NOT NULL REFERENCES human_move_corpus_artifact_snapshot (content_digest),
+    source_run_id        UUID NOT NULL REFERENCES human_move_corpus_import (source_run_id),
+    prefix_n             INT NOT NULL,
+    rating_band          VARCHAR(20) NOT NULL,
+    min_observations     INT NOT NULL CHECK (min_observations >= 1),
+    calculation_version  VARCHAR(64) NOT NULL,
+    distribution_sha256  VARCHAR(64),
+    finalized            BOOLEAN NOT NULL DEFAULT FALSE,
+    verified             BOOLEAN NOT NULL DEFAULT FALSE,
+    CONSTRAINT uk_corpus_projection_scope UNIQUE (content_digest, source_run_id, prefix_n, rating_band, min_observations, calculation_version)
+);
+
+CREATE TABLE human_move_corpus_projection_row
+(
+    id                UUID PRIMARY KEY,
+    projection_id     UUID NOT NULL REFERENCES human_move_corpus_projection (id) ON DELETE CASCADE,
+    position_hash     VARCHAR(255) NOT NULL,
+    move_played       VARCHAR(20) NOT NULL,
+    observation_count INT NOT NULL CHECK (observation_count > 0),
+    CONSTRAINT uk_corpus_projection_row UNIQUE (projection_id, position_hash, move_played)
+);
+
 CREATE FUNCTION guard_human_move_corpus_run_update()
 RETURNS TRIGGER AS
 $$
