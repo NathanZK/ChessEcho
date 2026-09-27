@@ -1,5 +1,10 @@
 package com.chessecho.service
 
+import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
+import java.nio.ByteBuffer
+import java.security.MessageDigest
 import java.util.UUID
 
 data class EvaluationReferencePopulation(
@@ -85,7 +90,12 @@ data class PracticalEvidenceCounts(
     val losses: Int,
 )
 
-class EvaluationEvidenceSnapshotService {
+class EvaluationEvidenceIntegrityException(message: String) : RuntimeException(message)
+
+@Service
+class EvaluationEvidenceSnapshotService(
+    private val jdbcTemplate: JdbcTemplate? = null,
+) {
     fun validate(snapshot: EvaluationEvidenceSnapshot) {
         require(snapshot.players.isNotEmpty()) { "evaluation-player set must not be empty" }
         require(snapshot.configuration.thresholds == APPROVED_THRESHOLDS) {
@@ -137,19 +147,116 @@ class EvaluationEvidenceSnapshotService {
 
     fun reconstruct(snapshot: EvaluationEvidenceSnapshot): EvaluationEvidenceReconstruction {
         validate(snapshot)
-        val rowsByPlayer = snapshot.rows.groupBy { it.playerId }
+        val canonicalRows = canonicalize(snapshot.rows)
+        return aggregate(snapshot.players, snapshot.configuration.thresholds, canonicalRows)
+    }
+
+    /**
+     * Verifies occurrence linkage against the finalized #431 occurrence/binding tables,
+     * canonicalizes duplicate/conflicting rows, and idempotently retains the minimal
+     * evidence in the immutable #430 tables. Returns the persisted (or already-persisted,
+     * on an identical retry) snapshot id.
+     */
+    @Transactional
+    fun persist(
+        snapshot: EvaluationEvidenceSnapshot,
+        selectedReferencePopulation: EvaluationReferencePopulation,
+    ): UUID {
+        val db = requireJdbcTemplate()
+        bind(snapshot, selectedReferencePopulation)
+        val canonicalRows = canonicalize(snapshot.rows)
+        verifyOccurrenceLinkage(db, snapshot.referencePopulation, canonicalRows)
+        val digest = computeEvidenceDigest(snapshot.referencePopulation, canonicalRows)
+
+        val existing =
+            db.query(
+                "SELECT id, evidence_digest FROM evaluation_evidence_snapshot WHERE source_run_id = ?",
+                { rs, _ -> rs.getObject("id", UUID::class.java) to rs.getString("evidence_digest") },
+                snapshot.referencePopulation.sourceRunId,
+            ).singleOrNull()
+        if (existing != null) {
+            val (existingId, existingDigest) = existing
+            if (existingDigest == digest) return existingId
+            throw EvaluationEvidenceIntegrityException(
+                "Conflicting evaluation evidence replacement for source run ${snapshot.referencePopulation.sourceRunId}",
+            )
+        }
+
+        val id = UUID.randomUUID()
+        insertSnapshot(db, id, snapshot, digest)
+        insertRows(db, id, canonicalRows)
+        return id
+    }
+
+    /** Reconstructs threshold/practical/outcome facts using only retained #430 evidence rows. */
+    @Transactional(readOnly = true)
+    fun reconstructPersisted(sourceRunId: UUID): EvaluationEvidenceReconstruction {
+        val db = requireJdbcTemplate()
+        val (snapshotId, thresholds) =
+            db.query(
+                "SELECT id, thresholds FROM evaluation_evidence_snapshot WHERE source_run_id = ?",
+                { rs, _ ->
+                    val thresholdValues =
+                        (rs.getArray("thresholds").array as Array<*>).map { (it as Number).toDouble() }.toSet()
+                    rs.getObject("id", UUID::class.java) to thresholdValues
+                },
+                sourceRunId,
+            ).singleOrNull()
+                ?: throw EvaluationEvidenceIntegrityException(
+                    "No retained evaluation evidence for source run $sourceRunId",
+                )
+
+        val rows =
+            db.query(
+                "SELECT player_id, game_id, occurrence_id, position_identity, pre_move_ply, move_played, " +
+                    "player_color, loss, engine_depth, observed_outcome, objective_outcome, practical_candidate, " +
+                    "practical_eligible, practical_wins, practical_draws, practical_losses " +
+                    "FROM evaluation_evidence_row WHERE snapshot_id = ?",
+                { rs, _ ->
+                    EvaluationEvidenceRow(
+                        playerId = rs.getObject("player_id", UUID::class.java),
+                        gameId = rs.getObject("game_id", UUID::class.java),
+                        occurrenceId = rs.getObject("occurrence_id", UUID::class.java),
+                        positionIdentity = rs.getString("position_identity"),
+                        preMovePly = rs.getInt("pre_move_ply"),
+                        move = rs.getString("move_played"),
+                        playerColor = rs.getString("player_color"),
+                        loss = rs.getDouble("loss"),
+                        engineDepth = rs.getInt("engine_depth"),
+                        observedOutcome = ObservedGameOutcome.valueOf(rs.getString("observed_outcome")),
+                        objectiveOutcome = ObjectiveOutcome.valueOf(rs.getString("objective_outcome")),
+                        practicalCandidate = rs.getBoolean("practical_candidate"),
+                        practicalEligible = rs.getBoolean("practical_eligible"),
+                        practicalWins = rs.getInt("practical_wins"),
+                        practicalDraws = rs.getInt("practical_draws"),
+                        practicalLosses = rs.getInt("practical_losses"),
+                    )
+                },
+                snapshotId,
+            )
+
+        val players = rows.map { it.playerId }.distinct().map { EvaluationEvidencePlayer(it, it.toString()) }.toSet()
+        return aggregate(players, thresholds, rows)
+    }
+
+    private fun aggregate(
+        players: Set<EvaluationEvidencePlayer>,
+        thresholds: Set<Double>,
+        rows: List<EvaluationEvidenceRow>,
+    ): EvaluationEvidenceReconstruction {
+        val rowsByPlayer = rows.groupBy { it.playerId }
         val objective =
-            snapshot.players.associate { player ->
+            players.associate { player ->
                 player.id to
-                    snapshot.configuration.thresholds.associateWith { threshold ->
+                    thresholds.associateWith { threshold ->
                         rowsByPlayer[player.id].orEmpty().count { it.loss >= threshold }
                     }
             }
         val practical =
-            snapshot.players.associate { player ->
-                val rows = rowsByPlayer[player.id].orEmpty().filter { it.practicalCandidate }
+            players.associate { player ->
+                val candidateRows = rowsByPlayer[player.id].orEmpty().filter { it.practicalCandidate }
                 val byGame =
-                    rows.groupBy { it.gameId }.mapValues { (_, gameRows) -> gameRows.first() }
+                    candidateRows.groupBy { it.gameId }.mapValues { (_, gameRows) -> gameRows.first() }
                 val eligible = byGame.values.filter { it.practicalEligible }
                 val excluded = eligible.count { it.practicalWins + it.practicalDraws + it.practicalLosses == 0 }
                 player.id to
@@ -164,7 +271,7 @@ class EvaluationEvidenceSnapshotService {
                     )
             }
         val outcomes =
-            snapshot.players.associate { player ->
+            players.associate { player ->
                 player.id to
                     rowsByPlayer[player.id].orEmpty()
                         .distinctBy { it.gameId }
@@ -174,9 +281,258 @@ class EvaluationEvidenceSnapshotService {
         return EvaluationEvidenceReconstruction(objective, practical, outcomes)
     }
 
+    /**
+     * Deterministically collapses identical duplicate rows and rejects conflicting duplicates.
+     * Duplicates are resolved by evidence identity, never by list/iteration order:
+     *  1. Rows sharing (playerId, occurrenceId) must be fully identical; identical duplicates collapse.
+     *  2. Rows sharing (playerId, gameId) must agree on the game-level observed outcome and
+     *     practical-evidence contribution.
+     *  3. No two distinct occurrences may claim the same (playerId, gameId, preMovePly) location.
+     */
+    private fun canonicalize(rows: List<EvaluationEvidenceRow>): List<EvaluationEvidenceRow> {
+        val canonicalByOccurrence =
+            rows.groupBy { it.playerId to it.occurrenceId }.map { (key, group) ->
+                val distinct = group.distinct()
+                if (distinct.size > 1) {
+                    throw EvaluationEvidenceIntegrityException(
+                        "Conflicting evidence rows for player ${key.first} occurrence ${key.second}",
+                    )
+                }
+                distinct.single()
+            }
+
+        canonicalByOccurrence.groupBy { it.playerId to it.gameId }.forEach { (key, group) ->
+            if (group.map { it.observedOutcome }.toSet().size > 1) {
+                throw EvaluationEvidenceIntegrityException(
+                    "Conflicting observed outcomes for player ${key.first} game ${key.second}",
+                )
+            }
+            val practicalFacts =
+                group.map {
+                    listOf(it.practicalCandidate, it.practicalEligible, it.practicalWins, it.practicalDraws, it.practicalLosses)
+                }.toSet()
+            if (practicalFacts.size > 1) {
+                throw EvaluationEvidenceIntegrityException(
+                    "Conflicting practical evidence for player ${key.first} game ${key.second}",
+                )
+            }
+        }
+
+        canonicalByOccurrence.groupBy { Triple(it.playerId, it.gameId, it.preMovePly) }.forEach { (key, group) ->
+            if (group.size > 1) {
+                throw EvaluationEvidenceIntegrityException(
+                    "Conflicting evidence rows for player ${key.first} game ${key.second} pre-move ply ${key.third}",
+                )
+            }
+        }
+
+        return canonicalByOccurrence
+    }
+
+    /** Verifies every row's occurrence exists, is finalized, matches the reference population, and agrees on facts. */
+    private fun verifyOccurrenceLinkage(
+        db: JdbcTemplate,
+        referencePopulation: EvaluationReferencePopulation,
+        rows: List<EvaluationEvidenceRow>,
+    ) {
+        val occurrenceIds = rows.map { it.occurrenceId }.distinct()
+        if (occurrenceIds.isEmpty()) return
+        val placeholders = occurrenceIds.joinToString(",") { "?" }
+        val occurrences =
+            db.query(
+                "SELECT id, source_run_id, position_hash, pre_move_ply, content_digest, covered_prefix " +
+                    "FROM human_move_corpus_occurrence WHERE id IN ($placeholders)",
+                { rs, _ ->
+                    rs.getObject("id", UUID::class.java) to
+                        OccurrenceRecord(
+                            sourceRunId = rs.getObject("source_run_id", UUID::class.java),
+                            positionHash = rs.getString("position_hash"),
+                            preMovePly = rs.getInt("pre_move_ply"),
+                            contentDigest = rs.getString("content_digest"),
+                            coveredPrefix = rs.getObject("covered_prefix") as Int?,
+                        )
+                },
+                *occurrenceIds.toTypedArray(),
+            ).toMap()
+
+        rows.forEach { row ->
+            val occurrence =
+                occurrences[row.occurrenceId]
+                    ?: throw EvaluationEvidenceIntegrityException(
+                        "Evidence row references an unknown occurrence ${row.occurrenceId}",
+                    )
+            if (occurrence.contentDigest == null || occurrence.coveredPrefix == null) {
+                throw EvaluationEvidenceIntegrityException(
+                    "Occurrence ${row.occurrenceId} is not yet bound to a finalized #426 population",
+                )
+            }
+            if (occurrence.sourceRunId != referencePopulation.sourceRunId ||
+                occurrence.contentDigest != referencePopulation.contentDigest ||
+                occurrence.coveredPrefix != referencePopulation.coveredPrefix
+            ) {
+                throw EvaluationEvidenceIntegrityException(
+                    "Occurrence ${row.occurrenceId} is bound to a different finalized #426 population",
+                )
+            }
+            if (occurrence.positionHash != row.positionIdentity || occurrence.preMovePly != row.preMovePly) {
+                throw EvaluationEvidenceIntegrityException(
+                    "Occurrence ${row.occurrenceId} position/ply facts disagree with the evidence row",
+                )
+            }
+        }
+    }
+
+    private fun computeEvidenceDigest(
+        referencePopulation: EvaluationReferencePopulation,
+        rows: List<EvaluationEvidenceRow>,
+    ): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        listOf(
+            referencePopulation.contentDigest,
+            referencePopulation.sourceRunId.toString(),
+            referencePopulation.coveredPrefix.toString(),
+            referencePopulation.prefixN.toString(),
+            referencePopulation.ratingBand,
+            referencePopulation.minObservations.toString(),
+            referencePopulation.calculationVersion,
+            referencePopulation.distributionSha256 ?: "",
+        ).forEach { updateDigest(digest, it) }
+
+        rows.sortedWith(compareBy({ it.playerId }, { it.occurrenceId })).forEach { row ->
+            listOf(
+                row.playerId.toString(),
+                row.gameId.toString(),
+                row.occurrenceId.toString(),
+                row.positionIdentity,
+                row.preMovePly.toString(),
+                row.move,
+                row.playerColor,
+                row.loss.toString(),
+                row.engineDepth.toString(),
+                row.observedOutcome.name,
+                row.objectiveOutcome.name,
+                row.practicalCandidate.toString(),
+                row.practicalEligible.toString(),
+                row.practicalWins.toString(),
+                row.practicalDraws.toString(),
+                row.practicalLosses.toString(),
+            ).forEach { updateDigest(digest, it) }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private fun updateDigest(
+        digest: MessageDigest,
+        value: String,
+    ) {
+        val bytes = value.toByteArray(Charsets.UTF_8)
+        digest.update(ByteBuffer.allocate(Int.SIZE_BYTES).putInt(bytes.size).array())
+        digest.update(bytes)
+    }
+
+    private fun insertSnapshot(
+        db: JdbcTemplate,
+        id: UUID,
+        snapshot: EvaluationEvidenceSnapshot,
+        digest: String,
+    ) {
+        db.execute(
+            "INSERT INTO evaluation_evidence_snapshot (" +
+                "id, source_run_id, content_digest, covered_prefix, prefix_n, rating_band, min_observations, " +
+                "calculation_version, distribution_sha256, occurrence_evidence_id, thresholds, min_mistake_count, " +
+                "min_times_reached, color, platform, observation_window_days, source_revision, engine_identity, " +
+                "parser_identity, evidence_digest" +
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ) { ps: java.sql.PreparedStatement ->
+            val population = snapshot.referencePopulation
+            val configuration = snapshot.configuration
+            val thresholdsArray = ps.connection.createArrayOf("float8", configuration.thresholds.sorted().toTypedArray())
+            var index = 1
+            ps.setObject(index++, id)
+            ps.setObject(index++, population.sourceRunId)
+            ps.setString(index++, population.contentDigest)
+            ps.setInt(index++, population.coveredPrefix)
+            ps.setInt(index++, population.prefixN)
+            ps.setString(index++, population.ratingBand)
+            ps.setInt(index++, population.minObservations)
+            ps.setString(index++, population.calculationVersion)
+            ps.setString(index++, population.distributionSha256)
+            if (snapshot.occurrenceEvidenceId != null) {
+                ps.setObject(index++, snapshot.occurrenceEvidenceId)
+            } else {
+                ps.setNull(index++, java.sql.Types.OTHER)
+            }
+            ps.setArray(index++, thresholdsArray)
+            ps.setInt(index++, configuration.minMistakeCount)
+            ps.setInt(index++, configuration.minTimesReached)
+            ps.setString(index++, configuration.color)
+            ps.setString(index++, configuration.platform)
+            if (configuration.observationWindowDays != null) {
+                ps.setInt(index++, configuration.observationWindowDays)
+            } else {
+                ps.setNull(index++, java.sql.Types.INTEGER)
+            }
+            ps.setString(index++, snapshot.sourceRevision)
+            ps.setString(index++, snapshot.engineIdentity)
+            ps.setString(index++, snapshot.parserIdentity)
+            ps.setString(index, digest)
+            ps.executeUpdate()
+        }
+    }
+
+    private fun insertRows(
+        db: JdbcTemplate,
+        snapshotId: UUID,
+        rows: List<EvaluationEvidenceRow>,
+    ) {
+        if (rows.isEmpty()) return
+        db.batchUpdate(
+            "INSERT INTO evaluation_evidence_row (" +
+                "id, snapshot_id, player_id, game_id, occurrence_id, position_identity, pre_move_ply, move_played, " +
+                "player_color, loss, engine_depth, observed_outcome, objective_outcome, practical_candidate, " +
+                "practical_eligible, practical_wins, practical_draws, practical_losses" +
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rows.map { row ->
+                arrayOf<Any>(
+                    UUID.randomUUID(),
+                    snapshotId,
+                    row.playerId,
+                    row.gameId,
+                    row.occurrenceId,
+                    row.positionIdentity,
+                    row.preMovePly,
+                    row.move,
+                    row.playerColor,
+                    row.loss,
+                    row.engineDepth,
+                    row.observedOutcome.name,
+                    row.objectiveOutcome.name,
+                    row.practicalCandidate,
+                    row.practicalEligible,
+                    row.practicalWins,
+                    row.practicalDraws,
+                    row.practicalLosses,
+                )
+            },
+        )
+    }
+
+    private fun requireJdbcTemplate(): JdbcTemplate =
+        jdbcTemplate ?: throw IllegalStateException(
+            "This operation requires a JdbcTemplate-backed EvaluationEvidenceSnapshotService",
+        )
+
     private fun requireDigest(value: String) {
         require(value.matches(HEX_DIGEST)) { "digest must be a 64-character hexadecimal value" }
     }
+
+    private data class OccurrenceRecord(
+        val sourceRunId: UUID,
+        val positionHash: String,
+        val preMovePly: Int,
+        val contentDigest: String?,
+        val coveredPrefix: Int?,
+    )
 
     companion object {
         val APPROVED_THRESHOLDS = setOf(0.30, 0.50, 0.80)
