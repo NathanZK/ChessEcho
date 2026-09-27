@@ -60,6 +60,65 @@ class HumanMoveCorpusBaselineSchemaTest : PostgresMigrationTestFixture() {
     }
 
     @Test
+    fun `fresh V1 contains immutable lossless occurrence evidence and finalized binding`() {
+        assertColumns(
+            "human_move_corpus_occurrence",
+            setOf(
+                "id",
+                "source_run_id",
+                "qualifying_ordinal",
+                "provider_game_id",
+                "pre_move_ply",
+                "move_played",
+                "position_hash",
+                "content_digest",
+                "covered_prefix",
+            ),
+        )
+        assertColumns(
+            "human_move_corpus_occurrence_binding",
+            setOf(
+                "id",
+                "source_run_id",
+                "content_digest",
+                "covered_prefix",
+                "occurrence_digest",
+                "occurrence_count",
+                "finalized_at",
+            ),
+        )
+
+        val uniques = uniqueConstraintColumns()
+        assertTrue(
+            listOf("source_run_id", "qualifying_ordinal", "pre_move_ply") in
+                uniques.getValue("human_move_corpus_occurrence"),
+            "$uniques",
+        )
+        assertTrue(
+            listOf("source_run_id") in uniques.getValue("human_move_corpus_occurrence_binding"),
+            "$uniques",
+        )
+
+        val triggers =
+            query(
+                """
+                SELECT event_object_table AS table_name, event_manipulation AS event
+                FROM information_schema.triggers
+                WHERE event_object_table IN
+                    ('human_move_corpus_occurrence', 'human_move_corpus_occurrence_binding')
+                """.trimIndent(),
+            ).map { it["table_name"] to it["event"] }.toSet()
+        listOf(
+            "human_move_corpus_occurrence" to "INSERT",
+            "human_move_corpus_occurrence" to "UPDATE",
+            "human_move_corpus_occurrence" to "DELETE",
+            "human_move_corpus_occurrence_binding" to "INSERT",
+            "human_move_corpus_occurrence_binding" to "UPDATE",
+            "human_move_corpus_occurrence_binding" to "DELETE",
+        ).forEach { assertTrue(it in triggers, "missing trigger $it in $triggers") }
+    }
+
+    @Test
     fun `corpus constraints enforce run-scoped membership, contiguous-ordinal uniqueness, and restrictive ownership`() {
         val uniques = uniqueConstraintColumns()
         assertTrue(listOf("run_id", "provider_game_id") in uniques.getValue("human_move_corpus_game"), "$uniques")

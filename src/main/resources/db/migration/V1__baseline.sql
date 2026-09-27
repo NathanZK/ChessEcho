@@ -447,6 +447,39 @@ CREATE TABLE human_move_corpus_artifact_snapshot
 );
 CREATE INDEX idx_corpus_snapshot_run ON human_move_corpus_artifact_snapshot (source_run_id);
 
+-- Issue #431: lossless qualifying move locations. These rows are retained
+-- independently of #426 imported raw rows and the fixed v1 artifact format.
+CREATE TABLE human_move_corpus_occurrence
+(
+    id                  UUID PRIMARY KEY,
+    source_run_id       UUID NOT NULL REFERENCES human_move_corpus_run (id) ON DELETE RESTRICT,
+    qualifying_ordinal  INT NOT NULL CHECK (qualifying_ordinal >= 1),
+    provider_game_id    VARCHAR(2048) NOT NULL,
+    pre_move_ply        INT NOT NULL CHECK (pre_move_ply >= 1),
+    move_played         VARCHAR(20) NOT NULL CHECK (length(trim(move_played)) > 0),
+    position_hash       VARCHAR(255) NOT NULL CHECK (length(trim(position_hash)) > 0),
+    content_digest      VARCHAR(64) REFERENCES human_move_corpus_artifact_snapshot (content_digest) ON DELETE RESTRICT,
+    covered_prefix      INT,
+    CONSTRAINT uk_human_move_corpus_occurrence_location UNIQUE (source_run_id, qualifying_ordinal, pre_move_ply),
+    CONSTRAINT ck_human_move_corpus_occurrence_binding CHECK (
+        (content_digest IS NULL AND covered_prefix IS NULL)
+            OR (content_digest ~ '^[0-9a-f]{64}$' AND covered_prefix IS NOT NULL AND covered_prefix >= qualifying_ordinal)
+    )
+);
+CREATE INDEX idx_human_move_corpus_occurrence_position
+    ON human_move_corpus_occurrence (source_run_id, position_hash, move_played);
+
+CREATE TABLE human_move_corpus_occurrence_binding
+(
+    id                 UUID PRIMARY KEY,
+    source_run_id      UUID NOT NULL UNIQUE REFERENCES human_move_corpus_run (id) ON DELETE RESTRICT,
+    content_digest     VARCHAR(64) NOT NULL REFERENCES human_move_corpus_artifact_snapshot (content_digest) ON DELETE RESTRICT,
+    covered_prefix     INT NOT NULL CHECK (covered_prefix >= 1),
+    occurrence_digest  VARCHAR(64) NOT NULL CHECK (occurrence_digest ~ '^[0-9a-f]{64}$'),
+    occurrence_count   INT NOT NULL CHECK (occurrence_count > 0),
+    finalized_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE human_move_corpus_imported_game
 (
     id                  UUID PRIMARY KEY,
@@ -631,24 +664,214 @@ CREATE TRIGGER trg_human_move_corpus_observation_insert
     FOR EACH ROW
     EXECUTE FUNCTION guard_human_move_corpus_observation_insert();
 
+CREATE FUNCTION guard_human_move_corpus_occurrence_insert()
+RETURNS TRIGGER AS
+$$
+DECLARE
+    game_run_id UUID;
+    game_ordinal INT;
+    game_provider_id VARCHAR(2048);
+    run_status VARCHAR(20);
+    run_frontier INT;
+BEGIN
+    IF NEW.content_digest IS NOT NULL THEN
+        RAISE EXCEPTION 'new occurrence evidence cannot be pre-bound';
+    END IF;
+    SELECT g.run_id, g.qualifying_ordinal, g.provider_game_id, r.status, r.committed_frontier
+    INTO game_run_id, game_ordinal, game_provider_id, run_status, run_frontier
+    FROM human_move_corpus_game g
+    JOIN human_move_corpus_run r ON r.id = g.run_id
+    WHERE g.run_id = NEW.source_run_id AND g.qualifying_ordinal = NEW.qualifying_ordinal
+    FOR UPDATE OF r;
+    IF NOT FOUND OR run_status <> 'RUNNING' OR game_ordinal <= run_frontier
+        OR game_provider_id IS DISTINCT FROM NEW.provider_game_id THEN
+        RAISE EXCEPTION 'occurrence does not belong to the uncommitted source game';
+    END IF;
+    IF EXISTS (SELECT 1 FROM human_move_corpus_occurrence_binding b WHERE b.source_run_id = NEW.source_run_id) THEN
+        RAISE EXCEPTION 'occurrence evidence is already bound for source run %', NEW.source_run_id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_human_move_corpus_occurrence_insert
+    BEFORE INSERT ON human_move_corpus_occurrence
+    FOR EACH ROW
+    EXECUTE FUNCTION guard_human_move_corpus_occurrence_insert();
+
+CREATE FUNCTION guard_human_move_corpus_occurrence_update()
+RETURNS TRIGGER AS
+$$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'DELETE on human_move_corpus_occurrence is not permitted';
+    END IF;
+    IF NEW.id IS DISTINCT FROM OLD.id
+        OR NEW.source_run_id IS DISTINCT FROM OLD.source_run_id
+        OR NEW.qualifying_ordinal IS DISTINCT FROM OLD.qualifying_ordinal
+        OR NEW.provider_game_id IS DISTINCT FROM OLD.provider_game_id
+        OR NEW.pre_move_ply IS DISTINCT FROM OLD.pre_move_ply
+        OR NEW.move_played IS DISTINCT FROM OLD.move_played
+        OR NEW.position_hash IS DISTINCT FROM OLD.position_hash
+        OR OLD.content_digest IS NOT NULL
+        OR NEW.content_digest IS NULL
+        OR NEW.covered_prefix IS NULL
+        OR EXISTS (SELECT 1 FROM human_move_corpus_occurrence_binding b WHERE b.source_run_id = OLD.source_run_id)
+        OR NOT EXISTS (
+            SELECT 1 FROM human_move_corpus_artifact_snapshot s
+            WHERE s.content_digest = NEW.content_digest
+              AND s.source_run_id = NEW.source_run_id
+              AND s.covered_prefix = NEW.covered_prefix
+        ) THEN
+        RAISE EXCEPTION 'occurrence rows are immutable except for their one-time verified artifact binding';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_human_move_corpus_occurrence_immutable
+    BEFORE UPDATE OR DELETE ON human_move_corpus_occurrence
+    FOR EACH ROW
+    EXECUTE FUNCTION guard_human_move_corpus_occurrence_update();
+
+CREATE FUNCTION reject_human_move_corpus_occurrence_binding_mutation()
+RETURNS TRIGGER AS
+$$
+BEGIN
+    RAISE EXCEPTION '% on human_move_corpus_occurrence_binding is not permitted', TG_OP;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_human_move_corpus_occurrence_binding_immutable
+    BEFORE UPDATE OR DELETE ON human_move_corpus_occurrence_binding
+    FOR EACH ROW
+    EXECUTE FUNCTION reject_human_move_corpus_occurrence_binding_mutation();
+
+CREATE FUNCTION verify_human_move_corpus_occurrence_binding()
+RETURNS TRIGGER AS
+$$
+DECLARE
+    actual_count BIGINT;
+    expected_count BIGINT;
+    source_games BIGINT;
+    source_min INT;
+    source_max INT;
+BEGIN
+    SELECT COUNT(*)
+    INTO actual_count
+    FROM human_move_corpus_occurrence o
+    JOIN human_move_corpus_game g
+      ON g.run_id = o.source_run_id
+     AND g.qualifying_ordinal = o.qualifying_ordinal
+     AND g.provider_game_id = o.provider_game_id
+    WHERE o.source_run_id = NEW.source_run_id
+      AND o.qualifying_ordinal <= NEW.covered_prefix
+      AND o.content_digest = NEW.content_digest
+      AND o.covered_prefix = NEW.covered_prefix;
+    SELECT COALESCE(SUM(observation_total), 0)
+    INTO expected_count
+    FROM human_move_corpus_game
+    WHERE run_id = NEW.source_run_id AND qualifying_ordinal <= NEW.covered_prefix;
+    SELECT COUNT(*), COALESCE(MIN(qualifying_ordinal), 0), COALESCE(MAX(qualifying_ordinal), 0)
+    INTO source_games, source_min, source_max
+    FROM human_move_corpus_game
+    WHERE run_id = NEW.source_run_id AND qualifying_ordinal <= NEW.covered_prefix;
+    IF source_games <> NEW.covered_prefix OR source_min <> 1 OR source_max <> NEW.covered_prefix
+        OR actual_count <> NEW.occurrence_count OR actual_count <> expected_count
+        OR EXISTS (
+            SELECT 1
+            FROM human_move_corpus_occurrence o
+            JOIN human_move_corpus_game g
+              ON g.run_id = o.source_run_id AND g.qualifying_ordinal = o.qualifying_ordinal
+            WHERE o.source_run_id = NEW.source_run_id
+              AND o.qualifying_ordinal <= NEW.covered_prefix
+              AND g.provider_game_id IS DISTINCT FROM o.provider_game_id
+        ) THEN
+        RAISE EXCEPTION 'occurrence binding for source run % does not cover its complete verified prefix', NEW.source_run_id;
+    END IF;
+    IF EXISTS (
+        WITH occurrence_aggregate AS (
+            SELECT qualifying_ordinal, position_hash, move_played, COUNT(*)::BIGINT AS occurrence_count
+            FROM human_move_corpus_occurrence
+            WHERE source_run_id = NEW.source_run_id AND qualifying_ordinal <= NEW.covered_prefix
+            GROUP BY qualifying_ordinal, position_hash, move_played
+        ), source_aggregate AS (
+            SELECT g.qualifying_ordinal, o.position_hash, o.move_played, SUM(o.observation_count)::BIGINT AS occurrence_count
+            FROM human_move_corpus_observation o
+            JOIN human_move_corpus_game g ON g.id = o.game_id
+            WHERE g.run_id = NEW.source_run_id AND g.qualifying_ordinal <= NEW.covered_prefix
+            GROUP BY g.qualifying_ordinal, o.position_hash, o.move_played
+        )
+        (SELECT * FROM occurrence_aggregate EXCEPT SELECT * FROM source_aggregate)
+        UNION ALL
+        (SELECT * FROM source_aggregate EXCEPT SELECT * FROM occurrence_aggregate)
+    ) THEN
+        RAISE EXCEPTION 'occurrence binding for source run % diverges from aggregate checkpoint evidence', NEW.source_run_id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_human_move_corpus_occurrence_binding_insert
+    BEFORE INSERT ON human_move_corpus_occurrence_binding
+    FOR EACH ROW
+    EXECUTE FUNCTION verify_human_move_corpus_occurrence_binding();
+
 -- Commit-time check: a game row may only become durable together with its
 -- complete observation set and the frontier advance onto its ordinal.
 CREATE FUNCTION verify_human_move_corpus_game_committed()
 RETURNS TRIGGER AS
 $$
 BEGIN
-    IF NOT EXISTS (SELECT 1
-                   FROM human_move_corpus_game g
-                            JOIN human_move_corpus_run r ON r.id = g.run_id
-                   WHERE g.id = NEW.id
-                     AND g.qualifying_ordinal <= r.committed_frontier
-                     AND g.distinct_move_count = (SELECT count(*)
-                                                  FROM human_move_corpus_observation o
-                                                  WHERE o.game_id = g.id)
-                     AND g.observation_total = (SELECT coalesce(sum(o.observation_count), 0)
-                                                FROM human_move_corpus_observation o
-                                                WHERE o.game_id = g.id)) THEN
-        RAISE EXCEPTION 'human_move_corpus_game % must commit with its complete observations and frontier advance',
+    IF NOT EXISTS (
+        SELECT 1
+        FROM human_move_corpus_game g
+        JOIN human_move_corpus_run r ON r.id = g.run_id
+        WHERE g.id = NEW.id
+          AND g.qualifying_ordinal <= r.committed_frontier
+          AND g.distinct_move_count = (
+              SELECT count(*) FROM human_move_corpus_observation o WHERE o.game_id = g.id
+          )
+          AND g.observation_total = (
+              SELECT coalesce(sum(o.observation_count), 0)
+              FROM human_move_corpus_observation o
+              WHERE o.game_id = g.id
+          )
+          AND (
+              NOT EXISTS (
+                  SELECT 1
+                  FROM human_move_corpus_occurrence o
+                  WHERE o.source_run_id = g.run_id
+                    AND o.qualifying_ordinal = g.qualifying_ordinal
+              )
+              OR (
+                  g.observation_total = (
+                      SELECT count(*)
+                      FROM human_move_corpus_occurrence o
+                      WHERE o.source_run_id = g.run_id
+                        AND o.qualifying_ordinal = g.qualifying_ordinal
+                  )
+                  AND NOT EXISTS (
+                      (SELECT position_hash, move_played, observation_count
+                       FROM human_move_corpus_observation WHERE game_id = g.id
+                       EXCEPT
+                       SELECT position_hash, move_played, count(*)::INT
+                       FROM human_move_corpus_occurrence
+                       WHERE source_run_id = g.run_id AND qualifying_ordinal = g.qualifying_ordinal
+                       GROUP BY position_hash, move_played)
+                      UNION ALL
+                      (SELECT position_hash, move_played, count(*)::INT
+                       FROM human_move_corpus_occurrence
+                       WHERE source_run_id = g.run_id AND qualifying_ordinal = g.qualifying_ordinal
+                       GROUP BY position_hash, move_played
+                       EXCEPT
+                       SELECT position_hash, move_played, observation_count
+                       FROM human_move_corpus_observation WHERE game_id = g.id)
+                  )
+              )
+          )
+    ) THEN
+        RAISE EXCEPTION 'human_move_corpus_game % must commit with complete aggregate and occurrence evidence',
             NEW.id;
     END IF;
     RETURN NULL;

@@ -35,6 +35,7 @@ class HumanMoveCorpusMaterializationService(
     private val jdbcTemplate: JdbcTemplate,
     private val projectionRepository: HumanMoveCorpusProjectionRepository,
     private val finalizationService: HumanMoveCorpusProjectionFinalizationService,
+    private val occurrenceService: HumanMoveCorpusOccurrenceService,
 ) {
     @Transactional
     fun materialize(request: HumanMoveCorpusMaterializeRequest): HumanMoveCorpusMaterializeResponse {
@@ -49,6 +50,7 @@ class HumanMoveCorpusMaterializationService(
             ).singleOrNull() ?: throw NoSuchElementException("Artifact snapshot ${request.contentDigest} not found")
         val (sourceRunId, coveredPrefix) = snapshot
         HumanMoveCorpusImportService.lockSource(jdbcTemplate, sourceRunId)
+        occurrenceService.verifyBindingIfPresent(sourceRunId, request.contentDigest, coveredPrefix)
         require(request.prefixN <= coveredPrefix) {
             "prefixN (${request.prefixN}) exceeds this artifact snapshot's covered prefix ($coveredPrefix)"
         }

@@ -299,6 +299,7 @@ internal class HumanMoveBfsTraversal(
         isBlackInBand: Boolean,
         observations: MutableMap<Pair<String, String>, Int>,
         fenByHash: MutableMap<String, String>,
+        occurrences: MutableList<HumanMoveCorpusOccurrence>? = null,
     ): HumanMoveBfsPgnOutcome {
         val file = File.createTempFile("bfs_game", ".pgn")
         try {
@@ -330,6 +331,13 @@ internal class HumanMoveBfsTraversal(
 
                         val key = Pair(hash, moveSan)
                         observations[key] = observations.getOrDefault(key, 0) + 1
+                        occurrences?.add(
+                            HumanMoveCorpusOccurrence(
+                                preMovePly = index + 1,
+                                positionHash = hash,
+                                movePlayed = moveSan,
+                            ),
+                        )
                     }
 
                     board.doMove(move)

@@ -49,6 +49,7 @@ class HumanMoveCorpusService(
                 override fun accept(game: HumanMoveBfsQualifyingGame): Boolean {
                     val observations = mutableMapOf<Pair<String, String>, Int>()
                     val fenByHash = mutableMapOf<String, String>()
+                    val occurrences = mutableListOf<HumanMoveCorpusOccurrence>()
                     val parse =
                         traversal.processGamePgn(
                             pgn = game.pgn,
@@ -56,12 +57,18 @@ class HumanMoveCorpusService(
                             isBlackInBand = game.isPlayerWhite,
                             observations = observations,
                             fenByHash = fenByHash,
+                            occurrences = occurrences,
                         )
-                    if (parse != HumanMoveBfsPgnOutcome.PARSED || observations.isEmpty()) {
+                    if (parse != HumanMoveBfsPgnOutcome.PARSED || observations.isEmpty() || occurrences.isEmpty()) {
                         rejectedGames++
                         val reason = if (parse == HumanMoveBfsPgnOutcome.PARSED) "ZERO_OBSERVATIONS" else parse.name
                         log.info("Corpus run $runId rejected game ${game.url}: $reason")
                         return false
+                    }
+                    val occurrenceAggregate =
+                        occurrences.groupingBy { it.positionHash to it.movePlayed }.eachCount()
+                    check(occurrenceAggregate == observations) {
+                        "Occurrence and aggregate contributions diverged while parsing ${game.url}"
                     }
                     val candidate =
                         HumanMoveCorpusCandidate(
@@ -75,10 +82,16 @@ class HumanMoveCorpusService(
                             bfsDepth = game.depth,
                             pgn = game.pgn,
                             observations =
-                                observations
+                                occurrenceAggregate
                                     .map { (key, count) ->
-                                        HumanMoveCorpusObservedMove(key.first, fenByHash.getValue(key.first), key.second, count)
+                                        HumanMoveCorpusObservedMove(
+                                            key.first,
+                                            fenByHash.getValue(key.first),
+                                            key.second,
+                                            count,
+                                        )
                                     }.sortedWith(compareBy({ it.positionHash }, { it.movePlayed })),
+                            occurrences = occurrences.sortedBy { it.preMovePly },
                         )
                     commitWithRetry(runId, candidate)
                     return true

@@ -26,6 +26,7 @@ class HumanMoveCorpusProjectionFinalizationService(
     private val jdbcTemplate: JdbcTemplate,
     private val artifactService: HumanMoveCorpusArtifactService,
     private val importService: HumanMoveCorpusImportService,
+    private val occurrenceService: HumanMoveCorpusOccurrenceService,
 ) {
     fun expectedDigest(
         runId: UUID,
@@ -82,6 +83,7 @@ class HumanMoveCorpusProjectionFinalizationService(
             ).singleOrNull() ?: throw NoSuchElementException("Projection $projectionId not found")
         if (projection.finalized) {
             if (!projection.verified) throw CorpusArtifactConflict("Projection $projectionId is finalized without verification")
+            occurrenceService.verifyFinalizedEvidenceIfEligible(projection.runId, projection.contentDigest)
             return digestProjection(projectionId).also {
                 if (it.distributionSha256 != projection.expectedDigest) {
                     throw CorpusArtifactConflict("Projection $projectionId differs from its verified distribution digest")
@@ -143,6 +145,7 @@ class HumanMoveCorpusProjectionFinalizationService(
                 projectionId,
             )!!
         if (mismatches) throw CorpusArtifactConflict("Projection $projectionId rows differ from imported raw evidence")
+        occurrenceService.bindFinalizedEvidence(verified, archive)
         jdbcTemplate.update(
             "UPDATE human_move_corpus_projection SET finalized = true, verified = true WHERE id = ?",
             projectionId,

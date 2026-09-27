@@ -6,20 +6,29 @@ import com.chessecho.dto.HumanMoveCorpusCheckpointRequest
 import com.chessecho.dto.HumanMoveCorpusCheckpointResponse
 import com.chessecho.dto.HumanMoveCorpusRunRequest
 import com.chessecho.dto.HumanMoveFinalizeRequest
+import com.chessecho.humanmove.artifact.HumanMoveCorpusArtifactService
+import com.chessecho.humanmove.artifact.HumanMoveCorpusExportRequest
 import com.chessecho.service.ChessComClient
+import com.chessecho.service.GameParserService
 import com.chessecho.service.HumanMoveBfsService
 import com.chessecho.service.HumanMoveCorpusCandidate
 import com.chessecho.service.HumanMoveCorpusCheckpointService
 import com.chessecho.service.HumanMoveCorpusCommitOutcome
 import com.chessecho.service.HumanMoveCorpusContributionMismatchException
 import com.chessecho.service.HumanMoveCorpusGameWriter
+import com.chessecho.service.HumanMoveCorpusImportService
 import com.chessecho.service.HumanMoveCorpusIntegrityException
+import com.chessecho.service.HumanMoveCorpusMaterializationService
+import com.chessecho.service.HumanMoveCorpusMaterializeRequest
 import com.chessecho.service.HumanMoveCorpusObservedMove
+import com.chessecho.service.HumanMoveCorpusProjectionFinalizationService
+import com.chessecho.service.HumanMoveCorpusPurgeService
 import com.chessecho.service.HumanMoveCorpusRunNotRunningException
 import com.chessecho.service.HumanMoveCorpusRunOutcome
 import com.chessecho.service.HumanMoveCorpusService
 import com.chessecho.service.HumanMoveCorpusSide
 import com.chessecho.service.HumanMoveDistributionFinalizationService
+import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -40,8 +49,10 @@ import org.springframework.transaction.support.TransactionTemplate
 import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
+import java.nio.file.Files
 import java.security.MessageDigest
 import java.util.Collections
+import java.util.Comparator
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -69,6 +80,21 @@ class HumanMoveCorpusPostgresIntegrationTest {
 
     @Autowired
     private lateinit var checkpointService: HumanMoveCorpusCheckpointService
+
+    @Autowired
+    private lateinit var artifactService: HumanMoveCorpusArtifactService
+
+    @Autowired
+    private lateinit var importService: HumanMoveCorpusImportService
+
+    @Autowired
+    private lateinit var materializationService: HumanMoveCorpusMaterializationService
+
+    @Autowired
+    private lateinit var purgeService: HumanMoveCorpusPurgeService
+
+    @Autowired
+    private lateinit var projectionFinalizationService: HumanMoveCorpusProjectionFinalizationService
 
     @Autowired
     private lateinit var legacyBfsService: HumanMoveBfsService
@@ -260,6 +286,201 @@ class HumanMoveCorpusPostgresIntegrationTest {
 
     private fun sha256(text: String): String =
         MessageDigest.getInstance("SHA-256").digest(text.toByteArray()).joinToString("") { "%02x".format(it) }
+
+    private data class FinalizedPopulation(
+        val runId: UUID,
+        val contentDigest: String,
+        val artifactBytes: ByteArray,
+        val projectionId: UUID,
+        val canonicalLocationAnalysis: List<Map<String, Any?>>,
+    )
+
+    private fun finalizedAndPurgedPopulation(label: String): FinalizedPopulation {
+        val runId = newRun()
+        val candidates = adversarialLifecycleCandidates(label)
+        commitAll(runId, candidates)
+        val exported = artifactService.export(HumanMoveCorpusExportRequest(runId, 2))
+        val bytes = Files.readAllBytes(artifactService.archivePath(exported.contentDigest))
+        importService.import(bytes, exported.contentDigest)
+        val projection =
+            materializationService.materialize(
+                HumanMoveCorpusMaterializeRequest(
+                    contentDigest = exported.contentDigest,
+                    prefixN = 2,
+                    minObservations = 1,
+                ),
+            )
+        projectionFinalizationService.finalize(projection.projectionId)
+        val canonicalAnalysis = canonicalLocationAnalysis(runId)
+        assertTrue(canonicalAnalysis.isNotEmpty(), "finalized population must expose location analysis before purge")
+        assertEquals(14, canonicalAnalysis.size, "the two source games must retain all one-based pre-move occurrences")
+        val firstGameId = candidates[0].providerGameId
+        val secondGameId = candidates[1].providerGameId
+        assertNotEquals(firstGameId, secondGameId, "the fixture must use distinct provider game identities")
+        assertEquals(
+            setOf(firstGameId, secondGameId),
+            canonicalAnalysis.map { it["provider_game_id"].toString() }.toSet(),
+            "the location analysis must retain both source games",
+        )
+        assertEquals(
+            (1..9).toList(),
+            canonicalAnalysis.filter { it["provider_game_id"] == firstGameId }
+                .map { (it["pre_move_ply"] as Number).toInt() },
+            "the first game's locations must be canonically ordered by one-based pre-move ply",
+        )
+        assertEquals(
+            (1..5).toList(),
+            canonicalAnalysis.filter { it["provider_game_id"] == secondGameId }
+                .map { (it["pre_move_ply"] as Number).toInt() },
+            "the second game's locations must be canonically ordered by one-based pre-move ply",
+        )
+
+        val initialPositionHash =
+            GameParserService.generateHash("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+        assertEquals(
+            listOf(1, 5),
+            canonicalAnalysis.filter {
+                it["provider_game_id"] == firstGameId &&
+                    it["position_hash"] == initialPositionHash &&
+                    it["move_played"] == "Nf3"
+            }.map { (it["pre_move_ply"] as Number).toInt() },
+            "the same position and SAN must remain distinct at two plies in one game",
+        )
+        assertEquals(
+            setOf(firstGameId, secondGameId),
+            canonicalAnalysis.filter { it["position_hash"] == initialPositionHash }
+                .map { it["provider_game_id"].toString() }.toSet(),
+            "the same position must be retained across distinct source games",
+        )
+        val transposedPositionHash =
+            GameParserService.generateHash(
+                "rnbqkb1r/ppp1pppp/5n2/3p4/8/5NP1/PPPPPP1P/RNBQKB1R w KQkq d6 0 5",
+            )
+        assertEquals(
+            mapOf(firstGameId to listOf(9), secondGameId to listOf(5)),
+            canonicalAnalysis.filter {
+                it["position_hash"] == transposedPositionHash && it["move_played"] == "Bg2"
+            }.groupBy { it["provider_game_id"].toString() }
+                .mapValues { (_, rows) -> rows.map { (it["pre_move_ply"] as Number).toInt() } },
+            "different move orders must preserve the same transposed position at their canonical plies",
+        )
+        assertEquals(
+            jdbcTemplate.queryForObject(
+                "SELECT occurrence_count FROM human_move_corpus_occurrence_binding WHERE source_run_id = ?",
+                Int::class.java,
+                runId,
+            ),
+            canonicalAnalysis.size,
+            "the canonical analysis must cover every occurrence bound at finalization",
+        )
+        purgeService.purge(runId, exported.contentDigest)
+        assertEquals(
+            0L,
+            count("SELECT COUNT(*) FROM human_move_corpus_imported_game WHERE source_run_id = '$runId'"),
+            "the raw #426 rows must actually be purged before recovery is exercised",
+        )
+        return FinalizedPopulation(runId, exported.contentDigest, bytes, projection.projectionId, canonicalAnalysis)
+    }
+
+    private fun adversarialLifecycleCandidates(label: String): List<HumanMoveCorpusCandidate> {
+        val initialPosition = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        val afterNf3 = "rnbqkbnr/pppppppp/8/8/8/5N2/PPPPPPPP/RNBQKB1R b KQkq - 1 1"
+        val afterNf3Nf6 = "rnbqkb1r/pppppppp/5n2/8/8/5N2/PPPPPPPP/RNBQKB1R w KQkq - 2 2"
+        val afterNg1 = "rnbqkb1r/pppppppp/5n2/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 1 2"
+        val afterG3 = "rnbqkbnr/pppppppp/8/8/8/6P1/PPPPPP1P/RNBQKBNR b KQkq - 0 1"
+        val afterG3Nf6 = "rnbqkb1r/pppppppp/5n2/8/8/6P1/PPPPPP1P/RNBQKBNR w KQkq - 1 2"
+        val afterG3Nf6Nf3 = "rnbqkb1r/pppppppp/5n2/8/8/5NP1/PPPPPP1P/RNBQKB1R b KQkq - 2 2"
+        val transposedPosition = "rnbqkb1r/ppp1pppp/5n2/3p4/8/5NP1/PPPPPP1P/RNBQKB1R w KQkq d6 0 5"
+        val afterG3ForFirstGame = "rnbqkb1r/pppppppp/5n2/8/8/5NP1/PPPPPP1P/RNBQKB1R b KQkq - 0 4"
+
+        return listOf(
+            lifecycleCandidate(
+                label = "$label-game-1",
+                pgn = "1. Nf3 Nf6 2. Ng1 Ng8 3. Nf3 Nf6 4. g3 d5 5. Bg2 *",
+                lifecycleObservation(initialPosition, "Nf3", 2),
+                lifecycleObservation(afterNf3, "Nf6", 2),
+                lifecycleObservation(afterNf3Nf6, "Ng1"),
+                lifecycleObservation(afterNg1, "Ng8"),
+                lifecycleObservation(afterNf3Nf6, "g3"),
+                lifecycleObservation(afterG3ForFirstGame, "d5"),
+                lifecycleObservation(transposedPosition, "Bg2"),
+            ),
+            lifecycleCandidate(
+                label = "$label-game-2",
+                pgn = "1. g3 Nf6 2. Nf3 d5 3. Bg2 *",
+                lifecycleObservation(initialPosition, "g3"),
+                lifecycleObservation(afterG3, "Nf6"),
+                lifecycleObservation(afterG3Nf6, "Nf3"),
+                lifecycleObservation(afterG3Nf6Nf3, "d5"),
+                lifecycleObservation(transposedPosition, "Bg2"),
+            ),
+        )
+    }
+
+    private fun lifecycleObservation(
+        fen: String,
+        move: String,
+        count: Int = 1,
+    ): HumanMoveCorpusObservedMove {
+        return HumanMoveCorpusObservedMove(GameParserService.generateHash(fen), fen, move, count)
+    }
+
+    private fun lifecycleCandidate(
+        label: String,
+        pgn: String,
+        vararg observations: HumanMoveCorpusObservedMove,
+    ) = HumanMoveCorpusCandidate(
+        providerGameId = "http://$label",
+        traversedPlayer = "p1",
+        opponent = "opponent",
+        opponentSide = HumanMoveCorpusSide.BLACK,
+        opponentRating = 1100,
+        rules = "chess",
+        timeClass = "rapid",
+        bfsDepth = 0,
+        pgn = "[Event \"$label\"]\n\n$pgn",
+        observations = observations.toList(),
+    )
+
+    private fun canonicalLocationAnalysis(runId: UUID): List<Map<String, Any?>> =
+        jdbcTemplate.queryForList(
+            """
+            SELECT occurrence.source_run_id, occurrence.qualifying_ordinal, occurrence.provider_game_id,
+                   occurrence.pre_move_ply, occurrence.position_hash, occurrence.move_played,
+                   occurrence.content_digest, occurrence.covered_prefix
+            FROM human_move_corpus_occurrence occurrence
+            JOIN human_move_corpus_imported_game imported
+              ON imported.source_run_id = occurrence.source_run_id
+             AND imported.qualifying_ordinal = occurrence.qualifying_ordinal
+             AND imported.provider_game_id = occurrence.provider_game_id
+            WHERE occurrence.source_run_id = ?
+            ORDER BY occurrence.source_run_id, occurrence.qualifying_ordinal, occurrence.provider_game_id,
+                     occurrence.pre_move_ply, occurrence.position_hash, occurrence.move_played
+            """.trimIndent(),
+            runId,
+        )
+
+    private fun occurrenceRows(runId: UUID): List<Map<String, Any?>> =
+        jdbcTemplate.queryForList(
+            """
+            SELECT id, source_run_id, qualifying_ordinal, provider_game_id, pre_move_ply,
+                   move_played, position_hash, content_digest, covered_prefix
+            FROM human_move_corpus_occurrence
+            WHERE source_run_id = ?
+            ORDER BY qualifying_ordinal, provider_game_id, pre_move_ply, position_hash, move_played, id
+            """.trimIndent(),
+            runId,
+        )
+
+    private fun occurrenceBinding(runId: UUID): Map<String, Any?> =
+        jdbcTemplate.queryForMap(
+            """
+            SELECT source_run_id, content_digest, covered_prefix, occurrence_digest, occurrence_count, finalized_at
+            FROM human_move_corpus_occurrence_binding
+            WHERE source_run_id = ?
+            """.trimIndent(),
+            runId,
+        )
 
     private val pgn = "[Event \"Live Chess\"]\n[Result \"1-0\"]\n\n1. e4 e5 2. Nf3 Nc6 1-0"
 
@@ -984,7 +1205,345 @@ class HumanMoveCorpusPostgresIntegrationTest {
         assertEquals(3, frontier(corpus.runId), "legacy ingestion does not touch the corpus")
     }
 
+    @Test
+    fun `committing a game retains every occurrence location while preserving aggregate checkpoint positions`() {
+        val run = newRun()
+        val initialFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        val initialHash = GameParserService.generateHash(initialFen)
+        val game = candidate("http://lossless-game", Triple(initialHash, "e4", 1))
+
+        assertEquals(HumanMoveCorpusCommitOutcome.COMMITTED, gameWriter.commitGame(run, game).outcome)
+
+        val occurrences =
+            jdbcTemplate.queryForList(
+                """
+                SELECT source_run_id, qualifying_ordinal, provider_game_id, pre_move_ply,
+                       move_played, position_hash
+                FROM human_move_corpus_occurrence
+                WHERE source_run_id = ?
+                ORDER BY qualifying_ordinal, pre_move_ply, provider_game_id, move_played, position_hash
+                """.trimIndent(),
+                run,
+            )
+        assertTrue(occurrences.isNotEmpty(), "lossless occurrence evidence must be retained")
+        assertEquals(
+            occurrences.map { (it["pre_move_ply"] as Number).toInt() }.distinct().size,
+            occurrences.size,
+            "one source game must retain one row per location",
+        )
+
+        val aggregatePositions = checkpoint(run, 1).rows.map { it.positionHash }.toSet()
+        assertEquals(
+            aggregatePositions,
+            occurrences.map { it["position_hash"].toString() }.toSet(),
+            "occurrence evidence and aggregate checkpoint must describe the same positions",
+        )
+
+        val aggregateFromOccurrences =
+            jdbcTemplate.queryForList(
+                """
+                SELECT position_hash, move_played, COUNT(*) AS occurrence_count
+                FROM human_move_corpus_occurrence
+                WHERE source_run_id = ? AND covered_prefix <= ?
+                GROUP BY position_hash, move_played
+                ORDER BY position_hash, move_played
+                """.trimIndent(),
+                run,
+                1,
+            ).map {
+                Triple(
+                    it["position_hash"].toString(),
+                    it["move_played"].toString(),
+                    (it["occurrence_count"] as Number).toInt(),
+                )
+            }
+        assertEquals(rowsOf(checkpoint(run, 1)), aggregateFromOccurrences)
+    }
+
+    @Test
+    fun `same-game retry compares the complete occurrence contribution and leaves conflicting retries atomic`() {
+        val run = newRun()
+        val original = candidate("http://retry-occurrence", Triple("retry-position", "e4", 2))
+        assertEquals(HumanMoveCorpusCommitOutcome.COMMITTED, gameWriter.commitGame(run, original).outcome)
+
+        val beforeGames = count("SELECT count(*) FROM human_move_corpus_game")
+        val beforeOccurrences =
+            count("SELECT count(*) FROM human_move_corpus_occurrence WHERE source_run_id = '$run'")
+
+        assertEquals(HumanMoveCorpusCommitOutcome.ALREADY_COMMITTED, gameWriter.commitGame(run, original).outcome)
+        assertFailsWith<HumanMoveCorpusContributionMismatchException> {
+            gameWriter.commitGame(run, candidate("http://retry-occurrence", Triple("retry-position", "d4", 2)))
+        }
+
+        assertEquals(beforeGames, count("SELECT count(*) FROM human_move_corpus_game"))
+        assertEquals(
+            beforeOccurrences,
+            count("SELECT count(*) FROM human_move_corpus_occurrence WHERE source_run_id = '$run'"),
+            "a conflicting retry must not partially replace occurrence evidence",
+        )
+    }
+
+    @Test
+    fun `repeated same-position and SAN occurrences at different plies remain distinct lossless evidence`() {
+        val run = newRun()
+        gameWriter.commitGame(run, candidate("http://same-san", Triple("same-position", "e4", 2)))
+
+        val rows =
+            jdbcTemplate.queryForList(
+                """
+                SELECT pre_move_ply, position_hash, move_played
+                FROM human_move_corpus_occurrence
+                WHERE source_run_id = ? AND provider_game_id = ?
+                ORDER BY pre_move_ply
+                """.trimIndent(),
+                run,
+                "http://same-san",
+            )
+        assertTrue(rows.size >= 2, "the same position/SAN must be retained at each source ply")
+        assertEquals(rows.size, rows.map { it["pre_move_ply"] }.toSet().size)
+        assertEquals(setOf("same-position"), rows.map { it["position_hash"].toString() }.toSet())
+        assertEquals(setOf("e4"), rows.map { it["move_played"].toString() }.toSet())
+    }
+
+    @Test
+    fun `finalized issue 426 artifact binds one immutable occurrence prefix`() {
+        val population = finalizedAndPurgedPopulation("binding")
+        val binding = occurrenceBinding(population.runId)
+
+        assertEquals(population.runId, binding["source_run_id"])
+        assertEquals(population.contentDigest, binding["content_digest"])
+        assertEquals(2, binding["covered_prefix"])
+        assertTrue(binding["occurrence_digest"].toString().matches(Regex("[0-9a-f]{64}")))
+        assertTrue((binding["occurrence_count"] as Number).toInt() > 0)
+        assertTrue(binding["finalized_at"] != null)
+        assertEquals(
+            true,
+            jdbcTemplate.queryForObject(
+                "SELECT finalized AND verified FROM human_move_corpus_projection WHERE id = ?",
+                Boolean::class.java,
+                population.projectionId,
+            ),
+            "the binding must be created through the normal finalized #426 projection path",
+        )
+    }
+
+    @Test
+    fun `post-purge recovery preserves canonical location analysis and rejects missing substituted or mismatched evidence`() {
+        val first = finalizedAndPurgedPopulation("recovery-first")
+        val firstCanonicalAnalysis = first.canonicalLocationAnalysis
+        val firstBinding = occurrenceBinding(first.runId)
+        assertEquals(2, firstCanonicalAnalysis.map { it["provider_game_id"] }.toSet().size)
+        assertEquals(
+            0L,
+            count("SELECT COUNT(*) FROM human_move_corpus_imported_game WHERE source_run_id = '${first.runId}'"),
+            "recovery must start after the purge removed the imported raw rows",
+        )
+
+        importService.import(first.artifactBytes, first.contentDigest)
+        assertEquals(
+            2,
+            count("SELECT COUNT(*) FROM human_move_corpus_imported_game WHERE source_run_id = '${first.runId}'"),
+            "verified #426 artifact import must execute the raw-evidence recovery path",
+        )
+        assertEquals(
+            firstCanonicalAnalysis,
+            canonicalLocationAnalysis(first.runId),
+            "canonical per-game, per-ply location analysis must be byte-for-byte stable across purge and recovery",
+        )
+        assertEquals(firstBinding, occurrenceBinding(first.runId), "recovery must retain the finalized evidence binding")
+
+        val second = finalizedAndPurgedPopulation("recovery-substitute")
+        purgeService.purge(first.runId, first.contentDigest)
+        val otherPopulationRow =
+            jdbcTemplate.queryForMap(
+                """
+                SELECT qualifying_ordinal, provider_game_id, pre_move_ply, position_hash, move_played,
+                       content_digest, covered_prefix
+                FROM human_move_corpus_occurrence
+                WHERE source_run_id = ?
+                ORDER BY qualifying_ordinal, provider_game_id, pre_move_ply
+                LIMIT 1
+                """.trimIndent(),
+                second.runId,
+            )
+        val corruptions: List<Pair<String, (FinalizedPopulation) -> Unit>> =
+            listOf(
+                "missing occurrence" to { population ->
+                    withTriggersDisabled {
+                        jdbcTemplate.update(
+                            "DELETE FROM human_move_corpus_occurrence WHERE id = " +
+                                "(SELECT id FROM human_move_corpus_occurrence WHERE source_run_id = ? ORDER BY id LIMIT 1)",
+                            population.runId,
+                        )
+                    }
+                },
+                "substituted evidence from another finalized population" to { population ->
+                    withTriggersDisabled {
+                        jdbcTemplate.update(
+                            """
+                            UPDATE human_move_corpus_occurrence
+                            SET provider_game_id = ?, position_hash = ?, move_played = ?,
+                                content_digest = ?, covered_prefix = ?
+                            WHERE id = (
+                                SELECT id FROM human_move_corpus_occurrence
+                                WHERE source_run_id = ? ORDER BY id LIMIT 1
+                            )
+                            """.trimIndent(),
+                            otherPopulationRow["provider_game_id"],
+                            otherPopulationRow["position_hash"],
+                            otherPopulationRow["move_played"],
+                            otherPopulationRow["content_digest"],
+                            otherPopulationRow["covered_prefix"],
+                            population.runId,
+                        )
+                    }
+                },
+                "mismatched occurrence digest" to { population ->
+                    withTriggersDisabled {
+                        jdbcTemplate.update(
+                            "UPDATE human_move_corpus_occurrence_binding SET occurrence_digest = ? WHERE source_run_id = ?",
+                            "f".repeat(64),
+                            population.runId,
+                        )
+                    }
+                },
+                "mismatched covered prefix" to { population ->
+                    withTriggersDisabled {
+                        jdbcTemplate.update(
+                            "UPDATE human_move_corpus_occurrence_binding SET covered_prefix = covered_prefix + 1 " +
+                                "WHERE source_run_id = ?",
+                            population.runId,
+                        )
+                    }
+                },
+                "mismatched occurrence count" to { population ->
+                    withTriggersDisabled {
+                        jdbcTemplate.update(
+                            "UPDATE human_move_corpus_occurrence_binding SET occurrence_count = occurrence_count + 1 " +
+                                "WHERE source_run_id = ?",
+                            population.runId,
+                        )
+                    }
+                },
+                "mismatched content digest" to { population ->
+                    withTriggersDisabled {
+                        jdbcTemplate.update(
+                            "UPDATE human_move_corpus_occurrence SET content_digest = ? WHERE source_run_id = ?",
+                            "f".repeat(64),
+                            population.runId,
+                        )
+                    }
+                },
+            )
+        corruptions.forEachIndexed { index, (kind, corrupt) ->
+            val population =
+                when (index) {
+                    0 -> finalizedAndPurgedPopulation("recovery-missing")
+                    1 -> first
+                    else -> finalizedAndPurgedPopulation("recovery-mismatch-$index")
+                }
+            if (index == 1) {
+                assertEquals(
+                    0L,
+                    count("SELECT COUNT(*) FROM human_move_corpus_imported_game WHERE source_run_id = '${population.runId}'"),
+                )
+            }
+            corrupt(population)
+            assertFailsWith<HumanMoveCorpusIntegrityException>(
+                "$kind must be rejected by verified post-purge recovery for run ${population.runId}",
+            ) {
+                importService.import(population.artifactBytes, population.contentDigest)
+            }
+            assertEquals(
+                0L,
+                count("SELECT COUNT(*) FROM human_move_corpus_imported_game WHERE source_run_id = '${population.runId}'"),
+                "$kind rejection must not republish partial imported evidence",
+            )
+        }
+    }
+
+    @Test
+    fun `post-binding occurrence rows reject tampering and rebinding`() {
+        val population = finalizedAndPurgedPopulation("immutable-binding")
+        val alternate = finalizedAndPurgedPopulation("alternate-binding")
+        val originalRows = occurrenceRows(population.runId)
+        val originalBinding = occurrenceBinding(population.runId)
+        val occurrenceId = originalRows.first()["id"]
+        val rejectedMutations =
+            listOf(
+                "UPDATE human_move_corpus_occurrence SET source_run_id = ? WHERE id = ?" to
+                    arrayOf<Any?>(alternate.runId, occurrenceId),
+                "UPDATE human_move_corpus_occurrence SET qualifying_ordinal = qualifying_ordinal + 10 WHERE id = ?" to
+                    arrayOf<Any?>(occurrenceId),
+                "UPDATE human_move_corpus_occurrence SET provider_game_id = 'substituted' WHERE id = ?" to
+                    arrayOf<Any?>(occurrenceId),
+                "UPDATE human_move_corpus_occurrence SET pre_move_ply = pre_move_ply + 100 WHERE id = ?" to
+                    arrayOf<Any?>(occurrenceId),
+                "UPDATE human_move_corpus_occurrence SET move_played = 'd4' WHERE id = ?" to
+                    arrayOf<Any?>(occurrenceId),
+                "UPDATE human_move_corpus_occurrence SET position_hash = 'substituted' WHERE id = ?" to
+                    arrayOf<Any?>(occurrenceId),
+                "UPDATE human_move_corpus_occurrence SET content_digest = ? WHERE id = ?" to
+                    arrayOf<Any?>("f".repeat(64), occurrenceId),
+                "UPDATE human_move_corpus_occurrence SET covered_prefix = covered_prefix + 1 WHERE id = ?" to
+                    arrayOf<Any?>(occurrenceId),
+            )
+        rejectedMutations.forEach { (sql, arguments) ->
+            assertFailsWith<DataAccessException>("post-binding mutation must fail: $sql") {
+                jdbcTemplate.update(sql, *arguments)
+            }
+            assertEquals(originalRows, occurrenceRows(population.runId), "rejected mutation must preserve exact original evidence")
+            assertEquals(originalBinding, occurrenceBinding(population.runId), "rejected mutation must preserve the database binding")
+        }
+
+        assertFailsWith<DataAccessException>("a finalized occurrence must not be deleted for replacement") {
+            jdbcTemplate.update("DELETE FROM human_move_corpus_occurrence WHERE id = ?", occurrenceId)
+        }
+        val row = originalRows.first()
+        assertFailsWith<DataAccessException>("reinserting a finalized occurrence must not replace its existing row") {
+            jdbcTemplate.update(
+                """
+                INSERT INTO human_move_corpus_occurrence
+                    (id, source_run_id, qualifying_ordinal, provider_game_id, pre_move_ply, move_played,
+                     position_hash, content_digest, covered_prefix)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """.trimIndent(),
+                occurrenceId,
+                row["source_run_id"],
+                row["qualifying_ordinal"],
+                row["provider_game_id"],
+                row["pre_move_ply"],
+                row["move_played"],
+                row["position_hash"],
+                row["content_digest"],
+                row["covered_prefix"],
+            )
+        }
+        assertEquals(originalRows, occurrenceRows(population.runId), "delete/reinsert attempts must leave exact rows unchanged")
+        assertEquals(originalBinding, occurrenceBinding(population.runId), "delete/reinsert attempts must preserve its binding")
+
+        assertFailsWith<DataAccessException> {
+            jdbcTemplate.update(
+                "UPDATE human_move_corpus_occurrence_binding SET content_digest = ? WHERE source_run_id = ?",
+                alternate.contentDigest,
+                population.runId,
+            )
+        }
+        assertFailsWith<DataAccessException> {
+            jdbcTemplate.update(
+                "UPDATE human_move_corpus_occurrence_binding SET source_run_id = ? WHERE source_run_id = ?",
+                alternate.runId,
+                population.runId,
+            )
+        }
+        assertEquals(originalRows, occurrenceRows(population.runId), "failed rebind must leave original rows intact")
+        assertEquals(originalBinding, occurrenceBinding(population.runId), "failed rebind must preserve the database binding")
+        assertEquals(alternate.runId, occurrenceBinding(alternate.runId)["source_run_id"])
+    }
+
     companion object {
+        private val archiveRoot = Files.createTempDirectory("chessecho-corpus-431-")
+
         @Container
         @JvmField
         val postgres: PostgreSQLContainer<Nothing> = PostgreSQLContainer("postgres:16-alpine")
@@ -996,8 +1555,17 @@ class HumanMoveCorpusPostgresIntegrationTest {
             registry.add("spring.datasource.username", postgres::getUsername)
             registry.add("spring.datasource.password", postgres::getPassword)
             registry.add("spring.jpa.hibernate.ddl-auto") { "validate" }
+            registry.add("chessecho.corpus.archive-root", archiveRoot::toString)
             // Headroom for 16 concurrent writers plus the lock holder in the concurrency test.
             registry.add("spring.datasource.hikari.maximum-pool-size") { "24" }
+        }
+
+        @AfterAll
+        @JvmStatic
+        fun removeArchives() {
+            Files.walk(archiveRoot).use { paths ->
+                paths.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) }
+            }
         }
     }
 }
