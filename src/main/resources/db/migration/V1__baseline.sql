@@ -941,3 +941,76 @@ CREATE TABLE training_attempt (
 CREATE INDEX idx_puzzle_id ON training_attempt (puzzle_id);
 CREATE INDEX idx_account_id ON training_attempt (chess_account_id);
 CREATE INDEX idx_created_at ON training_attempt (created_at);
+
+-- #430: minimal immutable E6 evaluation evidence. Additive to the existing
+-- #426 artifact-snapshot and #431 occurrence tables; neither is modified.
+CREATE TABLE evaluation_evidence_snapshot
+(
+    id                     UUID PRIMARY KEY,
+    source_run_id          UUID NOT NULL REFERENCES human_move_corpus_run (id) ON DELETE RESTRICT,
+    content_digest         VARCHAR(64) NOT NULL CHECK (content_digest ~ '^[0-9a-f]{64}$'),
+    covered_prefix         INT NOT NULL CHECK (covered_prefix >= 1),
+    prefix_n               INT NOT NULL CHECK (prefix_n >= 1),
+    rating_band            VARCHAR(64) NOT NULL,
+    min_observations       INT NOT NULL CHECK (min_observations >= 0),
+    calculation_version    VARCHAR(255) NOT NULL,
+    distribution_sha256    VARCHAR(64) CHECK (distribution_sha256 IS NULL OR distribution_sha256 ~ '^[0-9a-f]{64}$'),
+    occurrence_evidence_id UUID,
+    thresholds             DOUBLE PRECISION[] NOT NULL,
+    min_mistake_count      INT NOT NULL CHECK (min_mistake_count >= 0),
+    min_times_reached      INT NOT NULL CHECK (min_times_reached >= 0),
+    color                  VARCHAR(10) NOT NULL CHECK (color IN ('WHITE', 'BLACK', 'BOTH')),
+    platform               VARCHAR(32) NOT NULL,
+    observation_window_days INT,
+    source_revision        VARCHAR(255) NOT NULL,
+    engine_identity        VARCHAR(255) NOT NULL,
+    parser_identity        VARCHAR(255) NOT NULL,
+    evidence_digest        VARCHAR(64) NOT NULL CHECK (evidence_digest ~ '^[0-9a-f]{64}$'),
+    created_at             TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uk_evaluation_evidence_snapshot_run UNIQUE (source_run_id)
+);
+
+CREATE TABLE evaluation_evidence_row
+(
+    id                  UUID PRIMARY KEY,
+    snapshot_id         UUID NOT NULL REFERENCES evaluation_evidence_snapshot (id) ON DELETE RESTRICT,
+    player_id           UUID NOT NULL,
+    game_id             UUID NOT NULL,
+    occurrence_id       UUID NOT NULL REFERENCES human_move_corpus_occurrence (id) ON DELETE RESTRICT,
+    position_identity   VARCHAR(255) NOT NULL CHECK (length(trim(position_identity)) > 0),
+    pre_move_ply        INT NOT NULL CHECK (pre_move_ply >= 1),
+    move_played         VARCHAR(20) NOT NULL CHECK (length(trim(move_played)) > 0),
+    player_color        VARCHAR(10) NOT NULL CHECK (player_color IN ('WHITE', 'BLACK')),
+    loss                DOUBLE PRECISION NOT NULL CHECK (loss >= 0.0),
+    engine_depth        INT NOT NULL CHECK (engine_depth > 0),
+    observed_outcome    VARCHAR(10) NOT NULL CHECK (observed_outcome IN ('WIN', 'DRAW', 'LOSS')),
+    objective_outcome   VARCHAR(10) NOT NULL CHECK (objective_outcome IN ('WEAK', 'SOUND')),
+    practical_candidate BOOLEAN NOT NULL,
+    practical_eligible  BOOLEAN NOT NULL,
+    practical_wins      INT NOT NULL CHECK (practical_wins >= 0),
+    practical_draws     INT NOT NULL CHECK (practical_draws >= 0),
+    practical_losses    INT NOT NULL CHECK (practical_losses >= 0),
+    CONSTRAINT uk_evaluation_evidence_row_occurrence UNIQUE (snapshot_id, player_id, occurrence_id),
+    CONSTRAINT uk_evaluation_evidence_row_location UNIQUE (snapshot_id, player_id, game_id, pre_move_ply),
+    CONSTRAINT ck_evaluation_evidence_row_eligible_candidate CHECK (NOT practical_eligible OR practical_candidate)
+);
+
+CREATE INDEX idx_evaluation_evidence_row_snapshot ON evaluation_evidence_row (snapshot_id);
+
+CREATE FUNCTION reject_evaluation_evidence_mutation()
+RETURNS TRIGGER AS
+$$
+BEGIN
+    RAISE EXCEPTION '% on % is not permitted', TG_OP, TG_TABLE_NAME;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_evaluation_evidence_snapshot_immutable
+    BEFORE UPDATE OR DELETE ON evaluation_evidence_snapshot
+    FOR EACH ROW
+    EXECUTE FUNCTION reject_evaluation_evidence_mutation();
+
+CREATE TRIGGER trg_evaluation_evidence_row_immutable
+    BEFORE UPDATE OR DELETE ON evaluation_evidence_row
+    FOR EACH ROW
+    EXECUTE FUNCTION reject_evaluation_evidence_mutation();

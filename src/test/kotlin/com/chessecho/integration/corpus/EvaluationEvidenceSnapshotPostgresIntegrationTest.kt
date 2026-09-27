@@ -1,0 +1,352 @@
+package com.chessecho.integration.corpus
+
+import com.chessecho.dto.HumanMoveCorpusRunRequest
+import com.chessecho.humanmove.artifact.HumanMoveCorpusArtifactService
+import com.chessecho.humanmove.artifact.HumanMoveCorpusExportRequest
+import com.chessecho.service.EvaluationEvidenceConfiguration
+import com.chessecho.service.EvaluationEvidenceIntegrityException
+import com.chessecho.service.EvaluationEvidencePlayer
+import com.chessecho.service.EvaluationEvidenceRow
+import com.chessecho.service.EvaluationEvidenceSnapshot
+import com.chessecho.service.EvaluationEvidenceSnapshotService
+import com.chessecho.service.EvaluationReferencePopulation
+import com.chessecho.service.GameParserService
+import com.chessecho.service.HumanMoveCorpusCandidate
+import com.chessecho.service.HumanMoveCorpusGameWriter
+import com.chessecho.service.HumanMoveCorpusImportService
+import com.chessecho.service.HumanMoveCorpusMaterializationService
+import com.chessecho.service.HumanMoveCorpusMaterializeRequest
+import com.chessecho.service.HumanMoveCorpusObservedMove
+import com.chessecho.service.HumanMoveCorpusProjectionFinalizationService
+import com.chessecho.service.HumanMoveCorpusSide
+import com.chessecho.service.ObjectiveOutcome
+import com.chessecho.service.ObservedGameOutcome
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
+import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.test.context.DynamicPropertyRegistry
+import org.springframework.test.context.DynamicPropertySource
+import org.testcontainers.containers.PostgreSQLContainer
+import org.testcontainers.junit.jupiter.Container
+import org.testcontainers.junit.jupiter.Testcontainers
+import java.nio.file.Files
+import java.util.UUID
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
+
+/**
+ * Issue #430 PostgreSQL evidence: occurrence linkage against a real finalized
+ * #431 binding, exact #426 identity mismatch rejection, deterministic
+ * duplicate/conflict handling, retry idempotency, DB-enforced immutability,
+ * and post-purge reconstruction using only retained #430 evidence plus its
+ * verified #426/#431 bindings.
+ */
+@SpringBootTest
+@Testcontainers
+class EvaluationEvidenceSnapshotPostgresIntegrationTest {
+    @Autowired
+    private lateinit var gameWriter: HumanMoveCorpusGameWriter
+
+    @Autowired
+    private lateinit var artifactService: HumanMoveCorpusArtifactService
+
+    @Autowired
+    private lateinit var importService: HumanMoveCorpusImportService
+
+    @Autowired
+    private lateinit var materializationService: HumanMoveCorpusMaterializationService
+
+    @Autowired
+    private lateinit var projectionFinalizationService: HumanMoveCorpusProjectionFinalizationService
+
+    @Autowired
+    private lateinit var jdbcTemplate: JdbcTemplate
+
+    @Autowired
+    private lateinit var evaluationEvidenceSnapshotService: EvaluationEvidenceSnapshotService
+
+    @BeforeEach
+    fun setUp() = resetDatabase()
+
+    @AfterEach
+    fun tearDown() = resetDatabase()
+
+    private fun resetDatabase() =
+        jdbcTemplate.execute(
+            "TRUNCATE evaluation_evidence_row, evaluation_evidence_snapshot, human_move_corpus_import CASCADE",
+        ).also {
+            jdbcTemplate.execute(
+                "TRUNCATE human_move_corpus_observation, human_move_corpus_game, human_move_corpus_run, " +
+                    "human_move_distribution, human_move_bfs_seen_game, position CASCADE",
+            )
+        }
+
+    private fun newRun(): UUID =
+        gameWriter.createRun(
+            HumanMoveCorpusRunRequest(
+                ratingBand = "1000-1200",
+                seedPlayers = listOf("seed"),
+                maxQualifyingGames = 10,
+                sourceRevision = "source-430-test",
+            ),
+        )
+
+    /** Commits one game with two distinct occurrence locations and finalizes/binds #431 evidence for it. */
+    private fun finalizedRunWithOccurrences(): UUID {
+        val runId = newRun()
+        val firstFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        val secondFen = "rnbqkbnr/pppppppp/8/8/8/5N2/PPPPPPPP/RNBQKB1R b KQkq - 1 1"
+        val firstHash = GameParserService.generateHash(firstFen)
+        val secondHash = GameParserService.generateHash(secondFen)
+        gameWriter.commitGame(
+            runId,
+            HumanMoveCorpusCandidate(
+                providerGameId = "http://game-430",
+                traversedPlayer = "seed",
+                opponent = "opponent",
+                opponentSide = HumanMoveCorpusSide.BLACK,
+                opponentRating = 1100,
+                rules = "chess",
+                timeClass = "rapid",
+                bfsDepth = 0,
+                pgn = "[Event \"issue-430\"]\n\n1. Nf3 *",
+                observations =
+                    listOf(
+                        HumanMoveCorpusObservedMove(firstHash, firstFen, "Nf3", 1),
+                        HumanMoveCorpusObservedMove(secondHash, secondFen, "Nf6", 1),
+                    ),
+            ),
+        )
+        val exported = artifactService.export(HumanMoveCorpusExportRequest(runId, 1))
+        val bytes = Files.readAllBytes(artifactService.archivePath(exported.contentDigest))
+        importService.import(bytes, exported.contentDigest)
+        val projection =
+            materializationService.materialize(
+                HumanMoveCorpusMaterializeRequest(contentDigest = exported.contentDigest, prefixN = 1, minObservations = 1),
+            )
+        projectionFinalizationService.finalize(projection.projectionId)
+        return runId
+    }
+
+    private data class Occurrence(
+        val id: UUID,
+        val positionHash: String,
+        val preMovePly: Int,
+        val contentDigest: String,
+        val coveredPrefix: Int,
+    )
+
+    private fun occurrencesOf(runId: UUID): List<Occurrence> =
+        jdbcTemplate.queryForList(
+            "SELECT id, position_hash, pre_move_ply, content_digest, covered_prefix " +
+                "FROM human_move_corpus_occurrence WHERE source_run_id = ? ORDER BY pre_move_ply",
+            runId,
+        ).map {
+            Occurrence(
+                it["id"] as UUID,
+                it["position_hash"].toString(),
+                (it["pre_move_ply"] as Number).toInt(),
+                it["content_digest"].toString(),
+                (it["covered_prefix"] as Number).toInt(),
+            )
+        }
+
+    private fun referencePopulation(
+        runId: UUID,
+        occurrence: Occurrence,
+    ) = EvaluationReferencePopulation(
+        contentDigest = occurrence.contentDigest,
+        sourceRunId = runId,
+        coveredPrefix = occurrence.coveredPrefix,
+        prefixN = occurrence.coveredPrefix,
+        ratingBand = "1000-1200",
+        minObservations = 1,
+        calculationVersion = "human-move-corpus-checkpoint-v1",
+        distributionSha256 = null,
+    )
+
+    private fun configuration() =
+        EvaluationEvidenceConfiguration(
+            thresholds = EvaluationEvidenceSnapshotService.APPROVED_THRESHOLDS,
+            minMistakeCount = 1,
+            minTimesReached = 1,
+            color = "BOTH",
+            platform = "CHESS_COM",
+            observationWindowDays = null,
+        )
+
+    private fun snapshotFor(
+        runId: UUID,
+        occurrences: List<Occurrence>,
+        player: UUID = UUID.randomUUID(),
+        game: UUID = UUID.randomUUID(),
+    ) = EvaluationEvidenceSnapshot(
+        id = UUID.randomUUID(),
+        referencePopulation = referencePopulation(runId, occurrences.first()),
+        occurrenceEvidenceId = null,
+        players = setOf(EvaluationEvidencePlayer(player, "player")),
+        configuration = configuration(),
+        sourceRevision = "source-430-test",
+        engineIdentity = "stockfish-16-depth-18",
+        parserIdentity = "pgn-normalizer-v1",
+        rows =
+            occurrences.map { occurrence ->
+                EvaluationEvidenceRow(
+                    playerId = player,
+                    gameId = game,
+                    occurrenceId = occurrence.id,
+                    positionIdentity = occurrence.positionHash,
+                    preMovePly = occurrence.preMovePly,
+                    move = "Nf3",
+                    playerColor = "WHITE",
+                    loss = 0.55,
+                    engineDepth = 18,
+                    observedOutcome = ObservedGameOutcome.WIN,
+                    objectiveOutcome = ObjectiveOutcome.WEAK,
+                    practicalCandidate = true,
+                    practicalEligible = true,
+                    practicalWins = 1,
+                    practicalDraws = 0,
+                    practicalLosses = 0,
+                )
+            },
+    )
+
+    @Test
+    fun `persists a valid snapshot bound to a verified occurrence and reconstructs it`() {
+        val runId = finalizedRunWithOccurrences()
+        val occurrences = occurrencesOf(runId)
+        val snapshot = snapshotFor(runId, occurrences)
+
+        evaluationEvidenceSnapshotService.persist(snapshot, snapshot.referencePopulation)
+        val result = evaluationEvidenceSnapshotService.reconstructPersisted(runId)
+
+        assertEquals(2, result.objectiveWeakness.getValue(snapshot.players.first().id).getValue(0.30))
+    }
+
+    @Test
+    fun `rejects a row whose occurrence does not exist`() {
+        val runId = finalizedRunWithOccurrences()
+        val occurrences = occurrencesOf(runId)
+        val snapshot =
+            snapshotFor(runId, occurrences).let { snap ->
+                snap.copy(rows = snap.rows.map { it.copy(occurrenceId = UUID.randomUUID()) })
+            }
+
+        assertFailsWith<EvaluationEvidenceIntegrityException> {
+            evaluationEvidenceSnapshotService.persist(snapshot, snapshot.referencePopulation)
+        }
+    }
+
+    @Test
+    fun `rejects a row whose occurrence is bound to a different run`() {
+        val runId = finalizedRunWithOccurrences()
+        val otherRunId = finalizedRunWithOccurrences()
+        val occurrences = occurrencesOf(runId)
+        val otherOccurrences = occurrencesOf(otherRunId)
+        val snapshot =
+            snapshotFor(runId, occurrences).let { snap ->
+                snap.copy(rows = listOf(snap.rows.first().copy(occurrenceId = otherOccurrences.first().id)))
+            }
+
+        assertFailsWith<EvaluationEvidenceIntegrityException> {
+            evaluationEvidenceSnapshotService.persist(snapshot, snapshot.referencePopulation)
+        }
+    }
+
+    @Test
+    fun `rejects a row whose position identity disagrees with the resolved occurrence`() {
+        val runId = finalizedRunWithOccurrences()
+        val occurrences = occurrencesOf(runId)
+        val snapshot =
+            snapshotFor(runId, occurrences).let { snap ->
+                snap.copy(rows = snap.rows.map { it.copy(positionIdentity = "mismatched-position") })
+            }
+
+        assertFailsWith<EvaluationEvidenceIntegrityException> {
+            evaluationEvidenceSnapshotService.persist(snapshot, snapshot.referencePopulation)
+        }
+    }
+
+    @Test
+    fun `retrying identical evidence is idempotent and rejects a conflicting replacement`() {
+        val runId = finalizedRunWithOccurrences()
+        val occurrences = occurrencesOf(runId)
+        val snapshot = snapshotFor(runId, occurrences)
+
+        val firstId = evaluationEvidenceSnapshotService.persist(snapshot, snapshot.referencePopulation)
+        val secondId = evaluationEvidenceSnapshotService.persist(snapshot, snapshot.referencePopulation)
+        assertEquals(firstId, secondId)
+        assertEquals(
+            occurrences.size,
+            jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM evaluation_evidence_row WHERE snapshot_id = ?",
+                Int::class.java,
+                firstId,
+            ),
+        )
+
+        val conflicting = snapshot.copy(rows = snapshot.rows.map { it.copy(loss = it.loss + 0.1) })
+        assertFailsWith<EvaluationEvidenceIntegrityException> {
+            evaluationEvidenceSnapshotService.persist(conflicting, conflicting.referencePopulation)
+        }
+    }
+
+    @Test
+    fun `retained snapshot and row tables are immutable`() {
+        val runId = finalizedRunWithOccurrences()
+        val occurrences = occurrencesOf(runId)
+        val snapshot = snapshotFor(runId, occurrences)
+        val id = evaluationEvidenceSnapshotService.persist(snapshot, snapshot.referencePopulation)
+
+        assertFailsWith<Exception> {
+            jdbcTemplate.update("UPDATE evaluation_evidence_snapshot SET evidence_digest = evidence_digest WHERE id = ?", id)
+        }
+        assertFailsWith<Exception> {
+            jdbcTemplate.update("DELETE FROM evaluation_evidence_snapshot WHERE id = ?", id)
+        }
+        val rowId =
+            jdbcTemplate.queryForObject("SELECT id FROM evaluation_evidence_row WHERE snapshot_id = ? LIMIT 1", UUID::class.java, id)
+        assertFailsWith<Exception> {
+            jdbcTemplate.update("DELETE FROM evaluation_evidence_row WHERE id = ?", rowId)
+        }
+    }
+
+    @Test
+    fun `post-purge reconstruction uses only retained evidence and its verified bindings`() {
+        val runId = finalizedRunWithOccurrences()
+        val occurrences = occurrencesOf(runId)
+        val snapshot = snapshotFor(runId, occurrences)
+        evaluationEvidenceSnapshotService.persist(snapshot, snapshot.referencePopulation)
+
+        // Purge the mutable operational rows the post-purge path must not depend on.
+        jdbcTemplate.execute("TRUNCATE human_move_corpus_imported_observation, human_move_corpus_imported_game CASCADE")
+        jdbcTemplate.execute("TRUNCATE human_move_corpus_observation CASCADE")
+
+        val result = evaluationEvidenceSnapshotService.reconstructPersisted(runId)
+
+        assertTrue(result.objectiveWeakness.getValue(snapshot.players.first().id).getValue(0.30) == 2)
+    }
+
+    companion object {
+        private val archiveRoot = Files.createTempDirectory("chessecho-corpus-430-artifact-")
+
+        @Container
+        @JvmStatic
+        val postgres = PostgreSQLContainer<Nothing>("postgres:16-alpine")
+
+        @DynamicPropertySource
+        @JvmStatic
+        fun database(registry: DynamicPropertyRegistry) {
+            registry.add("spring.datasource.url", postgres::getJdbcUrl)
+            registry.add("spring.datasource.username", postgres::getUsername)
+            registry.add("spring.datasource.password", postgres::getPassword)
+            registry.add("chessecho.corpus.archive-root", archiveRoot::toString)
+            registry.add("chessecho.corpus.max-archive-bytes", { "100000" })
+        }
+    }
+}
