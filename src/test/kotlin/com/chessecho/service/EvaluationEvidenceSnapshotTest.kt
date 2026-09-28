@@ -180,7 +180,7 @@ class EvaluationEvidenceSnapshotTest {
     }
 
     @Test
-    fun `rejects duplicate (player, game, preMovePly) rows with conflicting occurrence identity`() {
+    fun `retains distinct occurrences at the same player game and preMovePly`() {
         val player = UUID.randomUUID()
         val game = UUID.randomUUID()
         val snapshot =
@@ -193,9 +193,9 @@ class EvaluationEvidenceSnapshotTest {
                     ),
             )
 
-        assertThrows<EvaluationEvidenceIntegrityException> {
-            EvaluationEvidenceSnapshotService().reconstruct(snapshot)
-        }
+        val result = EvaluationEvidenceSnapshotService().reconstruct(snapshot)
+
+        assertEquals(2, result.objectiveWeakness[player]?.get(0.50))
     }
 
     @Test

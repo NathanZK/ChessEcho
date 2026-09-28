@@ -21,6 +21,7 @@ import com.chessecho.service.HumanMoveCorpusImportService
 import com.chessecho.service.HumanMoveCorpusMaterializationService
 import com.chessecho.service.HumanMoveCorpusMaterializeRequest
 import com.chessecho.service.HumanMoveCorpusObservedMove
+import com.chessecho.service.HumanMoveCorpusOccurrence
 import com.chessecho.service.HumanMoveCorpusProjectionFinalizationService
 import com.chessecho.service.HumanMoveCorpusRunOutcome
 import com.chessecho.service.HumanMoveCorpusSide
@@ -150,22 +151,75 @@ class EvaluationEvidenceSnapshotPostgresIntegrationTest {
         return runId
     }
 
+    private fun finalizedRunWithSamePlyOccurrences(): UUID {
+        val runId = newRun()
+        val fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        val positionHash = GameParserService.generateHash(fen)
+        listOf("http://game-430-a", "http://game-430-b").forEach { providerGameId ->
+            gameWriter.commitGame(
+                runId,
+                HumanMoveCorpusCandidate(
+                    providerGameId = providerGameId,
+                    traversedPlayer = "seed",
+                    opponent = "opponent",
+                    opponentSide = HumanMoveCorpusSide.BLACK,
+                    opponentRating = 1100,
+                    rules = "chess",
+                    timeClass = "rapid",
+                    bfsDepth = 0,
+                    pgn = "[Event \"issue-430-same-ply\"]\n\n1. e4 *",
+                    observations = listOf(HumanMoveCorpusObservedMove(positionHash, fen, "e4", 1)),
+                    occurrences = listOf(HumanMoveCorpusOccurrence(1, positionHash, "e4")),
+                ),
+            )
+        }
+        gameWriter.finishRun(
+            runId,
+            HumanMoveCorpusRunOutcome(
+                status = HumanMoveCorpusRunStatus.COMPLETED,
+                stopReason = "MAX_QUALIFYING_GAMES",
+                rejectedGameCount = 0,
+                archiveFetchFailureCount = 0,
+                failureDetails = null,
+            ),
+        )
+        val exported = artifactService.export(HumanMoveCorpusExportRequest(runId, 2))
+        val bytes = Files.readAllBytes(artifactService.archivePath(exported.contentDigest))
+        importService.import(bytes, exported.contentDigest)
+        val projection =
+            materializationService.materialize(
+                HumanMoveCorpusMaterializeRequest(contentDigest = exported.contentDigest, prefixN = 2, minObservations = 1),
+            )
+        projectionFinalizationService.finalize(projection.projectionId)
+        return runId
+    }
+
     private data class Occurrence(
         val id: UUID,
+        val qualifyingOrdinal: Int,
         val positionHash: String,
         val preMovePly: Int,
         val contentDigest: String,
         val coveredPrefix: Int,
     )
 
+    private data class PersistedEvidenceIdentity(
+        val playerId: UUID,
+        val gameId: UUID,
+        val occurrenceId: UUID,
+        val positionIdentity: String,
+        val preMovePly: Int,
+    )
+
     private fun occurrencesOf(runId: UUID): List<Occurrence> =
         jdbcTemplate.queryForList(
-            "SELECT id, position_hash, pre_move_ply, content_digest, covered_prefix " +
-                "FROM human_move_corpus_occurrence WHERE source_run_id = ? ORDER BY pre_move_ply",
+            "SELECT id, qualifying_ordinal, position_hash, pre_move_ply, content_digest, covered_prefix " +
+                "FROM human_move_corpus_occurrence WHERE source_run_id = ? ORDER BY qualifying_ordinal, pre_move_ply",
             runId,
         ).map {
             Occurrence(
                 it["id"] as UUID,
+                (it["qualifying_ordinal"] as Number).toInt(),
                 it["position_hash"].toString(),
                 (it["pre_move_ply"] as Number).toInt(),
                 it["content_digest"].toString(),
@@ -244,6 +298,61 @@ class EvaluationEvidenceSnapshotPostgresIntegrationTest {
         val result = evaluationEvidenceSnapshotService.reconstructPersisted(runId)
 
         assertEquals(2, result.objectiveWeakness.getValue(snapshot.players.first().id).getValue(0.30))
+    }
+
+    @Test
+    fun `persists and analyzes distinct retained occurrences at the same operational game ply`() {
+        val runId = finalizedRunWithSamePlyOccurrences()
+        val occurrences = occurrencesOf(runId)
+        assertEquals(2, occurrences.size)
+        assertEquals(listOf(1, 2), occurrences.map { it.qualifyingOrdinal })
+        assertEquals(setOf(1), occurrences.map { it.preMovePly }.toSet())
+        assertEquals(1, occurrences.map { it.positionHash }.toSet().size)
+        assertEquals(2, occurrences.map { it.id }.toSet().size)
+        val gameId = UUID.randomUUID()
+        val snapshot = snapshotFor(runId, occurrences, game = gameId)
+
+        val snapshotId = evaluationEvidenceSnapshotService.persist(snapshot, snapshot.referencePopulation)
+        val retainedRows =
+            jdbcTemplate.query(
+                "SELECT player_id, game_id, occurrence_id, position_identity, pre_move_ply " +
+                    "FROM evaluation_evidence_row WHERE snapshot_id = ? ORDER BY occurrence_id",
+                { rs, _ ->
+                    PersistedEvidenceIdentity(
+                        playerId = rs.getObject("player_id", UUID::class.java),
+                        gameId = rs.getObject("game_id", UUID::class.java),
+                        occurrenceId = rs.getObject("occurrence_id", UUID::class.java),
+                        positionIdentity = rs.getString("position_identity"),
+                        preMovePly = rs.getInt("pre_move_ply"),
+                    )
+                },
+                snapshotId,
+            )
+        assertEquals(2, retainedRows.size)
+        assertEquals(setOf(snapshot.players.single().id), retainedRows.map { it.playerId }.toSet())
+        assertEquals(setOf(gameId), retainedRows.map { it.gameId }.toSet())
+        assertEquals(occurrences.map { it.id }.toSet(), retainedRows.map { it.occurrenceId }.toSet())
+        assertEquals(1, retainedRows.map { it.positionIdentity }.toSet().size)
+        assertEquals(setOf(1), retainedRows.map { it.preMovePly }.toSet())
+
+        val projectionId =
+            jdbcTemplate.queryForObject(
+                "SELECT id FROM human_move_corpus_projection WHERE source_run_id = ? AND finalized AND verified",
+                UUID::class.java,
+                runId,
+            )!!
+        val admitted = e6AnalysisEvidenceService.loadAndAdmit(runId, projectionId, "e6-v1")
+        assertEquals(occurrences.map { it.id }.toSet(), admitted.resolvedOccurrences.keys)
+        assertEquals(
+            occurrences.map { it.qualifyingOrdinal }.toSet(),
+            occurrences.map { admitted.resolvedOccurrences.getValue(it.id).qualifyingOrdinal }.toSet(),
+        )
+        val locations =
+            E6AnalysisService().analyze(admitted.toAnalysisInput())
+                .locations.getValue(snapshot.players.single().identity).at(0.50)
+        assertEquals(2, locations.occurrenceCount)
+        assertEquals(1, locations.distinctPositionCount)
+        assertEquals(2, locations.uniqueGameCount)
     }
 
     @Test

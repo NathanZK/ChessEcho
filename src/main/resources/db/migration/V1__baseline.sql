@@ -992,7 +992,6 @@ CREATE TABLE evaluation_evidence_row
     practical_draws     INT NOT NULL CHECK (practical_draws >= 0),
     practical_losses    INT NOT NULL CHECK (practical_losses >= 0),
     CONSTRAINT uk_evaluation_evidence_row_occurrence UNIQUE (snapshot_id, player_id, occurrence_id),
-    CONSTRAINT uk_evaluation_evidence_row_location UNIQUE (snapshot_id, player_id, game_id, pre_move_ply),
     CONSTRAINT ck_evaluation_evidence_row_eligible_candidate CHECK (NOT practical_eligible OR practical_candidate)
 );
 
