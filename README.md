@@ -285,15 +285,41 @@ ChessEcho is a **functional MVP**. The core pipeline works end-to-end:
 
 An important finding from testing the system:
 
-> **Engine evaluation loss does not always correspond to a genuine player weakness.** Intentional opening experiments, unusual repertoire choices, or positions where the engine's preferred move is objectively correct but rarely played at the human level can all surface as apparent weaknesses. The weakness ranking reflects objective evaluation loss, not a judgment about whether a move was actually a mistake in context.
+> **Engine evaluation loss does not always correspond to a genuine player weakness.** Intentional opening experiments, unusual repertoire choices, or positions where the engine's preferred move is objectively correct but rarely played at the human level can all surface as apparent weaknesses. By default, the weakness ranking reflects objective evaluation loss, not a judgment about whether a move was actually a mistake in context.
 
 This is a known open problem in the design — not a bug — and is an active area of improvement. The configurable `minEvalLoss` and `minMistakeCount` thresholds provide partial control but cannot fully eliminate false positives.
+
+### Optional Practical-Evidence Ranking
+
+Practical-evidence ranking is disabled by default: `CHESS_WEAKNESS_PRACTICAL_RANKING_ENABLED=false`. In `application.yml`, calibration values are unset or the method settings are `DISABLED`; `docker-compose.yml` does not set these environment variables.
+
+Enabling practical-evidence ranking requires all seven calibration values below; startup validation fails if any are missing or the method settings are not the required enabled values:
+
+- `CHESS_WEAKNESS_PRACTICAL_SAMPLE_FLOOR`
+- `CHESS_WEAKNESS_PRACTICAL_COMPARATOR_METHOD`
+- `CHESS_WEAKNESS_PRACTICAL_COMPARATOR_SCORE_RATE`
+- `CHESS_WEAKNESS_PRACTICAL_CONFIDENCE_METHOD`
+- `CHESS_WEAKNESS_PRACTICAL_WILSON_Z_SCORE`
+- `CHESS_WEAKNESS_PRACTICAL_MEANINGFUL_DIFFERENCE`
+- `CHESS_WEAKNESS_PRACTICAL_MAX_PRIORITY_ADJUSTMENT`
+
+The enable switch is `CHESS_WEAKNESS_PRACTICAL_RANKING_ENABLED`. `CHESS_WEAKNESS_PRACTICAL_COMPARATOR_METHOD` accepts `DISABLED` or `FIXED_SCORE_RATE`; enabled ranking requires `FIXED_SCORE_RATE`, which compares the observed score rate with the configured fixed comparator. `CHESS_WEAKNESS_PRACTICAL_CONFIDENCE_METHOD` accepts `DISABLED` or `BERNOULLI_WILSON_SCORE_POINTS_HALF_DRAW_CONSERVATIVE`; enabled ranking requires the latter, which uses conservative Wilson bounds on score points, counting a draw as half a point.
+
+The score rate is `(wins + 0.5 * draws) / eligibleGames`. Positions below the sample floor keep their objective priority unchanged. Once the sample floor is met, the Wilson interval classifies evidence as:
+
+- **POOR** when the upper bound is at or below `comparator - difference`.
+- **SUCCESSFUL** when the lower bound is at or above `comparator + difference`.
+- **Inconclusive** otherwise; priority is unchanged.
+
+`CHESS_WEAKNESS_PRACTICAL_WILSON_Z_SCORE` sets the confidence interval width and directly affects classification, so it should be chosen deliberately. For illustration only, at a 67% score rate over 60 games with comparator `0.50` and difference `0.10`, z-score `1.0` gives a lower bound of about `0.607` (SUCCESSFUL), while z-score `1.96` gives a lower bound of about `0.544` (inconclusive). These comparator and difference values are examples, not defaults.
+
+The adjustment is a fixed multiplier, not scaled by distance from the comparator: POOR multiplies objective priority by `1 + maxPriorityAdjustment`, while SUCCESSFUL multiplies it by `1 - maxPriorityAdjustment`. Opponent rating is not used directly.
 
 ---
 
 ## Known Limitations
 
-- **No authentication.** Any Chess.com username can be imported. This is appropriate for local and demo use, not for a public multi-user deployment.
+- **Optional authentication.** Guests can import and view unclaimed accounts; registered users can claim accounts and receive owner-scoped access. Unclaimed guest data is not suited to public multi-user deployment.
 - **Chess.com only.** Lichess is not currently implemented.
 - **Engine analysis can take several minutes for large histories.** A player with thousands of games may have many qualifying positions, each requiring individual analysis.
 - **Stockfish runs sequentially as a subprocess.** A new process is spawned per position analysis. There is no persistent engine connection or analysis pool. This is the primary performance bottleneck for large imports.
