@@ -357,12 +357,8 @@ class EvaluationEvidenceSnapshotService(
     }
 
     /**
-     * Deterministically collapses identical duplicate rows and rejects conflicting duplicates.
-     * Duplicates are resolved by evidence identity, never by list/iteration order:
-     *  1. Rows sharing (playerId, occurrenceId) must be fully identical; identical duplicates collapse.
-     *  2. Rows sharing (playerId, gameId) must agree on the game-level observed outcome and
-     *     practical-evidence contribution.
-     *  3. No two distinct occurrences may claim the same (playerId, gameId, preMovePly) location.
+     * Deterministically collapses identical rows by canonical occurrence identity and rejects
+     * conflicting occurrence or game-level evidence without depending on list order.
      */
     private fun canonicalize(rows: List<EvaluationEvidenceRow>): List<EvaluationEvidenceRow> {
         val canonicalByOccurrence =
@@ -389,14 +385,6 @@ class EvaluationEvidenceSnapshotService(
             if (practicalFacts.size > 1) {
                 throw EvaluationEvidenceIntegrityException(
                     "Conflicting practical evidence for player ${key.first} game ${key.second}",
-                )
-            }
-        }
-
-        canonicalByOccurrence.groupBy { Triple(it.playerId, it.gameId, it.preMovePly) }.forEach { (key, group) ->
-            if (group.size > 1) {
-                throw EvaluationEvidenceIntegrityException(
-                    "Conflicting evidence rows for player ${key.first} game ${key.second} pre-move ply ${key.third}",
                 )
             }
         }
