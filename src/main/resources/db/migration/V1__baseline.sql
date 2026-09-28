@@ -966,6 +966,7 @@ CREATE TABLE evaluation_evidence_snapshot
     engine_identity        VARCHAR(255) NOT NULL,
     parser_identity        VARCHAR(255) NOT NULL,
     evidence_digest        VARCHAR(64) NOT NULL CHECK (evidence_digest ~ '^[0-9a-f]{64}$'),
+    roster_json            JSONB,
     created_at             TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uk_evaluation_evidence_snapshot_run UNIQUE (source_run_id)
 );

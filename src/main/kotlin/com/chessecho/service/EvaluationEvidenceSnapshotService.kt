@@ -1,7 +1,9 @@
 package com.chessecho.service
 
+import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Isolation
 import org.springframework.transaction.annotation.Transactional
 import java.nio.ByteBuffer
 import java.security.MessageDigest
@@ -72,6 +74,8 @@ data class EvaluationEvidenceSnapshot(
     val engineIdentity: String,
     val parserIdentity: String,
     val rows: List<EvaluationEvidenceRow>,
+    val digestCoverage: Set<String> = emptySet(),
+    val evidenceDigest: String? = null,
 )
 
 data class EvaluationEvidenceReconstruction(
@@ -170,15 +174,30 @@ class EvaluationEvidenceSnapshotService(
 
         val existing =
             db.query(
-                "SELECT id, evidence_digest FROM evaluation_evidence_snapshot WHERE source_run_id = ?",
-                { rs, _ -> rs.getObject("id", UUID::class.java) to rs.getString("evidence_digest") },
+                "SELECT id, source_run_id, evidence_digest, roster_json, content_digest, covered_prefix, prefix_n, rating_band, " +
+                    "min_observations, calculation_version, distribution_sha256, occurrence_evidence_id, thresholds, " +
+                    "min_mistake_count, min_times_reached, color, platform, observation_window_days, source_revision, " +
+                    "engine_identity, parser_identity FROM evaluation_evidence_snapshot WHERE source_run_id = ?",
+                { rs, _ ->
+                    ExistingSnapshot(
+                        id = rs.getObject("id", UUID::class.java),
+                        evidenceDigest = rs.getString("evidence_digest"),
+                        snapshot = readSnapshotMetadata(rs),
+                        players = readRoster(rs.getString("roster_json")),
+                    )
+                },
                 snapshot.referencePopulation.sourceRunId,
             ).singleOrNull()
         if (existing != null) {
-            val (existingId, existingDigest) = existing
-            if (existingDigest == digest) return existingId
+            if (existing.evidenceDigest == digest &&
+                existing.snapshot == snapshotMetadata(snapshot) &&
+                existing.players == snapshot.players
+            ) {
+                return existing.id
+            }
             throw EvaluationEvidenceIntegrityException(
-                "Conflicting evaluation evidence replacement for source run ${snapshot.referencePopulation.sourceRunId}",
+                "Conflicting evaluation evidence replacement for source run ${snapshot.referencePopulation.sourceRunId}; " +
+                    "retained digest, roster, or metadata differs",
             )
         }
 
@@ -186,6 +205,62 @@ class EvaluationEvidenceSnapshotService(
         insertSnapshot(db, id, snapshot, digest)
         insertRows(db, id, canonicalRows)
         return id
+    }
+
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    fun readVerifiedPersisted(sourceRunId: UUID): EvaluationEvidenceSnapshot {
+        val db = requireJdbcTemplate()
+        val row =
+            db.query(
+                "SELECT id, source_run_id, content_digest, covered_prefix, prefix_n, rating_band, min_observations, " +
+                    "calculation_version, distribution_sha256, occurrence_evidence_id, thresholds, min_mistake_count, " +
+                    "min_times_reached, color, platform, observation_window_days, source_revision, engine_identity, " +
+                    "parser_identity, evidence_digest, roster_json FROM evaluation_evidence_snapshot WHERE source_run_id = ?",
+                { rs, _ ->
+                    ExistingSnapshot(
+                        id = rs.getObject("id", UUID::class.java),
+                        evidenceDigest = rs.getString("evidence_digest"),
+                        snapshot = readSnapshotMetadata(rs),
+                        players = readRoster(rs.getString("roster_json")),
+                    )
+                },
+                sourceRunId,
+            ).singleOrNull()
+                ?: throw EvaluationEvidenceIntegrityException("No retained evaluation evidence for source run $sourceRunId")
+
+        val players =
+            row.players ?: throw EvaluationEvidenceIntegrityException(
+                "Retained evaluation evidence for source run $sourceRunId has no declared roster",
+            )
+        validateRoster(players)
+        val rows = readRows(db, row.id)
+        val playerIds = players.map { it.id }.toSet()
+        if (rows.any { it.playerId !in playerIds }) {
+            throw EvaluationEvidenceIntegrityException("Retained evaluation evidence contains a row outside its declared roster")
+        }
+        val canonicalRows = canonicalize(rows)
+        if (canonicalRows.size != rows.size) {
+            throw EvaluationEvidenceIntegrityException("Retained evaluation evidence contains duplicate rows")
+        }
+        val digest = computeEvidenceDigest(row.snapshot.referencePopulation, canonicalRows)
+        if (digest != row.evidenceDigest) {
+            throw EvaluationEvidenceIntegrityException(
+                "Retained evaluation evidence digest verification failed for source run $sourceRunId",
+            )
+        }
+        return EvaluationEvidenceSnapshot(
+            id = row.id,
+            referencePopulation = row.snapshot.referencePopulation,
+            occurrenceEvidenceId = row.snapshot.occurrenceEvidenceId,
+            players = players,
+            configuration = row.snapshot.configuration,
+            sourceRevision = row.snapshot.sourceRevision,
+            engineIdentity = row.snapshot.engineIdentity,
+            parserIdentity = row.snapshot.parserIdentity,
+            rows = rows,
+            digestCoverage = setOf("reference-population", "canonical-retained-rows-including-occurrence-id"),
+            evidenceDigest = row.evidenceDigest,
+        )
     }
 
     /** Reconstructs threshold/practical/outcome facts using only retained #430 evidence rows. */
@@ -441,8 +516,8 @@ class EvaluationEvidenceSnapshotService(
                 "id, source_run_id, content_digest, covered_prefix, prefix_n, rating_band, min_observations, " +
                 "calculation_version, distribution_sha256, occurrence_evidence_id, thresholds, min_mistake_count, " +
                 "min_times_reached, color, platform, observation_window_days, source_revision, engine_identity, " +
-                "parser_identity, evidence_digest" +
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "parser_identity, evidence_digest, roster_json" +
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb)",
         ) { ps: java.sql.PreparedStatement ->
             val population = snapshot.referencePopulation
             val configuration = snapshot.configuration
@@ -475,10 +550,44 @@ class EvaluationEvidenceSnapshotService(
             ps.setString(index++, snapshot.sourceRevision)
             ps.setString(index++, snapshot.engineIdentity)
             ps.setString(index++, snapshot.parserIdentity)
-            ps.setString(index, digest)
+            ps.setString(index++, digest)
+            ps.setString(index, serializeRoster(snapshot.players))
             ps.executeUpdate()
         }
     }
+
+    private fun readRows(
+        db: JdbcTemplate,
+        snapshotId: UUID,
+    ): List<EvaluationEvidenceRow> =
+        db.query(
+            "SELECT player_id, game_id, occurrence_id, position_identity, pre_move_ply, move_played, player_color, loss, " +
+                "engine_depth, observed_outcome, objective_outcome, practical_candidate, practical_eligible, " +
+                "practical_wins, practical_draws, practical_losses FROM evaluation_evidence_row WHERE snapshot_id = ? " +
+                "ORDER BY player_id, pre_move_ply, occurrence_id",
+            { rs, _ -> readEvidenceRow(rs) },
+            snapshotId,
+        )
+
+    private fun readEvidenceRow(rs: java.sql.ResultSet): EvaluationEvidenceRow =
+        EvaluationEvidenceRow(
+            playerId = rs.getObject("player_id", UUID::class.java),
+            gameId = rs.getObject("game_id", UUID::class.java),
+            occurrenceId = rs.getObject("occurrence_id", UUID::class.java),
+            positionIdentity = rs.getString("position_identity"),
+            preMovePly = rs.getInt("pre_move_ply"),
+            move = rs.getString("move_played"),
+            playerColor = rs.getString("player_color"),
+            loss = rs.getDouble("loss"),
+            engineDepth = rs.getInt("engine_depth"),
+            observedOutcome = ObservedGameOutcome.valueOf(rs.getString("observed_outcome")),
+            objectiveOutcome = ObjectiveOutcome.valueOf(rs.getString("objective_outcome")),
+            practicalCandidate = rs.getBoolean("practical_candidate"),
+            practicalEligible = rs.getBoolean("practical_eligible"),
+            practicalWins = rs.getInt("practical_wins"),
+            practicalDraws = rs.getInt("practical_draws"),
+            practicalLosses = rs.getInt("practical_losses"),
+        )
 
     private fun insertRows(
         db: JdbcTemplate,
@@ -517,6 +626,82 @@ class EvaluationEvidenceSnapshotService(
         )
     }
 
+    private fun readSnapshotMetadata(rs: java.sql.ResultSet): SnapshotMetadata {
+        val thresholds =
+            (rs.getArray("thresholds").array as Array<*>).map { (it as Number).toDouble() }.toSet()
+        return SnapshotMetadata(
+            referencePopulation =
+                EvaluationReferencePopulation(
+                    contentDigest = rs.getString("content_digest"),
+                    sourceRunId = rs.getObject("source_run_id", UUID::class.java),
+                    coveredPrefix = rs.getInt("covered_prefix"),
+                    prefixN = rs.getInt("prefix_n"),
+                    ratingBand = rs.getString("rating_band"),
+                    minObservations = rs.getInt("min_observations"),
+                    calculationVersion = rs.getString("calculation_version"),
+                    distributionSha256 = rs.getString("distribution_sha256"),
+                ),
+            occurrenceEvidenceId = rs.getObject("occurrence_evidence_id", UUID::class.java),
+            configuration =
+                EvaluationEvidenceConfiguration(
+                    thresholds = thresholds,
+                    minMistakeCount = rs.getInt("min_mistake_count"),
+                    minTimesReached = rs.getInt("min_times_reached"),
+                    color = rs.getString("color"),
+                    platform = rs.getString("platform"),
+                    observationWindowDays = rs.getObject("observation_window_days") as Int?,
+                ),
+            sourceRevision = rs.getString("source_revision"),
+            engineIdentity = rs.getString("engine_identity"),
+            parserIdentity = rs.getString("parser_identity"),
+        )
+    }
+
+    private fun snapshotMetadata(snapshot: EvaluationEvidenceSnapshot): SnapshotMetadata =
+        SnapshotMetadata(
+            referencePopulation = snapshot.referencePopulation,
+            occurrenceEvidenceId = snapshot.occurrenceEvidenceId,
+            configuration = snapshot.configuration,
+            sourceRevision = snapshot.sourceRevision,
+            engineIdentity = snapshot.engineIdentity,
+            parserIdentity = snapshot.parserIdentity,
+        )
+
+    private fun serializeRoster(players: Set<EvaluationEvidencePlayer>): String =
+        jacksonObjectMapper().writeValueAsString(
+            players.sortedBy { it.id.toString() }.map { mapOf("id" to it.id, "identity" to it.identity) },
+        )
+
+    private fun readRoster(value: String?): Set<EvaluationEvidencePlayer>? =
+        value?.let {
+            try {
+                val root = jacksonObjectMapper().readTree(it)
+                if (!root.isArray) throw EvaluationEvidenceIntegrityException("Retained evaluation evidence roster is invalid")
+                val players =
+                    root.map { node ->
+                        EvaluationEvidencePlayer(
+                            id = UUID.fromString(node["id"].textValue()),
+                            identity = node["identity"].textValue(),
+                        )
+                    }
+                if (players.size != players.toSet().size) {
+                    throw EvaluationEvidenceIntegrityException("Retained evaluation evidence roster contains duplicates")
+                }
+                players.toSet()
+            } catch (exception: RuntimeException) {
+                throw EvaluationEvidenceIntegrityException("Retained evaluation evidence roster is invalid")
+            }
+        }
+
+    private fun validateRoster(players: Set<EvaluationEvidencePlayer>) {
+        if (players.isEmpty() || players.size != players.map { it.id }.toSet().size ||
+            players.map { it.identity }.toSet().size != players.size ||
+            players.any { it.identity.isBlank() }
+        ) {
+            throw EvaluationEvidenceIntegrityException("Retained evaluation evidence roster is invalid")
+        }
+    }
+
     private fun requireJdbcTemplate(): JdbcTemplate =
         jdbcTemplate ?: throw IllegalStateException(
             "This operation requires a JdbcTemplate-backed EvaluationEvidenceSnapshotService",
@@ -532,6 +717,22 @@ class EvaluationEvidenceSnapshotService(
         val preMovePly: Int,
         val contentDigest: String?,
         val coveredPrefix: Int?,
+    )
+
+    private data class SnapshotMetadata(
+        val referencePopulation: EvaluationReferencePopulation,
+        val occurrenceEvidenceId: UUID?,
+        val configuration: EvaluationEvidenceConfiguration,
+        val sourceRevision: String,
+        val engineIdentity: String,
+        val parserIdentity: String,
+    )
+
+    private data class ExistingSnapshot(
+        val id: UUID,
+        val evidenceDigest: String,
+        val snapshot: SnapshotMetadata,
+        val players: Set<EvaluationEvidencePlayer>?,
     )
 
     companion object {
