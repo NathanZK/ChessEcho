@@ -21,6 +21,7 @@ import com.chessecho.service.HumanMoveCorpusIntegrityException
 import com.chessecho.service.HumanMoveCorpusMaterializationService
 import com.chessecho.service.HumanMoveCorpusMaterializeRequest
 import com.chessecho.service.HumanMoveCorpusObservedMove
+import com.chessecho.service.HumanMoveCorpusOccurrenceService
 import com.chessecho.service.HumanMoveCorpusProjectionFinalizationService
 import com.chessecho.service.HumanMoveCorpusPurgeService
 import com.chessecho.service.HumanMoveCorpusRunNotRunningException
@@ -95,6 +96,9 @@ class HumanMoveCorpusPostgresIntegrationTest {
 
     @Autowired
     private lateinit var projectionFinalizationService: HumanMoveCorpusProjectionFinalizationService
+
+    @Autowired
+    private lateinit var occurrenceService: HumanMoveCorpusOccurrenceService
 
     @Autowired
     private lateinit var legacyBfsService: HumanMoveBfsService
@@ -286,6 +290,31 @@ class HumanMoveCorpusPostgresIntegrationTest {
 
     private fun sha256(text: String): String =
         MessageDigest.getInstance("SHA-256").digest(text.toByteArray()).joinToString("") { "%02x".format(it) }
+
+    @Test
+    fun `partial occurrence binding remains valid through finalization`() {
+        val runId = newRun()
+        commitAll(runId, adversarialLifecycleCandidates("partial-binding"))
+        val exported = artifactService.export(HumanMoveCorpusExportRequest(runId, 1))
+        val bytes = Files.readAllBytes(artifactService.archivePath(exported.contentDigest))
+        importService.import(bytes, exported.contentDigest)
+        val projection =
+            materializationService.materialize(
+                HumanMoveCorpusMaterializeRequest(
+                    contentDigest = exported.contentDigest,
+                    prefixN = 1,
+                    minObservations = 1,
+                ),
+            )
+
+        projectionFinalizationService.finalize(projection.projectionId)
+
+        val binding = occurrenceService.verifyRequiredBinding(runId, exported.contentDigest, 1)
+
+        assertEquals(runId, binding.sourceRunId)
+        assertEquals(exported.contentDigest, binding.contentDigest)
+        assertEquals(1, binding.coveredPrefix)
+    }
 
     private data class FinalizedPopulation(
         val runId: UUID,
