@@ -146,6 +146,56 @@ class E6AnalysisEvidenceService(
     private val snapshotService: EvaluationEvidenceSnapshotService,
     private val occurrenceService: HumanMoveCorpusOccurrenceService,
 ) {
+    @Transactional(readOnly = true)
+    fun verifyTerminalE6Eligibility(
+        sourceRunId: UUID,
+        contentDigest: String,
+        coveredPrefix: Int,
+    ): HumanMoveCorpusOccurrenceBinding {
+        val binding = occurrenceService.verifyRequiredBinding(sourceRunId, contentDigest, coveredPrefix)
+        val eligible =
+            jdbcTemplate.query(
+                """
+                SELECT COALESCE((s.manifest_json::jsonb ->> 'e6Eligible')::boolean, false),
+                       r.committed_frontier
+                FROM human_move_corpus_artifact_snapshot s
+                JOIN human_move_corpus_run r ON r.id = s.source_run_id
+                WHERE s.source_run_id = ? AND s.content_digest = ? AND s.covered_prefix = ?
+                """.trimIndent(),
+                { rs, _ -> rs.getBoolean(1) && rs.getInt(2) == coveredPrefix },
+                sourceRunId,
+                contentDigest,
+                coveredPrefix,
+            ).singleOrNull() == true
+        if (!eligible) {
+            throw E6AnalysisEvidenceIntegrityException(
+                "Run $sourceRunId artifact is not terminal expanded-E6 eligible",
+            )
+        }
+        return binding
+    }
+
+    @Transactional(readOnly = true)
+    fun verifyFinalizedEvidenceIfEligible(
+        sourceRunId: UUID,
+        contentDigest: String,
+    ) {
+        val snapshot =
+            jdbcTemplate.query(
+                """
+                SELECT covered_prefix, COALESCE((manifest_json::jsonb ->> 'e6Eligible')::boolean, false)
+                FROM human_move_corpus_artifact_snapshot
+                WHERE source_run_id = ? AND content_digest = ?
+                """.trimIndent(),
+                { rs, _ -> rs.getInt(1) to rs.getBoolean(2) },
+                sourceRunId,
+                contentDigest,
+            ).singleOrNull() ?: return
+        if (snapshot.second && occurrenceService.hasSourceRun(sourceRunId)) {
+            verifyTerminalE6Eligibility(sourceRunId, contentDigest, snapshot.first)
+        }
+    }
+
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     fun loadAndAdmit(
         sourceRunId: UUID,
@@ -217,7 +267,7 @@ class E6AnalysisEvidenceService(
         if (!artifactEligible) {
             throw E6AnalysisEvidenceIntegrityException("selected artifact is not expanded-E6 eligible")
         }
-        occurrenceService.verifyExpandedE6Eligibility(sourceRunId, population.contentDigest, population.coveredPrefix)
+        verifyTerminalE6Eligibility(sourceRunId, population.contentDigest, population.coveredPrefix)
         val ids = snapshot.rows.map { it.occurrenceId }.distinct()
         val occurrences =
             if (ids.isEmpty()) {

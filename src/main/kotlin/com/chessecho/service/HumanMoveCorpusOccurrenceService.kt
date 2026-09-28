@@ -53,7 +53,7 @@ class HumanMoveCorpusOccurrenceService(
             )
         }
         if (binding.contentDigest == artifact.digest && binding.coveredPrefix == manifest.coveredPrefix) {
-            verifyExpandedE6Eligibility(manifest.sourceRunId, artifact.digest, manifest.coveredPrefix)
+            verifyRequiredBinding(manifest.sourceRunId, artifact.digest, manifest.coveredPrefix)
         }
     }
 
@@ -70,7 +70,7 @@ class HumanMoveCorpusOccurrenceService(
         val existing = findBinding(runId)
         if (existing != null) {
             return if (existing.contentDigest == artifact.digest && existing.coveredPrefix == manifest.coveredPrefix) {
-                verifyExpandedE6Eligibility(runId, artifact.digest, manifest.coveredPrefix)
+                verifyRequiredBinding(runId, artifact.digest, manifest.coveredPrefix)
             } else {
                 null
             }
@@ -110,18 +110,18 @@ class HumanMoveCorpusOccurrenceService(
             Math.toIntExact(occurrenceCount),
         )
         return if (manifest.e6Eligible) {
-            verifyExpandedE6Eligibility(runId, artifact.digest, manifest.coveredPrefix)
+            verifyRequiredBinding(runId, artifact.digest, manifest.coveredPrefix)
         } else {
             findBinding(runId)
         }
     }
 
     /**
-     * The explicit expanded-E6 gate. Aggregate-only #426 snapshots have no
-     * binding and therefore cannot be expanded into location-level evidence.
+     * Required retained occurrence-binding verification. A valid binding may
+     * represent a partial, nonterminal source prefix.
      */
     @Transactional(readOnly = true)
-    fun verifyExpandedE6Eligibility(
+    fun verifyRequiredBinding(
         sourceRunId: UUID,
         contentDigest: String,
         coveredPrefix: Int,
@@ -129,8 +129,9 @@ class HumanMoveCorpusOccurrenceService(
         val binding =
             findBinding(sourceRunId)
                 ?: throw HumanMoveCorpusIntegrityException(
-                    "Run $sourceRunId has no finalized occurrence binding and is not expanded-E6 eligible",
+                    "Run $sourceRunId has no finalized occurrence binding",
                 )
+        verifyBindingTarget(binding)
         if (binding.contentDigest != contentDigest || binding.coveredPrefix != coveredPrefix) {
             throw HumanMoveCorpusIntegrityException(
                 "Run $sourceRunId occurrence binding does not match the requested artifact and covered prefix",
@@ -158,20 +159,6 @@ class HumanMoveCorpusOccurrenceService(
             )
         }
         verifySourcePrefix(sourceRunId, coveredPrefix)
-        val e6Eligible =
-            jdbcTemplate.query(
-                """
-                SELECT COALESCE((s.manifest_json::jsonb ->> 'e6Eligible')::boolean, false),
-                       r.committed_frontier
-                FROM human_move_corpus_artifact_snapshot s
-                JOIN human_move_corpus_run r ON r.id = s.source_run_id
-                WHERE s.source_run_id = ? AND s.content_digest = ? AND s.covered_prefix = ?
-                """.trimIndent(),
-                { rs, _ -> rs.getBoolean(1) && rs.getInt(2) == coveredPrefix },
-                sourceRunId,
-                contentDigest,
-                coveredPrefix,
-            ).singleOrNull() == true
         return binding
     }
 
@@ -197,28 +184,7 @@ class HumanMoveCorpusOccurrenceService(
             )
         }
         if (binding.contentDigest == contentDigest) {
-            verifyExpandedE6Eligibility(sourceRunId, contentDigest, coveredPrefix)
-        }
-    }
-
-    @Transactional(readOnly = true)
-    fun verifyFinalizedEvidenceIfEligible(
-        sourceRunId: UUID,
-        contentDigest: String,
-    ) {
-        val snapshot =
-            jdbcTemplate.query(
-                """
-                SELECT covered_prefix, COALESCE((manifest_json::jsonb ->> 'e6Eligible')::boolean, false)
-                FROM human_move_corpus_artifact_snapshot
-                WHERE source_run_id = ? AND content_digest = ?
-                """.trimIndent(),
-                { rs, _ -> rs.getInt(1) to rs.getBoolean(2) },
-                sourceRunId,
-                contentDigest,
-            ).singleOrNull() ?: return
-        if (snapshot.second && hasSourceRun(sourceRunId)) {
-            verifyExpandedE6Eligibility(sourceRunId, contentDigest, snapshot.first)
+            verifyRequiredBinding(sourceRunId, contentDigest, coveredPrefix)
         }
     }
 

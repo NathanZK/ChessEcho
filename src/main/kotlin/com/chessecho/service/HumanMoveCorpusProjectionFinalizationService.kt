@@ -27,6 +27,7 @@ class HumanMoveCorpusProjectionFinalizationService(
     private val artifactService: HumanMoveCorpusArtifactService,
     private val importService: HumanMoveCorpusImportService,
     private val occurrenceService: HumanMoveCorpusOccurrenceService,
+    private val e6AnalysisEvidenceService: E6AnalysisEvidenceService,
 ) {
     fun expectedDigest(
         runId: UUID,
@@ -83,7 +84,7 @@ class HumanMoveCorpusProjectionFinalizationService(
             ).singleOrNull() ?: throw NoSuchElementException("Projection $projectionId not found")
         if (projection.finalized) {
             if (!projection.verified) throw CorpusArtifactConflict("Projection $projectionId is finalized without verification")
-            occurrenceService.verifyFinalizedEvidenceIfEligible(projection.runId, projection.contentDigest)
+            e6AnalysisEvidenceService.verifyFinalizedEvidenceIfEligible(projection.runId, projection.contentDigest)
             return digestProjection(projectionId).also {
                 if (it.distributionSha256 != projection.expectedDigest) {
                     throw CorpusArtifactConflict("Projection $projectionId differs from its verified distribution digest")
