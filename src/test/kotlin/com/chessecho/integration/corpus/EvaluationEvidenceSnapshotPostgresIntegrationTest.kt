@@ -1,8 +1,12 @@
 package com.chessecho.integration.corpus
 
+import com.chessecho.domain.HumanMoveCorpusRunStatus
 import com.chessecho.dto.HumanMoveCorpusRunRequest
 import com.chessecho.humanmove.artifact.HumanMoveCorpusArtifactService
 import com.chessecho.humanmove.artifact.HumanMoveCorpusExportRequest
+import com.chessecho.service.E6AnalysisEvidenceService
+import com.chessecho.service.E6AnalysisService
+import com.chessecho.service.E6Coverage
 import com.chessecho.service.EvaluationEvidenceConfiguration
 import com.chessecho.service.EvaluationEvidenceIntegrityException
 import com.chessecho.service.EvaluationEvidencePlayer
@@ -18,6 +22,7 @@ import com.chessecho.service.HumanMoveCorpusMaterializationService
 import com.chessecho.service.HumanMoveCorpusMaterializeRequest
 import com.chessecho.service.HumanMoveCorpusObservedMove
 import com.chessecho.service.HumanMoveCorpusProjectionFinalizationService
+import com.chessecho.service.HumanMoveCorpusRunOutcome
 import com.chessecho.service.HumanMoveCorpusSide
 import com.chessecho.service.ObjectiveOutcome
 import com.chessecho.service.ObservedGameOutcome
@@ -68,6 +73,9 @@ class EvaluationEvidenceSnapshotPostgresIntegrationTest {
 
     @Autowired
     private lateinit var evaluationEvidenceSnapshotService: EvaluationEvidenceSnapshotService
+
+    @Autowired
+    private lateinit var e6AnalysisEvidenceService: E6AnalysisEvidenceService
 
     @BeforeEach
     fun setUp() = resetDatabase()
@@ -121,6 +129,16 @@ class EvaluationEvidenceSnapshotPostgresIntegrationTest {
                     ),
             ),
         )
+        gameWriter.finishRun(
+            runId,
+            HumanMoveCorpusRunOutcome(
+                status = HumanMoveCorpusRunStatus.COMPLETED,
+                stopReason = "MAX_QUALIFYING_GAMES",
+                rejectedGameCount = 0,
+                archiveFetchFailureCount = 0,
+                failureDetails = null,
+            ),
+        )
         val exported = artifactService.export(HumanMoveCorpusExportRequest(runId, 1))
         val bytes = Files.readAllBytes(artifactService.archivePath(exported.contentDigest))
         importService.import(bytes, exported.contentDigest)
@@ -165,7 +183,7 @@ class EvaluationEvidenceSnapshotPostgresIntegrationTest {
         prefixN = occurrence.coveredPrefix,
         ratingBand = "1000-1200",
         minObservations = 1,
-        calculationVersion = "human-move-corpus-checkpoint-v1",
+        calculationVersion = HumanMoveCorpusMaterializationService.CALCULATION_VERSION,
         distributionSha256 = null,
     )
 
@@ -297,6 +315,102 @@ class EvaluationEvidenceSnapshotPostgresIntegrationTest {
     }
 
     @Test
+    fun `retained read returns exact metadata roster and every persisted row`() {
+        val runId = finalizedRunWithOccurrences()
+        val occurrences = occurrencesOf(runId)
+        val zeroRowPlayer = UUID.randomUUID()
+        val player = UUID.randomUUID()
+        val snapshot =
+            snapshotFor(runId, occurrences, player = player).copy(
+                players =
+                    setOf(
+                        EvaluationEvidencePlayer(player, "player"),
+                        EvaluationEvidencePlayer(zeroRowPlayer, "zero-row-player"),
+                    ),
+            )
+        val persistedId = evaluationEvidenceSnapshotService.persist(snapshot, snapshot.referencePopulation)
+
+        val retained = evaluationEvidenceSnapshotService.readVerifiedPersisted(runId)
+
+        assertEquals(persistedId, retained.id)
+        assertEquals(snapshot.referencePopulation, retained.referencePopulation)
+        assertEquals(snapshot.players, retained.players)
+        assertEquals(snapshot.configuration, retained.configuration)
+        assertEquals(snapshot.sourceRevision, retained.sourceRevision)
+        assertEquals(snapshot.engineIdentity, retained.engineIdentity)
+        assertEquals(snapshot.parserIdentity, retained.parserIdentity)
+        assertEquals(snapshot.rows, retained.rows)
+        assertEquals(
+            setOf("reference-population", "canonical-retained-rows-including-occurrence-id"),
+            retained.digestCoverage,
+        )
+    }
+
+    @Test
+    fun `retained read fails closed when a retained row is inserted after admission`() {
+        val runId = finalizedRunWithOccurrences()
+        val occurrences = occurrencesOf(runId)
+        val snapshot = snapshotFor(runId, occurrences).let { it.copy(rows = it.rows.take(1)) }
+        val snapshotId = evaluationEvidenceSnapshotService.persist(snapshot, snapshot.referencePopulation)
+        val extra = snapshot.rows.first()
+
+        jdbcTemplate.update(
+            "INSERT INTO evaluation_evidence_row " +
+                "(id, snapshot_id, player_id, game_id, occurrence_id, position_identity, pre_move_ply, move_played, " +
+                "player_color, loss, engine_depth, observed_outcome, objective_outcome, practical_candidate, " +
+                "practical_eligible, practical_wins, practical_draws, practical_losses) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            UUID.randomUUID(),
+            snapshotId,
+            extra.playerId,
+            UUID.randomUUID(),
+            occurrences.last().id,
+            occurrences.last().positionHash,
+            occurrences.last().preMovePly,
+            extra.move,
+            extra.playerColor,
+            extra.loss,
+            extra.engineDepth,
+            extra.observedOutcome.name,
+            extra.objectiveOutcome.name,
+            extra.practicalCandidate,
+            extra.practicalEligible,
+            extra.practicalWins,
+            extra.practicalDraws,
+            extra.practicalLosses,
+        )
+
+        assertFailsWith<EvaluationEvidenceIntegrityException> {
+            evaluationEvidenceSnapshotService.readVerifiedPersisted(runId)
+        }
+    }
+
+    @Test
+    fun `identical retry compares roster and retained metadata rather than digest alone`() {
+        val runId = finalizedRunWithOccurrences()
+        val occurrences = occurrencesOf(runId)
+        val snapshot = snapshotFor(runId, occurrences)
+        evaluationEvidenceSnapshotService.persist(snapshot, snapshot.referencePopulation)
+
+        val conflictingRoster = snapshot.copy(players = snapshot.players + EvaluationEvidencePlayer(UUID.randomUUID(), "new-player"))
+
+        assertFailsWith<EvaluationEvidenceIntegrityException> {
+            evaluationEvidenceSnapshotService.persist(conflictingRoster, conflictingRoster.referencePopulation)
+        }.also { error ->
+            assertTrue(error.message!!.contains("roster") || error.message!!.contains("metadata"))
+        }
+        assertFailsWith<EvaluationEvidenceIntegrityException> {
+            evaluationEvidenceSnapshotService.persist(snapshot.copy(engineIdentity = "different-engine"), snapshot.referencePopulation)
+        }
+        assertFailsWith<EvaluationEvidenceIntegrityException> {
+            evaluationEvidenceSnapshotService.persist(
+                snapshot.copy(configuration = snapshot.configuration.copy(minTimesReached = 2)),
+                snapshot.referencePopulation,
+            )
+        }
+    }
+
+    @Test
     fun `retained snapshot and row tables are immutable`() {
         val runId = finalizedRunWithOccurrences()
         val occurrences = occurrencesOf(runId)
@@ -330,6 +444,67 @@ class EvaluationEvidenceSnapshotPostgresIntegrationTest {
         val result = evaluationEvidenceSnapshotService.reconstructPersisted(runId)
 
         assertTrue(result.objectiveWeakness.getValue(snapshot.players.first().id).getValue(0.30) == 2)
+    }
+
+    @Test
+    fun `verified retained read survives purge and retains zero-row roster`() {
+        val runId = finalizedRunWithOccurrences()
+        val occurrences = occurrencesOf(runId)
+        val zeroRowPlayer = UUID.randomUUID()
+        val player = UUID.randomUUID()
+        val snapshot =
+            snapshotFor(runId, occurrences, player = player).copy(
+                players =
+                    setOf(
+                        EvaluationEvidencePlayer(player, "player"),
+                        EvaluationEvidencePlayer(zeroRowPlayer, "zero-row-player"),
+                    ),
+            )
+        evaluationEvidenceSnapshotService.persist(snapshot, snapshot.referencePopulation)
+
+        jdbcTemplate.execute("TRUNCATE human_move_corpus_imported_observation, human_move_corpus_imported_game CASCADE")
+        jdbcTemplate.execute("TRUNCATE human_move_corpus_observation CASCADE")
+
+        val retained = evaluationEvidenceSnapshotService.readVerifiedPersisted(runId)
+
+        assertEquals(snapshot.players, retained.players)
+        assertEquals(snapshot.referencePopulation, retained.referencePopulation)
+        assertEquals(snapshot.rows, retained.rows)
+    }
+
+    @Test
+    fun `retained only analysis reconstructs reference positions and source locations after purge`() {
+        val runId = finalizedRunWithOccurrences()
+        val occurrences = occurrencesOf(runId)
+        val playerId = UUID.randomUUID()
+        val zeroRowPlayerId = UUID.randomUUID()
+        val snapshot =
+            snapshotFor(runId, occurrences, player = playerId).copy(
+                players =
+                    setOf(
+                        EvaluationEvidencePlayer(playerId, "evaluated"),
+                        EvaluationEvidencePlayer(zeroRowPlayerId, "zero-row"),
+                    ),
+            )
+        evaluationEvidenceSnapshotService.persist(snapshot, snapshot.referencePopulation)
+        val projectionId =
+            jdbcTemplate.queryForObject(
+                "SELECT id FROM human_move_corpus_projection WHERE source_run_id = ? AND finalized AND verified",
+                UUID::class.java,
+                runId,
+            )!!
+
+        jdbcTemplate.execute("TRUNCATE human_move_corpus_imported_observation, human_move_corpus_imported_game CASCADE")
+
+        val admitted = e6AnalysisEvidenceService.loadAndAdmit(runId, projectionId, "e6-v1")
+        val result = E6AnalysisService().analyze(admitted.toAnalysisInput())
+
+        assertEquals(occurrences.map { it.positionHash }.toSet(), admitted.referencePositions)
+        assertEquals(occurrences.map { it.id }.toSet(), admitted.resolvedOccurrences.keys)
+        assertEquals(E6Coverage(2, 2, 1.0), result.byPlayer["evaluated"]!!.at(0.50))
+        assertEquals(E6Coverage(0, 0, null), result.byPlayer["zero-row"]!!.at(0.50))
+        assertEquals(2, result.locations["evaluated"]!!.at(0.50).occurrenceCount)
+        assertEquals(1, result.locations["evaluated"]!!.at(0.50).uniqueGameCount)
     }
 
     companion object {
