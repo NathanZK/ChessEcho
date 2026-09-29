@@ -32,6 +32,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
@@ -42,6 +43,7 @@ import java.nio.file.Files
 import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -288,6 +290,133 @@ class EvaluationEvidenceSnapshotPostgresIntegrationTest {
             },
     )
 
+    private fun withoutNonCoreEvidence(snapshot: EvaluationEvidenceSnapshot) =
+        snapshot.copy(
+            sourceRevision = null,
+            engineIdentity = null,
+            parserIdentity = null,
+            rows =
+                snapshot.rows.map {
+                    it.copy(
+                        objectiveOutcome = null,
+                        practicalCandidate = null,
+                        practicalEligible = null,
+                        practicalWins = null,
+                        practicalDraws = null,
+                        practicalLosses = null,
+                    )
+                },
+        )
+
+    @Test
+    fun `unavailable non-core evidence round trips and identical retry remains idempotent`() {
+        val runId = finalizedRunWithOccurrences()
+        val snapshot = withoutNonCoreEvidence(snapshotFor(runId, occurrencesOf(runId)))
+
+        val id = evaluationEvidenceSnapshotService.persist(snapshot, snapshot.referencePopulation)
+        assertEquals(
+            id,
+            evaluationEvidenceSnapshotService.persist(snapshot.copy(id = UUID.randomUUID()), snapshot.referencePopulation),
+        )
+        val retained = evaluationEvidenceSnapshotService.readVerifiedPersisted(runId)
+        assertEquals(snapshot.rows, retained.rows)
+        assertNull(retained.sourceRevision)
+        assertNull(retained.engineIdentity)
+        assertNull(retained.parserIdentity)
+        assertEquals(
+            1,
+            jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM evaluation_evidence_snapshot WHERE source_run_id = ?",
+                Int::class.java,
+                runId,
+            ),
+        )
+        assertEquals(
+            snapshot.rows.size,
+            jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM evaluation_evidence_row WHERE snapshot_id = ?",
+                Int::class.java,
+                id,
+            ),
+        )
+        assertNull(evaluationEvidenceSnapshotService.reconstruct(snapshot).practicalEvidence.getValue(snapshot.players.single().id))
+        assertEquals(
+            evaluationEvidenceSnapshotService.reconstruct(snapshot),
+            evaluationEvidenceSnapshotService.reconstructPersisted(runId),
+        )
+    }
+
+    @Test
+    fun `absent versus supplied row and metadata evidence conflicts in both directions`() {
+        val runId = finalizedRunWithOccurrences()
+        val snapshot = snapshotFor(runId, occurrencesOf(runId))
+        val absent = withoutNonCoreEvidence(snapshot)
+        evaluationEvidenceSnapshotService.persist(absent, absent.referencePopulation)
+        listOf(
+            absent.copy(sourceRevision = snapshot.sourceRevision),
+            absent.copy(engineIdentity = snapshot.engineIdentity),
+            absent.copy(parserIdentity = snapshot.parserIdentity),
+            absent.copy(rows = absent.rows.map { it.copy(objectiveOutcome = ObjectiveOutcome.WEAK) }),
+            absent.copy(rows = snapshot.rows),
+        ).forEach { supplied ->
+            assertFailsWith<EvaluationEvidenceIntegrityException> {
+                evaluationEvidenceSnapshotService.persist(supplied, supplied.referencePopulation)
+            }
+        }
+        val otherRunId = finalizedRunWithOccurrences()
+        val complete = snapshotFor(otherRunId, occurrencesOf(otherRunId))
+        evaluationEvidenceSnapshotService.persist(complete, complete.referencePopulation)
+        listOf(
+            complete.copy(sourceRevision = null),
+            complete.copy(engineIdentity = null),
+            complete.copy(parserIdentity = null),
+            complete.copy(rows = complete.rows.map { it.copy(objectiveOutcome = null) }),
+            complete.copy(rows = withoutNonCoreEvidence(complete).rows),
+        ).forEach { missing ->
+            assertFailsWith<EvaluationEvidenceIntegrityException> {
+                evaluationEvidenceSnapshotService.persist(missing, missing.referencePopulation)
+            }
+        }
+    }
+
+    @Test
+    fun `database rejects partial practical evidence without the application validator`() {
+        val runId = finalizedRunWithOccurrences()
+        val snapshot = withoutNonCoreEvidence(snapshotFor(runId, occurrencesOf(runId)))
+        val id = evaluationEvidenceSnapshotService.persist(snapshot, snapshot.referencePopulation)
+        val row = snapshot.rows.first()
+
+        val error =
+            assertFailsWith<DataIntegrityViolationException> {
+                jdbcTemplate.update(
+                    "INSERT INTO evaluation_evidence_row " +
+                        "(id, snapshot_id, player_id, game_id, occurrence_id, position_identity, pre_move_ply, move_played, " +
+                        "player_color, loss, engine_depth, observed_outcome, objective_outcome, practical_candidate, " +
+                        "practical_eligible, practical_wins, practical_draws, practical_losses) " +
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    UUID.randomUUID(),
+                    id,
+                    UUID.randomUUID(),
+                    row.gameId,
+                    row.occurrenceId,
+                    row.positionIdentity,
+                    row.preMovePly,
+                    row.move,
+                    row.playerColor,
+                    row.loss,
+                    row.engineDepth,
+                    row.observedOutcome.name,
+                    null,
+                    true,
+                    null,
+                    null,
+                    null,
+                    null,
+                )
+            }
+        assertTrue(error.message!!.contains("ck_evaluation_evidence_row_practical_complete"))
+    }
+
     @Test
     fun `persists a valid snapshot bound to a verified occurrence and reconstructs it`() {
         val runId = finalizedRunWithOccurrences()
@@ -481,7 +610,7 @@ class EvaluationEvidenceSnapshotPostgresIntegrationTest {
             extra.loss,
             extra.engineDepth,
             extra.observedOutcome.name,
-            extra.objectiveOutcome.name,
+            extra.objectiveOutcome?.name,
             extra.practicalCandidate,
             extra.practicalEligible,
             extra.practicalWins,
@@ -582,13 +711,13 @@ class EvaluationEvidenceSnapshotPostgresIntegrationTest {
     }
 
     @Test
-    fun `retained only analysis reconstructs reference positions and source locations after purge`() {
+    fun `retained only analysis admits absent non-core evidence and preserves locations after purge`() {
         val runId = finalizedRunWithOccurrences()
         val occurrences = occurrencesOf(runId)
         val playerId = UUID.randomUUID()
         val zeroRowPlayerId = UUID.randomUUID()
         val snapshot =
-            snapshotFor(runId, occurrences, player = playerId).copy(
+            withoutNonCoreEvidence(snapshotFor(runId, occurrences, player = playerId)).copy(
                 players =
                     setOf(
                         EvaluationEvidencePlayer(playerId, "evaluated"),
@@ -608,6 +737,9 @@ class EvaluationEvidenceSnapshotPostgresIntegrationTest {
         val admitted = retainedEvaluationEvidenceService.loadAndAdmit(runId, projectionId, "e6-v1")
         val result = ReferenceCoverageAnalysisService().analyze(admitted.toAnalysisInput())
 
+        assertEquals(snapshot.rows, admitted.snapshot.rows)
+        assertNull(evaluationEvidenceSnapshotService.reconstructPersisted(runId).practicalEvidence.getValue(playerId))
+        assertNull(evaluationEvidenceSnapshotService.reconstructPersisted(runId).practicalEvidence.getValue(zeroRowPlayerId))
         assertEquals(occurrences.map { it.positionHash }.toSet(), admitted.referencePositions)
         assertEquals(occurrences.map { it.id }.toSet(), admitted.resolvedOccurrences.keys)
         assertEquals(PositionCoverage(2, 2, 1.0), result.byPlayer["evaluated"]!!.at(0.50))

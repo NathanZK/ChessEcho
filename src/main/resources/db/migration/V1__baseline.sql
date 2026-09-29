@@ -962,9 +962,9 @@ CREATE TABLE evaluation_evidence_snapshot
     color                  VARCHAR(10) NOT NULL CHECK (color IN ('WHITE', 'BLACK', 'BOTH')),
     platform               VARCHAR(32) NOT NULL,
     observation_window_days INT,
-    source_revision        VARCHAR(255) NOT NULL,
-    engine_identity        VARCHAR(255) NOT NULL,
-    parser_identity        VARCHAR(255) NOT NULL,
+    source_revision        VARCHAR(255),
+    engine_identity        VARCHAR(255),
+    parser_identity        VARCHAR(255),
     evidence_digest        VARCHAR(64) NOT NULL CHECK (evidence_digest ~ '^[0-9a-f]{64}$'),
     roster_json            JSONB,
     created_at             TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -985,13 +985,19 @@ CREATE TABLE evaluation_evidence_row
     loss                DOUBLE PRECISION NOT NULL CHECK (loss >= 0.0),
     engine_depth        INT NOT NULL CHECK (engine_depth > 0),
     observed_outcome    VARCHAR(10) NOT NULL CHECK (observed_outcome IN ('WIN', 'DRAW', 'LOSS')),
-    objective_outcome   VARCHAR(10) NOT NULL CHECK (objective_outcome IN ('WEAK', 'SOUND')),
-    practical_candidate BOOLEAN NOT NULL,
-    practical_eligible  BOOLEAN NOT NULL,
-    practical_wins      INT NOT NULL CHECK (practical_wins >= 0),
-    practical_draws     INT NOT NULL CHECK (practical_draws >= 0),
-    practical_losses    INT NOT NULL CHECK (practical_losses >= 0),
+    objective_outcome   VARCHAR(10) CHECK (objective_outcome IN ('WEAK', 'SOUND')),
+    practical_candidate BOOLEAN,
+    practical_eligible  BOOLEAN,
+    practical_wins      INT CHECK (practical_wins >= 0),
+    practical_draws     INT CHECK (practical_draws >= 0),
+    practical_losses    INT CHECK (practical_losses >= 0),
     CONSTRAINT uk_evaluation_evidence_row_occurrence UNIQUE (snapshot_id, player_id, occurrence_id),
+    CONSTRAINT ck_evaluation_evidence_row_practical_complete CHECK (
+        (practical_candidate IS NULL AND practical_eligible IS NULL AND practical_wins IS NULL AND
+         practical_draws IS NULL AND practical_losses IS NULL) OR
+        (practical_candidate IS NOT NULL AND practical_eligible IS NOT NULL AND practical_wins IS NOT NULL AND
+         practical_draws IS NOT NULL AND practical_losses IS NOT NULL)
+    ),
     CONSTRAINT ck_evaluation_evidence_row_eligible_candidate CHECK (NOT practical_eligible OR practical_candidate)
 );
 
