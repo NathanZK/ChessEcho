@@ -3,13 +3,28 @@
 import React, { useState, useSyncExternalStore } from 'react';
 import { Download, CheckCircle2, Clock, Calendar, Play } from 'lucide-react';
 
-import { startImportJob, startAccountImportJob, pollJobStatus, JobStatusResponse } from '../services/api';
+import {
+  AccountSummary,
+  SessionState,
+  startImportJob,
+  startAccountImportJob,
+  pollJobStatus,
+  JobStatusResponse,
+} from '../services/api';
 import { activeJobStore } from '../utils/browserStores';
 import { MonthPicker } from './MonthPicker';
+
+export type AccountConnectionStatus = 'loading' | 'connected' | 'unconnected' | 'error';
 
 interface ImportGamesViewProps {
   connectedUsername?: string;
   connectedAccountId?: string;
+  connectedAccount?: AccountSummary;
+  sessionStatus?: SessionState['status'];
+  accountStatus?: AccountConnectionStatus;
+  accountError?: string;
+  onConnectAccount?: (username: string) => Promise<void>;
+  onRetryAccountLoad?: () => void;
   onImportStarted?: (username: string) => void;
   onNavigateTab?: (tab: 'puzzles' | 'weaknesses') => void;
   onDisconnect?: () => void;
@@ -19,6 +34,12 @@ interface ImportGamesViewProps {
 export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
   connectedUsername,
   connectedAccountId,
+  connectedAccount,
+  sessionStatus = 'unauthenticated',
+  accountStatus = 'unconnected',
+  accountError,
+  onConnectAccount,
+  onRetryAccountLoad,
   onImportStarted,
   onNavigateTab,
   onDisconnect,
@@ -37,6 +58,20 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
   );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [pollingError, setPollingError] = useState<string | null>(null);
+  const [associationError, setAssociationError] = useState<string | null>(null);
+  const [isAssociating, setIsAssociating] = useState(false);
+  const isAuthenticated = sessionStatus === 'authenticated';
+  const usernameMatchesAccount =
+    !!connectedAccount &&
+    username.trim().toLocaleLowerCase() === connectedAccount.username.toLocaleLowerCase();
+  const canStartImport =
+    sessionStatus === 'unauthenticated' ||
+    (isAuthenticated &&
+      accountStatus === 'connected' &&
+      !!connectedAccountId &&
+      !!connectedAccount &&
+      usernameMatchesAccount &&
+      !isAssociating);
 
   // Sync username input if connectedUsername changes
   const [trackedConnectedUsername, setTrackedConnectedUsername] = useState(connectedUsername);
@@ -143,8 +178,37 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
     return /^20\d{2}-(0[1-9]|1[0-2])$/.test(val.trim());
   };
 
+  const handleConnectAccount = async () => {
+    const trimmedUsername = username.trim();
+    if (!trimmedUsername || !onConnectAccount) return;
+    setAssociationError(null);
+    setIsAssociating(true);
+    try {
+      await onConnectAccount(trimmedUsername);
+    } catch (err: unknown) {
+      setAssociationError(err instanceof Error ? err.message : 'Failed to connect Chess.com account');
+    } finally {
+      setIsAssociating(false);
+    }
+  };
+
   const handleStartImport = async () => {
     const trimmedUser = username.trim();
+    if (sessionStatus === 'loading') {
+      setErrorMessage('Checking your session. Please wait before importing.');
+      return;
+    }
+    if (sessionStatus === 'error') {
+      setErrorMessage('Your session could not be verified. Refresh the page or sign in again.');
+      return;
+    }
+    if (
+      isAuthenticated &&
+      (accountStatus !== 'connected' || !connectedAccountId || !connectedAccount || !usernameMatchesAccount)
+    ) {
+      setErrorMessage('Connect the Chess.com username shown above before importing.');
+      return;
+    }
     if (!trimmedUser) {
       setErrorMessage('Please enter a Chess.com username');
       return;
@@ -163,7 +227,7 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
         ? await startAccountImportJob({
             accountId: connectedAccountId,
             platform: 'CHESS_COM',
-            username: trimmedUser,
+            username: connectedAccount?.username || trimmedUser,
             timeControls,
             playerColor,
             fromDate: fromDate || undefined,
@@ -179,7 +243,7 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
           );
 
       if (onImportStarted) {
-        onImportStarted(trimmedUser);
+        onImportStarted(isAuthenticated ? connectedAccount!.username : trimmedUser);
       }
 
       const initialStatus: JobStatusResponse = {
@@ -228,9 +292,9 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
         <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 shadow-xl space-y-3.5">
           <h3 className="text-sm font-bold text-white border-b border-slate-800 pb-2.5 flex items-center justify-between">
             <span>Import Configuration</span>
-            {connectedUsername && (
+            {isAuthenticated && accountStatus === 'connected' && connectedAccount && (
               <div className="flex items-center gap-2">
-                <span className="text-xs text-emerald-400 font-medium">● Connected: {connectedUsername}</span>
+                <span className="text-xs text-emerald-400 font-medium">● Connected: {connectedAccount.username}</span>
                 {onDisconnect && (
                   <button
                     type="button"
@@ -254,9 +318,68 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               placeholder="e.g. Hikaru"
+              disabled={
+                sessionStatus === 'loading' ||
+                sessionStatus === 'error' ||
+                (isAuthenticated && accountStatus === 'loading')
+              }
               className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-xl text-sm font-medium text-slate-200 outline-none transition"
             />
           </div>
+
+          {isAuthenticated && (
+            <div className="space-y-2" aria-live="polite">
+              {accountStatus === 'loading' && (
+                <p role="status" className="text-xs text-slate-400">
+                  Loading your connected Chess.com account…
+                </p>
+              )}
+              {accountStatus === 'connected' && connectedAccount && (
+                <p role="status" className="text-xs text-emerald-400">
+                  Connected Chess.com account: {connectedAccount.username}
+                </p>
+              )}
+              {accountStatus === 'unconnected' && (
+                <p role="status" className="text-xs text-slate-400">
+                  No Chess.com account connected. Connect an account before importing.
+                </p>
+              )}
+              {accountStatus === 'error' && (
+                <div role="alert" className="space-y-2 text-xs text-rose-300">
+                  <p>Unable to load your connected account. {accountError}</p>
+                  {onRetryAccountLoad && (
+                    <button
+                      type="button"
+                      onClick={onRetryAccountLoad}
+                      className="font-semibold underline cursor-pointer"
+                    >
+                      Retry account loading
+                    </button>
+                  )}
+                </div>
+              )}
+              {(accountStatus === 'connected' || accountStatus === 'unconnected') && (
+                <button
+                  type="button"
+                  onClick={handleConnectAccount}
+                  disabled={!username.trim() || isAssociating}
+                  className="text-xs font-semibold text-emerald-300 hover:text-emerald-200 underline disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+                >
+                  {isAssociating ? 'Connecting account…' : 'Connect Chess.com account'}
+                </button>
+              )}
+              {associationError && (
+                <p role="alert" className="text-xs text-rose-300">
+                  {associationError}
+                </p>
+              )}
+              {isAuthenticated && accountStatus === 'connected' && !usernameMatchesAccount && (
+                <p role="status" className="text-xs text-amber-300">
+                  Connect this username before importing it.
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Multi-Select Time Controls (Order: Blitz, Rapid, Bullet, Classical) */}
           <div className="space-y-1.5">
@@ -354,7 +477,7 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
           <button
             type="button"
             onClick={handleStartImport}
-            disabled={activeJob?.status === 'QUEUED' || activeJob?.status === 'PROCESSING'}
+            disabled={!canStartImport || activeJob?.status === 'QUEUED' || activeJob?.status === 'PROCESSING'}
             className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-sm rounded-xl transition shadow-lg shadow-emerald-900/40 flex items-center justify-center space-x-2 cursor-pointer disabled:cursor-not-allowed"
           >
             <Play className="w-4 h-4 fill-white" />

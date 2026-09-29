@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { Swords, Target, Download, User } from 'lucide-react';
+import type { AccountSummary } from '../services/api';
 
 export type TabType = 'puzzles' | 'weaknesses' | 'import';
 
@@ -11,6 +12,7 @@ interface HeaderProps {
   activeTab: TabType;
   setActiveTab: (tab: TabType) => void;
   username?: string;
+  connectedAccount?: AccountSummary;
   weaknessCount?: number;
   onDisconnect?: () => void;
   sessionStatus?: HeaderSessionStatus;
@@ -20,22 +22,16 @@ export const Header: React.FC<HeaderProps> = ({
   activeTab,
   setActiveTab,
   username,
+  connectedAccount,
   weaknessCount = 0,
   onDisconnect,
   sessionStatus,
 }) => {
   const isPuzzlesLayout = activeTab === 'puzzles';
-  // Keep the selected Chess.com username separate from identity state. A guest
-  // username remains usable for guest-eligible analysis but is not presented as
-  // an authenticated connection.
-  const showConnected =
-    !!username &&
-    (sessionStatus === undefined ||
-      sessionStatus === 'loading' ||
-      sessionStatus === 'authenticated' ||
-      sessionStatus === 'error');
-  const showGuestSelection = !!username && sessionStatus !== undefined && !showConnected && sessionStatus !== 'loading';
+  const showConnected = sessionStatus === 'authenticated' && !!connectedAccount;
+  const showGuestSelection = sessionStatus === 'unauthenticated' && !!username;
   const showAccount = showConnected || showGuestSelection;
+  const accountUsername = showConnected ? connectedAccount?.username : username;
 
   return (
     <header
@@ -186,7 +182,7 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             >
               <div className={`text-sm font-semibold text-slate-200 ${isPuzzlesLayout ? 'break-all' : ''}`}>
-                {username}
+                {accountUsername}
               </div>
               <div
                 className={`text-[11px] text-emerald-400 font-medium flex items-center gap-1 ${

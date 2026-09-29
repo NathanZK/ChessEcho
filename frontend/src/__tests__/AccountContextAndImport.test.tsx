@@ -14,6 +14,7 @@ vi.mock('../services/api', async () => {
   const actual = await vi.importActual<typeof import('../services/api')>('../services/api');
   return {
     ...actual,
+    fetchCurrentSession: vi.fn(),
     startImportJob: vi.fn(),
     pollJobStatus: vi.fn(),
     fetchPuzzles: vi.fn(),
@@ -48,6 +49,7 @@ describe('Account Context and Import Games MVP Behavior', () => {
     localStorage.clear();
     window.location.hash = '';
     vi.resetAllMocks();
+    vi.mocked(api.fetchCurrentSession).mockResolvedValue({ status: 'unauthenticated' });
     vi.mocked(api.fetchPuzzles).mockResolvedValue([]);
     vi.mocked(api.fetchWeaknesses).mockResolvedValue([]);
   });
@@ -70,10 +72,11 @@ describe('Account Context and Import Games MVP Behavior', () => {
       const importTabBtn = screen.getByRole('button', { name: /^import games$/i });
       fireEvent.click(importTabBtn);
 
+      const startBtn = screen.getByRole('button', { name: /start import/i });
+      await waitFor(() => expect(startBtn).toBeEnabled());
       const usernameInput = screen.getByPlaceholderText(/e\.g\. Hikaru/i);
       fireEvent.change(usernameInput, { target: { value: 'gothamchess' } });
 
-      const startBtn = screen.getByRole('button', { name: /start import/i });
       fireEvent.click(startBtn);
 
       await waitFor(() => {
@@ -110,13 +113,13 @@ describe('Account Context and Import Games MVP Behavior', () => {
   });
 
   describe('2. Connected State & Form Access', () => {
-    it('shows connected account badge in header while keeping the import form active and usable', async () => {
+    it('shows a persisted guest username as guest, not as an owned connected account', async () => {
       localStorage.setItem('chessecho_username', 'hikaru');
 
       render(<Home />);
 
-      // Header should display Connected indicator
-      expect(screen.getByText(/Chess\.com Connected/i)).toBeInTheDocument();
+      expect(await screen.findByText('Guest Mode')).toBeInTheDocument();
+      expect(screen.queryByText(/Chess\.com Connected/i)).not.toBeInTheDocument();
       expect(screen.getAllByText(/hikaru/i).length).toBeGreaterThan(0);
 
       // Switch to Import tab
@@ -147,10 +150,11 @@ describe('Account Context and Import Games MVP Behavior', () => {
       const importTabBtn = screen.getByRole('button', { name: /^import games$/i });
       fireEvent.click(importTabBtn);
 
+      const startBtn = screen.getByRole('button', { name: /start import/i });
+      await waitFor(() => expect(startBtn).toBeEnabled());
       const usernameInput = screen.getByPlaceholderText(/e\.g\. Hikaru/i);
       fireEvent.change(usernameInput, { target: { value: 'player2' } });
 
-      const startBtn = screen.getByRole('button', { name: /start import/i });
       fireEvent.click(startBtn);
 
       await waitFor(() => {
@@ -179,6 +183,9 @@ describe('Account Context and Import Games MVP Behavior', () => {
       const importTabBtn = screen.getByRole('button', { name: /^import games$/i });
       fireEvent.click(importTabBtn);
 
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /start import/i })).toBeEnabled()
+      );
       // Verify heading and labels
       expect(screen.getByText('Advanced Date Range')).toBeInTheDocument();
       expect(screen.getByText('From month')).toBeInTheDocument();
@@ -209,6 +216,7 @@ describe('Account Context and Import Games MVP Behavior', () => {
       expect(toBtn).toHaveTextContent(/September \d{4}/);
 
       const startBtn = screen.getByRole('button', { name: /start import/i });
+      await waitFor(() => expect(startBtn).toBeEnabled());
       fireEvent.click(startBtn);
 
       const currentYear = new Date().getFullYear();
@@ -245,6 +253,9 @@ describe('Account Context and Import Games MVP Behavior', () => {
       const importTabBtn = screen.getByRole('button', { name: /^import games$/i });
       fireEvent.click(importTabBtn);
 
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /start import/i })).toBeEnabled()
+      );
       const usernameInput = screen.getByPlaceholderText(/e\.g\. Hikaru/i);
       fireEvent.change(usernameInput, { target: { value: 'payloadtest' } });
 
@@ -285,6 +296,9 @@ describe('Account Context and Import Games MVP Behavior', () => {
       const importTabBtn = screen.getByRole('button', { name: /^import games$/i });
       fireEvent.click(importTabBtn);
 
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: /start import/i })).toBeEnabled()
+      );
       const usernameInput = screen.getByPlaceholderText(/e\.g\. Hikaru/i);
       fireEvent.change(usernameInput, { target: { value: 'emptytest' } });
 

@@ -9,12 +9,29 @@ import { PuzzleFeedbackPanel, type ChallengeSubmissionResult } from '@/component
 import { WeaknessesList } from '@/components/WeaknessesList';
 import { ImportGamesView } from '@/components/ImportGamesView';
 import { Puzzle } from '@/mock/mockData';
-import { fetchPuzzles, JobStatusResponse, ContinuationMode, ContinuationCandidate, ExplorationPlayMode, toWhitePerspective, fetchPuzzleContinuation, fetchCurrentSession, fetchAccounts, logout as apiLogout, recordPuzzleEvent, submitTrainingAttempt, type SessionState } from '@/services/api';
+import {
+  associateAccount,
+  fetchPuzzles,
+  JobStatusResponse,
+  ContinuationMode,
+  ContinuationCandidate,
+  ExplorationPlayMode,
+  toWhitePerspective,
+  fetchPuzzleContinuation,
+  fetchCurrentSession,
+  fetchAccounts,
+  logout as apiLogout,
+  recordPuzzleEvent,
+  submitTrainingAttempt,
+  type AccountSummary,
+  type SessionState,
+} from '@/services/api';
 import { soundService } from '@/services/soundService';
 import { createDeterministicSelectionPolicy, createStochasticSelectionPolicy } from '@/services/continuationService';
 import { usePuzzleContinuation } from '@/utils/usePuzzleContinuation';
 import { StopwatchTimer, CountdownTimer } from '@/utils/timedTraining';
 import { activeTabStore, activeUsernameStore, activeAccountStore, activeJobStore, clearAuthenticatedAccountState, puzzleSettingsStore, reconcileSessionStorageOwner } from '@/utils/browserStores';
+import type { AccountConnectionStatus } from '@/components/ImportGamesView';
 
 export const EXPLORATION_STEP_DELAY_MS = 800;
 const chessEchoSelectionPolicy = createStochasticSelectionPolicy();
@@ -69,6 +86,11 @@ export default function Home() {
   // Non-persistent session state, bootstrapped from /api/me. The auth indicator is
   // derived from this — never from a stored Chess.com username (#113 AC7/AC13).
   const [sessionStatus, setSessionStatus] = useState<SessionState['status']>('loading');
+  const [accountStatus, setAccountStatus] = useState<AccountConnectionStatus>('loading');
+  const [accountError, setAccountError] = useState<string | undefined>(undefined);
+  const accountOwnerIdRef = React.useRef<string | undefined>(undefined);
+  const accountRequestVersionRef = React.useRef(0);
+  const accountContextMountedRef = React.useRef(true);
   // Guest-eligible fetches are gated only until the session resolves. The gate is
   // a shared one-shot promise so the puzzle load cannot race bootstrap, while an
   // unauthenticated result still permits username-driven guest analysis.
@@ -100,6 +122,72 @@ export default function Home() {
     prevJobRef.current = null;
     setActiveJobStatus(null);
   }, []);
+
+  const loadOwnedAccounts = React.useCallback(
+    async (userId: string, isCurrent: () => boolean = () => true) => {
+      const requestVersion = ++accountRequestVersionRef.current;
+      accountOwnerIdRef.current = userId;
+      setAccountStatus('loading');
+      setAccountError(undefined);
+      const requestIsCurrent = () =>
+        isCurrent() &&
+        accountRequestVersionRef.current === requestVersion &&
+        accountOwnerIdRef.current === userId;
+      try {
+        const accounts = await fetchAccounts();
+        if (!requestIsCurrent()) return;
+        if (accounts.length === 0) {
+          clearAuthenticatedAccountState();
+          clearLiveJobState();
+          setAccountStatus('unconnected');
+          return;
+        }
+        const current = activeAccountStore.getSnapshot();
+        const selected = current && accounts.some((account) => account.id === current.id)
+          ? current
+          : accounts[0];
+        activeAccountStore.set(selected);
+        activeUsernameStore.set(selected.username);
+        setAccountStatus('connected');
+      } catch (error: unknown) {
+        if (!requestIsCurrent()) return;
+        clearAuthenticatedAccountState();
+        clearLiveJobState();
+        setAccountStatus('error');
+        setAccountError(errorMessageOf(error) || 'Please retry account loading.');
+      } finally {
+        if (requestIsCurrent()) sessionGateRef.current!.resolve(true);
+      }
+    },
+    [clearLiveJobState]
+  );
+
+  const retryAccountLoad = React.useCallback(() => {
+    const userId = accountOwnerIdRef.current;
+    if (userId) void loadOwnedAccounts(userId);
+  }, [loadOwnedAccounts]);
+
+  const connectChessAccount = React.useCallback(async (username: string): Promise<AccountSummary> => {
+    const userId = accountOwnerIdRef.current;
+    if (!accountContextMountedRef.current || !userId || accountStatus === 'loading' || accountStatus === 'error') {
+      throw new Error('Your authenticated account is not ready. Retry account loading.');
+    }
+    const requestVersion = accountRequestVersionRef.current;
+    const account = await associateAccount('CHESS_COM', username);
+    if (
+      !accountContextMountedRef.current ||
+      accountRequestVersionRef.current !== requestVersion ||
+      accountOwnerIdRef.current !== userId
+    ) {
+      throw new Error('Your session changed before the account could be selected. Please try again.');
+    }
+    activeAccountStore.set(account);
+    activeUsernameStore.set(account.username);
+    setAccountStatus('connected');
+    setAccountError(undefined);
+    clearLiveJobState();
+    return account;
+  }, [accountStatus, clearLiveJobState]);
 
   const reconcileSessionIdentity = React.useCallback(
     (userId: string | undefined) => {
@@ -164,6 +252,10 @@ export default function Home() {
   // persisted active job, and mark the session unauthenticated so a late response
   // cannot restore the prior user's data (#113 AC8). Generations are bumped first.
   const clearSessionState = () => {
+    accountRequestVersionRef.current++;
+    accountOwnerIdRef.current = undefined;
+    setAccountStatus('unconnected');
+    setAccountError(undefined);
     invalidatePuzzleRequests();
     reconcileSessionIdentity(undefined);
     handleDisconnect();
@@ -875,39 +967,33 @@ export default function Home() {
   // known. A late resolve after unmount is ignored (#113 AC7).
   React.useEffect(() => {
     let active = true;
+    accountContextMountedRef.current = true;
     fetchCurrentSession().then(async (state) => {
       if (!active) return;
       setSessionStatus(state.status);
       if (state.status === 'unauthenticated') {
+        accountRequestVersionRef.current++;
+        accountOwnerIdRef.current = undefined;
+        setAccountStatus('unconnected');
+        setAccountError(undefined);
         reconcileSessionIdentity(undefined);
         setIsLoadingPuzzles(false);
         sessionGateRef.current!.resolve(true);
       } else if (state.status === 'authenticated') {
         if (!reconcileSessionIdentity(state.userId)) {
+          accountRequestVersionRef.current++;
+          accountOwnerIdRef.current = undefined;
+          setAccountStatus('error');
+          setAccountError('Unable to verify the authenticated user. Refresh the page and sign in again.');
           sessionGateRef.current!.resolve(true);
           return;
         }
-        try {
-          const accounts = await fetchAccounts();
-          if (!active) return;
-          if (accounts.length === 0) {
-            clearAuthenticatedAccountState();
-            clearLiveJobState();
-          } else {
-            const current = activeAccountStore.getSnapshot();
-            const selected = current && accounts.some((account) => account.id === current.id)
-              ? current
-              : accounts[0];
-            activeAccountStore.set(selected);
-            activeUsernameStore.set(selected.username);
-          }
-        } catch {
-          clearAuthenticatedAccountState();
-          clearLiveJobState();
-        } finally {
-          if (active) sessionGateRef.current!.resolve(true);
-        }
+        if (state.userId) await loadOwnedAccounts(state.userId, () => active);
       } else {
+        accountRequestVersionRef.current++;
+        accountOwnerIdRef.current = undefined;
+        setAccountStatus('unconnected');
+        setAccountError(undefined);
         reconcileSessionIdentity(undefined);
         setIsLoadingPuzzles(false);
         sessionGateRef.current!.resolve(true);
@@ -915,8 +1001,9 @@ export default function Home() {
     });
     return () => {
       active = false;
+      accountContextMountedRef.current = false;
     };
-  }, [clearLiveJobState, reconcileSessionIdentity]);
+  }, [clearLiveJobState, loadOwnedAccounts, reconcileSessionIdentity]);
 
   const handleRetryPuzzleLoad = () => {
     invalidatePuzzleRequests();
@@ -1487,6 +1574,11 @@ export default function Home() {
     setCalculationInput('');
   };
 
+  const connectedAccount =
+    sessionStatus === 'authenticated' && accountStatus === 'connected' ? activeAccount : undefined;
+  const displayedUsername =
+    connectedAccount?.username ?? (sessionStatus === 'unauthenticated' ? activeUsername : undefined);
+
   return (
     <div
       className={`h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-emerald-500 selection:text-white overflow-hidden ${
@@ -1497,7 +1589,8 @@ export default function Home() {
       <Header
         activeTab={activeTab}
         setActiveTab={changeTab}
-        username={activeUsername}
+        username={displayedUsername}
+        connectedAccount={connectedAccount}
         weaknessCount={weaknessCount}
         onDisconnect={handleLogout}
         sessionStatus={sessionStatus}
@@ -1711,8 +1804,16 @@ export default function Home() {
         {/* TAB 3: IMPORT GAMES */}
         {activeTab === 'import' && (
           <ImportGamesView
-            connectedUsername={activeUsername}
-            connectedAccountId={activeAccount?.id}
+            connectedUsername={displayedUsername}
+            connectedAccount={connectedAccount}
+            connectedAccountId={connectedAccount?.id}
+            sessionStatus={sessionStatus}
+            accountStatus={accountStatus}
+            accountError={accountError}
+            onConnectAccount={async (username) => {
+              await connectChessAccount(username);
+            }}
+            onRetryAccountLoad={retryAccountLoad}
             onDisconnect={handleDisconnect}
             onImportStarted={(user) => handleSetUsername(user)}
             onNavigateTab={(tab) => changeTab(tab)}

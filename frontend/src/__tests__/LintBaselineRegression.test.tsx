@@ -241,13 +241,13 @@ describe('Issue 98 — persisted state store and page hydration', () => {
     unsubscribe();
   });
 
-  it('T5 — a persisted username is connected in the first committed render', () => {
+  it('T5 — a persisted username is not presented as connected before server verification', () => {
     localStorage.setItem('chessecho_username', 'magnuscarlsen');
 
     render(<Home />);
 
     expect(headerRenders.length).toBeGreaterThan(0);
-    expect(headerRenders[0].username).toBe('magnuscarlsen');
+    expect(headerRenders[0].username).toBeUndefined();
   });
 
   it('T6 — the persisted tab is applied in the first committed render and a valid hash wins', () => {
