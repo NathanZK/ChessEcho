@@ -22,6 +22,7 @@ import com.chessecho.service.HumanMoveCorpusOccurrence
 import com.chessecho.service.HumanMoveCorpusProjectionFinalizationService
 import com.chessecho.service.HumanMoveCorpusRunOutcome
 import com.chessecho.service.HumanMoveCorpusSide
+import com.chessecho.service.LocationGroupCount
 import com.chessecho.service.ObjectiveOutcome
 import com.chessecho.service.ObservedGameOutcome
 import com.chessecho.service.PositionCoverage
@@ -553,6 +554,44 @@ class EvaluationEvidenceSnapshotPostgresIntegrationTest {
     }
 
     @Test
+    fun `persists independent operational games linked to one occurrence with immutable retry semantics`() {
+        val runId = finalizedRunWithOccurrences()
+        val occurrence = occurrencesOf(runId).first()
+        val base = snapshotFor(runId, listOf(occurrence))
+        val first = base.rows.single()
+        val second = first.copy(gameId = UUID.randomUUID(), loss = 0.35)
+        val snapshot = base.copy(rows = listOf(first, second))
+
+        val id = evaluationEvidenceSnapshotService.persist(snapshot, snapshot.referencePopulation)
+
+        val retained = evaluationEvidenceSnapshotService.readVerifiedPersisted(runId)
+        assertEquals(2, retained.rows.size)
+        assertEquals(setOf(first.gameId, second.gameId), retained.rows.map { it.gameId }.toSet())
+        assertEquals(setOf(occurrence.id), retained.rows.map { it.occurrenceId }.toSet())
+        assertEquals(
+            id,
+            evaluationEvidenceSnapshotService.persist(
+                snapshot.copy(rows = snapshot.rows.reversed()),
+                snapshot.referencePopulation,
+            ),
+        )
+        val reconstruction = evaluationEvidenceSnapshotService.reconstructPersisted(runId)
+        assertEquals(2, reconstruction.objectiveWeakness.getValue(first.playerId).getValue(0.30))
+        assertEquals(1, reconstruction.objectiveWeakness.getValue(first.playerId).getValue(0.50))
+
+        listOf(
+            snapshot.copy(rows = listOf(first.copy(loss = 0.60), second)),
+            snapshot.copy(rows = listOf(first)),
+            snapshot.copy(rows = listOf(first, second, first.copy(gameId = UUID.randomUUID(), loss = 0.25))),
+        ).forEach { conflicting ->
+            assertFailsWith<EvaluationEvidenceIntegrityException> {
+                evaluationEvidenceSnapshotService.persist(conflicting, conflicting.referencePopulation)
+            }
+        }
+        assertEquals(2, evaluationEvidenceSnapshotService.readVerifiedPersisted(runId).rows.size)
+    }
+
+    @Test
     fun `retained read returns exact metadata roster and every persisted row`() {
         val runId = finalizedRunWithOccurrences()
         val occurrences = occurrencesOf(runId)
@@ -746,6 +785,41 @@ class EvaluationEvidenceSnapshotPostgresIntegrationTest {
         assertEquals(PositionCoverage(0, 0, null), result.byPlayer["zero-row"]!!.at(0.50))
         assertEquals(2, result.locations["evaluated"]!!.at(0.50).occurrenceCount)
         assertEquals(1, result.locations["evaluated"]!!.at(0.50).uniqueGameCount)
+    }
+
+    @Test
+    fun `retained analysis counts repeated operational links as one reference location`() {
+        val runId = finalizedRunWithOccurrences()
+        val occurrence = occurrencesOf(runId).first()
+        val base = snapshotFor(runId, listOf(occurrence))
+        val first = base.rows.single()
+        val second = first.copy(gameId = UUID.randomUUID(), loss = 0.35)
+        val snapshot = base.copy(rows = listOf(first, second))
+        evaluationEvidenceSnapshotService.persist(snapshot, snapshot.referencePopulation)
+        val projectionId =
+            jdbcTemplate.queryForObject(
+                "SELECT id FROM human_move_corpus_projection WHERE source_run_id = ? AND finalized AND verified",
+                UUID::class.java,
+                runId,
+            )!!
+
+        val admitted = retainedEvaluationEvidenceService.loadAndAdmit(runId, projectionId, "e6-v1")
+        val result = ReferenceCoverageAnalysisService().analyze(admitted.toAnalysisInput())
+
+        assertEquals(2, admitted.snapshot.rows.size)
+        val reconstruction = evaluationEvidenceSnapshotService.reconstructPersisted(runId)
+        assertEquals(2, reconstruction.objectiveWeakness.getValue(first.playerId).getValue(0.30))
+        assertEquals(1, reconstruction.objectiveWeakness.getValue(first.playerId).getValue(0.50))
+        assertEquals(PositionCoverage(1, 1, 1.0), result.byPlayer.getValue("player").at(0.30))
+        assertEquals(PositionCoverage(1, 1, 1.0), result.byPlayer.getValue("player").at(0.50))
+
+        listOf(0.30, 0.50).forEach { threshold ->
+            val location = result.locations.getValue("player").at(threshold)
+            assertEquals(1, location.occurrenceCount)
+            assertEquals(1, location.denominator)
+            assertEquals(1, location.uniqueGameCount)
+            assertEquals(LocationGroupCount(1, 1), location.groupsByPreMovePly.getValue(occurrence.preMovePly))
+        }
     }
 
     companion object {

@@ -21,6 +21,12 @@ location is `(sourceRunId, qualifyingOrdinal, preMovePly)`. The declared
 evaluation-player roster is retained independently of rows so a player with no
 evidence is still reported.
 
+For matching #445 evidence, #430 row identity is
+`(snapshotId, playerId, gameId, occurrenceId)`. Use it only when operational
+position hash and pre-move ply match the referenced #431 occurrence; it is not
+a universal operational identity. Multiple operational links remain separate
+evidence rows, while location summaries count their canonical occurrence once.
+
 The retained evaluation digest covers the exact reference-population tuple and
 canonical evaluation rows, including occurrence UUID. It does **not** cover
 the snapshot ID, declared roster, configuration, or source/engine/parser
@@ -39,9 +45,14 @@ before division, without unioning players or averaging their ratios.
 Mean, median, minimum, and maximum use defined player coverages only.
 
 Source-location reporting includes **all** threshold-qualified evaluation
-occurrences, even when their position is outside `R(P)`. Repeated positions
-remain separate canonical occurrence observations. Location groups count
-occurrences with an occurrence denominator; distinct-position and unique
-source-game counts are descriptive, not substitutes for coverage. The
-evaluation row's game ID is not assumed to identify a source-corpus game.
-No cohort analysis, new weakness detector, or causal inference is performed.
+rows, even when their position is outside `R(P)`. For each player and
+threshold, repeated operational links to one reference occurrence count once
+in location metrics, using the semantic identity
+`(sourceRunId, qualifyingOrdinal, preMovePly)`. Filtering by threshold happens
+before this deduplication: a location is included when at least one linked row
+qualifies. Repeated positions at distinct canonical identities remain
+separate occurrence observations. Location groups and their denominator count
+distinct canonical occurrences; distinct-position and unique source-game
+counts are descriptive, not substitutes for coverage. The evaluation row's
+game ID is not assumed to identify a source-corpus game. No cohort analysis,
+new weakness detector, or causal inference is performed.

@@ -991,7 +991,8 @@ CREATE TABLE evaluation_evidence_row
     practical_wins      INT CHECK (practical_wins >= 0),
     practical_draws     INT CHECK (practical_draws >= 0),
     practical_losses    INT CHECK (practical_losses >= 0),
-    CONSTRAINT uk_evaluation_evidence_row_occurrence UNIQUE (snapshot_id, player_id, occurrence_id),
+    CONSTRAINT uk_evaluation_evidence_row_game_occurrence
+        UNIQUE (snapshot_id, player_id, game_id, occurrence_id),
     CONSTRAINT ck_evaluation_evidence_row_practical_complete CHECK (
         (practical_candidate IS NULL AND practical_eligible IS NULL AND practical_wins IS NULL AND
          practical_draws IS NULL AND practical_losses IS NULL) OR

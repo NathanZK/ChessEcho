@@ -363,22 +363,22 @@ class EvaluationEvidenceSnapshotService(
     }
 
     /**
-     * Deterministically collapses identical rows by canonical occurrence identity and rejects
-     * conflicting occurrence or game-level evidence without depending on list order.
+     * Deterministically collapses identical operational-decision/reference-occurrence links and
+     * rejects conflicting link payloads or game-level evidence without depending on list order.
      */
     private fun canonicalize(rows: List<EvaluationEvidenceRow>): List<EvaluationEvidenceRow> {
-        val canonicalByOccurrence =
-            rows.groupBy { it.playerId to it.occurrenceId }.map { (key, group) ->
+        val canonicalByIdentity =
+            rows.groupBy { Triple(it.playerId, it.gameId, it.occurrenceId) }.map { (key, group) ->
                 val distinct = group.distinct()
                 if (distinct.size > 1) {
                     throw EvaluationEvidenceIntegrityException(
-                        "Conflicting evidence rows for player ${key.first} occurrence ${key.second}",
+                        "Conflicting evidence rows for player ${key.first}, game ${key.second}, occurrence ${key.third}",
                     )
                 }
                 distinct.single()
             }
 
-        canonicalByOccurrence.groupBy { it.playerId to it.gameId }.forEach { (key, group) ->
+        canonicalByIdentity.groupBy { it.playerId to it.gameId }.forEach { (key, group) ->
             if (group.map { it.observedOutcome }.toSet().size > 1) {
                 throw EvaluationEvidenceIntegrityException(
                     "Conflicting observed outcomes for player ${key.first} game ${key.second}",
@@ -395,7 +395,9 @@ class EvaluationEvidenceSnapshotService(
             }
         }
 
-        return canonicalByOccurrence
+        return canonicalByIdentity.sortedWith(
+            compareBy({ it.playerId }, { it.preMovePly }, { it.occurrenceId }, { it.gameId }),
+        )
     }
 
     /** Verifies every row's occurrence exists, is finalized, matches the reference population, and agrees on facts. */
@@ -467,7 +469,7 @@ class EvaluationEvidenceSnapshotService(
             referencePopulation.distributionSha256 ?: "",
         ).forEach { updateDigest(digest, it) }
 
-        rows.sortedWith(compareBy({ it.playerId }, { it.occurrenceId })).forEach { row ->
+        rows.sortedWith(compareBy({ it.playerId }, { it.occurrenceId }, { it.gameId })).forEach { row ->
             listOf(
                 row.playerId.toString(),
                 row.gameId.toString(),
@@ -562,7 +564,7 @@ class EvaluationEvidenceSnapshotService(
             "SELECT player_id, game_id, occurrence_id, position_identity, pre_move_ply, move_played, player_color, loss, " +
                 "engine_depth, observed_outcome, objective_outcome, practical_candidate, practical_eligible, " +
                 "practical_wins, practical_draws, practical_losses FROM evaluation_evidence_row WHERE snapshot_id = ? " +
-                "ORDER BY player_id, pre_move_ply, occurrence_id",
+                "ORDER BY player_id, pre_move_ply, occurrence_id, game_id",
             { rs, _ -> readEvidenceRow(rs) },
             snapshotId,
         )

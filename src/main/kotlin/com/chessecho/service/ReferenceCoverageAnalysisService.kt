@@ -167,17 +167,28 @@ class ReferenceCoverageAnalysisService {
                 ThresholdValues(
                     thresholds.associateWith { threshold ->
                         val qualified = input.rows.filter { it.playerId == player.id && it.loss >= threshold }
-                        val groups = qualified.groupBy { it.canonicalLocation.preMovePly }
+                        val locations =
+                            qualified.distinctBy {
+                                Triple(
+                                    it.canonicalLocation.sourceRunId,
+                                    it.canonicalLocation.qualifyingOrdinal,
+                                    it.canonicalLocation.preMovePly,
+                                )
+                            }
+                        val groups = locations.groupBy { it.canonicalLocation.preMovePly }
                         OccurrenceLocationSummary(
-                            occurrenceCount = qualified.size,
-                            distinctPositionCount = qualified.map { it.positionIdentity }.toSet().size,
+                            occurrenceCount = locations.size,
+                            distinctPositionCount = locations.map { it.positionIdentity }.toSet().size,
                             uniqueGameCount =
-                                qualified.map { it.canonicalLocation.sourceRunId to it.canonicalLocation.qualifyingOrdinal }.toSet().size,
+                                locations
+                                    .map { it.canonicalLocation.sourceRunId to it.canonicalLocation.qualifyingOrdinal }
+                                    .toSet()
+                                    .size,
                             population = "all-threshold-qualified-occurrences",
                             unit = "canonical-source-occurrence",
-                            denominator = qualified.size,
+                            denominator = locations.size,
                             groupingKey = "preMovePly",
-                            groupsByPreMovePly = groups.mapValues { LocationGroupCount(it.value.size, qualified.size) },
+                            groupsByPreMovePly = groups.mapValues { LocationGroupCount(it.value.size, locations.size) },
                         )
                     },
                 )
