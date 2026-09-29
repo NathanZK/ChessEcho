@@ -37,6 +37,19 @@ interface PositionOccurrenceRepository : JpaRepository<PositionOccurrence, UUID>
 
     @Query(
         """
+        SELECT DISTINCT po FROM PositionOccurrence po
+        JOIN FETCH po.game
+        JOIN FETCH po.position
+        JOIN FETCH po.chessAccount
+        WHERE po.id IN :ids
+        """,
+    )
+    fun findSelectedWithOperationalFacts(
+        @Param("ids") ids: Set<UUID>,
+    ): List<PositionOccurrence>
+
+    @Query(
+        """
         SELECT po FROM PositionOccurrence po
         JOIN FETCH po.game
         WHERE po.chessAccount.id = :chessAccountId

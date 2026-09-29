@@ -1,12 +1,24 @@
 package com.chessecho.integration.corpus
 
+import com.chessecho.domain.ChessAccount
+import com.chessecho.domain.EngineAnalysis
+import com.chessecho.domain.Game
 import com.chessecho.domain.HumanMoveCorpusRunStatus
+import com.chessecho.domain.MoveEvaluation
+import com.chessecho.domain.PositionOccurrence
 import com.chessecho.dto.HumanMoveCorpusRunRequest
 import com.chessecho.humanmove.artifact.HumanMoveCorpusArtifactService
 import com.chessecho.humanmove.artifact.HumanMoveCorpusExportRequest
+import com.chessecho.repository.ChessAccountRepository
+import com.chessecho.repository.EngineAnalysisRepository
+import com.chessecho.repository.GameRepository
+import com.chessecho.repository.PositionOccurrenceRepository
+import com.chessecho.repository.PositionRepository
 import com.chessecho.service.EvaluationEvidenceConfiguration
 import com.chessecho.service.EvaluationEvidenceIntegrityException
 import com.chessecho.service.EvaluationEvidencePlayer
+import com.chessecho.service.EvaluationEvidenceProducerInput
+import com.chessecho.service.EvaluationEvidenceProducerService
 import com.chessecho.service.EvaluationEvidenceRow
 import com.chessecho.service.EvaluationEvidenceSnapshot
 import com.chessecho.service.EvaluationEvidenceSnapshotService
@@ -27,16 +39,24 @@ import com.chessecho.service.ObjectiveOutcome
 import com.chessecho.service.ObservedGameOutcome
 import com.chessecho.service.PositionCoverage
 import com.chessecho.service.ReferenceCoverageAnalysisService
+import com.chessecho.service.RetainedEvaluationEvidenceIntegrityException
 import com.chessecho.service.RetainedEvaluationEvidenceService
+import com.chessecho.service.SelectedPopulationVerificationService
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.mockito.kotlin.any
+import org.mockito.kotlin.doAnswer
+import org.mockito.kotlin.whenever
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.boot.test.mock.mockito.SpyBean
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
+import org.springframework.transaction.TransactionDefinition
+import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.junit.jupiter.Container
 import org.testcontainers.junit.jupiter.Testcontainers
@@ -77,6 +97,30 @@ class EvaluationEvidenceSnapshotPostgresIntegrationTest {
 
     @Autowired
     private lateinit var evaluationEvidenceSnapshotService: EvaluationEvidenceSnapshotService
+
+    @Autowired
+    private lateinit var evaluationEvidenceProducerService: EvaluationEvidenceProducerService
+
+    @Autowired
+    private lateinit var chessAccountRepository: ChessAccountRepository
+
+    @Autowired
+    private lateinit var gameRepository: GameRepository
+
+    @Autowired
+    private lateinit var positionRepository: PositionRepository
+
+    @Autowired
+    private lateinit var positionOccurrenceRepository: PositionOccurrenceRepository
+
+    @Autowired
+    private lateinit var engineAnalysisRepository: EngineAnalysisRepository
+
+    @SpyBean
+    private lateinit var selectedPopulationVerificationService: SelectedPopulationVerificationService
+
+    @SpyBean
+    private lateinit var evaluationEvidenceSnapshotServiceSpy: EvaluationEvidenceSnapshotService
 
     @Autowired
     private lateinit var retainedEvaluationEvidenceService: RetainedEvaluationEvidenceService
@@ -290,6 +334,357 @@ class EvaluationEvidenceSnapshotPostgresIntegrationTest {
                 )
             },
     )
+
+    private fun producerPopulation(
+        runId: UUID,
+        prefixN: Int,
+    ): EvaluationReferencePopulation =
+        jdbcTemplate.query(
+            """
+            SELECT p.content_digest, p.source_run_id, b.covered_prefix, p.prefix_n, p.rating_band,
+                   p.min_observations, p.calculation_version, p.distribution_sha256
+            FROM human_move_corpus_projection p
+            JOIN human_move_corpus_occurrence_binding b ON b.source_run_id = p.source_run_id
+            WHERE p.source_run_id = ? AND p.prefix_n = ? AND p.finalized AND p.verified
+            """.trimIndent(),
+            { rs, _ ->
+                EvaluationReferencePopulation(
+                    contentDigest = rs.getString("content_digest"),
+                    sourceRunId = rs.getObject("source_run_id", UUID::class.java),
+                    coveredPrefix = rs.getInt("covered_prefix"),
+                    prefixN = rs.getInt("prefix_n"),
+                    ratingBand = rs.getString("rating_band"),
+                    minObservations = rs.getInt("min_observations"),
+                    calculationVersion = rs.getString("calculation_version"),
+                    distributionSha256 = rs.getString("distribution_sha256"),
+                )
+            },
+            runId,
+            prefixN,
+        ).single()
+
+    private fun producerConfiguration() =
+        EvaluationEvidenceConfiguration(
+            thresholds = setOf(0.30, 0.50, 0.80),
+            minMistakeCount = 9,
+            minTimesReached = 99,
+            color = "BOTH",
+            platform = "CHESS_COM",
+            observationWindowDays = null,
+        )
+
+    private data class OperationalProducerFixture(
+        val input: EvaluationEvidenceProducerInput,
+        val decisions: List<PositionOccurrence>,
+        val zeroRowPlayer: EvaluationEvidencePlayer,
+    )
+
+    private fun operationalProducerFixture(
+        population: EvaluationReferencePopulation,
+        selectedGameCount: Int = 2,
+        unselectedGameCount: Int = 1,
+        selectedOrder: List<Int> = (0 until selectedGameCount).toList(),
+    ): OperationalProducerFixture {
+        val account =
+            chessAccountRepository.saveAndFlush(
+                ChessAccount(
+                    platform = "CHESS_COM",
+                    username = "producer-${UUID.randomUUID()}",
+                ),
+            )
+        val position =
+            positionRepository.findByHash(occurrencesOf(population.sourceRunId).first().positionHash)
+                ?: error("expected retained corpus to have a matching canonical position")
+        val analysis =
+            EngineAnalysis(
+                position = position,
+                depth = 16,
+                baselineEvalCp = 100,
+                bestMove = "Nf3",
+                bestMoveEvalCp = 100,
+            ).also {
+                it.moveEvaluations.add(
+                    MoveEvaluation(
+                        engineAnalysis = it,
+                        move = "e4",
+                        evalCp = 45,
+                        evalLossFromBest = 0.55,
+                    ),
+                )
+            }
+        engineAnalysisRepository.saveAndFlush(analysis)
+
+        val decisions =
+            (0 until selectedGameCount + unselectedGameCount).map { index ->
+                val game =
+                    gameRepository.saveAndFlush(
+                        Game(
+                            chessAccount = account,
+                            platformGameId = "producer-${UUID.randomUUID()}",
+                            pgn = "[Event \"producer\"]\n[White \"${account.username}\"]\n[Black \"opponent\"]\n\n1. e4 *",
+                            result = "win",
+                            whiteUsername = account.username,
+                            blackUsername = "opponent",
+                        ),
+                    )
+                positionOccurrenceRepository.saveAndFlush(
+                    PositionOccurrence(
+                        game = game,
+                        position = position,
+                        chessAccount = account,
+                        plyNumber = 1,
+                        movePlayed = "e4",
+                        playerColor = "WHITE",
+                    ),
+                )
+            }
+        val zeroRowPlayer = EvaluationEvidencePlayer(UUID.randomUUID(), "zero-row-player")
+        val declaredPlayer = EvaluationEvidencePlayer(account.id, account.username)
+        val input =
+            EvaluationEvidenceProducerInput(
+                roster = listOf(declaredPlayer, zeroRowPlayer),
+                operationalOccurrenceIds = selectedOrder.map { decisions[it].id },
+                referencePopulation = population,
+                configuration = producerConfiguration(),
+            )
+        return OperationalProducerFixture(input, decisions, zeroRowPlayer)
+    }
+
+    private fun assertProducerTransaction() {
+        assertTrue(TransactionSynchronizationManager.isActualTransactionActive())
+        assertTrue(!TransactionSynchronizationManager.isCurrentTransactionReadOnly())
+        assertEquals(
+            TransactionDefinition.ISOLATION_REPEATABLE_READ,
+            TransactionSynchronizationManager.getCurrentTransactionIsolationLevel(),
+        )
+    }
+
+    @Test
+    fun `producer preserves explicit operational links and remains admissible after source rows are unavailable`() {
+        val runId = finalizedRunWithSamePlyOccurrences()
+        val population = producerPopulation(runId, prefixN = 2)
+        val references = occurrencesOf(runId)
+        val fixture = operationalProducerFixture(population)
+        val events = mutableListOf<String>()
+        doAnswer { invocation ->
+            assertProducerTransaction()
+            events += "verify"
+            invocation.callRealMethod()
+        }.whenever(selectedPopulationVerificationService).verify(any(), any())
+        doAnswer { invocation ->
+            assertProducerTransaction()
+            events += "persist"
+            invocation.callRealMethod()
+        }.whenever(evaluationEvidenceSnapshotServiceSpy).persist(any(), any())
+
+        val snapshotId = evaluationEvidenceProducerService.produce(fixture.input)
+
+        assertEquals(listOf("verify", "persist"), events)
+        val snapshot = evaluationEvidenceSnapshotService.readVerifiedPersisted(runId)
+        assertEquals(snapshotId, snapshot.id)
+        assertEquals(fixture.input.roster, snapshot.players)
+        assertEquals(4, snapshot.rows.size)
+        assertEquals(
+            references.map { it.id }.toSet(),
+            snapshot.rows.map { it.occurrenceId }.toSet(),
+        )
+        assertEquals(
+            fixture.decisions.take(2).map { it.game.id }.toSet(),
+            snapshot.rows.map { it.gameId }.toSet(),
+        )
+        val evaluatedPlayer = fixture.input.roster.single { it.id != fixture.zeroRowPlayer.id }
+        assertTrue(snapshot.rows.all { it.playerId == evaluatedPlayer.id })
+        assertTrue(snapshot.rows.all { it.positionIdentity == references.first().positionHash })
+        assertTrue(snapshot.rows.all { it.preMovePly == references.first().preMovePly })
+        assertTrue(snapshot.rows.all { it.move == "e4" && it.playerColor == "WHITE" })
+        assertTrue(snapshot.rows.all { it.loss == 0.55 && it.engineDepth == 16 })
+        assertTrue(snapshot.rows.all { it.observedOutcome == ObservedGameOutcome.WIN })
+        assertTrue(
+            snapshot.rows.all {
+                it.objectiveOutcome == null && it.practicalCandidate == null && it.practicalEligible == null &&
+                    it.practicalWins == null && it.practicalDraws == null && it.practicalLosses == null
+            },
+        )
+        assertEquals(fixture.input.configuration, snapshot.configuration)
+        assertNull(snapshot.occurrenceEvidenceId)
+        assertNull(snapshot.sourceRevision)
+        assertNull(snapshot.engineIdentity)
+        assertNull(snapshot.parserIdentity)
+        val practicalEvidence = evaluationEvidenceSnapshotService.reconstructPersisted(runId).practicalEvidence
+        assertNull(practicalEvidence.getValue(evaluatedPlayer.id))
+        assertNull(practicalEvidence.getValue(fixture.zeroRowPlayer.id))
+
+        val evidenceDigest =
+            jdbcTemplate.queryForObject(
+                "SELECT evidence_digest FROM evaluation_evidence_snapshot WHERE id = ?",
+                String::class.java,
+                snapshotId,
+            )
+        val reversedInput =
+            EvaluationEvidenceProducerInput(
+                roster = fixture.input.roster,
+                operationalOccurrenceIds = fixture.input.operationalOccurrenceIds.reversed(),
+                referencePopulation = population,
+                configuration = fixture.input.configuration,
+            )
+        assertEquals(snapshotId, evaluationEvidenceProducerService.produce(reversedInput))
+        assertEquals(
+            evidenceDigest,
+            jdbcTemplate.queryForObject(
+                "SELECT evidence_digest FROM evaluation_evidence_snapshot WHERE id = ?",
+                String::class.java,
+                snapshotId,
+            ),
+        )
+        val changedInput =
+            EvaluationEvidenceProducerInput(
+                roster = fixture.input.roster,
+                operationalOccurrenceIds = listOf(fixture.input.operationalOccurrenceIds.first()),
+                referencePopulation = population,
+                configuration = fixture.input.configuration,
+            )
+        assertFailsWith<EvaluationEvidenceIntegrityException> {
+            evaluationEvidenceProducerService.produce(changedInput)
+        }
+        assertEquals(4, evaluationEvidenceSnapshotService.readVerifiedPersisted(runId).rows.size)
+
+        val projectionId =
+            jdbcTemplate.queryForObject(
+                "SELECT id FROM human_move_corpus_projection WHERE source_run_id = ? AND prefix_n = 2 AND finalized AND verified",
+                UUID::class.java,
+                runId,
+            )!!
+        jdbcTemplate.execute("TRUNCATE human_move_corpus_imported_observation, human_move_corpus_imported_game CASCADE")
+
+        val admitted = retainedEvaluationEvidenceService.loadAndAdmit(runId, projectionId, "e6-v1")
+        val analysisResult =
+            ReferenceCoverageAnalysisService().analyze(admitted.toAnalysisInput())
+        assertEquals(4, admitted.snapshot.rows.size)
+        assertEquals(
+            PositionCoverage(1, 1, 1.0),
+            analysisResult.byPlayer.getValue(evaluatedPlayer.identity).at(0.50),
+        )
+        assertEquals(
+            PositionCoverage(0, 0, null),
+            analysisResult.byPlayer.getValue(fixture.zeroRowPlayer.identity).at(0.50),
+        )
+        assertEquals(2, analysisResult.locations.getValue(evaluatedPlayer.identity).at(0.50).occurrenceCount)
+        assertEquals(2, analysisResult.locations.getValue(evaluatedPlayer.identity).at(0.50).uniqueGameCount)
+    }
+
+    @Test
+    fun `producer persists an empty operational selection with its declared zero row roster`() {
+        val runId = finalizedRunWithSamePlyOccurrences()
+        val population = producerPopulation(runId, prefixN = 2)
+        val zeroRowPlayer = EvaluationEvidencePlayer(UUID.randomUUID(), "zero-row-player")
+        val input =
+            EvaluationEvidenceProducerInput(
+                roster = listOf(zeroRowPlayer),
+                operationalOccurrenceIds = emptyList(),
+                referencePopulation = population,
+                configuration = producerConfiguration(),
+            )
+
+        val snapshotId = evaluationEvidenceProducerService.produce(input)
+        val snapshot = evaluationEvidenceSnapshotService.readVerifiedPersisted(runId)
+
+        assertEquals(snapshotId, snapshot.id)
+        assertEquals(setOf(zeroRowPlayer), snapshot.players)
+        assertTrue(snapshot.rows.isEmpty())
+    }
+
+    @Test
+    fun `verification failure leaves no producer snapshot or evidence rows`() {
+        val runId = finalizedRunWithSamePlyOccurrences()
+        val population = producerPopulation(runId, prefixN = 2)
+        val fixture = operationalProducerFixture(population)
+        val invalidPopulation = population.copy(distributionSha256 = "f".repeat(64))
+        val input =
+            EvaluationEvidenceProducerInput(
+                roster = fixture.input.roster,
+                operationalOccurrenceIds = fixture.input.operationalOccurrenceIds,
+                referencePopulation = invalidPopulation,
+                configuration = fixture.input.configuration,
+            )
+
+        assertFailsWith<RetainedEvaluationEvidenceIntegrityException> {
+            evaluationEvidenceProducerService.produce(input)
+        }
+
+        assertEquals(
+            0,
+            jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM evaluation_evidence_snapshot WHERE source_run_id = ?",
+                Int::class.java,
+                runId,
+            ),
+        )
+        assertEquals(
+            0,
+            jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(*) FROM evaluation_evidence_row e
+                JOIN evaluation_evidence_snapshot s ON s.id = e.snapshot_id
+                WHERE s.source_run_id = ?
+                """.trimIndent(),
+                Int::class.java,
+                runId,
+            ),
+        )
+    }
+
+    @Test
+    fun `persistence failure after snapshot insertion rolls back the complete producer write`() {
+        val runId = finalizedRunWithSamePlyOccurrences()
+        val population = producerPopulation(runId, prefixN = 2)
+        val fixture = operationalProducerFixture(population)
+        jdbcTemplate.execute(
+            """
+            CREATE OR REPLACE FUNCTION fail_producer_evidence_row_insert() RETURNS trigger AS $$
+            BEGIN
+                RAISE EXCEPTION 'forced producer row failure';
+            END;
+            $$ LANGUAGE plpgsql
+            """.trimIndent(),
+        )
+        jdbcTemplate.execute(
+            """
+            CREATE TRIGGER fail_producer_evidence_row_insert
+            BEFORE INSERT ON evaluation_evidence_row
+            FOR EACH ROW EXECUTE FUNCTION fail_producer_evidence_row_insert()
+            """.trimIndent(),
+        )
+
+        try {
+            assertFailsWith<Exception> {
+                evaluationEvidenceProducerService.produce(fixture.input)
+            }
+        } finally {
+            jdbcTemplate.execute("DROP TRIGGER IF EXISTS fail_producer_evidence_row_insert ON evaluation_evidence_row")
+            jdbcTemplate.execute("DROP FUNCTION IF EXISTS fail_producer_evidence_row_insert()")
+        }
+
+        assertEquals(
+            0,
+            jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM evaluation_evidence_snapshot WHERE source_run_id = ?",
+                Int::class.java,
+                runId,
+            ),
+        )
+        assertEquals(
+            0,
+            jdbcTemplate.queryForObject(
+                """
+                SELECT COUNT(*) FROM evaluation_evidence_row e
+                JOIN evaluation_evidence_snapshot s ON s.id = e.snapshot_id
+                WHERE s.source_run_id = ?
+                """.trimIndent(),
+                Int::class.java,
+                runId,
+            ),
+        )
+    }
 
     private fun withoutNonCoreEvidence(snapshot: EvaluationEvidenceSnapshot) =
         snapshot.copy(

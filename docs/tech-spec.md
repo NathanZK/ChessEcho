@@ -14,7 +14,7 @@ architecture:
   - **Analysis flow**: imported games are replayed; positions use four-field FEN identity; qualifying positions are evaluated by Stockfish; weakness ranking is calculated per account.
   - **Backend modules**: `controller` and `dto` expose HTTP boundaries; `service` implements application behavior; `domain` models persisted concepts; `repository` uses Spring Data JPA; `config` and `web` provide framework and request/security integration.
   - **Human-move subsystem**: `humanmove` and related services build empirical human-move distributions by rating band; see `docs/architecture/human-move-provider.md` and `docs/engineering/human-move-corpus-portability.md`.
-  - **Reference-coverage analysis**: Retained-evidence admission and coverage calculations are documented in `docs/specs/reference-coverage-analysis.md`.
+  - **Reference-evidence subsystem**: The explicit-input producer creates #430 snapshots; retained admission and coverage are documented in `docs/specs/evaluation-evidence-producer.md` and `docs/specs/reference-coverage-analysis.md`.
 
 stack:
   - **Backend**: Kotlin 2.0, Spring Boot 3.3.2, Spring Data JPA, Flyway, PostgreSQL 16, kchesslib, Stockfish.
@@ -36,6 +36,7 @@ contract:
   - **Import and jobs**: `POST /api/games/import` creates an asynchronous job; `GET /api/jobs/{id}` reports ingestion and analysis progress.
   - **Private selectors**: authenticated private requests select an owned account by `accountId`; guest requests use platform and username. An authenticated guest-shaped import returns `400 ACCOUNT_SELECTION_REQUIRED`.
   - **Analysis and practice**: `/api/positions/weaknesses` and `/api/positions/{positionId}/progress` expose weakness and progress reads; `/api/puzzles`, `/api/puzzles/continuation`, `/api/puzzles/evaluate-move`, `/api/puzzles/attempt`, and `/api/puzzles/events` support puzzles, continuation, evaluation, attempts, and events.
+  - **Evaluation evidence**: Internal `EvaluationEvidenceProducerService.produce` creates #430 snapshots from explicit input and verifies #450 before persistence; see `docs/specs/evaluation-evidence-producer.md`.
   - **Human-move corpus administration**: `/api/admin/human-move-distribution/*` covers BFS acquisition, corpus runs/checkpoints, artifact export/verify/import/purge, projections, and cross-cohort comparison.
   - **Errors and security**: API errors use structured responses; state-changing requests require the session's double-submit CSRF token. See `API_CONTRACT.md`.
 

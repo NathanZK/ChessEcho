@@ -77,6 +77,14 @@ class EngineAnalysisServiceTest {
     }
 
     @Test
+    fun `deterministically derives evaluation loss only when both centipawn inputs are present`() {
+        assertEquals(0.75, engineAnalysisService.calculateEvalLoss(100, 25))
+        assertEquals(0.0, engineAnalysisService.calculateEvalLoss(25, 100))
+        assertEquals(null, engineAnalysisService.calculateEvalLoss(null, 25))
+        assertEquals(null, engineAnalysisService.calculateEvalLoss(100, null))
+    }
+
+    @Test
     fun `analyzePosition persists historical move even if evalLossFromBest exceeds 1 5 pawns`() {
         val positionId = UUID.randomUUID()
         val fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"

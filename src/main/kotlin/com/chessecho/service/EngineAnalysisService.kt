@@ -556,7 +556,7 @@ class EngineAnalysisService(
      * (positive scores indicate advantage for the player to move). Therefore, `bestMoveEvalCp - moveEvalCp` is valid
      * for both White and Black positions.
      */
-    private fun calculateEvalLoss(
+    internal fun calculateEvalLoss(
         bestMoveEvalCp: Int?,
         moveEvalCp: Int?,
     ): Double? {
