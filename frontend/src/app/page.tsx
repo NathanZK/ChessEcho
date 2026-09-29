@@ -20,6 +20,7 @@ import {
   fetchPuzzleContinuation,
   fetchCurrentSession,
   fetchAccounts,
+  disconnectAccount,
   logout as apiLogout,
   recordPuzzleEvent,
   submitTrainingAttempt,
@@ -68,6 +69,7 @@ export default function Home() {
     activeAccountStore.getSnapshot,
     activeAccountStore.getServerSnapshot
   );
+  const activeAccountId = activeAccount?.id;
   const previousAccountIdRef = React.useRef<string | undefined>(activeAccount?.id);
   React.useEffect(() => {
     if (
@@ -88,6 +90,8 @@ export default function Home() {
   const [sessionStatus, setSessionStatus] = useState<SessionState['status']>('loading');
   const [accountStatus, setAccountStatus] = useState<AccountConnectionStatus>('loading');
   const [accountError, setAccountError] = useState<string | undefined>(undefined);
+  const [disconnectError, setDisconnectError] = useState<string | undefined>(undefined);
+  const [isDisconnecting, setIsDisconnecting] = useState(false);
   const accountOwnerIdRef = React.useRef<string | undefined>(undefined);
   const accountRequestVersionRef = React.useRef(0);
   const accountContextMountedRef = React.useRef(true);
@@ -235,8 +239,12 @@ export default function Home() {
     activeUsernameStore.set(user);
   };
 
-  const handleDisconnect = () => {
+  const clearAccountUiState = () => {
     handleSetUsername(undefined);
+    activeAccountStore.set(undefined);
+    clearLiveJobState();
+    activeJobStore.set(null);
+    setAccountStatus('unconnected');
     setPuzzlesList([]);
     setCurrentPuzzleIndex(0);
     setActivePuzzle(null);
@@ -246,6 +254,43 @@ export default function Home() {
     setHasMorePuzzles(false);
     setIsFetchingMorePuzzles(false);
     setWeaknessCount(0);
+    setWeaknessRefreshKey((key) => key + 1);
+  };
+
+  const handleDisconnect = async () => {
+    const accountId = activeAccountStore.getSnapshot()?.id;
+    if (!accountId) {
+      setDisconnectError('No connected Chess.com account is selected.');
+      return;
+    }
+    const requestVersion = accountRequestVersionRef.current;
+    const ownerId = accountOwnerIdRef.current;
+    setDisconnectError(undefined);
+    setIsDisconnecting(true);
+    try {
+      await disconnectAccount(accountId);
+    } catch (error: unknown) {
+      if (
+        accountRequestVersionRef.current === requestVersion &&
+        accountOwnerIdRef.current === ownerId &&
+        activeAccountStore.getSnapshot()?.id === accountId
+      ) {
+        setDisconnectError(errorMessageOf(error) || 'Failed to disconnect Chess.com account.');
+      }
+      return;
+    } finally {
+      setIsDisconnecting(false);
+    }
+
+    if (
+      accountRequestVersionRef.current !== requestVersion ||
+      accountOwnerIdRef.current !== ownerId ||
+      activeAccountStore.getSnapshot()?.id !== accountId
+    ) {
+      return;
+    }
+    setDisconnectError(undefined);
+    clearAccountUiState();
   };
 
   // Logout/expiry: clear private state, invalidate in-flight generations, drop the
@@ -258,10 +303,8 @@ export default function Home() {
     setAccountError(undefined);
     invalidatePuzzleRequests();
     reconcileSessionIdentity(undefined);
-    handleDisconnect();
-    activeAccountStore.set(undefined);
-    activeJobStore.set(null);
-    setWeaknessRefreshKey((k) => k + 1);
+    clearAccountUiState();
+    setDisconnectError(undefined);
   };
 
   const handleLogout = () => {
@@ -282,15 +325,20 @@ export default function Home() {
   const recordPuzzleEventBestEffort = React.useCallback(
     (eventType: 'PRESENTED' | 'STARTED' | 'SOLVED' | 'FAILED' | 'SKIPPED', puzzle: Puzzle | null = activePuzzle) => {
       if (!puzzle || sessionStatus !== 'authenticated') return;
+      if (!activeAccountId) {
+        console.warn('Unable to record puzzle scheduling event without a selected account');
+        return;
+      }
       void recordPuzzleEvent({
         positionId: puzzle.puzzleId,
         playerColor: puzzle.playerColor,
         eventType,
+        accountId: activeAccountId,
       }).catch((error) => {
         console.warn('Unable to record puzzle scheduling event', error);
       });
     },
-    [activePuzzle, sessionStatus],
+    [activePuzzle, activeAccountId, sessionStatus],
   );
 
   React.useEffect(() => {
@@ -318,6 +366,10 @@ export default function Home() {
       if (!timer || !mode || !activePuzzle) return;
       const attemptId = timer.getCurrentAttemptId();
       if (!attemptId) return;
+      if (sessionStatus === 'authenticated' && !activeAccountId) {
+        setTimerSubmissionError('Select a connected Chess.com account before recording this attempt.');
+        return;
+      }
 
       let elapsedMs: number;
       let allowedMs: number | undefined;
@@ -336,13 +388,14 @@ export default function Home() {
           elapsedMs,
           allowedMs,
           outcome,
+          ...(sessionStatus === 'authenticated' ? { accountId: activeAccountId } : {}),
         });
         setTimerSubmissionError(null);
       } catch {
         setTimerSubmissionError('Failed to record timing for this attempt.');
       }
     },
-    [timerMode, timerAllowedMs, activePuzzle]
+    [timerMode, timerAllowedMs, activePuzzle, activeAccountId, sessionStatus]
   );
 
   React.useEffect(() => {
@@ -1815,6 +1868,8 @@ export default function Home() {
             }}
             onRetryAccountLoad={retryAccountLoad}
             onDisconnect={handleDisconnect}
+            disconnectError={disconnectError}
+            isDisconnecting={isDisconnecting}
             onImportStarted={(user) => handleSetUsername(user)}
             onNavigateTab={(tab) => changeTab(tab)}
             onJobStatusUpdate={handleJobStatusUpdate}

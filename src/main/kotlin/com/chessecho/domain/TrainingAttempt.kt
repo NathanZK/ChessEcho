@@ -46,6 +46,9 @@ class TrainingAttempt(
     @ManyToOne(fetch = FetchType.LAZY, optional = true)
     @JoinColumn(name = "chess_account_id", nullable = true)
     val chessAccount: ChessAccount? = null,
+    @ManyToOne(fetch = FetchType.LAZY, optional = true)
+    @JoinColumn(name = "app_user_id", nullable = true)
+    val appUser: AppUser? = null,
     @Column(nullable = false)
     val createdAt: Instant = Instant.now(),
 )

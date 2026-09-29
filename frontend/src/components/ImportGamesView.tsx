@@ -23,6 +23,8 @@ interface ImportGamesViewProps {
   sessionStatus?: SessionState['status'];
   accountStatus?: AccountConnectionStatus;
   accountError?: string;
+  disconnectError?: string;
+  isDisconnecting?: boolean;
   onConnectAccount?: (username: string) => Promise<void>;
   onRetryAccountLoad?: () => void;
   onImportStarted?: (username: string) => void;
@@ -38,6 +40,8 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
   sessionStatus = 'unauthenticated',
   accountStatus = 'unconnected',
   accountError,
+  disconnectError,
+  isDisconnecting = false,
   onConnectAccount,
   onRetryAccountLoad,
   onImportStarted,
@@ -299,14 +303,20 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                   <button
                     type="button"
                     onClick={onDisconnect}
-                    className="text-[11px] font-semibold text-slate-400 hover:text-rose-400 underline cursor-pointer"
+                    disabled={isDisconnecting}
+                    className="text-[11px] font-semibold text-slate-400 hover:text-rose-400 underline disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
                   >
-                    Disconnect
+                    {isDisconnecting ? 'Disconnecting…' : 'Disconnect'}
                   </button>
                 )}
               </div>
             )}
           </h3>
+          {disconnectError && (
+            <p role="alert" className="text-xs text-rose-300">
+              Unable to disconnect account. {disconnectError}
+            </p>
+          )}
 
           {/* Username Input */}
           <div className="space-y-1.5">

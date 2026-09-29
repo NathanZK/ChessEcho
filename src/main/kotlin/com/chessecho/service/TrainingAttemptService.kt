@@ -5,6 +5,7 @@ import com.chessecho.domain.TrainingAttemptMode
 import com.chessecho.domain.TrainingAttemptOutcome
 import com.chessecho.dto.TrainingAttemptRequest
 import com.chessecho.dto.TrainingAttemptResponse
+import com.chessecho.repository.AppUserRepository
 import com.chessecho.repository.TrainingAttemptRepository
 import com.chessecho.service.auth.AuthenticatedPrincipal
 import org.springframework.stereotype.Service
@@ -13,6 +14,8 @@ import java.time.Instant
 @Service
 class TrainingAttemptService(
     private val trainingAttemptRepository: TrainingAttemptRepository,
+    private val accountOwnershipService: AccountOwnershipService,
+    private val appUserRepository: AppUserRepository,
 ) {
     fun submit(
         request: TrainingAttemptRequest,
@@ -23,6 +26,13 @@ class TrainingAttemptService(
         principal: AuthenticatedPrincipal?,
         request: TrainingAttemptRequest,
     ): TrainingAttemptResponse {
+        val chessAccount =
+            when {
+                request.accountId != null -> accountOwnershipService.resolveSharedAccount(request.accountId, principal)
+                principal != null -> throw AccountSelectionRequiredException()
+                else -> null
+            }
+
         // Validate non-negative durations
         if (request.elapsedMs < 0) {
             throw IllegalArgumentException("Elapsed time cannot be negative: ${request.elapsedMs}ms")
@@ -57,7 +67,8 @@ class TrainingAttemptService(
                 elapsedMs = request.elapsedMs,
                 allowedMs = request.allowedMs,
                 outcome = outcome,
-                chessAccount = null,
+                chessAccount = chessAccount,
+                appUser = principal?.let { appUserRepository.getReferenceById(it.appUserId) },
                 createdAt = Instant.now(),
             )
 

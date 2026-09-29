@@ -34,7 +34,8 @@ The goal is to change habits, not to memorize engine lines.
 - **Interactive personalized puzzles**: practice your actual recurring weaknesses on an interactive board; the system recognizes your historical mistake moves and gives targeted feedback
 - **Evaluation bar, hints, undo/redo**: move-by-move evaluation tracking, source-square hint highlighting, and full board navigation
 - **Configurable thresholds**: adjust minimum eval loss, minimum mistake count, and color filter without triggering new Stockfish analysis
-- **Owner-scoped accounts**: signed-in users explicitly connect a Chess.com account before account-scoped imports; guest imports remain username-based
+- **Connected Chess.com accounts**: signed-in users connect or disconnect accounts; imports use the confirmed selected account, while guest imports remain username-based
+- **Personal training history**: puzzle and training history is private to each signed-in user and Chess.com account, and remains available after disconnecting and reconnecting
 - **Immutable import jobs**: every job persists its account, date, time-control, color, and provider snapshot; workers fail closed on malformed configuration
 
 ---
@@ -216,9 +217,9 @@ Move-order transpositions that produce legally identical positions are grouped t
 
 **Kotlin/Spring Boot backend** — handles game import (via Chess.com's public API), PGN parsing, position detection, engine analysis orchestration, weakness calculation, and puzzle serving. Runs on port 8080.
 
-**PostgreSQL** — stores provider-neutral users/sessions, canonical chess accounts, imported games, board positions, position occurrences, engine analysis results, and owner-scoped import jobs. Schema is managed by one clean `V1__baseline.sql` migration; the unreleased V1/V2 history and any V3 upgrade/quarantine path are not used. See [`docs/engineering/repository-conventions.md`](docs/engineering/repository-conventions.md) for the pre-deployment default this reflects and when it no longer applies.
+**PostgreSQL** — stores provider-neutral users/sessions, canonical chess accounts, imported games, board positions, position occurrences, engine analysis results, and import jobs with immutable initiating-user attribution. Schema is managed by one clean `V1__baseline.sql` migration; the unreleased V1/V2 history and any V3 upgrade/quarantine path are not used. See [`docs/engineering/repository-conventions.md`](docs/engineering/repository-conventions.md) for the pre-deployment default this reflects and when it no longer applies.
 
-**Asynchronous import job** — when a game import is started, the backend creates a job record and executes the pipeline asynchronously. Live game progress is checkpointed after each archive. Game ingestion and the subsequent Stockfish analysis have independent statuses on the same job, and the frontend polls both every two seconds. Authenticated jobs are selected by account UUID and can be polled only by the owner; guest jobs are limited to unclaimed accounts.
+**Asynchronous import job** — when a game import is started, the backend creates a job record and executes the pipeline asynchronously. Live game progress is checkpointed after each archive. Game ingestion and the subsequent Stockfish analysis have independent statuses on the same job, and the frontend polls both every two seconds. Authenticated imports require the account's current owner, and only the initiating user can poll that job; guests can poll jobs only while the account is unclaimed.
 
 **Stockfish analysis** — qualifying positions are analyzed by spawning Stockfish as a subprocess. The baseline position evaluation and the evaluation of each historically played move are stored. Analysis runs at depth 16.
 
@@ -319,7 +320,7 @@ The adjustment is a fixed multiplier, not scaled by distance from the comparator
 
 ## Known Limitations
 
-- **Optional authentication.** Guests can import and view unclaimed accounts; registered users can claim accounts and receive owner-scoped access. Unclaimed guest data is not suited to public multi-user deployment.
+- **Optional authentication.** Guests can import and view unclaimed accounts; registered users can connect accounts and initiate imports. Authenticated users may read shared imported data, while personal training history and job status remain scoped to their initiating user. Unclaimed guest data is not suited to public multi-user deployment.
 - **Chess.com only.** Lichess is not currently implemented.
 - **Engine analysis can take several minutes for large histories.** A player with thousands of games may have many qualifying positions, each requiring individual analysis.
 - **Stockfish runs sequentially as a subprocess.** A new process is spawned per position analysis. There is no persistent engine connection or analysis pool. This is the primary performance bottleneck for large imports.

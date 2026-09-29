@@ -1,5 +1,6 @@
 package com.chessecho.service
 
+import com.chessecho.domain.AppUser
 import com.chessecho.domain.ArchiveDerivedProcessing
 import com.chessecho.domain.ArchiveDerivedStatus
 import com.chessecho.domain.AsyncJob
@@ -13,6 +14,7 @@ import com.chessecho.domain.SchedulingEventType
 import com.chessecho.domain.TimeControl
 import com.chessecho.domain.UserPositionStats
 import com.chessecho.dto.ImportGamesRequest
+import com.chessecho.repository.AppUserRepository
 import com.chessecho.repository.ArchiveDerivedProcessingRepository
 import com.chessecho.repository.AsyncJobRepository
 import com.chessecho.repository.ChessAccountRepository
@@ -44,6 +46,7 @@ import javax.sql.DataSource
 @Service
 class GameImportService(
     private val asyncJobRepository: AsyncJobRepository,
+    private val appUserRepository: AppUserRepository,
     private val chessAccountRepository: ChessAccountRepository,
     private val gameRepository: GameRepository,
     private val importedArchiveRepository: ImportedArchiveRepository,
@@ -134,6 +137,7 @@ class GameImportService(
             val job =
                 AsyncJob(
                     chessAccount = lockedAccount,
+                    appUser = principal?.let { appUserRepository.getReferenceById(it.appUserId) },
                     username = lockedAccount.username,
                     platform = lockedAccount.platform,
                     status = "QUEUED",
@@ -208,7 +212,7 @@ class GameImportService(
                     )
                     skipped += importedArchive.gameCount
                     processed += importedArchive.gameCount
-                    allAffectedPositionIds.addAll(processDerivedArchive(account, importedArchive))
+                    allAffectedPositionIds.addAll(processDerivedArchive(account, job.appUser, importedArchive))
                     transactionTemplate.executeWithoutResult {
                         persistImportProgress(claim, imported, skipped, processed, eligibleSelected)
                     }
@@ -216,7 +220,8 @@ class GameImportService(
                 }
 
                 val remainingCap = maxEligible?.let { (it - eligibleSelected).coerceAtLeast(0) }
-                val res = importMonth(account, archiveUrl, yearMonth, isPastMonth, request, remainingCap)
+                val res =
+                    importMonth(account, job.appUser, archiveUrl, yearMonth, isPastMonth, request, remainingCap)
                 imported += res.imported
                 skipped += res.skipped
                 processed += res.processed
@@ -489,6 +494,7 @@ class GameImportService(
 
     private fun importMonth(
         account: ChessAccount,
+        initiatingUser: AppUser?,
         archiveUrl: String,
         yearMonth: String,
         isPastMonth: Boolean,
@@ -611,7 +617,7 @@ class GameImportService(
             } ?: Pair(emptyList(), null)
 
         val affectedPositionIds =
-            processDerivedGames(account, savedGamesAndArchive.first, savedGamesAndArchive.second)
+            processDerivedGames(account, initiatingUser, savedGamesAndArchive.first, savedGamesAndArchive.second)
 
         return ImportMonthResult(
             gamesToSave.size,
@@ -624,13 +630,15 @@ class GameImportService(
 
     private fun processDerivedArchive(
         account: ChessAccount,
+        initiatingUser: AppUser?,
         archive: ImportedArchive,
     ): Set<UUID> {
-        return processDerivedGames(account, emptyList(), archive)
+        return processDerivedGames(account, initiatingUser, emptyList(), archive)
     }
 
     private fun processDerivedGames(
         account: ChessAccount,
+        initiatingUser: AppUser?,
         savedGames: List<Game>,
         archive: ImportedArchive?,
     ): Set<UUID> {
@@ -651,7 +659,7 @@ class GameImportService(
             // does not guarantee.
             games.chunked(derivedGameBatchSize.coerceAtLeast(1)).forEach { batch ->
                 val ids = gameParserService.parseAndSavePositions(batch)
-                emitSchedulingEvents(batch, ids)
+                emitSchedulingEvents(batch, initiatingUser, ids)
                 updateUserPositionStats(account, ids)
                 affected.addAll(ids)
                 claim?.let(::renewDerivedProcessingLease)
@@ -806,6 +814,7 @@ class GameImportService(
 
     private fun emitSchedulingEvents(
         savedGames: List<Game>,
+        initiatingUser: AppUser?,
         affectedPositionIds: Set<UUID>,
     ) {
         if (savedGames.isEmpty() || affectedPositionIds.isEmpty()) return
@@ -847,6 +856,7 @@ class GameImportService(
                 val occurredAt = occurrence.game.playedAt ?: occurrence.game.createdAt
                 claimSchedulingEvent(
                     PuzzleSchedulingEvent(
+                        appUser = initiatingUser,
                         chessAccount = occurrence.chessAccount,
                         position = occurrence.position,
                         playerColor = occurrence.playerColor,
@@ -857,6 +867,7 @@ class GameImportService(
                 )
                 claimSchedulingEvent(
                     PuzzleSchedulingEvent(
+                        appUser = initiatingUser,
                         chessAccount = occurrence.chessAccount,
                         position = occurrence.position,
                         playerColor = occurrence.playerColor,
@@ -878,7 +889,11 @@ class GameImportService(
             puzzleSchedulingEventRepository.saveAndFlush(event)
         } catch (ex: DataIntegrityViolationException) {
             val sourceOccurrence = requireNotNull(event.sourceOccurrence)
-            puzzleSchedulingEventRepository.findExistingClaim(sourceOccurrence.id, event.eventType) ?: throw ex
+            puzzleSchedulingEventRepository.findExistingClaim(
+                event.appUser?.id,
+                sourceOccurrence.id,
+                event.eventType,
+            ) ?: throw ex
         }
     }
 

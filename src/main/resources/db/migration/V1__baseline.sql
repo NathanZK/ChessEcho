@@ -65,6 +65,9 @@ CREATE INDEX idx_chess_account_platform_username ON chess_account (platform, use
 CREATE TABLE async_job
 (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    -- #457: NO ACTION, not CASCADE/SET NULL. There is no AppUser deletion path today, and no
+    -- policy authorizes destroying job audit records or silently re-attributing them to a guest.
+    app_user_id          UUID REFERENCES app_user (id) ON DELETE NO ACTION,
     chess_account_id     UUID REFERENCES chess_account (id) ON DELETE SET NULL,
     username             VARCHAR(255) NOT NULL,
     platform             VARCHAR(20)  NOT NULL,
@@ -903,6 +906,10 @@ CREATE INDEX idx_local_credential_app_user ON local_credential (app_user_id);
 CREATE TABLE puzzle_scheduling_event
 (
     id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    -- #457: NO ACTION, not CASCADE/SET NULL. SET NULL would reclassify a personal claim as a
+    -- guest claim and collide under the NULLS NOT DISTINCT index below; CASCADE would destroy
+    -- personal training history. Revisit only under an explicit account-erasure policy.
+    app_user_id           UUID REFERENCES app_user (id) ON DELETE NO ACTION,
     chess_account_id      UUID         NOT NULL REFERENCES chess_account (id) ON DELETE CASCADE,
     position_id           UUID         NOT NULL REFERENCES position (id) ON DELETE CASCADE,
     player_color          VARCHAR(10)  NOT NULL,
@@ -918,13 +925,19 @@ CREATE TABLE puzzle_scheduling_event
     )
 );
 
+-- #457: source-linked scheduling events are the import-replay claim mechanism. The claim
+-- namespace is personal, so app_user_id participates in the key. NULLS NOT DISTINCT keeps the
+-- pre-existing guest (app_user_id IS NULL) idempotency, which a plain nullable key would lose.
 CREATE UNIQUE INDEX uk_puzzle_event_source_type
-    ON puzzle_scheduling_event (position_occurrence_id, event_type)
+    ON puzzle_scheduling_event (app_user_id, position_occurrence_id, event_type)
+    NULLS NOT DISTINCT
     WHERE position_occurrence_id IS NOT NULL;
 CREATE INDEX idx_puzzle_event_account_position
     ON puzzle_scheduling_event (chess_account_id, position_id, player_color, occurred_at);
 CREATE INDEX idx_puzzle_event_source
     ON puzzle_scheduling_event (position_occurrence_id);
+CREATE INDEX idx_puzzle_event_user_account_position
+    ON puzzle_scheduling_event (app_user_id, chess_account_id, position_id, player_color, occurred_at);
 
 CREATE TABLE training_attempt (
     id UUID PRIMARY KEY,
@@ -934,8 +947,11 @@ CREATE TABLE training_attempt (
     allowed_ms BIGINT CHECK (allowed_ms IS NULL OR allowed_ms >= 0),
     outcome VARCHAR(50) NOT NULL CHECK (outcome IN ('SUBMITTED', 'EXPIRED', 'CANCELLED')),
     chess_account_id UUID,
+    app_user_id UUID,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (chess_account_id) REFERENCES chess_account(id) ON DELETE SET NULL
+    FOREIGN KEY (chess_account_id) REFERENCES chess_account(id) ON DELETE SET NULL,
+    -- #457: NO ACTION, not CASCADE/SET NULL. See app_user_id notes on puzzle_scheduling_event.
+    FOREIGN KEY (app_user_id) REFERENCES app_user(id) ON DELETE NO ACTION
 );
 
 CREATE INDEX idx_puzzle_id ON training_attempt (puzzle_id);

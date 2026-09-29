@@ -7,4 +7,5 @@ data class PuzzleEventRequest(
     val positionId: UUID,
     val playerColor: String,
     val eventType: SchedulingEventType,
+    val accountId: UUID? = null,
 )

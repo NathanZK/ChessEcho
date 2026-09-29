@@ -10,6 +10,7 @@ data class TrainingAttemptRequest(
     val elapsedMs: Long,
     val allowedMs: Long? = null,
     val outcome: String,
+    val accountId: UUID? = null,
 )
 
 data class TrainingAttemptResponse(

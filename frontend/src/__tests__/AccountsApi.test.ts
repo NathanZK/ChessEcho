@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { associateAccount, fetchAccounts } from '../services/api';
+import { associateAccount, disconnectAccount, fetchAccounts } from '../services/api';
 
 function response(status: number, body: unknown): Response {
   return {
@@ -61,5 +61,23 @@ describe('owned account API contract', () => {
       platform: 'CHESS_COM',
       username: 'new-player',
     });
+  });
+
+  it('disconnects the selected account with credentials and the CSRF token', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(response(204, {}));
+
+    await expect(disconnectAccount('account-3')).resolves.toBeUndefined();
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0];
+    expect(String(url)).toContain('/accounts/account-3/connection');
+    expect(init?.method).toBe('DELETE');
+    expect(init?.credentials).toBe('include');
+    expect(new Headers(init?.headers).get('X-XSRF-TOKEN')).toBe('account-csrf');
+  });
+
+  it('surfaces disconnect failures', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(response(403, { error: 'FORBIDDEN' }));
+
+    await expect(disconnectAccount('account-3')).rejects.toThrow('FORBIDDEN');
   });
 });

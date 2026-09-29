@@ -100,6 +100,7 @@ class GameImportServiceDerivedClaimTest {
 
         return GameImportService(
             asyncJobRepository = mock(),
+            appUserRepository = mock(),
             chessAccountRepository = mock(),
             gameRepository = mock(),
             importedArchiveRepository = mock(),
