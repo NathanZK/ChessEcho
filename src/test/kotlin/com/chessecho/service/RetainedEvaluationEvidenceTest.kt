@@ -6,8 +6,8 @@ import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
-class E6AnalysisEvidenceServiceTest {
-    private val service = E6AdmissionValidator()
+class RetainedEvaluationEvidenceTest {
+    private val service = RetainedEvaluationEvidenceValidator()
     private val runId = UUID.nameUUIDFromBytes("reference-run".toByteArray())
     private val playerId = UUID.nameUUIDFromBytes("evaluation-player".toByteArray())
     private val occurrenceId = UUID.nameUUIDFromBytes("reference-occurrence".toByteArray())
@@ -29,10 +29,10 @@ class E6AnalysisEvidenceServiceTest {
     @Test
     fun `rejects unfinalized projection corrupted distribution and every mismatched population component`() {
         val selected = evidence()
-        assertFailsWith<E6AnalysisEvidenceIntegrityException> {
+        assertFailsWith<RetainedEvaluationEvidenceIntegrityException> {
             service.admit(selected.copy(projection = selected.projection.copy(finalized = false)))
         }
-        assertFailsWith<E6AnalysisEvidenceIntegrityException> {
+        assertFailsWith<RetainedEvaluationEvidenceIntegrityException> {
             service.admit(selected.copy(projection = selected.projection.copy(distributionSha256 = "0".repeat(64))))
         }
         val changes =
@@ -47,7 +47,7 @@ class E6AnalysisEvidenceServiceTest {
                 selected.snapshot.referencePopulation.copy(distributionSha256 = "d".repeat(64)),
             )
         changes.forEach { population ->
-            assertFailsWith<E6AnalysisEvidenceIntegrityException> {
+            assertFailsWith<RetainedEvaluationEvidenceIntegrityException> {
                 service.admit(selected.copy(snapshot = selected.snapshot.copy(referencePopulation = population)))
             }
         }
@@ -61,24 +61,24 @@ class E6AnalysisEvidenceServiceTest {
         assertEquals(occurrence.positionHash, row.positionIdentity)
         assertEquals(occurrence.preMovePly, row.preMovePly)
 
-        assertFailsWith<E6AnalysisEvidenceIntegrityException> {
+        assertFailsWith<RetainedEvaluationEvidenceIntegrityException> {
             service.admit(selected.copy(occurrences = selected.occurrences + (occurrenceId to occurrence.copy(preMovePly = 3))))
         }
-        assertFailsWith<E6AnalysisEvidenceIntegrityException> {
+        assertFailsWith<RetainedEvaluationEvidenceIntegrityException> {
             service.admit(selected.copy(occurrences = emptyMap()))
         }
-        assertFailsWith<E6AnalysisEvidenceIntegrityException> {
+        assertFailsWith<RetainedEvaluationEvidenceIntegrityException> {
             service.admit(
                 selected.copy(occurrences = selected.occurrences + (occurrenceId to occurrence.copy(contentDigest = "c".repeat(64)))),
             )
         }
     }
 
-    private fun evidence(): E6AdmissionEvidence {
+    private fun evidence(): RetainedEvaluationEvidence {
         val projectionRows =
             listOf(
-                E6ProjectionRow("r1", "e4", 5),
-                E6ProjectionRow("r2", "Nf3", 6),
+                RetainedReferenceProjectionRow("r1", "e4", 5),
+                RetainedReferenceProjectionRow("r2", "Nf3", 6),
             )
         val digest =
             MessageDigest.getInstance("SHA-256")
@@ -138,14 +138,14 @@ class E6AnalysisEvidenceServiceTest {
                 parserIdentity = "parser",
                 rows = listOf(row),
             )
-        return E6AdmissionEvidence(
+        return RetainedEvaluationEvidence(
             referencePopulation = population,
-            projection = E6ReferenceProjection(finalized = true, verified = true, distributionSha256 = digest, rows = projectionRows),
+            projection = RetainedReferenceProjection(finalized = true, verified = true, distributionSha256 = digest, rows = projectionRows),
             snapshot = snapshot,
             occurrences =
                 mapOf(
                     occurrenceId to
-                        E6ReferenceOccurrence(
+                        RetainedReferenceOccurrence(
                             sourceRunId = runId,
                             qualifyingOrdinal = 7,
                             preMovePly = 2,

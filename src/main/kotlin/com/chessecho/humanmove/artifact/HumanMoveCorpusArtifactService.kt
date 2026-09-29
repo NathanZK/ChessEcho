@@ -209,7 +209,7 @@ class HumanMoveCorpusArtifactService(
                 "Corpus snapshot exceeds the configured record count limit"
             }
 
-            val e6Eligible = run.status == HumanMoveCorpusRunStatus.COMPLETED && request.prefixN == recheckedFrontier
+            val terminalEligible = run.status == HumanMoveCorpusRunStatus.COMPLETED && request.prefixN == recheckedFrontier
             val manifest =
                 buildManifest(
                     run = run,
@@ -219,7 +219,7 @@ class HumanMoveCorpusArtifactService(
                     observationCount = observationWriter.count,
                     gamesEntry = gamesEntry,
                     observationsEntry = observationsEntry,
-                    e6Eligible = e6Eligible,
+                    terminalEligible = terminalEligible,
                 )
             val entryBytesBeforeManifest = Math.addExact(gamesEntry.size, observationsEntry.size)
             if (entryBytesBeforeManifest >= properties.maxExpandedBytes) {
@@ -451,7 +451,7 @@ class HumanMoveCorpusArtifactService(
         observationCount: Int,
         gamesEntry: HumanMoveCorpusArtifactCodec.EntryFile,
         observationsEntry: HumanMoveCorpusArtifactCodec.EntryFile,
-        e6Eligible: Boolean,
+        terminalEligible: Boolean,
     ): HumanMoveCorpusArtifactManifest {
         val seedPlayers = plainMapper.readValue<List<String>>(run.seedPlayers)
         val excludedPlayers = plainMapper.readValue<List<String>>(run.excludedPlayers)
@@ -491,7 +491,7 @@ class HumanMoveCorpusArtifactService(
             observationBytes = observationsEntry.size,
             gamesSha256 = gamesEntry.sha256,
             observationsSha256 = observationsEntry.sha256,
-            e6Eligible = e6Eligible,
+            e6Eligible = terminalEligible,
         )
     }
 }

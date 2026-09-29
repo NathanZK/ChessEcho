@@ -4,150 +4,16 @@ import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Isolation
 import org.springframework.transaction.annotation.Transactional
-import java.security.MessageDigest
 import java.util.UUID
 
-data class E6ProjectionRow(
-    val positionHash: String,
-    val movePlayed: String,
-    val observationCount: Int,
-)
-
-data class E6ReferenceProjection(
-    val finalized: Boolean,
-    val verified: Boolean,
-    val distributionSha256: String?,
-    val rows: List<E6ProjectionRow>,
-    val contentDigest: String? = null,
-    val sourceRunId: UUID? = null,
-    val prefixN: Int? = null,
-    val ratingBand: String? = null,
-    val minObservations: Int? = null,
-    val calculationVersion: String? = null,
-)
-
-data class E6ReferenceOccurrence(
-    val sourceRunId: UUID,
-    val qualifyingOrdinal: Int,
-    val preMovePly: Int,
-    val providerGameId: String,
-    val positionHash: String,
-    val movePlayed: String,
-    val contentDigest: String,
-    val coveredPrefix: Int,
-)
-
-data class E6AdmissionEvidence(
-    val referencePopulation: EvaluationReferencePopulation,
-    val projection: E6ReferenceProjection,
-    val snapshot: EvaluationEvidenceSnapshot,
-    val occurrences: Map<UUID, E6ReferenceOccurrence>,
-    val analysisVersion: String,
-) {
-    val referencePositions: Set<String>
-        get() = projection.rows.map { it.positionHash }.toSet()
-
-    val resolvedOccurrences: Map<UUID, E6ReferenceOccurrence>
-        get() = occurrences
-
-    fun toAnalysisInput(): E6AnalysisInput {
-        E6AdmissionValidator().admit(this)
-        return E6AnalysisInput(
-            referencePositions = referencePositions,
-            players =
-                snapshot.players.associate { player ->
-                    val key = player.identity
-                    key to player
-                },
-            rows =
-                snapshot.rows.map { row ->
-                    val occurrence =
-                        occurrences[row.occurrenceId]
-                            ?: throw E6AnalysisEvidenceIntegrityException(
-                                "missing authoritative occurrence ${row.occurrenceId}",
-                            )
-                    E6AnalysisRow(
-                        playerId = row.playerId,
-                        gameId = row.gameId,
-                        occurrenceId = row.occurrenceId,
-                        positionIdentity = row.positionIdentity,
-                        loss = row.loss,
-                        verifiedOccurrence = true,
-                        canonicalLocation =
-                            E6CanonicalLocation(
-                                occurrence.sourceRunId,
-                                occurrence.qualifyingOrdinal,
-                                occurrence.preMovePly,
-                                occurrence.movePlayed,
-                            ),
-                    )
-                },
-            analysisVersion = analysisVersion,
-        )
-    }
-}
-
-class E6AnalysisEvidenceIntegrityException(message: String) : RuntimeException(message)
-
-class E6AdmissionValidator {
-    fun admit(evidence: E6AdmissionEvidence): E6AdmissionEvidence {
-        val population = evidence.referencePopulation
-        val projection = evidence.projection
-        if (!projection.finalized || !projection.verified || projection.distributionSha256 == null) {
-            throw E6AnalysisEvidenceIntegrityException("reference projection is not finalized, verified, and digested")
-        }
-        if (projectionDigest(projection.rows) != projection.distributionSha256) {
-            throw E6AnalysisEvidenceIntegrityException("reference projection distribution digest mismatch")
-        }
-        if (evidence.snapshot.referencePopulation != population ||
-            population.distributionSha256 != null && population.distributionSha256 != projection.distributionSha256
-        ) {
-            throw E6AnalysisEvidenceIntegrityException("retained evidence does not match the selected reference population")
-        }
-        val players = evidence.snapshot.players
-        if (players.isEmpty() || players.map { it.id }.toSet().size != players.size ||
-            players.map { it.identity }.toSet().size != players.size || players.any { it.identity.isBlank() }
-        ) {
-            throw E6AnalysisEvidenceIntegrityException("declared E6 player identities are not unique")
-        }
-        if (evidence.analysisVersion.isBlank()) {
-            throw E6AnalysisEvidenceIntegrityException("analysis version must not be blank")
-        }
-        val declaredIds = players.map { it.id }.toSet()
-        evidence.snapshot.rows.forEach { row ->
-            val occurrence =
-                evidence.occurrences[row.occurrenceId]
-                    ?: throw E6AnalysisEvidenceIntegrityException("missing authoritative occurrence ${row.occurrenceId}")
-            if (row.playerId !in declaredIds ||
-                occurrence.sourceRunId != population.sourceRunId ||
-                occurrence.qualifyingOrdinal !in 1..population.coveredPrefix ||
-                occurrence.providerGameId.isBlank() ||
-                occurrence.contentDigest != population.contentDigest ||
-                occurrence.coveredPrefix != population.coveredPrefix ||
-                occurrence.positionHash != row.positionIdentity ||
-                occurrence.preMovePly != row.preMovePly ||
-                occurrence.movePlayed.isBlank()
-            ) {
-                throw E6AnalysisEvidenceIntegrityException("occurrence ${row.occurrenceId} does not match retained evidence")
-            }
-        }
-        return evidence
-    }
-
-    private fun projectionDigest(rows: List<E6ProjectionRow>): String =
-        MessageDigest.getInstance("SHA-256")
-            .digest(rows.joinToString("") { "${it.positionHash}\t${it.movePlayed}\t${it.observationCount}\n" }.toByteArray())
-            .joinToString("") { "%02x".format(it) }
-}
-
 @Service
-class E6AnalysisEvidenceService(
+class RetainedEvaluationEvidenceService(
     private val jdbcTemplate: JdbcTemplate,
     private val snapshotService: EvaluationEvidenceSnapshotService,
     private val occurrenceService: HumanMoveCorpusOccurrenceService,
 ) {
     @Transactional(readOnly = true)
-    fun verifyTerminalE6Eligibility(
+    fun verifyTerminalReferenceCoverageEligibility(
         sourceRunId: UUID,
         contentDigest: String,
         coveredPrefix: Int,
@@ -168,8 +34,8 @@ class E6AnalysisEvidenceService(
                 coveredPrefix,
             ).singleOrNull() == true
         if (!eligible) {
-            throw E6AnalysisEvidenceIntegrityException(
-                "Run $sourceRunId artifact is not terminal expanded-E6 eligible",
+            throw RetainedEvaluationEvidenceIntegrityException(
+                "Run $sourceRunId artifact is not terminally eligible for reference coverage",
             )
         }
         return binding
@@ -192,7 +58,7 @@ class E6AnalysisEvidenceService(
                 contentDigest,
             ).singleOrNull() ?: return
         if (snapshot.second && occurrenceService.hasSourceRun(sourceRunId)) {
-            verifyTerminalE6Eligibility(sourceRunId, contentDigest, snapshot.first)
+            verifyTerminalReferenceCoverageEligibility(sourceRunId, contentDigest, snapshot.first)
         }
     }
 
@@ -201,7 +67,7 @@ class E6AnalysisEvidenceService(
         sourceRunId: UUID,
         projectionId: UUID,
         analysisVersion: String,
-    ): E6AdmissionEvidence {
+    ): RetainedEvaluationEvidence {
         val snapshot = snapshotService.readVerifiedPersisted(sourceRunId)
         val projection =
             jdbcTemplate.query(
@@ -212,7 +78,7 @@ class E6AnalysisEvidenceService(
                 WHERE id = ?
                 """.trimIndent(),
                 { rs, _ ->
-                    E6ReferenceProjection(
+                    RetainedReferenceProjection(
                         finalized = rs.getBoolean("finalized"),
                         verified = rs.getBoolean("verified"),
                         distributionSha256 = rs.getString("distribution_sha256"),
@@ -226,7 +92,7 @@ class E6AnalysisEvidenceService(
                     )
                 },
                 projectionId,
-            ).singleOrNull() ?: throw E6AnalysisEvidenceIntegrityException("reference projection not found")
+            ).singleOrNull() ?: throw RetainedEvaluationEvidenceIntegrityException("reference projection not found")
         val rows =
             jdbcTemplate.query(
                 """
@@ -235,7 +101,7 @@ class E6AnalysisEvidenceService(
                 WHERE projection_id = ?
                 ORDER BY position_hash, move_played, observation_count
                 """.trimIndent(),
-                { rs, _ -> E6ProjectionRow(rs.getString(1), rs.getString(2), rs.getInt(3)) },
+                { rs, _ -> RetainedReferenceProjectionRow(rs.getString(1), rs.getString(2), rs.getInt(3)) },
                 projectionId,
             )
         val projectionWithRows = projection.copy(rows = rows)
@@ -247,7 +113,7 @@ class E6AnalysisEvidenceService(
             population.minObservations != projection.minObservations ||
             population.calculationVersion != projection.calculationVersion
         ) {
-            throw E6AnalysisEvidenceIntegrityException("projection does not match retained reference population")
+            throw RetainedEvaluationEvidenceIntegrityException("projection does not match retained reference population")
         }
         val artifactEligible =
             jdbcTemplate.query(
@@ -265,9 +131,9 @@ class E6AnalysisEvidenceService(
                 population.contentDigest,
             ).singleOrNull() == true
         if (!artifactEligible) {
-            throw E6AnalysisEvidenceIntegrityException("selected artifact is not expanded-E6 eligible")
+            throw RetainedEvaluationEvidenceIntegrityException("selected artifact is not terminally eligible for reference coverage")
         }
-        verifyTerminalE6Eligibility(sourceRunId, population.contentDigest, population.coveredPrefix)
+        verifyTerminalReferenceCoverageEligibility(sourceRunId, population.contentDigest, population.coveredPrefix)
         val ids = snapshot.rows.map { it.occurrenceId }.distinct()
         val occurrences =
             if (ids.isEmpty()) {
@@ -282,7 +148,7 @@ class E6AnalysisEvidenceService(
                     """.trimIndent(),
                     { rs, _ ->
                         rs.getObject("id", UUID::class.java) to
-                            E6ReferenceOccurrence(
+                            RetainedReferenceOccurrence(
                                 rs.getObject("source_run_id", UUID::class.java),
                                 rs.getInt("qualifying_ordinal"),
                                 rs.getInt("pre_move_ply"),
@@ -296,8 +162,8 @@ class E6AnalysisEvidenceService(
                     *ids.toTypedArray(),
                 ).toMap()
             }
-        return E6AdmissionValidator().admit(
-            E6AdmissionEvidence(population, projectionWithRows, snapshot, occurrences, analysisVersion),
+        return RetainedEvaluationEvidenceValidator().admit(
+            RetainedEvaluationEvidence(population, projectionWithRows, snapshot, occurrences, analysisVersion),
         )
     }
 }

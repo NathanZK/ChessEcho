@@ -12,7 +12,7 @@ import org.springframework.stereotype.Service
 import java.util.UUID
 
 /**
- * Issue #423 reference-corpus runs for Issue #75 E6. Traversal and
+ * Issue #423 reference-corpus runs for retained evaluation analysis. Traversal and
  * qualification are shared with legacy `/bfs` via [HumanMoveBfsTraversal];
  * membership is run-scoped and never touches the legacy global seen-game
  * claim or `human_move_distribution`.

@@ -280,7 +280,7 @@ class HumanMoveCorpusArtifactPostgresIntegrationTest {
     }
 
     @Test
-    fun `running prefixes are partial and only a completed terminal frontier is E6 eligible`() {
+    fun `running prefixes are partial and only a completed terminal frontier is marked eligible`() {
         val run = newRun()
         addGame(run, 1)
         val partial = export(run, 1)

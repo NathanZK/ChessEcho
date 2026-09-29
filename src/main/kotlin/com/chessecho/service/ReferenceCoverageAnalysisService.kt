@@ -2,49 +2,49 @@ package com.chessecho.service
 
 import java.util.UUID
 
-data class E6AnalysisInput(
+data class ReferenceCoverageAnalysisInput(
     val referencePositions: Set<String>,
     val players: Map<String, EvaluationEvidencePlayer>,
-    val rows: List<E6AnalysisRow>,
+    val rows: List<ReferenceCoverageAnalysisRow>,
     val analysisVersion: String,
 )
 
-data class E6AnalysisRow(
+data class ReferenceCoverageAnalysisRow(
     val playerId: UUID,
     val gameId: UUID,
     val occurrenceId: UUID,
     val positionIdentity: String,
     val loss: Double,
     val verifiedOccurrence: Boolean,
-    val canonicalLocation: E6CanonicalLocation,
+    val canonicalLocation: CanonicalOccurrenceLocation,
 )
 
-data class E6CanonicalLocation(
+data class CanonicalOccurrenceLocation(
     val sourceRunId: UUID,
     val qualifyingOrdinal: Int,
     val preMovePly: Int,
     val movePlayed: String,
 )
 
-data class E6Coverage(
+data class PositionCoverage(
     val weaknessPositionCount: Int,
     val sharedPositionCount: Int,
     val coverage: Double?,
 )
 
-data class E6Summary(
+data class CoverageSummary(
     val mean: Double?,
     val median: Double?,
     val minimum: Double?,
     val maximum: Double?,
 )
 
-data class E6LocationGroup(
+data class LocationGroupCount(
     val numerator: Int,
     val denominator: Int,
 )
 
-data class E6Locations(
+data class OccurrenceLocationSummary(
     val occurrenceCount: Int,
     val distinctPositionCount: Int,
     val uniqueGameCount: Int,
@@ -52,15 +52,15 @@ data class E6Locations(
     val unit: String,
     val denominator: Int,
     val groupingKey: String,
-    val groupsByPreMovePly: Map<Int, E6LocationGroup>,
+    val groupsByPreMovePly: Map<Int, LocationGroupCount>,
 )
 
-data class E6PlayerAnalysis(
-    val coverageByThreshold: Map<Double, E6Coverage>,
+data class PlayerCoverageAnalysis(
+    val coverageByThreshold: Map<Double, PositionCoverage>,
     val weaknessPositions: ThresholdValues<Set<String>>,
     val sharedPositions: ThresholdValues<Set<String>>,
 ) {
-    fun at(threshold: Double): E6Coverage = coverageByThreshold.getValue(threshold)
+    fun at(threshold: Double): PositionCoverage = coverageByThreshold.getValue(threshold)
 }
 
 data class ThresholdValues<T>(
@@ -69,26 +69,26 @@ data class ThresholdValues<T>(
     fun at(threshold: Double): T = values.getValue(threshold)
 }
 
-data class E6AnalysisResult(
+data class ReferenceCoverageAnalysisResult(
     val analysisVersion: String,
-    val byPlayer: Map<String, E6PlayerAnalysis>,
-    val pooled: ThresholdValues<E6Coverage>,
-    val summaries: ThresholdValues<E6Summary>,
-    val locations: Map<String, ThresholdValues<E6Locations>>,
+    val byPlayer: Map<String, PlayerCoverageAnalysis>,
+    val pooled: ThresholdValues<PositionCoverage>,
+    val summaries: ThresholdValues<CoverageSummary>,
+    val locations: Map<String, ThresholdValues<OccurrenceLocationSummary>>,
 )
 
-class E6AnalysisIntegrityException(message: String) : RuntimeException(message)
+class ReferenceCoverageAnalysisIntegrityException(message: String) : RuntimeException(message)
 
-class E6AnalysisService {
-    fun analyze(input: E6AnalysisInput): E6AnalysisResult {
+class ReferenceCoverageAnalysisService {
+    fun analyze(input: ReferenceCoverageAnalysisInput): ReferenceCoverageAnalysisResult {
         if (input.analysisVersion.isBlank()) {
-            throw E6AnalysisIntegrityException("analysis version must not be blank")
+            throw ReferenceCoverageAnalysisIntegrityException("analysis version must not be blank")
         }
         if (input.players.isEmpty() ||
             input.players.values.map { it.id }.toSet().size != input.players.size ||
             input.players.any { (name, player) -> name != player.identity || name.isBlank() }
         ) {
-            throw E6AnalysisIntegrityException("declared E6 players are invalid")
+            throw ReferenceCoverageAnalysisIntegrityException("declared players are invalid")
         }
         val declaredIds = input.players.values.map { it.id }.toSet()
         if (input.rows.any {
@@ -97,7 +97,7 @@ class E6AnalysisService {
                     it.canonicalLocation.qualifyingOrdinal < 1 || it.canonicalLocation.preMovePly < 1
             }
         ) {
-            throw E6AnalysisIntegrityException("all E6 rows must have a verified occurrence")
+            throw ReferenceCoverageAnalysisIntegrityException("all rows must have a verified occurrence")
         }
 
         val thresholds = EvaluationEvidenceSnapshotService.APPROVED_THRESHOLDS.sorted()
@@ -110,9 +110,9 @@ class E6AnalysisService {
                         val weakness = qualified.map { it.positionIdentity }.toSet()
                         val shared = weakness intersect input.referencePositions
                         val coverage = if (weakness.isEmpty()) null else shared.size.toDouble() / weakness.size
-                        E6Coverage(weakness.size, shared.size, coverage)
+                        PositionCoverage(weakness.size, shared.size, coverage)
                     }
-                E6PlayerAnalysis(
+                PlayerCoverageAnalysis(
                     coverageByThreshold = coverage,
                     weaknessPositions =
                         ThresholdValues(
@@ -139,7 +139,7 @@ class E6AnalysisService {
                     val denominator = values.sumOf { it.weaknessPositionCount }
                     val numerator = values.sumOf { it.sharedPositionCount }
                     val coverage = if (denominator == 0) null else numerator.toDouble() / denominator
-                    E6Coverage(denominator, numerator, coverage)
+                    PositionCoverage(denominator, numerator, coverage)
                 },
             )
         val summaries =
@@ -154,7 +154,7 @@ class E6AnalysisService {
                                 (values[values.size / 2 - 1] + values[values.size / 2]) / 2
                             }
                         }
-                    E6Summary(
+                    CoverageSummary(
                         mean = defined.takeIf { it.isNotEmpty() }?.average(),
                         median = median,
                         minimum = defined.minOrNull(),
@@ -168,7 +168,7 @@ class E6AnalysisService {
                     thresholds.associateWith { threshold ->
                         val qualified = input.rows.filter { it.playerId == player.id && it.loss >= threshold }
                         val groups = qualified.groupBy { it.canonicalLocation.preMovePly }
-                        E6Locations(
+                        OccurrenceLocationSummary(
                             occurrenceCount = qualified.size,
                             distinctPositionCount = qualified.map { it.positionIdentity }.toSet().size,
                             uniqueGameCount =
@@ -177,11 +177,11 @@ class E6AnalysisService {
                             unit = "canonical-source-occurrence",
                             denominator = qualified.size,
                             groupingKey = "preMovePly",
-                            groupsByPreMovePly = groups.mapValues { E6LocationGroup(it.value.size, qualified.size) },
+                            groupsByPreMovePly = groups.mapValues { LocationGroupCount(it.value.size, qualified.size) },
                         )
                     },
                 )
             }
-        return E6AnalysisResult(input.analysisVersion, byPlayer, pooled, summaries, locations)
+        return ReferenceCoverageAnalysisResult(input.analysisVersion, byPlayer, pooled, summaries, locations)
     }
 }

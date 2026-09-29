@@ -103,7 +103,7 @@ class EvaluationEvidenceSnapshotService(
     fun validate(snapshot: EvaluationEvidenceSnapshot) {
         require(snapshot.players.isNotEmpty()) { "evaluation-player set must not be empty" }
         require(snapshot.configuration.thresholds == APPROVED_THRESHOLDS) {
-            "snapshot thresholds do not match the approved E6 configuration"
+            "snapshot thresholds do not match the approved analysis configuration"
         }
         require(snapshot.configuration.minMistakeCount >= 0)
         require(snapshot.configuration.minTimesReached >= 0)
