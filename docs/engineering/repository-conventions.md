@@ -43,3 +43,7 @@ New product issues should use the structure in
 product intent, acceptance criteria, repository constraints (including
 deployment/migration state), and validation. The template records the
 information an implementation agent needs without prescribing architecture.
+
+Repository conventions and approved task scope take precedence over workflow defaults. Do not create repository conventions or artifacts, including documentation or changelogs, solely to satisfy a workflow unless the approved scope or an existing repository convention calls for them.
+
+If work introduced during a task is later determined to be out of scope, remove it from that change set. If already committed, amend or squash the relevant work where practical; do not leave a standalone cleanup commit.
