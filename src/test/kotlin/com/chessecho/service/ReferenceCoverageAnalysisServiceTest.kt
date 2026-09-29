@@ -86,6 +86,36 @@ class ReferenceCoverageAnalysisServiceTest {
     }
 
     @Test
+    fun `counts repeated operational links once per canonical location after thresholding`() {
+        val first = row("alice", "p1", 0.55, 5, "g1")
+        val second = first.copy(gameId = UUID.randomUUID(), loss = 0.35)
+
+        val result =
+            service.analyze(
+                ReferenceCoverageAnalysisInput(
+                    setOf("p1"),
+                    players("alice"),
+                    listOf(first, second),
+                    "e6-v1",
+                ),
+            )
+
+        val lowThreshold = result.locations.getValue("alice").at(0.30)
+        assertEquals(1, lowThreshold.occurrenceCount)
+        assertEquals(1, lowThreshold.denominator)
+        assertEquals(1, lowThreshold.uniqueGameCount)
+        assertEquals(LocationGroupCount(1, 1), lowThreshold.groupsByPreMovePly.getValue(5))
+        assertEquals(PositionCoverage(1, 1, 1.0), result.byPlayer.getValue("alice").at(0.30))
+
+        val higherThreshold = result.locations.getValue("alice").at(0.50)
+        assertEquals(1, higherThreshold.occurrenceCount)
+        assertEquals(1, higherThreshold.denominator)
+        assertEquals(1, higherThreshold.groupsByPreMovePly.getValue(5).numerator)
+        assertEquals(0, result.locations.getValue("alice").at(0.80).occurrenceCount)
+        assertEquals(PositionCoverage(0, 0, null), result.byPlayer.getValue("alice").at(0.80))
+    }
+
+    @Test
     fun `keeps a declared player with no rows and reports undefined pooled coverage`() {
         val result = service.analyze(ReferenceCoverageAnalysisInput(setOf("p1"), players("zero-row"), emptyList(), "e6-v1"))
 

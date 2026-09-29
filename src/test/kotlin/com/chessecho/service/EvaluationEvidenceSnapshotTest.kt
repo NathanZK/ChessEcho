@@ -181,6 +181,33 @@ class EvaluationEvidenceSnapshotTest {
     }
 
     @Test
+    fun `retains the same reference occurrence independently for different operational games`() {
+        val player = UUID.randomUUID()
+        val occurrence = UUID.randomUUID()
+        val first =
+            evidenceRow(
+                player,
+                UUID.randomUUID(),
+                0.55,
+                ObjectiveOutcome.WEAK,
+                occurrenceId = occurrence,
+            )
+        val second = first.copy(gameId = UUID.randomUUID(), loss = 0.35)
+        val snapshot =
+            validSnapshot().copy(
+                players = setOf(EvaluationEvidencePlayer(player, "player")),
+                rows = listOf(first, second),
+            )
+
+        val result = EvaluationEvidenceSnapshotService().reconstruct(snapshot)
+
+        assertEquals(2, result.objectiveWeakness.getValue(player).getValue(0.30))
+        assertEquals(1, result.objectiveWeakness.getValue(player).getValue(0.50))
+        assertEquals(2, result.observedOutcomes.getValue(player).getValue(ObservedGameOutcome.WIN))
+        assertEquals(2, result.practicalEvidence.getValue(player)?.candidateGames)
+    }
+
+    @Test
     fun `retains distinct occurrences at the same player game and preMovePly`() {
         val player = UUID.randomUUID()
         val game = UUID.randomUUID()
