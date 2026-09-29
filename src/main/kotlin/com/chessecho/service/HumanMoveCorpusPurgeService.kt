@@ -28,7 +28,7 @@ class HumanMoveCorpusPurgeService(
     private val importService: HumanMoveCorpusImportService,
     private val finalizationService: HumanMoveCorpusProjectionFinalizationService,
     private val occurrenceService: HumanMoveCorpusOccurrenceService,
-    private val e6AnalysisEvidenceService: E6AnalysisEvidenceService,
+    private val retainedEvaluationEvidenceService: RetainedEvaluationEvidenceService,
 ) {
     @Transactional
     fun purge(
@@ -54,7 +54,7 @@ class HumanMoveCorpusPurgeService(
         }
         occurrenceService.verifyImportEvidence(verified, archive)
         if (verified.manifest.e6Eligible && occurrenceService.hasSourceRun(runId)) {
-            e6AnalysisEvidenceService.verifyTerminalE6Eligibility(
+            retainedEvaluationEvidenceService.verifyTerminalReferenceCoverageEligibility(
                 runId,
                 contentDigest,
                 verified.manifest.coveredPrefix,

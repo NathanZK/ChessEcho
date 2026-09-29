@@ -4,9 +4,6 @@ import com.chessecho.domain.HumanMoveCorpusRunStatus
 import com.chessecho.dto.HumanMoveCorpusRunRequest
 import com.chessecho.humanmove.artifact.HumanMoveCorpusArtifactService
 import com.chessecho.humanmove.artifact.HumanMoveCorpusExportRequest
-import com.chessecho.service.E6AnalysisEvidenceService
-import com.chessecho.service.E6AnalysisService
-import com.chessecho.service.E6Coverage
 import com.chessecho.service.EvaluationEvidenceConfiguration
 import com.chessecho.service.EvaluationEvidenceIntegrityException
 import com.chessecho.service.EvaluationEvidencePlayer
@@ -27,6 +24,9 @@ import com.chessecho.service.HumanMoveCorpusRunOutcome
 import com.chessecho.service.HumanMoveCorpusSide
 import com.chessecho.service.ObjectiveOutcome
 import com.chessecho.service.ObservedGameOutcome
+import com.chessecho.service.PositionCoverage
+import com.chessecho.service.ReferenceCoverageAnalysisService
+import com.chessecho.service.RetainedEvaluationEvidenceService
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -76,7 +76,7 @@ class EvaluationEvidenceSnapshotPostgresIntegrationTest {
     private lateinit var evaluationEvidenceSnapshotService: EvaluationEvidenceSnapshotService
 
     @Autowired
-    private lateinit var e6AnalysisEvidenceService: E6AnalysisEvidenceService
+    private lateinit var retainedEvaluationEvidenceService: RetainedEvaluationEvidenceService
 
     @BeforeEach
     fun setUp() = resetDatabase()
@@ -341,14 +341,14 @@ class EvaluationEvidenceSnapshotPostgresIntegrationTest {
                 UUID::class.java,
                 runId,
             )!!
-        val admitted = e6AnalysisEvidenceService.loadAndAdmit(runId, projectionId, "e6-v1")
+        val admitted = retainedEvaluationEvidenceService.loadAndAdmit(runId, projectionId, "e6-v1")
         assertEquals(occurrences.map { it.id }.toSet(), admitted.resolvedOccurrences.keys)
         assertEquals(
             occurrences.map { it.qualifyingOrdinal }.toSet(),
             occurrences.map { admitted.resolvedOccurrences.getValue(it.id).qualifyingOrdinal }.toSet(),
         )
         val locations =
-            E6AnalysisService().analyze(admitted.toAnalysisInput())
+            ReferenceCoverageAnalysisService().analyze(admitted.toAnalysisInput())
                 .locations.getValue(snapshot.players.single().identity).at(0.50)
         assertEquals(2, locations.occurrenceCount)
         assertEquals(1, locations.distinctPositionCount)
@@ -605,13 +605,13 @@ class EvaluationEvidenceSnapshotPostgresIntegrationTest {
 
         jdbcTemplate.execute("TRUNCATE human_move_corpus_imported_observation, human_move_corpus_imported_game CASCADE")
 
-        val admitted = e6AnalysisEvidenceService.loadAndAdmit(runId, projectionId, "e6-v1")
-        val result = E6AnalysisService().analyze(admitted.toAnalysisInput())
+        val admitted = retainedEvaluationEvidenceService.loadAndAdmit(runId, projectionId, "e6-v1")
+        val result = ReferenceCoverageAnalysisService().analyze(admitted.toAnalysisInput())
 
         assertEquals(occurrences.map { it.positionHash }.toSet(), admitted.referencePositions)
         assertEquals(occurrences.map { it.id }.toSet(), admitted.resolvedOccurrences.keys)
-        assertEquals(E6Coverage(2, 2, 1.0), result.byPlayer["evaluated"]!!.at(0.50))
-        assertEquals(E6Coverage(0, 0, null), result.byPlayer["zero-row"]!!.at(0.50))
+        assertEquals(PositionCoverage(2, 2, 1.0), result.byPlayer["evaluated"]!!.at(0.50))
+        assertEquals(PositionCoverage(0, 0, null), result.byPlayer["zero-row"]!!.at(0.50))
         assertEquals(2, result.locations["evaluated"]!!.at(0.50).occurrenceCount)
         assertEquals(1, result.locations["evaluated"]!!.at(0.50).uniqueGameCount)
     }
