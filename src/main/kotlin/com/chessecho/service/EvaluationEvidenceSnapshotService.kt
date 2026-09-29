@@ -56,12 +56,12 @@ data class EvaluationEvidenceRow(
     val loss: Double,
     val engineDepth: Int,
     val observedOutcome: ObservedGameOutcome,
-    val objectiveOutcome: ObjectiveOutcome,
-    val practicalCandidate: Boolean,
-    val practicalEligible: Boolean,
-    val practicalWins: Int,
-    val practicalDraws: Int,
-    val practicalLosses: Int,
+    val objectiveOutcome: ObjectiveOutcome?,
+    val practicalCandidate: Boolean?,
+    val practicalEligible: Boolean?,
+    val practicalWins: Int?,
+    val practicalDraws: Int?,
+    val practicalLosses: Int?,
 )
 
 data class EvaluationEvidenceSnapshot(
@@ -70,9 +70,9 @@ data class EvaluationEvidenceSnapshot(
     val occurrenceEvidenceId: UUID?,
     val players: Set<EvaluationEvidencePlayer>,
     val configuration: EvaluationEvidenceConfiguration,
-    val sourceRevision: String,
-    val engineIdentity: String,
-    val parserIdentity: String,
+    val sourceRevision: String?,
+    val engineIdentity: String?,
+    val parserIdentity: String?,
     val rows: List<EvaluationEvidenceRow>,
     val digestCoverage: Set<String> = emptySet(),
     val evidenceDigest: String? = null,
@@ -80,7 +80,7 @@ data class EvaluationEvidenceSnapshot(
 
 data class EvaluationEvidenceReconstruction(
     val objectiveWeakness: Map<UUID, Map<Double, Int>>,
-    val practicalEvidence: Map<UUID, PracticalEvidenceCounts>,
+    val practicalEvidence: Map<UUID, PracticalEvidenceCounts?>,
     val observedOutcomes: Map<UUID, Map<ObservedGameOutcome, Int>>,
 )
 
@@ -109,9 +109,9 @@ class EvaluationEvidenceSnapshotService(
         require(snapshot.configuration.minTimesReached >= 0)
         require(snapshot.configuration.color in setOf("WHITE", "BLACK", "BOTH"))
         require(snapshot.configuration.platform == "CHESS_COM")
-        require(snapshot.sourceRevision.isNotBlank())
-        require(snapshot.engineIdentity.isNotBlank())
-        require(snapshot.parserIdentity.isNotBlank())
+        snapshot.sourceRevision?.let { require(it.isNotBlank()) }
+        snapshot.engineIdentity?.let { require(it.isNotBlank()) }
+        snapshot.parserIdentity?.let { require(it.isNotBlank()) }
         require(snapshot.referencePopulation.coveredPrefix >= snapshot.referencePopulation.prefixN)
         require(snapshot.referencePopulation.prefixN > 0)
         require(snapshot.referencePopulation.minObservations >= 0)
@@ -131,9 +131,22 @@ class EvaluationEvidenceSnapshotService(
             require(row.playerColor in setOf("WHITE", "BLACK"))
             require(row.loss.isFinite() && row.loss >= 0.0)
             require(row.engineDepth > 0)
-            require(row.practicalWins >= 0 && row.practicalDraws >= 0 && row.practicalLosses >= 0)
-            require(!row.practicalEligible || row.practicalCandidate) {
-                "eligible practical evidence must be a candidate"
+            val practical =
+                listOf(
+                    row.practicalCandidate,
+                    row.practicalEligible,
+                    row.practicalWins,
+                    row.practicalDraws,
+                    row.practicalLosses,
+                )
+            require(practical.all { it == null } || practical.all { it != null }) {
+                "practical evidence must be entirely present or absent"
+            }
+            if (row.practicalCandidate != null) {
+                require(row.practicalWins!! >= 0 && row.practicalDraws!! >= 0 && row.practicalLosses!! >= 0)
+                require(row.practicalEligible != true || row.practicalCandidate == true) {
+                    "eligible practical evidence must be a candidate"
+                }
             }
         }
     }
@@ -267,13 +280,18 @@ class EvaluationEvidenceSnapshotService(
     @Transactional(readOnly = true)
     fun reconstructPersisted(sourceRunId: UUID): EvaluationEvidenceReconstruction {
         val db = requireJdbcTemplate()
-        val (snapshotId, thresholds) =
+        val (snapshotId, thresholds, players) =
             db.query(
-                "SELECT id, thresholds FROM evaluation_evidence_snapshot WHERE source_run_id = ?",
+                "SELECT id, thresholds, roster_json FROM evaluation_evidence_snapshot WHERE source_run_id = ?",
                 { rs, _ ->
                     val thresholdValues =
                         (rs.getArray("thresholds").array as Array<*>).map { (it as Number).toDouble() }.toSet()
-                    rs.getObject("id", UUID::class.java) to thresholdValues
+                    Triple(
+                        rs.getObject("id", UUID::class.java),
+                        thresholdValues,
+                        readRoster(rs.getString("roster_json"))
+                            ?: throw EvaluationEvidenceIntegrityException("Retained evaluation evidence has no declared roster"),
+                    )
                 },
                 sourceRunId,
             ).singleOrNull()
@@ -287,30 +305,14 @@ class EvaluationEvidenceSnapshotService(
                     "player_color, loss, engine_depth, observed_outcome, objective_outcome, practical_candidate, " +
                     "practical_eligible, practical_wins, practical_draws, practical_losses " +
                     "FROM evaluation_evidence_row WHERE snapshot_id = ?",
-                { rs, _ ->
-                    EvaluationEvidenceRow(
-                        playerId = rs.getObject("player_id", UUID::class.java),
-                        gameId = rs.getObject("game_id", UUID::class.java),
-                        occurrenceId = rs.getObject("occurrence_id", UUID::class.java),
-                        positionIdentity = rs.getString("position_identity"),
-                        preMovePly = rs.getInt("pre_move_ply"),
-                        move = rs.getString("move_played"),
-                        playerColor = rs.getString("player_color"),
-                        loss = rs.getDouble("loss"),
-                        engineDepth = rs.getInt("engine_depth"),
-                        observedOutcome = ObservedGameOutcome.valueOf(rs.getString("observed_outcome")),
-                        objectiveOutcome = ObjectiveOutcome.valueOf(rs.getString("objective_outcome")),
-                        practicalCandidate = rs.getBoolean("practical_candidate"),
-                        practicalEligible = rs.getBoolean("practical_eligible"),
-                        practicalWins = rs.getInt("practical_wins"),
-                        practicalDraws = rs.getInt("practical_draws"),
-                        practicalLosses = rs.getInt("practical_losses"),
-                    )
-                },
+                { rs, _ -> readEvidenceRow(rs) },
                 snapshotId,
             )
 
-        val players = rows.map { it.playerId }.distinct().map { EvaluationEvidencePlayer(it, it.toString()) }.toSet()
+        validateRoster(players)
+        if (rows.any { row -> players.none { it.id == row.playerId } }) {
+            throw EvaluationEvidenceIntegrityException("Retained evaluation evidence contains a row outside its declared roster")
+        }
         return aggregate(players, thresholds, rows)
     }
 
@@ -329,20 +331,24 @@ class EvaluationEvidenceSnapshotService(
             }
         val practical =
             players.associate { player ->
-                val candidateRows = rowsByPlayer[player.id].orEmpty().filter { it.practicalCandidate }
+                val playerRows = rowsByPlayer[player.id].orEmpty()
+                if (playerRows.isEmpty() || playerRows.any { it.practicalCandidate == null }) {
+                    return@associate player.id to null
+                }
+                val candidateRows = playerRows.filter { it.practicalCandidate == true }
                 val byGame =
                     candidateRows.groupBy { it.gameId }.mapValues { (_, gameRows) -> gameRows.first() }
-                val eligible = byGame.values.filter { it.practicalEligible }
-                val excluded = eligible.count { it.practicalWins + it.practicalDraws + it.practicalLosses == 0 }
+                val eligible = byGame.values.filter { it.practicalEligible == true }
+                val excluded = eligible.count { it.practicalWins!! + it.practicalDraws!! + it.practicalLosses!! == 0 }
                 player.id to
                     PracticalEvidenceCounts(
                         candidateGames = byGame.size,
                         eligibleGames = eligible.size,
-                        ineligibleGames = byGame.values.count { !it.practicalEligible },
+                        ineligibleGames = byGame.values.count { it.practicalEligible == false },
                         excludedGames = excluded,
-                        wins = eligible.sumOf { it.practicalWins },
-                        draws = eligible.sumOf { it.practicalDraws },
-                        losses = eligible.sumOf { it.practicalLosses },
+                        wins = eligible.sumOf { it.practicalWins!! },
+                        draws = eligible.sumOf { it.practicalDraws!! },
+                        losses = eligible.sumOf { it.practicalLosses!! },
                     )
             }
         val outcomes =
@@ -473,12 +479,12 @@ class EvaluationEvidenceSnapshotService(
                 row.loss.toString(),
                 row.engineDepth.toString(),
                 row.observedOutcome.name,
-                row.objectiveOutcome.name,
-                row.practicalCandidate.toString(),
-                row.practicalEligible.toString(),
-                row.practicalWins.toString(),
-                row.practicalDraws.toString(),
-                row.practicalLosses.toString(),
+                row.objectiveOutcome?.name,
+                row.practicalCandidate?.toString(),
+                row.practicalEligible?.toString(),
+                row.practicalWins?.toString(),
+                row.practicalDraws?.toString(),
+                row.practicalLosses?.toString(),
             ).forEach { updateDigest(digest, it) }
         }
         return digest.digest().joinToString("") { "%02x".format(it) }
@@ -486,8 +492,12 @@ class EvaluationEvidenceSnapshotService(
 
     private fun updateDigest(
         digest: MessageDigest,
-        value: String,
+        value: String?,
     ) {
+        if (value == null) {
+            digest.update(ByteBuffer.allocate(Int.SIZE_BYTES).putInt(-1).array())
+            return
+        }
         val bytes = value.toByteArray(Charsets.UTF_8)
         digest.update(ByteBuffer.allocate(Int.SIZE_BYTES).putInt(bytes.size).array())
         digest.update(bytes)
@@ -569,12 +579,12 @@ class EvaluationEvidenceSnapshotService(
             loss = rs.getDouble("loss"),
             engineDepth = rs.getInt("engine_depth"),
             observedOutcome = ObservedGameOutcome.valueOf(rs.getString("observed_outcome")),
-            objectiveOutcome = ObjectiveOutcome.valueOf(rs.getString("objective_outcome")),
-            practicalCandidate = rs.getBoolean("practical_candidate"),
-            practicalEligible = rs.getBoolean("practical_eligible"),
-            practicalWins = rs.getInt("practical_wins"),
-            practicalDraws = rs.getInt("practical_draws"),
-            practicalLosses = rs.getInt("practical_losses"),
+            objectiveOutcome = rs.getString("objective_outcome")?.let(ObjectiveOutcome::valueOf),
+            practicalCandidate = rs.getObject("practical_candidate", Boolean::class.javaObjectType),
+            practicalEligible = rs.getObject("practical_eligible", Boolean::class.javaObjectType),
+            practicalWins = rs.getObject("practical_wins", Int::class.javaObjectType),
+            practicalDraws = rs.getObject("practical_draws", Int::class.javaObjectType),
+            practicalLosses = rs.getObject("practical_losses", Int::class.javaObjectType),
         )
 
     private fun insertRows(
@@ -590,7 +600,7 @@ class EvaluationEvidenceSnapshotService(
                 "practical_eligible, practical_wins, practical_draws, practical_losses" +
                 ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             rows.map { row ->
-                arrayOf<Any>(
+                arrayOf<Any?>(
                     UUID.randomUUID(),
                     snapshotId,
                     row.playerId,
@@ -603,7 +613,7 @@ class EvaluationEvidenceSnapshotService(
                     row.loss,
                     row.engineDepth,
                     row.observedOutcome.name,
-                    row.objectiveOutcome.name,
+                    row.objectiveOutcome?.name,
                     row.practicalCandidate,
                     row.practicalEligible,
                     row.practicalWins,
@@ -711,9 +721,9 @@ class EvaluationEvidenceSnapshotService(
         val referencePopulation: EvaluationReferencePopulation,
         val occurrenceEvidenceId: UUID?,
         val configuration: EvaluationEvidenceConfiguration,
-        val sourceRevision: String,
-        val engineIdentity: String,
-        val parserIdentity: String,
+        val sourceRevision: String?,
+        val engineIdentity: String?,
+        val parserIdentity: String?,
     )
 
     private data class ExistingSnapshot(

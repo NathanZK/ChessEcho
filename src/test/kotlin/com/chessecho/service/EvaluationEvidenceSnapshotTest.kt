@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import java.util.UUID
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 
 class EvaluationEvidenceSnapshotTest {
     @Test
@@ -233,6 +234,129 @@ class EvaluationEvidenceSnapshotTest {
 
         assertThrows<EvaluationEvidenceIntegrityException> {
             EvaluationEvidenceSnapshotService().reconstruct(snapshot)
+        }
+    }
+
+    @Test
+    fun `reconstructs unavailable practical evidence without turning it into zero`() {
+        val snapshot = validSnapshot()
+        val player = snapshot.players.single().id
+        val unavailable =
+            snapshot.copy(
+                sourceRevision = null,
+                engineIdentity = null,
+                parserIdentity = null,
+                rows =
+                    snapshot.rows.map {
+                        it.copy(
+                            objectiveOutcome = null,
+                            practicalCandidate = null,
+                            practicalEligible = null,
+                            practicalWins = null,
+                            practicalDraws = null,
+                            practicalLosses = null,
+                        )
+                    },
+            )
+
+        val result = EvaluationEvidenceSnapshotService().reconstruct(unavailable)
+
+        assertEquals(1, result.objectiveWeakness.getValue(player).getValue(0.50))
+        assertNull(result.practicalEvidence.getValue(player))
+        assertEquals(1, result.observedOutcomes.getValue(player).getValue(ObservedGameOutcome.WIN))
+        assertEquals(
+            PracticalEvidenceCounts(
+                candidateGames = 1,
+                eligibleGames = 1,
+                ineligibleGames = 0,
+                excludedGames = 0,
+                wins = 1,
+                draws = 0,
+                losses = 0,
+            ),
+            EvaluationEvidenceSnapshotService().reconstruct(snapshot).practicalEvidence[player],
+        )
+    }
+
+    @Test
+    fun `available zero practical counts remain available while mixed rows are unavailable`() {
+        val snapshot = validSnapshot()
+        val player = snapshot.players.single().id
+        val zero = snapshot.rows.single().copy(practicalWins = 0)
+        val absent =
+            zero.copy(
+                gameId = UUID.randomUUID(),
+                occurrenceId = UUID.randomUUID(),
+                practicalCandidate = null,
+                practicalEligible = null,
+                practicalWins = null,
+                practicalDraws = null,
+                practicalLosses = null,
+            )
+        val service = EvaluationEvidenceSnapshotService()
+
+        assertEquals(
+            PracticalEvidenceCounts(
+                candidateGames = 1,
+                eligibleGames = 1,
+                ineligibleGames = 0,
+                excludedGames = 1,
+                wins = 0,
+                draws = 0,
+                losses = 0,
+            ),
+            service.reconstruct(snapshot.copy(rows = listOf(zero))).practicalEvidence[player],
+        )
+        assertNull(service.reconstruct(snapshot.copy(rows = listOf(zero, absent))).practicalEvidence.getValue(player))
+        assertNull(service.reconstruct(snapshot.copy(rows = emptyList())).practicalEvidence.getValue(player))
+    }
+
+    @Test
+    fun `rejects each partially present practical tuple and blank supplied provenance`() {
+        val snapshot = validSnapshot()
+        val row = snapshot.rows.single()
+        val service = EvaluationEvidenceSnapshotService()
+        val partials =
+            listOf(
+                row.copy(practicalCandidate = null),
+                row.copy(practicalEligible = null),
+                row.copy(practicalWins = null),
+                row.copy(practicalDraws = null),
+                row.copy(practicalLosses = null),
+                row.copy(
+                    practicalCandidate = null,
+                    practicalEligible = null,
+                    practicalWins = null,
+                    practicalDraws = null,
+                ),
+            )
+        partials.forEach { partial ->
+            assertThrows<IllegalArgumentException> { service.validate(snapshot.copy(rows = listOf(partial))) }
+        }
+        listOf(
+            snapshot.copy(sourceRevision = " "),
+            snapshot.copy(engineIdentity = ""),
+            snapshot.copy(parserIdentity = " "),
+        ).forEach { invalid ->
+            assertThrows<IllegalArgumentException> { service.validate(invalid) }
+        }
+    }
+
+    @Test
+    fun `rejects absent versus supplied practical tuples within one game`() {
+        val snapshot = validSnapshot()
+        val row = snapshot.rows.single()
+        val absent =
+            row.copy(
+                occurrenceId = UUID.randomUUID(),
+                practicalCandidate = null,
+                practicalEligible = null,
+                practicalWins = null,
+                practicalDraws = null,
+                practicalLosses = null,
+            )
+        assertThrows<EvaluationEvidenceIntegrityException> {
+            EvaluationEvidenceSnapshotService().reconstruct(snapshot.copy(rows = listOf(row, absent)))
         }
     }
 }
