@@ -20,6 +20,9 @@ vi.mock('../services/api', async () => {
   const actual = await vi.importActual<typeof import('../services/api')>('../services/api');
   return {
     ...actual,
+    fetchCurrentSession: vi.fn(),
+    fetchAccounts: vi.fn(),
+    logout: vi.fn(),
     startImportJob: vi.fn(),
     pollJobStatus: vi.fn(),
     fetchPuzzles: vi.fn(),
@@ -101,11 +104,21 @@ function goToPuzzlesTab(): void {
   fireEvent.click(screen.getByRole('button', { name: /^practice puzzles$/i }));
 }
 
+function mockConnectedAccount(username = 'hikaru'): void {
+  vi.mocked(api.fetchCurrentSession).mockResolvedValue({ status: 'authenticated', userId: 'user-1' });
+  vi.mocked(api.fetchAccounts).mockResolvedValue([
+    { id: `${username}-account`, platform: 'CHESS_COM', username },
+  ]);
+}
+
 describe('Puzzle load error states (Issue #86)', () => {
   beforeEach(() => {
     localStorage.clear();
     window.location.hash = '';
     vi.resetAllMocks();
+    vi.mocked(api.fetchCurrentSession).mockResolvedValue({ status: 'unauthenticated' });
+    vi.mocked(api.fetchAccounts).mockResolvedValue([]);
+    vi.mocked(api.logout).mockResolvedValue(undefined);
     vi.mocked(api.fetchWeaknesses).mockResolvedValue([]);
   });
 
@@ -174,9 +187,10 @@ describe('Puzzle load error states (Issue #86)', () => {
     expect(screen.queryByText(/We couldn't load your puzzles/i)).not.toBeInTheDocument();
   });
 
-  // T15: disconnect clears the error state; a late reject from the pre-disconnect
+  // T15: signing out clears the error state; a late reject from the pre-logout
   // request must not re-raise the error afterward.
-  it('T15: disconnecting clears the puzzle error and a late reject does not re-raise it', async () => {
+  it('T15: signing out clears the puzzle error and a late reject does not re-raise it', async () => {
+    mockConnectedAccount();
     localStorage.setItem('chessecho_username', 'hikaru');
     const first = deferred<Puzzle[]>();
     vi.mocked(api.fetchPuzzles).mockReturnValueOnce(first.promise);
@@ -188,7 +202,7 @@ describe('Puzzle load error states (Issue #86)', () => {
     expect(screen.getByText(/Loading Practice Puzzles/i)).toBeInTheDocument();
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /Disconnect/i }));
+      fireEvent.click(screen.getByRole('button', { name: /Sign out/i }));
       first.reject(new Error('late HTTP 500'));
       await Promise.resolve();
     });
@@ -202,9 +216,10 @@ describe('Puzzle load error states (Issue #86)', () => {
     expect(screen.getByText(/No Practice Puzzles Available/i)).toBeInTheDocument();
   });
 
-  // T19: a stale completion (after a superseding generation bump via disconnect)
+  // T19: a stale completion (after a superseding generation bump via logout)
   // is a total no-op — it must not repopulate data nor drop/flip loading/UI state.
-  it('T19: a stale success that resolves after disconnect does not repopulate puzzles', async () => {
+  it('T19: a stale success that resolves after sign out does not repopulate puzzles', async () => {
+    mockConnectedAccount();
     localStorage.setItem('chessecho_username', 'hikaru');
     const first = deferred<Puzzle[]>();
     vi.mocked(api.fetchPuzzles).mockReturnValueOnce(first.promise);
@@ -216,7 +231,7 @@ describe('Puzzle load error states (Issue #86)', () => {
     expect(screen.getByText(/Loading Practice Puzzles/i)).toBeInTheDocument();
 
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /Disconnect/i }));
+      fireEvent.click(screen.getByRole('button', { name: /Sign out/i }));
       first.resolve(mockPuzzles);
       await Promise.resolve();
     });
@@ -232,10 +247,10 @@ describe('Puzzle load error states (Issue #86)', () => {
     expect(screen.queryByText(/Loading Practice Puzzles/i)).not.toBeInTheDocument();
   });
 
-  // T15 (R14): a puzzle error that is ALREADY VISIBLE must be cleared when the
-  // account disconnects — an error is neither "no data" nor a fresh load failure,
-  // so disconnecting must render the empty/import state, never the error card.
-  it('T15: an already-visible puzzle error is cleared by Disconnect (R14)', async () => {
+  // T15 (R14): a puzzle error that is ALREADY VISIBLE must be cleared on sign out.
+  // It is neither "no data" nor a fresh load failure, so show the empty/import state.
+  it('T15: an already-visible puzzle error is cleared by sign out (R14)', async () => {
+    mockConnectedAccount();
     localStorage.setItem('chessecho_username', 'hikaru');
     vi.mocked(api.fetchPuzzles).mockRejectedValue(new Error('HTTP 500'));
 
@@ -246,8 +261,8 @@ describe('Puzzle load error states (Issue #86)', () => {
       expect(screen.getByText(/We couldn't load your puzzles/i)).toBeInTheDocument();
     });
 
-    // Disconnect must clear the visible error and show the empty/import state.
-    fireEvent.click(screen.getByRole('button', { name: /Disconnect/i }));
+    // Sign out must clear the visible error and show the empty/import state.
+    fireEvent.click(screen.getByRole('button', { name: /Sign out/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/No Practice Puzzles Available/i)).toBeInTheDocument();
@@ -443,6 +458,7 @@ describe('Puzzle load error states (Issue #86)', () => {
   it.each(['resolve', 'reject'] as const)(
     'cleanup ownership: an old puzzle load cannot affect a remount when it later %ss',
     async (settlement) => {
+      mockConnectedAccount();
       localStorage.setItem('chessecho_username', 'hikaru');
       const oldLoad = deferred<Puzzle[]>();
       const newLoad = deferred<Puzzle[]>();

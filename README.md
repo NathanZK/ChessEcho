@@ -34,7 +34,7 @@ The goal is to change habits, not to memorize engine lines.
 - **Interactive personalized puzzles**: practice your actual recurring weaknesses on an interactive board; the system recognizes your historical mistake moves and gives targeted feedback
 - **Evaluation bar, hints, undo/redo**: move-by-move evaluation tracking, source-square hint highlighting, and full board navigation
 - **Configurable thresholds**: adjust minimum eval loss, minimum mistake count, and color filter without triggering new Stockfish analysis
-- **Owner-scoped accounts**: authenticated users can atomically associate a Chess.com account; unclaimed guest data remains available only until it is claimed
+- **Owner-scoped accounts**: signed-in users explicitly connect a Chess.com account before account-scoped imports; guest imports remain username-based
 - **Immutable import jobs**: every job persists its account, date, time-control, color, and provider snapshot; workers fail closed on malformed configuration
 
 ---

@@ -34,6 +34,19 @@ export interface AccountSummary {
   username: string;
 }
 
+function isAccountSummary(value: unknown): value is AccountSummary {
+  if (typeof value !== 'object' || value === null) return false;
+  const account = value as Record<string, unknown>;
+  return (
+    typeof account.id === 'string' &&
+    account.id.length > 0 &&
+    typeof account.platform === 'string' &&
+    account.platform.length > 0 &&
+    typeof account.username === 'string' &&
+    account.username.length > 0
+  );
+}
+
 export interface PracticalEvidenceResponse {
   scope: 'POSITION' | 'DECISION';
   decisionSan: string | null;
@@ -164,10 +177,12 @@ export async function devLogin(): Promise<SessionState | null> {
 
 export async function fetchAccounts(): Promise<AccountSummary[]> {
   const response = await fetch(`${API_BASE_URL}/accounts`, { credentials: 'include' });
-  if (response.status === 401) return [];
   if (!response.ok) throw new Error(`Failed to load accounts: ${response.status}`);
-  const body = await response.json();
-  return Array.isArray(body) ? (body as AccountSummary[]) : [];
+  const body: unknown = await response.json();
+  if (!Array.isArray(body) || !body.every(isAccountSummary)) {
+    throw new Error('Failed to load accounts: unexpected response body');
+  }
+  return body;
 }
 
 export async function associateAccount(platform: string, username: string): Promise<AccountSummary> {
@@ -181,7 +196,11 @@ export async function associateAccount(platform: string, username: string): Prom
     const body = await response.json().catch(() => ({}));
     throw new Error(body?.error || `Failed to associate account: ${response.status}`);
   }
-  return (await response.json()) as AccountSummary;
+  const body: unknown = await response.json();
+  if (!isAccountSummary(body)) {
+    throw new Error('Failed to associate account: unexpected response body');
+  }
+  return body;
 }
 
 export interface ImportJobResponse {

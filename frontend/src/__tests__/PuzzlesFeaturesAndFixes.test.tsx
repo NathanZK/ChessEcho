@@ -21,6 +21,8 @@ vi.mock('../services/api', async () => {
   const actual = await vi.importActual<typeof import('../services/api')>('../services/api');
   return {
     ...actual,
+    fetchCurrentSession: vi.fn(),
+    fetchAccounts: vi.fn(),
     startImportJob: vi.fn(),
     pollJobStatus: vi.fn(),
     fetchPuzzles: vi.fn(),
@@ -77,6 +79,13 @@ function expectNoClassTokens(element: Element, tokens: string[]) {
 function expectClassNameTokens(className: string, tokens: string[]) {
   const classTokens = className.split(/\s+/);
   tokens.forEach((token) => expect(classTokens).toContain(token));
+}
+
+function mockConnectedAccount(): void {
+  vi.mocked(api.fetchCurrentSession).mockResolvedValue({ status: 'authenticated', userId: 'user-1' });
+  vi.mocked(api.fetchAccounts).mockResolvedValue([
+    { id: 'hikaru-account', platform: 'CHESS_COM', username: 'hikaru' },
+  ]);
 }
 
 function getHomeLayout() {
@@ -166,7 +175,7 @@ function expectWideTopHeader() {
   expectNoClassTokens(weaknessBadge, ['shrink-0', '2xl:ml-auto']);
 
   const account = requireElement(headerInner.children.item(2), 'connected account');
-  const disconnect = requireElement(account.querySelector('button'), 'account Disconnect button');
+  const signOut = requireElement(account.querySelector('button'), 'account sign-out button');
   const avatar = requireElement(account.children.item(0), 'account avatar');
   const accountText = requireElement(account.children.item(1), 'account text');
   const username = requireElement(screen.getByText('hikaru'), 'username');
@@ -191,7 +200,7 @@ function expectWideTopHeader() {
   expectNoClassTokens(accountText, ['min-w-0', '2xl:block', '2xl:w-full']);
   expectNoClassTokens(username, ['break-all']);
   expectNoClassTokens(status, ['flex-wrap']);
-  expectNoClassTokens(disconnect, ['shrink-0', 'max-w-full', 'whitespace-normal', '2xl:w-full', '2xl:ml-0']);
+  expectNoClassTokens(signOut, ['shrink-0', 'max-w-full', 'whitespace-normal', '2xl:w-full', '2xl:ml-0']);
 }
 
 describe('Puzzles Tab Features and Fixes', () => {
@@ -199,6 +208,8 @@ describe('Puzzles Tab Features and Fixes', () => {
     localStorage.clear();
     window.location.hash = '';
     vi.resetAllMocks();
+    vi.mocked(api.fetchCurrentSession).mockResolvedValue({ status: 'unauthenticated' });
+    vi.mocked(api.fetchAccounts).mockResolvedValue([]);
     vi.mocked(api.fetchPuzzles).mockResolvedValue(mockPuzzles);
     vi.mocked(api.fetchWeaknesses).mockResolvedValue([]);
   });
@@ -724,6 +735,7 @@ describe('Puzzles Tab Features and Fixes', () => {
 
   describe('8. Responsive Puzzles navigation and workspace layout', () => {
     it('uses the real loaded Home fixture for the overflow-safe rail, workspace, account, and source-game contracts', async () => {
+      mockConnectedAccount();
       localStorage.setItem('chessecho_username', 'hikaru');
 
       const layoutPuzzle: Puzzle = {
@@ -885,8 +897,8 @@ describe('Puzzles Tab Features and Fixes', () => {
       expectClassTokens(accountText, ['min-w-0', '2xl:block', '2xl:w-full']);
       expectClassTokens(requireElement(screen.getByText('hikaru'), 'username'), ['break-all']);
       expectClassTokens(requireElement(screen.getByText('Chess.com Connected').parentElement, 'connection status'), ['flex-wrap']);
-      const disconnect = screen.getByRole('button', { name: /^Disconnect$/i });
-      expectClassTokens(disconnect, ['shrink-0', 'max-w-full', 'whitespace-normal', '2xl:w-full', '2xl:ml-0']);
+      const signOut = screen.getByRole('button', { name: /^Sign out$/i });
+      expectClassTokens(signOut, ['shrink-0', 'max-w-full', 'whitespace-normal', '2xl:w-full', '2xl:ml-0']);
       expect(settingsButton).toBeInTheDocument();
 
       fireEvent.click(screen.getByRole('button', { name: /View Games \(1\)/i }));
@@ -898,6 +910,7 @@ describe('Puzzles Tab Features and Fixes', () => {
     });
 
     it('restores the wide top header across real Puzzles, Weaknesses, and Import transitions', async () => {
+      mockConnectedAccount();
       localStorage.setItem('chessecho_username', 'hikaru');
       const layoutPuzzle: Puzzle = {
         ...mockPuzzles[0],
@@ -967,6 +980,7 @@ describe('Puzzles Tab Features and Fixes', () => {
     });
 
     it('keeps the Puzzles rail and connected account usable while puzzles are loading', async () => {
+      mockConnectedAccount();
       localStorage.setItem('chessecho_username', 'hikaru');
       let resolvePuzzles: (value: Puzzle[]) => void;
       const pendingPuzzles = new Promise<Puzzle[]>((resolve) => {
@@ -978,12 +992,13 @@ describe('Puzzles Tab Features and Fixes', () => {
 
       expect(screen.getByText(/Loading Practice Puzzles/i)).toBeInTheDocument();
       expect(screen.queryByText("King's Pawn Opening")).not.toBeInTheDocument();
+      await screen.findByRole('button', { name: /^Sign out$/i });
       const { shell, header, headerInner, nav, main } = getHomeLayout();
-      const account = requireElement(screen.getByRole('button', { name: /^Disconnect$/i }).parentElement, 'connected account');
+      const account = requireElement(screen.getByRole('button', { name: /^Sign out$/i }).parentElement, 'connected account');
       const avatar = requireElement(account.children.item(0), 'account avatar');
       const accountText = requireElement(account.children.item(1), 'account text');
       const status = requireElement(screen.getByText('Chess.com Connected').parentElement, 'connection status');
-      const disconnect = screen.getByRole('button', { name: /^Disconnect$/i });
+      const signOut = screen.getByRole('button', { name: /^Sign out$/i });
 
       expectClassTokens(shell, ['h-screen', 'flex', 'flex-col', 'overflow-hidden', '2xl:flex-row']);
       expectClassTokens(header, [
@@ -1077,7 +1092,7 @@ describe('Puzzles Tab Features and Fixes', () => {
       expectClassTokens(accountText, ['min-w-0', '2xl:block', '2xl:w-full']);
       expectClassTokens(requireElement(screen.getByText('hikaru'), 'username'), ['break-all']);
       expectClassTokens(status, ['flex-wrap']);
-      expectClassTokens(disconnect, ['shrink-0', 'max-w-full', 'whitespace-normal', '2xl:w-full', '2xl:ml-0']);
+      expectClassTokens(signOut, ['shrink-0', 'max-w-full', 'whitespace-normal', '2xl:w-full', '2xl:ml-0']);
 
       resolvePuzzles!(mockPuzzles);
       await waitFor(() => expect(screen.getByText("King's Pawn Opening")).toBeInTheDocument());

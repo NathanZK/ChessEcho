@@ -32,6 +32,8 @@ vi.mock('../services/api', async () => {
   const actual = await vi.importActual<typeof import('../services/api')>('../services/api');
   return {
     ...actual,
+    fetchCurrentSession: vi.fn(),
+    fetchAccounts: vi.fn(),
     startImportJob: vi.fn(),
     pollJobStatus: vi.fn(),
     fetchPuzzles: vi.fn(),
@@ -94,6 +96,8 @@ describe('Puzzle next-page prefetch failure/lock invariant (Issue #86)', () => {
     localStorage.clear();
     window.location.hash = '';
     vi.resetAllMocks();
+    vi.mocked(api.fetchCurrentSession).mockResolvedValue({ status: 'unauthenticated' });
+    vi.mocked(api.fetchAccounts).mockResolvedValue([]);
     vi.mocked(api.fetchWeaknesses).mockResolvedValue([]);
   });
 
