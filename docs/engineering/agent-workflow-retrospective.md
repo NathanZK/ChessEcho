@@ -1,10 +1,9 @@
 # ChessEcho governed-agent workflow retrospective
 
 > **Historical record:** this retrospective describes ChessEcho's former
-> embedded workflow implementation and its development. Fidenaut now owns
-> governed workflow mechanics. For current consumer responsibilities and the
-> pinned external invocation, see [`agent-workflow.md`](agent-workflow.md) and
-> [`agent-workflow-architecture.md`](agent-workflow-architecture.md).
+> embedded workflow implementation and its development. The subsequent
+> external Fidenaut consumer integration is no longer active; this document
+> preserves workflow history rather than current operational instructions.
 
 ## Executive summary
 
