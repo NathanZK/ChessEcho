@@ -65,7 +65,6 @@ constraint:
   - Engine evaluation loss can produce false positives and does not necessarily indicate a practical weakness.
   - Practical-evidence ranking is optional and disabled by default; its calibration requirements are documented in `README.md`.
   - Import jobs accept only `CHESS_COM` (`AsyncJob` validation); Lichess is not implemented.
-  - Fidenaut runtime and manifest are external to this repository. Fidenaut owns governed workflow mechanics; ChessEcho owns repository identity, target branch, role profiles, application validation, and product behavior. The issue workflow is used only when explicitly started. See `docs/engineering/agent-workflow.md` and `AGENTS.md`.
 
 convention:
   - **Quality checks**: backend `./gradlew ktlintCheck` and `./gradlew test`; frontend `npm run lint`, `npx tsc --noEmit`, `npm run test`, and `npm run build` from `frontend/`.
@@ -74,4 +73,4 @@ convention:
   - **Tests**: backend tests under `src/test/kotlin/com/chessecho/{controller,service,repository,integration,...}`; integration tests use Testcontainers PostgreSQL.
   - **CI**: `.github/workflows/ci.yml` runs backend ktlint and tests (Java 21) and frontend lint, typecheck, Vitest, and build (Node 20).
   - **Persistence**: follow the pre-deployment baseline-first migration convention in `docs/engineering/repository-conventions.md`.
-  - **Workflow**: keep changes issue-focused; target pull requests at `main`; follow `AGENTS.md` and `docs/engineering/agent-workflow.md` when an issue workflow is explicitly started.
+  - **Workflow**: keep changes issue-focused and target pull requests at `main`; follow the repository conventions in `AGENTS.md`.

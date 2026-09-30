@@ -46,7 +46,7 @@ test: Caller-owned transaction semantics are verified by the fact that all integ
 
 convention: Kotlin/Spring Boot service in the existing backend service layer; use the projection repository's six-field finder, existing integrity exceptions and binding service, read-only transaction conventions, and PostgreSQL integration-test patterns. No schema change. Validation is `./gradlew ktlintCheck` and `./gradlew test`.
 
-deferred: #445 producer invocation and transaction wiring, #429/#440 admission behavior, position/move membership against retained projection rows, all schema changes, and any changes to projection, occurrence, artifact, BFS, or Fidenaut behavior.
+deferred: #445 producer invocation and transaction wiring, #429/#440 admission behavior, position/move membership against retained projection rows, all schema changes, and any changes to projection, occurrence, artifact, or BFS behavior.
 
 ## Working notes
 
