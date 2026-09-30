@@ -15,6 +15,8 @@ import jakarta.servlet.http.Cookie
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.doThrow
+import org.mockito.kotlin.eq
+import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration
@@ -25,6 +27,7 @@ import org.springframework.context.annotation.Import
 import org.springframework.http.MediaType
 import org.springframework.test.context.TestPropertySource
 import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.delete
 import org.springframework.test.web.servlet.post
 import java.util.UUID
 
@@ -73,6 +76,35 @@ class AccountControllerTest {
         mockMvc.post("/api/accounts") {
             contentType = MediaType.APPLICATION_JSON
             content = """{"platform":"CHESS_COM","username":"caseplayer"}"""
+            cookie(Cookie("CHESSECHO_SESSION", "good-secret"), Cookie("XSRF-TOKEN", "csrf-1"))
+        }.andExpect {
+            status { isForbidden() }
+            jsonPath("$.error") { value("CSRF_FAILED") }
+        }
+    }
+
+    @Test
+    fun `DELETE account connection disconnects the authenticated owner's account`() {
+        val principal = AuthenticatedPrincipal(UUID.randomUUID(), devPrincipal = false)
+        val accountId = UUID.randomUUID()
+        whenever(identitySessionService.resolveSession("good-secret")).thenReturn(principal)
+
+        mockMvc.delete("/api/accounts/$accountId/connection") {
+            cookie(Cookie("CHESSECHO_SESSION", "good-secret"), Cookie("XSRF-TOKEN", "csrf-1"))
+            header("X-XSRF-TOKEN", "csrf-1")
+        }.andExpect {
+            status { isNoContent() }
+        }
+
+        verify(accountOwnershipService).disconnect(eq(accountId), eq(principal))
+    }
+
+    @Test
+    fun `DELETE account connection without CSRF token is rejected`() {
+        whenever(identitySessionService.resolveSession("good-secret"))
+            .thenReturn(AuthenticatedPrincipal(UUID.randomUUID(), devPrincipal = false))
+
+        mockMvc.delete("/api/accounts/${UUID.randomUUID()}/connection") {
             cookie(Cookie("CHESSECHO_SESSION", "good-secret"), Cookie("XSRF-TOKEN", "csrf-1"))
         }.andExpect {
             status { isForbidden() }

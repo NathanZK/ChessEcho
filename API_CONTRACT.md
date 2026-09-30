@@ -35,6 +35,12 @@ repeat by the same owner; `401 UNAUTHENTICATED` means no live session;
 `409 ACCOUNT_CLAIM_CONFLICT` means another owner already claimed the identity;
 `403 CSRF_FAILED` means the double-submit pair is missing or mismatched.
 
+### `DELETE /api/accounts/{accountId}/connection`
+
+Requires the current account owner, a live session, and a matching CSRF token.
+Returns `204 No Content` and clears only the connection pointer; shared imported
+data and the user's training history remain available for later reconnection.
+
 ---
 
 ## 2. Start Import Job
@@ -68,6 +74,10 @@ A valid session plus a guest-shaped body never falls back to an unclaimed
 username: it returns `400 ACCOUNT_SELECTION_REQUIRED`. A selected account with
 an inconsistent snapshot returns `400 ACCOUNT_SELECTION_MISMATCH`. Both forms
 require CSRF, including a guest request with no session cookie.
+
+Authenticated import creation requires that the caller currently owns the
+selected account. The created job records the initiating user independently of
+later disconnect or reconnect operations.
 
 ### Curl Example
 ```bash
@@ -147,9 +157,10 @@ curl http://localhost:8080/api/jobs/3fa85f64-5717-4562-b3fc-2c963f66afa6
 
 The response also includes the persisted platform, username, date bounds,
 canonical sorted time controls, and player color when the job is resolved.
-`READY` jobs are immutable commands. `UNRESOLVED` or malformed jobs fail closed
-and are never exposed to a guest or foreign owner. A guest can poll only an
-unclaimed account job; an authenticated caller can poll only their own account.
+`READY` jobs are immutable commands. `UNRESOLVED` or malformed jobs fail closed.
+A guest can poll only a job for an unclaimed account. An authenticated caller can
+poll only jobs initiated by that user, even if another user later connects the
+account.
 There is at most one `QUEUED`/`PROCESSING` job per account.
 
 `status` tracks game ingestion and becomes `COMPLETED` before Stockfish analysis starts.
@@ -175,7 +186,8 @@ Retrieves a paginated list of imported games for a specified player and platform
 - **Endpoint:** `GET /api/games`
 
 ### Query Parameters
-- `accountId` (UUID, authenticated form): The sole owner-scoped selector.
+- `accountId` (UUID, authenticated form): Selects an existing account for shared
+  imported-game reads; the caller need not currently own the connection.
 - `username` and `platform` (guest form): Select an unclaimed account together.
 - `page` (int, optional, default: 0): Zero-indexed page number.
 - `size` (int, optional, default: 20): Page size limit.

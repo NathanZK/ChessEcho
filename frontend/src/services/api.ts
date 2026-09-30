@@ -203,6 +203,21 @@ export async function associateAccount(platform: string, username: string): Prom
   return body;
 }
 
+export async function disconnectAccount(accountId: string): Promise<void> {
+  const response = await fetch(
+    `${API_BASE_URL}/accounts/${encodeURIComponent(accountId)}/connection`,
+    {
+      method: 'DELETE',
+      credentials: 'include',
+      headers: jsonHeaders(),
+    }
+  );
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body?.error || `Failed to disconnect account: ${response.status}`);
+  }
+}
+
 export interface ImportJobResponse {
   jobId: string;
   status: 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
@@ -317,6 +332,7 @@ export interface PuzzleEventRequest {
   positionId: string;
   playerColor: 'WHITE' | 'BLACK';
   eventType: PuzzleSchedulingEventType;
+  accountId: string;
 }
 
 export async function recordPuzzleEvent(request: PuzzleEventRequest): Promise<void> {
@@ -521,6 +537,7 @@ export async function submitTrainingAttempt(payload: {
   elapsedMs: number;
   allowedMs?: number;
   outcome: string;
+  accountId?: string;
 }): Promise<{
   attemptId: string;
   puzzleId: string;

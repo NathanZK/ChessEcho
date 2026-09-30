@@ -2,9 +2,11 @@ package com.chessecho.controller
 
 import com.chessecho.domain.PuzzleSchedulingEvent
 import com.chessecho.dto.PuzzleEventRequest
-import com.chessecho.repository.ChessAccountRepository
+import com.chessecho.repository.AppUserRepository
 import com.chessecho.repository.PositionOccurrenceRepository
 import com.chessecho.repository.PuzzleSchedulingEventRepository
+import com.chessecho.service.AccountOwnershipService
+import com.chessecho.service.AccountSelectionRequiredException
 import com.chessecho.service.auth.AuthenticatedPrincipal
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.PostMapping
@@ -16,7 +18,8 @@ import java.time.Instant
 @RestController
 @RequestMapping("/api/puzzles/events")
 class PuzzleEventController(
-    private val chessAccountRepository: ChessAccountRepository,
+    private val accountOwnershipService: AccountOwnershipService,
+    private val appUserRepository: AppUserRepository,
     private val positionOccurrenceRepository: PositionOccurrenceRepository,
     private val puzzleSchedulingEventRepository: PuzzleSchedulingEventRepository,
 ) {
@@ -25,21 +28,19 @@ class PuzzleEventController(
         @RequestBody request: PuzzleEventRequest,
         principal: AuthenticatedPrincipal,
     ): ResponseEntity<Unit> {
-        val accounts = chessAccountRepository.findAllByUserIdOrderByCreatedAtAsc(principal.appUserId)
+        val accountId = request.accountId ?: throw AccountSelectionRequiredException()
+        val account = accountOwnershipService.resolveSharedAccount(accountId, principal)
         val occurrence =
-            accounts.asSequence()
-                .flatMap { account ->
-                    positionOccurrenceRepository
-                        .findByChessAccountIdAndPlayerColorAndPositionIdIn(
-                            account.id,
-                            request.playerColor,
-                            listOf(request.positionId),
-                        ).asSequence()
-                }.firstOrNull()
+            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorAndPositionIdIn(
+                account.id,
+                request.playerColor,
+                listOf(request.positionId),
+            ).firstOrNull()
                 ?: return ResponseEntity.notFound().build()
 
         val event =
             PuzzleSchedulingEvent(
+                appUser = appUserRepository.getReferenceById(principal.appUserId),
                 chessAccount = occurrence.chessAccount,
                 position = occurrence.position,
                 playerColor = request.playerColor,

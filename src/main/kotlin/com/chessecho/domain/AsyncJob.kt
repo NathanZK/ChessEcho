@@ -33,6 +33,9 @@ class AsyncJob(
     @GeneratedValue(strategy = GenerationType.UUID)
     val id: UUID = UUID.randomUUID(),
     @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "app_user_id")
+    val appUser: AppUser? = null,
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "chess_account_id")
     val chessAccount: ChessAccount? = null,
     @Column(nullable = false)
@@ -175,6 +178,7 @@ class AsyncJob(
 
     private fun currentConfiguration(): ConfigurationSnapshot =
         ConfigurationSnapshot(
+            appUserId = appUser?.id,
             chessAccountId = chessAccount?.id,
             username = username,
             platform = platform,
@@ -188,6 +192,7 @@ class AsyncJob(
         )
 
     private data class ConfigurationSnapshot(
+        val appUserId: UUID?,
         val chessAccountId: UUID?,
         val username: String,
         val platform: String,

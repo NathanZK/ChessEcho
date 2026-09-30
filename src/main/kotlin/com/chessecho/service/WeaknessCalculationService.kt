@@ -67,7 +67,7 @@ class WeaknessCalculationService(
         val ownership = accountOwnershipService
         val account =
             if (ownership != null && accountId != null) {
-                ownership.resolvePrivateRead(accountId, principal)
+                ownership.resolveSharedAccount(accountId, principal)
             } else if (ownership != null && (requestAttributes != null || principal != null)) {
                 ownership.resolvePrivateRead(platform, username, principal)
             } else {
@@ -325,16 +325,18 @@ class WeaknessCalculationService(
         val eventRepository = puzzleSchedulingEventRepository
         val schedulingPolicy = adaptivePuzzleSchedulingPolicy
         val schedulingHistory =
-            if (account.user != null && eventRepository != null) {
+            if (principal != null && eventRepository != null) {
                 eventRepository
-                    .findHistory(account.id, positionIds, color)
+                    // #457 T7: personal scheduling history belongs to the requesting principal, never
+                    // to whoever the account currently points at.
+                    .findHistory(principal.appUserId, account.id, positionIds, color)
                     .groupBy { it.position.id to it.playerColor }
             } else {
                 emptyMap()
             }
         val now = Instant.now()
         val result =
-            if (account.user == null) {
+            if (principal == null) {
                 baselineResult.sortedWith(
                     compareByDescending<WeaknessResponse> { it.recommendationPriority }
                         .thenByDescending { it.priority }

@@ -19,8 +19,18 @@ import kotlin.test.assertNotEquals
 
 /**
  * Issue #252 ownership boundary. Username/platform are lookup inputs, never an
- * authorization key: private rows are selected through the authenticated owner
- * and a foreign owner receives 403 without an existence leak.
+ * authorization key.
+ *
+ * Amended by issue #457 (Decision 1, approved at the human gate): shared account-derived reads —
+ * games, weaknesses, puzzles — are owned by the `ChessAccount` row, so any authenticated principal
+ * may read them for any account that exists. The ownership boundary that remains is over
+ * *operational* and *personal* data: a foreign principal still cannot read another principal's
+ * import job.
+ *
+ * This class asserts only the HTTP authorization surface. The complementary guarantee — that the
+ * per-user scheduling history layered on top of those shared reads stays scoped to the requesting
+ * principal — is asserted at the service level by `SharedWeaknessCalculationReadIntegrationTest`,
+ * which checks that weakness ranking order differs per principal.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
@@ -38,7 +48,7 @@ class OwnerScopedAccessIntegrationTest {
     private val csrfHeader = "X-XSRF-TOKEN"
 
     @Test
-    fun `two principals isolate games weaknesses puzzles jobs and derived data`() {
+    fun `shared reads are open to any principal while jobs stay owner-scoped`() {
         val owner = session("owner-${UUID.randomUUID()}")
         val other = session("other-${UUID.randomUUID()}")
         val username = "owned-${UUID.randomUUID()}"
@@ -48,7 +58,8 @@ class OwnerScopedAccessIntegrationTest {
 
         privateReads(username, accountId(account)).forEach { path ->
             assertEquals(HttpStatus.OK, get(path, owner).statusCode, "owner must read $path")
-            assertEquals(HttpStatus.FORBIDDEN, get(path, other).statusCode, "foreign owner must be denied $path")
+            // #457 Decision 1: shared account-derived data is not gated on who connected the account.
+            assertEquals(HttpStatus.OK, get(path, other).statusCode, "any principal must read shared $path")
             assertEquals(HttpStatus.UNAUTHORIZED, get(path, null).statusCode, "missing principal must be rejected for $path")
         }
 
@@ -56,7 +67,7 @@ class OwnerScopedAccessIntegrationTest {
         assertEquals(HttpStatus.ACCEPTED, jobResponse.statusCode)
         val jobPath = "/api/jobs/${objectMapper.readTree(jobResponse.body).path("jobId").asText()}"
         assertEquals(HttpStatus.OK, get(jobPath, owner).statusCode)
-        assertEquals(HttpStatus.FORBIDDEN, get(jobPath, other).statusCode)
+        assertEquals(HttpStatus.FORBIDDEN, get(jobPath, other).statusCode, "jobs remain owner-scoped")
         assertEquals(HttpStatus.UNAUTHORIZED, get(jobPath, null).statusCode)
         assertEquals(HttpStatus.NOT_FOUND, get("/api/jobs/${UUID.randomUUID()}", owner).statusCode)
     }

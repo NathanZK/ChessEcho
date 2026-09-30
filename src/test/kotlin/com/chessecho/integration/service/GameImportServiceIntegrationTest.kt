@@ -345,13 +345,14 @@ class GameImportServiceIntegrationTest {
             GameImportService::class.java.getDeclaredMethod(
                 "processDerivedArchive",
                 com.chessecho.domain.ChessAccount::class.java,
+                com.chessecho.domain.AppUser::class.java,
                 com.chessecho.domain.ImportedArchive::class.java,
             ).apply { isAccessible = true }
         val pool = java.util.concurrent.Executors.newFixedThreadPool(2)
         try {
-            val first = pool.submit<Any?> { processArchive.invoke(targetService, account, archive) }
+            val first = pool.submit<Any?> { processArchive.invoke(targetService, account, null, archive) }
             assertTrue(enteredParser.await(5, TimeUnit.SECONDS), "first worker did not claim derived processing")
-            val second = pool.submit<Any?> { processArchive.invoke(targetService, account, archive) }
+            val second = pool.submit<Any?> { processArchive.invoke(targetService, account, null, archive) }
             assertEquals(
                 emptySet<UUID>(),
                 second.get(5, TimeUnit.SECONDS),
@@ -415,13 +416,14 @@ class GameImportServiceIntegrationTest {
             GameImportService::class.java.getDeclaredMethod(
                 "processDerivedArchive",
                 com.chessecho.domain.ChessAccount::class.java,
+                com.chessecho.domain.AppUser::class.java,
                 com.chessecho.domain.ImportedArchive::class.java,
             ).apply { isAccessible = true }
         val pool = java.util.concurrent.Executors.newFixedThreadPool(2)
         try {
-            val first = pool.submit<Any?> { processArchive.invoke(targetService, account, archive) }
+            val first = pool.submit<Any?> { processArchive.invoke(targetService, account, null, archive) }
             assertTrue(enteredParser.await(5, TimeUnit.SECONDS), "first worker did not create and claim derived processing")
-            val second = pool.submit<Any?> { processArchive.invoke(targetService, account, archive) }
+            val second = pool.submit<Any?> { processArchive.invoke(targetService, account, null, archive) }
             assertEquals(emptySet<UUID>(), second.get(5, TimeUnit.SECONDS))
             releaseParser.countDown()
             first.get(5, TimeUnit.SECONDS)
@@ -711,11 +713,12 @@ class GameImportServiceIntegrationTest {
                 .associate { it.position.id to it.timesReached },
             "a replayed derived unit must not inflate the occurrence counts it recomputes",
         )
-        assertEquals(
-            expectedEvents.size.toLong(),
-            puzzleSchedulingEventRepository.count(),
-            "a replayed derived unit must not duplicate scheduling events",
-        )
+        // Guest replay deduplication of source-linked scheduling events is asserted by
+        // GuestSchedulingClaimReplayPostgresIntegrationTest. Guest events carry
+        // app_user_id = NULL, and that invariant is enforced by the PostgreSQL-only
+        // NULLS NOT DISTINCT semantics of uk_puzzle_event_source_type, which H2 — backing
+        // this profile — cannot represent. Asserting it here would only prove that H2
+        // happens to reject the row, not that production does.
     }
 
     @Test

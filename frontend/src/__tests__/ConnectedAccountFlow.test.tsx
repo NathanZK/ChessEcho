@@ -8,11 +8,14 @@ const accountApi = vi.hoisted(() => ({
   fetchCurrentSession: vi.fn(),
   fetchAccounts: vi.fn(),
   associateAccount: vi.fn(),
+  disconnectAccount: vi.fn(),
   startAccountImportJob: vi.fn(),
   startImportJob: vi.fn(),
   pollJobStatus: vi.fn(),
   fetchPuzzles: vi.fn(),
   fetchWeaknesses: vi.fn(),
+  recordPuzzleEvent: vi.fn(),
+  submitTrainingAttempt: vi.fn(),
   logout: vi.fn(),
 }));
 
@@ -20,6 +23,23 @@ vi.mock('../services/api', async () => {
   const actual = await vi.importActual<typeof import('../services/api')>('../services/api');
   return { ...actual, ...accountApi };
 });
+
+vi.mock('react-chessboard', () => ({
+  Chessboard: ({
+    options,
+  }: {
+    options?: {
+      onPieceDrop?: (args: { sourceSquare: string; targetSquare: string }) => boolean;
+    };
+  }) => (
+    <button
+      type="button"
+      onClick={() => options?.onPieceDrop?.({ sourceSquare: 'e2', targetSquare: 'e4' })}
+    >
+      Play correct move
+    </button>
+  ),
+}));
 
 vi.mock('../components/WeaknessesList', () => ({
   WeaknessesList: () => <div>Weaknesses</div>,
@@ -47,6 +67,20 @@ const serverAccount: api.AccountSummary = {
   username: 'server-player',
 };
 
+const accountScopedPuzzle = {
+  puzzleId: 'account-puzzle',
+  fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+  playerColor: 'WHITE' as const,
+  targetMove: 'e4',
+  openingTitle: 'Account-scoped puzzle',
+  acceptableMoves: [],
+  movesPlayed: [],
+  priority: 1,
+  timesReached: 1,
+  mistakeCount: 1,
+  mistakeRate: 100,
+};
+
 function openImportView() {
   window.location.hash = '#import';
   render(<Home />);
@@ -60,10 +94,20 @@ describe('connected Chess.com account flow', () => {
     vi.mocked(api.fetchCurrentSession).mockResolvedValue({ status: 'unauthenticated' });
     vi.mocked(api.fetchAccounts).mockResolvedValue([]);
     vi.mocked(api.associateAccount).mockResolvedValue(serverAccount);
+    vi.mocked(api.disconnectAccount).mockResolvedValue(undefined);
     vi.mocked(api.startAccountImportJob).mockResolvedValue({ jobId: 'account-job', status: 'QUEUED' });
     vi.mocked(api.startImportJob).mockResolvedValue({ jobId: 'guest-job', status: 'QUEUED' });
     vi.mocked(api.fetchPuzzles).mockResolvedValue([]);
     vi.mocked(api.fetchWeaknesses).mockResolvedValue([]);
+    vi.mocked(api.recordPuzzleEvent).mockResolvedValue(undefined);
+    vi.mocked(api.submitTrainingAttempt).mockResolvedValue({
+      attemptId: 'attempt-1',
+      puzzleId: 'account-puzzle',
+      mode: 'STOPWATCH',
+      elapsedMs: 1,
+      outcome: 'SUBMITTED',
+      recordedAt: '2026-01-01T00:00:00Z',
+    });
     vi.mocked(api.logout).mockResolvedValue(undefined);
   });
 
@@ -250,5 +294,111 @@ describe('connected Chess.com account flow', () => {
       undefined
     ));
     expect(api.startAccountImportJob).not.toHaveBeenCalled();
+  });
+
+  it('calls the disconnect endpoint and clears active account state only after it succeeds', async () => {
+    vi.mocked(api.fetchCurrentSession).mockResolvedValueOnce({
+      status: 'authenticated',
+      userId: 'user-1',
+    });
+    vi.mocked(api.fetchAccounts).mockResolvedValueOnce([serverAccount]);
+    const disconnect = deferred<void>();
+    vi.mocked(api.disconnectAccount).mockReturnValueOnce(disconnect.promise);
+
+    openImportView();
+    expect(await screen.findByText('Chess.com Connected')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^disconnect$/i }));
+
+    await waitFor(() => expect(api.disconnectAccount).toHaveBeenCalledWith('server-account'));
+    expect(JSON.parse(localStorage.getItem('chessecho_active_account') ?? '{}')).toMatchObject({
+      id: 'server-account',
+    });
+
+    await act(async () => {
+      disconnect.resolve();
+      await disconnect.promise;
+    });
+
+    await waitFor(() => {
+      expect(localStorage.getItem('chessecho_active_account')).toBeNull();
+      expect(localStorage.getItem('chessecho_username')).toBeNull();
+    });
+    expect(screen.queryByText('Chess.com Connected')).not.toBeInTheDocument();
+  });
+
+  it('keeps the connected account selected and reports an error when disconnect fails', async () => {
+    vi.mocked(api.fetchCurrentSession).mockResolvedValueOnce({
+      status: 'authenticated',
+      userId: 'user-1',
+    });
+    vi.mocked(api.fetchAccounts).mockResolvedValueOnce([serverAccount]);
+    vi.mocked(api.disconnectAccount).mockRejectedValueOnce(new Error('Disconnect unavailable'));
+
+    openImportView();
+    expect(await screen.findByText('Chess.com Connected')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^disconnect$/i }));
+
+    await waitFor(() => expect(api.disconnectAccount).toHaveBeenCalledWith('server-account'));
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('Disconnect unavailable');
+    });
+    expect(JSON.parse(localStorage.getItem('chessecho_active_account') ?? '{}')).toMatchObject({
+      id: 'server-account',
+    });
+    expect(screen.getByText('Chess.com Connected')).toBeInTheDocument();
+  });
+
+  it('includes the selected account ID in authenticated puzzle and timed-training writes', async () => {
+    localStorage.setItem('chessecho_session_user', 'user-1');
+    vi.mocked(api.fetchCurrentSession).mockResolvedValueOnce({
+      status: 'authenticated',
+      userId: 'user-1',
+    });
+    vi.mocked(api.fetchAccounts).mockResolvedValueOnce([serverAccount]);
+    vi.mocked(api.fetchPuzzles).mockResolvedValueOnce([accountScopedPuzzle]);
+    window.location.hash = '#puzzles';
+
+    render(<Home />);
+
+    await waitFor(() => expect(api.fetchAccounts).toHaveBeenCalled());
+    await waitFor(() => expect(api.fetchPuzzles).toHaveBeenCalled());
+    expect(await screen.findByText('Account-scoped puzzle')).toBeInTheDocument();
+    expect(api.recordPuzzleEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: serverAccount.id,
+        positionId: accountScopedPuzzle.puzzleId,
+        eventType: 'PRESENTED',
+      })
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Puzzle Settings Show/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Stopwatch' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Play correct move' }));
+
+    await waitFor(() =>
+      expect(api.submitTrainingAttempt).toHaveBeenCalledWith(
+        expect.objectContaining({
+          accountId: serverAccount.id,
+          puzzleId: accountScopedPuzzle.puzzleId,
+        })
+      )
+    );
+  });
+
+  it('omits a persisted account ID from guest timed-training writes', async () => {
+    localStorage.setItem('chessecho_username', serverAccount.username);
+    localStorage.setItem('chessecho_active_account', JSON.stringify(serverAccount));
+    vi.mocked(api.fetchPuzzles).mockResolvedValueOnce([accountScopedPuzzle]);
+    window.location.hash = '#puzzles';
+
+    render(<Home />);
+
+    expect(await screen.findByText('Account-scoped puzzle')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Puzzle Settings Show/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Stopwatch' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Play correct move' }));
+
+    await waitFor(() => expect(api.submitTrainingAttempt).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(api.submitTrainingAttempt).mock.calls[0][0]).not.toHaveProperty('accountId');
   });
 });

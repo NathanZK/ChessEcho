@@ -58,7 +58,7 @@ class GameService(
         principal: AuthenticatedPrincipal?,
     ): Page<GameDto> {
         val account =
-            accountOwnershipService?.resolvePrivateRead(accountId, principal)
+            accountOwnershipService?.resolveSharedAccount(accountId, principal)
                 ?: return Page.empty()
         return gameRepository
             .findAllByChessAccountOrderByPlayedAtDesc(account, pageable)

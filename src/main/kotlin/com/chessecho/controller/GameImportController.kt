@@ -84,7 +84,7 @@ class GameImportController(
             if (!job.isReady()) {
                 throw com.chessecho.service.AccountNotFoundException("Import job is unresolved")
             }
-            accountOwnershipService.authorizeJob(job.chessAccount, principal)
+            accountOwnershipService.authorizeJob(job, principal)
         }
         return ResponseEntity.ok(
             JobStatusResponse(

@@ -1,5 +1,6 @@
 package com.chessecho.service
 
+import com.chessecho.domain.AsyncJob
 import com.chessecho.domain.ChessAccount
 import com.chessecho.domain.Platform
 import com.chessecho.dto.AccountAssociationRequest
@@ -93,6 +94,18 @@ class AccountOwnershipService(
         }
     }
 
+    @Transactional
+    fun disconnect(
+        accountId: UUID,
+        principal: AuthenticatedPrincipal,
+    ) {
+        val account =
+            chessAccountRepository.findByIdForUpdate(accountId)
+                ?: throw AccountNotFoundException("Account not found: $accountId")
+        requireOwner(principal, account)
+        account.user = null
+    }
+
     /**
      * Resolves and authorizes an import request before any job is inserted.
      */
@@ -151,6 +164,32 @@ class AccountOwnershipService(
         return account
     }
 
+    /**
+     * Existence-only resolution for **shared** account-derived reads (#457, T5).
+     *
+     * Shared data — games, occurrences, position stats, engine analysis — is owned by the
+     * `ChessAccount` row itself, so any authenticated principal may read it for any account that
+     * exists. `account.user` is a mutable current-connection pointer and deliberately plays no part
+     * here; it stays authoritative only for claim/association and import-initiation flows.
+     *
+     * Personal state is *not* covered by this resolver: callers must still scope
+     * `PuzzleSchedulingEvent` reads by `app_user_id`.
+     *
+     * Unauthenticated callers are still rejected, and the lookup deliberately precedes that check so
+     * the guest-visible outcome matches [resolvePrivateRead] exactly.
+     */
+    @Transactional(readOnly = true)
+    fun resolveSharedAccount(
+        accountId: UUID,
+        principal: AuthenticatedPrincipal?,
+    ): ChessAccount {
+        val account =
+            chessAccountRepository.findById(accountId)
+                .orElseThrow { AccountNotFoundException("Account not found: $accountId") }
+        if (principal == null) throw UnauthenticatedException()
+        return account
+    }
+
     @Transactional(readOnly = true)
     fun requireOwnedAccount(
         accountId: UUID,
@@ -165,14 +204,14 @@ class AccountOwnershipService(
 
     @Transactional(readOnly = true)
     fun authorizeJob(
-        account: ChessAccount?,
+        job: AsyncJob,
         principal: AuthenticatedPrincipal?,
     ) {
-        if (account == null) throw AccountNotFoundException("Import account is unresolved")
+        val account = job.chessAccount ?: throw AccountNotFoundException("Import account is unresolved")
         if (principal == null) {
             if (account.user != null) throw UnauthenticatedException()
-        } else {
-            requireOwner(principal, account)
+        } else if (job.appUser?.id != principal.appUserId) {
+            throw ForbiddenAccountException()
         }
     }
 

@@ -14,6 +14,8 @@ architecture:
   - **Analysis flow**: imported games are replayed; positions use four-field FEN identity; qualifying positions are evaluated by Stockfish; weakness ranking is calculated per account.
   - **Backend modules**: `controller` and `dto` expose HTTP boundaries; `service` implements application behavior; `domain` models persisted concepts; `repository` uses Spring Data JPA; `config` and `web` provide framework and request/security integration.
   - **Human-move subsystem**: `humanmove` and related services build empirical human-move distributions by rating band; see `docs/architecture/human-move-provider.md` and `docs/engineering/human-move-corpus-portability.md`.
+  - **Reference-coverage analysis**: Retained-evidence admission and coverage calculations are documented in `docs/specs/reference-coverage-analysis.md`.
+  - **Chess account data boundary**: Shared imported data, per-user training history, disconnect behavior, and import-job authorization are documented in `docs/specs/account-data-boundary.md`.
   - **Reference-evidence subsystem**: The explicit-input producer creates #430 snapshots; retained admission and coverage are documented in `docs/specs/evaluation-evidence-producer.md` and `docs/specs/reference-coverage-analysis.md`.
 
 stack:
@@ -30,11 +32,11 @@ entry:
   - Backend outbound Chess.com requests use configured `CHESS_PUBAPI_USERNAME` and `CHESS_PUBAPI_CONTACT` for the required User-Agent. See `README.md`.
 
 contract:
-  - **Account association**: `POST /api/accounts` associates an account with the authenticated user; `GET /api/accounts` lists that user's accounts. See `AccountController` and `API_CONTRACT.md`; frontend connected-account state is specified in `docs/specs/connected-account-state.md`.
+  - **Chess accounts**: `POST /api/accounts` connects an account; `GET /api/accounts` lists the caller's connections; `DELETE /api/accounts/{accountId}/connection` disconnects it. See `API_CONTRACT.md` and `docs/specs/connected-account-state.md`.
   - **Authentication/session**: `POST /api/register`, `POST /api/login`, `GET /api/me`, and `POST /api/logout`; session cookie `CHESSECHO_SESSION`. See `docs/architecture/identity-and-session.md`.
   - **Development session**: `POST /api/dev/session` exists only under `dev`/`local` profiles with `chessecho.auth.dev-mode.enabled=true`; otherwise it returns 404 (`DevSessionController`).
-  - **Import and jobs**: `POST /api/games/import` creates an asynchronous job; `GET /api/jobs/{id}` reports ingestion and analysis progress.
-  - **Private selectors**: authenticated private requests select an owned account by `accountId`; guest requests use platform and username. An authenticated guest-shaped import returns `400 ACCOUNT_SELECTION_REQUIRED`.
+  - **Import and jobs**: `POST /api/games/import` requires the authenticated user's connected account; `GET /api/jobs/{id}` is available to the initiating user, or to guests only while the account is unclaimed.
+  - **Account data access**: authenticated shared-data reads select any existing account by `accountId`; guest reads use platform and username for an unclaimed account. Personal training reads are scoped to the authenticated user and selected account.
   - **Analysis and practice**: `/api/positions/weaknesses` and `/api/positions/{positionId}/progress` expose weakness and progress reads; `/api/puzzles`, `/api/puzzles/continuation`, `/api/puzzles/evaluate-move`, `/api/puzzles/attempt`, and `/api/puzzles/events` support puzzles, continuation, evaluation, attempts, and events.
   - **Evaluation evidence**: Internal `EvaluationEvidenceProducerService.produce` creates #430 snapshots from explicit input and verifies #450 before persistence; see `docs/specs/evaluation-evidence-producer.md`.
   - **Human-move corpus administration**: `/api/admin/human-move-distribution/*` covers BFS acquisition, corpus runs/checkpoints, artifact export/verify/import/purge, projections, and cross-cohort comparison.
@@ -43,7 +45,7 @@ contract:
 flow:
   - import: `POST /api/games/import` → resolve owned or unclaimed account → async job fetches and replays Chess.com games → store position occurrences.
   - analysis: import ingestion completes → positions reached ≥5 times (`EngineAnalysisOrchestrator`) → Stockfish depth 16 (`EngineAnalysisService`) → stored position and move evaluations.
-  - weakness: weakness/puzzle request → on-demand per-account aggregation with recency-weighted priority (`README.md`) → paginated weaknesses or puzzles.
+  - weakness: weakness/puzzle request → account-derived aggregation plus the caller's account-scoped training history → paginated weaknesses or puzzles.
   - practice: puzzle move → evaluate/continue/attempt/event endpoints → feedback and recorded training events.
   - Import and ingestion details: `README.md` and `API_CONTRACT.md`.
 
@@ -52,7 +54,8 @@ invariant:
   - Occurrence counts are scoped by account and player color.
   - Engine analysis is stored per position and shared across accounts; weakness ranking is computed per account.
   - `userId`, usernames, account UUIDs, and job UUIDs are never bearer credentials (`API_CONTRACT.md`).
-  - Authenticated reads and imports select an account by UUID and verify ownership; guest reads and imports select only unclaimed accounts.
+  - Authenticated shared reads select an existing account by UUID; personal history is scoped to `(app_user_id, chess_account_id)`.
+  - Authenticated import creation requires the current account owner; status reads require the immutable initiating user. Guests can read/import only unclaimed accounts.
   - `AsyncJob` rejects updates that change its persisted import configuration, including account, date range, time controls, and player color.
   - Before deployment, schema evolution updates the V1 baseline rather than adding synthetic Flyway versions. See `docs/engineering/repository-conventions.md`.
 
@@ -67,7 +70,7 @@ constraint:
 convention:
   - **Quality checks**: backend `./gradlew ktlintCheck` and `./gradlew test`; frontend `npm run lint`, `npx tsc --noEmit`, `npm run test`, and `npm run build` from `frontend/`.
   - **Error handling**: exceptions map to structured JSON errors with codes in `GlobalExceptionHandler`; codes are listed in `API_CONTRACT.md`.
-  - **Security**: server-side sessions, double-submit CSRF on state changes, and owner-scoped account access; see `docs/architecture/identity-and-session.md`.
+  - **Security**: server-side sessions, double-submit CSRF on state changes, connection-owner checks for import initiation, initiator-only authenticated job status, and per-user personal-state scoping; see `docs/architecture/identity-and-session.md` and `docs/specs/account-data-boundary.md`.
   - **Tests**: backend tests under `src/test/kotlin/com/chessecho/{controller,service,repository,integration,...}`; integration tests use Testcontainers PostgreSQL.
   - **CI**: `.github/workflows/ci.yml` runs backend ktlint and tests (Java 21) and frontend lint, typecheck, Vitest, and build (Node 20).
   - **Persistence**: follow the pre-deployment baseline-first migration convention in `docs/engineering/repository-conventions.md`.

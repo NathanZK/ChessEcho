@@ -128,14 +128,24 @@ describe('Puzzle scheduling event API contract', () => {
     vi.mocked(global.fetch).mockResolvedValueOnce({ ok: true, json: async () => ({}) } as Response);
 
     const { recordPuzzleEvent } = await import('../services/api');
-    await recordPuzzleEvent({ positionId: 'position-1', playerColor: 'WHITE', eventType: 'PRESENTED' });
+    await recordPuzzleEvent({
+      positionId: 'position-1',
+      playerColor: 'WHITE',
+      eventType: 'PRESENTED',
+      accountId: 'account-1',
+    });
 
     expect(global.fetch).toHaveBeenCalledWith(
       expect.stringContaining('/puzzles/events'),
       expect.objectContaining({
         method: 'POST',
         credentials: 'include',
-        body: JSON.stringify({ positionId: 'position-1', playerColor: 'WHITE', eventType: 'PRESENTED' }),
+        body: JSON.stringify({
+          positionId: 'position-1',
+          playerColor: 'WHITE',
+          eventType: 'PRESENTED',
+          accountId: 'account-1',
+        }),
       }),
     );
   });
@@ -145,7 +155,12 @@ describe('Puzzle scheduling event API contract', () => {
     async (eventType) => {
       vi.mocked(global.fetch).mockResolvedValueOnce({ ok: true, json: async () => ({}) } as Response);
       const { recordPuzzleEvent } = await import('../services/api');
-      await recordPuzzleEvent({ positionId: 'position-1', playerColor: 'WHITE', eventType });
+      await recordPuzzleEvent({
+        positionId: 'position-1',
+        playerColor: 'WHITE',
+        eventType,
+        accountId: 'account-1',
+      });
       expect(global.fetch).toHaveBeenCalledTimes(1);
     },
   );
@@ -153,6 +168,64 @@ describe('Puzzle scheduling event API contract', () => {
   it('surfaces rejected requests without inventing a persisted guest event', async () => {
     vi.mocked(global.fetch).mockResolvedValueOnce({ ok: false, status: 401 } as Response);
     const { recordPuzzleEvent } = await import('../services/api');
-    await expect(recordPuzzleEvent({ positionId: 'position-1', playerColor: 'WHITE', eventType: 'SOLVED' })).rejects.toThrow();
+    await expect(
+      recordPuzzleEvent({
+        positionId: 'position-1',
+        playerColor: 'WHITE',
+        eventType: 'SOLVED',
+        accountId: 'account-1',
+      })
+    ).rejects.toThrow();
+  });
+
+  it('serializes the selected account ID with a timed training attempt', async () => {
+    vi.mocked(global.fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ attemptId: 'attempt-1' }),
+    } as Response);
+
+    const { submitTrainingAttempt } = await import('../services/api');
+    await submitTrainingAttempt({
+      attemptId: 'attempt-1',
+      puzzleId: 'puzzle-1',
+      mode: 'STOPWATCH',
+      elapsedMs: 1250,
+      outcome: 'SUBMITTED',
+      accountId: 'account-1',
+    });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/puzzles/attempt'),
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          attemptId: 'attempt-1',
+          puzzleId: 'puzzle-1',
+          mode: 'STOPWATCH',
+          elapsedMs: 1250,
+          outcome: 'SUBMITTED',
+          accountId: 'account-1',
+        }),
+      })
+    );
+  });
+
+  it('omits the account ID for a guest timed training attempt', async () => {
+    vi.mocked(global.fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ attemptId: 'attempt-guest' }),
+    } as Response);
+
+    const { submitTrainingAttempt } = await import('../services/api');
+    await submitTrainingAttempt({
+      attemptId: 'attempt-guest',
+      puzzleId: 'puzzle-1',
+      mode: 'STOPWATCH',
+      elapsedMs: 1250,
+      outcome: 'SUBMITTED',
+    });
+
+    const [, request] = vi.mocked(global.fetch).mock.calls[0];
+    expect(JSON.parse(String(request?.body))).not.toHaveProperty('accountId');
   });
 });

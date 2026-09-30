@@ -12,7 +12,6 @@ import jakarta.persistence.Index
 import jakarta.persistence.JoinColumn
 import jakarta.persistence.ManyToOne
 import jakarta.persistence.Table
-import jakarta.persistence.UniqueConstraint
 import java.time.Instant
 import java.util.UUID
 
@@ -27,24 +26,32 @@ enum class SchedulingEventType {
     GAME_HANDLED_SUCCESSFULLY,
 }
 
+/**
+ * The source-linked uniqueness invariant for this table is a partial, `NULLS NOT DISTINCT`
+ * unique index defined in `V1__baseline.sql` (`uk_puzzle_event_source_type`). JPA cannot express
+ * either the `WHERE position_occurrence_id IS NOT NULL` predicate or the null-equality semantics,
+ * so it is deliberately not declared here: a table-wide `@UniqueConstraint` would wrongly collide
+ * every training-history row, which carries `position_occurrence_id = NULL`.
+ */
 @Entity
 @Table(
     name = "puzzle_scheduling_event",
-    uniqueConstraints = [
-        UniqueConstraint(
-            name = "uk_puzzle_event_source_type",
-            columnNames = ["position_occurrence_id", "event_type"],
-        ),
-    ],
     indexes = [
         Index(name = "idx_puzzle_event_account_position", columnList = "chess_account_id, position_id, player_color, occurred_at"),
         Index(name = "idx_puzzle_event_source", columnList = "position_occurrence_id"),
+        Index(
+            name = "idx_puzzle_event_user_account_position",
+            columnList = "app_user_id, chess_account_id, position_id, player_color, occurred_at",
+        ),
     ],
 )
 class PuzzleSchedulingEvent(
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     val id: UUID = UUID.randomUUID(),
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "app_user_id")
+    val appUser: AppUser? = null,
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "chess_account_id", nullable = false)
     val chessAccount: ChessAccount,

@@ -9,7 +9,9 @@ import com.chessecho.web.UnauthenticatedException
 import jakarta.validation.Valid
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
+import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestAttribute
 import org.springframework.web.bind.annotation.RequestBody
@@ -39,5 +41,15 @@ class AccountController(
         return ResponseEntity
             .status(if (result.created) HttpStatus.CREATED else HttpStatus.OK)
             .body(result.account)
+    }
+
+    @DeleteMapping("/{accountId}/connection")
+    fun disconnect(
+        @PathVariable accountId: java.util.UUID,
+        @RequestAttribute(name = SessionAuthenticationFilter.PRINCIPAL_ATTRIBUTE, required = false)
+        principal: AuthenticatedPrincipal?,
+    ): ResponseEntity<Unit> {
+        accountOwnershipService.disconnect(accountId, principal ?: throw UnauthenticatedException())
+        return ResponseEntity.status(HttpStatus.NO_CONTENT).build()
     }
 }
