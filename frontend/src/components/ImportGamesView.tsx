@@ -4,6 +4,7 @@ import React, { useState, useSyncExternalStore } from 'react';
 import { Download, CheckCircle2, Clock, Calendar, Play } from 'lucide-react';
 
 import {
+  AccountAssociationError,
   AccountSummary,
   SessionState,
   startImportJob,
@@ -15,6 +16,9 @@ import { activeJobStore } from '../utils/browserStores';
 import { MonthPicker } from './MonthPicker';
 
 export type AccountConnectionStatus = 'loading' | 'connected' | 'unconnected' | 'error';
+
+const ACCOUNT_CLAIM_CONFLICT_MESSAGE =
+  "This Chess.com account is connected under another ChessEcho sign-in. Verify that you're signed in to the right ChessEcho account, or choose a Chess.com account you can connect.";
 
 interface ImportGamesViewProps {
   connectedUsername?: string;
@@ -190,7 +194,15 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
     try {
       await onConnectAccount(trimmedUsername);
     } catch (err: unknown) {
-      setAssociationError(err instanceof Error ? err.message : 'Failed to connect Chess.com account');
+      setAssociationError(
+        err instanceof AccountAssociationError &&
+          err.status === 409 &&
+          err.code === 'ACCOUNT_CLAIM_CONFLICT'
+          ? ACCOUNT_CLAIM_CONFLICT_MESSAGE
+          : err instanceof Error
+            ? err.message
+            : 'Failed to connect Chess.com account'
+      );
     } finally {
       setIsAssociating(false);
     }

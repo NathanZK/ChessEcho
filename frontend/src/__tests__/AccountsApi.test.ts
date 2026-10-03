@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { associateAccount, disconnectAccount, fetchAccounts } from '../services/api';
+import { AccountAssociationError, associateAccount, disconnectAccount, fetchAccounts } from '../services/api';
 
 function response(status: number, body: unknown): Response {
   return {
@@ -60,6 +60,60 @@ describe('owned account API contract', () => {
     expect(JSON.parse(String(init?.body))).toEqual({
       platform: 'CHESS_COM',
       username: 'new-player',
+    });
+  });
+
+  it('preserves the HTTP status and API code for account-association errors', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      response(409, { error: 'ACCOUNT_CLAIM_CONFLICT', details: ['Account already claimed'] })
+    );
+
+    const error = await associateAccount('CHESS_COM', 'other-player').catch((reason: unknown) => reason);
+
+    expect(error).toBeInstanceOf(AccountAssociationError);
+    expect(error).toMatchObject({
+      status: 409,
+      code: 'ACCOUNT_CLAIM_CONFLICT',
+      message: 'ACCOUNT_CLAIM_CONFLICT',
+    });
+  });
+
+  it('uses a null association error code when the API error field is not a string', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(response(503, { error: 42 }));
+
+    const error = await associateAccount('CHESS_COM', 'new-player').catch((reason: unknown) => reason);
+
+    expect(error).toBeInstanceOf(AccountAssociationError);
+    expect(error).toMatchObject({
+      status: 503,
+      code: null,
+      message: 'Failed to associate account: 503',
+    });
+  });
+
+  it('rejects a successful association response that is not an account summary', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      response(200, { id: 'account-1', platform: 'CHESS_COM', username: '' })
+    );
+
+    await expect(associateAccount('CHESS_COM', 'new-player')).rejects.toThrow(
+      'Failed to associate account: unexpected response body'
+    );
+  });
+
+  it('keeps the status and existing fallback when an association error body is invalid', async () => {
+    const invalidJsonResponse = response(503, {});
+    vi.mocked(fetch).mockResolvedValueOnce({
+      ...invalidJsonResponse,
+      json: vi.fn().mockRejectedValue(new SyntaxError('invalid JSON')),
+    });
+
+    const error = await associateAccount('CHESS_COM', 'new-player').catch((reason: unknown) => reason);
+
+    expect(error).toMatchObject({
+      status: 503,
+      code: null,
+      message: 'Failed to associate account: 503',
     });
   });
 

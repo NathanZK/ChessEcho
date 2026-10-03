@@ -34,6 +34,17 @@ export interface AccountSummary {
   username: string;
 }
 
+export class AccountAssociationError extends Error {
+  constructor(
+    readonly status: number,
+    readonly code: string | null,
+    message: string
+  ) {
+    super(message);
+    this.name = 'AccountAssociationError';
+  }
+}
+
 function isAccountSummary(value: unknown): value is AccountSummary {
   if (typeof value !== 'object' || value === null) return false;
   const account = value as Record<string, unknown>;
@@ -192,11 +203,18 @@ export async function associateAccount(platform: string, username: string): Prom
     headers: jsonHeaders(),
     body: JSON.stringify({ platform, username }),
   });
+  const body: unknown = await response.json().catch(() => ({}));
+  const code =
+    typeof body === 'object' && body !== null && 'error' in body && typeof body.error === 'string'
+      ? body.error
+      : null;
   if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new Error(body?.error || `Failed to associate account: ${response.status}`);
+    throw new AccountAssociationError(
+      response.status,
+      code,
+      code || `Failed to associate account: ${response.status}`
+    );
   }
-  const body: unknown = await response.json();
   if (!isAccountSummary(body)) {
     throw new Error('Failed to associate account: unexpected response body');
   }

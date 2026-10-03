@@ -230,7 +230,12 @@ describe('connected Chess.com account flow', () => {
     });
     vi.mocked(api.fetchAccounts).mockResolvedValueOnce([]);
     vi.mocked(api.associateAccount)
-      .mockRejectedValueOnce(new Error('ACCOUNT_CLAIM_CONFLICT'))
+      .mockRejectedValueOnce(
+        new api.AccountAssociationError(409, 'ACCOUNT_CLAIM_CONFLICT', 'ACCOUNT_CLAIM_CONFLICT')
+      )
+      .mockRejectedValueOnce(
+        new api.AccountAssociationError(409, 'ACCOUNT_CLAIM_CONFLICT', 'ACCOUNT_CLAIM_CONFLICT')
+      )
       .mockResolvedValueOnce(serverAccount);
 
     openImportView();
@@ -239,10 +244,94 @@ describe('connected Chess.com account flow', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: /connect chess\.com account/i }));
 
-    expect(await screen.findByText('ACCOUNT_CLAIM_CONFLICT')).toBeInTheDocument();
+    const conflictMessage =
+      "This Chess.com account is connected under another ChessEcho sign-in. Verify that you're signed in to the right ChessEcho account, or choose a Chess.com account you can connect.";
+    expect(await screen.findByText(conflictMessage)).toBeInTheDocument();
+    expect(screen.queryByText('Chess.com Connected')).not.toBeInTheDocument();
+    expect(localStorage.getItem('chessecho_active_account')).toBeNull();
     expect(api.startAccountImportJob).not.toHaveBeenCalled();
+    expect(api.startImportJob).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: /connect chess\.com account/i }));
+    expect(await screen.findByText(conflictMessage)).toBeInTheDocument();
+    expect(screen.queryByText('Chess.com Connected')).not.toBeInTheDocument();
+    expect(localStorage.getItem('chessecho_active_account')).toBeNull();
+    expect(api.associateAccount).toHaveBeenCalledTimes(2);
+    expect(api.startAccountImportJob).not.toHaveBeenCalled();
+    expect(api.startImportJob).not.toHaveBeenCalled();
+
     fireEvent.click(screen.getByRole('button', { name: /connect chess\.com account/i }));
     expect(await screen.findByText('Chess.com Connected')).toBeInTheDocument();
+    expect(api.associateAccount).toHaveBeenCalledTimes(3);
+    expect(screen.getByText('server-player')).toBeInTheDocument();
+  });
+
+  it('preserves and can import a different confirmed account after a claim conflict', async () => {
+    vi.mocked(api.fetchCurrentSession).mockResolvedValueOnce({
+      status: 'authenticated',
+      userId: 'user-1',
+    });
+    vi.mocked(api.fetchAccounts).mockResolvedValueOnce([serverAccount]);
+    vi.mocked(api.associateAccount).mockRejectedValueOnce(
+      new api.AccountAssociationError(409, 'ACCOUNT_CLAIM_CONFLICT', 'ACCOUNT_CLAIM_CONFLICT')
+    );
+
+    openImportView();
+    expect(await screen.findByText('Chess.com Connected')).toBeInTheDocument();
+    const username = screen.getByPlaceholderText(/e\.g\. Hikaru/i);
+    fireEvent.change(username, { target: { value: 'other-player' } });
+    fireEvent.click(screen.getByRole('button', { name: /connect chess\.com account/i }));
+
+    expect(
+      await screen.findByText(
+        "This Chess.com account is connected under another ChessEcho sign-in. Verify that you're signed in to the right ChessEcho account, or choose a Chess.com account you can connect."
+      )
+    ).toBeInTheDocument();
+    expect(screen.getByText('Connected Chess.com account: server-player')).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem('chessecho_active_account') ?? '{}')).toMatchObject({
+      id: serverAccount.id,
+      username: serverAccount.username,
+    });
+    expect(api.startAccountImportJob).not.toHaveBeenCalled();
+
+    fireEvent.change(username, { target: { value: serverAccount.username } });
+    fireEvent.click(screen.getByRole('button', { name: /start import/i }));
+
+    await waitFor(() =>
+      expect(api.startAccountImportJob).toHaveBeenCalledWith(
+        expect.objectContaining({ accountId: serverAccount.id, username: serverAccount.username })
+      )
+    );
+    expect(api.associateAccount).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [409, 'CONFLICT', 'CONFLICT'],
+    [400, 'ACCOUNT_CLAIM_CONFLICT', 'ACCOUNT_CLAIM_CONFLICT'],
+  ])('keeps the existing error message when status/code do not both match (%s, %s)', async (
+    status,
+    code,
+    message
+  ) => {
+    vi.mocked(api.fetchCurrentSession).mockResolvedValueOnce({
+      status: 'authenticated',
+      userId: 'user-1',
+    });
+    vi.mocked(api.fetchAccounts).mockResolvedValueOnce([]);
+    vi.mocked(api.associateAccount).mockRejectedValueOnce(
+      new api.AccountAssociationError(status, code, message)
+    );
+
+    openImportView();
+    fireEvent.change(await screen.findByPlaceholderText(/e\.g\. Hikaru/i), {
+      target: { value: 'new-player' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /connect chess\.com account/i }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(message);
+    expect(screen.queryByText(/connected under another ChessEcho sign-in/)).not.toBeInTheDocument();
+    expect(api.startAccountImportJob).not.toHaveBeenCalled();
+    expect(api.startImportJob).not.toHaveBeenCalled();
   });
 
   it('does not restore a late association response after logout', async () => {
