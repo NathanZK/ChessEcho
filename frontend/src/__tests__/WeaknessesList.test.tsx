@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { WeaknessesList, adaptWeaknessToPuzzle, formatLastSeen } from '../components/WeaknessesList';
 import * as api from '../services/api';
@@ -216,7 +216,39 @@ describe('Weaknesses Tab MVP', () => {
       });
     });
 
-    it('shows an insufficient practical-evidence state without fabricating a score', async () => {
+    it.each(['INSUFFICIENT', 'INCONCLUSIVE'] as const)(
+      'shows actual-game outcomes without internal labels for %s confidence',
+      async (confidenceState) => {
+        vi.mocked(api.fetchWeaknesses).mockResolvedValue([{
+          ...mockWeaknessItem,
+          practicalEvidence: {
+            ...mockWeaknessItem.practicalEvidence!,
+            candidateGames: 25,
+            eligibleGames: 25,
+            wins: 9,
+            draws: 1,
+            losses: 15,
+            scoreRate: 0.38,
+            confidenceState,
+          },
+        }]);
+
+        render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
+
+        const title = await screen.findByText('Actual-game results at this exact position');
+        const results = within(title.parentElement!);
+        expect(results.getByText('Wins 9 · Draws 1 · Losses 15')).toBeInTheDocument();
+        expect(results.getByText('38.0% score rate')).toBeInTheDocument();
+        expect(results.getByText('25 eligible games')).toBeInTheDocument();
+        expect(results.queryByText(/evidence confidence|insufficient|inconclusive|ranking eligible|practical evidence|training/i)).not.toBeInTheDocument();
+      }
+    );
+
+    it.each([
+      { scoreRate: null, eligibleGames: 0 },
+      { scoreRate: null, eligibleGames: 4 },
+      { scoreRate: 0.625, eligibleGames: 0 },
+    ])('shows neutral unavailable-score wording for $scoreRate score and $eligibleGames eligible games', async ({ scoreRate, eligibleGames }) => {
       const itemWithoutUsableEvidence: WeaknessResponse = {
         ...mockWeaknessItem,
         practicalEvidence: {
@@ -224,8 +256,8 @@ describe('Weaknesses Tab MVP', () => {
           wins: 0,
           draws: 0,
           losses: 0,
-          eligibleGames: 0,
-          scoreRate: null,
+          eligibleGames,
+          scoreRate,
           confidenceState: 'INSUFFICIENT',
         },
       };
@@ -233,10 +265,22 @@ describe('Weaknesses Tab MVP', () => {
 
       render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
 
-      await waitFor(() => {
-        expect(screen.getByText(/Practical evidence is insufficient/i)).toBeInTheDocument();
-      });
-      expect(screen.queryByText(/score rate/i)).not.toBeInTheDocument();
+      const title = await screen.findByText('Actual-game results at this exact position');
+      const results = within(title.parentElement!);
+      expect(results.getByText(`No score available from actual games (${eligibleGames} eligible games)`)).toBeInTheDocument();
+      expect(results.queryByText(/%|score rate/i)).not.toBeInTheDocument();
+      expect(results.queryByText(/evidence confidence|insufficient|inconclusive|ranking eligible|practical evidence|training/i)).not.toBeInTheDocument();
+    });
+
+    it('omits actual-game results when the payload is absent', async () => {
+      const { practicalEvidence, ...itemWithoutEvidence } = mockWeaknessItem;
+      expect(practicalEvidence).toBeDefined();
+      vi.mocked(api.fetchWeaknesses).mockResolvedValue([itemWithoutEvidence]);
+
+      render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
+
+      expect(await screen.findByText('33.3% (5x)')).toBeInTheDocument();
+      expect(screen.queryByText('Actual-game results at this exact position')).not.toBeInTheDocument();
     });
 
     it('refetches and resets page 0 when color filter, min mistake count, or minEvalLoss threshold changes', async () => {

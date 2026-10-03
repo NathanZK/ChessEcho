@@ -544,24 +544,16 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                         <div className="text-[11px] font-semibold text-emerald-300">
                           Actual-game results at this exact position
                         </div>
-                        <div className="text-[10px] text-slate-400 mt-0.5">
-                          Final results from games that reached this position, not training results.
-                        </div>
                         {item.practicalEvidence.scoreRate !== null &&
                         item.practicalEvidence.eligibleGames > 0 ? (
-                          <>
-                            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-slate-200">
-                              <span>Wins {item.practicalEvidence.wins} · Draws {item.practicalEvidence.draws} · Losses {item.practicalEvidence.losses}</span>
-                              <span>{(item.practicalEvidence.scoreRate * 100).toFixed(1)}% score rate</span>
-                              <span>{item.practicalEvidence.eligibleGames} eligible games</span>
-                            </div>
-                            <div className="text-[10px] text-slate-400 mt-1">
-                              Evidence confidence: {item.practicalEvidence.confidenceState.toLowerCase().replace('_', ' ')}
-                            </div>
-                          </>
+                          <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-slate-200">
+                            <span>Wins {item.practicalEvidence.wins} · Draws {item.practicalEvidence.draws} · Losses {item.practicalEvidence.losses}</span>
+                            <span>{(item.practicalEvidence.scoreRate * 100).toFixed(1)}% score rate</span>
+                            <span>{item.practicalEvidence.eligibleGames} eligible games</span>
+                          </div>
                         ) : (
                           <div className="text-xs text-slate-400 mt-2">
-                            Practical evidence is insufficient to report a score ({item.practicalEvidence.eligibleGames} eligible games).
+                            No score available from actual games ({item.practicalEvidence.eligibleGames} eligible games)
                           </div>
                         )}
                       </div>
