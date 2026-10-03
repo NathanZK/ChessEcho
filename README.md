@@ -175,7 +175,7 @@ Replay each game move-by-move (kchesslib)
         ↓
 Identify unique board positions (4-field FEN hash)
         ↓
-Count per-user occurrences of each position
+Count occurrences per account and player color
         ↓
 Positions reached 5+ times → Stockfish analysis candidates
         ↓
@@ -183,7 +183,7 @@ Stockfish evaluates position baseline + each historically played move
         ↓
 Compare historical moves against engine evaluation → compute eval loss
         ↓
-Aggregate by user: mistakeCount, averageLoss, recency-weighted priority
+Aggregate by account: mistakeCount, averageLoss, recency-weighted priority
         ↓
 Rank recurring weaknesses and serve as personalized puzzles
 ```
@@ -215,9 +215,11 @@ Move-order transpositions that produce legally identical positions are grouped t
 
 **Next.js frontend** — `/` contains the Import Games, Weaknesses Library, and Practice Puzzles tabs, with separate `/login` and `/register` routes. Tab state is reflected in the URL hash and browser storage; session identity remains server-authoritative. See the [frontend architecture guide](docs/architecture/frontend.md) for route-to-API/UI traces, state ownership, and diagrams.
 
-**Kotlin/Spring Boot backend** — handles game import (via Chess.com's public API), PGN parsing, position detection, engine analysis orchestration, weakness calculation, and puzzle serving. Runs on port 8080.
+**Kotlin/Spring Boot backend** — handles game import (via Chess.com's public API), PGN parsing, position detection, engine analysis orchestration, weakness calculation, and puzzle serving. Runs on port 8080. See the [backend architecture guide](docs/architecture/backend-architecture.md) for request-to-service and persistence traces.
 
 **PostgreSQL** — stores provider-neutral users/sessions, canonical chess accounts, imported games, board positions, position occurrences, engine analysis results, and import jobs with immutable initiating-user attribution. Schema is managed by one clean `V1__baseline.sql` migration; the unreleased V1/V2 history and any V3 upgrade/quarantine path are not used. See [`docs/engineering/repository-conventions.md`](docs/engineering/repository-conventions.md) for the pre-deployment default this reflects and when it no longer applies.
+
+Imported games and position occurrences belong to a `ChessAccount` and are shared account data, not data owned by the user who imported them. Engine analysis is shared by position, while weakness ranking is calculated for the selected account.
 
 **Asynchronous import job** — when a game import is started, the backend creates a job record and executes the pipeline asynchronously. Live game progress is checkpointed after each archive. Game ingestion and the subsequent Stockfish analysis have independent statuses on the same job, and the frontend polls both every two seconds. Authenticated imports require the account's current owner, and only the initiating user can poll that job; guests can poll jobs only while the account is unclaimed.
 
@@ -355,7 +357,7 @@ history, decay, and pagination remain active.
 - **Exact position matching only.** Weaknesses are identified from identical recurring board states, not from generalized chess concepts or strategic patterns.
 - **Intentional or unusual opening choices can produce false positives.** Evaluation loss does not always mean a recurring mistake by human standards.
 - **No opening name classification.** Weakness positions are not currently labeled with ECO codes or opening names.
-- **No explicit progress-tracking UI.** As new games are imported, weakness scores update automatically. There is no dedicated dashboard showing how a weakness has evolved over time.
+- **Position Progress requires authentication.** The Weaknesses Library offers a **View Progress** action for a position; the Position Progress view shows the signed-in user's historical baseline and interval observations for the selected account. Guests must sign in to view personal progress.
 
 ---
 
