@@ -221,6 +221,16 @@ export async function associateAccount(platform: string, username: string): Prom
   return body;
 }
 
+export class DisconnectAccountError extends Error {
+  constructor(
+    message: string,
+    readonly status: number
+  ) {
+    super(message);
+    this.name = 'DisconnectAccountError';
+  }
+}
+
 export async function disconnectAccount(accountId: string): Promise<void> {
   const response = await fetch(
     `${API_BASE_URL}/accounts/${encodeURIComponent(accountId)}/connection`,
@@ -232,7 +242,10 @@ export async function disconnectAccount(accountId: string): Promise<void> {
   );
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new Error(body?.error || `Failed to disconnect account: ${response.status}`);
+    throw new DisconnectAccountError(
+      body?.error || `Failed to disconnect account: ${response.status}`,
+      response.status
+    );
   }
 }
 

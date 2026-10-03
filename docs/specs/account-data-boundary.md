@@ -23,7 +23,12 @@ invariant:
 failure:
   - A foreign user cannot initiate an import for a currently connected account or read another user's authenticated job status.
   - Unauthenticated reads and imports are rejected for claimed accounts.
-  - A failed disconnect leaves the server connection and frontend selection intact.
+  - Non-404 disconnect failures preserve the confirmed frontend selection and dependent context.
+  - A DELETE 404 alone does not confirm a disconnect.
+  - After a DELETE 404, the frontend reloads the authenticated account list.
+  - The frontend removes or replaces a selection only when a valid list omits it.
+  - An empty valid list leaves the user unconnected; a non-empty list selects only a listed account.
+  - A failed or malformed reload leaves connection state unconfirmed and recoverable; it does not report disconnect success.
 
 convention:
   - Backend ownership, shared-read resolution, job status, and personal-state scoping are enforced server-side.

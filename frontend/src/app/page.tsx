@@ -22,6 +22,7 @@ import {
   fetchCurrentSession,
   fetchAccounts,
   disconnectAccount,
+  DisconnectAccountError,
   logout as apiLogout,
   recordPuzzleEvent,
   submitTrainingAttempt,
@@ -129,7 +130,11 @@ export default function Home() {
   }, []);
 
   const loadOwnedAccounts = React.useCallback(
-    async (userId: string, isCurrent: () => boolean = () => true) => {
+    async (
+      userId: string,
+      isCurrent: () => boolean = () => true,
+      preferredAccountId?: string
+    ) => {
       const requestVersion = ++accountRequestVersionRef.current;
       accountOwnerIdRef.current = userId;
       setAccountStatus('loading');
@@ -150,7 +155,7 @@ export default function Home() {
         const current = activeAccountStore.getSnapshot();
         const selected = current && accounts.some((account) => account.id === current.id)
           ? current
-          : accounts[0];
+          : accounts.find((account) => account.id === preferredAccountId) ?? accounts[0];
         activeAccountStore.set(selected);
         activeUsernameStore.set(selected.username);
         setAccountStatus('connected');
@@ -276,12 +281,16 @@ export default function Home() {
     try {
       await disconnectAccount(accountId);
     } catch (error: unknown) {
-      if (
+      const requestIsCurrent =
         accountRequestVersionRef.current === requestVersion &&
         accountOwnerIdRef.current === ownerId &&
-        activeAccountStore.getSnapshot()?.id === accountId
-      ) {
-        setDisconnectError(errorMessageOf(error) || 'Failed to disconnect Chess.com account.');
+        activeAccountStore.getSnapshot()?.id === accountId;
+      if (!requestIsCurrent) return;
+
+      setDisconnectError(errorMessageOf(error) || 'Failed to disconnect Chess.com account.');
+      if (error instanceof DisconnectAccountError && error.status === 404 && ownerId) {
+        clearAccountUiState();
+        await loadOwnedAccounts(ownerId, () => accountContextMountedRef.current, accountId);
       }
       return;
     } finally {
