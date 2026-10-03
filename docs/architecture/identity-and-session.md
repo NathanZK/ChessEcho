@@ -54,6 +54,10 @@ password, without issuing a session on failure. Success uses
 `IdentitySessionService` and `SessionCookieWriter`; no raw session material is
 returned to JSON or persisted in the frontend.
 
+The sign-in page starts with a masked password and provides a keyboard-operable
+visibility button whose accessible name and pressed state reflect visibility.
+Toggling preserves the controlled value and does not submit the form.
+
 ## Opaque sessions
 
 `AuthSession` stores only the SHA-256 hex of a 256-bit opaque secret. The raw
