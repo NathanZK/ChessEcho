@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Target, Flame, Swords, ExternalLink, Filter, AlertCircle, RefreshCw } from 'lucide-react';
+import { Target, Flame, Swords, ExternalLink, Filter, AlertCircle, RefreshCw, TrendingUp } from 'lucide-react';
 import { Chessboard } from 'react-chessboard';
 import { fetchWeaknesses, WeaknessResponse } from '../services/api';
 import { Puzzle } from '../mock/mockData';
@@ -62,6 +62,7 @@ interface WeaknessesListProps {
   minMistakeCount?: number;
   onMinMistakeCountChange?: (val: number) => void;
   onSelectPractice: (puzzle: Puzzle, fullList?: Puzzle[]) => void;
+  onViewProgress?: (positionId: string, playerColor: 'WHITE' | 'BLACK') => void;
   onWeaknessCountChange?: (count: number) => void;
   activeColorFilter?: 'ALL' | 'WHITE' | 'BLACK';
   onColorFilterChange?: (color: 'ALL' | 'WHITE' | 'BLACK') => void;
@@ -78,6 +79,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
   minMistakeCount = 3,
   onMinMistakeCountChange,
   onSelectPractice,
+  onViewProgress,
   onWeaknessCountChange,
   activeColorFilter,
   onColorFilterChange,
@@ -567,7 +569,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                   </div>
 
                   {/* Bottom Action Bar */}
-                  <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between gap-2">
+                  <div className="pt-3 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2">
                     {item.gameUrls && item.gameUrls.length > 0 ? (
                       <button
                         type="button"
@@ -581,20 +583,32 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                       <div />
                     )}
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const fullConvertedList = weaknesses.map((w) => {
-                          const col: 'WHITE' | 'BLACK' = w.fen && w.fen.split(' ')[1] === 'b' ? 'BLACK' : 'WHITE';
-                          return adaptWeaknessToPuzzle(w, col);
-                        });
-                        onSelectPractice(adaptWeaknessToPuzzle(item, playerColor), fullConvertedList);
-                      }}
-                      className="flex items-center space-x-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition shadow-md shadow-emerald-900/30 cursor-pointer"
-                    >
-                      <Swords className="w-3.5 h-3.5" />
-                      <span>Practice Position</span>
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {onViewProgress && (
+                        <button
+                          type="button"
+                          onClick={() => onViewProgress(item.positionId, playerColor)}
+                          className="flex items-center gap-1.5 rounded-xl border border-slate-700 px-3 py-2 text-xs font-bold text-slate-200 transition hover:border-emerald-500/50 hover:text-emerald-300"
+                        >
+                          <TrendingUp className="h-3.5 w-3.5" />
+                          <span>View Progress</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const fullConvertedList = weaknesses.map((w) => {
+                            const col: 'WHITE' | 'BLACK' = w.fen && w.fen.split(' ')[1] === 'b' ? 'BLACK' : 'WHITE';
+                            return adaptWeaknessToPuzzle(w, col);
+                          });
+                          onSelectPractice(adaptWeaknessToPuzzle(item, playerColor), fullConvertedList);
+                        }}
+                        className="flex items-center space-x-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition shadow-md shadow-emerald-900/30 cursor-pointer"
+                      >
+                        <Swords className="w-3.5 h-3.5" />
+                        <span>Practice Position</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
