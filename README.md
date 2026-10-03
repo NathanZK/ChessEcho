@@ -213,7 +213,7 @@ Move-order transpositions that produce legally identical positions are grouped t
 
 ### Components
 
-**Next.js frontend** — a single-page application with three tabs: Import Games, Weaknesses Library, and Practice Puzzles. Tab state and username are persisted via `localStorage` and the URL hash.
+**Next.js frontend** — `/` contains the Import Games, Weaknesses Library, and Practice Puzzles tabs, with separate `/login` and `/register` routes. Tab state is reflected in the URL hash and browser storage; session identity remains server-authoritative. See the [frontend architecture guide](docs/architecture/frontend.md) for route-to-API/UI traces, state ownership, and diagrams.
 
 **Kotlin/Spring Boot backend** — handles game import (via Chess.com's public API), PGN parsing, position detection, engine analysis orchestration, weakness calculation, and puzzle serving. Runs on port 8080.
 
