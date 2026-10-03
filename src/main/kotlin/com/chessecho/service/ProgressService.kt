@@ -16,6 +16,7 @@ class ProgressService(
     private val chessAccountRepository: ChessAccountRepository,
     private val positionOccurrenceRepository: PositionOccurrenceRepository,
     private val engineAnalysisRepository: EngineAnalysisRepository,
+    private val gameOutcomeNormalizer: GameOutcomeNormalizer,
 ) {
     @Transactional(readOnly = true)
     fun getProgress(
@@ -40,11 +41,11 @@ class ProgressService(
             occurrences.map { occurrence ->
                 val loss = evaluations[occurrence.movePlayed]?.evalLossFromBest ?: 0.0
                 val won =
-                    when (occurrence.playerColor) {
-                        "WHITE" -> occurrence.game.result.equals("1-0", ignoreCase = true)
-                        "BLACK" -> occurrence.game.result.equals("0-1", ignoreCase = true)
-                        else -> false
-                    }
+                    gameOutcomeNormalizer.normalize(
+                        occurrence.game,
+                        occurrence.playerColor,
+                        account.username,
+                    ).outcome == PracticalOutcome.WIN
                 Observation(occurrence.game.playedAt ?: occurrence.createdAt, loss >= threshold, won)
             }
         val points =
