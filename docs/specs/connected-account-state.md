@@ -6,7 +6,7 @@ contract:
   - Session hydration distinguishes loading, authenticated, unauthenticated, and error. Only an unauthenticated session enables guest imports.
   - Authenticated account hydration distinguishes loading, connected, unconnected, and error. Failed or malformed account responses remain errors and can be retried.
   - Users explicitly connect a Chess.com username from Import Games after account hydration. The frontend calls `associateAccount("CHESS_COM", username)` and selects the returned account.
-  - Account association does not start an import. Association errors preserve the confirmed selection and remain retryable.
+  - Account association does not start an import. Association errors preserve the confirmed selection and remain explicitly retryable. A `409` with code `ACCOUNT_CLAIM_CONFLICT` explains that the Chess.com account is connected under another ChessEcho sign-in and advises verifying sign-in or choosing an account the user can connect; other errors retain their API error display.
   - Users can disconnect a confirmed account. The frontend calls `DELETE /api/accounts/{accountId}/connection`; only a successful response clears the selected account and its account-scoped UI state.
   - Disconnect clears the server-side connection pointer but retains shared imported data and the user's account-scoped training history for a later reconnect.
   - Hydration retains a cached selection only when its account ID appears in the server response; otherwise it selects the first returned account.
@@ -29,7 +29,7 @@ invariant:
 
 failure:
   - Account-list HTTP, network, and malformed-response failures are surfaced as retryable errors, not empty account lists.
-  - Association failures do not change the selected account and display the API error.
+  - Association failures do not change the selected account or start an import. A `409 ACCOUNT_CLAIM_CONFLICT` displays the conflict-specific guidance; other failures display the API error. Retries are user-initiated, and a repeated conflict remains a conflict.
   - Disconnect failures preserve the selected account and display the API error.
   - Import failures use the existing import error state; imports are not automatically retried.
 
