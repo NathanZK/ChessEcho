@@ -290,31 +290,59 @@ An important finding from testing the system:
 
 This is a known open problem in the design — not a bug — and is an active area of improvement. The configurable `minEvalLoss` and `minMistakeCount` thresholds provide partial control but cannot fully eliminate false positives.
 
-### Optional Practical-Evidence Ranking
+### Practical-Evidence Ranking (Enabled by Default)
 
-Practical-evidence ranking is disabled by default: `CHESS_WEAKNESS_PRACTICAL_RANKING_ENABLED=false`. In `application.yml`, calibration values are unset or the method settings are `DISABLED`; `docker-compose.yml` does not set these environment variables.
+Practical evidence is enabled in the normal application and Docker Compose
+configuration. It adjusts `recommendationPriority` only; objective `priority`
+and engine-based weakness detection remain unchanged. The initial policy is
+confidence-gated using these defaults:
 
-Enabling practical-evidence ranking requires all seven calibration values below; startup validation fails if any are missing or the method settings are not the required enabled values:
+| Environment setting | Default |
+|---|---:|
+| `CHESS_WEAKNESS_PRACTICAL_RANKING_ENABLED` | `true` |
+| `CHESS_WEAKNESS_PRACTICAL_SAMPLE_FLOOR` | `5` distinct eligible games |
+| `CHESS_WEAKNESS_PRACTICAL_COMPARATOR_METHOD` | `FIXED_SCORE_RATE` |
+| `CHESS_WEAKNESS_PRACTICAL_COMPARATOR_SCORE_RATE` | `0.5` |
+| `CHESS_WEAKNESS_PRACTICAL_CONFIDENCE_METHOD` | `BERNOULLI_WILSON_SCORE_POINTS_HALF_DRAW_CONSERVATIVE` |
+| `CHESS_WEAKNESS_PRACTICAL_WILSON_Z_SCORE` | `1.0` |
+| `CHESS_WEAKNESS_PRACTICAL_MEANINGFUL_DIFFERENCE` | `0.1` |
+| `CHESS_WEAKNESS_PRACTICAL_MAX_PRIORITY_ADJUSTMENT` | `0.25` |
+| `CHESS_WEAKNESS_PRACTICAL_OBSERVATION_WINDOW_DAYS` | unset (all history) |
+| `CHESS_WEAKNESS_PRACTICAL_POLICY_VERSION` | `practical-score-rate-wilson-v1` |
 
-- `CHESS_WEAKNESS_PRACTICAL_SAMPLE_FLOOR`
-- `CHESS_WEAKNESS_PRACTICAL_COMPARATOR_METHOD`
-- `CHESS_WEAKNESS_PRACTICAL_COMPARATOR_SCORE_RATE`
-- `CHESS_WEAKNESS_PRACTICAL_CONFIDENCE_METHOD`
-- `CHESS_WEAKNESS_PRACTICAL_WILSON_Z_SCORE`
-- `CHESS_WEAKNESS_PRACTICAL_MEANINGFUL_DIFFERENCE`
-- `CHESS_WEAKNESS_PRACTICAL_MAX_PRIORITY_ADJUSTMENT`
+These are repository-tested starting values, not an empirically optimized
+calibration. Environment overrides take precedence; `.env.example` lists the
+complete settings, and Docker Compose forwards them to the application.
+Invalid supplied values fail startup validation even when ranking is disabled.
+When using the rollback switch, calibration environment overrides may be left
+unset; the YAML defaults remain complete and valid.
 
-The enable switch is `CHESS_WEAKNESS_PRACTICAL_RANKING_ENABLED`. `CHESS_WEAKNESS_PRACTICAL_COMPARATOR_METHOD` accepts `DISABLED` or `FIXED_SCORE_RATE`; enabled ranking requires `FIXED_SCORE_RATE`, which compares the observed score rate with the configured fixed comparator. `CHESS_WEAKNESS_PRACTICAL_CONFIDENCE_METHOD` accepts `DISABLED` or `BERNOULLI_WILSON_SCORE_POINTS_HALF_DRAW_CONSERVATIVE`; enabled ranking requires the latter, which uses conservative Wilson bounds on score points, counting a draw as half a point.
+The empirical score rate is `(wins + 0.5 * draws) / distinct eligible games`.
+With the defaults, the conservative Wilson interval classifies evidence as:
 
-The score rate is `(wins + 0.5 * draws) / eligibleGames`. Positions below the sample floor keep their objective priority unchanged. Once the sample floor is met, the Wilson interval classifies evidence as:
+- **POOR** when the upper bound is at or below `0.5 - 0.1` (`0.4`).
+- **SUCCESSFUL** when the lower bound is at or above `0.5 + 0.1` (`0.6`).
+- **Inconclusive** otherwise; objective priority is unchanged.
 
-- **POOR** when the upper bound is at or below `comparator - difference`.
-- **SUCCESSFUL** when the lower bound is at or above `comparator + difference`.
-- **Inconclusive** otherwise; priority is unchanged.
+If fewer than five eligible games remain after exclusions, the objective
+priority is unchanged. Eligible evidence adjusts priority by a fixed multiplier,
+not by distance from the comparator: POOR multiplies it by
+`1.25`; SUCCESSFUL multiplies it by `0.75`. For example, objective priority
+`10` becomes `12.5` or `7.5`; the objective `priority` field itself is not
+modified. Opponent rating is not used directly.
 
-`CHESS_WEAKNESS_PRACTICAL_WILSON_Z_SCORE` sets the confidence interval width and directly affects classification, so it should be chosen deliberately. For illustration only, at a 67% score rate over 60 games with comparator `0.50` and difference `0.10`, z-score `1.0` gives a lower bound of about `0.607` (SUCCESSFUL), while z-score `1.96` gives a lower bound of about `0.544` (inconclusive). These comparator and difference values are examples, not defaults.
+The z-score controls confidence-interval width and can change classifications.
+The default `1.0` is a tested starting value rather than a statistically
+optimized choice. For illustration, at a 67% score rate over 60 games, the
+default comparator and difference produce a lower bound of about `0.607`
+(SUCCESSFUL) at z-score `1.0`, while z-score `1.96` gives about `0.544`
+(inconclusive).
 
-The adjustment is a fixed multiplier, not scaled by distance from the comparator: POOR multiplies objective priority by `1 + maxPriorityAdjustment`, while SUCCESSFUL multiplies it by `1 - maxPriorityAdjustment`. Opponent rating is not used directly.
+To roll back the practical contribution, set
+`CHESS_WEAKNESS_PRACTICAL_RANKING_ENABLED=false` in the process environment or
+`.env` file and restart. This restores the pre-practical
+`recommendationPriority` calculation; authenticated adaptive scheduling,
+history, decay, and pagination remain active.
 
 ---
 

@@ -42,6 +42,7 @@ contract:
   - **Actual-game results display**:
     - The Weaknesses Library displays supplied W/D/L, score rate, and eligible-game count without confidence classifications or training comparisons.
     - Null scores or zero eligible games show neutral unavailable-score wording; absent practical evidence omits the block.
+  - **Practical weakness priority**: Confidence-gated, account/position/color-scoped distinct-game score rates adjust recommendation priority using the enabled normal policy; objective priority is unchanged. See `README.md` and `docs/architecture/precomputed-weakness-analysis.md`.
   - **Evaluation evidence**: Internal `EvaluationEvidenceProducerService.produce` creates #430 snapshots from explicit input and verifies #450 before persistence; see `docs/specs/evaluation-evidence-producer.md`.
   - **Human-move corpus administration**: `/api/admin/human-move-distribution/*` covers BFS acquisition, corpus runs/checkpoints, artifact export/verify/import/purge, projections, and cross-cohort comparison.
   - **Errors and security**: API errors use structured responses; state-changing requests require the session's double-submit CSRF token. See `API_CONTRACT.md`.
@@ -67,7 +68,7 @@ constraint:
   - Stockfish runs as a subprocess; analysis can take several minutes for large histories.
   - Exact recurring positions are analyzed; abstract strategic patterns are not detected.
   - Engine evaluation loss can produce false positives and does not necessarily indicate a practical weakness.
-  - Practical-evidence ranking is optional and disabled by default; its calibration requirements are documented in `README.md`.
+  - Practical ranking uses tested initial calibration values that are not empirically optimized; `CHESS_WEAKNESS_PRACTICAL_RANKING_ENABLED=false` disables only its contribution, preserving authenticated adaptive scheduling. See `README.md`.
   - Import jobs accept only `CHESS_COM` (`AsyncJob` validation); Lichess is not implemented.
 
 convention:
