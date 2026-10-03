@@ -4,7 +4,9 @@ import { useEffect, useState } from 'react';
 import { ArrowLeft, RefreshCw } from 'lucide-react';
 import {
   fetchPositionProgress,
+  type PositionProgressBaseline,
   type PositionProgressResponse,
+  type ProgressIntervalState,
   type SessionState,
 } from '../services/api';
 
@@ -20,10 +22,52 @@ type LoadState =
   | { requestKey: string; status: 'loaded'; progress: PositionProgressResponse }
   | { requestKey: string; status: 'error' };
 
-function changeText(value: number | null, pointCount: number): string {
-  if (pointCount === 1) return 'Not enough history yet';
+function changeText(value: number | null): string {
   if (value === null) return 'Not available yet';
   return `${value > 0 ? '+' : ''}${value}%`;
+}
+
+function intervalStateText(state: ProgressIntervalState): string {
+  switch (state) {
+    case 'NO_CHECKPOINT':
+      return 'No solved puzzle checkpoint yet.';
+    case 'OPEN_AWAITING_EVIDENCE':
+      return 'Waiting for a dated game after the latest solve.';
+    case 'MEASURED_OPEN':
+      return 'Current interval is open.';
+  }
+}
+
+function formatRate(rate: number): string {
+  return `${Number(rate.toFixed(1))}%`;
+}
+
+function BaselineSummary({ baseline }: { baseline: PositionProgressBaseline | null }) {
+  return (
+    <div className="rounded-xl border border-slate-800 bg-slate-900 p-5">
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-300">Historical baseline</h2>
+      {baseline === null ? (
+        <p className="mt-2 text-sm text-slate-400">No dated baseline evidence yet.</p>
+      ) : (
+        <>
+          <p className="mt-2 text-sm text-slate-400">{baseline.sourceEncounterCount} dated encounters</p>
+          <dl className="mt-3 grid grid-cols-2 gap-3 text-sm">
+            <div>
+              <dt className="text-slate-400">Mistake rate</dt>
+              <dd className="mt-1 font-semibold text-white">{formatRate(baseline.mistakeRate)}</dd>
+            </div>
+            <div>
+              <dt className="text-slate-400">Win rate</dt>
+              <dd className="mt-1 font-semibold text-white">{formatRate(baseline.winRate)}</dd>
+            </div>
+          </dl>
+          <p className="mt-3 text-xs text-slate-500">
+            Dated through {new Date(baseline.occurredAt).toLocaleDateString()}
+          </p>
+        </>
+      )}
+    </div>
+  );
 }
 
 function chartX(index: number, points: PositionProgressResponse['points']): number {
@@ -68,7 +112,10 @@ function ProgressChart({ progress }: { progress: PositionProgressResponse }) {
         preserveAspectRatio="none"
       >
         <title>Position progress over time</title>
-        <desc>Mistake rate and win rate by encounter, shown as percentages from 0 to 100.</desc>
+        <desc>
+          Mistake rate and win rate by measured training interval, shown as percentages from 0 to 100.
+          The historical baseline is shown separately.
+        </desc>
         {[0, 50, 100].map((rate) => {
           const y = chartY(rate);
           return (
@@ -101,7 +148,7 @@ function ProgressChart({ progress }: { progress: PositionProgressResponse }) {
         {points.map((point, index) => {
           const x = chartX(index, points);
           return (
-            <g key={`${point.occurredAt}-${index}`}>
+            <g key={point.checkpointId}>
               <circle
                 data-testid="progress-point-mistake-rate"
                 cx={x}
@@ -110,6 +157,7 @@ function ProgressChart({ progress }: { progress: PositionProgressResponse }) {
                 fill="#34d399"
               >
                 <title>
+                  {point.open ? 'Open' : 'Closed'} interval, {point.attempts} encounters,{' '}
                   {new Date(point.occurredAt).toLocaleDateString()}: mistake rate {point.mistakeRate}%
                 </title>
               </circle>
@@ -121,6 +169,7 @@ function ProgressChart({ progress }: { progress: PositionProgressResponse }) {
                 fill="#38bdf8"
               >
                 <title>
+                  {point.open ? 'Open' : 'Closed'} interval, {point.attempts} encounters,{' '}
                   {new Date(point.occurredAt).toLocaleDateString()}: win rate {point.winRate}%
                 </title>
               </circle>
@@ -136,9 +185,20 @@ function ProgressChart({ progress }: { progress: PositionProgressResponse }) {
           </text>
         )}
       </svg>
+      <ul className="mt-2 flex flex-wrap gap-2 text-xs text-slate-300" aria-label="Interval lifecycle">
+        {points.map((point) => (
+          <li
+            key={point.checkpointId}
+            className="rounded-full border border-slate-700 px-3 py-1"
+            data-testid={`progress-interval-status-${point.checkpointId}`}
+          >
+            {point.open ? 'Open interval' : 'Closed interval'} · {point.attempts} encounters
+          </li>
+        ))}
+      </ul>
       <p id="progress-chart-description" className="sr-only">
-        Mistake rate is green and win rate is blue. The horizontal axis is encounter date and
-        the vertical axis is percentage.
+        Mistake rate is green and win rate is blue. The horizontal axis is the latest included
+        game date for each training interval, and the vertical axis is percentage.
       </p>
     </div>
   );
@@ -252,17 +312,28 @@ export function PositionProgressView({
             <p className="mt-2 text-slate-100">{visibleLoadState.progress.assessment}</p>
           </div>
 
+          <p
+            className="rounded-lg border border-slate-800 bg-slate-900/70 p-4 text-sm text-slate-300"
+            data-testid="progress-current-interval-state"
+          >
+            {intervalStateText(visibleLoadState.progress.currentIntervalState)}
+          </p>
+
+          <BaselineSummary baseline={visibleLoadState.progress.baseline} />
+
+          {visibleLoadState.progress.excludedUndatedEncounters > 0 && (
+            <p className="rounded-lg border border-amber-900/60 bg-amber-950/20 p-4 text-sm text-amber-200">
+              {visibleLoadState.progress.excludedUndatedEncounters} undated encounters excluded because
+              game date is unavailable.
+            </p>
+          )}
+
           {visibleLoadState.progress.points.length === 0 ? (
             <p className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">
-              No progress history yet.
+              No measured interval observations yet.
             </p>
           ) : (
             <>
-              {visibleLoadState.progress.points.length === 1 && (
-                <p className="rounded-lg border border-slate-800 bg-slate-900/70 p-4 text-sm text-slate-300">
-                  One encounter is not enough history to show a trend.
-                </p>
-              )}
               <ProgressChart progress={visibleLoadState.progress} />
             </>
           )}
@@ -273,7 +344,7 @@ export function PositionProgressView({
                 Mistake-rate change
               </dt>
               <dd className="mt-2 text-xl font-bold text-white">
-                {changeText(visibleLoadState.progress.mistakeRateChange, visibleLoadState.progress.points.length)}
+                {changeText(visibleLoadState.progress.mistakeRateChange)}
               </dd>
             </div>
             <div className="rounded-xl border border-slate-800 bg-slate-900 p-4">
@@ -281,7 +352,7 @@ export function PositionProgressView({
                 Win-rate change
               </dt>
               <dd className="mt-2 text-xl font-bold text-white">
-                {changeText(visibleLoadState.progress.winRateChange, visibleLoadState.progress.points.length)}
+                {changeText(visibleLoadState.progress.winRateChange)}
               </dd>
             </div>
           </dl>
