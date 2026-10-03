@@ -1637,6 +1637,8 @@ export default function Home() {
     sessionStatus === 'authenticated' && accountStatus === 'connected' ? activeAccount : undefined;
   const displayedUsername =
     connectedAccount?.username ?? (sessionStatus === 'unauthenticated' ? activeUsername : undefined);
+  const weaknessDisplayUsername =
+    sessionStatus === 'authenticated' ? connectedAccount?.username : activeUsername;
 
   return (
     <div
@@ -1854,7 +1856,8 @@ export default function Home() {
             />
           ) : (
             <WeaknessesList
-              username={sessionGateOpen ? activeAccount?.id || activeUsername : undefined}
+              accountId={sessionGateOpen ? connectedAccount?.id : undefined}
+              username={sessionGateOpen ? weaknessDisplayUsername : undefined}
               minEvalLoss={minEvalLoss}
               onMinEvalLossChange={handleMinEvalLossChange}
               minMistakeCount={minMistakeCount}

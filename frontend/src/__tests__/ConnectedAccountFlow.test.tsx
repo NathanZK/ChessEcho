@@ -42,7 +42,13 @@ vi.mock('react-chessboard', () => ({
 }));
 
 vi.mock('../components/WeaknessesList', () => ({
-  WeaknessesList: () => <div>Weaknesses</div>,
+  WeaknessesList: ({ username, accountId }: { username?: string; accountId?: string }) => (
+    <div
+      data-testid="weaknesses-list"
+      data-username={username}
+      data-account-id={accountId}
+    />
+  ),
 }));
 
 interface Deferred<T> {
@@ -178,6 +184,26 @@ describe('connected Chess.com account flow', () => {
       );
     });
     expect(api.startImportJob).not.toHaveBeenCalled();
+  });
+
+  it('shows the connected Chess.com username while selecting weaknesses by account UUID', async () => {
+    const accountId = '550e8400-e29b-41d4-a716-446655440470';
+    const chessUsername = 'chess-player-470';
+    vi.mocked(api.fetchCurrentSession).mockResolvedValueOnce({
+      status: 'authenticated',
+      userId: 'principal-user-470',
+    });
+    vi.mocked(api.fetchAccounts).mockResolvedValueOnce([
+      { ...serverAccount, id: accountId, username: chessUsername },
+    ]);
+
+    render(<Home />);
+    fireEvent.click(await screen.findByRole('button', { name: /Weaknesses Library/i }));
+
+    const weaknessesList = await screen.findByTestId('weaknesses-list');
+    expect(weaknessesList).toHaveAttribute('data-username', chessUsername);
+    expect(weaknessesList).toHaveAttribute('data-account-id', accountId);
+    expect(weaknessesList).not.toHaveTextContent('principal-user-470');
   });
 
   it('shows a retryable account-hydration error and recovers from a successful retry', async () => {

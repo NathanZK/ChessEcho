@@ -107,6 +107,22 @@ describe('Weaknesses Tab MVP', () => {
       expect(url).toContain('size=20');
       expect(res).toEqual([mockWeaknessItem]);
     });
+
+    it('uses an accountId selector for authenticated UUID reads', async () => {
+      const actualApi = await vi.importActual<typeof import('../services/api')>('../services/api');
+      const accountId = '550e8400-e29b-41d4-a716-446655440470';
+
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => [mockWeaknessItem],
+      }));
+
+      await actualApi.fetchWeaknesses(accountId, 'chess_com', 'both', 0.8, 3, 0, 20);
+
+      const url = vi.mocked(global.fetch).mock.calls[0][0] as string;
+      expect(url).toContain(`accountId=${accountId}`);
+      expect(url).not.toContain('username=');
+    });
   });
 
   describe('2. WeaknessResponse to Puzzle Adapter', () => {
@@ -164,13 +180,44 @@ describe('Weaknesses Tab MVP', () => {
 
     it('renders empty response state when API returns no weaknesses', async () => {
       vi.mocked(api.fetchWeaknesses).mockResolvedValue([]);
+      const accountId = '550e8400-e29b-41d4-a716-446655440470';
 
-      render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
+      render(
+        <WeaknessesList
+          accountId={accountId}
+          username="chess-player-470"
+          onSelectPractice={vi.fn()}
+        />
+      );
 
       await waitFor(() => {
         expect(screen.getByText('No Recurring Weaknesses Found')).toBeInTheDocument();
         expect(screen.getByText(/No positions met your weakness filter criteria/i)).toBeInTheDocument();
+        expect(screen.getByText(/chess-player-470/i)).toBeInTheDocument();
       });
+      expect(screen.queryByText(accountId)).not.toBeInTheDocument();
+      expect(api.fetchWeaknesses).toHaveBeenCalledWith(accountId, 'CHESS_COM', 'BOTH', 0.8, 3, 0, 20);
+    });
+
+    it('does not render an account selector as a name when the username is unavailable', async () => {
+      vi.mocked(api.fetchWeaknesses).mockResolvedValue([]);
+      const accountId = '550e8400-e29b-41d4-a716-446655440470';
+
+      render(
+        <WeaknessesList
+          accountId={accountId}
+          username={undefined}
+          isAnalysisActive
+          onSelectPractice={vi.fn()}
+        />
+      );
+
+      await waitFor(() => {
+        expect(api.fetchWeaknesses).toHaveBeenCalledWith(accountId, 'CHESS_COM', 'BOTH', 0.8, 3, 0, 20);
+        expect(screen.getByText('No Recurring Weaknesses Found')).toBeInTheDocument();
+      });
+      expect(screen.queryByText(accountId)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Stockfish Engine Analysis Active/i)).not.toBeInTheDocument();
     });
 
     it('renders error state (not the empty state) when API call fails', async () => {
@@ -285,9 +332,11 @@ describe('Weaknesses Tab MVP', () => {
 
     it('refetches and resets page 0 when color filter, min mistake count, or minEvalLoss threshold changes', async () => {
       const onMinEvalLossChange = vi.fn();
+      const accountId = '550e8400-e29b-41d4-a716-446655440470';
       render(
         <WeaknessesList
-          username="hikaru"
+          accountId={accountId}
+          username="chess-player-470"
           minEvalLoss={0.8}
           onMinEvalLossChange={onMinEvalLossChange}
           onSelectPractice={vi.fn()}
@@ -295,7 +344,7 @@ describe('Weaknesses Tab MVP', () => {
       );
 
       await waitFor(() => {
-        expect(api.fetchWeaknesses).toHaveBeenCalledWith('hikaru', 'CHESS_COM', 'BOTH', 0.8, 3, 0, 20);
+        expect(api.fetchWeaknesses).toHaveBeenCalledWith(accountId, 'CHESS_COM', 'BOTH', 0.8, 3, 0, 20);
       });
 
       vi.clearAllMocks();
@@ -305,7 +354,7 @@ describe('Weaknesses Tab MVP', () => {
       fireEvent.click(whiteFilterBtn);
 
       await waitFor(() => {
-        expect(api.fetchWeaknesses).toHaveBeenCalledWith('hikaru', 'CHESS_COM', 'WHITE', 0.8, 3, 0, 20);
+        expect(api.fetchWeaknesses).toHaveBeenCalledWith(accountId, 'CHESS_COM', 'WHITE', 0.8, 3, 0, 20);
       });
 
       vi.clearAllMocks();
@@ -341,34 +390,62 @@ describe('Weaknesses Tab MVP', () => {
     });
 
     it('renders engine analysis active indicator when isAnalysisActive is true and hides it when false', async () => {
+      const accountId = '550e8400-e29b-41d4-a716-446655440470';
       const { rerender } = render(
-        <WeaknessesList username="hikaru" onSelectPractice={vi.fn()} isAnalysisActive={true} />
+        <WeaknessesList
+          accountId={accountId}
+          username="chess-player-470"
+          onSelectPractice={vi.fn()}
+          isAnalysisActive={true}
+        />
       );
 
-      expect(screen.getByText(/Stockfish Engine Analysis Active/i)).toBeInTheDocument();
+      expect(screen.getByText('chess-player-470').closest('span')).toHaveTextContent(
+        'Stockfish Engine Analysis Active: Evaluating positions for chess-player-470.'
+      );
+      expect(screen.queryByText(accountId)).not.toBeInTheDocument();
+      expect(api.fetchWeaknesses).toHaveBeenCalledWith(accountId, 'CHESS_COM', 'BOTH', 0.8, 3, 0, 20);
 
       rerender(
-        <WeaknessesList username="hikaru" onSelectPractice={vi.fn()} isAnalysisActive={false} />
+        <WeaknessesList
+          accountId={accountId}
+          username="chess-player-470"
+          onSelectPractice={vi.fn()}
+          isAnalysisActive={false}
+        />
       );
 
       expect(screen.queryByText(/Stockfish Engine Analysis Active/i)).not.toBeInTheDocument();
     });
 
     it('re-fetches weaknesses automatically when refreshKey is updated', async () => {
+      const accountId = '550e8400-e29b-41d4-a716-446655440470';
       const { rerender } = render(
-        <WeaknessesList username="hikaru" onSelectPractice={vi.fn()} refreshKey={0} />
+        <WeaknessesList
+          accountId={accountId}
+          username="chess-player-470"
+          onSelectPractice={vi.fn()}
+          refreshKey={0}
+        />
       );
 
       await waitFor(() => {
         expect(api.fetchWeaknesses).toHaveBeenCalledTimes(1);
+        expect(api.fetchWeaknesses).toHaveBeenLastCalledWith(accountId, 'CHESS_COM', 'BOTH', 0.8, 3, 0, 20);
       });
 
       rerender(
-        <WeaknessesList username="hikaru" onSelectPractice={vi.fn()} refreshKey={1} />
+        <WeaknessesList
+          accountId={accountId}
+          username="chess-player-470"
+          onSelectPractice={vi.fn()}
+          refreshKey={1}
+        />
       );
 
       await waitFor(() => {
         expect(api.fetchWeaknesses).toHaveBeenCalledTimes(2);
+        expect(api.fetchWeaknesses).toHaveBeenLastCalledWith(accountId, 'CHESS_COM', 'BOTH', 0.8, 3, 0, 20);
       });
     });
 
@@ -392,6 +469,7 @@ describe('Weaknesses Tab MVP', () => {
     });
 
     it('maintains persistent sentinel element in DOM and appends page 1', async () => {
+      const accountId = '550e8400-e29b-41d4-a716-446655440470';
       const page0Items: WeaknessResponse[] = Array.from({ length: 20 }, (_, idx) => ({
         ...mockWeaknessItem,
         positionId: `pos-p0-${idx}`,
@@ -406,7 +484,13 @@ describe('Weaknesses Tab MVP', () => {
         .mockResolvedValueOnce(page0Items)
         .mockResolvedValueOnce(page1Items);
 
-      render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
+      render(
+        <WeaknessesList
+          accountId={accountId}
+          username="chess-player-470"
+          onSelectPractice={vi.fn()}
+        />
+      );
 
       // Verify persistent sentinel div is mounted in DOM
       const sentinel = await screen.findByTestId('weaknesses-sentinel');
@@ -416,7 +500,7 @@ describe('Weaknesses Tab MVP', () => {
       fireEvent.click(loadMoreBtn);
 
       await waitFor(() => {
-        expect(api.fetchWeaknesses).toHaveBeenCalledWith('hikaru', 'CHESS_COM', 'BOTH', 0.8, 3, 1, 20);
+        expect(api.fetchWeaknesses).toHaveBeenCalledWith(accountId, 'CHESS_COM', 'BOTH', 0.8, 3, 1, 20);
       });
 
       // After loading page 1 (5 items < 20), sentinel remains mounted but loadMore button is no longer shown

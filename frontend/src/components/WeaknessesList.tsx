@@ -56,6 +56,7 @@ export function formatLastSeen(lastSeenAt?: string | null): string | null {
 }
 
 interface WeaknessesListProps {
+  accountId?: string;
   username?: string;
   minEvalLoss?: number;
   onMinEvalLossChange?: (val: number) => void;
@@ -73,6 +74,7 @@ interface WeaknessesListProps {
 const PAGE_SIZE = 20;
 
 export const WeaknessesList: React.FC<WeaknessesListProps> = ({
+  accountId,
   username,
   minEvalLoss = 0.8,
   onMinEvalLossChange,
@@ -86,6 +88,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
   isAnalysisActive,
   refreshKey,
 }) => {
+  const selector = accountId ?? username;
   const [colorFilter, setColorFilter] = useState<'ALL' | 'WHITE' | 'BLACK'>(
     activeColorFilter || 'ALL'
   );
@@ -149,7 +152,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
 
   // Initial load or filter change reset
   const [trackedWeaknessQuery, setTrackedWeaknessQuery] = useState<{
-    username?: string;
+    selector?: string;
     colorFilter: 'ALL' | 'WHITE' | 'BLACK';
     minMistakeCount: number;
     minEvalLoss: number;
@@ -158,14 +161,14 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
 
   if (
     !trackedWeaknessQuery ||
-    trackedWeaknessQuery.username !== username ||
+    trackedWeaknessQuery.selector !== selector ||
     trackedWeaknessQuery.colorFilter !== colorFilter ||
     trackedWeaknessQuery.minMistakeCount !== minMistakeCount ||
     trackedWeaknessQuery.minEvalLoss !== minEvalLoss ||
     trackedWeaknessQuery.refreshKey !== refreshKey
   ) {
-    setTrackedWeaknessQuery({ username, colorFilter, minMistakeCount, minEvalLoss, refreshKey });
-    if (!username) {
+    setTrackedWeaknessQuery({ selector, colorFilter, minMistakeCount, minEvalLoss, refreshKey });
+    if (!selector) {
       setWeaknesses([]);
       setIsLoading(false);
       setIsLoadingMore(false);
@@ -177,7 +180,8 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
   }
 
   useEffect(() => {
-    if (!username) {
+    const requestSelector = selector ?? '';
+    if (!requestSelector) {
       return;
     }
     const requestSequence = loadSeqRef;
@@ -194,7 +198,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
       try {
         const backendColor = colorFilter === 'ALL' ? 'BOTH' : colorFilter;
         const data = await fetchWeaknesses(
-          username!,
+          requestSelector,
           'CHESS_COM',
           backendColor,
           minEvalLoss,
@@ -224,11 +228,11 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
       requestSequence.current++;
       fetchLock.current = false;
     };
-  }, [username, colorFilter, minMistakeCount, minEvalLoss, refreshKey, reloadToken]);
+  }, [selector, colorFilter, minMistakeCount, minEvalLoss, refreshKey, reloadToken]);
 
   // Load next page function
   const loadNextPage = useCallback(async (isRetry: boolean = false) => {
-    if (!username || isLoading || isLoadingMore || !hasMore || isFetchingRef.current) return;
+    if (!selector || isLoading || isLoadingMore || !hasMore || isFetchingRef.current) return;
     // While a pagination error is unresolved, only an explicit Retry may proceed;
     // this suppresses the auto-loader so the error stays a stable manual state.
     if (loadMoreError && !isRetry) return;
@@ -241,7 +245,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
     try {
       const backendColor = colorFilter === 'ALL' ? 'BOTH' : colorFilter;
       const data = await fetchWeaknesses(
-        username,
+        selector,
         'CHESS_COM',
         backendColor,
         minEvalLoss,
@@ -275,7 +279,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
         isFetchingRef.current = false;
       }
     }
-  }, [username, isLoading, isLoadingMore, hasMore, page, colorFilter, minMistakeCount, minEvalLoss, loadMoreError]);
+  }, [selector, isLoading, isLoadingMore, hasMore, page, colorFilter, minMistakeCount, minEvalLoss, loadMoreError]);
 
   // IntersectionObserver for infinite scroll sentinel
   useEffect(() => {
@@ -301,7 +305,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
   return (
     <div className="max-w-[1536px] w-full mx-auto px-4 lg:px-8 space-y-4 py-2 text-slate-200">
       {/* Engine Analysis Status Banner */}
-      {isAnalysisActive && (
+      {isAnalysisActive && username && (
         <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex items-center space-x-3 text-xs font-semibold text-amber-300 shadow-md animate-in fade-in duration-200">
           <div className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping shrink-0" />
           <span>
@@ -384,7 +388,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
           <div className="w-8 h-8 border-3 border-emerald-400 border-t-transparent rounded-full animate-spin" />
           <span className="text-xs font-bold text-slate-300">Loading Recurring Weaknesses...</span>
         </div>
-      ) : !username ? (
+      ) : !selector ? (
         <div className="py-16 text-center space-y-4 max-w-lg mx-auto bg-slate-900/60 p-8 rounded-2xl border border-slate-800 shadow-xl">
           <div className="w-14 h-14 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-center mx-auto text-emerald-400">
             <Target className="w-7 h-7" />
@@ -421,7 +425,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
           <div>
             <h3 className="text-lg font-bold text-white">No Recurring Weaknesses Found</h3>
             <p className="text-xs text-slate-400 mt-1">
-              No positions met your weakness filter criteria for <span className="text-emerald-400 font-semibold">{username}</span>. Try lowering the minimum mistakes filter or importing more games.
+              No positions met your weakness filter criteria{username && <> for <span className="text-emerald-400 font-semibold">{username}</span></>}. Try lowering the minimum mistakes filter or importing more games.
             </p>
           </div>
         </div>
