@@ -387,7 +387,7 @@ npm run build          # production build
 
 ## API Overview
 
-Full API details are documented in [`API_CONTRACT.md`](./API_CONTRACT.md). A Swagger UI is available at **http://localhost:8080/swagger-ui.html** when the backend is running.
+Backend responsibilities and implementation-level endpoint traces are documented in [`docs/architecture/backend-architecture.md`](docs/architecture/backend-architecture.md). Full API details are documented in [`API_CONTRACT.md`](./API_CONTRACT.md). A Swagger UI is available at **http://localhost:8080/swagger-ui.html** when the backend is running.
 
 **Start a game import**
 ```http
