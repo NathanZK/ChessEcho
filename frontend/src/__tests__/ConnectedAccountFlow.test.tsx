@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Home from '../app/page';
 import * as api from '../services/api';
+import { activeJobStore } from '../utils/browserStores';
 
 const accountApi = vi.hoisted(() => ({
   fetchCurrentSession: vi.fn(),
@@ -441,26 +442,222 @@ describe('connected Chess.com account flow', () => {
     expect(screen.queryByText('Chess.com Connected')).not.toBeInTheDocument();
   });
 
-  it('keeps the connected account selected and reports an error when disconnect fails', async () => {
+  it('reconciles a disconnect 404 against an empty account list without reporting success', async () => {
     vi.mocked(api.fetchCurrentSession).mockResolvedValueOnce({
       status: 'authenticated',
       userId: 'user-1',
     });
-    vi.mocked(api.fetchAccounts).mockResolvedValueOnce([serverAccount]);
-    vi.mocked(api.disconnectAccount).mockRejectedValueOnce(new Error('Disconnect unavailable'));
+    const refreshedAccounts = deferred<api.AccountSummary[]>();
+    vi.mocked(api.fetchAccounts)
+      .mockResolvedValueOnce([serverAccount])
+      .mockReturnValueOnce(refreshedAccounts.promise);
+    vi.mocked(api.disconnectAccount).mockRejectedValueOnce(
+      new api.DisconnectAccountError('ACCOUNT_NOT_FOUND', 404)
+    );
+
+    openImportView();
+    expect(await screen.findByText('Chess.com Connected')).toBeInTheDocument();
+    act(() => {
+      activeJobStore.set({
+        jobId: 'old-job',
+        status: 'COMPLETED',
+        gamesImported: 1,
+        gamesSkipped: 0,
+        accountId: serverAccount.id,
+      });
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^disconnect$/i }));
+
+    await waitFor(() => expect(api.fetchAccounts).toHaveBeenCalledTimes(2));
+    expect(screen.getByText('Loading your connected Chess.com account…')).toBeInTheDocument();
+    expect(screen.queryByText('Chess.com Connected')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /start import/i })).toBeDisabled();
+    expect(activeJobStore.getSnapshot()).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /start import/i }));
+    expect(api.startAccountImportJob).not.toHaveBeenCalled();
+
+    await act(async () => {
+      refreshedAccounts.resolve([]);
+      await Promise.resolve();
+    });
+
+    expect(await screen.findByText('No Chess.com account connected. Connect an account before importing.')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('Unable to disconnect account. ACCOUNT_NOT_FOUND');
+    expect(localStorage.getItem('chessecho_active_account')).toBeNull();
+    expect(localStorage.getItem('chessecho_username')).toBeNull();
+    expect(activeJobStore.getSnapshot()).toBeNull();
+  });
+
+  it('keeps the selected account connected when it remains in the refreshed list after a 404', async () => {
+    vi.mocked(api.fetchCurrentSession).mockResolvedValueOnce({
+      status: 'authenticated',
+      userId: 'user-1',
+    });
+    vi.mocked(api.fetchAccounts)
+      .mockResolvedValueOnce([serverAccount])
+      .mockResolvedValueOnce([serverAccount]);
+    vi.mocked(api.disconnectAccount).mockRejectedValueOnce(
+      new api.DisconnectAccountError('ACCOUNT_NOT_FOUND', 404)
+    );
 
     openImportView();
     expect(await screen.findByText('Chess.com Connected')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /^disconnect$/i }));
 
-    await waitFor(() => expect(api.disconnectAccount).toHaveBeenCalledWith('server-account'));
-    await waitFor(() => {
-      expect(screen.getByRole('alert')).toHaveTextContent('Disconnect unavailable');
-    });
+    await waitFor(() => expect(api.fetchAccounts).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('Chess.com Connected')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('Unable to disconnect account. ACCOUNT_NOT_FOUND');
     expect(JSON.parse(localStorage.getItem('chessecho_active_account') ?? '{}')).toMatchObject({
-      id: 'server-account',
+      id: serverAccount.id,
     });
+  });
+
+  it('selects a confirmed remaining account and clears the old account job after a 404', async () => {
+    const remainingAccount: api.AccountSummary = {
+      id: 'remaining-account',
+      platform: 'CHESS_COM',
+      username: 'remaining-player',
+    };
+    vi.mocked(api.fetchCurrentSession).mockResolvedValueOnce({
+      status: 'authenticated',
+      userId: 'user-1',
+    });
+    vi.mocked(api.fetchAccounts)
+      .mockResolvedValueOnce([serverAccount])
+      .mockResolvedValueOnce([remainingAccount]);
+    vi.mocked(api.disconnectAccount).mockRejectedValueOnce(
+      new api.DisconnectAccountError('ACCOUNT_NOT_FOUND', 404)
+    );
+
+    openImportView();
+    expect(await screen.findByText('Chess.com Connected')).toBeInTheDocument();
+    act(() => {
+      activeJobStore.set({
+        jobId: 'old-job',
+        status: 'COMPLETED',
+        gamesImported: 1,
+        gamesSkipped: 0,
+        accountId: serverAccount.id,
+      });
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^disconnect$/i }));
+
+    expect(await screen.findByText('remaining-player')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('Unable to disconnect account. ACCOUNT_NOT_FOUND');
+    expect(JSON.parse(localStorage.getItem('chessecho_active_account') ?? '{}')).toMatchObject({
+      id: remainingAccount.id,
+      username: remainingAccount.username,
+    });
+    expect(activeJobStore.getSnapshot()).toBeNull();
+  });
+
+  it('shows a retryable account-loading error when 404 reconciliation fails', async () => {
+    vi.mocked(api.fetchCurrentSession).mockResolvedValueOnce({
+      status: 'authenticated',
+      userId: 'user-1',
+    });
+    vi.mocked(api.fetchAccounts)
+      .mockResolvedValueOnce([serverAccount])
+      .mockRejectedValueOnce(new Error('Failed to load accounts: 503'))
+      .mockResolvedValueOnce([serverAccount]);
+    vi.mocked(api.disconnectAccount).mockRejectedValueOnce(
+      new api.DisconnectAccountError('ACCOUNT_NOT_FOUND', 404)
+    );
+
+    openImportView();
+    expect(await screen.findByText('Chess.com Connected')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^disconnect$/i }));
+
+    expect(await screen.findByText(/unable to load your connected account/i)).toBeInTheDocument();
+    expect(screen.getByText(/Unable to disconnect account\.\s+ACCOUNT_NOT_FOUND/)).toBeInTheDocument();
+    expect(screen.queryByText('Chess.com Connected')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /retry account loading/i }));
+
+    expect(await screen.findByText('Chess.com Connected')).toBeInTheDocument();
+    expect(api.fetchAccounts).toHaveBeenCalledTimes(3);
+    expect(screen.getByRole('alert')).toHaveTextContent('Unable to disconnect account. ACCOUNT_NOT_FOUND');
+  });
+
+  it('does not apply a late 404 reconciliation after a different user takes over', async () => {
+    const newUserAccount: api.AccountSummary = {
+      id: 'new-user-account',
+      platform: 'CHESS_COM',
+      username: 'new-user-player',
+    };
+    vi.mocked(api.fetchCurrentSession).mockResolvedValueOnce({
+      status: 'authenticated',
+      userId: 'user-1',
+    }).mockResolvedValueOnce({
+      status: 'authenticated',
+      userId: 'user-2',
+    });
+    const refreshedAccounts = deferred<api.AccountSummary[]>();
+    vi.mocked(api.fetchAccounts)
+      .mockResolvedValueOnce([serverAccount])
+      .mockReturnValueOnce(refreshedAccounts.promise)
+      .mockResolvedValueOnce([newUserAccount]);
+    vi.mocked(api.disconnectAccount).mockRejectedValueOnce(
+      new api.DisconnectAccountError('ACCOUNT_NOT_FOUND', 404)
+    );
+
+    window.location.hash = '#import';
+    const firstSession = render(<Home />);
+    expect(await screen.findByText('Chess.com Connected')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^disconnect$/i }));
+    await waitFor(() => expect(api.fetchAccounts).toHaveBeenCalledTimes(2));
+
+    firstSession.unmount();
+    render(<Home />);
+    expect(await screen.findByText('new-user-player')).toBeInTheDocument();
+
+    await act(async () => {
+      refreshedAccounts.resolve([serverAccount]);
+      await Promise.resolve();
+    });
+
     expect(screen.getByText('Chess.com Connected')).toBeInTheDocument();
+    expect(screen.queryByText('server-player')).not.toBeInTheDocument();
+    expect(screen.getByText('new-user-player')).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem('chessecho_active_account') ?? '{}')).toMatchObject({
+      id: newUserAccount.id,
+      username: newUserAccount.username,
+    });
+    expect(api.fetchAccounts).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    ['network', new Error('Disconnect unavailable')],
+    ['forbidden', new api.DisconnectAccountError('FORBIDDEN', 403)],
+    ['server', new api.DisconnectAccountError('SERVER_ERROR', 503)],
+  ])('keeps the confirmed account and does not reload it after a generic %s failure', async (_kind, error) => {
+    vi.mocked(api.fetchCurrentSession).mockResolvedValueOnce({
+      status: 'authenticated',
+      userId: 'user-1',
+    });
+    vi.mocked(api.fetchAccounts).mockResolvedValueOnce([serverAccount]);
+    vi.mocked(api.disconnectAccount).mockRejectedValueOnce(error);
+
+    openImportView();
+    expect(await screen.findByText('Chess.com Connected')).toBeInTheDocument();
+    act(() => {
+      activeJobStore.set({
+        jobId: 'confirmed-job',
+        status: 'COMPLETED',
+        gamesImported: 1,
+        gamesSkipped: 0,
+        accountId: serverAccount.id,
+      });
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^disconnect$/i }));
+
+    await waitFor(() => expect(api.disconnectAccount).toHaveBeenCalledWith(serverAccount.id));
+    expect(screen.getByRole('alert')).toHaveTextContent(error.message);
+    expect(screen.getByText('Chess.com Connected')).toBeInTheDocument();
+    expect(api.fetchAccounts).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(localStorage.getItem('chessecho_active_account') ?? '{}')).toMatchObject({
+      id: serverAccount.id,
+    });
+    expect(activeJobStore.getSnapshot()?.jobId).toBe('confirmed-job');
   });
 
   it('includes the selected account ID in authenticated puzzle and timed-training writes', async () => {

@@ -41,6 +41,14 @@ describe('owned account API contract', () => {
     await expect(fetchAccounts()).rejects.toThrow(/unexpected response body/i);
   });
 
+  it('rejects an account-list entry missing a required account summary field', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      response(200, [{ id: 'account-1', platform: 'CHESS_COM' }])
+    );
+
+    await expect(fetchAccounts()).rejects.toThrow(/unexpected response body/i);
+  });
+
   it('associates a Chess.com username with credentials and the CSRF token', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       response(201, { id: 'account-2', platform: 'CHESS_COM', username: 'new-player' })
@@ -129,9 +137,21 @@ describe('owned account API contract', () => {
     expect(new Headers(init?.headers).get('X-XSRF-TOKEN')).toBe('account-csrf');
   });
 
-  it('surfaces disconnect failures', async () => {
+  it('retains the Not Found status and server error code for a disconnect failure', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(response(404, { error: 'ACCOUNT_NOT_FOUND' }));
+
+    await expect(disconnectAccount('account-3')).rejects.toMatchObject({
+      status: 404,
+      message: 'ACCOUNT_NOT_FOUND',
+    });
+  });
+
+  it('retains the forbidden status and server error code for a disconnect failure', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(response(403, { error: 'FORBIDDEN' }));
 
-    await expect(disconnectAccount('account-3')).rejects.toThrow('FORBIDDEN');
+    await expect(disconnectAccount('account-3')).rejects.toMatchObject({
+      status: 403,
+      message: 'FORBIDDEN',
+    });
   });
 });
