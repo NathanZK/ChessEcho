@@ -311,8 +311,12 @@ materialization, or backfill and does not activate `UserPositionWeakness`.
 the objective `priority` whenever practical ranking is disabled, uncalibrated,
 absent, insufficient, or inconclusive. Only explicitly enabled, calibrated, and
 confidence-eligible practical evidence may apply the bounded adjustment. The
-production defaults (`chess.weakness.practical.ranking-enabled=false` and
-`policy-version=uncalibrated-v1`) therefore preserve objective-only ordering.
+normal application defaults enable the existing policy with a sample floor of
+five distinct eligible games, score-rate comparator `0.5`, conservative
+Wilson z-score `1.0`, meaningful difference `0.1`, maximum adjustment `0.25`,
+and policy version `practical-score-rate-wilson-v1`. These are tested starting
+values, not empirically optimized calibration; the README documents the
+environment settings and rollback switch.
 
 ---
 
@@ -350,10 +354,15 @@ PositionOccurrence + Game                        │
 ```
 
 `priority` stays objective-only. `recommendationPriority` changes ordering only
-when practical ranking is explicitly configured, calibrated, and admitted by
-the confidence gate; it is equal to `priority` under the default-off
-configuration. Both weaknesses and puzzles consume this same total order before
-pagination.
+when calibrated practical evidence is admitted by the confidence gate; normal
+configuration enables this policy, and setting
+`CHESS_WEAKNESS_PRACTICAL_RANKING_ENABLED=false` restores
+`recommendationPriority` to the objective value without disabling authenticated
+adaptive scheduling. Guests are ordered by recommendation priority, objective
+priority, position ID, and color. Authenticated reads retain the existing
+adaptive scheduling score followed by recommendation priority, objective
+priority, position ID, and color. Both weaknesses and puzzles consume this
+total order before pagination.
 
 The read path performs no database writes and invokes no Stockfish analysis.
 Practical evidence is derived from existing occurrence and game data rather
