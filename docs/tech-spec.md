@@ -38,6 +38,7 @@ contract:
   - **Import and jobs**: `POST /api/games/import` requires the authenticated user's connected account; `GET /api/jobs/{id}` is available to the initiating user, or to guests only while the account is unclaimed.
   - **Account data access**: authenticated shared-data reads select any existing account by `accountId`; guest reads use platform and username for an unclaimed account. Personal training reads are scoped to the authenticated user and selected account.
   - **Analysis and practice**: `/api/positions/weaknesses` and `/api/positions/{positionId}/progress` expose weakness and progress reads; `/api/puzzles`, `/api/puzzles/continuation`, `/api/puzzles/evaluate-move`, `/api/puzzles/attempt`, and `/api/puzzles/events` support puzzles, continuation, evaluation, attempts, and events.
+  - **Position progress win rate**: Cumulative normalized wins divided by all played encounters, multiplied by 100. Draws and unknown outcomes count as attempts, not wins. `GameOutcomeNormalizer` uses the occurrence's player color, Chess.com's White-source results, and PGN Result fallback.
   - **Actual-game results display**:
     - The Weaknesses Library displays supplied W/D/L, score rate, and eligible-game count without confidence classifications or training comparisons.
     - Null scores or zero eligible games show neutral unavailable-score wording; absent practical evidence omits the block.
