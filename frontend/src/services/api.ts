@@ -326,17 +326,31 @@ export interface WeaknessResponse {
   practicalEvidence?: PracticalEvidenceResponse | null;
 }
 
+export type ProgressIntervalState = 'NO_CHECKPOINT' | 'OPEN_AWAITING_EVIDENCE' | 'MEASURED_OPEN';
+
+export interface PositionProgressBaseline {
+  occurredAt: string;
+  mistakeRate: number;
+  winRate: number;
+  sourceEncounterCount: number;
+}
+
 export interface PositionProgressPoint {
+  checkpointId: string;
   occurredAt: string;
   mistakeRate: number;
   winRate: number;
   attempts: number;
+  open: boolean;
 }
 
 export interface PositionProgressResponse {
   positionId: string;
   playerColor: 'WHITE' | 'BLACK';
+  baseline: PositionProgressBaseline | null;
   points: PositionProgressPoint[];
+  currentIntervalState: ProgressIntervalState;
+  excludedUndatedEncounters: number;
   mistakeRateChange: number | null;
   winRateChange: number | null;
   assessment: string;
@@ -521,23 +535,45 @@ export async function fetchWeaknesses(
   return await fetchJsonArray<WeaknessResponse>(url, 'weaknesses');
 }
 
+function isProgressTimestamp(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) &&
+    Number.isFinite(Date.parse(value))
+  );
+}
+
+function isProgressRate(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100;
+}
+
+function isUuid(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
+function isProgressBaseline(value: unknown): value is PositionProgressBaseline {
+  if (typeof value !== 'object' || value === null) return false;
+  const baseline = value as Record<string, unknown>;
+  return (
+    isProgressTimestamp(baseline.occurredAt) &&
+    isProgressRate(baseline.mistakeRate) &&
+    isProgressRate(baseline.winRate) &&
+    Number.isInteger(baseline.sourceEncounterCount) &&
+    (baseline.sourceEncounterCount as number) > 0
+  );
+}
+
 function isProgressPoint(value: unknown): value is PositionProgressPoint {
   if (typeof value !== 'object' || value === null) return false;
   const point = value as Record<string, unknown>;
   return (
-    typeof point.occurredAt === 'string' &&
-    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(point.occurredAt) &&
-    Number.isFinite(Date.parse(point.occurredAt)) &&
-    typeof point.mistakeRate === 'number' &&
-    Number.isFinite(point.mistakeRate) &&
-    point.mistakeRate >= 0 &&
-    point.mistakeRate <= 100 &&
-    typeof point.winRate === 'number' &&
-    Number.isFinite(point.winRate) &&
-    point.winRate >= 0 &&
-    point.winRate <= 100 &&
+    isUuid(point.checkpointId) &&
+    isProgressTimestamp(point.occurredAt) &&
+    isProgressRate(point.mistakeRate) &&
+    isProgressRate(point.winRate) &&
     Number.isInteger(point.attempts) &&
-    (point.attempts as number) > 0
+    (point.attempts as number) > 0 &&
+    typeof point.open === 'boolean'
   );
 }
 
@@ -545,11 +581,16 @@ function isPositionProgressResponse(value: unknown): value is PositionProgressRe
   if (typeof value !== 'object' || value === null) return false;
   const progress = value as Record<string, unknown>;
   return (
-    typeof progress.positionId === 'string' &&
-    progress.positionId.length > 0 &&
+    isUuid(progress.positionId) &&
     (progress.playerColor === 'WHITE' || progress.playerColor === 'BLACK') &&
+    (progress.baseline === null || isProgressBaseline(progress.baseline)) &&
     Array.isArray(progress.points) &&
     progress.points.every(isProgressPoint) &&
+    (progress.currentIntervalState === 'NO_CHECKPOINT' ||
+      progress.currentIntervalState === 'OPEN_AWAITING_EVIDENCE' ||
+      progress.currentIntervalState === 'MEASURED_OPEN') &&
+    Number.isInteger(progress.excludedUndatedEncounters) &&
+    (progress.excludedUndatedEncounters as number) >= 0 &&
     (progress.mistakeRateChange === null ||
       (typeof progress.mistakeRateChange === 'number' && Number.isFinite(progress.mistakeRateChange))) &&
     (progress.winRateChange === null ||

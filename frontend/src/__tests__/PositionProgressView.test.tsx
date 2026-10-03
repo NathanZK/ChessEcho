@@ -12,10 +12,32 @@ vi.mock('../services/api', async () => {
 const response: PositionProgressResponse = {
   positionId: 'position-1',
   playerColor: 'BLACK',
+  baseline: {
+    occurredAt: '2025-12-01T00:00:00Z',
+    mistakeRate: 50,
+    winRate: 25,
+    sourceEncounterCount: 4,
+  },
   points: [
-    { occurredAt: '2026-01-01T00:00:00Z', mistakeRate: 50, winRate: 25, attempts: 4 },
-    { occurredAt: '2026-02-01T00:00:00Z', mistakeRate: 25, winRate: 50, attempts: 8 },
+    {
+      checkpointId: '00000000-0000-0000-0000-000000000001',
+      occurredAt: '2026-01-01T00:00:00Z',
+      mistakeRate: 50,
+      winRate: 25,
+      attempts: 4,
+      open: false,
+    },
+    {
+      checkpointId: '00000000-0000-0000-0000-000000000002',
+      occurredAt: '2026-02-01T00:00:00Z',
+      mistakeRate: 25,
+      winRate: 50,
+      attempts: 8,
+      open: true,
+    },
   ],
+  currentIntervalState: 'MEASURED_OPEN',
+  excludedUndatedEncounters: 0,
   mistakeRateChange: -50,
   winRateChange: 100,
   assessment: 'You are making fewer mistakes at this position.',
@@ -57,6 +79,13 @@ describe('PositionProgressView', () => {
       'points',
       '42,175 558,130',
     );
+    expect(screen.getByText('Historical baseline')).toBeInTheDocument();
+    expect(screen.getByText('4 dated encounters')).toBeInTheDocument();
+    expect(screen.getByText('Current interval is open.')).toBeInTheDocument();
+    expect(screen.getByTestId('progress-interval-status-00000000-0000-0000-0000-000000000001'))
+      .toHaveTextContent(/closed interval/i);
+    expect(screen.getByTestId('progress-interval-status-00000000-0000-0000-0000-000000000002'))
+      .toHaveTextContent(/open interval/i);
     expect(screen.getByText('-50%')).toBeInTheDocument();
     expect(screen.getByText('+100%')).toBeInTheDocument();
   });
@@ -112,29 +141,43 @@ describe('PositionProgressView', () => {
     expect(api.fetchPositionProgress).toHaveBeenCalledTimes(2);
   });
 
-  it('shows a no-history state for a valid empty history', async () => {
-    vi.mocked(api.fetchPositionProgress).mockResolvedValueOnce({ ...response, points: [] });
+  it('shows baseline-only history without inventing a training interval', async () => {
+    vi.mocked(api.fetchPositionProgress).mockResolvedValueOnce({
+      ...response,
+      baseline: response.baseline,
+      points: [],
+      currentIntervalState: 'NO_CHECKPOINT',
+      mistakeRateChange: null,
+      winRateChange: null,
+      assessment: 'More played encounters are needed to assess progress.',
+    });
 
     render(<PositionProgressView {...defaultProps} />);
 
-    expect(await screen.findByText(/no progress history yet/i)).toBeInTheDocument();
+    expect(await screen.findByText(/no solved puzzle checkpoint yet/i)).toBeInTheDocument();
+    expect(screen.getByText('4 dated encounters')).toBeInTheDocument();
+    expect(screen.getByText('50%')).toBeInTheDocument();
+    expect(screen.getByText('25%')).toBeInTheDocument();
+    expect(screen.getByText(`Dated through ${new Date(response.baseline!.occurredAt).toLocaleDateString()}`))
+      .toBeInTheDocument();
+    expect(screen.getByText('No measured interval observations yet.')).toBeInTheDocument();
     expect(screen.queryByRole('img', { name: /position progress over time/i })).not.toBeInTheDocument();
-    expect(screen.getByText(response.assessment)).toBeInTheDocument();
+    expect(screen.queryAllByTestId('progress-point-mistake-rate')).toHaveLength(0);
+    expect(screen.getByText('More played encounters are needed to assess progress.')).toBeInTheDocument();
   });
 
-  it('shows the single point but does not present it as a trend', async () => {
+  it('shows a single measured interval and its supplied baseline comparison', async () => {
     const singlePoint = { ...response, points: [response.points[0]] };
     vi.mocked(api.fetchPositionProgress).mockResolvedValueOnce(singlePoint);
 
     render(<PositionProgressView {...defaultProps} />);
 
-    expect(await screen.findAllByText('Not enough history yet')).toHaveLength(2);
-    expect(screen.getByText(/one encounter is not enough history to show a trend/i)).toBeInTheDocument();
+    expect(await screen.findByText(response.assessment)).toBeInTheDocument();
     expect(screen.getByRole('img', { name: /position progress over time/i })).toBeInTheDocument();
     expect(screen.getAllByTestId('progress-point-mistake-rate')).toHaveLength(1);
     expect(screen.getAllByTestId('progress-point-win-rate')).toHaveLength(1);
-    expect(screen.queryByText('-50%')).not.toBeInTheDocument();
-    expect(screen.queryByText('+100%')).not.toBeInTheDocument();
+    expect(screen.getByText('-50%')).toBeInTheDocument();
+    expect(screen.getByText('+100%')).toBeInTheDocument();
   });
 
   it('shows unavailable text for null changes when history is sufficient', async () => {
@@ -147,5 +190,31 @@ describe('PositionProgressView', () => {
     render(<PositionProgressView {...defaultProps} />);
 
     expect(await screen.findAllByText('Not available yet')).toHaveLength(2);
+  });
+
+  it('distinguishes a measured closed interval from an empty current interval', async () => {
+    vi.mocked(api.fetchPositionProgress).mockResolvedValueOnce({
+      ...response,
+      points: [response.points[0]],
+      currentIntervalState: 'OPEN_AWAITING_EVIDENCE',
+    });
+
+    render(<PositionProgressView {...defaultProps} />);
+
+    expect(await screen.findByText(/waiting for a dated game after the latest solve/i)).toBeInTheDocument();
+    expect(screen.getByTestId('progress-interval-status-00000000-0000-0000-0000-000000000001'))
+      .toHaveTextContent(/closed interval/i);
+    expect(screen.queryByText('Current interval is open.')).not.toBeInTheDocument();
+  });
+
+  it('reports undated encounters excluded from rates and observations', async () => {
+    vi.mocked(api.fetchPositionProgress).mockResolvedValueOnce({
+      ...response,
+      excludedUndatedEncounters: 2,
+    });
+
+    render(<PositionProgressView {...defaultProps} />);
+
+    expect(await screen.findByText(/2 undated encounters excluded because game date is unavailable/i)).toBeInTheDocument();
   });
 });

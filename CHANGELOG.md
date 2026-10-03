@@ -11,6 +11,7 @@
 ### Changed
 
 - Weaknesses Library actual-game results show W/D/L, score rate, and eligible-game count without internal evidence labels or training comparisons.
+- Position Progress shows a separate historical baseline and one measured observation per SOLVED training interval, with explicit empty-interval and undated-game states.
 - Account-claim conflicts explain when a Chess.com account is connected under another ChessEcho sign-in without changing the selected account or starting an import.
 
 ### Fixed
