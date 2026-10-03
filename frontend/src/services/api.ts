@@ -295,6 +295,22 @@ export interface WeaknessResponse {
   practicalEvidence?: PracticalEvidenceResponse | null;
 }
 
+export interface PositionProgressPoint {
+  occurredAt: string;
+  mistakeRate: number;
+  winRate: number;
+  attempts: number;
+}
+
+export interface PositionProgressResponse {
+  positionId: string;
+  playerColor: 'WHITE' | 'BLACK';
+  points: PositionProgressPoint[];
+  mistakeRateChange: number | null;
+  winRateChange: number | null;
+  assessment: string;
+}
+
 export type ContinuationMode = 'ENGINE' | 'HUMAN';
 export type ExplorationPlayMode = 'CHESSECHO' | 'BOTH_SIDES' | 'CHALLENGE';
 
@@ -474,6 +490,64 @@ export async function fetchWeaknesses(
   return await fetchJsonArray<WeaknessResponse>(url, 'weaknesses');
 }
 
+function isProgressPoint(value: unknown): value is PositionProgressPoint {
+  if (typeof value !== 'object' || value === null) return false;
+  const point = value as Record<string, unknown>;
+  return (
+    typeof point.occurredAt === 'string' &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(point.occurredAt) &&
+    Number.isFinite(Date.parse(point.occurredAt)) &&
+    typeof point.mistakeRate === 'number' &&
+    Number.isFinite(point.mistakeRate) &&
+    point.mistakeRate >= 0 &&
+    point.mistakeRate <= 100 &&
+    typeof point.winRate === 'number' &&
+    Number.isFinite(point.winRate) &&
+    point.winRate >= 0 &&
+    point.winRate <= 100 &&
+    Number.isInteger(point.attempts) &&
+    (point.attempts as number) > 0
+  );
+}
+
+function isPositionProgressResponse(value: unknown): value is PositionProgressResponse {
+  if (typeof value !== 'object' || value === null) return false;
+  const progress = value as Record<string, unknown>;
+  return (
+    typeof progress.positionId === 'string' &&
+    progress.positionId.length > 0 &&
+    (progress.playerColor === 'WHITE' || progress.playerColor === 'BLACK') &&
+    Array.isArray(progress.points) &&
+    progress.points.every(isProgressPoint) &&
+    (progress.mistakeRateChange === null ||
+      (typeof progress.mistakeRateChange === 'number' && Number.isFinite(progress.mistakeRateChange))) &&
+    (progress.winRateChange === null ||
+      (typeof progress.winRateChange === 'number' && Number.isFinite(progress.winRateChange))) &&
+    typeof progress.assessment === 'string'
+  );
+}
+
+export async function fetchPositionProgress(
+  positionId: string,
+  playerColor: 'WHITE' | 'BLACK'
+): Promise<PositionProgressResponse> {
+  const url = `${API_BASE_URL}/positions/${encodeURIComponent(positionId)}/progress?playerColor=${encodeURIComponent(playerColor)}`;
+  const response = await fetch(url, { credentials: 'include' });
+  if (!response.ok) {
+    throw new Error(`Failed to load position progress: ${response.status}`);
+  }
+
+  const body: unknown = await response.json();
+  if (
+    !isPositionProgressResponse(body) ||
+    body.positionId !== positionId ||
+    body.playerColor !== playerColor
+  ) {
+    throw new Error('Failed to load position progress: unexpected response body');
+  }
+
+  return body;
+}
 
 export async function startImportJob(
   username: string,

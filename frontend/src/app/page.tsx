@@ -7,6 +7,7 @@ import { ChessBoardArea } from '@/components/ChessBoardArea';
 import { BlinfoldContinuationPanel } from '@/components/BlinfoldContinuationPanel';
 import { PuzzleFeedbackPanel, type ChallengeSubmissionResult } from '@/components/PuzzleFeedbackPanel';
 import { WeaknessesList } from '@/components/WeaknessesList';
+import { PositionProgressView } from '@/components/PositionProgressView';
 import { ImportGamesView } from '@/components/ImportGamesView';
 import { Puzzle } from '@/mock/mockData';
 import {
@@ -214,6 +215,10 @@ export default function Home() {
   };
 
   const [weaknessCount, setWeaknessCount] = useState<number>(0);
+  const [selectedProgress, setSelectedProgress] = useState<{
+    positionId: string;
+    playerColor: 'WHITE' | 'BLACK';
+  } | null>(null);
 
   const [puzzlesList, setPuzzlesList] = useState<Puzzle[]>([]);
   const [currentPuzzleIndex, setCurrentPuzzleIndex] = useState<number>(0);
@@ -254,6 +259,7 @@ export default function Home() {
     setHasMorePuzzles(false);
     setIsFetchingMorePuzzles(false);
     setWeaknessCount(0);
+    setSelectedProgress(null);
     setWeaknessRefreshKey((key) => key + 1);
   };
 
@@ -1839,19 +1845,31 @@ export default function Home() {
 
         {/* TAB 2: WEAKNESSES LIBRARY */}
         {activeTab === 'weaknesses' && (
-          <WeaknessesList
-            username={sessionGateOpen ? activeAccount?.id || activeUsername : undefined}
-            minEvalLoss={minEvalLoss}
-            onMinEvalLossChange={handleMinEvalLossChange}
-            minMistakeCount={minMistakeCount}
-            onMinMistakeCountChange={handleMinMistakeCountChange}
-            onSelectPractice={handleSelectPracticeFromLibrary}
-            onWeaknessCountChange={setWeaknessCount}
-            activeColorFilter={puzzleColorFilter === 'BOTH' ? 'ALL' : puzzleColorFilter}
-            onColorFilterChange={(c) => handleColorFilterChange(c === 'ALL' ? 'BOTH' : c)}
-            isAnalysisActive={!!activeUsername && activeJobStatus?.analysisStatus === 'ANALYZING'}
-            refreshKey={weaknessRefreshKey}
-          />
+          selectedProgress ? (
+            <PositionProgressView
+              positionId={selectedProgress.positionId}
+              playerColor={selectedProgress.playerColor}
+              sessionStatus={sessionStatus}
+              onBack={() => setSelectedProgress(null)}
+            />
+          ) : (
+            <WeaknessesList
+              username={sessionGateOpen ? activeAccount?.id || activeUsername : undefined}
+              minEvalLoss={minEvalLoss}
+              onMinEvalLossChange={handleMinEvalLossChange}
+              minMistakeCount={minMistakeCount}
+              onMinMistakeCountChange={handleMinMistakeCountChange}
+              onSelectPractice={handleSelectPracticeFromLibrary}
+              onViewProgress={(positionId, playerColor) =>
+                setSelectedProgress({ positionId, playerColor })
+              }
+              onWeaknessCountChange={setWeaknessCount}
+              activeColorFilter={puzzleColorFilter === 'BOTH' ? 'ALL' : puzzleColorFilter}
+              onColorFilterChange={(c) => handleColorFilterChange(c === 'ALL' ? 'BOTH' : c)}
+              isAnalysisActive={!!activeUsername && activeJobStatus?.analysisStatus === 'ANALYZING'}
+              refreshKey={weaknessRefreshKey}
+            />
+          )
         )}
 
         {/* TAB 3: IMPORT GAMES */}
