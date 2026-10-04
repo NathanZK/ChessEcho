@@ -20,6 +20,7 @@ This route map leads to the focused flows below: [import and jobs](#import-games
 [practice and exploration](#practice-puzzles-and-exploration).
 
 ```mermaid
+%%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false}}}%%
 flowchart TB
   routes["Next.js routes"] --> home["/ · tabbed home"]
   routes --> login["/login"]
@@ -112,6 +113,7 @@ response handling.
 ## Import Games and job monitoring
 
 ```mermaid
+%%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false, "diagramPadding": 120}}}%%
 flowchart TB
   form["ImportGamesView"] --> guest["Guest: username"]
   form --> connect["Authenticated: POST /api/accounts"]
@@ -160,6 +162,7 @@ for restored job context.
 ## Weaknesses Library and position progress
 
 ```mermaid
+%%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false}}}%%
 flowchart TB
   context["Resolved accountId or guest username"] --> weaknesses["GET /api/positions/weaknesses · shared account data"]
   weaknesses --> list["WeaknessesList · 20 rows/page"]
@@ -205,6 +208,7 @@ and [`PositionProgressView.test.tsx`](../../frontend/src/__tests__/PositionProgr
 ## Practice puzzles and exploration
 
 ```mermaid
+%%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false, "diagramPadding": 120}}}%%
 flowchart TB
   load["GET /api/puzzles"] --> board["ChessBoardArea"]
   board -->|"first puzzle move"| local["Local validation + feedback"]
@@ -260,6 +264,7 @@ currently shows only its generic timing-submission error on a rejected request.
 Line exploration has three frontend modes:
 
 ```mermaid
+%%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false}}}%%
 flowchart TB
   explore["Exploration position"] -->|"ChessEcho or Challenge"| continuation["GET /api/puzzles/continuation"]
   continuation --> candidates["Candidate list + provider"]

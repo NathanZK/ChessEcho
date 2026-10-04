@@ -22,9 +22,10 @@ current controllers, including routes behind profile/property conditions.
 ## Request identity, account scope, and errors
 
 ```mermaid
+%%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false}}}%%
 flowchart TB
     Client[HTTP client] --> Filter[SessionAuthenticationFilter]
-    Filter -->|principal or absent; seed XSRF cookie| MVC[Spring MVC]
+    Filter -->|"principal or absent;<br/>seed XSRF cookie"| MVC[Spring MVC]
     MVC --> CSRF{Registered CSRF path and mutating method?}
     CSRF -->|yes: compare cookie and header| Handler[Controller]
     CSRF -->|no: continue| Handler
@@ -80,6 +81,7 @@ and ownership invariants.
 ## Identity and connected accounts
 
 ```mermaid
+%%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false, "diagramPadding": 120}}}%%
 flowchart TB
     Register[POST /api/register] --> Local[LocalCredentialService and session persistence]
     Login[POST /api/login] --> Local
@@ -91,7 +93,7 @@ flowchart TB
     DevIdentity --> Session[IdentitySessionService and session cookie]
     List[GET /api/accounts] --> Accounts[AccountOwnershipService]
     Associate[POST /api/accounts] --> Accounts
-    Disconnect[DELETE /api/accounts/{accountId}/connection] --> Accounts
+    Disconnect["DELETE /api/accounts/{accountId}/connection"] --> Accounts
     Accounts --> AccountRows[(ChessAccountRepository)]
 ```
 
@@ -113,18 +115,19 @@ absent. The table records the response and access boundary for each route.
 ## Imports and game reads
 
 ```mermaid
+%%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false}}}%%
 flowchart TB
     Start[POST /api/games/import] --> Own[Resolve guest or owned account]
     Own --> Job[(Persist immutable AsyncJob)]
     Job --> Accepted[202 ImportJobResponse]
-    Job --> Worker[@Async worker claims job and reloads snapshot]
+    Job --> Worker["@Async worker claims job and reloads snapshot"]
     Worker --> PubAPI[Chess.com archives and monthly games]
     PubAPI --> Parse[Parse PGN and replay positions]
     Parse --> UserData[(Game, Position, PositionOccurrence)]
     UserData --> Qualify[Qualify affected positions]
     Qualify --> Stockfish[Stockfish subprocess]
     Stockfish --> EngineData[(EngineAnalysis and MoveEvaluation)]
-    Worker --> Poll[GET /api/jobs/{id}]
+    Worker --> Poll["GET /api/jobs/{id}"]
     Poll --> Status[JobStatusResponse]
     Games[GET /api/games] --> GameService[GameService and account resolution]
     GameService --> GameRows[(ChessAccount and GameRepository)]
@@ -160,12 +163,13 @@ default.
 ## Weaknesses and puzzles
 
 ```mermaid
+%%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false, "diagramPadding": 120}}}%%
 flowchart TB
-    WeaknessRoute[GET /api/positions/weaknesses] --> Weakness[WeaknessCalculationService]
+    WeaknessRoute["GET /api/positions/<br/>weaknesses"] --> Weakness[WeaknessCalculationService]
     PuzzleRoute[GET /api/puzzles] --> Weakness
-    Occurrences[(PositionOccurrence and Game)] --> Weakness
-    Evaluations[(EngineAnalysis and MoveEvaluation)] --> Weakness
-    Events[(User-scoped scheduling events)] --> Schedule[Adaptive scheduling]
+    Occurrences[("PositionOccurrence<br/>and Game")] --> Weakness
+    Evaluations[("EngineAnalysis<br/>and MoveEvaluation")] --> Weakness
+    Events[("User-scoped<br/>scheduling events")] --> Schedule[Adaptive scheduling]
     Weakness --> WeaknessResponse[200 WeaknessResponse list]
     Weakness --> Puzzles[PuzzleResponse mapping]
     Schedule --> Puzzles
@@ -188,13 +192,14 @@ and [practical weakness prioritization](practical-weakness-prioritization.md).
 ## Continuation and move evaluation
 
 ```mermaid
+%%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false}}}%%
 flowchart TB
-    ContinuationRoute[GET /api/puzzles/continuation] --> Continuation[ContinuationService]
-    Continuation --> Engine[EngineMoveProvider and Stockfish]
-    Continuation --> Human[HumanMoveProvider and distribution repository]
-    Engine --> Candidates[ContinuationResponse or 404]
+    ContinuationRoute["GET /api/puzzles/<br/>continuation"] --> Continuation[ContinuationService]
+    Continuation --> Engine["EngineMoveProvider<br/>and Stockfish"]
+    Continuation --> Human["HumanMoveProvider<br/>and distribution<br/>repository"]
+    Engine --> Candidates["ContinuationResponse<br/>or 404"]
     Human --> Candidates
-    EvalRoute[GET /api/puzzles/evaluate-move] --> EvalService[MoveEvaluationService]
+    EvalRoute["GET /api/puzzles/<br/>evaluate-move"] --> EvalService[MoveEvaluationService]
     EvalService --> Stockfish[Stockfish subprocess]
     Stockfish --> EvalResponse[MoveEvaluationResponse]
 ```
@@ -215,6 +220,7 @@ empirical provider, rating bands, and fallback behavior.
 ## Training and progress
 
 ```mermaid
+%%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false, "diagramPadding": 120}}}%%
 flowchart TB
     AttemptRoute[POST /api/puzzles/attempt] --> AttemptService[TrainingAttemptService]
     AttemptService --> AttemptRepo[(TrainingAttemptRepository)]
@@ -222,7 +228,7 @@ flowchart TB
     EventRoute[POST /api/puzzles/events] --> EventController[PuzzleEventController direct path]
     EventController --> EventRepos[(AccountOwnership, occurrence, user, event repositories)]
     EventRepos --> EventResponse[202 accepted or 404]
-    ProgressRoute[GET /api/positions/{positionId}/progress] --> Progress[ProgressService]
+    ProgressRoute["GET /api/positions/{positionId}/progress"] --> Progress[ProgressService]
     Progress --> ProgressRepos[(Owned accounts, occurrences, SOLVED events, engine analysis)]
     ProgressRepos --> ProgressResponse[ProgressResponse]
 ```
@@ -246,34 +252,37 @@ late-import handling, and evidence rules.
 ## Human-move distribution and corpus operations
 
 ```mermaid
+%%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false}}}%%
 flowchart TB
-    BFS[POST /api/admin/human-move-distribution/bfs] --> Traverse[HumanMoveBfsService and traversal]
+    BFS["POST /api/admin/<br/>human-move-distribution/<br/>bfs"] --> Traverse["HumanMoveBfsService<br/>and traversal"]
     Traverse --> ChessCom[Chess.com PubAPI]
-    Traverse --> Global[(Global HumanMoveDistribution)]
-    Discover[POST /api/admin/human-move-distribution/population/discover] --> DiscoverService[Population discovery]
+    Traverse --> Global[("Global<br/>HumanMoveDistribution")]
+    Discover["POST /api/admin/<br/>human-move-distribution/<br/>population/discover"] --> DiscoverService[Population discovery]
     DiscoverService --> ChessCom
-    Finalize[POST /api/admin/human-move-distribution/finalize] --> Finalizer[HumanMoveDistributionFinalizationService]
+    Finalize["POST /api/admin/<br/>human-move-distribution/<br/>finalize"] --> Finalizer["HumanMoveDistribution<br/>FinalizationService"]
     Finalizer --> Global
     Global --> Provider[HumanMoveProvider]
     Provider --> Continuation[ContinuationService]
 ```
 
 ```mermaid
+%%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false}}}%%
 flowchart TB
     Create[POST /api/admin/human-move-distribution/corpus-runs] --> RunService[HumanMoveCorpusService]
     RunService --> RunTraversal[Shared traversal and qualification]
     RunTraversal --> RunRows[(Run, games, observations)]
     List[GET /api/admin/human-move-distribution/corpus-runs] --> RunReads[HumanMoveCorpusService reads]
-    Detail[GET /api/admin/human-move-distribution/corpus-runs/{runId}] --> RunReads
+    Detail["GET /api/admin/human-move-distribution/corpus-runs/{runId}"] --> RunReads
     RunReads --> RunRows
-    Checkpoint[POST /api/admin/human-move-distribution/corpus-runs/{runId}/checkpoints] --> CheckpointService[Read-only checkpoint calculation]
+    Checkpoint["POST /api/admin/human-move-distribution/corpus-runs/{runId}/checkpoints"] --> CheckpointService[Read-only checkpoint calculation]
     CheckpointService --> RunRows
 ```
 
 ```mermaid
+%%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false}}}%%
 flowchart TB
     Materialize[POST /api/admin/human-move-distribution/corpus-projections/materialize] --> Materializer[HumanMoveCorpusMaterializationService]
-    Finalize[POST /api/admin/human-move-distribution/corpus-projections/{projectionId}/finalize] --> ProjectionFinalizer[Projection finalization service]
+    Finalize["POST /api/admin/human-move-distribution/corpus-projections/{projectionId}/finalize"] --> ProjectionFinalizer[Projection finalization service]
     Compare[POST /api/admin/human-move-distribution/corpus-projections/compare] --> Comparator[HumanMoveCorpusCrossCohortService]
     Materializer --> ProjectionData[(Corpus and projection repositories)]
     ProjectionFinalizer --> ProjectionData
@@ -281,12 +290,13 @@ flowchart TB
 ```
 
 ```mermaid
+%%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false}}}%%
 flowchart TB
     Export[POST /api/admin/human-move-distribution/corpus-artifacts/export] --> ArtifactService[HumanMoveCorpusArtifactService]
-    Download[GET /api/admin/human-move-distribution/corpus-artifacts/{contentDigest}] --> ArtifactService
+    Download["GET /api/admin/human-move-distribution/corpus-artifacts/{contentDigest}"] --> ArtifactService
     Verify[POST /api/admin/human-move-distribution/corpus-artifacts/verify] --> ArtifactService
     Import[POST /api/admin/human-move-distribution/corpus-artifacts/import] --> ImportService[HumanMoveCorpusImportService]
-    Purge[POST /api/admin/human-move-distribution/corpus-artifacts/{runId}/purge] --> PurgeService[HumanMoveCorpusPurgeService]
+    Purge["POST /api/admin/human-move-distribution/corpus-artifacts/{runId}/purge"] --> PurgeService[HumanMoveCorpusPurgeService]
     ArtifactService --> Files[(Configured archive filesystem)]
     ImportService --> Corpus[(Corpus repositories)]
     PurgeService --> Corpus
