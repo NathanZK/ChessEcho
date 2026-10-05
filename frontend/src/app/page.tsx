@@ -362,6 +362,13 @@ export default function Home() {
 
   // Timed training state
   const timerRef = React.useRef<StopwatchTimer | CountdownTimer | null>(null);
+  const timerAttemptRef = React.useRef<{
+    puzzle: Puzzle;
+    mode: 'STOPWATCH' | 'COUNTDOWN';
+    allowedMs: number;
+    timer: StopwatchTimer | CountdownTimer;
+    hasExpired: boolean;
+  } | null>(null);
   const [timerMode, setTimerMode] = useState<'STOPWATCH' | 'COUNTDOWN' | null>(null);
   const [timerElapsedMs, setTimerElapsedMs] = useState<number>(0);
   const [timerAllowedMs, setTimerAllowedMs] = useState<number>(30000);
@@ -410,44 +417,57 @@ export default function Home() {
     [timerMode, timerAllowedMs, activePuzzle, activeAccountId, sessionStatus]
   );
 
+  const submitExpiredTimerAttempt = React.useEffectEvent(() => {
+    void submitTimerAttempt('EXPIRED');
+  });
+
   React.useEffect(() => {
     if (!activePuzzle || !timerMode) {
       timerRef.current = null;
+      timerAttemptRef.current = null;
       return;
     }
 
-    const timer: StopwatchTimer | CountdownTimer =
-      timerMode === 'STOPWATCH' ? new StopwatchTimer() : new CountdownTimer(timerAllowedMs);
-    timer.startNewAttempt();
-    timer.start();
-    timerRef.current = timer;
-
-    let hasExpired = false;
+    let attempt = timerAttemptRef.current;
+    if (attempt?.puzzle !== activePuzzle || attempt.mode !== timerMode || attempt.allowedMs !== timerAllowedMs) {
+      attempt = null;
+      timerRef.current = null;
+    }
 
     // Update timer display; also detects countdown expiry as a terminal
     // outcome and submits telemetry automatically.
     const tick = () => {
-      const current = timerRef.current;
-      if (!current) return;
+      if (!attempt) return;
+      const current = attempt.timer;
       if (timerMode === 'STOPWATCH' && current instanceof StopwatchTimer) {
         setTimerElapsedMs(current.getElapsed());
       } else if (timerMode === 'COUNTDOWN' && current instanceof CountdownTimer) {
         const remaining = current.getRemaining();
         setTimerElapsedMs(timerAllowedMs - remaining);
-        if (remaining === 0 && !hasExpired) {
-          hasExpired = true;
+        if (remaining === 0 && !attempt.hasExpired) {
+          attempt.hasExpired = true;
           setTimerExpired(true);
-          void submitTimerAttempt('EXPIRED');
+          soundService.playSound('completion');
+          submitExpiredTimerAttempt();
         }
       }
     };
 
-    // Defer the initial reset/tick outside the effect's synchronous body so
-    // state updates happen from a callback rather than directly in the effect.
+    // Canceled effect setups must not start attempts or emit sound.
     const initId = setTimeout(() => {
-      setTimerElapsedMs(0);
-      setTimerExpired(false);
-      setTimerSubmissionError(null);
+      if (!attempt) {
+        const timer = timerMode === 'STOPWATCH' ? new StopwatchTimer() : new CountdownTimer(timerAllowedMs);
+        timer.startNewAttempt();
+        timer.start();
+        attempt = { puzzle: activePuzzle, mode: timerMode, allowedMs: timerAllowedMs, timer, hasExpired: false };
+        timerAttemptRef.current = attempt;
+        timerRef.current = timer;
+        setTimerElapsedMs(0);
+        setTimerExpired(false);
+        setTimerSubmissionError(null);
+        soundService.playSound('move');
+      }
+      timerRef.current = attempt.timer;
       tick();
     }, 0);
     const intervalId = setInterval(tick, 100);
@@ -456,7 +476,7 @@ export default function Home() {
       clearTimeout(initId);
       clearInterval(intervalId);
     };
-  }, [activePuzzle, timerMode, timerAllowedMs, submitTimerAttempt]);
+  }, [activePuzzle, timerMode, timerAllowedMs]);
 
   const requestBlindfoldChessEchoMove = React.useCallback(async (fen: string) => {
     const response = await fetchPuzzleContinuation(fen, 'ENGINE');

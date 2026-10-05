@@ -288,6 +288,17 @@ current attempt ID unchanged, matching the backend's UUID request field.
 The routed UI shows its generic timing-submission error on a rejected request;
 it does not use the response ID for correlation.
 
+Timed Training uses the existing sound service: `move.wav` plays once when
+Stopwatch or Countdown starts, and `completion.wav` plays once at Countdown
+expiry. Enabling/switching mode, activating a new puzzle, or changing Countdown
+duration starts an attempt. Canceled pending starts are silent; routine ticks,
+rerenders, and repeated expiry observations do not replay cues. The existing
+persisted global mute preference applies at each transition; unmuting does not
+replay suppressed cues. Browser playback failure does not interrupt timing or
+telemetry. Audio supplements the unchanged timer badge and "Time's up" text.
+[`TimerSoundIntegration.test.tsx`](../../frontend/src/__tests__/TimerSoundIntegration.test.tsx)
+exercises these transitions through the production page and real sound service.
+
 Line exploration has three frontend modes:
 
 ```mermaid
