@@ -35,6 +35,7 @@ entry:
 contract:
   - **Chess accounts**: `POST /api/accounts` connects an account; `GET /api/accounts` lists the caller's connections; `DELETE /api/accounts/{accountId}/connection` disconnects it. See `API_CONTRACT.md` and `docs/specs/connected-account-state.md`.
   - **Authentication/session**: `POST /api/register`, `POST /api/login`, `GET /api/me`, and `POST /api/logout`; session cookie `CHESSECHO_SESSION`. See `docs/architecture/identity-and-session.md`.
+  - **Header account state**: The Header distinguishes guests, signed-in users without a connected Chess.com account, and signed-in users with one.
   - **Development session**: `POST /api/dev/session` exists only under `dev`/`local` profiles with `chessecho.auth.dev-mode.enabled=true`; otherwise it returns 404 (`DevSessionController`).
   - **Import and jobs**: `POST /api/games/import` requires the authenticated user's connected account; `GET /api/jobs/{id}` is available to the initiating user, or to guests only while the account is unclaimed.
   - **Account data access**: authenticated shared-data reads select any existing account by `accountId`; guest reads use platform and username for an unclaimed account. Personal training reads are scoped to the authenticated user and selected account.
@@ -61,6 +62,7 @@ invariant:
   - Engine analysis is stored per position and shared across accounts; weakness ranking is computed per account.
   - `userId`, usernames, account UUIDs, and job UUIDs are never bearer credentials (`API_CONTRACT.md`).
   - Authenticated shared reads select an existing account by UUID; personal history is scoped to `(app_user_id, chess_account_id)`.
+  - The Header shows “No Chess.com account connected” only after account loading confirms the user has no connections; authenticated users always retain Sign out.
   - Authenticated import creation requires the current account owner; status reads require the immutable initiating user. Guests can read/import only unclaimed accounts.
   - `AsyncJob` rejects updates that change its persisted import configuration, including account, date range, time controls, and player color.
   - Before deployment, schema evolution updates the V1 baseline rather than adding synthetic Flyway versions. See `docs/engineering/repository-conventions.md`.

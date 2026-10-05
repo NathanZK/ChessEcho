@@ -144,6 +144,7 @@ describe('connected Chess.com account flow', () => {
     await waitFor(() => expect(api.fetchAccounts).toHaveBeenCalled());
 
     expect(screen.queryByText('Chess.com Connected')).not.toBeInTheDocument();
+    expect(screen.queryByText('No Chess.com account connected')).not.toBeInTheDocument();
     expect(screen.queryByText('stale-player')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /start import/i }));
     expect(api.startAccountImportJob).not.toHaveBeenCalled();
@@ -396,6 +397,9 @@ describe('connected Chess.com account flow', () => {
     vi.mocked(api.fetchCurrentSession).mockResolvedValueOnce({ status: 'unauthenticated' });
 
     openImportView();
+    expect(await screen.findByText('Not Connected')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Sign In' })).toHaveAttribute('href', '/login');
+    expect(screen.getByRole('link', { name: 'Register' })).toHaveAttribute('href', '/register');
     fireEvent.change(await screen.findByPlaceholderText(/e\.g\. Hikaru/i), {
       target: { value: 'guest-player' },
     });
@@ -423,6 +427,9 @@ describe('connected Chess.com account flow', () => {
 
     openImportView();
     expect(await screen.findByText('Chess.com Connected')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Sign In' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Register' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /^disconnect$/i }));
 
     await waitFor(() => expect(api.disconnectAccount).toHaveBeenCalledWith('server-account'));
@@ -440,6 +447,11 @@ describe('connected Chess.com account flow', () => {
       expect(localStorage.getItem('chessecho_username')).toBeNull();
     });
     expect(screen.queryByText('Chess.com Connected')).not.toBeInTheDocument();
+    expect(screen.getByText('Signed in to ChessEcho')).toBeInTheDocument();
+    expect(screen.getByText('No Chess.com account connected')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Sign In' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Register' })).not.toBeInTheDocument();
   });
 
   it('reconciles a disconnect 404 against an empty account list without reporting success', async () => {

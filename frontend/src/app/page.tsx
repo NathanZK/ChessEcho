@@ -1664,6 +1664,7 @@ export default function Home() {
         weaknessCount={weaknessCount}
         onDisconnect={handleLogout}
         sessionStatus={sessionStatus}
+        accountStatus={accountStatus}
       />
 
       {/* Main Content Area */}

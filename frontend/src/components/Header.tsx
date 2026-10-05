@@ -7,6 +7,7 @@ import type { AccountSummary } from '../services/api';
 export type TabType = 'puzzles' | 'weaknesses' | 'import';
 
 export type HeaderSessionStatus = 'loading' | 'authenticated' | 'unauthenticated' | 'error';
+export type HeaderAccountStatus = 'loading' | 'connected' | 'unconnected' | 'error';
 
 interface HeaderProps {
   activeTab: TabType;
@@ -16,6 +17,7 @@ interface HeaderProps {
   weaknessCount?: number;
   onDisconnect?: () => void;
   sessionStatus?: HeaderSessionStatus;
+  accountStatus: HeaderAccountStatus;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -26,11 +28,20 @@ export const Header: React.FC<HeaderProps> = ({
   weaknessCount = 0,
   onDisconnect,
   sessionStatus,
+  accountStatus,
 }) => {
   const isPuzzlesLayout = activeTab === 'puzzles';
   const showConnected = sessionStatus === 'authenticated' && !!connectedAccount;
   const showGuestSelection = sessionStatus === 'unauthenticated' && !!username;
   const showAccount = showConnected || showGuestSelection;
+  const accountConnectionLabel =
+    accountStatus === 'unconnected'
+      ? 'No Chess.com account connected'
+      : accountStatus === 'loading'
+        ? 'Checking Chess.com connection'
+        : accountStatus === 'error'
+          ? 'Unable to load Chess.com connection'
+          : 'Connected Chess.com account unavailable';
   const accountUsername = showConnected ? connectedAccount?.username : username;
 
   return (
@@ -224,7 +235,27 @@ export const Header: React.FC<HeaderProps> = ({
             }`}
           >
             <User className={`w-4 h-4 text-slate-500 ${isPuzzlesLayout ? 'shrink-0' : ''}`} />
-            <span className={isPuzzlesLayout ? 'min-w-0 break-words' : ''}>Not Connected</span>
+            {sessionStatus === 'authenticated' ? (
+              <div className={`flex min-w-0 flex-col ${isPuzzlesLayout ? 'break-words' : ''}`}>
+                <span className="text-sm font-semibold text-slate-200">Signed in to ChessEcho</span>
+                <span className="text-[11px] font-medium text-slate-400">
+                  {accountConnectionLabel}
+                </span>
+              </div>
+            ) : (
+              <span className={isPuzzlesLayout ? 'min-w-0 break-words' : ''}>Not Connected</span>
+            )}
+            {sessionStatus === 'authenticated' && onDisconnect && (
+              <button
+                onClick={onDisconnect}
+                title="Sign out"
+                className={`ml-2 px-2.5 py-1 bg-slate-700 hover:bg-rose-600 text-slate-300 hover:text-white text-[11px] font-bold rounded-lg transition border border-slate-600 hover:border-rose-500 cursor-pointer ${
+                  isPuzzlesLayout ? 'shrink-0 max-w-full whitespace-normal 2xl:w-full 2xl:ml-0' : ''
+                }`}
+              >
+                Sign out
+              </button>
+            )}
             {sessionStatus === 'unauthenticated' && (
               <a
                 href="/login"
