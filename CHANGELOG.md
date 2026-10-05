@@ -10,6 +10,7 @@
 
 ### Changed
 
+- Train Blindfold now continues from the studied puzzle position: it is offered with the exploration actions after a move, keeps the puzzle board size, colours, and orientation, and lets the side to move play first.
 - Puzzle training events now record only solved and failed outcomes; puzzle activation, timed-training start, and skips no longer submit scheduling events.
 - Practical game-outcome evidence adjusts weakness and puzzle recommendation priority by default through a confidence-gated policy; authenticated adaptive scheduling remains active.
 - Weaknesses Library actual-game results show W/D/L, score rate, and eligible-game count without internal evidence labels or training comparisons.

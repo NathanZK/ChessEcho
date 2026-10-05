@@ -315,4 +315,27 @@ describe('BlinfoldContinuationMode', () => {
       expect(reset.moveCount).toBe(0);
     });
   });
+  describe('Opening turn from entry position', () => {
+    const blackToMove = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1';
+
+    it('gives the player the first turn when the player is to move', () => {
+      expect(createBlinfoldGameState(initialFen, 'WHITE').currentTurn).toBe('PLAYER');
+      expect(createBlinfoldGameState(blackToMove, 'BLACK').currentTurn).toBe('PLAYER');
+    });
+
+    it('gives ChessEcho the first turn when the other side is to move', () => {
+      expect(createBlinfoldGameState(initialFen, 'BLACK').currentTurn).toBe('CHESSECHO');
+      expect(createBlinfoldGameState(blackToMove, 'WHITE').currentTurn).toBe('CHESSECHO');
+    });
+
+    it('keeps the player first when no player color is given', () => {
+      expect(createBlinfoldGameState(blackToMove).currentTurn).toBe('PLAYER');
+    });
+
+    it('applies the same rule on reset', () => {
+      const played = createBlinfoldGameState(initialFen, 'BLACK');
+      expect(resetBlinfoldGame(played, initialFen, 'BLACK').currentTurn).toBe('CHESSECHO');
+      expect(resetBlinfoldGame(played, initialFen, 'WHITE').currentTurn).toBe('PLAYER');
+    });
+  });
 });

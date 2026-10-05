@@ -14,6 +14,7 @@ import {
   Sparkles,
   LogOut,
   Timer,
+  EyeOff,
 } from 'lucide-react';
 import { Puzzle } from '../mock/mockData';
 import { HistoricalGamesModal } from './HistoricalGamesModal';
@@ -90,6 +91,8 @@ interface PuzzleFeedbackPanelProps {
   explorationDecisionMove?: string | null;
   onEnterExploration?: (initialMode?: ExplorationPlayMode, decisionMove?: string) => void;
   onExitExploration?: () => void;
+  onEnterBlindfold?: () => void;
+  isBlindfoldEntryDisabled?: boolean;
   continuationMode?: ContinuationMode;
   onContinuationModeChange?: (mode: ContinuationMode) => void;
   opponentRatingBand?: string;
@@ -154,6 +157,8 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
   explorationDecisionMove,
   onEnterExploration,
   onExitExploration,
+  onEnterBlindfold,
+  isBlindfoldEntryDisabled = false,
   continuationMode = 'ENGINE',
   onContinuationModeChange,
   opponentRatingBand,
@@ -196,6 +201,19 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
   const [showGameModal, setShowGameModal] = React.useState<boolean>(false);
 
   const activeColorToMove = sideToMove || (puzzle.playerColor === 'BLACK' ? 'Black' : 'White');
+
+  const renderBlindfoldEntry = (className: string, iconClassName: string) => onEnterBlindfold && (
+    <button
+      type="button"
+      onClick={onEnterBlindfold}
+      disabled={isBlindfoldEntryDisabled}
+      title={isBlindfoldEntryDisabled ? 'Available once the board settles' : 'Continue this position blindfolded'}
+      className={`${className} disabled:opacity-50 disabled:cursor-not-allowed`}
+    >
+      <EyeOff className={iconClassName} />
+      <span>Train Blindfold</span>
+    </button>
+  );
 
   // Listen for Enter key when puzzle is solved to advance to next puzzle
   useEffect(() => {
@@ -435,17 +453,25 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
             </div>
           )}
 
-          <div className="flex items-center space-x-2 pt-1">
-            {!isExplorationActive && onEnterExploration && (
-              <button
-                type="button"
-                onClick={() => onEnterExploration()}
-                className="flex-1 py-2.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold text-xs rounded-xl transition border border-amber-500/30 flex items-center justify-center space-x-1.5 cursor-pointer shadow-sm"
-              >
-                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                <span>Continue Exploration →</span>
-              </button>
-            )}
+          {!isExplorationActive && (onEnterExploration || onEnterBlindfold) && (
+            <div data-testid="exploration-actions" className="flex items-center space-x-2 pt-1">
+              {onEnterExploration && (
+                <button
+                  type="button"
+                  onClick={() => onEnterExploration()}
+                  className="flex-1 py-2.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold text-xs rounded-xl transition border border-amber-500/30 flex items-center justify-center space-x-1.5 cursor-pointer shadow-sm"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Continue Exploration →</span>
+                </button>
+              )}
+              {renderBlindfoldEntry(
+                'flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl transition border border-slate-700/60 flex items-center justify-center space-x-1.5 cursor-pointer',
+                'w-3.5 h-3.5 text-slate-300',
+              )}
+            </div>
+          )}
+          <div className="flex items-center space-x-2">
             {onPreviousPuzzle && (
               <button
                 onClick={onPreviousPuzzle}
@@ -488,15 +514,23 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
               </p>
             </div>
           </div>
-          {!isExplorationActive && onEnterExploration && feedback.lastMove && (
-            <button
-              type="button"
-              onClick={() => onEnterExploration(undefined, feedback.lastMove)}
-              className="w-full mt-2 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold text-xs rounded-xl transition border border-amber-500/30 flex items-center justify-center space-x-1.5 cursor-pointer"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              <span>Explore this decision</span>
-            </button>
+          {!isExplorationActive && ((onEnterExploration && feedback.lastMove) || onEnterBlindfold) && (
+            <div data-testid="exploration-actions" className="flex items-center space-x-2 mt-2">
+              {onEnterExploration && feedback.lastMove && (
+                <button
+                  type="button"
+                  onClick={() => onEnterExploration(undefined, feedback.lastMove)}
+                  className="flex-1 py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold text-xs rounded-xl transition border border-amber-500/30 flex items-center justify-center space-x-1.5 cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Explore this decision</span>
+                </button>
+              )}
+              {renderBlindfoldEntry(
+                'flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl transition border border-slate-700/60 flex items-center justify-center space-x-1.5 cursor-pointer',
+                'w-3.5 h-3.5 text-slate-300',
+              )}
+            </div>
           )}
         </>
       ) : feedback.status === 'INCORRECT' ? (
@@ -510,15 +544,23 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
               </p>
             </div>
           </div>
-          {!isExplorationActive && onEnterExploration && feedback.lastMove && (
-            <button
-              type="button"
-              onClick={() => onEnterExploration(undefined, feedback.lastMove)}
-              className="w-full mt-2 py-2 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 font-bold text-xs rounded-xl transition border border-rose-500/30 flex items-center justify-center space-x-1.5 cursor-pointer"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-rose-400" />
-              <span>Explore this decision</span>
-            </button>
+          {!isExplorationActive && ((onEnterExploration && feedback.lastMove) || onEnterBlindfold) && (
+            <div data-testid="exploration-actions" className="flex items-center space-x-2 mt-2">
+              {onEnterExploration && feedback.lastMove && (
+                <button
+                  type="button"
+                  onClick={() => onEnterExploration(undefined, feedback.lastMove)}
+                  className="flex-1 py-2 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 font-bold text-xs rounded-xl transition border border-rose-500/30 flex items-center justify-center space-x-1.5 cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-rose-400" />
+                  <span>Explore this decision</span>
+                </button>
+              )}
+              {renderBlindfoldEntry(
+                'flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl transition border border-slate-700/60 flex items-center justify-center space-x-1.5 cursor-pointer',
+                'w-3.5 h-3.5 text-slate-300',
+              )}
+            </div>
           )}
         </>
       ) : (
@@ -547,18 +589,24 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
                 </span>
               </div>
 
-              {/* Exit Exploration Button */}
-              {onExitExploration && (
-                <button
-                  type="button"
-                  onClick={onExitExploration}
-                  title="Exit Exploration"
-                  className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 font-bold text-[11px] rounded-lg transition border border-slate-800 cursor-pointer"
-                >
-                  <LogOut className="w-3 h-3 text-slate-400" />
-                  <span>Exit</span>
-                </button>
-              )}
+              <div data-testid="exploration-actions" className="flex items-center gap-1.5">
+                {renderBlindfoldEntry(
+                  'flex items-center gap-1.5 px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 font-bold text-[11px] rounded-lg transition border border-slate-800 cursor-pointer',
+                  'w-3 h-3 text-slate-400',
+                )}
+                {/* Exit Exploration Button */}
+                {onExitExploration && (
+                  <button
+                    type="button"
+                    onClick={onExitExploration}
+                    title="Exit Exploration"
+                    className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-slate-200 font-bold text-[11px] rounded-lg transition border border-slate-800 cursor-pointer"
+                  >
+                    <LogOut className="w-3 h-3 text-slate-400" />
+                    <span>Exit</span>
+                  </button>
+                )}
+              </div>
             </div>
 
             {!explorationPlayMode ? (

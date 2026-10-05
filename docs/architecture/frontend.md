@@ -248,6 +248,19 @@ first submitted move is not itself sent to an API. `Home` derives feedback and
 evaluation display from that response data. Undo, redo, reset, sound, and
 blindfold board state are frontend interactions.
 
+Blindfold training continues from the puzzle being studied.
+`PuzzleFeedbackPanel` offers "Train Blindfold" next to the exploration
+actions on the solved, wrong-move, and historical-mistake cards, and in the
+Line Exploration header. A fresh puzzle shows no entry. Entry is disabled while
+a move evaluation or ChessEcho continuation is pending. The session
+(`useBlindfoldSession`) starts from the current board FEN, and the side to move
+plays first. ChessEcho replies come from `GET /api/puzzles/continuation` in
+`ENGINE` mode. The puzzle layout stays in place: `ChessBoardArea` stays mounted
+but hidden, and `BlinfoldBoardWrapper` occupies the same board column. It uses
+the shared presentation from `boardPresentation.ts` and the puzzle board's
+orientation. `NotationExchangeUI` replaces the feedback panel until Exit, which
+restores the previous puzzle and exploration state.
+
 For authenticated users with a selected account, `Home` best-effort records
 `SOLVED` and `FAILED` puzzle outcomes through `POST /api/puzzles/events` with
 position ID, player color, event type, and selected account ID. Activating a

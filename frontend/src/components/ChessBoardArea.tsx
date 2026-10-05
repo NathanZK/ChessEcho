@@ -4,6 +4,12 @@ import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { Chess } from 'chess.js';
 import { Chessboard } from 'react-chessboard';
 import { BoardControls } from './BoardControls';
+import {
+  BOARD_CONTAINER_CLASS,
+  BOARD_DARK_SQUARE_STYLE,
+  BOARD_FRAME_CLASS,
+  BOARD_LIGHT_SQUARE_STYLE,
+} from './boardPresentation';
 import { playSound } from '@/services/soundService';
 import { moveEvaluationService } from '@/services/continuationService';
 import { ContinuationCandidate, ExplorationPlayMode } from '@/services/api';
@@ -50,6 +56,7 @@ interface ChessBoardAreaProps {
   onAlternativeContinuationApplied?: () => void;
   explorationPlayMode?: ExplorationPlayMode;
   isChallengeComplete?: boolean;
+  onMoveEvaluationPendingChange?: (pending: boolean) => void;
 }
 
 export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
@@ -82,12 +89,14 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   onAlternativeContinuationApplied,
   explorationPlayMode = 'CHESSECHO',
   isChallengeComplete = false,
+  onMoveEvaluationPendingChange,
 }) => {
   const [game, setGame] = useState<Chess>(new Chess(initialFen));
   const currentBoardFenRef = useRef<string>(initialFen);
   const [fenHistory, setFenHistory] = useState<string[]>([initialFen]);
   const [historyIndex, setHistoryIndex] = useState<number>(0);
   const [customSquareStyles, setCustomSquareStyles] = useState<Record<string, React.CSSProperties>>({});
+  const pendingEvaluationsRef = useRef(0);
 
   // Commit-phase mirror of the board position used by the stale-evaluation guard
   useEffect(() => {
@@ -99,7 +108,11 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   const onChessEchoExplorationMoveRef = useRef(onChessEchoExplorationMove);
   const onContinuationAppliedRef = useRef(onContinuationApplied);
   const onAlternativeContinuationAppliedRef = useRef(onAlternativeContinuationApplied);
+  const onMoveEvaluationPendingChangeRef = useRef(onMoveEvaluationPendingChange);
+  const blindfoldModeRef = useRef(blindfoldMode);
   useLayoutEffect(() => {
+    onMoveEvaluationPendingChangeRef.current = onMoveEvaluationPendingChange;
+    blindfoldModeRef.current = blindfoldMode;
     onFenChangeRef.current = onFenChange;
     onChessEchoExplorationMoveRef.current = onChessEchoExplorationMove;
     onContinuationAppliedRef.current = onContinuationApplied;
@@ -268,6 +281,9 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
         currentBoardFenRef.current = nextFen;
         setGame(gameCopy);
 
+        pendingEvaluationsRef.current += 1;
+        if (pendingEvaluationsRef.current === 1) onMoveEvaluationPendingChangeRef.current?.(true);
+
         moveEvaluationService.evaluateMove(currentFen, moveSan).then((res) => {
           // Stale evaluation guard: verify board has not moved or reset while request was in flight
           if (currentBoardFenRef.current !== nextFen) {
@@ -342,6 +358,9 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
           setHistoryIndex(newHistory.length - 1);
           onFenChange?.(nextFen);
           onUserExplorationMove?.(moveSan, nextFen, { isBest: false, loss: 0, evalCp: null, fromFen: currentFen });
+        }).finally(() => {
+          pendingEvaluationsRef.current -= 1;
+          if (pendingEvaluationsRef.current === 0) onMoveEvaluationPendingChangeRef.current?.(false);
         });
 
         return true;
@@ -437,6 +456,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't trigger if user is typing in an input field
       if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return;
+      if (blindfoldModeRef.current) return;
 
       if (e.key === 'ArrowLeft') {
         handleUndoRef.current();
@@ -483,15 +503,14 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   if (blindfoldMode) return null;
 
   return (
-    <div className="flex flex-col space-y-2.5 w-full max-w-[640px] 2xl:max-w-[760px] mx-auto">
-      {/* Chessboard Container with Chess.com Green Theme */}
-      <div className="rounded-2xl overflow-hidden shadow-2xl border border-slate-800 bg-slate-900 p-2">
+    <div className={BOARD_CONTAINER_CLASS}>
+      <div className={BOARD_FRAME_CLASS}>
         <Chessboard
           options={{
             position: game.fen(),
             boardOrientation: orientation,
-            darkSquareStyle: { backgroundColor: '#769656' },
-            lightSquareStyle: { backgroundColor: '#eeeed2' },
+            darkSquareStyle: BOARD_DARK_SQUARE_STYLE,
+            lightSquareStyle: BOARD_LIGHT_SQUARE_STYLE,
             squareStyles: customSquareStyles,
             animationDurationInMs: 200,
             allowDragging: true,
