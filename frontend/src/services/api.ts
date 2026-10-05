@@ -601,9 +601,10 @@ function isPositionProgressResponse(value: unknown): value is PositionProgressRe
 
 export async function fetchPositionProgress(
   positionId: string,
-  playerColor: 'WHITE' | 'BLACK'
+  playerColor: 'WHITE' | 'BLACK',
+  minEvalLoss: number
 ): Promise<PositionProgressResponse> {
-  const url = `${API_BASE_URL}/positions/${encodeURIComponent(positionId)}/progress?playerColor=${encodeURIComponent(playerColor)}`;
+  const url = `${API_BASE_URL}/positions/${encodeURIComponent(positionId)}/progress?playerColor=${encodeURIComponent(playerColor)}&minEvalLoss=${encodeURIComponent(minEvalLoss)}`;
   const response = await fetch(url, { credentials: 'include' });
   if (!response.ok) {
     throw new Error(`Failed to load position progress: ${response.status}`);

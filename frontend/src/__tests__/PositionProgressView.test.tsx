@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PositionProgressView } from '../components/PositionProgressView';
 import * as api from '../services/api';
@@ -40,19 +40,20 @@ const response: PositionProgressResponse = {
   excludedUndatedEncounters: 0,
   mistakeRateChange: -50,
   winRateChange: 100,
-  assessment: 'You are making fewer mistakes at this position.',
+  assessment: 'You are making fewer mistakes at this position, and your win rate has increased.',
 };
 
 const defaultProps = {
   positionId: 'position-1',
   playerColor: 'BLACK' as const,
+  minEvalLoss: 0.3,
   sessionStatus: 'authenticated' as const,
   onBack: vi.fn(),
 };
 
 describe('PositionProgressView', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     vi.mocked(api.fetchPositionProgress).mockResolvedValue(response);
   });
 
@@ -64,8 +65,8 @@ describe('PositionProgressView', () => {
     render(<PositionProgressView {...defaultProps} />);
 
     await waitFor(() => {
-      expect(api.fetchPositionProgress).toHaveBeenCalledWith('position-1', 'BLACK');
-      expect(screen.getByText('You are making fewer mistakes at this position.')).toBeInTheDocument();
+      expect(api.fetchPositionProgress).toHaveBeenCalledWith('position-1', 'BLACK', 0.3);
+      expect(screen.getByText(response.assessment)).toBeInTheDocument();
     });
 
     const chart = screen.getByRole('img', { name: /position progress over time/i });
@@ -80,12 +81,23 @@ describe('PositionProgressView', () => {
       '42,175 558,130',
     );
     expect(screen.getByText('Historical baseline')).toBeInTheDocument();
+    const latestInterval = await screen.findByRole('region', { name: 'Latest measured interval' });
+    expect(within(latestInterval).getByText('25%')).toBeInTheDocument();
+    expect(within(latestInterval).getByText('50%')).toBeInTheDocument();
+    expect(within(latestInterval).getByText('8 attempts')).toBeInTheDocument();
+    expect(within(latestInterval).getByText('Open interval')).toBeInTheDocument();
+    expect(within(latestInterval).getByText(
+      `Latest included game: ${new Date(response.points[1].occurredAt).toLocaleDateString()}`,
+    )).toBeInTheDocument();
     expect(screen.getByText('4 dated encounters')).toBeInTheDocument();
-    expect(screen.getByText('Current interval is open.')).toBeInTheDocument();
-    expect(screen.getByTestId('progress-interval-status-00000000-0000-0000-0000-000000000001'))
-      .toHaveTextContent(/closed interval/i);
-    expect(screen.getByTestId('progress-interval-status-00000000-0000-0000-0000-000000000002'))
-      .toHaveTextContent(/open interval/i);
+    expect(screen.queryByText('Current interval is open.')).not.toBeInTheDocument();
+    expect(screen.getByTestId('progress-interval-label-00000000-0000-0000-0000-000000000001'))
+      .toHaveTextContent(`Interval 1 · 4 encounters · ${new Date(response.points[0].occurredAt).toLocaleDateString()}`);
+    expect(screen.getByTestId('progress-interval-label-00000000-0000-0000-0000-000000000002'))
+      .toHaveTextContent(`Interval 2 · 8 encounters · ${new Date(response.points[1].occurredAt).toLocaleDateString()}`);
+    const tooltipTitles = [...chart.querySelectorAll('title')].map((title) => title.textContent);
+    expect(tooltipTitles).toHaveLength(5);
+    expect(tooltipTitles.join(' ')).not.toMatch(/open|closed/i);
     expect(screen.getByText('-50%')).toBeInTheDocument();
     expect(screen.getByText('+100%')).toBeInTheDocument();
   });
@@ -95,6 +107,27 @@ describe('PositionProgressView', () => {
 
     expect(screen.getByRole('link', { name: /sign in/i })).toHaveAttribute('href', '/login');
     expect(api.fetchPositionProgress).not.toHaveBeenCalled();
+  });
+
+  it('does not display a stale response when the same position is selected with a new threshold', async () => {
+    let resolveOld!: (value: PositionProgressResponse) => void;
+    let resolveNew!: (value: PositionProgressResponse) => void;
+    vi.mocked(api.fetchPositionProgress)
+      .mockReturnValueOnce(new Promise((resolve) => { resolveOld = resolve; }))
+      .mockReturnValueOnce(new Promise((resolve) => { resolveNew = resolve; }));
+    const { rerender } = render(<PositionProgressView {...defaultProps} />);
+
+    rerender(<PositionProgressView {...defaultProps} minEvalLoss={0.5} />);
+    expect(api.fetchPositionProgress).toHaveBeenLastCalledWith('position-1', 'BLACK', 0.5);
+    await act(async () => {
+      resolveOld(response);
+    });
+    expect(screen.getByText('Loading position progress…')).toBeInTheDocument();
+    expect(screen.queryByText(response.assessment)).not.toBeInTheDocument();
+    await act(async () => {
+      resolveNew({ ...response, assessment: 'New threshold report' });
+    });
+    expect(screen.getByText('New threshold report')).toBeInTheDocument();
   });
 
   it('distinguishes unresolved and failed session checks without requesting progress', () => {
@@ -155,6 +188,9 @@ describe('PositionProgressView', () => {
     render(<PositionProgressView {...defaultProps} />);
 
     expect(await screen.findByText(/no solved puzzle checkpoint yet/i)).toBeInTheDocument();
+    const latestInterval = screen.getByRole('region', { name: 'Latest measured interval' });
+    expect(within(latestInterval).getByText(/no measured interval data yet/i)).toBeInTheDocument();
+    expect(within(latestInterval).queryByText('Mistake rate')).not.toBeInTheDocument();
     expect(screen.getByText('4 dated encounters')).toBeInTheDocument();
     expect(screen.getByText('50%')).toBeInTheDocument();
     expect(screen.getByText('25%')).toBeInTheDocument();
@@ -192,7 +228,7 @@ describe('PositionProgressView', () => {
     expect(await screen.findAllByText('Not available yet')).toHaveLength(2);
   });
 
-  it('distinguishes a measured closed interval from an empty current interval', async () => {
+  it('keeps a measured closed interval summary while the current interval awaits evidence', async () => {
     vi.mocked(api.fetchPositionProgress).mockResolvedValueOnce({
       ...response,
       points: [response.points[0]],
@@ -202,8 +238,13 @@ describe('PositionProgressView', () => {
     render(<PositionProgressView {...defaultProps} />);
 
     expect(await screen.findByText(/waiting for a dated game after the latest solve/i)).toBeInTheDocument();
-    expect(screen.getByTestId('progress-interval-status-00000000-0000-0000-0000-000000000001'))
-      .toHaveTextContent(/closed interval/i);
+    const latestInterval = screen.getByRole('region', { name: 'Latest measured interval' });
+    expect(within(latestInterval).getByText('Closed interval')).toBeInTheDocument();
+    expect(within(latestInterval).getByText('4 attempts')).toBeInTheDocument();
+    expect(screen.getByTestId('progress-interval-label-00000000-0000-0000-0000-000000000001'))
+      .toHaveTextContent(`Interval 1 · 4 encounters · ${new Date(response.points[0].occurredAt).toLocaleDateString()}`);
+    expect(screen.getByTestId('progress-interval-label-00000000-0000-0000-0000-000000000001'))
+      .not.toHaveTextContent(/open|closed/i);
     expect(screen.queryByText('Current interval is open.')).not.toBeInTheDocument();
   });
 

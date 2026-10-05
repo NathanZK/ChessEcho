@@ -1,7 +1,9 @@
 package com.chessecho.integration.controller
 
 import com.chessecho.domain.ChessAccount
+import com.chessecho.domain.EngineAnalysis
 import com.chessecho.domain.Game
+import com.chessecho.domain.MoveEvaluation
 import com.chessecho.domain.PlayerColor
 import com.chessecho.domain.Position
 import com.chessecho.domain.PositionOccurrence
@@ -12,6 +14,7 @@ import com.chessecho.domain.TrainingAttemptMode
 import com.chessecho.domain.TrainingAttemptOutcome
 import com.chessecho.repository.AppUserRepository
 import com.chessecho.repository.ChessAccountRepository
+import com.chessecho.repository.EngineAnalysisRepository
 import com.chessecho.repository.GameRepository
 import com.chessecho.repository.PositionOccurrenceRepository
 import com.chessecho.repository.PositionRepository
@@ -23,6 +26,8 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.EnumSource
+import org.junit.jupiter.params.provider.NullSource
+import org.junit.jupiter.params.provider.ValueSource
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.client.TestRestTemplate
@@ -35,6 +40,7 @@ import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
@@ -68,6 +74,108 @@ class ProgressControllerIntegrationTest {
 
     @Autowired
     private lateinit var trainingAttemptRepository: TrainingAttemptRepository
+
+    @Autowired
+    private lateinit var engineAnalysisRepository: EngineAnalysisRepository
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = ["invalid", "", "0", "-0.3", "NaN", "Infinity", "-Infinity", "1e309"])
+    fun `invalid or missing threshold returns structured validation error`(threshold: String?) {
+        val subject = "progress-validation-${UUID.randomUUID()}"
+        val session =
+            identitySessionService.establishSession(
+                VerifiedIdentityClaims(
+                    issuer = "integration-test",
+                    subject = subject,
+                    emailSnapshot = "$subject@example.test",
+                    emailVerified = true,
+                ),
+                devPrincipal = false,
+            )
+        val headers = HttpHeaders().apply { add(HttpHeaders.COOKIE, "CHESSECHO_SESSION=${session.rawSecret}") }
+        val query = threshold?.let { "&minEvalLoss=$it" }.orEmpty()
+
+        val response =
+            restTemplate.exchange(
+                "/api/positions/${UUID.randomUUID()}/progress?playerColor=WHITE$query",
+                HttpMethod.GET,
+                HttpEntity<Void>(headers),
+                String::class.java,
+            )
+
+        assertEquals(HttpStatus.BAD_REQUEST, response.statusCode)
+        val body = objectMapper.readTree(response.body)
+        assertEquals("VALIDATION_ERROR", body["error"].textValue())
+        assertTrue(body["details"].isArray)
+        assertTrue(body["details"].size() > 0)
+    }
+
+    @Test
+    fun `selected threshold returns 23 mistakes over 26 attempts`() {
+        val subject = "progress-threshold-${UUID.randomUUID()}"
+        val session =
+            identitySessionService.establishSession(
+                VerifiedIdentityClaims(
+                    issuer = "integration-test",
+                    subject = subject,
+                    emailSnapshot = "$subject@example.test",
+                    emailVerified = true,
+                ),
+                devPrincipal = false,
+            )
+        val user = appUserRepository.findById(session.principal.appUserId).orElseThrow()
+        val account = chessAccountRepository.save(ChessAccount(user = user, platform = "CHESS_COM", username = subject))
+        val position = positionRepository.save(Position(hash = UUID.randomUUID().toString(), fen = "8/8/8/8/8/8/8/8 w - -"))
+        val analysis = EngineAnalysis(position = position, depth = 16, baselineEvalCp = 0, bestMove = "best", bestMoveEvalCp = 0)
+        (0 until 26).forEach { index ->
+            val game =
+                gameRepository.save(
+                    Game(
+                        chessAccount = account,
+                        platformGameId = "$subject-$index",
+                        pgn = """[Result "*"]""",
+                        result = "win",
+                        playedAt = Instant.parse("2026-09-01T12:00:00Z").plusSeconds(index.toLong()),
+                        whiteUsername = subject,
+                        blackUsername = "opponent",
+                    ),
+                )
+            occurrenceRepository.save(
+                PositionOccurrence(
+                    game = game,
+                    position = position,
+                    chessAccount = account,
+                    plyNumber = 1,
+                    movePlayed = "move-$index",
+                    playerColor = PlayerColor.WHITE.name,
+                ),
+            )
+            analysis.moveEvaluations.add(
+                MoveEvaluation(
+                    engineAnalysis = analysis,
+                    move = "move-$index",
+                    evalCp = 0,
+                    evalLossFromBest = if (index < 23) 0.34 else 0.29,
+                ),
+            )
+        }
+        engineAnalysisRepository.save(analysis)
+        val headers = HttpHeaders().apply { add(HttpHeaders.COOKIE, "CHESSECHO_SESSION=${session.rawSecret}") }
+
+        val response =
+            restTemplate.exchange(
+                "/api/positions/${position.id}/progress?playerColor=WHITE&minEvalLoss=0.3",
+                HttpMethod.GET,
+                HttpEntity<Void>(headers),
+                String::class.java,
+            )
+
+        assertEquals(HttpStatus.OK, response.statusCode)
+        val baseline = objectMapper.readTree(response.body)["baseline"]
+        assertEquals(26, baseline["sourceEncounterCount"].intValue())
+        assertEquals(88.461538, baseline["mistakeRate"].doubleValue(), 0.000001)
+    }
 
     @ParameterizedTest
     @EnumSource(value = PlayerColor::class, names = ["WHITE", "BLACK"])
@@ -276,7 +384,7 @@ class ProgressControllerIntegrationTest {
 
         val response =
             restTemplate.exchange(
-                "/api/positions/${position.id}/progress?playerColor=${color.name}",
+                "/api/positions/${position.id}/progress?playerColor=${color.name}&minEvalLoss=0.3",
                 HttpMethod.GET,
                 HttpEntity<Void>(headers),
                 String::class.java,
@@ -320,7 +428,10 @@ class ProgressControllerIntegrationTest {
         assertEquals(1, body["excludedUndatedEncounters"].intValue())
         assertEquals(expectedIntervalWinRate - 100.0, body["winRateChange"].doubleValue(), 0.000001)
         assertEquals(true, body["mistakeRateChange"].isNull)
-        assertEquals("Your performance at this position is stable.", body["assessment"].textValue())
+        assertEquals(
+            "Your mistake rate stayed the same, and your win rate has decreased.",
+            body["assessment"].textValue(),
+        )
     }
 
     @Test
@@ -329,12 +440,12 @@ class ProgressControllerIntegrationTest {
 
         val first =
             restTemplate.getForEntity(
-                "/api/positions/$positionId/progress?playerColor=WHITE",
+                "/api/positions/$positionId/progress?playerColor=WHITE&minEvalLoss=0.3",
                 String::class.java,
             )
         val repeated =
             restTemplate.getForEntity(
-                "/api/positions/$positionId/progress?playerColor=WHITE",
+                "/api/positions/$positionId/progress?playerColor=WHITE&minEvalLoss=0.3",
                 String::class.java,
             )
 

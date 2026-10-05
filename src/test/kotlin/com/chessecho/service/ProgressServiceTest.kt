@@ -48,6 +48,131 @@ class ProgressServiceTest {
     private val firstPlayedAt = Instant.parse("2026-09-01T12:00:00Z")
 
     @Test
+    fun `selected threshold classifies 23 of 26 dated encounters in baseline and interval`() {
+        val checkpointAt = firstPlayedAt.plusSeconds(2_000)
+        val encounters =
+            (0 until 52).map { index ->
+                occurrence(
+                    PlayerColor.WHITE,
+                    "win",
+                    index,
+                    playedAt = if (index < 26) firstPlayedAt.plusSeconds(index.toLong()) else checkpointAt.plusSeconds(index.toLong()),
+                )
+            }
+        stubOccurrences(PlayerColor.WHITE, encounters)
+        stubEvents(PlayerColor.WHITE, listOf(checkpoint(checkpointAt)))
+        val analysis = stubAnalysis()
+        encounters.forEachIndexed { index, encounter ->
+            analysis.moveEvaluations.add(
+                MoveEvaluation(
+                    engineAnalysis = analysis,
+                    move = encounter.movePlayed,
+                    evalCp = 0,
+                    evalLossFromBest = if (index % 26 < 23) 0.34 else 0.29,
+                ),
+            )
+        }
+
+        val response = service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.3)
+
+        assertEquals(26, response.baseline?.sourceEncounterCount)
+        assertEquals(88.461538, response.baseline!!.mistakeRate, 0.000001)
+        assertEquals(26, response.points.single().attempts)
+        assertEquals(88.461538, response.points.single().mistakeRate, 0.000001)
+    }
+
+    @ParameterizedTest
+    @CsvSource("0.3, 0.3, 100.0", "0.3, 0.299, 0.0", "0.8, 0.34, 0.0", "0.01, 0.01, 100.0")
+    fun `selected threshold includes equality and excludes lower losses`(
+        threshold: Double,
+        loss: Double,
+        expectedRate: Double,
+    ) {
+        stubOccurrences(PlayerColor.WHITE, listOf(occurrence(PlayerColor.WHITE, "win")))
+        val analysis = stubAnalysis()
+        analysis.moveEvaluations.add(
+            MoveEvaluation(engineAnalysis = analysis, move = "move-0", evalCp = -100, evalLossFromBest = loss),
+        )
+
+        val baseline = service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = threshold).baseline!!
+
+        assertEquals(1, baseline.sourceEncounterCount)
+        assertEquals(expectedRate, baseline.mistakeRate)
+    }
+
+    @ParameterizedTest
+    @CsvSource("50, 20, 100.0", "50, 21, 0.0", "50, 60, 0.0")
+    fun `missing direct loss uses Weaknesses best move fallback`(
+        bestCp: Int,
+        resultCp: Int,
+        expectedRate: Double,
+    ) {
+        stubOccurrences(PlayerColor.WHITE, listOf(occurrence(PlayerColor.WHITE, "win")))
+        val analysis = stubAnalysis(bestCp)
+        analysis.moveEvaluations.add(
+            MoveEvaluation(engineAnalysis = analysis, move = "move-0", evalCp = resultCp, evalLossFromBest = null),
+        )
+
+        val baseline = service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.3).baseline!!
+
+        assertEquals(1, baseline.sourceEncounterCount)
+        assertEquals(expectedRate, baseline.mistakeRate)
+    }
+
+    @Test
+    fun `unavailable evaluations remain attempts while undated mistakes are excluded`() {
+        val dated = (0..4).map { occurrence(PlayerColor.WHITE, "win", it) }
+        val undated = occurrence(PlayerColor.WHITE, "win", 5, playedAt = null)
+        stubOccurrences(PlayerColor.WHITE, dated + undated)
+        val analysis = stubAnalysis(null)
+        listOf(
+            Triple("move-0", null, 0.34),
+            Triple("move-1", null, null),
+            Triple("move-2", -100, null),
+            Triple("move-4", null, 0.0),
+            Triple("move-5", null, 1.0),
+        ).forEach { (move, evalCp, loss) ->
+            analysis.moveEvaluations.add(
+                MoveEvaluation(engineAnalysis = analysis, move = move, evalCp = evalCp, evalLossFromBest = loss),
+            )
+        }
+
+        val response = service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.3)
+
+        assertEquals(5, response.baseline?.sourceEncounterCount)
+        assertEquals(20.0, response.baseline?.mistakeRate)
+        assertEquals(1, response.excludedUndatedEncounters)
+    }
+
+    @Test
+    fun `missing analysis retains all dated encounters as non mistakes`() {
+        stubOccurrences(PlayerColor.WHITE, listOf(occurrence(PlayerColor.WHITE, "win")))
+
+        val baseline = service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.3).baseline!!
+
+        assertEquals(1, baseline.sourceEncounterCount)
+        assertEquals(0.0, baseline.mistakeRate)
+    }
+
+    @ParameterizedTest
+    @CsvSource(value = ["0, missing", "missing, -100", "missing, missing"], nullValues = ["missing"])
+    fun `fallback with either evaluation input missing does not count a mistake`(
+        bestCp: Int?,
+        resultCp: Int?,
+    ) {
+        stubOccurrences(PlayerColor.WHITE, listOf(occurrence(PlayerColor.WHITE, "win")))
+        val analysis = stubAnalysis(bestCp)
+        analysis.moveEvaluations.add(
+            MoveEvaluation(engineAnalysis = analysis, move = "move-0", evalCp = resultCp, evalLossFromBest = null),
+        )
+
+        val baseline = service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.3).baseline!!
+
+        assertEquals(1, baseline.sourceEncounterCount)
+        assertEquals(0.0, baseline.mistakeRate)
+    }
+
+    @Test
     fun `untrained dated history does not create interval observations`() {
         stubOccurrences(
             PlayerColor.WHITE,
@@ -57,7 +182,7 @@ class ProgressServiceTest {
             ),
         )
 
-        val response = service.getProgress(position.id, PlayerColor.WHITE, principal)
+        val response = service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.8)
 
         assertEquals(emptyList(), response.points)
         assertEquals(ProgressIntervalState.NO_CHECKPOINT, response.currentIntervalState)
@@ -90,7 +215,7 @@ class ProgressServiceTest {
         stubOccurrences(PlayerColor.WHITE, baseline + trained)
         stubEvents(PlayerColor.WHITE, listOf(solved))
 
-        val response = service.getProgress(position.id, PlayerColor.WHITE, principal)
+        val response = service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.8)
 
         assertEquals(20, response.baseline?.sourceEncounterCount)
         assertEquals(45.0, response.baseline?.winRate)
@@ -103,7 +228,7 @@ class ProgressServiceTest {
         val laterWin = occurrence(PlayerColor.WHITE, "win", index = 30, playedAt = checkpointAt.plusSeconds(2_000))
         stubOccurrences(PlayerColor.WHITE, baseline + trained + laterWin)
         stubEvents(PlayerColor.WHITE, listOf(solved))
-        val updated = service.getProgress(position.id, PlayerColor.WHITE, principal)
+        val updated = service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.8)
 
         assertEquals(1, updated.points.size)
         assertEquals(solved.id, updated.points.single().checkpointId)
@@ -164,7 +289,7 @@ class ProgressServiceTest {
         }
         whenever(analysisRepository.findByPositionIdWithMoveEvaluations(position.id)).thenReturn(analysis)
 
-        val response = service.getProgress(position.id, PlayerColor.WHITE, principal)
+        val response = service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.8)
 
         assertEquals(listOf(firstCheckpoint.id, secondCheckpoint.id), response.points.map { it.checkpointId })
         assertEquals(listOf(5, 5), response.points.map { it.attempts })
@@ -177,7 +302,10 @@ class ProgressServiceTest {
         )
         assertEquals(-60.0, response.mistakeRateChange)
         assertEquals(-60.0, response.winRateChange)
-        assertEquals("You are making fewer mistakes at this position.", response.assessment)
+        assertEquals(
+            "You are making fewer mistakes at this position, but your win rate has decreased.",
+            response.assessment,
+        )
     }
 
     @Test
@@ -195,7 +323,7 @@ class ProgressServiceTest {
         )
         stubEvents(PlayerColor.WHITE, listOf(later, earlier))
 
-        val response = service.getProgress(position.id, PlayerColor.WHITE, principal)
+        val response = service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.8)
 
         assertEquals(1, response.points.size)
         assertEquals(later.id, response.points.single().checkpointId)
@@ -210,7 +338,7 @@ class ProgressServiceTest {
         stubOccurrences(PlayerColor.WHITE, listOf(occurrence(PlayerColor.WHITE, "win")))
         stubEvents(PlayerColor.WHITE, listOf(firstCheckpoint, secondCheckpoint))
 
-        val response = service.getProgress(position.id, PlayerColor.WHITE, principal)
+        val response = service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.8)
 
         assertEquals(emptyList(), response.points)
         assertEquals(ProgressIntervalState.OPEN_AWAITING_EVIDENCE, response.currentIntervalState)
@@ -231,7 +359,7 @@ class ProgressServiceTest {
         )
         stubEvents(PlayerColor.WHITE, listOf(solved))
 
-        val response = service.getProgress(position.id, PlayerColor.WHITE, principal)
+        val response = service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.8)
 
         assertEquals(null, response.baseline)
         assertEquals(emptyList(), response.points)
@@ -249,7 +377,7 @@ class ProgressServiceTest {
             ),
         )
 
-        val response = service.getProgress(position.id, PlayerColor.WHITE, principal)
+        val response = service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.8)
 
         assertEquals(null, response.baseline)
         assertEquals(emptyList(), response.points)
@@ -282,7 +410,7 @@ class ProgressServiceTest {
             }
         stubOccurrences(PlayerColor.WHITE, repeatedOccurrences)
 
-        val response = service.getProgress(position.id, PlayerColor.WHITE, principal)
+        val response = service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.8)
 
         assertEquals(2, response.baseline?.sourceEncounterCount)
         assertEquals(100.0, response.baseline?.winRate)
@@ -314,7 +442,7 @@ class ProgressServiceTest {
         )
         whenever(analysisRepository.findByPositionIdWithMoveEvaluations(position.id)).thenReturn(analysis)
 
-        val initialResponse = service.getProgress(position.id, PlayerColor.WHITE, principal)
+        val initialResponse = service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.8)
 
         assertEquals(ProgressIntervalState.OPEN_AWAITING_EVIDENCE, initialResponse.currentIntervalState)
         assertEquals(listOf(firstCheckpoint.id), initialResponse.points.map { it.checkpointId })
@@ -323,7 +451,10 @@ class ProgressServiceTest {
         assertEquals(1, initialResponse.points.single().attempts)
         assertEquals(-100.0, initialResponse.mistakeRateChange)
         assertEquals(-100.0, initialResponse.winRateChange)
-        assertEquals("You are making fewer mistakes at this position.", initialResponse.assessment)
+        assertEquals(
+            "You are making fewer mistakes at this position, but your win rate has decreased.",
+            initialResponse.assessment,
+        )
 
         val earlierBaseline = occurrence(PlayerColor.WHITE, "resigned", 2, playedAt = firstPlayedAt.plusSeconds(50))
         val earlierClosed = occurrence(PlayerColor.WHITE, "win", 3, playedAt = firstPlayedAt.plusSeconds(150))
@@ -332,7 +463,7 @@ class ProgressServiceTest {
         stubOccurrences(PlayerColor.WHITE, extendedOccurrences)
         stubEvents(PlayerColor.WHITE, listOf(firstCheckpoint, secondCheckpoint))
 
-        val lateImportResponse = service.getProgress(position.id, PlayerColor.WHITE, principal)
+        val lateImportResponse = service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.8)
 
         assertEquals(2, lateImportResponse.baseline?.sourceEncounterCount)
         assertEquals(earlierBaseline.game.playedAt, lateImportResponse.baseline?.occurredAt)
@@ -343,8 +474,8 @@ class ProgressServiceTest {
         val openOccurrence = occurrence(PlayerColor.WHITE, "win", 5, playedAt = firstPlayedAt.plusSeconds(350))
         stubOccurrences(PlayerColor.WHITE, extendedOccurrences + openOccurrence)
         stubEvents(PlayerColor.WHITE, listOf(firstCheckpoint, secondCheckpoint))
-        val completedOpenIntervalResponse = service.getProgress(position.id, PlayerColor.WHITE, principal)
-        val repeatedResponse = service.getProgress(position.id, PlayerColor.WHITE, principal)
+        val completedOpenIntervalResponse = service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.8)
+        val repeatedResponse = service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.8)
 
         assertEquals(ProgressIntervalState.MEASURED_OPEN, completedOpenIntervalResponse.currentIntervalState)
         assertEquals(listOf(false, true), completedOpenIntervalResponse.points.map { it.open })
@@ -357,7 +488,7 @@ class ProgressServiceTest {
             allOccurrences.sortedBy { it.game.playedAt },
         )
         stubEvents(PlayerColor.WHITE, listOf(firstCheckpoint, secondCheckpoint))
-        assertEquals(completedOpenIntervalResponse, service.getProgress(position.id, PlayerColor.WHITE, principal))
+        assertEquals(completedOpenIntervalResponse, service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.8))
     }
 
     @Test
@@ -367,7 +498,7 @@ class ProgressServiceTest {
         stubOccurrences(PlayerColor.WHITE, listOf(latestExisting))
         stubEvents(PlayerColor.WHITE, listOf(solved))
 
-        val initialResponse = service.getProgress(position.id, PlayerColor.WHITE, principal)
+        val initialResponse = service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.8)
 
         assertEquals(1, initialResponse.points.single().attempts)
         assertEquals(100.0, initialResponse.points.single().winRate)
@@ -377,7 +508,7 @@ class ProgressServiceTest {
         stubOccurrences(PlayerColor.WHITE, listOf(latestExisting, olderLateImport))
         stubEvents(PlayerColor.WHITE, listOf(solved))
 
-        val updatedResponse = service.getProgress(position.id, PlayerColor.WHITE, principal)
+        val updatedResponse = service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.8)
 
         assertEquals(2, updatedResponse.points.single().attempts)
         assertEquals(50.0, updatedResponse.points.single().winRate)
@@ -393,7 +524,7 @@ class ProgressServiceTest {
         )
         stubEvents(PlayerColor.WHITE, listOf(solved))
 
-        val response = service.getProgress(position.id, PlayerColor.WHITE, principal)
+        val response = service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.8)
 
         assertEquals(null, response.baseline)
         assertEquals(null, response.winRateChange)
@@ -413,11 +544,11 @@ class ProgressServiceTest {
         )
         stubEvents(PlayerColor.WHITE, listOf(solved))
 
-        val response = service.getProgress(position.id, PlayerColor.WHITE, principal)
+        val response = service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.8)
 
         assertEquals(0.0, response.baseline?.mistakeRate)
         assertEquals(null, response.mistakeRateChange)
-        assertEquals("Your performance at this position is stable.", response.assessment)
+        assertEquals("Your mistake rate and win rate stayed the same.", response.assessment)
     }
 
     @Test
@@ -447,12 +578,96 @@ class ProgressServiceTest {
         }
         whenever(analysisRepository.findByPositionIdWithMoveEvaluations(position.id)).thenReturn(analysis)
 
-        val response = service.getProgress(position.id, PlayerColor.WHITE, principal)
+        val response = service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.8)
 
         assertEquals(50.0, response.baseline?.mistakeRate)
         assertEquals(100.0, response.points.single().mistakeRate)
         assertEquals(100.0, response.mistakeRateChange)
-        assertEquals("You are making more mistakes at this position.", response.assessment)
+        assertEquals(
+            "You are making more mistakes at this position, and your win rate stayed the same.",
+            response.assessment,
+        )
+    }
+
+    @Test
+    fun `assessment joins opposite rate directions with and`() {
+        val response =
+            assessedResponse(
+                baseline = listOf(true to true, false to false),
+                latest = listOf(false to true, false to true),
+            )
+
+        assertEquals(
+            "You are making fewer mistakes at this position, and your win rate has increased.",
+            response.assessment,
+        )
+    }
+
+    @Test
+    fun `assessment joins mistake increase and win rate decrease with and`() {
+        val response =
+            assessedResponse(
+                baseline = listOf(false to true, false to true),
+                latest = listOf(true to false, true to false),
+            )
+
+        assertEquals(
+            "You are making more mistakes at this position, and your win rate has decreased.",
+            response.assessment,
+        )
+    }
+
+    @Test
+    fun `assessment joins same-direction rate increases with but`() {
+        val response =
+            assessedResponse(
+                baseline = listOf(true to false, false to true),
+                latest = listOf(true to true, true to true),
+            )
+
+        assertEquals(
+            "You are making more mistakes at this position, but your win rate has increased.",
+            response.assessment,
+        )
+    }
+
+    @Test
+    fun `assessment joins same-direction rate decreases with but`() {
+        val response =
+            assessedResponse(
+                baseline = listOf(true to true, true to true),
+                latest = listOf(false to false, false to false),
+            )
+
+        assertEquals(
+            "You are making fewer mistakes at this position, but your win rate has decreased.",
+            response.assessment,
+        )
+    }
+
+    @Test
+    fun `assessment reports one unchanged rate with and`() {
+        val response =
+            assessedResponse(
+                baseline = listOf(true to true, false to false),
+                latest = listOf(true to true, false to true),
+            )
+
+        assertEquals(
+            "Your mistake rate stayed the same, and your win rate has increased.",
+            response.assessment,
+        )
+    }
+
+    @Test
+    fun `assessment reports both unchanged rates`() {
+        val response =
+            assessedResponse(
+                baseline = listOf(true to true, false to false),
+                latest = listOf(true to true, false to false),
+            )
+
+        assertEquals("Your mistake rate and win rate stayed the same.", response.assessment)
     }
 
     @Test
@@ -474,7 +689,7 @@ class ProgressServiceTest {
         )
         stubEvents(PlayerColor.WHITE, otherEvents + solved)
 
-        val response = service.getProgress(position.id, PlayerColor.WHITE, principal)
+        val response = service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.8)
 
         assertEquals(listOf(solved.id), response.points.map { it.checkpointId })
         assertEquals(1, response.points.single().attempts)
@@ -496,7 +711,7 @@ class ProgressServiceTest {
         expectedRate: Double,
     ) {
         stubOccurrences(color, listOf(occurrence(color, sourceResult)))
-        val response = service.getProgress(position.id, color, principal)
+        val response = service.getProgress(position.id, color, principal, minEvalLoss = 0.8)
 
         assertEquals(emptyList(), response.points)
         assertEquals(1, response.baseline?.sourceEncounterCount)
@@ -514,7 +729,7 @@ class ProgressServiceTest {
         val analysis = EngineAnalysis(position = position, depth = 16, baselineEvalCp = 0, bestMove = "best", bestMoveEvalCp = 0)
         analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "move-0", evalCp = -100, evalLossFromBest = 0.8))
         whenever(analysisRepository.findByPositionIdWithMoveEvaluations(position.id)).thenReturn(analysis)
-        val response = service.getProgress(position.id, color, principal)
+        val response = service.getProgress(position.id, color, principal, minEvalLoss = 0.8)
 
         assertEquals(emptyList(), response.points)
         assertEquals(3, response.baseline?.sourceEncounterCount)
@@ -534,7 +749,7 @@ class ProgressServiceTest {
             listOf(occurrence(PlayerColor.BLACK, "unknown", pgn = """[Result "0-1"]""")),
         )
 
-        val baseline = service.getProgress(position.id, PlayerColor.BLACK, principal).baseline
+        val baseline = service.getProgress(position.id, PlayerColor.BLACK, principal, minEvalLoss = 0.8).baseline
 
         assertEquals(1, baseline?.sourceEncounterCount)
         assertEquals(100.0, baseline?.winRate)
@@ -550,7 +765,7 @@ class ProgressServiceTest {
             ),
         )
 
-        val baseline = service.getProgress(position.id, PlayerColor.WHITE, principal).baseline
+        val baseline = service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.8).baseline
 
         assertEquals(2, baseline?.sourceEncounterCount)
         assertEquals(50.0, baseline?.winRate)
@@ -561,9 +776,59 @@ class ProgressServiceTest {
         whenever(accountRepository.findAllByUserIdOrderByCreatedAtAsc(user.id)).thenReturn(emptyList())
 
         assertFailsWith<AccountNotFoundException> {
-            service.getProgress(position.id, PlayerColor.WHITE, principal)
+            service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.8)
         }
         verify(accountRepository).findAllByUserIdOrderByCreatedAtAsc(user.id)
+    }
+
+    private fun stubAnalysis(bestMoveEvalCp: Int? = 0): EngineAnalysis {
+        val analysis =
+            EngineAnalysis(
+                position = position,
+                depth = 16,
+                baselineEvalCp = 0,
+                bestMove = "best",
+                bestMoveEvalCp = bestMoveEvalCp,
+            )
+        whenever(analysisRepository.findByPositionIdWithMoveEvaluations(position.id)).thenReturn(analysis)
+        return analysis
+    }
+
+    private fun assessedResponse(
+        baseline: List<Pair<Boolean, Boolean>>,
+        latest: List<Pair<Boolean, Boolean>>,
+    ): com.chessecho.dto.ProgressResponse {
+        val checkpointAt = firstPlayedAt.plusSeconds(baseline.size * 60L)
+        val facts = baseline + latest
+        val occurrences =
+            facts.mapIndexed { index, (isMistake, isWin) ->
+                val playedAt =
+                    if (index < baseline.size) {
+                        firstPlayedAt.plusSeconds(index * 60L)
+                    } else {
+                        checkpointAt.plusSeconds((index - baseline.size + 1) * 60L)
+                    }
+                occurrence(
+                    PlayerColor.WHITE,
+                    if (isWin) "win" else "resigned",
+                    index = index,
+                    playedAt = playedAt,
+                )
+            }
+        stubOccurrences(PlayerColor.WHITE, occurrences)
+        stubEvents(PlayerColor.WHITE, listOf(checkpoint(checkpointAt)))
+        val analysis = stubAnalysis()
+        facts.forEachIndexed { index, (isMistake, _) ->
+            analysis.moveEvaluations.add(
+                MoveEvaluation(
+                    engineAnalysis = analysis,
+                    move = "move-$index",
+                    evalCp = 0,
+                    evalLossFromBest = if (isMistake) 0.8 else 0.0,
+                ),
+            )
+        }
+        return service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.3)
     }
 
     private fun stubOccurrences(

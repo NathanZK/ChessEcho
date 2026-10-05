@@ -29,7 +29,10 @@ class ProgressService(
         positionId: UUID,
         playerColor: PlayerColor,
         principal: AuthenticatedPrincipal,
+        minEvalLoss: Double,
     ): ProgressResponse {
+        require(minEvalLoss.isFinite() && minEvalLoss > 0.0) { "minEvalLoss must be positive and finite" }
+
         val account =
             chessAccountRepository.findAllByUserIdOrderByCreatedAtAsc(principal.appUserId)
                 .firstOrNull { account ->
@@ -73,7 +76,7 @@ class ProgressService(
             }
 
             val occurrence = datedOccurrence.occurrence
-            val loss = evaluations[occurrence.movePlayed]?.evalLossFromBest ?: 0.0
+            val loss = evaluations[occurrence.movePlayed]?.weaknessEvaluationLoss(analysis?.bestMoveEvalCp)
             val won =
                 gameOutcomeNormalizer.normalize(
                     occurrence.game,
@@ -86,7 +89,7 @@ class ProgressService(
                 } else {
                     intervalAccumulators[latestCheckpointIndex].accumulator
                 }
-            accumulator.add(datedOccurrence.playedAt, loss >= MISTAKE_THRESHOLD, won)
+            accumulator.add(datedOccurrence.playedAt, loss != null && loss.isFinite() && loss >= minEvalLoss, won)
         }
 
         val baseline = baselineAccumulator.toBaseline()
@@ -100,14 +103,7 @@ class ProgressService(
         val latestMeasured = intervalAccumulators.lastOrNull { it.accumulator.attempts > 0 }?.accumulator
         val mistakeChange = relativeChange(baseline?.mistakeRate, latestMeasured?.mistakeRate())
         val winChange = relativeChange(baseline?.winRate, latestMeasured?.winRate())
-        val assessment =
-            when {
-                baseline == null || latestMeasured == null ->
-                    "More played encounters are needed to assess progress."
-                mistakeChange != null && mistakeChange < 0 -> "You are making fewer mistakes at this position."
-                mistakeChange != null && mistakeChange > 0 -> "You are making more mistakes at this position."
-                else -> "Your performance at this position is stable."
-            }
+        val assessment = assessment(baseline, latestMeasured)
         val currentIntervalState =
             when {
                 checkpoints.isEmpty() -> ProgressIntervalState.NO_CHECKPOINT
@@ -137,6 +133,37 @@ class ProgressService(
         } else {
             (measuredRate - baselineRate) / baselineRate * 100
         }
+
+    private fun assessment(
+        baseline: ProgressBaseline?,
+        latestMeasured: Accumulator?,
+    ): String {
+        if (baseline == null || latestMeasured == null) {
+            return "More played encounters are needed to assess progress."
+        }
+
+        val mistakeTrend = latestMeasured.mistakeRate().compareTo(baseline.mistakeRate)
+        val winTrend = latestMeasured.winRate().compareTo(baseline.winRate)
+        if (mistakeTrend == 0 && winTrend == 0) {
+            return "Your mistake rate and win rate stayed the same."
+        }
+
+        val mistakeClause =
+            when {
+                mistakeTrend < 0 -> "You are making fewer mistakes at this position"
+                mistakeTrend > 0 -> "You are making more mistakes at this position"
+                else -> "Your mistake rate stayed the same"
+            }
+        val winClause =
+            when {
+                winTrend > 0 -> "your win rate has increased"
+                winTrend < 0 -> "your win rate has decreased"
+                else -> "your win rate stayed the same"
+            }
+        val conjunction = if (mistakeTrend == 0 || winTrend == 0 || mistakeTrend != winTrend) "and" else "but"
+
+        return "$mistakeClause, $conjunction $winClause."
+    }
 
     private data class Checkpoint(val id: UUID, val occurredAt: Instant)
 
@@ -191,9 +218,5 @@ class ProgressService(
                     open = open,
                 )
             }
-    }
-
-    private companion object {
-        const val MISTAKE_THRESHOLD = 0.8
     }
 }

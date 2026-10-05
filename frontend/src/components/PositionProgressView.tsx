@@ -5,6 +5,7 @@ import { ArrowLeft, RefreshCw } from 'lucide-react';
 import {
   fetchPositionProgress,
   type PositionProgressBaseline,
+  type PositionProgressPoint,
   type PositionProgressResponse,
   type ProgressIntervalState,
   type SessionState,
@@ -13,6 +14,7 @@ import {
 interface PositionProgressViewProps {
   positionId: string;
   playerColor: 'WHITE' | 'BLACK';
+  minEvalLoss: number;
   sessionStatus: SessionState['status'];
   onBack: () => void;
 }
@@ -27,14 +29,14 @@ function changeText(value: number | null): string {
   return `${value > 0 ? '+' : ''}${value}%`;
 }
 
-function intervalStateText(state: ProgressIntervalState): string {
+function intervalStateText(state: ProgressIntervalState): string | null {
   switch (state) {
     case 'NO_CHECKPOINT':
       return 'No solved puzzle checkpoint yet.';
     case 'OPEN_AWAITING_EVIDENCE':
       return 'Waiting for a dated game after the latest solve.';
     case 'MEASURED_OPEN':
-      return 'Current interval is open.';
+      return null;
   }
 }
 
@@ -67,6 +69,53 @@ function BaselineSummary({ baseline }: { baseline: PositionProgressBaseline | nu
         </>
       )}
     </div>
+  );
+}
+
+function LatestIntervalSummary({ point }: { point: PositionProgressPoint | null }) {
+  return (
+    <section
+      aria-labelledby="latest-interval-heading"
+      className="rounded-xl border border-slate-800 bg-slate-900 p-5"
+    >
+      <h2
+        id="latest-interval-heading"
+        className="text-sm font-semibold uppercase tracking-wide text-slate-300"
+      >
+        Latest measured interval
+      </h2>
+      {point === null ? (
+        <p className="mt-2 text-sm text-slate-400">No measured interval data yet.</p>
+      ) : (
+        <>
+          <dl className="mt-3 grid grid-cols-2 gap-3 text-sm">
+            <div>
+              <dt className="text-slate-400">Mistake rate</dt>
+              <dd className="mt-1 font-semibold text-white">{formatRate(point.mistakeRate)}</dd>
+            </div>
+            <div>
+              <dt className="text-slate-400">Win rate</dt>
+              <dd className="mt-1 font-semibold text-white">{formatRate(point.winRate)}</dd>
+            </div>
+            <div>
+              <dt className="text-slate-400">Attempts</dt>
+              <dd className="mt-1 font-semibold text-white">
+                {point.attempts} {point.attempts === 1 ? 'attempt' : 'attempts'}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-slate-400">Interval status</dt>
+              <dd className="mt-1 font-semibold text-white">
+                {point.open ? 'Open interval' : 'Closed interval'}
+              </dd>
+            </div>
+          </dl>
+          <p className="mt-3 text-xs text-slate-500">
+            Latest included game: {new Date(point.occurredAt).toLocaleDateString()}
+          </p>
+        </>
+      )}
+    </section>
   );
 }
 
@@ -157,8 +206,8 @@ function ProgressChart({ progress }: { progress: PositionProgressResponse }) {
                 fill="#34d399"
               >
                 <title>
-                  {point.open ? 'Open' : 'Closed'} interval, {point.attempts} encounters,{' '}
-                  {new Date(point.occurredAt).toLocaleDateString()}: mistake rate {point.mistakeRate}%
+                  {point.attempts} encounters, {new Date(point.occurredAt).toLocaleDateString()}:
+                  mistake rate {point.mistakeRate}%
                 </title>
               </circle>
               <circle
@@ -169,8 +218,8 @@ function ProgressChart({ progress }: { progress: PositionProgressResponse }) {
                 fill="#38bdf8"
               >
                 <title>
-                  {point.open ? 'Open' : 'Closed'} interval, {point.attempts} encounters,{' '}
-                  {new Date(point.occurredAt).toLocaleDateString()}: win rate {point.winRate}%
+                  {point.attempts} encounters, {new Date(point.occurredAt).toLocaleDateString()}:
+                  win rate {point.winRate}%
                 </title>
               </circle>
             </g>
@@ -185,14 +234,19 @@ function ProgressChart({ progress }: { progress: PositionProgressResponse }) {
           </text>
         )}
       </svg>
-      <ul className="mt-2 flex flex-wrap gap-2 text-xs text-slate-300" aria-label="Interval lifecycle">
-        {points.map((point) => (
+      <p className="mt-2 text-xs text-slate-400">Each label below corresponds to one point in the chart.</p>
+      <ul
+        className="mt-2 flex flex-wrap gap-2 text-xs text-slate-300"
+        aria-label="Measured intervals shown in chart"
+      >
+        {points.map((point, index) => (
           <li
             key={point.checkpointId}
             className="rounded-full border border-slate-700 px-3 py-1"
-            data-testid={`progress-interval-status-${point.checkpointId}`}
+            data-testid={`progress-interval-label-${point.checkpointId}`}
           >
-            {point.open ? 'Open interval' : 'Closed interval'} · {point.attempts} encounters
+            Interval {index + 1} · {point.attempts} encounters ·{' '}
+            {new Date(point.occurredAt).toLocaleDateString()}
           </li>
         ))}
       </ul>
@@ -207,20 +261,25 @@ function ProgressChart({ progress }: { progress: PositionProgressResponse }) {
 export function PositionProgressView({
   positionId,
   playerColor,
+  minEvalLoss,
   sessionStatus,
   onBack,
 }: PositionProgressViewProps) {
   const [loadState, setLoadState] = useState<LoadState | null>(null);
   const [retryToken, setRetryToken] = useState(0);
-  const requestKey = `${positionId}:${playerColor}`;
+  const requestKey = `${positionId}:${playerColor}:${minEvalLoss}`;
   const visibleLoadState =
     loadState?.requestKey === requestKey ? loadState : { status: 'loading' as const };
+  const intervalStateMessage =
+    visibleLoadState.status === 'loaded'
+      ? intervalStateText(visibleLoadState.progress.currentIntervalState)
+      : null;
 
   useEffect(() => {
     if (sessionStatus !== 'authenticated') return;
 
     let isCurrentRequest = true;
-    fetchPositionProgress(positionId, playerColor)
+    fetchPositionProgress(positionId, playerColor, minEvalLoss)
       .then((progress) => {
         if (isCurrentRequest) setLoadState({ requestKey, status: 'loaded', progress });
       })
@@ -231,7 +290,7 @@ export function PositionProgressView({
     return () => {
       isCurrentRequest = false;
     };
-  }, [positionId, playerColor, requestKey, retryToken, sessionStatus]);
+  }, [positionId, playerColor, minEvalLoss, requestKey, retryToken, sessionStatus]);
 
   return (
     <section className="mx-auto w-full max-w-5xl px-4 py-6 lg:px-8" aria-labelledby="progress-heading">
@@ -312,14 +371,21 @@ export function PositionProgressView({
             <p className="mt-2 text-slate-100">{visibleLoadState.progress.assessment}</p>
           </div>
 
-          <p
-            className="rounded-lg border border-slate-800 bg-slate-900/70 p-4 text-sm text-slate-300"
-            data-testid="progress-current-interval-state"
-          >
-            {intervalStateText(visibleLoadState.progress.currentIntervalState)}
-          </p>
+          {intervalStateMessage !== null && (
+            <p
+              className="rounded-lg border border-slate-800 bg-slate-900/70 p-4 text-sm text-slate-300"
+              data-testid="progress-current-interval-state"
+            >
+              {intervalStateMessage}
+            </p>
+          )}
 
-          <BaselineSummary baseline={visibleLoadState.progress.baseline} />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <BaselineSummary baseline={visibleLoadState.progress.baseline} />
+            <LatestIntervalSummary
+              point={visibleLoadState.progress.points.at(-1) ?? null}
+            />
+          </div>
 
           {visibleLoadState.progress.excludedUndatedEncounters > 0 && (
             <p className="rounded-lg border border-amber-900/60 bg-amber-950/20 p-4 text-sm text-amber-200">

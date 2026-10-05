@@ -1,8 +1,8 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Home from '../app/page';
 import type { AccountSummary, PositionProgressResponse, WeaknessResponse } from '../services/api';
-import { activeTabStore } from '../utils/browserStores';
+import { activeTabStore, puzzleSettingsStore } from '../utils/browserStores';
 
 const mocks = vi.hoisted(() => ({
   fetchCurrentSession: vi.fn(),
@@ -105,6 +105,7 @@ describe('Weakness progress navigation', () => {
   });
 
   it('opens the selected weakness progress with its FEN color and returns to the library', async () => {
+    localStorage.setItem('chessecho_min_eval_loss', '0.3');
     render(<Home />);
 
     await screen.findByText('Recurring Opening Weaknesses Library');
@@ -112,11 +113,39 @@ describe('Weakness progress navigation', () => {
 
     expect(await screen.findByRole('heading', { name: 'Position Progress' })).toBeInTheDocument();
     await waitFor(() => {
-      expect(mocks.fetchPositionProgress).toHaveBeenCalledWith('position-451', 'BLACK');
+      expect(mocks.fetchPositionProgress).toHaveBeenCalledWith('position-451', 'BLACK', 0.3);
     });
     expect(screen.getByText(progress.assessment)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /back to weaknesses/i }));
     expect(await screen.findByText('Recurring Opening Weaknesses Library')).toBeInTheDocument();
+  });
+
+  it('freezes the selected threshold across global filter changes and uses the next result threshold on reselection', async () => {
+    localStorage.setItem('chessecho_min_eval_loss', '0.3');
+    mocks.fetchPositionProgress.mockRejectedValueOnce(new Error('Unavailable'));
+    render(<Home />);
+
+    fireEvent.click(await screen.findByRole('button', { name: /view progress/i }));
+    await screen.findByText(/couldn't load position progress/i);
+    expect(mocks.fetchPositionProgress).toHaveBeenLastCalledWith(weakness.positionId, 'BLACK', 0.3);
+
+    act(() => {
+      puzzleSettingsStore.set({ ...puzzleSettingsStore.getSnapshot(), minEvalLoss: 1.2 });
+    });
+    expect(mocks.fetchPositionProgress).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: /retry/i }));
+    await screen.findByText(progress.assessment);
+    expect(mocks.fetchPositionProgress).toHaveBeenLastCalledWith(weakness.positionId, 'BLACK', 0.3);
+
+    fireEvent.click(screen.getByRole('button', { name: /back to weaknesses/i }));
+    await screen.findByRole('button', { name: /view progress/i });
+    fireEvent.change(screen.getAllByRole('combobox')[0], { target: { value: '0.5' } });
+    await waitFor(() => {
+      expect(mocks.fetchWeaknesses).toHaveBeenLastCalledWith(account.id, 'CHESS_COM', 'BOTH', 0.5, 3, 0, 20);
+    });
+    fireEvent.click(await screen.findByRole('button', { name: /view progress/i }));
+    await screen.findByText(progress.assessment);
+    expect(mocks.fetchPositionProgress).toHaveBeenLastCalledWith(weakness.positionId, 'BLACK', 0.5);
   });
 });

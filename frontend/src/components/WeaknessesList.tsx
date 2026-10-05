@@ -63,7 +63,7 @@ interface WeaknessesListProps {
   minMistakeCount?: number;
   onMinMistakeCountChange?: (val: number) => void;
   onSelectPractice: (puzzle: Puzzle, fullList?: Puzzle[]) => void;
-  onViewProgress?: (positionId: string, playerColor: 'WHITE' | 'BLACK') => void;
+  onViewProgress?: (positionId: string, playerColor: 'WHITE' | 'BLACK', minEvalLoss: number) => void;
   onWeaknessCountChange?: (count: number) => void;
   activeColorFilter?: 'ALL' | 'WHITE' | 'BLACK';
   onColorFilterChange?: (color: 'ALL' | 'WHITE' | 'BLACK') => void;
@@ -97,7 +97,11 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
     setColorFilter(activeColorFilter);
   }
 
-  const [weaknesses, setWeaknesses] = useState<WeaknessResponse[]>([]);
+  const [weaknessResult, setWeaknessResult] = useState<{
+    rows: WeaknessResponse[];
+    minEvalLoss: number;
+  }>({ rows: [], minEvalLoss });
+  const weaknesses = weaknessResult.rows;
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -169,7 +173,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
   ) {
     setTrackedWeaknessQuery({ selector, colorFilter, minMistakeCount, minEvalLoss, refreshKey });
     if (!selector) {
-      setWeaknesses([]);
+      setWeaknessResult({ rows: [], minEvalLoss });
       setIsLoading(false);
       setIsLoadingMore(false);
       setError(null);
@@ -189,6 +193,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
 
     async function loadInitialWeaknesses() {
       const seq = ++loadSeqRef.current;
+      const requestMinEvalLoss = minEvalLoss;
       setIsLoading(true);
       setError(null);
       setLoadMoreError(false);
@@ -201,19 +206,19 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
           requestSelector,
           'CHESS_COM',
           backendColor,
-          minEvalLoss,
+          requestMinEvalLoss,
           minMistakeCount,
           0,
           PAGE_SIZE
         );
         if (seq !== loadSeqRef.current) return;
-        setWeaknesses(data);
+        setWeaknessResult({ rows: data, minEvalLoss: requestMinEvalLoss });
         setHasMore(data.length === PAGE_SIZE);
       } catch (err) {
         if (seq !== loadSeqRef.current) return;
         console.error('Failed to fetch weaknesses:', err);
         setError("We couldn't load your weaknesses. Please try again.");
-        setWeaknesses([]);
+        setWeaknessResult({ rows: [], minEvalLoss: requestMinEvalLoss });
         setHasMore(false);
       } finally {
         if (seq === loadSeqRef.current) {
@@ -238,6 +243,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
     if (loadMoreError && !isRetry) return;
 
     const seq = ++loadSeqRef.current;
+    const requestMinEvalLoss = minEvalLoss;
     isFetchingRef.current = true;
     setIsLoadingMore(true);
     if (loadMoreError) setLoadMoreError(false);
@@ -248,7 +254,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
         selector,
         'CHESS_COM',
         backendColor,
-        minEvalLoss,
+        requestMinEvalLoss,
         minMistakeCount,
         nextPage,
         PAGE_SIZE
@@ -257,10 +263,10 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
       if (seq !== loadSeqRef.current) return;
 
       if (data && data.length > 0) {
-        setWeaknesses((prev) => {
-          const existingIds = new Set(prev.map((w) => w.positionId));
+        setWeaknessResult((prev) => {
+          const existingIds = new Set(prev.rows.map((w) => w.positionId));
           const newItems = data.filter((w) => !existingIds.has(w.positionId));
-          return [...prev, ...newItems];
+          return { rows: [...prev.rows, ...newItems], minEvalLoss: requestMinEvalLoss };
         });
         setPage(nextPage);
         setHasMore(data.length === PAGE_SIZE);
@@ -583,7 +589,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                       {onViewProgress && (
                         <button
                           type="button"
-                          onClick={() => onViewProgress(item.positionId, playerColor)}
+                          onClick={() => onViewProgress(item.positionId, playerColor, weaknessResult.minEvalLoss)}
                           className="flex items-center gap-1.5 rounded-xl border border-slate-700 px-3 py-2 text-xs font-bold text-slate-200 transition hover:border-emerald-500/50 hover:text-emerald-300"
                         >
                           <TrendingUp className="h-3.5 w-3.5" />

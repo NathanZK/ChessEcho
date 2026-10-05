@@ -15,6 +15,7 @@ import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.MethodArgumentNotValidException
+import org.springframework.web.bind.MissingServletRequestParameterException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException
@@ -108,6 +109,12 @@ class GlobalExceptionHandler {
             .badRequest()
             .body(ErrorResponse(error = "VALIDATION_ERROR", details = listOf(detail)))
     }
+
+    @ExceptionHandler(MissingServletRequestParameterException::class)
+    fun handleMissingParameter(ex: MissingServletRequestParameterException): ResponseEntity<ErrorResponse> =
+        ResponseEntity
+            .badRequest()
+            .body(ErrorResponse(error = "VALIDATION_ERROR", details = listOf(ex.message ?: "Missing required request parameter")))
 
     @ExceptionHandler(org.springframework.http.converter.HttpMessageNotReadableException::class)
     fun handleHttpMessageNotReadable(
