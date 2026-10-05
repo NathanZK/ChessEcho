@@ -4,7 +4,9 @@ import React, { useState, useSyncExternalStore } from 'react';
 import { Header, TabType } from '@/components/Header';
 import { EvalBar } from '@/components/EvalBar';
 import { ChessBoardArea } from '@/components/ChessBoardArea';
-import { BlinfoldContinuationPanel } from '@/components/BlinfoldContinuationPanel';
+import { BlinfoldBoardWrapper } from '@/components/BlinfoldBoardWrapper';
+import { NotationExchangeUI } from '@/components/NotationExchangeUI';
+import { useBlindfoldSession } from '@/hooks/useBlindfoldSession';
 import { PuzzleFeedbackPanel, type ChallengeSubmissionResult } from '@/components/PuzzleFeedbackPanel';
 import { WeaknessesList } from '@/components/WeaknessesList';
 import { PositionProgressView } from '@/components/PositionProgressView';
@@ -456,11 +458,25 @@ export default function Home() {
     };
   }, [activePuzzle, timerMode, timerAllowedMs, submitTimerAttempt]);
 
+  const requestBlindfoldChessEchoMove = React.useCallback(async (fen: string) => {
+    const response = await fetchPuzzleContinuation(fen, 'ENGINE');
+    return response?.candidates[0]?.move ?? null;
+  }, []);
+  const blindfold = useBlindfoldSession(requestBlindfoldChessEchoMove);
+  const isBlindfoldActive = blindfold.state !== null;
+  const isBlindfoldActiveRef = React.useRef(isBlindfoldActive);
+  const exitBlindfoldRef = React.useRef(blindfold.exit);
+  React.useLayoutEffect(() => {
+    isBlindfoldActiveRef.current = isBlindfoldActive;
+    exitBlindfoldRef.current = blindfold.exit;
+  });
+
   // Flip board keyboard shortcut (x / X)
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target as HTMLElement)?.isContentEditable) return;
+      if (isBlindfoldActiveRef.current) return;
       if (e.key === 'x' || e.key === 'X') {
         setIsBoardFlipped((prev) => !prev);
       }
@@ -535,7 +551,7 @@ export default function Home() {
 
   // Continuation & Line Exploration turn-based state machine
   const [isExplorationActive, setIsExplorationActive] = useState<boolean>(false);
-  const [isBlindfoldMode, setIsBlindfoldMode] = useState<boolean>(false);
+  const [isMoveEvaluationPending, setIsMoveEvaluationPending] = useState<boolean>(false);
   const [explorationPlayMode, setExplorationPlayMode] = useState<ExplorationPlayMode | undefined>(undefined);
   const [explorationDecisionMove, setExplorationDecisionMove] = useState<string | null>(null);
   const [unacceptableMoveMessage, setUnacceptableMoveMessage] = useState<string | null>(null);
@@ -820,6 +836,21 @@ export default function Home() {
     setRequestedContinuationFen(undefined);
   };
 
+  const puzzleBoardOrientation: 'white' | 'black' =
+    (activePuzzle?.playerColor === 'WHITE') !== isBoardFlipped ? 'white' : 'black';
+
+  const isPuzzleBoardUnsettled =
+    continuation.loading ||
+    !!requestedContinuationFen ||
+    !!pendingContinuationCandidate ||
+    !!alternativeContinuationToApply ||
+    isMoveEvaluationPending;
+
+  const handleEnterBlindfold = () => {
+    if (!activePuzzle || isPuzzleBoardUnsettled) return;
+    blindfold.start(currentBoardFen || activePuzzle.fen, activePuzzle.playerColor);
+  };
+
   const handleEnterExploration = (
     initialMode?: ExplorationPlayMode,
     decisionMove?: string
@@ -896,6 +927,7 @@ export default function Home() {
     setHintSquare(undefined);
     setIsEvalUnknown(false);
     setCurrentBoardFen(puzzle.fen);
+    exitBlindfoldRef.current();
     setPendingContinuationCandidate(null);
     setRequestedContinuationFen(undefined);
     setIsExplorationActive(false);
@@ -1709,27 +1741,7 @@ export default function Home() {
                   </button>
                 </div>
               ) : (
-              <>
-                <div className="flex w-full items-center justify-end">
-                  <button
-                    type="button"
-                    onClick={() => setIsBlindfoldMode((value) => !value)}
-                    className="rounded-lg border border-emerald-700/60 px-3 py-2 text-xs font-bold text-emerald-300 hover:bg-emerald-950/40"
-                  >
-                    {isBlindfoldMode ? 'Exit blindfold mode' : 'Train blindfold'}
-                  </button>
-                </div>
-                {isBlindfoldMode ? (
-                  <BlinfoldContinuationPanel
-                    initialFen={activePuzzle.fen}
-                    onExit={() => setIsBlindfoldMode(false)}
-                    requestChessEchoMove={async (fen) => {
-                      const response = await fetchPuzzleContinuation(fen, 'ENGINE');
-                      return response?.candidates[0]?.move ?? null;
-                    }}
-                  />
-                ) : (
-                  <div className="flex flex-col items-center justify-center gap-4 lg:flex-row lg:flex-wrap lg:items-start 2xl:flex-nowrap">
+                <div className="flex flex-col items-center justify-center gap-4 lg:flex-row lg:flex-wrap lg:items-start 2xl:flex-nowrap">
                 {/* Left Stockfish Eval Bar */}
                 <div className="hidden sm:flex flex-col items-center pt-1">
                   <span className="text-[10px] font-bold text-slate-400 mb-1.5 uppercase tracking-wider">
@@ -1747,7 +1759,8 @@ export default function Home() {
                   <ChessBoardArea
                     initialFen={activePuzzle.fen}
                     playerColor={activePuzzle.playerColor}
-                    boardOrientation={isBoardFlipped ? (activePuzzle.playerColor === 'WHITE' ? 'black' : 'white') : (activePuzzle.playerColor === 'WHITE' ? 'white' : 'black')}
+                    blindfoldMode={isBlindfoldActive}
+                    boardOrientation={puzzleBoardOrientation}
                     targetMove={activePuzzle.targetMove}
                     acceptableMoves={activePuzzle.acceptableMoves}
                     movesPlayed={activePuzzle.movesPlayed}
@@ -1774,71 +1787,90 @@ export default function Home() {
 
                     explorationPlayMode={explorationPlayMode}
                     isChallengeComplete={challengeSubmissionByFen[currentBoardFen]?.isComplete ?? false}
+                    onMoveEvaluationPendingChange={setIsMoveEvaluationPending}
                   />
+                  {blindfold.state && (
+                    <BlinfoldBoardWrapper
+                      fen={blindfold.state.currentFen}
+                      isVisible={blindfold.state.isVisible}
+                      onReveal={blindfold.reveal}
+                      boardOrientation={puzzleBoardOrientation}
+                    />
+                  )}
                 </div>
 
                 {/* Right Feedback & Settings Panel */}
                 <div className="w-full max-w-[480px] shrink-0 2xl:max-w-[360px] 2xl:w-auto 2xl:min-w-0 2xl:basis-[360px] 2xl:shrink">
-                  <PuzzleFeedbackPanel
-                    puzzle={activePuzzle}
-                    feedback={feedback}
-                    onPreviousPuzzle={handlePreviousPuzzle}
-                    onNextPuzzle={handleNextPuzzle}
-                    puzzleColorFilter={puzzleColorFilter}
-                    onColorFilterChange={handleColorFilterChange}
-                    showPuzzleSettings={showPuzzleSettings}
-                    onTogglePuzzleSettings={() => setShowPuzzleSettings((v) => !v)}
-                    minMistakeCount={minMistakeCount}
-                    onMinMistakeCountChange={handleMinMistakeCountChange}
-                    onApplySettings={handleApplyPuzzleSettings}
-                    username={activeUsername}
-                    isExplorationActive={isExplorationActive}
-                    explorationDecisionMove={explorationDecisionMove}
-                    onEnterExploration={handleEnterExploration}
-                    onExitExploration={handleExitExploration}
-                    continuationMode={continuationMode}
-                    onContinuationModeChange={setContinuationMode}
-                    opponentRatingBand={opponentRatingBand}
-                    onOpponentRatingBandChange={setOpponentRatingBand}
-                    explorationPlayMode={explorationPlayMode}
-                    onExplorationPlayModeChange={handleExplorationPlayModeChange}
-                    sideToMove={sideToMove}
-                    continuationCandidate={continuation.selectedCandidate}
-                    isContinuationLoading={continuation.loading || !!requestedContinuationFen}
-                    unacceptableMoveMessage={unacceptableMoveMessage}
-                    explorationFeedback={explorationFeedbackByFen[currentBoardFen] || null}
-                    lastContinuationCandidates={lastContinuationCandidates}
-                    onAlternativeSelected={handleAlternativeSelected}
-                    challengeCandidates={challengeCandidatesByFen[currentBoardFen] || []}
-                    challengeSubmission={challengeSubmissionByFen[currentBoardFen]}
-                    challengeInput={challengeInputByFen[currentBoardFen] || ''}
-                    onChallengeInputChange={(v) => setChallengeInputByFen(prev => ({ ...prev, [currentBoardFen]: v }))}
-                    onChallengeSubmit={handleChallengeSubmit}
-                    challengeFeedback={challengeFeedbackByFen[currentBoardFen]}
-                    isChallengeLoading={isChallengeLoading}
-                    onChallengeCandidateSelect={handleChallengeCandidateSelect}
-                    activeChallengeCandidate={challengeActiveCandidateByFen[currentBoardFen] || null}
-                    challengeBranches={challengeBranchesByFen[currentBoardFen] || {}}
-                    onFinishChallenge={handleExitExploration}
-                    calculationInput={calculationInput}
-                    onCalculationInputChange={setCalculationInput}
-                    onCalculationSubmit={handleCalculationSubmit}
-                    calculationFeedback={calculationFeedback}
-                    isCalculationLoading={isCalculationLoading}
-                    onCalculationBack={handleCalculationBack}
-                    onBackToCandidates={handleBackToCandidates}
-                    timerMode={timerMode}
-                    timerElapsedMs={timerElapsedMs}
-                    timerAllowedMs={timerAllowedMs}
-                    timerExpired={timerExpired}
-                    timerSubmissionError={timerSubmissionError}
-                    onTimerModeChange={setTimerMode}
-                    onTimerAllowedMsChange={setTimerAllowedMs}
-                  />
+                  {blindfold.state ? (
+                    <NotationExchangeUI
+                      state={blindfold.state}
+                      onPlayerMove={blindfold.submitPlayerMove}
+                      onReveal={blindfold.reveal}
+                      onReset={blindfold.reset}
+                      onExit={blindfold.exit}
+                    />
+                  ) : (
+                    <PuzzleFeedbackPanel
+                      puzzle={activePuzzle}
+                      feedback={feedback}
+                      onPreviousPuzzle={handlePreviousPuzzle}
+                      onNextPuzzle={handleNextPuzzle}
+                      puzzleColorFilter={puzzleColorFilter}
+                      onColorFilterChange={handleColorFilterChange}
+                      showPuzzleSettings={showPuzzleSettings}
+                      onTogglePuzzleSettings={() => setShowPuzzleSettings((v) => !v)}
+                      minMistakeCount={minMistakeCount}
+                      onMinMistakeCountChange={handleMinMistakeCountChange}
+                      onApplySettings={handleApplyPuzzleSettings}
+                      username={activeUsername}
+                      isExplorationActive={isExplorationActive}
+                      explorationDecisionMove={explorationDecisionMove}
+                      onEnterExploration={handleEnterExploration}
+                      onExitExploration={handleExitExploration}
+                      onEnterBlindfold={handleEnterBlindfold}
+                      isBlindfoldEntryDisabled={isPuzzleBoardUnsettled}
+                      continuationMode={continuationMode}
+                      onContinuationModeChange={setContinuationMode}
+                      opponentRatingBand={opponentRatingBand}
+                      onOpponentRatingBandChange={setOpponentRatingBand}
+                      explorationPlayMode={explorationPlayMode}
+                      onExplorationPlayModeChange={handleExplorationPlayModeChange}
+                      sideToMove={sideToMove}
+                      continuationCandidate={continuation.selectedCandidate}
+                      isContinuationLoading={continuation.loading || !!requestedContinuationFen}
+                      unacceptableMoveMessage={unacceptableMoveMessage}
+                      explorationFeedback={explorationFeedbackByFen[currentBoardFen] || null}
+                      lastContinuationCandidates={lastContinuationCandidates}
+                      onAlternativeSelected={handleAlternativeSelected}
+                      challengeCandidates={challengeCandidatesByFen[currentBoardFen] || []}
+                      challengeSubmission={challengeSubmissionByFen[currentBoardFen]}
+                      challengeInput={challengeInputByFen[currentBoardFen] || ''}
+                      onChallengeInputChange={(v) => setChallengeInputByFen(prev => ({ ...prev, [currentBoardFen]: v }))}
+                      onChallengeSubmit={handleChallengeSubmit}
+                      challengeFeedback={challengeFeedbackByFen[currentBoardFen]}
+                      isChallengeLoading={isChallengeLoading}
+                      onChallengeCandidateSelect={handleChallengeCandidateSelect}
+                      activeChallengeCandidate={challengeActiveCandidateByFen[currentBoardFen] || null}
+                      challengeBranches={challengeBranchesByFen[currentBoardFen] || {}}
+                      onFinishChallenge={handleExitExploration}
+                      calculationInput={calculationInput}
+                      onCalculationInputChange={setCalculationInput}
+                      onCalculationSubmit={handleCalculationSubmit}
+                      calculationFeedback={calculationFeedback}
+                      isCalculationLoading={isCalculationLoading}
+                      onCalculationBack={handleCalculationBack}
+                      onBackToCandidates={handleBackToCandidates}
+                      timerMode={timerMode}
+                      timerElapsedMs={timerElapsedMs}
+                      timerAllowedMs={timerAllowedMs}
+                      timerExpired={timerExpired}
+                      timerSubmissionError={timerSubmissionError}
+                      onTimerModeChange={setTimerMode}
+                      onTimerAllowedMsChange={setTimerAllowedMs}
+                    />
+                  )}
                 </div>
-                  </div>
-                )}
-              </>
+                </div>
             )}
           </div>
           </div>

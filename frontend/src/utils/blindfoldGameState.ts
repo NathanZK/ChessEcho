@@ -2,6 +2,8 @@ import { Chess } from 'chess.js';
 
 export type BlindfoldTurn = 'PLAYER' | 'CHESSECHO';
 
+export type BlindfoldPlayerColor = 'WHITE' | 'BLACK';
+
 export interface BlindfoldMove {
   san: string;
   fen: string;
@@ -62,13 +64,22 @@ function applyMove(
   }
 }
 
-export function createBlinfoldGameState(initialFen: string): BlindfoldGameState {
-  new Chess(initialFen);
+function openingTurn(game: Chess, playerColor?: BlindfoldPlayerColor): BlindfoldTurn {
+  if (!playerColor) return 'PLAYER';
+  const playerSide = playerColor === 'WHITE' ? 'w' : 'b';
+  return game.turn() === playerSide ? 'PLAYER' : 'CHESSECHO';
+}
+
+export function createBlinfoldGameState(
+  initialFen: string,
+  playerColor?: BlindfoldPlayerColor,
+): BlindfoldGameState {
+  const game = new Chess(initialFen);
   return {
     initialFen,
     currentFen: initialFen,
     moveHistory: [],
-    currentTurn: 'PLAYER',
+    currentTurn: openingTurn(game, playerColor),
     isVisible: false,
     notationInput: '',
     notationError: null,
@@ -99,9 +110,10 @@ export function applyChessEchoMove(
 export function resetBlinfoldGame(
   state: BlindfoldGameState,
   initialFen: string,
+  playerColor?: BlindfoldPlayerColor,
 ): BlindfoldGameState {
   return {
-    ...createBlinfoldGameState(initialFen),
+    ...createBlinfoldGameState(initialFen, playerColor),
     isVisible: state.isVisible,
   };
 }
