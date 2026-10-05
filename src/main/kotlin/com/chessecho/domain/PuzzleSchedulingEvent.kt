@@ -65,4 +65,8 @@ class PuzzleSchedulingEvent(
     val sourceOccurrence: PositionOccurrence? = null,
     @Column(name = "occurred_at", nullable = false)
     val occurredAt: Instant = Instant.now(),
+    @Column(name = "submission_id")
+    val submissionId: UUID? = null,
+    @Column(name = "submitted_move")
+    val submittedMove: String? = null,
 )

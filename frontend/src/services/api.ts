@@ -394,6 +394,12 @@ export interface PuzzleEventRequest {
   playerColor: 'WHITE' | 'BLACK';
   eventType: PuzzleSchedulingEventType;
   accountId: string;
+  submissionId?: string;
+  submittedMove?: string;
+}
+
+export class PuzzleSubmissionError extends Error {
+  constructor(message: string, public readonly status: number) { super(message); }
 }
 
 export async function recordPuzzleEvent(request: PuzzleEventRequest): Promise<void> {
@@ -404,8 +410,39 @@ export async function recordPuzzleEvent(request: PuzzleEventRequest): Promise<vo
     body: JSON.stringify(request),
   });
   if (!response.ok) {
-    throw new Error(`Failed to record puzzle event: ${response.status}`);
+    throw new PuzzleSubmissionError(`Failed to record puzzle event: ${response.status}`, response.status);
   }
+  if (request.submissionId) {
+    const receipt: unknown = await response.json();
+    if (typeof receipt !== 'object' || receipt === null || !('submissionId' in receipt) ||
+      receipt.submissionId !== request.submissionId) {
+      throw new Error('Invalid puzzle submission receipt');
+    }
+  }
+}
+
+export interface PuzzleAttemptCounts {
+  solvedCount: number;
+  failedCount: number;
+}
+
+export async function fetchPuzzleAttemptCount(
+  puzzleId: string,
+  accountId: string,
+  playerColor: 'WHITE' | 'BLACK',
+): Promise<PuzzleAttemptCounts> {
+  const params = new URLSearchParams({ accountId, playerColor });
+  const response = await fetch(`${API_BASE_URL}/puzzles/${encodeURIComponent(puzzleId)}/attempt-count?${params}`, {
+    credentials: 'include',
+  });
+  if (!response.ok) throw new Error(`Failed to load your attempts: ${response.status}`);
+  const body: unknown = await response.json();
+  if (typeof body !== 'object' || body === null || !('solvedCount' in body) || !('failedCount' in body) ||
+    typeof body.solvedCount !== 'number' || !Number.isSafeInteger(body.solvedCount) || body.solvedCount < 0 ||
+    typeof body.failedCount !== 'number' || !Number.isSafeInteger(body.failedCount) || body.failedCount < 0) {
+    throw new Error('Invalid puzzle attempt counts');
+  }
+  return { solvedCount: body.solvedCount, failedCount: body.failedCount };
 }
 
 /**

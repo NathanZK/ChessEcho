@@ -926,6 +926,15 @@ CREATE TABLE puzzle_scheduling_event
     event_type            VARCHAR(32)  NOT NULL,
     position_occurrence_id UUID REFERENCES position_occurrence (id) ON DELETE CASCADE,
     occurred_at           TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    submission_id         UUID,
+    submitted_move        VARCHAR(255),
+    CONSTRAINT ck_puzzle_submission CHECK (
+        (submission_id IS NULL AND submitted_move IS NULL) OR
+        (submission_id IS NOT NULL AND submitted_move IS NOT NULL
+         AND length(trim(submitted_move)) > 0 AND submitted_move = trim(submitted_move)
+         AND app_user_id IS NOT NULL AND position_occurrence_id IS NULL
+         AND event_type IN ('SOLVED', 'FAILED'))
+    ),
     CONSTRAINT ck_puzzle_event_player_color CHECK (player_color IN ('WHITE', 'BLACK')),
     CONSTRAINT ck_puzzle_event_type CHECK (
         event_type IN (
@@ -948,6 +957,8 @@ CREATE INDEX idx_puzzle_event_source
     ON puzzle_scheduling_event (position_occurrence_id);
 CREATE INDEX idx_puzzle_event_user_account_position
     ON puzzle_scheduling_event (app_user_id, chess_account_id, position_id, player_color, occurred_at);
+CREATE UNIQUE INDEX uk_puzzle_event_user_submission
+    ON puzzle_scheduling_event (app_user_id, submission_id);
 
 CREATE TABLE training_attempt (
     id UUID PRIMARY KEY,

@@ -272,7 +272,7 @@ IDs. A stale response cannot change the current board or loading state.
 The practice view shows loading, retryable load failure, or an empty result
 separately. `ChessBoardArea` validates the initial practice move locally from
 the returned FEN, target move, acceptable moves, and historical moves; the
-first submitted move is not itself sent to an API. `Home` derives feedback and
+first submitted move does not require remote evaluation. `Home` derives feedback and
 evaluation display from that response data. Undo, redo, reset, sound, and
 blindfold board state are frontend interactions.
 
@@ -289,12 +289,27 @@ the shared presentation from `boardPresentation.ts` and the puzzle board's
 orientation. `NotationExchangeUI` replaces the feedback panel until Exit, which
 restores the previous puzzle and exploration state.
 
-For authenticated users with a selected account, `Home` best-effort records
-`SOLVED` and `FAILED` puzzle outcomes through `POST /api/puzzles/events` with
-position ID, player color, event type, and selected account ID. Activating a
-puzzle, starting timed training, or moving to another puzzle does not create a
-scheduling event. Successful writes return `202 Accepted`; failures are logged
-and do not replace the board result. The endpoint is described in
+For authenticated users with a resolved selected account, `usePuzzleAttemptCount`
+records `SOLVED` and `FAILED` initial answers through `POST /api/puzzles/events`.
+Each answer carries its original account/position/color, canonical SAN, and a
+fresh submission UUID independent of timing IDs. `PuzzleFeedbackPanel` displays
+"Failed" and "Solved" counts before and after answers, separately from source-game statistics.
+The hook reads the authoritative `{ solvedCount, failedCount }` pair through
+`GET /api/puzzles/{positionId}/attempt-count`; it never fabricates zero on failure.
+Activating a puzzle, timers, hints, reset/undo/redo alone, and continuation moves
+do not create an answer. A new initial answer after reset/undo does.
+
+Identified writes return a `202` receipt; manual retries reuse the immutable
+payload and UUID. Network/5xx failures show uncertainty and offer retry; terminal
+4xx rejection does not. Multiple pending answers remain separate across puzzle
+and account navigation, hidden outside their original context, and are cleared
+on logout/user change. They are not persisted across browser reload. Read
+generations suppress stale responses; replacement-account puzzle loads gate
+initial answers until provenance matches. Guests and unresolved identities omit
+the personal counts without changing guest practice. See
+[`PuzzleAttemptCountFlow.test.tsx`](../../frontend/src/__tests__/PuzzleAttemptCountFlow.test.tsx)
+and [`PuzzleAttemptCount.test.tsx`](../../frontend/src/__tests__/PuzzleAttemptCount.test.tsx).
+The endpoint is described in
 [`API_CONTRACT.md`](../../API_CONTRACT.md), with implementation in the
 [controller route](../../src/main/kotlin/com/chessecho/controller/PuzzleEventController.kt)
 and [request DTO](../../src/main/kotlin/com/chessecho/dto/PuzzleEventRequest.kt).

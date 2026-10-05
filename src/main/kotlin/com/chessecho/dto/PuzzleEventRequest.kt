@@ -8,4 +8,10 @@ data class PuzzleEventRequest(
     val playerColor: String,
     val eventType: SchedulingEventType,
     val accountId: UUID? = null,
+    val submissionId: UUID? = null,
+    val submittedMove: String? = null,
 )
+
+data class PuzzleSubmissionReceipt(val submissionId: UUID)
+
+data class PuzzleAttemptCountResponse(val solvedCount: Long, val failedCount: Long)

@@ -52,6 +52,7 @@ contract:
     - `/api/positions/weaknesses` exposes weakness reads; `/api/positions/{positionId}/progress` requires `playerColor`, a connected `accountId`, and the selected `minEvalLoss`.
     - `/api/puzzles`, `/api/puzzles/continuation`, `/api/puzzles/evaluate-move`, `/api/puzzles/attempt`, and `/api/puzzles/events` support practice.
   - **Position Progress**: Dated actual-game encounters form a separate historical baseline and one aggregate observation per interval started by a persisted `SOLVED` puzzle event. Intervals use `Game.playedAt`, remain reconstructible after late imports, and reuse `GameOutcomeNormalizer`; see `docs/specs/position-progress.md`.
+  - **Puzzle attempt counts**: Authenticated user/account/position/color counts separate submitted SOLVED and FAILED initial answers, with replay-safe identities; see [puzzle attempt counts](specs/puzzle-attempt-count.md).
   - **Actual-game results display**:
     - The Weaknesses Library displays supplied W/D/L, score rate, and eligible-game count without confidence classifications or training comparisons.
     - Null scores or zero eligible games show neutral unavailable-score wording; absent practical evidence omits the block.

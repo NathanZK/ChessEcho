@@ -33,6 +33,7 @@ class PuzzleEventControllerTest {
             appUserRepository,
             occurrenceRepository,
             eventRepository,
+            mock(),
         )
 
     @Test

@@ -7,6 +7,7 @@ import com.chessecho.service.AccountSelectionMismatchException
 import com.chessecho.service.AccountSelectionRequiredException
 import com.chessecho.service.ActiveImportJobException
 import com.chessecho.service.ForbiddenAccountException
+import com.chessecho.service.PuzzleSubmissionConflictException
 import com.chessecho.web.CsrfException
 import com.chessecho.web.DuplicateRegistrationException
 import com.chessecho.web.InvalidCredentialsException
@@ -22,6 +23,11 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 
 @RestControllerAdvice
 class GlobalExceptionHandler {
+    @ExceptionHandler(PuzzleSubmissionConflictException::class)
+    fun handlePuzzleSubmissionConflict(ex: PuzzleSubmissionConflictException): ResponseEntity<ErrorResponse> =
+        ResponseEntity.status(HttpStatus.CONFLICT)
+            .body(ErrorResponse(error = "PUZZLE_SUBMISSION_CONFLICT", details = listOf(requireNotNull(ex.message))))
+
     @ExceptionHandler(InvalidCredentialsException::class)
     fun handleInvalidCredentials(): ResponseEntity<ErrorResponse> =
         ResponseEntity

@@ -8,6 +8,7 @@ import { ChessBoardArea } from '@/components/ChessBoardArea';
 import { BlinfoldBoardWrapper } from '@/components/BlinfoldBoardWrapper';
 import { NotationExchangeUI } from '@/components/NotationExchangeUI';
 import { useBlindfoldSession } from '@/hooks/useBlindfoldSession';
+import { usePuzzleAttemptCount } from '@/hooks/usePuzzleAttemptCount';
 import { PuzzleFeedbackPanel, type ChallengeSubmissionResult } from '@/components/PuzzleFeedbackPanel';
 import { WeaknessesList } from '@/components/WeaknessesList';
 import { PositionProgressView } from '@/components/PositionProgressView';
@@ -27,10 +28,8 @@ import {
   disconnectAccount,
   DisconnectAccountError,
   logout as apiLogout,
-  recordPuzzleEvent,
   submitTrainingAttempt,
   type AccountSummary,
-  type PuzzleSchedulingEventType,
   type SessionState,
 } from '@/services/api';
 import { soundService } from '@/services/soundService';
@@ -94,6 +93,7 @@ export default function Home() {
   // Non-persistent session state, bootstrapped from /api/me. The auth indicator is
   // derived from this — never from a stored Chess.com username (#113 AC7/AC13).
   const [sessionStatus, setSessionStatus] = useState<SessionState['status']>('loading');
+  const [sessionUserId, setSessionUserId] = useState<string | undefined>();
   const [accountStatus, setAccountStatus] = useState<AccountConnectionStatus>('loading');
   const [accountError, setAccountError] = useState<string | undefined>(undefined);
   const [disconnectError, setDisconnectError] = useState<string | undefined>(undefined);
@@ -237,6 +237,7 @@ export default function Home() {
   const [initialMoveHistorySan, setInitialMoveHistorySan] = useState<string[]>([]);
   const [initialMoveHistoryStartFen, setInitialMoveHistoryStartFen] = useState<string | undefined>();
   const suppliedPositionCounterRef = React.useRef(0);
+  const [loadedPuzzleContext, setLoadedPuzzleContext] = useState('');
   const [isLoadingPuzzles, setIsLoadingPuzzles] = useState<boolean>(true);
   const [puzzleLoadError, setPuzzleLoadError] = useState<boolean>(false);
   const [puzzleReloadToken, setPuzzleReloadToken] = useState<number>(0);
@@ -244,6 +245,16 @@ export default function Home() {
   // setters, the loading flag, and the prefetch lock) only while it still owns the
   // current generation, so a stale/superseded load can never mutate the live UI.
   const puzzleLoadSeqRef = React.useRef<number>(0);
+  const puzzleContextKey = JSON.stringify([sessionUserId, activeAccountId, activeUsername]);
+  const puzzleContextReady = loadedPuzzleContext === puzzleContextKey && !isLoadingPuzzles &&
+    (sessionStatus === 'unauthenticated' || sessionStatus === 'error' ||
+      (sessionStatus === 'authenticated' && accountStatus === 'connected'));
+  const attemptContext = React.useMemo(() => (
+    puzzleContextReady && sessionStatus === 'authenticated' && sessionUserId && activeAccountId && activePuzzle && activePuzzle.source !== 'supplied'
+      ? { userId: sessionUserId, accountId: activeAccountId, puzzleId: activePuzzle.puzzleId, playerColor: activePuzzle.playerColor }
+      : null
+  ), [puzzleContextReady, sessionStatus, sessionUserId, activeAccountId, activePuzzle]);
+  const puzzleAttempts = usePuzzleAttemptCount(attemptContext, sessionUserId);
 
   const invalidatePuzzleRequests = () => {
     puzzleLoadSeqRef.current++;
@@ -320,6 +331,7 @@ export default function Home() {
   // persisted active job, and mark the session unauthenticated so a late response
   // cannot restore the prior user's data (#113 AC8). Generations are bumped first.
   const clearSessionState = () => {
+    setSessionUserId(undefined);
     accountRequestVersionRef.current++;
     accountOwnerIdRef.current = undefined;
     setAccountStatus('unconnected');
@@ -344,25 +356,6 @@ export default function Home() {
   const [showPuzzleSettings, setShowPuzzleSettings] = useState<boolean>(false);
   const [isBoardFlipped, setIsBoardFlipped] = useState<boolean>(false);
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
-
-  const recordPuzzleEventBestEffort = React.useCallback(
-    (eventType: PuzzleSchedulingEventType, puzzle: Puzzle | null = activePuzzle) => {
-      if (!puzzle || sessionStatus !== 'authenticated') return;
-      if (!activeAccountId) {
-        console.warn('Unable to record puzzle scheduling event without a selected account');
-        return;
-      }
-      void recordPuzzleEvent({
-        positionId: puzzle.puzzleId,
-        playerColor: puzzle.playerColor,
-        eventType,
-        accountId: activeAccountId,
-      }).catch((error) => {
-        console.warn('Unable to record puzzle scheduling event', error);
-      });
-    },
-    [activePuzzle, activeAccountId, sessionStatus],
-  );
 
   // Timed training state
   const timerRef = React.useRef<StopwatchTimer | CountdownTimer | null>(null);
@@ -1094,6 +1087,7 @@ export default function Home() {
 
           setCurrentPuzzleIndex(targetIdx);
           setActivePuzzle(targetPuzzle);
+          setLoadedPuzzleContext(puzzleContextKey);
           resetPuzzleInteractionState(targetPuzzle);
           setWeaknessCount(data.length);
         } else {
@@ -1122,7 +1116,7 @@ export default function Home() {
     return () => {
       requestSequence.current++;
     };
-  }, [isSettingsInitialized, activeUsername, activeAccount?.id, puzzleColorFilter, minEvalLoss, minMistakeCount, puzzleReloadToken]);
+  }, [isSettingsInitialized, activeUsername, activeAccount?.id, puzzleColorFilter, minEvalLoss, minMistakeCount, puzzleReloadToken, puzzleContextKey]);
 
   // Bootstrap the session from /api/me once on mount, resolving the shared gate
   // after every outcome so guest-eligible fetches proceed once session state is
@@ -1133,6 +1127,7 @@ export default function Home() {
     fetchCurrentSession().then(async (state) => {
       if (!active) return;
       setSessionStatus(state.status);
+      setSessionUserId(state.status === 'authenticated' ? state.userId : undefined);
       if (state.status === 'unauthenticated') {
         accountRequestVersionRef.current++;
         accountOwnerIdRef.current = undefined;
@@ -1202,6 +1197,7 @@ export default function Home() {
 
         setCurrentPuzzleIndex(targetIdx);
         setActivePuzzle(targetPuzzle);
+        setLoadedPuzzleContext(puzzleContextKey);
         resetPuzzleInteractionState(targetPuzzle);
         setWeaknessCount(data.length);
       } else {
@@ -1338,6 +1334,7 @@ export default function Home() {
 
     setCurrentPuzzleIndex(finalIndex);
     setActivePuzzle(selectedPuzzle);
+    setLoadedPuzzleContext(puzzleContextKey);
     resetPuzzleInteractionState(selectedPuzzle);
 
     if (typeof window !== 'undefined' && selectedPuzzle) {
@@ -1409,7 +1406,8 @@ export default function Home() {
   ) => {
     if (!activePuzzle) return;
     if (isInitialDecision) {
-      recordPuzzleEventBestEffort(isCorrect ? 'SOLVED' : 'FAILED', activePuzzle);
+      if (!puzzleContextReady) return;
+      void puzzleAttempts.submit(moveSan, isCorrect);
     }
     setMoveHistory((prev) => [...prev, moveSan]);
     setHintSquare(undefined);
@@ -1844,6 +1842,7 @@ export default function Home() {
                     acceptableMoves={activePuzzle.acceptableMoves}
                     movesPlayed={activePuzzle.movesPlayed}
                     onMoveAttempt={handleMoveAttempt}
+                    initialDecisionEnabled={activePuzzle.source === 'supplied' || puzzleContextReady}
                     onPreviousPuzzle={handlePreviousPuzzle}
                     onNextPuzzle={handleNextPuzzle}
                     onUndo={handleBoardUndo}
@@ -1946,6 +1945,11 @@ export default function Home() {
                       timerAllowedMs={timerAllowedMs}
                       timerExpired={timerExpired}
                       timerSubmissionError={timerSubmissionError}
+                      attemptCountState={puzzleAttempts.state}
+                      attemptRecording={puzzleAttempts.recording}
+                      pendingAttempts={puzzleAttempts.pending}
+                      onRetryAttempt={puzzleAttempts.retry}
+                      onReloadAttemptCount={puzzleAttempts.reload}
                       onTimerModeChange={setTimerMode}
                       onTimerAllowedMsChange={setTimerAllowedMs}
                     />
