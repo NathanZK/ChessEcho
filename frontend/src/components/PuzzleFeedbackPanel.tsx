@@ -199,6 +199,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
   onTimerAllowedMsChange,
 }) => {
   const [showGameModal, setShowGameModal] = React.useState<boolean>(false);
+  const isSuppliedPosition = puzzle.source === 'supplied';
 
   const activeColorToMove = sideToMove || (puzzle.playerColor === 'BLACK' ? 'Black' : 'White');
 
@@ -232,6 +233,8 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
 
   return (
     <div className="flex flex-col space-y-3 bg-slate-900 p-4 rounded-2xl border border-slate-800 shadow-xl text-slate-200">
+      {!isSuppliedPosition && (
+        <>
       {/* Collapsible Puzzle Settings Section */}
       <div className="border-b border-slate-800 pb-3">
         <button
@@ -387,9 +390,11 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
           {timerExpired && <span className="ml-1 text-[11px]">Time&apos;s up</span>}
         </div>
       )}
+        </>
+      )}
 
       {/* Dynamic Feedback / Success Card */}
-      {feedback.status === 'CORRECT' ? (
+      {!isSuppliedPosition && (feedback.status === 'CORRECT' ? (
         <div className="p-3.5 bg-gradient-to-br from-emerald-950/80 to-slate-900 border-2 border-emerald-500/50 rounded-2xl space-y-2.5 shadow-lg shadow-emerald-950/40 animate-in fade-in duration-200">
           <div className="flex items-center space-x-3">
             <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0">
@@ -570,7 +575,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
             Find {puzzle.playerColor === 'BLACK' ? "Black's" : "White's"} best move or an acceptable alternative to fix your opening habit.
           </p>
         </div>
-      )}
+      ))}
 
       {/* Active Line Exploration Card (Renders ONLY when isExplorationActive is true) */}
       {isExplorationActive && (
@@ -1042,7 +1047,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
       )}
 
       {/* Stats Pill Badges */}
-      <div className="grid grid-cols-2 gap-2 py-0.5">
+      {!isSuppliedPosition && <div className="grid grid-cols-2 gap-2 py-0.5">
         <div className="bg-slate-950 p-2 rounded-xl border border-slate-800 text-center">
           <div className="text-[11px] font-semibold text-slate-400">Mistake Rate</div>
           <div className="text-xs font-bold text-amber-400 mt-0.5 flex items-center justify-center gap-1">
@@ -1057,7 +1062,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
             {puzzle.timesReached} games
           </div>
         </div>
-      </div>
+      </div>}
 
       {showGameModal && puzzle.gameUrls && puzzle.gameUrls.length > 0 && (
         <HistoricalGamesModal

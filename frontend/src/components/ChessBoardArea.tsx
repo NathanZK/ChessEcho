@@ -13,12 +13,20 @@ import {
 import { playSound } from '@/services/soundService';
 import { moveEvaluationService } from '@/services/continuationService';
 import { ContinuationCandidate, ExplorationPlayMode } from '@/services/api';
+import {
+  applyChessMoveOrUseFen,
+  cloneChessGameWithHistory,
+  createChessGameAtPosition,
+} from '@/utils/chessGame';
 
 export const CHALLENGE_MAX_EVAL_LOSS = 0.20;
 
 interface ChessBoardAreaProps {
   blindfoldMode?: boolean;
   initialFen: string;
+  initialMoveHistorySan?: string[];
+  initialMoveHistoryStartFen?: string;
+  showPuzzleControls?: boolean;
   playerColor: 'WHITE' | 'BLACK';
   boardOrientation?: 'white' | 'black';
   targetMove: string;
@@ -62,6 +70,9 @@ interface ChessBoardAreaProps {
 export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   blindfoldMode = false,
   initialFen,
+  initialMoveHistorySan = [],
+  initialMoveHistoryStartFen,
+  showPuzzleControls = true,
   playerColor,
   boardOrientation,
   targetMove,
@@ -91,7 +102,12 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   isChallengeComplete = false,
   onMoveEvaluationPendingChange,
 }) => {
-  const [game, setGame] = useState<Chess>(new Chess(initialFen));
+  const [game, setGame] = useState<Chess>(() =>
+    createChessGameAtPosition(initialFen, initialMoveHistorySan, initialMoveHistoryStartFen)
+  );
+  const [gameHistory, setGameHistory] = useState<Chess[]>(() => [
+    createChessGameAtPosition(initialFen, initialMoveHistorySan, initialMoveHistoryStartFen),
+  ]);
   const currentBoardFenRef = useRef<string>(initialFen);
   const [fenHistory, setFenHistory] = useState<string[]>([initialFen]);
   const [historyIndex, setHistoryIndex] = useState<number>(0);
@@ -121,10 +137,17 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
 
   // Reset board state whenever initialFen changes
   const [fenNotification, setFenNotification] = useState<{ fen: string }>({ fen: initialFen });
-  const [trackedInitialFen, setTrackedInitialFen] = useState(initialFen);
-  if (trackedInitialFen !== initialFen) {
-    setTrackedInitialFen(initialFen);
-    setGame(new Chess(initialFen));
+  const initialPositionKey = `${initialFen}\u0000${initialMoveHistoryStartFen ?? ''}\u0000${initialMoveHistorySan.join('\u0000')}`;
+  const [trackedInitialPositionKey, setTrackedInitialPositionKey] = useState(initialPositionKey);
+  if (trackedInitialPositionKey !== initialPositionKey) {
+    const initialGame = createChessGameAtPosition(
+      initialFen,
+      initialMoveHistorySan,
+      initialMoveHistoryStartFen,
+    );
+    setTrackedInitialPositionKey(initialPositionKey);
+    setGame(initialGame);
+    setGameHistory([initialGame]);
     setFenHistory([initialFen]);
     setHistoryIndex(0);
     setCustomSquareStyles({});
@@ -166,11 +189,17 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
     if (isExplorationActive && pendingContinuationCandidate?.resultingFen) {
       const nextFen = pendingContinuationCandidate.resultingFen;
       try {
-        setGame(new Chess(nextFen));
+        const nextGame = applyChessMoveOrUseFen(game, pendingContinuationCandidate.move, nextFen);
+        setGame(nextGame);
 
         setFenHistory((prev) => {
           const newHistory = prev.slice(0, historyIndex + 1);
           newHistory.push(nextFen);
+          return newHistory;
+        });
+        setGameHistory((prev) => {
+          const newHistory = prev.slice(0, historyIndex + 1);
+          newHistory.push(nextGame);
           return newHistory;
         });
         setHistoryIndex((prev) => prev + 1);
@@ -199,11 +228,18 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
       if (parentIndex !== -1) {
         try {
           const nextFen = candidate.resultingFen;
-          setGame(new Chess(nextFen));
+          const parentGame = gameHistory[parentIndex] ?? game;
+          const nextGame = applyChessMoveOrUseFen(parentGame, candidate.move, nextFen);
+          setGame(nextGame);
 
           setFenHistory((prev) => {
             const newHistory = prev.slice(0, parentIndex + 1);
             newHistory.push(nextFen);
+            return newHistory;
+          });
+          setGameHistory((prev) => {
+            const newHistory = prev.slice(0, parentIndex + 1);
+            newHistory.push(nextGame);
             return newHistory;
           });
           setHistoryIndex(parentIndex + 1);
@@ -255,7 +291,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
 
   const handlePieceDrop = (sourceSquare: string, targetSquare: string): boolean => {
     try {
-      const gameCopy = new Chess(game.fen());
+      const gameCopy = cloneChessGameWithHistory(game);
       const move = gameCopy.move({
         from: sourceSquare,
         to: targetSquare,
@@ -321,7 +357,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
 
             if (!acceptable) {
               playSound('incorrect');
-              setGame(new Chess(currentFen)); // Revert board to position before move
+              setGame(cloneChessGameWithHistory(gameHistory[historyIndex] ?? new Chess(currentFen)));
               onUnacceptableMove?.(errorMessage);
             } else {
               if (lossCp === 0) {
@@ -335,13 +371,14 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
               const newHistory = fenHistory.slice(0, historyIndex + 1);
               newHistory.push(nextFen);
               setFenHistory(newHistory);
+              setGameHistory((prev) => [...prev.slice(0, historyIndex + 1), gameCopy]);
               setHistoryIndex(newHistory.length - 1);
               onFenChange?.(nextFen);
             }
           } else {
             // Fallback if res is null
             playSound('incorrect');
-            setGame(new Chess(currentFen)); // Revert board to position before move
+            setGame(cloneChessGameWithHistory(gameHistory[historyIndex] ?? new Chess(currentFen)));
             onUnacceptableMove?.("Evaluation failed. Please try again.");
           }
         }).catch(() => {
@@ -355,6 +392,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
           const newHistory = fenHistory.slice(0, historyIndex + 1);
           newHistory.push(nextFen);
           setFenHistory(newHistory);
+          setGameHistory((prev) => [...prev.slice(0, historyIndex + 1), gameCopy]);
           setHistoryIndex(newHistory.length - 1);
           onFenChange?.(nextFen);
           onUserExplorationMove?.(moveSan, nextFen, { isBest: false, loss: 0, evalCp: null, fromFen: currentFen });
@@ -373,6 +411,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
       const newHistory = fenHistory.slice(0, historyIndex + 1);
       newHistory.push(gameCopy.fen());
       setFenHistory(newHistory);
+      setGameHistory((prev) => [...prev.slice(0, historyIndex + 1), gameCopy]);
       setHistoryIndex(newHistory.length - 1);
       onFenChange?.(gameCopy.fen());
 
@@ -424,7 +463,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
       const prevIndex = historyIndex - 1;
       const prevFen = fenHistory[prevIndex];
       currentBoardFenRef.current = prevFen;
-      setGame(new Chess(prevFen));
+      setGame(cloneChessGameWithHistory(gameHistory[prevIndex] ?? new Chess(prevFen)));
       setHistoryIndex(prevIndex);
       onFenChange?.(prevFen);
       onUndo?.();
@@ -437,7 +476,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
       const nextIndex = historyIndex + 1;
       const nextFen = fenHistory[nextIndex];
       currentBoardFenRef.current = nextFen;
-      setGame(new Chess(nextFen));
+      setGame(cloneChessGameWithHistory(gameHistory[nextIndex] ?? new Chess(nextFen)));
       setHistoryIndex(nextIndex);
       onFenChange?.(nextFen);
       onRedo?.();
@@ -469,9 +508,14 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   }, []);
 
   const handleReset = () => {
-    const resetGame = new Chess(initialFen);
+    const resetGame = createChessGameAtPosition(
+      initialFen,
+      initialMoveHistorySan,
+      initialMoveHistoryStartFen,
+    );
     currentBoardFenRef.current = initialFen;
     setGame(resetGame);
+    setGameHistory([resetGame]);
     setFenHistory([initialFen]);
     setHistoryIndex(0);
     setCustomSquareStyles({});
@@ -533,6 +577,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
         canUndo={historyIndex > 0}
         canRedo={historyIndex < fenHistory.length - 1}
         canHint={canHint}
+        showPuzzleControls={showPuzzleControls}
         onFlipBoard={onFlipBoard}
         soundEnabled={soundEnabled}
         onToggleSound={onToggleSound}
