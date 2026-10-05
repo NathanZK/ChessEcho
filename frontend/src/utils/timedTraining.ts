@@ -4,9 +4,8 @@ export class StopwatchTimer {
   private running: boolean = false;
   private currentAttemptId: string | null = null;
 
-  startNewAttempt(puzzleId: string): string {
-    const safePuzzleId = puzzleId.replace(/[^a-zA-Z0-9_-]/g, '');
-    this.currentAttemptId = `attempt-${safePuzzleId}-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+  startNewAttempt(): string {
+    this.currentAttemptId = crypto.randomUUID();
     this.reset();
     return this.currentAttemptId;
   }
@@ -60,9 +59,8 @@ export class CountdownTimer {
     this.allowedMs = allowedMs;
   }
 
-  startNewAttempt(puzzleId: string): string {
-    const safePuzzleId = puzzleId.replace(/[^a-zA-Z0-9_-]/g, '');
-    this.currentAttemptId = `attempt-${safePuzzleId}-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+  startNewAttempt(): string {
+    this.currentAttemptId = crypto.randomUUID();
     this.reset();
     return this.currentAttemptId;
   }

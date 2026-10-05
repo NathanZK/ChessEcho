@@ -416,7 +416,7 @@ export default function Home() {
 
     const timer: StopwatchTimer | CountdownTimer =
       timerMode === 'STOPWATCH' ? new StopwatchTimer() : new CountdownTimer(timerAllowedMs);
-    timer.startNewAttempt(activePuzzle.puzzleId);
+    timer.startNewAttempt();
     timer.start();
     timerRef.current = timer;
 

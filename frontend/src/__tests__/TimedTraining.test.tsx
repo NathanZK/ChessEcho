@@ -4,6 +4,7 @@ import {
   StopwatchTimer,
   submitTrainingAttempt,
 } from '../utils/timedTraining';
+import { submitTrainingAttempt as submitApiTrainingAttempt } from '../services/api';
 
 describe('timed training timers', () => {
   beforeEach(() => {
@@ -12,11 +13,42 @@ describe('timed training timers', () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    { mode: 'STOPWATCH', timer: () => new StopwatchTimer(), allowedMs: undefined },
+    { mode: 'COUNTDOWN', timer: () => new CountdownTimer(5_000), allowedMs: 5_000 },
+  ])('sends the real $mode attempt UUID through the production client', async ({ mode, timer, allowedMs }) => {
+    const activeTimer = timer();
+    const attemptId = activeTimer.startNewAttempt();
+    activeTimer.start(1_000);
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({}),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await submitApiTrainingAttempt({
+      attemptId,
+      puzzleId: 'puzzle-1',
+      mode,
+      elapsedMs: 1_250,
+      allowedMs,
+      outcome: 'SUBMITTED',
+    });
+
+    const [url, request] = fetchMock.mock.calls[0];
+    const body = JSON.parse(request.body);
+    expect(url).toMatch(/\/api\/puzzles\/attempt$/);
+    expect(body.attemptId).toBe(attemptId);
+    expect(activeTimer.getCurrentAttemptId()).toBe(attemptId);
+    expect(body.attemptId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
   });
 
   it('measures stopwatch duration at the decision boundary', () => {
     const timer = new StopwatchTimer();
-    timer.startNewAttempt('puzzle-1');
+    timer.startNewAttempt();
     timer.start(1_000);
 
     expect(timer.getElapsed(4_250)).toBe(3_250);
@@ -26,10 +58,10 @@ describe('timed training timers', () => {
 
   it('isolates attempts when a puzzle is reset', () => {
     const timer = new StopwatchTimer();
-    const firstAttempt = timer.startNewAttempt('puzzle-1');
+    const firstAttempt = timer.startNewAttempt();
     timer.start(1_000);
     timer.reset();
-    const secondAttempt = timer.startNewAttempt('puzzle-2');
+    const secondAttempt = timer.startNewAttempt();
 
     expect(secondAttempt).not.toBe(firstAttempt);
     expect(timer.getCurrentAttemptId()).toBe(secondAttempt);
@@ -38,7 +70,7 @@ describe('timed training timers', () => {
 
   it('latches countdown expiry and rejects a late submission', () => {
     const timer = new CountdownTimer(5_000);
-    timer.startNewAttempt('puzzle-3');
+    timer.startNewAttempt();
     timer.start(1_000);
 
     expect(timer.getRemaining(3_500)).toBe(2_500);
