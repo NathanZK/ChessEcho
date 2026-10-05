@@ -75,11 +75,14 @@ describe('PositionProgressView', () => {
     expect(screen.getByText(/mistake rate is green and win rate is blue/i)).toBeInTheDocument();
     expect(screen.getByTestId('progress-series-mistake-rate')).toHaveAttribute(
       'points',
-      '42,130 558,175',
+      '42,130 300,130 558,175',
     );
     expect(screen.getByTestId('progress-series-win-rate')).toHaveAttribute(
       'points',
-      '42,175 558,130',
+      '42,175 300,175 558,130',
+    );
+    expect(screen.getByTestId('progress-interval-label-baseline')).toHaveTextContent(
+      `Historical baseline · 4 encounters · ${new Date(response.baseline!.occurredAt).toLocaleDateString()}`,
     );
     expect(screen.getByText('Historical baseline')).toBeInTheDocument();
     const latestInterval = await screen.findByRole('region', { name: 'Latest measured interval' });
@@ -97,7 +100,7 @@ describe('PositionProgressView', () => {
     expect(screen.getByTestId('progress-interval-label-00000000-0000-0000-0000-000000000002'))
       .toHaveTextContent(`Interval 2 · 8 encounters · ${new Date(response.points[1].occurredAt).toLocaleDateString()}`);
     const tooltipTitles = [...chart.querySelectorAll('title')].map((title) => title.textContent);
-    expect(tooltipTitles).toHaveLength(5);
+    expect(tooltipTitles).toHaveLength(7);
     expect(tooltipTitles.join(' ')).not.toMatch(/open|closed/i);
     expect(screen.getByText('-50%')).toBeInTheDocument();
     expect(screen.getByText('+100%')).toBeInTheDocument();
@@ -193,17 +196,22 @@ describe('PositionProgressView', () => {
     expect(within(latestInterval).getByText(/no measured interval data yet/i)).toBeInTheDocument();
     expect(within(latestInterval).queryByText('Mistake rate')).not.toBeInTheDocument();
     expect(screen.getByText('4 dated encounters')).toBeInTheDocument();
-    expect(screen.getByText('50%')).toBeInTheDocument();
-    expect(screen.getByText('25%')).toBeInTheDocument();
+    const baselineSummary = screen.getByText('Historical baseline').parentElement!;
+    expect(within(baselineSummary).getByText('50%')).toBeInTheDocument();
+    expect(within(baselineSummary).getByText('25%')).toBeInTheDocument();
     expect(screen.getByText(`Dated through ${new Date(response.baseline!.occurredAt).toLocaleDateString()}`))
       .toBeInTheDocument();
     expect(screen.getByText('No measured interval observations yet.')).toBeInTheDocument();
-    expect(screen.queryByRole('img', { name: /position progress over time/i })).not.toBeInTheDocument();
-    expect(screen.queryAllByTestId('progress-point-mistake-rate')).toHaveLength(0);
+    expect(screen.getByRole('img', { name: /position progress over time/i })).toBeInTheDocument();
+    expect(screen.getAllByTestId('progress-point-mistake-rate')).toHaveLength(1);
+    expect(screen.getAllByTestId('progress-point-win-rate')).toHaveLength(1);
+    expect(screen.getByTestId('progress-interval-label-baseline')).toHaveTextContent(
+      `Historical baseline · 4 encounters · ${new Date(response.baseline!.occurredAt).toLocaleDateString()}`,
+    );
     expect(screen.getByText('More played encounters are needed to assess progress.')).toBeInTheDocument();
   });
 
-  it('shows a single measured interval and its supplied baseline comparison', async () => {
+  it('shows a single measured interval after the historical baseline point', async () => {
     const singlePoint = { ...response, points: [response.points[0]] };
     vi.mocked(api.fetchPositionProgress).mockResolvedValueOnce(singlePoint);
 
@@ -211,10 +219,92 @@ describe('PositionProgressView', () => {
 
     expect(await screen.findByText(response.assessment)).toBeInTheDocument();
     expect(screen.getByRole('img', { name: /position progress over time/i })).toBeInTheDocument();
-    expect(screen.getAllByTestId('progress-point-mistake-rate')).toHaveLength(1);
-    expect(screen.getAllByTestId('progress-point-win-rate')).toHaveLength(1);
+    expect(screen.getAllByTestId('progress-point-mistake-rate')).toHaveLength(2);
+    expect(screen.getAllByTestId('progress-point-win-rate')).toHaveLength(2);
     expect(screen.getByText('-50%')).toBeInTheDocument();
     expect(screen.getByText('+100%')).toBeInTheDocument();
+  });
+
+  it('plots the observed baseline and subsequent interval as exactly two chronological points', async () => {
+    const example: PositionProgressResponse = {
+      ...response,
+      baseline: {
+        occurredAt: '2025-12-01T00:00:00Z',
+        mistakeRate: (16 / 19) * 100,
+        winRate: (6 / 19) * 100,
+        sourceEncounterCount: 19,
+      },
+      points: [{
+        checkpointId: '00000000-0000-0000-0000-000000000003',
+        occurredAt: '2026-01-01T00:00:00Z',
+        mistakeRate: 0,
+        winRate: 100,
+        attempts: 1,
+        open: true,
+      }],
+    };
+    vi.mocked(api.fetchPositionProgress).mockResolvedValueOnce(example);
+
+    render(<PositionProgressView {...defaultProps} />);
+
+    const chart = await screen.findByRole('img', { name: /position progress over time/i });
+    expect(screen.getAllByTestId('progress-point-mistake-rate')).toHaveLength(2);
+    expect(screen.getAllByTestId('progress-point-win-rate')).toHaveLength(2);
+    expect(screen.getByTestId('progress-series-mistake-rate')).toHaveAttribute(
+      'points',
+      '42,68.42105263157896 558,220',
+    );
+    expect(screen.getByTestId('progress-series-win-rate')).toHaveAttribute(
+      'points',
+      '42,163.1578947368421 558,40',
+    );
+    expect(screen.getByTestId('progress-interval-label-baseline')).toHaveTextContent(
+      `Historical baseline · 19 encounters · ${new Date(example.baseline!.occurredAt).toLocaleDateString()}`,
+    );
+    expect(screen.getByTestId('progress-interval-label-00000000-0000-0000-0000-000000000003'))
+      .toHaveTextContent(`Interval 1 · 1 encounter · ${new Date(example.points[0].occurredAt).toLocaleDateString()}`);
+    expect(within(screen.getByRole('region', { name: 'Latest measured interval' })).getByText('100%'))
+      .toBeInTheDocument();
+    expect(chart.querySelectorAll('circle')).toHaveLength(4);
+  });
+
+  it('uses the earliest interval as the displayed baseline without duplicating its graph point', async () => {
+    const intervalOnly = {
+      ...response,
+      baseline: null,
+    };
+    vi.mocked(api.fetchPositionProgress).mockResolvedValueOnce(intervalOnly);
+
+    render(<PositionProgressView {...defaultProps} />);
+
+    await screen.findByRole('img', { name: /position progress over time/i });
+    const first = intervalOnly.points[0];
+    expect(screen.getByText('Historical baseline')).toBeInTheDocument();
+    expect(screen.getByText(`${first.attempts} dated encounters`)).toBeInTheDocument();
+    expect(screen.getByText(`Dated through ${new Date(first.occurredAt).toLocaleDateString()}`))
+      .toBeInTheDocument();
+    expect(screen.getAllByTestId('progress-point-mistake-rate')).toHaveLength(2);
+    expect(screen.getAllByTestId('progress-point-win-rate')).toHaveLength(2);
+    expect(screen.getByTestId(`progress-interval-label-${first.checkpointId}`)).toHaveTextContent(
+      `Baseline · Interval 1 · ${first.attempts} encounters · ${new Date(first.occurredAt).toLocaleDateString()}`,
+    );
+  });
+
+  it('keeps the empty state when neither baseline nor measured intervals exist', async () => {
+    vi.mocked(api.fetchPositionProgress).mockResolvedValueOnce({
+      ...response,
+      baseline: null,
+      points: [],
+      currentIntervalState: 'NO_CHECKPOINT',
+      mistakeRateChange: null,
+      winRateChange: null,
+    });
+
+    render(<PositionProgressView {...defaultProps} />);
+
+    expect(await screen.findByText('No measured interval observations yet.')).toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: /position progress over time/i })).not.toBeInTheDocument();
+    expect(screen.queryAllByTestId('progress-point-mistake-rate')).toHaveLength(0);
   });
 
   it('shows unavailable text for null changes when history is sufficient', async () => {

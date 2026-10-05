@@ -43,12 +43,15 @@ failure:
 
 convention:
   - Keep interval construction deterministic and in memory over existing personal event and occurrence reads.
-  - The frontend displays baseline as separate historical context and charts every measured interval.
-  - Chronological labels identify each interval's number, encounter count, and date.
+  - The frontend displays the historical baseline as the first chart measurement, followed by each measured interval in response order; it appears exactly once.
+  - If baseline is absent but measured intervals exist, the first interval remains the first chart measurement and supplies the displayed baseline summary without duplication.
+  - The chart projection does not change the backend-provided relative changes or assessment.
+  - Chart labels identify the historical baseline or interval number, encounter count, and date.
   - Omit open/closed wording from chart labels and tooltips; show status in the latest summary.
   - Do not show a separate `MEASURED_OPEN` message. Retain no-checkpoint and awaiting-evidence states.
   - Use the backend-provided assessment and relative changes without recalculating them in the client.
   - The Weaknesses Library opens the exact position's progress detail and returns to the library; color follows the position's side to move.
+  - While Position Progress is selected, the app shell fills the dynamic viewport and its shrinkable main area owns vertical scrolling.
   - Check session status before requesting progress; do not fetch for unauthenticated or unverifiable sessions.
   - Distinguish session checking, sign-in, session verification, request loading, retryable request failure, and empty interval states.
-  - Use an accessible dependency-free SVG chart; keep the historical baseline separate from measured interval observations.
+  - Use an accessible dependency-free SVG chart; keep the historical baseline separate from backend interval observations.

@@ -1632,6 +1632,7 @@ export default function Home() {
 
   const connectedAccount =
     sessionStatus === 'authenticated' && accountStatus === 'connected' ? activeAccount : undefined;
+  const showingPositionProgress = activeTab === 'weaknesses' && selectedProgress !== null;
   const displayedUsername =
     connectedAccount?.username ?? (sessionStatus === 'unauthenticated' ? activeUsername : undefined);
   const weaknessDisplayUsername =
@@ -1639,7 +1640,7 @@ export default function Home() {
 
   return (
     <div
-      className={`h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-emerald-500 selection:text-white overflow-hidden ${
+      className={`${showingPositionProgress ? 'h-dvh' : 'h-screen'} bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-emerald-500 selection:text-white overflow-hidden ${
         activeTab === 'puzzles' ? '2xl:flex-row' : ''
       }`}
     >
@@ -1656,7 +1657,7 @@ export default function Home() {
       />
 
       {/* Main Content Area */}
-      <main className={`flex-1 min-w-0 flex flex-col ${activeTab === 'import' ? 'justify-center overflow-hidden py-2' : 'justify-start overflow-y-auto py-2'}`}>
+      <main className={`flex-1 min-w-0 flex flex-col ${showingPositionProgress ? 'min-h-0' : ''} ${activeTab === 'import' ? 'justify-center overflow-hidden py-2' : 'justify-start overflow-y-auto py-2'}`}>
         {/* TAB 1: PRACTICE PUZZLES */}
         {activeTab === 'puzzles' && (
           <div className="max-w-[1536px] w-full mx-auto px-4 lg:px-8 2xl:max-w-none 2xl:px-4 flex-1 flex flex-col justify-center min-h-0">

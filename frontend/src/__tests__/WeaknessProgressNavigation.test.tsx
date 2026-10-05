@@ -121,6 +121,22 @@ describe('Weakness progress navigation', () => {
     expect(await screen.findByText('Recurring Opening Weaknesses Library')).toBeInTheDocument();
   });
 
+  it('uses the dynamic viewport and a shrinkable scroll region while progress is selected', async () => {
+    render(<Home />);
+
+    await screen.findByText('Recurring Opening Weaknesses Library');
+    fireEvent.click(await screen.findByRole('button', { name: /view progress/i }));
+    await screen.findByRole('heading', { name: 'Position Progress' });
+
+    const main = document.querySelector('main');
+    expect(main).toHaveClass('min-h-0', 'overflow-y-auto');
+    expect(main?.parentElement).toHaveClass('h-dvh');
+    expect(main?.parentElement).not.toHaveClass('h-screen');
+
+    fireEvent.click(screen.getByRole('button', { name: /practice puzzles/i }));
+    await waitFor(() => expect(main?.parentElement).toHaveClass('h-screen'));
+  });
+
   it('freezes the selected threshold across global filter changes and uses the next result threshold on reselection', async () => {
     localStorage.setItem('chessecho_min_eval_loss', '0.3');
     mocks.fetchPositionProgress.mockRejectedValueOnce(new Error('Unavailable'));
