@@ -221,7 +221,7 @@ and [`PositionProgressView.test.tsx`](../../frontend/src/__tests__/PositionProgr
 flowchart TB
   load["GET /api/puzzles"] --> board["ChessBoardArea"]
   board -->|"first puzzle move"| local["Local validation + feedback"]
-  board -->|"authenticated lifecycle"| events["POST /api/puzzles/events · user/account history"]
+  board -->|"authenticated solved/failed result"| events["POST /api/puzzles/events · user/account history"]
   timer["Local stopwatch/countdown"] --> attempt["POST /api/puzzles/attempt"]
   account["Authenticated accountId"] --> events
   account --> attempt
@@ -243,14 +243,14 @@ evaluation display from that response data. Undo, redo, reset, sound, and
 blindfold board state are frontend interactions.
 
 For authenticated users with a selected account, `Home` best-effort records
-`PRESENTED`, `STARTED`, `SOLVED`, `FAILED`, and `SKIPPED` training events through
-`POST /api/puzzles/events` with position ID, player color, event type, and
-selected account ID. The controller accepts the write with `202 Accepted`.
-These writes are not prerequisites for puzzle feedback; failures are logged
-and do not replace the board result. The endpoint is currently present in the
+`SOLVED` and `FAILED` puzzle outcomes through `POST /api/puzzles/events` with
+position ID, player color, event type, and selected account ID. Activating a
+puzzle, starting timed training, or moving to another puzzle does not create a
+scheduling event. Successful writes return `202 Accepted`; failures are logged
+and do not replace the board result. The endpoint is described in
+[`API_CONTRACT.md`](../../API_CONTRACT.md), with implementation in the
 [controller route](../../src/main/kotlin/com/chessecho/controller/PuzzleEventController.kt)
-and [request DTO](../../src/main/kotlin/com/chessecho/dto/PuzzleEventRequest.kt),
-but not yet described in `API_CONTRACT.md`.
+and [request DTO](../../src/main/kotlin/com/chessecho/dto/PuzzleEventRequest.kt).
 
 Timed practice uses local stopwatch/countdown state and submits
 `POST /api/puzzles/attempt` with attempt/puzzle IDs, mode, elapsed time,

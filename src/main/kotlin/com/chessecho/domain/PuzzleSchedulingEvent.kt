@@ -16,11 +16,8 @@ import java.time.Instant
 import java.util.UUID
 
 enum class SchedulingEventType {
-    PRESENTED,
-    STARTED,
     SOLVED,
     FAILED,
-    SKIPPED,
     GAME_REENCOUNTERED,
     GAME_MISTAKE,
     GAME_HANDLED_SUCCESSFULLY,

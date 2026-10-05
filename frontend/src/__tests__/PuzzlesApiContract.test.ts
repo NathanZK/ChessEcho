@@ -124,14 +124,14 @@ describe('Puzzle scheduling event API contract', () => {
     vi.restoreAllMocks();
   });
 
-  it('records authenticated training events with exact position identity', async () => {
+  it.each(['SOLVED', 'FAILED'] as const)('records %s with exact position identity', async (eventType) => {
     vi.mocked(global.fetch).mockResolvedValueOnce({ ok: true, json: async () => ({}) } as Response);
 
     const { recordPuzzleEvent } = await import('../services/api');
     await recordPuzzleEvent({
       positionId: 'position-1',
       playerColor: 'WHITE',
-      eventType: 'PRESENTED',
+      eventType,
       accountId: 'account-1',
     });
 
@@ -143,14 +143,14 @@ describe('Puzzle scheduling event API contract', () => {
         body: JSON.stringify({
           positionId: 'position-1',
           playerColor: 'WHITE',
-          eventType: 'PRESENTED',
+          eventType,
           accountId: 'account-1',
         }),
       }),
     );
   });
 
-  it.each(['PRESENTED', 'STARTED', 'SOLVED', 'FAILED', 'SKIPPED'] as const)(
+  it.each(['SOLVED', 'FAILED'] as const)(
     'supports %s without conflating outcomes',
     async (eventType) => {
       vi.mocked(global.fetch).mockResolvedValueOnce({ ok: true, json: async () => ({}) } as Response);

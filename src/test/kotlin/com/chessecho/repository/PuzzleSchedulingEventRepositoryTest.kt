@@ -95,7 +95,7 @@ class PuzzleSchedulingEventRepositoryTest {
     fun `findHistory returns only the requesting user's events for a shared account`() {
         val aliceEvent = saveEvent(alice, SchedulingEventType.SOLVED)
         saveEvent(bob, SchedulingEventType.FAILED)
-        saveEvent(null, SchedulingEventType.SKIPPED)
+        saveEvent(null, SchedulingEventType.FAILED)
 
         val history = puzzleSchedulingEventRepository.findHistory(alice.id, account.id, listOf(position.id), "BOTH")
 
@@ -130,7 +130,7 @@ class PuzzleSchedulingEventRepositoryTest {
     @Test
     fun `findHistory with a null user returns only guest events`() {
         saveEvent(alice, SchedulingEventType.SOLVED)
-        val guestEvent = saveEvent(null, SchedulingEventType.SKIPPED)
+        val guestEvent = saveEvent(null, SchedulingEventType.FAILED)
 
         val history = puzzleSchedulingEventRepository.findHistory(null, account.id, listOf(position.id), "BOTH")
 

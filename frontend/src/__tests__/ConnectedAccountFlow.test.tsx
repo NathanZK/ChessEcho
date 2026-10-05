@@ -687,13 +687,11 @@ describe('connected Chess.com account flow', () => {
     await waitFor(() => expect(api.fetchAccounts).toHaveBeenCalled());
     await waitFor(() => expect(api.fetchPuzzles).toHaveBeenCalled());
     expect(await screen.findByText('Account-scoped puzzle')).toBeInTheDocument();
-    expect(api.recordPuzzleEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        accountId: serverAccount.id,
-        positionId: accountScopedPuzzle.puzzleId,
-        eventType: 'PRESENTED',
-      })
-    );
+    expect(api.recordPuzzleEvent).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTitle('Next Puzzle'));
+    fireEvent.click(screen.getByTitle('Previous Puzzle'));
+    expect(api.recordPuzzleEvent).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: /Puzzle Settings Show/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Stopwatch' }));
@@ -707,6 +705,7 @@ describe('connected Chess.com account flow', () => {
         })
       )
     );
+    expect(vi.mocked(api.recordPuzzleEvent).mock.calls.map(([event]) => event.eventType)).toEqual(['SOLVED']);
   });
 
   it('omits a persisted account ID from guest timed-training writes', async () => {

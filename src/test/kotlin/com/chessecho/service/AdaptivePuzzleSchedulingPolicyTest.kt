@@ -13,17 +13,19 @@ class AdaptivePuzzleSchedulingPolicyTest {
     private val now = Instant.parse("2026-01-31T00:00:00Z")
 
     @Test
-    fun `presentation and start do not change baseline urgency`() {
-        val baseline = policy.schedule(10.0, position, emptyList(), now)
-        val exposed =
-            policy.schedule(
-                10.0,
-                position,
-                listOf(event(SchedulingEventType.PRESENTED), event(SchedulingEventType.STARTED)),
-                now,
-            )
+    fun `retired puzzle event values are absent from the persisted enum`() {
+        val retiredValues = setOf("PRESENTED", "STARTED", "SKIPPED")
 
-        assertEquals(baseline, exposed)
+        assertTrue(SchedulingEventType.entries.none { it.name in retiredValues })
+    }
+
+    @Test
+    fun `solved temporarily deprioritizes while failure increases priority`() {
+        val solved = policy.schedule(10.0, position, listOf(event(SchedulingEventType.SOLVED)), now)
+        val failed = policy.schedule(10.0, position, listOf(event(SchedulingEventType.FAILED)), now)
+
+        assertTrue(solved < 10.0)
+        assertTrue(failed > 10.0)
     }
 
     @Test
@@ -74,13 +76,11 @@ class AdaptivePuzzleSchedulingPolicyTest {
     }
 
     @Test
-    fun `solved and skipped are temporary deprioritization not removal`() {
+    fun `solved cooldown remains finite`() {
         val solved = policy.schedule(10.0, position, listOf(event(SchedulingEventType.SOLVED)), now)
-        val skipped = policy.schedule(10.0, position, listOf(event(SchedulingEventType.SKIPPED)), now)
 
         assertTrue(solved < 10.0)
-        assertTrue(skipped < 10.0)
-        assertTrue(solved.isFinite() && skipped.isFinite())
+        assertTrue(solved.isFinite())
     }
 
     @Test

@@ -17,6 +17,17 @@ import kotlin.test.assertTrue
  */
 class AccountDataBoundaryBaselineSchemaTest : PostgresMigrationTestFixture() {
     @Test
+    fun `retired puzzle event values are rejected by the baseline constraint`() {
+        val fixture = seedFixture("retired-event-types")
+
+        listOf("PRESENTED", "STARTED", "SKIPPED").forEach { eventType ->
+            assertFailsWith<SQLException>(eventType) {
+                insertEvent(fixture, appUserId = fixture.userA, occurrenceId = null, eventType = eventType)
+            }
+        }
+    }
+
+    @Test
     fun `app_user_id is nullable on every personally scoped table`() {
         listOf("puzzle_scheduling_event", "training_attempt", "async_job").forEach { table ->
             val column =

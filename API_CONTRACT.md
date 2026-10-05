@@ -288,7 +288,7 @@ Returns the authenticated user's actual-game performance for an exact position a
 - **Response fields:** `positionId` is a UUID; `playerColor` is `WHITE` or `BLACK`; `baseline` is null or an object with ISO-8601 `occurredAt`, 0–100 rates, and positive `sourceEncounterCount`.
 - Each point has a UUID `checkpointId`, ISO-8601 `occurredAt`, 0–100 rates, positive `attempts`, and boolean `open`. Changes are finite numbers or null; `assessment` is a string.
 - `currentIntervalState` is `NO_CHECKPOINT`, `OPEN_AWAITING_EVIDENCE`, or `MEASURED_OPEN`; `excludedUndatedEncounters` is a non-negative integer.
-- Only persisted `SOLVED` puzzle scheduling events are checkpoints. `PRESENTED`, `STARTED`, `FAILED`, `SKIPPED`, game-scheduling events, and timed-attempt telemetry are not checkpoints.
+- Only persisted `SOLVED` puzzle scheduling events are checkpoints. `FAILED`, game-scheduling events, and timed-attempt telemetry are not checkpoints.
 - The baseline includes dated encounters before the first checkpoint. Each point represents one non-empty interval beginning at a checkpoint and ending immediately before the next checkpoint; the final interval is open. A game on a checkpoint boundary belongs to the new interval.
 - Rates are independently aggregated as normalized wins or mistakes divided by dated source encounters, multiplied by 100. Draws and unknown results remain attempts but are not wins. Mistake loss calculation and fallback evaluation follow Weaknesses; an encounter is a mistake when its loss is greater than or equal to the request's `minEvalLoss`. A dated encounter with no usable direct or fallback evaluation remains an attempt but is not a mistake.
 - `occurredAt` is the latest included game's `playedAt` for both the baseline and each measured point. It is not the checkpoint time. `playedAt` is the available game-completion-time proxy; undated encounters are excluded rather than assigned import or persistence timestamps.
@@ -383,7 +383,57 @@ curl "http://localhost:8080/api/puzzles?platform=CHESS_COM&username=magnuscarlse
 
 ---
 
-## 7. Get Puzzle Continuation
+## 7. Record Puzzle Scheduling Events
+Records a retained puzzle decision for an authenticated user and an existing
+Chess.com account.
+
+- **Endpoint:** `POST /api/puzzles/events`
+- **Content-Type:** `application/json`
+- **Authentication:** Requires a live `CHESSECHO_SESSION`.
+
+### Request Body
+```json
+{
+  "positionId": "position-uuid",
+  "playerColor": "WHITE",
+  "eventType": "SOLVED",
+  "accountId": "account-uuid"
+}
+```
+
+- `positionId` (UUID, required): Position to which the event applies.
+- `playerColor` (string, required): `WHITE` or `BLACK`; the position occurrence
+  must match this color.
+- `eventType` (required): `SOLVED`, `FAILED`, `GAME_REENCOUNTERED`,
+  `GAME_MISTAKE`, or `GAME_HANDLED_SUCCESSFULLY`. The frontend emits only
+  `SOLVED` and `FAILED` for puzzle outcomes; game event values retain their
+  existing backend behavior.
+- `accountId` (UUID, required by this route): An existing account used to find
+  the matching position occurrence. The account lookup requires a session but
+  does not require that the caller owns the account; the saved event is
+  attributed to the authenticated user.
+
+`PRESENTED`, `STARTED`, and `SKIPPED` are no longer accepted event types.
+
+### Responses
+#### `202 Accepted`
+The event was saved. The response body is empty.
+
+#### `400 Bad Request`
+Missing `accountId` returns `ACCOUNT_SELECTION_REQUIRED`. A removed or unknown
+`eventType` returns `VALIDATION_ERROR` before the controller writes an event.
+
+#### `401 Unauthorized`
+No live authenticated session is present.
+
+#### `404 Not Found`
+An unknown account returns `ACCOUNT_NOT_FOUND`. If the account exists but has
+no occurrence for the supplied position and player color, the route returns
+404 with an empty body and does not save an event.
+
+---
+
+## 8. Get Puzzle Continuation
 Retrieves continuation candidate moves and resulting board states for a given position.
 
 - **Endpoint:** `GET /api/puzzles/continuation`
@@ -445,7 +495,7 @@ No continuation moves available for the given position.
 
 ---
 
-## 8. Evaluate User Exploration Move
+## 9. Evaluate User Exploration Move
 Evaluates an arbitrary legal move played from an arbitrary position (FEN) during interactive line exploration against the engine baseline and determines whether its evaluation loss is within the configured user exploration threshold (`0.80` pawns).
 
 - **Endpoint:** `GET /api/puzzles/evaluate-move`
