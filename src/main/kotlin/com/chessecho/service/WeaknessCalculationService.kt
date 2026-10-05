@@ -162,9 +162,7 @@ class WeaknessCalculationService(
                     analysis.moveEvaluations.find {
                         it.move == occurrence.movePlayed
                     } ?: continue
-                val evalLoss =
-                    moveEvaluation.evalLossFromBest
-                        ?: calculateEvalLoss(bestMoveEvalCp, moveEvaluation.evalCp)
+                val evalLoss = moveEvaluation.weaknessEvaluationLoss(bestMoveEvalCp) ?: 0.0
                 val (previousLoss, previousCount) =
                     moveStats.getOrDefault(occurrence.movePlayed, 0.0 to 0)
                 moveStats[occurrence.movePlayed] =
@@ -189,9 +187,7 @@ class WeaknessCalculationService(
             val acceptableMoves =
                 analysis.moveEvaluations
                     .map { moveEvaluation ->
-                        val loss =
-                            moveEvaluation.evalLossFromBest
-                                ?: calculateEvalLoss(bestMoveEvalCp, moveEvaluation.evalCp)
+                        val loss = moveEvaluation.weaknessEvaluationLoss(bestMoveEvalCp) ?: 0.0
                         AcceptableMove(move = moveEvaluation.move, evalLoss = loss)
                     }.filter { it.evalLoss < minEvalLoss }
                     .sortedBy { it.evalLoss }
@@ -547,17 +543,6 @@ class WeaknessCalculationService(
             policyVersion,
             System.currentTimeMillis() - startTime,
         )
-    }
-
-    /**
-     * Fallback calculation for evaluation loss if evalLossFromBest is null.
-     */
-    private fun calculateEvalLoss(
-        bestMoveEvalCp: Int?,
-        resultCp: Int?,
-    ): Double {
-        if (bestMoveEvalCp == null || resultCp == null) return 0.0
-        return maxOf(0.0, (bestMoveEvalCp - resultCp) / 100.0)
     }
 
     private data class ScopedPositionKey(

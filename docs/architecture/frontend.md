@@ -191,10 +191,19 @@ read request.
 
 **View Progress** selects a position and color in `Home`; it does not add a
 route. `PositionProgressView` calls
-`GET /api/positions/{positionId}/progress?playerColor={WHITE|BLACK}` only for
-an authenticated session. Guests see a sign-in link; a loading or failed
-session check does not request private progress. The view renders the server's
-assessment, historical baseline, interval state, and measured observations.
+`GET /api/positions/{positionId}/progress?playerColor={WHITE|BLACK}&minEvalLoss={threshold}`
+only for an authenticated session. The threshold is captured from the selected
+Weaknesses result and remains fixed for that Progress report. Guests see a
+sign-in link; a loading or failed session check does not request private
+progress. The view renders the server's assessment, historical baseline, and
+the latest measured interval beside it. The assessment compares both mistake
+and win rates with the baseline. The latest summary uses the last chronological
+non-empty observation and shows its mistake rate, win rate, attempts, latest
+included-game date, and open/closed status. It supplements the chart without
+removing any measured observations; chronological chart labels identify
+intervals by number, attempt count, and date, without open/closed wording in
+labels or tooltips. The measured open state is conveyed by the summary rather
+than a duplicate banner; an empty timeline never substitutes baseline values.
 No baseline and no measured intervals have distinct empty states; request
 failure offers Retry, and a changed position/color or unmount makes an older
 response inert. See [Position Progress](../specs/position-progress.md).

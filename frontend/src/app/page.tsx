@@ -223,6 +223,7 @@ export default function Home() {
   const [selectedProgress, setSelectedProgress] = useState<{
     positionId: string;
     playerColor: 'WHITE' | 'BLACK';
+    minEvalLoss: number;
   } | null>(null);
 
   const [puzzlesList, setPuzzlesList] = useState<Puzzle[]>([]);
@@ -1861,6 +1862,7 @@ export default function Home() {
             <PositionProgressView
               positionId={selectedProgress.positionId}
               playerColor={selectedProgress.playerColor}
+              minEvalLoss={selectedProgress.minEvalLoss}
               sessionStatus={sessionStatus}
               onBack={() => setSelectedProgress(null)}
             />
@@ -1873,8 +1875,8 @@ export default function Home() {
               minMistakeCount={minMistakeCount}
               onMinMistakeCountChange={handleMinMistakeCountChange}
               onSelectPractice={handleSelectPracticeFromLibrary}
-              onViewProgress={(positionId, playerColor) =>
-                setSelectedProgress({ positionId, playerColor })
+              onViewProgress={(positionId, playerColor, minEvalLoss) =>
+                setSelectedProgress({ positionId, playerColor, minEvalLoss })
               }
               onWeaknessCountChange={setWeaknessCount}
               activeColorFilter={puzzleColorFilter === 'BOTH' ? 'ALL' : puzzleColorFilter}

@@ -50,10 +50,10 @@ describe('Position progress API contract', () => {
       json: async () => progress,
     } as Response);
 
-    await expect(fetchPositionProgress(progress.positionId, 'WHITE')).resolves.toEqual(progress);
+    await expect(fetchPositionProgress(progress.positionId, 'WHITE', 0.3)).resolves.toEqual(progress);
 
     expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining(`/positions/${progress.positionId}/progress?playerColor=WHITE`),
+      expect.stringMatching(new RegExp(`/positions/${progress.positionId}/progress\\?playerColor=WHITE&minEvalLoss=0\\.3$`)),
       { credentials: 'include' },
     );
   });
@@ -74,7 +74,12 @@ describe('Position progress API contract', () => {
       json: async () => empty,
     } as Response);
 
-    await expect(fetchPositionProgress(empty.positionId, 'BLACK')).resolves.toEqual(empty);
+    await expect(fetchPositionProgress(empty.positionId, 'BLACK', 1.2)).resolves.toEqual(empty);
+    const url = new URL(vi.mocked(global.fetch).mock.calls[0][0] as string);
+    expect([...url.searchParams.entries()]).toEqual([
+      ['playerColor', 'BLACK'],
+      ['minEvalLoss', '1.2'],
+    ]);
   });
 
   it('accepts unknown response properties for forward compatibility', async () => {
@@ -83,7 +88,7 @@ describe('Position progress API contract', () => {
       json: async () => ({ ...progress, positionId: '00000000-0000-0000-0000-000000000011', futureField: true }),
     } as Response);
 
-    await expect(fetchPositionProgress('00000000-0000-0000-0000-000000000011', 'WHITE')).resolves.toMatchObject({
+    await expect(fetchPositionProgress('00000000-0000-0000-0000-000000000011', 'WHITE', 0.3)).resolves.toMatchObject({
       ...progress,
       positionId: '00000000-0000-0000-0000-000000000011',
     });
@@ -98,7 +103,7 @@ describe('Position progress API contract', () => {
       json: async () => body,
     } as Response);
 
-    await expect(fetchPositionProgress(progress.positionId, 'WHITE')).rejects.toThrow(
+    await expect(fetchPositionProgress(progress.positionId, 'WHITE', 0.3)).rejects.toThrow(
       /unexpected response body/i,
     );
   });
@@ -106,13 +111,28 @@ describe('Position progress API contract', () => {
   it('throws when the backend response is not successful', async () => {
     vi.mocked(global.fetch).mockResolvedValueOnce({ ok: false, status: 401 } as Response);
 
-    await expect(fetchPositionProgress(progress.positionId, 'WHITE')).rejects.toThrow();
+    await expect(fetchPositionProgress(progress.positionId, 'WHITE', 0.3)).rejects.toThrow();
+  });
+
+  it('surfaces a backend threshold validation failure without returning progress', async () => {
+    vi.mocked(global.fetch).mockResolvedValueOnce(new Response(JSON.stringify({
+      error: 'VALIDATION_ERROR',
+      details: { minEvalLoss: 'must be positive' },
+    }), { status: 400 }));
+
+    await expect(fetchPositionProgress(progress.positionId, 'WHITE', 0)).rejects.toThrow(
+      'Failed to load position progress: 400',
+    );
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('playerColor=WHITE&minEvalLoss=0'),
+      { credentials: 'include' },
+    );
   });
 
   it('propagates network errors', async () => {
     vi.mocked(global.fetch).mockRejectedValueOnce(new TypeError('Failed to fetch'));
 
-    await expect(fetchPositionProgress(progress.positionId, 'WHITE')).rejects.toThrow('Failed to fetch');
+    await expect(fetchPositionProgress(progress.positionId, 'WHITE', 0.3)).rejects.toThrow('Failed to fetch');
   });
 
   it('throws when the response is not valid JSON', async () => {
@@ -120,7 +140,7 @@ describe('Position progress API contract', () => {
     vi.spyOn(invalidJsonResponse, 'json').mockRejectedValueOnce(new SyntaxError('Invalid JSON'));
     vi.mocked(global.fetch).mockResolvedValueOnce(invalidJsonResponse);
 
-    await expect(fetchPositionProgress(progress.positionId, 'WHITE')).rejects.toThrow();
+    await expect(fetchPositionProgress(progress.positionId, 'WHITE', 0.3)).rejects.toThrow();
   });
 
   it.each([
@@ -143,7 +163,7 @@ describe('Position progress API contract', () => {
       json: async () => body,
     } as Response);
 
-    await expect(fetchPositionProgress(progress.positionId, 'WHITE')).rejects.toThrow(
+    await expect(fetchPositionProgress(progress.positionId, 'WHITE', 0.3)).rejects.toThrow(
       /unexpected response body/i,
     );
   });
@@ -157,7 +177,7 @@ describe('Position progress API contract', () => {
       json: async () => body,
     } as Response);
 
-    await expect(fetchPositionProgress(progress.positionId, 'WHITE')).rejects.toThrow(
+    await expect(fetchPositionProgress(progress.positionId, 'WHITE', 0.3)).rejects.toThrow(
       /unexpected response body/i,
     );
   });

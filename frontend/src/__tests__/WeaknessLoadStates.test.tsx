@@ -108,6 +108,93 @@ describe('Weakness load & pagination failure states (Issue #86)', () => {
     vi.restoreAllMocks();
   });
 
+  it('uses the displayed result threshold even before a changed filter starts its replacement load', async () => {
+    vi.mocked(api.fetchWeaknesses)
+      .mockResolvedValueOnce([makeItem('accepted')])
+      .mockReturnValueOnce(deferred<WeaknessResponse[]>().promise);
+    const onViewProgress = vi.fn();
+    function Library({ minEvalLoss }: { minEvalLoss: number }) {
+      React.useLayoutEffect(() => {
+        if (minEvalLoss === 0.5) {
+          fireEvent.click(screen.getByRole('button', { name: /view progress/i }));
+        }
+      }, [minEvalLoss]);
+      return (
+        <WeaknessesList username="hikaru" minEvalLoss={minEvalLoss}
+          onSelectPractice={vi.fn()} onViewProgress={onViewProgress} />
+      );
+    }
+    const { rerender } = render(<Library minEvalLoss={0.3} />);
+    await screen.findByRole('button', { name: /view progress/i });
+
+    rerender(<Library minEvalLoss={0.5} />);
+
+    expect(onViewProgress).toHaveBeenCalledWith('accepted', 'BLACK', 0.3);
+    expect(api.fetchWeaknesses).toHaveBeenLastCalledWith('hikaru', 'CHESS_COM', 'BOTH', 0.5, 3, 0, PAGE_SIZE);
+  });
+
+  it('does not expose accepted rows as matching a threshold whose request failed', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.mocked(api.fetchWeaknesses)
+      .mockResolvedValueOnce([makeItem('accepted-at-0.3')])
+      .mockRejectedValueOnce(new Error('Network error'));
+    const props = { username: 'hikaru', onSelectPractice: vi.fn(), onViewProgress: vi.fn() };
+    const { rerender } = render(<WeaknessesList {...props} minEvalLoss={0.3} />);
+
+    await screen.findByRole('button', { name: /view progress/i });
+    rerender(<WeaknessesList {...props} minEvalLoss={0.5} />);
+
+    expect(await screen.findByText(/couldn't load your weaknesses/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /view progress/i })).not.toBeInTheDocument();
+    expect(api.fetchWeaknesses).toHaveBeenNthCalledWith(1, 'hikaru', 'CHESS_COM', 'BOTH', 0.3, 3, 0, PAGE_SIZE);
+    expect(api.fetchWeaknesses).toHaveBeenNthCalledWith(2, 'hikaru', 'CHESS_COM', 'BOTH', 0.5, 3, 0, PAGE_SIZE);
+  });
+
+  it('pairs accepted rows with their request threshold when initial loads overlap', async () => {
+    const oldRequest = deferred<WeaknessResponse[]>();
+    const newRequest = deferred<WeaknessResponse[]>();
+    vi.mocked(api.fetchWeaknesses)
+      .mockReturnValueOnce(oldRequest.promise)
+      .mockReturnValueOnce(newRequest.promise);
+    const onViewProgress = vi.fn();
+    const props = { username: 'hikaru', onSelectPractice: vi.fn(), onViewProgress };
+    const { rerender } = render(<WeaknessesList {...props} minEvalLoss={0.3} />);
+    expect(api.fetchWeaknesses).toHaveBeenLastCalledWith('hikaru', 'CHESS_COM', 'BOTH', 0.3, 3, 0, PAGE_SIZE);
+
+    rerender(<WeaknessesList {...props} minEvalLoss={0.5} />);
+    expect(api.fetchWeaknesses).toHaveBeenLastCalledWith('hikaru', 'CHESS_COM', 'BOTH', 0.5, 3, 0, PAGE_SIZE);
+    await act(async () => { newRequest.resolve([makeItem('current')]); });
+    await act(async () => { oldRequest.resolve([makeItem('stale')]); });
+    fireEvent.click(screen.getByRole('button', { name: /view progress/i }));
+    expect(onViewProgress).toHaveBeenLastCalledWith('current', 'BLACK', 0.5);
+  });
+
+  it('keeps pagination rows paired with their threshold and ignores a superseded page completion', async () => {
+    const stalePage = deferred<WeaknessResponse[]>();
+    const currentInitial = deferred<WeaknessResponse[]>();
+    vi.mocked(api.fetchWeaknesses)
+      .mockResolvedValueOnce(fullPage('initial'))
+      .mockResolvedValueOnce(fullPage('page-one'))
+      .mockReturnValueOnce(stalePage.promise)
+      .mockReturnValueOnce(currentInitial.promise);
+    const onViewProgress = vi.fn();
+    const props = { username: 'hikaru', onSelectPractice: vi.fn(), onViewProgress };
+    const { rerender } = render(<WeaknessesList {...props} minEvalLoss={0.3} />);
+    fireEvent.click(await screen.findByRole('button', { name: /load more weaknesses/i }));
+    await waitFor(() => expect(screen.getAllByRole('button', { name: /view progress/i })).toHaveLength(40));
+    fireEvent.click(screen.getAllByRole('button', { name: /view progress/i })[20]);
+    expect(onViewProgress).toHaveBeenLastCalledWith('page-one-0', 'BLACK', 0.3);
+
+    fireEvent.click(screen.getByRole('button', { name: /load more weaknesses/i }));
+    expect(api.fetchWeaknesses).toHaveBeenLastCalledWith('hikaru', 'CHESS_COM', 'BOTH', 0.3, 3, 2, PAGE_SIZE);
+    rerender(<WeaknessesList {...props} minEvalLoss={0.5} />);
+    await act(async () => { currentInitial.resolve(fullPage('current')); });
+    await act(async () => { stalePage.resolve([makeItem('stale')]); });
+    fireEvent.click(screen.getAllByRole('button', { name: /view progress/i })[0]);
+    expect(onViewProgress).toHaveBeenLastCalledWith('current-0', 'BLACK', 0.5);
+    expect(screen.getAllByRole('button', { name: /view progress/i })).toHaveLength(PAGE_SIZE);
+  });
+
   it('loads guest-eligible weaknesses when a username is available without a session', async () => {
     vi.mocked(api.fetchWeaknesses).mockResolvedValue([]);
 

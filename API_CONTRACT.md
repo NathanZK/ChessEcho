@@ -282,18 +282,21 @@ curl "http://localhost:8080/api/positions/weaknesses?platform=CHESS_COM&username
 
 Returns the authenticated user's actual-game performance for an exact position and player color, divided into a historical baseline and intervals that start at successful puzzle decisions.
 
-- **Endpoint:** `GET /api/positions/{positionId}/progress?playerColor={WHITE|BLACK}`
+- **Endpoint:** `GET /api/positions/{positionId}/progress?playerColor={WHITE|BLACK}&minEvalLoss={value}`
+- **Query parameter:** `minEvalLoss` is required, finite, and positive. Progress uses the threshold from the successful Weaknesses request that produced the selected row. The frontend snapshots it with the selection; later global filter changes do not alter the request. Missing, malformed, zero, negative, NaN, or infinite values return HTTP 400 with the existing structured `VALIDATION_ERROR` body. Invalid requests never fall back to a fixed threshold.
 - **Authentication:** Requires the existing authenticated session. The service resolves the user's account and scopes occurrences and training events to that user, account, exact position, and color.
 - **Response fields:** `positionId` is a UUID; `playerColor` is `WHITE` or `BLACK`; `baseline` is null or an object with ISO-8601 `occurredAt`, 0–100 rates, and positive `sourceEncounterCount`.
 - Each point has a UUID `checkpointId`, ISO-8601 `occurredAt`, 0–100 rates, positive `attempts`, and boolean `open`. Changes are finite numbers or null; `assessment` is a string.
 - `currentIntervalState` is `NO_CHECKPOINT`, `OPEN_AWAITING_EVIDENCE`, or `MEASURED_OPEN`; `excludedUndatedEncounters` is a non-negative integer.
 - Only persisted `SOLVED` puzzle scheduling events are checkpoints. `PRESENTED`, `STARTED`, `FAILED`, `SKIPPED`, game-scheduling events, and timed-attempt telemetry are not checkpoints.
 - The baseline includes dated encounters before the first checkpoint. Each point represents one non-empty interval beginning at a checkpoint and ending immediately before the next checkpoint; the final interval is open. A game on a checkpoint boundary belongs to the new interval.
-- Rates are independently aggregated as normalized wins or mistakes divided by dated source encounters, multiplied by 100. Draws and unknown results remain attempts but are not wins. Mistake classification retains the existing `0.8` threshold and missing-evaluation policy.
+- Rates are independently aggregated as normalized wins or mistakes divided by dated source encounters, multiplied by 100. Draws and unknown results remain attempts but are not wins. Mistake loss calculation and fallback evaluation follow Weaknesses; an encounter is a mistake when its loss is greater than or equal to the request's `minEvalLoss`. A dated encounter with no usable direct or fallback evaluation remains an attempt but is not a mistake.
 - `occurredAt` is the latest included game's `playedAt` for both the baseline and each measured point. It is not the checkpoint time. `playedAt` is the available game-completion-time proxy; undated encounters are excluded rather than assigned import or persistence timestamps.
 - Empty intervals have no point. A later game updates its historically matching interval and does not create a checkpoint. Point `checkpointId` remains stable when late imports alter its rates or timestamp.
 - `currentIntervalState` describes the latest interval: `NO_CHECKPOINT`, `OPEN_AWAITING_EVIDENCE`, or `MEASURED_OPEN`. Older measured points may be closed while the latest interval awaits evidence.
-- Rate changes compare the baseline with the latest non-empty interval in checkpoint order, using `(intervalRate - baselineRate) / baselineRate * 100`. Missing baseline/measurement or a zero baseline rate produces `null`; the backend supplies the assessment text.
+- Rate changes compare the baseline with the latest non-empty interval in checkpoint order: `(intervalRate - baselineRate) / baselineRate * 100`. Missing baseline/measurement or a zero baseline rate produces `null`.
+- The backend assessment describes both rate directions relative to baseline when both comparisons exist. It compares rate values even when a relative change is null because the baseline rate is zero.
+- Unchanged rates are named explicitly. Use “and” for opposing movement or any unchanged rate; use “but” for same-direction movement. When a comparison is unavailable, the assessment requests more played encounters.
 - `excludedUndatedEncounters` counts only otherwise scoped source occurrences with no `playedAt`.
 
 #### `200 OK`
@@ -322,7 +325,7 @@ Returns the authenticated user's actual-game performance for an exact position a
   "excludedUndatedEncounters": 0,
   "mistakeRateChange": -42.857142857142854,
   "winRateChange": 55.55555555555556,
-  "assessment": "You are making fewer mistakes at this position."
+  "assessment": "You are making fewer mistakes at this position, and your win rate has increased."
 }
 ```
 

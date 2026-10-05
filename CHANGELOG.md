@@ -12,7 +12,8 @@
 
 - Practical game-outcome evidence adjusts weakness and puzzle recommendation priority by default through a confidence-gated policy; authenticated adaptive scheduling remains active.
 - Weaknesses Library actual-game results show W/D/L, score rate, and eligible-game count without internal evidence labels or training comparisons.
-- Position Progress shows a separate historical baseline and one measured observation per SOLVED training interval, with explicit empty-interval and undated-game states.
+- Position Progress shows a historical baseline and a latest measured interval summary while retaining every measured observation in its chart; the summary shows open/closed status, while chronological chart labels and tooltips omit it. The assessment compares mistake and win rates with the baseline; empty-interval and undated-game states remain explicit.
+- Position Progress now classifies mistakes using the threshold from the selected Weaknesses result.
 - Account-claim conflicts explain when a Chess.com account is connected under another ChessEcho sign-in without changing the selected account or starting an import.
 
 ### Fixed

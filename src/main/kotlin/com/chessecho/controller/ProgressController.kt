@@ -20,6 +20,7 @@ class ProgressController(
     fun getProgress(
         @PathVariable positionId: UUID,
         @RequestParam playerColor: PlayerColor,
+        @RequestParam minEvalLoss: Double,
         principal: AuthenticatedPrincipal,
-    ): ProgressResponse = progressService.getProgress(positionId, playerColor, principal)
+    ): ProgressResponse = progressService.getProgress(positionId, playerColor, principal, minEvalLoss)
 }
