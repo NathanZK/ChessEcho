@@ -222,6 +222,34 @@ and [`PositionProgressView.test.tsx`](../../frontend/src/__tests__/PositionProgr
 
 ## Practice puzzles and exploration
 
+### Exploring a supplied position
+
+The shared `Header` action **Explore a position** is available from every home
+tab and is separate from the three-tab navigation. It opens a FEN/PGN form.
+FEN input is validated before handoff. PGN input is parsed as one main line;
+the user chooses the initial position or any ply. The selected position carries
+its SAN history and PGN starting FEN into the board, including for PGNs that
+start from a custom setup. Multiple games and variations are rejected rather
+than silently choosing a different line.
+
+`Home` uses a synthetic position record marked `source: 'supplied'` to enter
+the existing Line Exploration flow. This is an internal adapter to the
+puzzle-backed board workspace, not a claim that the position is a puzzle or
+weakness. During this session, the selected workspace label reads **Line
+Exploration** while retaining the same internal tab; it returns to **Practice
+Puzzles** on exit. No fourth tab or route is added. The board starts with an
+unknown evaluation, then uses the same FEN-based continuation and move
+evaluation services as other exploration sessions.
+
+Puzzle-only settings, weakness labels, feedback/outcome cards, timer controls,
+hint, puzzle navigation, blindfold entry, and puzzle statistics are suppressed
+for supplied sessions. Puzzle-event recording is not used; timed-training
+state and any prior blindfold session are cleared when entering. Undo, redo,
+reset, board flip/sound, and the shared Line Exploration modes remain
+available. Exiting clears the supplied session and returns to the existing
+empty Practice Puzzles state instead of showing a solved-puzzle result. Real
+puzzle and weakness sessions retain their existing labels and controls.
+
 ```mermaid
 %%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false, "diagramPadding": 120}}}%%
 flowchart TB

@@ -11,6 +11,7 @@ export interface MoveBreakdown {
 
 export interface Puzzle {
   puzzleId: string;
+  source?: 'puzzle' | 'weakness' | 'supplied';
   fen: string;
   playerColor: 'WHITE' | 'BLACK';
   targetMove: string;

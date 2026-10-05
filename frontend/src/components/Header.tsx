@@ -1,8 +1,9 @@
 'use client';
 
-import React from 'react';
-import { Swords, Target, Download, User } from 'lucide-react';
+import React, { useState } from 'react';
+import { Compass, Swords, Target, Download, User } from 'lucide-react';
 import type { AccountSummary } from '../services/api';
+import { ExplorePositionModal, type PositionExplorationStart } from './ExplorePositionModal';
 
 export type TabType = 'puzzles' | 'weaknesses' | 'import';
 
@@ -18,6 +19,8 @@ interface HeaderProps {
   onDisconnect?: () => void;
   sessionStatus?: HeaderSessionStatus;
   accountStatus: HeaderAccountStatus;
+  onExplorePosition?: (position: PositionExplorationStart) => void;
+  isSourceNeutralExploration?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -29,7 +32,10 @@ export const Header: React.FC<HeaderProps> = ({
   onDisconnect,
   sessionStatus,
   accountStatus,
+  onExplorePosition,
+  isSourceNeutralExploration = false,
 }) => {
+  const [isExplorePositionOpen, setIsExplorePositionOpen] = useState(false);
   const isPuzzlesLayout = activeTab === 'puzzles';
   const showConnected = sessionStatus === 'authenticated' && !!connectedAccount;
   const showGuestSelection = sessionStatus === 'unauthenticated' && !!username;
@@ -56,7 +62,7 @@ export const Header: React.FC<HeaderProps> = ({
         className={`max-w-7xl mx-auto flex items-center justify-between ${
           isPuzzlesLayout
             ? 'flex-wrap gap-3 2xl:max-w-none 2xl:mx-0 2xl:h-full 2xl:flex-col 2xl:flex-nowrap 2xl:items-stretch 2xl:justify-start'
-            : ''
+            : 'max-[1199px]:flex-wrap max-[1199px]:gap-3'
         }`}
       >
         {/* Brand Logo */}
@@ -92,7 +98,7 @@ export const Header: React.FC<HeaderProps> = ({
           className={`flex items-center bg-slate-950 p-1.5 rounded-xl border border-slate-800 ${
             isPuzzlesLayout
               ? 'gap-1 order-3 w-full min-w-0 overflow-x-auto 2xl:order-2 2xl:flex-col 2xl:items-stretch 2xl:overflow-visible'
-              : 'space-x-1'
+              : 'max-[1199px]:order-3 max-[1199px]:w-full max-[1199px]:min-w-0 max-[1199px]:overflow-x-auto space-x-1'
           }`}
         >
           <button
@@ -113,7 +119,9 @@ export const Header: React.FC<HeaderProps> = ({
                   : ''
               }
             >
-              Practice Puzzles
+              {activeTab === 'puzzles' && isSourceNeutralExploration
+                ? 'Line Exploration'
+                : 'Practice Puzzles'}
             </span>
           </button>
 
@@ -177,7 +185,7 @@ export const Header: React.FC<HeaderProps> = ({
             className={`flex items-center bg-slate-800/80 px-3.5 py-1.5 rounded-xl border border-slate-700/60 ${
               isPuzzlesLayout
                 ? 'order-2 ml-auto max-w-full min-w-0 flex-wrap gap-2 2xl:order-3 2xl:mt-auto 2xl:ml-0 2xl:w-full 2xl:shrink-0 2xl:flex-col 2xl:items-stretch'
-                : 'space-x-3'
+                : 'max-[1199px]:order-2 max-[1199px]:ml-auto space-x-3'
             }`}
           >
             <div
@@ -231,7 +239,7 @@ export const Header: React.FC<HeaderProps> = ({
             className={`flex items-center bg-slate-950 px-3.5 py-1.5 rounded-xl border border-slate-800 text-xs font-semibold text-slate-400 ${
               isPuzzlesLayout
                 ? 'order-2 ml-auto max-w-full min-w-0 flex-wrap gap-2 2xl:order-3 2xl:mt-auto 2xl:ml-0 2xl:w-full 2xl:shrink-0 2xl:flex-col 2xl:items-start'
-                : 'space-x-2'
+                : 'max-[1199px]:order-2 max-[1199px]:ml-auto space-x-2'
             }`}
           >
             <User className={`w-4 h-4 text-slate-500 ${isPuzzlesLayout ? 'shrink-0' : ''}`} />
@@ -278,7 +286,26 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </div>
         )}
+        <button
+          className={`order-4 flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-500/50 bg-emerald-500/10 px-4 py-2.5 text-sm font-semibold text-emerald-200 transition hover:border-emerald-400 hover:bg-emerald-500/20 hover:text-white sm:w-auto ${
+            isPuzzlesLayout ? '2xl:w-full' : ''
+          }`}
+          onClick={() => setIsExplorePositionOpen(true)}
+          type="button"
+        >
+          <Compass className="h-4 w-4 shrink-0" />
+          <span>Explore a position</span>
+        </button>
       </div>
+      {isExplorePositionOpen && (
+        <ExplorePositionModal
+          onClose={() => setIsExplorePositionOpen(false)}
+          onSubmit={(position) => {
+            onExplorePosition?.(position);
+            setIsExplorePositionOpen(false);
+          }}
+        />
+      )}
     </header>
   );
 };

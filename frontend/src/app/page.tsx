@@ -2,6 +2,7 @@
 
 import React, { useState, useSyncExternalStore } from 'react';
 import { Header, TabType } from '@/components/Header';
+import type { PositionExplorationStart } from '@/components/ExplorePositionModal';
 import { EvalBar } from '@/components/EvalBar';
 import { ChessBoardArea } from '@/components/ChessBoardArea';
 import { BlinfoldBoardWrapper } from '@/components/BlinfoldBoardWrapper';
@@ -233,6 +234,9 @@ export default function Home() {
   const [puzzlesList, setPuzzlesList] = useState<Puzzle[]>([]);
   const [currentPuzzleIndex, setCurrentPuzzleIndex] = useState<number>(0);
   const [activePuzzle, setActivePuzzle] = useState<Puzzle | null>(null);
+  const [initialMoveHistorySan, setInitialMoveHistorySan] = useState<string[]>([]);
+  const [initialMoveHistoryStartFen, setInitialMoveHistoryStartFen] = useState<string | undefined>();
+  const suppliedPositionCounterRef = React.useRef(0);
   const [isLoadingPuzzles, setIsLoadingPuzzles] = useState<boolean>(true);
   const [puzzleLoadError, setPuzzleLoadError] = useState<boolean>(false);
   const [puzzleReloadToken, setPuzzleReloadToken] = useState<number>(0);
@@ -867,23 +871,26 @@ export default function Home() {
     isMoveEvaluationPending;
 
   const handleEnterBlindfold = () => {
-    if (!activePuzzle || isPuzzleBoardUnsettled) return;
+    if (!activePuzzle || activePuzzle.source === 'supplied' || isPuzzleBoardUnsettled) return;
     blindfold.start(currentBoardFen || activePuzzle.fen, activePuzzle.playerColor);
   };
 
   const handleEnterExploration = (
     initialMode?: ExplorationPlayMode,
-    decisionMove?: string
+    decisionMove?: string,
+    baselineFenOverride?: string,
+    baselineEvalOverride?: number,
+    baselineUnknownOverride?: boolean,
   ) => {
     setExplorationDecisionMove(decisionMove ?? null);
     setIsExplorationActive(true);
     setExplorationPlayMode(initialMode);
-    const baselineFen = currentBoardFen || activePuzzle?.fen || '';
-    const baselineEval = currentEvalCp;
-    const baselineUnknown = isEvalUnknown;
+    const baselineFen = baselineFenOverride || currentBoardFen || activePuzzle?.fen || '';
+    const baselineEval = baselineEvalOverride ?? currentEvalCp;
+    const baselineUnknown = baselineUnknownOverride ?? isEvalUnknown;
 
     const initialMap: Record<string, { evalCp: number; isUnknown: boolean }> = {};
-    if (activePuzzle?.fen) {
+    if (!baselineFenOverride && activePuzzle?.fen) {
       initialMap[activePuzzle.fen] = { evalCp: activePuzzle.evalCp ?? 35, isUnknown: false };
     }
     if (baselineFen) {
@@ -906,6 +913,38 @@ export default function Home() {
     setChallengeActiveCandidateByFen({});
   };
 
+  const handleExplorePosition = (position: PositionExplorationStart) => {
+    suppliedPositionCounterRef.current += 1;
+    blindfold.exit();
+    setTimerMode(null);
+    setTimerElapsedMs(0);
+    setTimerExpired(false);
+    setTimerSubmissionError(null);
+    const sideToMove = position.fen.trim().split(/\s+/)[1];
+    setActivePuzzle({
+      puzzleId: `supplied-position-${Date.now()}-${suppliedPositionCounterRef.current}`,
+      source: 'supplied',
+      fen: position.fen,
+      playerColor: sideToMove === 'b' ? 'BLACK' : 'WHITE',
+      targetMove: '',
+      openingTitle: '',
+      acceptableMoves: [],
+      movesPlayed: [],
+      priority: 0,
+      timesReached: 0,
+      mistakeCount: 0,
+      mistakeRate: 0,
+    });
+    setInitialMoveHistorySan(position.sanHistory);
+    setInitialMoveHistoryStartFen(position.historyStartFen);
+    setCurrentBoardFen(position.fen);
+    setCurrentEvalCp(35);
+    setIsEvalUnknown(true);
+    setHintSquare(undefined);
+    changeTab('puzzles');
+    handleEnterExploration(undefined, undefined, position.fen, 35, true);
+  };
+
   const handleExitExploration = () => {
     setIsExplorationActive(false);
     setExplorationPlayMode(undefined);
@@ -918,6 +957,14 @@ export default function Home() {
     setChallengeBranchesByFen({});
     setChallengeActiveCandidateByFen({});
     setExplorationDecisionMove(null);
+    if (activePuzzle?.source === 'supplied') {
+      setActivePuzzle(null);
+      setInitialMoveHistorySan([]);
+      setInitialMoveHistoryStartFen(undefined);
+      setCurrentBoardFen('');
+      setFeedback({ status: 'IDLE' });
+      return;
+    }
     if (explorationDecisionMove) {
       setFeedback({ status: 'IDLE' });
     } else {
@@ -994,7 +1041,7 @@ export default function Home() {
   ) {
     setTrackedPuzzleQuery({ isSettingsInitialized, activeUsername, puzzleColorFilter, minEvalLoss, minMistakeCount });
     if (!isSettingsInitialized || !activeUsername) {
-      if (!activeUsername) {
+      if (!activeUsername && activePuzzle?.source !== 'supplied') {
         setPuzzlesList([]);
         setActivePuzzle(null);
         setPuzzleLoadError(false);
@@ -1700,12 +1747,16 @@ export default function Home() {
       <Header
         activeTab={activeTab}
         setActiveTab={changeTab}
+        onExplorePosition={handleExplorePosition}
         username={displayedUsername}
         connectedAccount={connectedAccount}
         weaknessCount={weaknessCount}
         onDisconnect={handleLogout}
         sessionStatus={sessionStatus}
         accountStatus={accountStatus}
+        isSourceNeutralExploration={
+          isExplorationActive && activePuzzle?.source === 'supplied'
+        }
       />
 
       {/* Main Content Area */}
@@ -1777,7 +1828,15 @@ export default function Home() {
                 {/* Center Interactive Chessboard & Controls */}
                 <div className="w-full max-w-[640px] shrink-0 2xl:max-w-[760px] 2xl:w-auto 2xl:min-w-0 2xl:basis-[760px] 2xl:grow 2xl:shrink">
                   <ChessBoardArea
+                    key={activePuzzle.source === 'supplied' ? activePuzzle.puzzleId : 'puzzle-board'}
                     initialFen={activePuzzle.fen}
+                    initialMoveHistorySan={
+                      activePuzzle.source === 'supplied' ? initialMoveHistorySan : undefined
+                    }
+                    initialMoveHistoryStartFen={
+                      activePuzzle.source === 'supplied' ? initialMoveHistoryStartFen : undefined
+                    }
+                    showPuzzleControls={activePuzzle.source !== 'supplied'}
                     playerColor={activePuzzle.playerColor}
                     blindfoldMode={isBlindfoldActive}
                     boardOrientation={puzzleBoardOrientation}
@@ -1847,7 +1906,9 @@ export default function Home() {
                       explorationDecisionMove={explorationDecisionMove}
                       onEnterExploration={handleEnterExploration}
                       onExitExploration={handleExitExploration}
-                      onEnterBlindfold={handleEnterBlindfold}
+                      onEnterBlindfold={
+                        activePuzzle.source === 'supplied' ? undefined : handleEnterBlindfold
+                      }
                       isBlindfoldEntryDisabled={isPuzzleBoardUnsettled}
                       continuationMode={continuationMode}
                       onContinuationModeChange={setContinuationMode}

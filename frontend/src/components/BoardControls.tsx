@@ -13,6 +13,7 @@ interface BoardControlsProps {
   canUndo: boolean;
   canRedo: boolean;
   canHint?: boolean;
+  showPuzzleControls?: boolean;
   onFlipBoard?: () => void;
   soundEnabled?: boolean;
   onToggleSound?: () => void;
@@ -28,6 +29,7 @@ export const BoardControls: React.FC<BoardControlsProps> = ({
   canUndo,
   canRedo,
   canHint = true,
+  showPuzzleControls = true,
   onFlipBoard,
   soundEnabled = true,
   onToggleSound,
@@ -92,35 +94,38 @@ export const BoardControls: React.FC<BoardControlsProps> = ({
           </button>
         )}
 
-        <button
-          onClick={onHint}
-          disabled={!canHint}
-          title={canHint ? "Show Move Hint" : "Hint unavailable after puzzle is solved"}
-          className="flex items-center space-x-1.5 px-3 h-9 bg-amber-500/20 hover:bg-amber-500/30 disabled:opacity-30 disabled:hover:bg-amber-500/20 text-amber-300 rounded-lg text-xs font-semibold transition border border-amber-500/30 cursor-pointer disabled:cursor-not-allowed"
-        >
-          <Lightbulb className="w-3.5 h-3.5 text-amber-400" />
-          <span>Hint</span>
-        </button>
+        {showPuzzleControls && (
+          <>
+            <button
+              onClick={onHint}
+              disabled={!canHint}
+              title={canHint ? "Show Move Hint" : "Hint unavailable after puzzle is solved"}
+              className="flex items-center space-x-1.5 px-3 h-9 bg-amber-500/20 hover:bg-amber-500/30 disabled:opacity-30 disabled:hover:bg-amber-500/20 text-amber-300 rounded-lg text-xs font-semibold transition border border-amber-500/30 cursor-pointer disabled:cursor-not-allowed"
+            >
+              <Lightbulb className="w-3.5 h-3.5 text-amber-400" />
+              <span>Hint</span>
+            </button>
 
-        <button
-          onClick={onPreviousPuzzle}
-          title="Previous Puzzle"
-          className="flex items-center space-x-1 px-2.5 h-9 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-bold transition border border-slate-700/60 cursor-pointer"
-        >
-          <ChevronLeft className="w-3.5 h-3.5" />
-          <span>Prev</span>
-        </button>
+            <button
+              onClick={onPreviousPuzzle}
+              title="Previous Puzzle"
+              className="flex items-center space-x-1 px-2.5 h-9 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-bold transition border border-slate-700/60 cursor-pointer"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+              <span>Prev</span>
+            </button>
 
-        <button
-          onClick={onNextPuzzle}
-          title="Next Puzzle"
-          className="flex items-center space-x-1.5 px-3.5 h-9 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition shadow-md shadow-emerald-900/40 cursor-pointer"
-        >
-          <span>Next Puzzle</span>
-          <ChevronRight className="w-3.5 h-3.5" />
-        </button>
+            <button
+              onClick={onNextPuzzle}
+              title="Next Puzzle"
+              className="flex items-center space-x-1.5 px-3.5 h-9 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition shadow-md shadow-emerald-900/40 cursor-pointer"
+            >
+              <span>Next Puzzle</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </>
+        )}
       </div>
     </div>
   );
 };
-
