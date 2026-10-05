@@ -387,7 +387,7 @@ export interface MoveEvaluationResponse {
   acceptable: boolean;
 }
 
-export type PuzzleSchedulingEventType = 'PRESENTED' | 'STARTED' | 'SOLVED' | 'FAILED' | 'SKIPPED';
+export type PuzzleSchedulingEventType = 'SOLVED' | 'FAILED';
 
 export interface PuzzleEventRequest {
   positionId: string;

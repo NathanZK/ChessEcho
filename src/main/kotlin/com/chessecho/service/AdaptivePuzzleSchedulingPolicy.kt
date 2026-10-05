@@ -41,14 +41,9 @@ class AdaptivePuzzleSchedulingPolicy {
         val failures = events.count { it.type == SchedulingEventType.FAILED }
         val failureBoost = minOf(3.0, failures * 0.5)
         val solved = events.filter { it.type == SchedulingEventType.SOLVED }.maxOfOrNull { it.occurredAt }
-        val skipped = events.filter { it.type == SchedulingEventType.SKIPPED }.maxOfOrNull { it.occurredAt }
         val cooldown =
             solved?.let { exp(-Duration.between(it, asOf).toHours().coerceAtLeast(0) / (24.0 * 3.0)) * 2.0 } ?: 0.0
-        val skipPenalty =
-            skipped?.let {
-                exp(-Duration.between(it, asOf).toHours().coerceAtLeast(0) / (24.0 * 2.0)) * 0.75
-            } ?: 0.0
-        return (baselinePriority + mistakeBoost - handled + failureBoost - cooldown - skipPenalty)
+        return (baselinePriority + mistakeBoost - handled + failureBoost - cooldown)
             .coerceAtLeast(0.0)
     }
 

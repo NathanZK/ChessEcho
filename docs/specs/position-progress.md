@@ -9,7 +9,7 @@ contract:
   - `currentIntervalState` uses the three documented lifecycle values; `excludedUndatedEncounters` is a non-negative integer.
   - Change values are finite numbers or null; `assessment` is a string supplied by the backend.
   - Only a persisted `SOLVED` scheduling event for the requesting user, resolved account, position, and color starts a training interval. It represents a correct initial puzzle decision; continuation completion is not required.
-  - `PRESENTED`, `STARTED`, `FAILED`, `SKIPPED`, game-scheduling events, and timed-attempt outcomes do not create checkpoints.
+  - `FAILED`, game-scheduling events, and timed-attempt outcomes do not create checkpoints.
   - The baseline contains all dated scoped occurrences before the first checkpoint; without checkpoints, all dated occurrences remain baseline. A baseline exists only when it has at least one dated encounter.
   - Checkpoints are ordered by `(occurredAt, id)`. A checkpoint starts a half-open interval through, but not including, its successor. At tied checkpoint times, only the last event in ID order receives encounters at that timestamp.
   - Each non-empty interval produces one observation identified by its checkpoint UUID. The final interval is open; prior intervals are closed. Empty intervals produce no observation or synthetic rate.

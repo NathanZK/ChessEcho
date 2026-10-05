@@ -27,6 +27,7 @@ import {
   recordPuzzleEvent,
   submitTrainingAttempt,
   type AccountSummary,
+  type PuzzleSchedulingEventType,
   type SessionState,
 } from '@/services/api';
 import { soundService } from '@/services/soundService';
@@ -229,7 +230,6 @@ export default function Home() {
   const [puzzlesList, setPuzzlesList] = useState<Puzzle[]>([]);
   const [currentPuzzleIndex, setCurrentPuzzleIndex] = useState<number>(0);
   const [activePuzzle, setActivePuzzle] = useState<Puzzle | null>(null);
-  const presentedPuzzleRef = React.useRef<string | null>(null);
   const [isLoadingPuzzles, setIsLoadingPuzzles] = useState<boolean>(true);
   const [puzzleLoadError, setPuzzleLoadError] = useState<boolean>(false);
   const [puzzleReloadToken, setPuzzleReloadToken] = useState<number>(0);
@@ -339,7 +339,7 @@ export default function Home() {
   const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
 
   const recordPuzzleEventBestEffort = React.useCallback(
-    (eventType: 'PRESENTED' | 'STARTED' | 'SOLVED' | 'FAILED' | 'SKIPPED', puzzle: Puzzle | null = activePuzzle) => {
+    (eventType: PuzzleSchedulingEventType, puzzle: Puzzle | null = activePuzzle) => {
       if (!puzzle || sessionStatus !== 'authenticated') return;
       if (!activeAccountId) {
         console.warn('Unable to record puzzle scheduling event without a selected account');
@@ -356,13 +356,6 @@ export default function Home() {
     },
     [activePuzzle, activeAccountId, sessionStatus],
   );
-
-  React.useEffect(() => {
-    if (!activePuzzle || sessionStatus !== 'authenticated') return;
-    if (presentedPuzzleRef.current === activePuzzle.puzzleId) return;
-    presentedPuzzleRef.current = activePuzzle.puzzleId;
-    recordPuzzleEventBestEffort('PRESENTED', activePuzzle);
-  }, [activePuzzle, recordPuzzleEventBestEffort, sessionStatus]);
 
   // Timed training state
   const timerRef = React.useRef<StopwatchTimer | CountdownTimer | null>(null);
@@ -1141,9 +1134,6 @@ export default function Home() {
 
   const handlePreviousPuzzle = () => {
     if (puzzlesList.length === 0) return;
-    if (activePuzzle && feedback.status === 'IDLE' && historyIndex === 0) {
-      recordPuzzleEventBestEffort('SKIPPED', activePuzzle);
-    }
     const prevIndex = (currentPuzzleIndex - 1 + puzzlesList.length) % puzzlesList.length;
     const prevPuzzle = puzzlesList[prevIndex];
 
@@ -1157,9 +1147,6 @@ export default function Home() {
 
   const handleNextPuzzle = async () => {
     if (puzzlesList.length === 0) return;
-    if (activePuzzle && feedback.status === 'IDLE' && historyIndex === 0) {
-      recordPuzzleEventBestEffort('SKIPPED', activePuzzle);
-    }
     const nextIndex = (currentPuzzleIndex + 1) % puzzlesList.length;
     const nextPuzzle = puzzlesList[nextIndex];
 
@@ -1322,7 +1309,6 @@ export default function Home() {
   ) => {
     if (!activePuzzle) return;
     if (isInitialDecision) {
-      recordPuzzleEventBestEffort('STARTED', activePuzzle);
       recordPuzzleEventBestEffort(isCorrect ? 'SOLVED' : 'FAILED', activePuzzle);
     }
     setMoveHistory((prev) => [...prev, moveSan]);

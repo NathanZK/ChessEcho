@@ -919,7 +919,7 @@ CREATE TABLE puzzle_scheduling_event
     CONSTRAINT ck_puzzle_event_player_color CHECK (player_color IN ('WHITE', 'BLACK')),
     CONSTRAINT ck_puzzle_event_type CHECK (
         event_type IN (
-            'PRESENTED', 'STARTED', 'SOLVED', 'FAILED', 'SKIPPED',
+            'SOLVED', 'FAILED',
             'GAME_REENCOUNTERED', 'GAME_MISTAKE', 'GAME_HANDLED_SUCCESSFULLY'
         )
     )
