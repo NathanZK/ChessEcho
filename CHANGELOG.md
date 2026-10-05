@@ -17,5 +17,6 @@
 
 ### Fixed
 
+- Authenticated users without a connected Chess.com account now see their signed-in state and can sign out from the Header.
 - Disconnect 404 responses now reconcile the selected account against the authenticated account list without treating the error as success.
 - Position Progress win rates correctly count imported Chess.com wins for White and Black, including the first encounter, with PGN result fallback.
