@@ -22,6 +22,7 @@ import {
 export const CHALLENGE_MAX_EVAL_LOSS = 0.20;
 
 interface ChessBoardAreaProps {
+  initialDecisionEnabled?: boolean;
   blindfoldMode?: boolean;
   initialFen: string;
   initialMoveHistorySan?: string[];
@@ -68,6 +69,7 @@ interface ChessBoardAreaProps {
 }
 
 export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
+  initialDecisionEnabled = true,
   blindfoldMode = false,
   initialFen,
   initialMoveHistorySan = [],
@@ -290,6 +292,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
 
 
   const handlePieceDrop = (sourceSquare: string, targetSquare: string): boolean => {
+    if (historyIndex === 0 && !initialDecisionEnabled) return false;
     try {
       const gameCopy = cloneChessGameWithHistory(game);
       const move = gameCopy.move({

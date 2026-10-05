@@ -19,6 +19,7 @@ import {
 import { Puzzle } from '../mock/mockData';
 import { HistoricalGamesModal } from './HistoricalGamesModal';
 import { ContinuationMode, ContinuationCandidate, ExplorationPlayMode } from '../services/api';
+import type { PuzzleAttemptCountState } from '../hooks/usePuzzleAttemptCount';
 
 export function formatDecimal(val: number, decimals: number = 2): string {
   return (val ?? 0).toFixed(decimals).replace(',', '.');
@@ -73,6 +74,11 @@ export interface ChallengeSubmissionResult {
 }
 
 interface PuzzleFeedbackPanelProps {
+  attemptCountState?: PuzzleAttemptCountState;
+  attemptRecording?: boolean;
+  pendingAttempts?: Array<{ id: string; retryable: boolean }>;
+  onRetryAttempt?: (id: string) => void;
+  onReloadAttemptCount?: () => void;
   puzzle: Puzzle;
   feedback: FeedbackState;
   onPreviousPuzzle?: () => void;
@@ -141,6 +147,11 @@ interface PuzzleFeedbackPanelProps {
 }
 
 export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
+  attemptCountState = { status: 'hidden' },
+  attemptRecording = false,
+  pendingAttempts = [],
+  onRetryAttempt,
+  onReloadAttemptCount,
   puzzle,
   feedback,
   onPreviousPuzzle,
@@ -1044,6 +1055,41 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
         )}
         </div>
         </div>
+      )}
+
+      {attemptCountState.status !== 'hidden' && (
+        <section aria-label="Your puzzle attempts" aria-live="polite" className="rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm">
+          {attemptCountState.status === 'loaded' ? (
+            <div className="flex flex-wrap gap-x-6 gap-y-1 font-semibold">
+              <p className="text-amber-300">Failed: {attemptCountState.failedCount}</p>
+              <p className="text-emerald-300">Solved: {attemptCountState.solvedCount}</p>
+            </div>
+          ) : attemptCountState.status === 'loading' ? (
+            <p className="text-slate-400">Loading your attempt counts...</p>
+          ) : (
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-amber-300">Your attempt counts are unavailable.</p>
+              <button type="button" onClick={onReloadAttemptCount} className="text-xs font-semibold text-emerald-300 underline">
+                Retry counts
+              </button>
+            </div>
+          )}
+          <p className="mt-1 text-xs text-slate-500">Your submitted answers to this puzzle.</p>
+          {attemptRecording && <p className="mt-2 text-xs text-slate-400">Recording your answer...</p>}
+          {pendingAttempts.map((attempt, index) => (
+            <div key={attempt.id} className="mt-2 flex items-center justify-between gap-2 text-xs">
+              <p className="text-amber-300">{attempt.retryable
+                ? 'Could not confirm this answer was recorded.'
+                : 'This answer could not be recorded. Reload to check your saved counts.'}</p>
+              {attempt.retryable && (
+                <button type="button" onClick={() => onRetryAttempt?.(attempt.id)}
+                  aria-label={`Retry recording answer ${index + 1}`} className="shrink-0 font-semibold text-emerald-300 underline">
+                  Retry answer
+                </button>
+              )}
+            </div>
+          ))}
+        </section>
       )}
 
       {/* Stats Pill Badges */}

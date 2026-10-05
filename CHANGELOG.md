@@ -27,3 +27,4 @@
 - Disconnect 404 responses now reconcile the selected account against the authenticated account list without treating the error as success.
 - Position Progress win rates correctly count imported Chess.com wins for White and Black, including the first encounter, with PGN result fallback.
 - Position Progress now plots its historical baseline as the first graph point and remains correctly rendered while scrolling upward.
+- Practice Puzzles displays separate solved and failed submitted-answer counts for the signed-in user's selected account and puzzle, with replay-safe retries and explicit unavailable states.

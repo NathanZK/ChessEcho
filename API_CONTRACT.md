@@ -437,7 +437,41 @@ Chess.com account.
 
 ### Responses
 #### `202 Accepted`
-The event was saved. The response body is empty.
+The event was saved. Legacy requests have an empty response body.
+
+For a replay-safe initial answer, supply both `submissionId` (UUID) and
+`submittedMove` (nonblank canonical SAN without surrounding whitespace).
+Identified answers must use `SOLVED` or `FAILED` and `WHITE` or `BLACK`.
+The response is `{ "submissionId": "submitted-uuid" }`.
+A fresh answer has a fresh identity, independent of timer IDs; retries reuse
+the exact identity and payload. Concurrent or repeated matching deliveries
+persist one event. Reusing the identity for another account, position, color,
+outcome, or move returns `409 PUZZLE_SUBMISSION_CONFLICT`.
+Omitted and null optional fields are equivalent; supplying only one field
+returns `400 VALIDATION_ERROR`.
+
+### Submitted-answer outcome counts
+
+`GET /api/puzzles/{positionId}/attempt-count?accountId=UUID&playerColor=WHITE|BLACK`
+requires an authenticated session and an explicit account/color. It returns
+`{ "solvedCount": 2, "failedCount": 3 }`, two nonnegative integers counting the caller's
+`SOLVED` and `FAILED` training events for that account/position/color, excluding
+source-linked events. Each row contributes only to its persisted outcome.
+One grouped aggregate supplies both values; absent outcome groups return zero.
+The combined `attemptCount` field is not returned. It does not count
+timing telemetry, real-game encounters, or Position Progress observations.
+
+Guest reads return `401 UNAUTHENTICATED` before account lookup. Invalid or
+missing parameters return `400 VALIDATION_ERROR`; an unknown account returns
+`404 ACCOUNT_NOT_FOUND`; missing position/color occurrence returns
+`404 NOT_FOUND`. Identified writes also use structured `404 NOT_FOUND` for a
+missing occurrence; legacy writes retain their empty 404 response.
+
+Both fields use signed 64-bit backend counts. The frontend accepts each through
+`Number.MAX_SAFE_INTEGER`; larger or malformed values show unavailable instead of rounded counts.
+Existing attributable legacy training events count once per row by outcome. Without
+historical submission identities, missing writes or duplicate historical
+answers cannot be reconstructed or deduplicated reliably.
 
 #### `400 Bad Request`
 Missing `accountId` returns `ACCOUNT_SELECTION_REQUIRED`. A removed or unknown

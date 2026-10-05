@@ -3,11 +3,57 @@ package com.chessecho.repository
 import com.chessecho.domain.PuzzleSchedulingEvent
 import com.chessecho.domain.SchedulingEventType
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
+import java.time.Instant
 import java.util.UUID
 
 interface PuzzleSchedulingEventRepository : JpaRepository<PuzzleSchedulingEvent, UUID> {
+    @Query(
+        """
+        SELECT e.eventType AS outcome, COUNT(e) AS submissionCount FROM PuzzleSchedulingEvent e
+        WHERE e.appUser.id = :userId AND e.chessAccount.id = :accountId
+          AND e.position.id = :positionId AND e.playerColor = :playerColor
+          AND e.eventType IN (com.chessecho.domain.SchedulingEventType.SOLVED, com.chessecho.domain.SchedulingEventType.FAILED)
+          AND e.sourceOccurrence IS NULL
+        GROUP BY e.eventType
+        """,
+    )
+    fun countSubmittedAnswers(
+        userId: UUID,
+        accountId: UUID,
+        positionId: UUID,
+        playerColor: String,
+    ): List<PuzzleOutcomeCount>
+
+    fun findByAppUserIdAndSubmissionId(
+        appUserId: UUID,
+        submissionId: UUID,
+    ): PuzzleSchedulingEvent?
+
+    @Modifying(flushAutomatically = true)
+    @Query(
+        value = """
+        INSERT INTO puzzle_scheduling_event
+            (id, app_user_id, chess_account_id, position_id, player_color, event_type, occurred_at, submission_id, submitted_move)
+        VALUES (:id, :userId, :accountId, :positionId, :playerColor, :eventType, :occurredAt, :submissionId, :submittedMove)
+        ON CONFLICT DO NOTHING
+        """,
+        nativeQuery = true,
+    )
+    fun insertSubmission(
+        id: UUID,
+        userId: UUID,
+        accountId: UUID,
+        positionId: UUID,
+        playerColor: String,
+        eventType: String,
+        occurredAt: Instant,
+        submissionId: UUID,
+        submittedMove: String,
+    ): Int
+
     /**
      * Personal read (#457): training history belongs to one `(AppUser, ChessAccount)` pair, never
      * to the shared account alone. `appUserId = null` selects guest history.
@@ -45,4 +91,9 @@ interface PuzzleSchedulingEventRepository : JpaRepository<PuzzleSchedulingEvent,
         @Param("sourceOccurrenceId") sourceOccurrenceId: UUID,
         @Param("eventType") eventType: SchedulingEventType,
     ): PuzzleSchedulingEvent?
+}
+
+interface PuzzleOutcomeCount {
+    val outcome: SchedulingEventType
+    val submissionCount: Long
 }
