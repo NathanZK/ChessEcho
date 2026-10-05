@@ -44,6 +44,18 @@ product intent, acceptance criteria, repository constraints (including
 deployment/migration state), and validation. The template records the
 information an implementation agent needs without prescribing architecture.
 
+Each acceptance criterion must pair an observable outcome with an appropriate
+verification method and evidence an independent reviewer can inspect or
+reproduce. Follow the template's criterion-specific evidence guidance: identify
+relevant revision/setup/state, state reachability, and limitations, and ensure
+combined evidence establishes the same claimed behavior. Rendered UI criteria
+require visual evidence; user-flow criteria also require evidence of the
+specified flow. Screenshots do not prove interaction/reachability, and interaction
+tests do not prove visual correctness. Non-rendered work uses suitable non-visual
+evidence. Keep auxiliary scope/context details conditional on material relevance
+and applicable validation separate from acceptance evidence; implementer reports
+and self-confirming tests do not establish the intended outcome.
+
 Repository conventions and approved task scope take precedence over workflow defaults. Do not create repository conventions or artifacts, including documentation or changelogs, solely to satisfy a workflow unless the approved scope or an existing repository convention calls for them.
 
 If work introduced during a task is later determined to be out of scope, remove it from that change set. If already committed, amend or squash the relevant work where practical; do not leave a standalone cleanup commit.
