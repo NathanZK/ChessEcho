@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Home from '../app/page';
 import * as api from '../services/api';
 import { activeJobStore } from '../utils/browserStores';
+import { soundService } from '../services/soundService';
 
 const accountApi = vi.hoisted(() => ({
   fetchCurrentSession: vi.fn(),
@@ -757,6 +758,7 @@ describe('connected Chess.com account flow', () => {
   });
 
   it('includes the selected account ID in authenticated puzzle and timed-training writes', async () => {
+    const timerStart = vi.spyOn(soundService, 'playSound');
     localStorage.setItem('chessecho_session_user', 'user-1');
     vi.mocked(api.fetchCurrentSession).mockResolvedValueOnce({
       status: 'authenticated',
@@ -779,6 +781,7 @@ describe('connected Chess.com account flow', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Puzzle Settings Show/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Stopwatch' }));
+    await waitFor(() => expect(timerStart).toHaveBeenCalledWith('move'));
     fireEvent.click(screen.getByRole('button', { name: 'Play correct move' }));
 
     await waitFor(() =>
@@ -793,6 +796,7 @@ describe('connected Chess.com account flow', () => {
   });
 
   it('omits a persisted account ID from guest timed-training writes', async () => {
+    const timerStart = vi.spyOn(soundService, 'playSound');
     localStorage.setItem('chessecho_username', serverAccount.username);
     localStorage.setItem('chessecho_active_account', JSON.stringify(serverAccount));
     vi.mocked(api.fetchPuzzles).mockResolvedValueOnce([accountScopedPuzzle]);
@@ -803,6 +807,7 @@ describe('connected Chess.com account flow', () => {
     expect(await screen.findByText('Account-scoped puzzle')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Puzzle Settings Show/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Stopwatch' }));
+    await waitFor(() => expect(timerStart).toHaveBeenCalledWith('move'));
     fireEvent.click(screen.getByRole('button', { name: 'Play correct move' }));
 
     await waitFor(() => expect(api.submitTrainingAttempt).toHaveBeenCalledTimes(1));
