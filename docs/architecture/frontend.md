@@ -200,13 +200,19 @@ the latest measured interval beside it. The assessment compares both mistake
 and win rates with the baseline. The latest summary uses the last chronological
 non-empty observation and shows its mistake rate, win rate, attempts, latest
 included-game date, and open/closed status. It supplements the chart without
-removing any measured observations; chronological chart labels identify
-intervals by number, attempt count, and date, without open/closed wording in
-labels or tooltips. The measured open state is conveyed by the summary rather
-than a duplicate banner; an empty timeline never substitutes baseline values.
-No baseline and no measured intervals have distinct empty states; request
-failure offers Retry, and a changed position/color or unmount makes an older
-response inert. See [Position Progress](../specs/position-progress.md).
+removing any measured observations. The chart starts with the historical
+baseline when one exists, followed by every measured interval in response
+order; the baseline is shown exactly once. Without a historical baseline, the
+first measured interval remains the first chart point and supplies the
+displayed baseline summary. This chart projection does not alter the
+backend-provided relative changes or assessment. Chart labels identify the
+baseline or interval number, attempt count, and date, without open/closed
+wording in labels or tooltips. The measured open state is conveyed by the
+summary rather than a duplicate banner. While this view is selected, the app
+shell fills the dynamic viewport and its shrinkable main area owns vertical
+scrolling. No baseline and no measured intervals have distinct empty states;
+request failure offers Retry, and a changed position/color or unmount makes an
+older response inert. See [Position Progress](../specs/position-progress.md).
 
 Representative tests:
 [`WeaknessLoadStates.test.tsx`](../../frontend/src/__tests__/WeaknessLoadStates.test.tsx),

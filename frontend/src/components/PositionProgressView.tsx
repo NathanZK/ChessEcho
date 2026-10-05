@@ -45,6 +45,49 @@ function formatRate(rate: number): string {
   return `${Number(rate.toFixed(1))}%`;
 }
 
+interface ChartMeasurement {
+  key: string;
+  label: string;
+  occurredAt: string;
+  mistakeRate: number;
+  winRate: number;
+  attempts: number;
+}
+
+function chartMeasurements(progress: PositionProgressResponse): ChartMeasurement[] {
+  const baseline = progress.baseline
+    ? [{
+        key: 'baseline',
+        label: 'Historical baseline',
+        occurredAt: progress.baseline.occurredAt,
+        mistakeRate: progress.baseline.mistakeRate,
+        winRate: progress.baseline.winRate,
+        attempts: progress.baseline.sourceEncounterCount,
+      }]
+    : [];
+  const intervals = progress.points.map((point, index) => ({
+    key: point.checkpointId,
+    label: progress.baseline || index > 0 ? `Interval ${index + 1}` : `Baseline · Interval ${index + 1}`,
+    occurredAt: point.occurredAt,
+    mistakeRate: point.mistakeRate,
+    winRate: point.winRate,
+    attempts: point.attempts,
+  }));
+  return [...baseline, ...intervals];
+}
+
+function displayBaseline(progress: PositionProgressResponse): PositionProgressBaseline | null {
+  if (progress.baseline) return progress.baseline;
+  const firstInterval = progress.points[0];
+  if (!firstInterval) return null;
+  return {
+    occurredAt: firstInterval.occurredAt,
+    mistakeRate: firstInterval.mistakeRate,
+    winRate: firstInterval.winRate,
+    sourceEncounterCount: firstInterval.attempts,
+  };
+}
+
 function BaselineSummary({ baseline }: { baseline: PositionProgressBaseline | null }) {
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900 p-5">
@@ -120,7 +163,7 @@ function LatestIntervalSummary({ point }: { point: PositionProgressPoint | null 
   );
 }
 
-function chartX(index: number, points: PositionProgressResponse['points']): number {
+function chartX(index: number, points: ChartMeasurement[]): number {
   if (points.length === 1) return 300;
   const first = Date.parse(points[0].occurredAt);
   const last = Date.parse(points[points.length - 1].occurredAt);
@@ -133,14 +176,13 @@ function chartY(rate: number): number {
 }
 
 function seriesPoints(
-  points: PositionProgressResponse['points'],
+  points: ChartMeasurement[],
   key: 'mistakeRate' | 'winRate',
 ): string {
   return points.map((point, index) => `${chartX(index, points)},${chartY(point[key])}`).join(' ');
 }
 
-function ProgressChart({ progress }: { progress: PositionProgressResponse }) {
-  const points = progress.points;
+function ProgressChart({ points }: { points: ChartMeasurement[] }) {
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 sm:p-5">
       <div className="mb-3 flex flex-wrap gap-x-5 gap-y-2 text-xs">
@@ -163,8 +205,8 @@ function ProgressChart({ progress }: { progress: PositionProgressResponse }) {
       >
         <title>Position progress over time</title>
         <desc>
-          Mistake rate and win rate by measured training interval, shown as percentages from 0 to 100.
-          The historical baseline is shown separately.
+          Mistake rate and win rate by measurement, shown as percentages from 0 to 100. The first point
+          is the historical baseline when available, followed by measured intervals.
         </desc>
         {[0, 50, 100].map((rate) => {
           const y = chartY(rate);
@@ -198,7 +240,7 @@ function ProgressChart({ progress }: { progress: PositionProgressResponse }) {
         {points.map((point, index) => {
           const x = chartX(index, points);
           return (
-            <g key={point.checkpointId}>
+            <g key={point.key}>
               <circle
                 data-testid="progress-point-mistake-rate"
                 cx={x}
@@ -238,15 +280,15 @@ function ProgressChart({ progress }: { progress: PositionProgressResponse }) {
       <p className="mt-2 text-xs text-slate-400">Each label below corresponds to one point in the chart.</p>
       <ul
         className="mt-2 flex flex-wrap gap-2 text-xs text-slate-300"
-        aria-label="Measured intervals shown in chart"
+        aria-label="Progress measurements shown in chart"
       >
-        {points.map((point, index) => (
+        {points.map((point) => (
           <li
-            key={point.checkpointId}
+            key={point.key}
             className="rounded-full border border-slate-700 px-3 py-1"
-            data-testid={`progress-interval-label-${point.checkpointId}`}
+            data-testid={`progress-interval-label-${point.key}`}
           >
-            Interval {index + 1} · {point.attempts} encounters ·{' '}
+            {point.label} · {point.attempts} {point.attempts === 1 ? 'encounter' : 'encounters'} ·{' '}
             {new Date(point.occurredAt).toLocaleDateString()}
           </li>
         ))}
@@ -276,6 +318,9 @@ export function PositionProgressView({
     visibleLoadState.status === 'loaded'
       ? intervalStateText(visibleLoadState.progress.currentIntervalState)
       : null;
+  const loadedProgress = visibleLoadState.status === 'loaded' ? visibleLoadState.progress : null;
+  const measurements = loadedProgress ? chartMeasurements(loadedProgress) : [];
+  const baseline = loadedProgress ? displayBaseline(loadedProgress) : null;
 
   useEffect(() => {
     if (sessionStatus !== 'authenticated' || !accountId) return;
@@ -389,7 +434,7 @@ export function PositionProgressView({
           )}
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <BaselineSummary baseline={visibleLoadState.progress.baseline} />
+            <BaselineSummary baseline={baseline} />
             <LatestIntervalSummary
               point={visibleLoadState.progress.points.at(-1) ?? null}
             />
@@ -402,15 +447,12 @@ export function PositionProgressView({
             </p>
           )}
 
-          {visibleLoadState.progress.points.length === 0 ? (
+          {visibleLoadState.progress.points.length === 0 && (
             <p className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">
               No measured interval observations yet.
             </p>
-          ) : (
-            <>
-              <ProgressChart progress={visibleLoadState.progress} />
-            </>
           )}
+          {measurements.length > 0 && <ProgressChart points={measurements} />}
 
           <dl className="grid gap-3 sm:grid-cols-2">
             <div className="rounded-xl border border-slate-800 bg-slate-900 p-4">
