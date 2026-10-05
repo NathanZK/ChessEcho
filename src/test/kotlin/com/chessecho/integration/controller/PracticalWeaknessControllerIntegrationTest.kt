@@ -466,7 +466,6 @@ class PracticalWeaknessControllerIntegrationTest {
         val user = appUserRepository.save(AppUser(email = "$username-${nextId++}@integration.test"))
         return chessAccountRepository.save(
             ChessAccount(
-                user = null,
                 platform = "CHESS_COM",
                 username = username,
             ),

@@ -113,7 +113,7 @@ describe('Weakness progress navigation', () => {
 
     expect(await screen.findByRole('heading', { name: 'Position Progress' })).toBeInTheDocument();
     await waitFor(() => {
-      expect(mocks.fetchPositionProgress).toHaveBeenCalledWith('position-451', 'BLACK', 0.3);
+      expect(mocks.fetchPositionProgress).toHaveBeenCalledWith('position-451', 'BLACK', account.id, 0.3);
     });
     expect(screen.getByText(progress.assessment)).toBeInTheDocument();
 
@@ -128,7 +128,7 @@ describe('Weakness progress navigation', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /view progress/i }));
     await screen.findByText(/couldn't load position progress/i);
-    expect(mocks.fetchPositionProgress).toHaveBeenLastCalledWith(weakness.positionId, 'BLACK', 0.3);
+    expect(mocks.fetchPositionProgress).toHaveBeenLastCalledWith(weakness.positionId, 'BLACK', account.id, 0.3);
 
     act(() => {
       puzzleSettingsStore.set({ ...puzzleSettingsStore.getSnapshot(), minEvalLoss: 1.2 });
@@ -136,7 +136,7 @@ describe('Weakness progress navigation', () => {
     expect(mocks.fetchPositionProgress).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole('button', { name: /retry/i }));
     await screen.findByText(progress.assessment);
-    expect(mocks.fetchPositionProgress).toHaveBeenLastCalledWith(weakness.positionId, 'BLACK', 0.3);
+    expect(mocks.fetchPositionProgress).toHaveBeenLastCalledWith(weakness.positionId, 'BLACK', account.id, 0.3);
 
     fireEvent.click(screen.getByRole('button', { name: /back to weaknesses/i }));
     await screen.findByRole('button', { name: /view progress/i });
@@ -146,6 +146,6 @@ describe('Weakness progress navigation', () => {
     });
     fireEvent.click(await screen.findByRole('button', { name: /view progress/i }));
     await screen.findByText(progress.assessment);
-    expect(mocks.fetchPositionProgress).toHaveBeenLastCalledWith(weakness.positionId, 'BLACK', 0.5);
+    expect(mocks.fetchPositionProgress).toHaveBeenLastCalledWith(weakness.positionId, 'BLACK', account.id, 0.5);
   });
 });

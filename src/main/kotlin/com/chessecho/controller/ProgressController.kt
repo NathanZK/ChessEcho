@@ -2,6 +2,7 @@ package com.chessecho.controller
 
 import com.chessecho.domain.PlayerColor
 import com.chessecho.dto.ProgressResponse
+import com.chessecho.service.AccountSelectionRequiredException
 import com.chessecho.service.ProgressService
 import com.chessecho.service.auth.AuthenticatedPrincipal
 import org.springframework.web.bind.annotation.GetMapping
@@ -19,8 +20,16 @@ class ProgressController(
     @GetMapping("/{positionId}/progress")
     fun getProgress(
         @PathVariable positionId: UUID,
+        @RequestParam(required = false) accountId: UUID?,
         @RequestParam playerColor: PlayerColor,
         @RequestParam minEvalLoss: Double,
         principal: AuthenticatedPrincipal,
-    ): ProgressResponse = progressService.getProgress(positionId, playerColor, principal, minEvalLoss)
+    ): ProgressResponse =
+        progressService.getProgress(
+            positionId,
+            playerColor,
+            accountId ?: throw AccountSelectionRequiredException(),
+            principal,
+            minEvalLoss,
+        )
 }

@@ -11,11 +11,11 @@ import com.chessecho.domain.PositionOccurrence
 import com.chessecho.domain.PuzzleSchedulingEvent
 import com.chessecho.domain.SchedulingEventType
 import com.chessecho.dto.ProgressIntervalState
-import com.chessecho.repository.ChessAccountRepository
 import com.chessecho.repository.EngineAnalysisRepository
 import com.chessecho.repository.PositionOccurrenceRepository
 import com.chessecho.repository.PuzzleSchedulingEventRepository
 import com.chessecho.service.auth.AuthenticatedPrincipal
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.CsvSource
@@ -29,23 +29,28 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
 class ProgressServiceTest {
-    private val accountRepository = mock<ChessAccountRepository>()
+    private val accountOwnershipService = mock<AccountOwnershipService>()
     private val occurrenceRepository = mock<PositionOccurrenceRepository>()
     private val schedulingEventRepository = mock<PuzzleSchedulingEventRepository>()
     private val analysisRepository = mock<EngineAnalysisRepository>()
     private val service =
         ProgressService(
-            accountRepository,
+            accountOwnershipService,
             occurrenceRepository,
             schedulingEventRepository,
             analysisRepository,
             GameOutcomeNormalizer(PgnHeaderTagReader()),
         )
     private val user = AppUser()
-    private val account = ChessAccount(user = user, platform = "CHESS_COM", username = "player")
+    private val account = ChessAccount(platform = "CHESS_COM", username = "player")
     private val position = Position(hash = "progress", fen = "8/8/8/8/8/8/8/8 w - -")
     private val principal = AuthenticatedPrincipal(user.id, devPrincipal = false)
     private val firstPlayedAt = Instant.parse("2026-09-01T12:00:00Z")
+
+    @BeforeEach
+    fun connectSelectedAccount() {
+        whenever(accountOwnershipService.requireConnectedAccountForProgress(account.id, principal)).thenReturn(account)
+    }
 
     @Test
     fun `selected threshold classifies 23 of 26 dated encounters in baseline and interval`() {
@@ -739,7 +744,6 @@ class ProgressServiceTest {
         assertEquals(null, response.winRateChange)
         assertEquals(null, response.mistakeRateChange)
         assertEquals("More played encounters are needed to assess progress.", response.assessment)
-        verify(accountRepository).findAllByUserIdOrderByCreatedAtAsc(user.id)
     }
 
     @Test
@@ -772,13 +776,15 @@ class ProgressServiceTest {
     }
 
     @Test
-    fun `no owned account keeps existing account not found behavior`() {
-        whenever(accountRepository.findAllByUserIdOrderByCreatedAtAsc(user.id)).thenReturn(emptyList())
+    fun `unconnected account returns account not found`() {
+        val missingAccountId = UUID.randomUUID()
+        whenever(accountOwnershipService.requireConnectedAccountForProgress(missingAccountId, principal))
+            .thenThrow(AccountNotFoundException())
 
         assertFailsWith<AccountNotFoundException> {
-            service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.8)
+            service.getProgress(position.id, PlayerColor.WHITE, missingAccountId, principal, minEvalLoss = 0.8)
         }
-        verify(accountRepository).findAllByUserIdOrderByCreatedAtAsc(user.id)
+        verify(accountOwnershipService).requireConnectedAccountForProgress(missingAccountId, principal)
     }
 
     private fun stubAnalysis(bestMoveEvalCp: Int? = 0): EngineAnalysis {
@@ -835,10 +841,16 @@ class ProgressServiceTest {
         color: PlayerColor,
         occurrences: List<PositionOccurrence>,
     ) {
-        whenever(accountRepository.findAllByUserIdOrderByCreatedAtAsc(user.id)).thenReturn(listOf(account))
         whenever(occurrenceRepository.findProgressOccurrences(account.id, position.id, color.name)).thenReturn(occurrences)
         stubEvents(color, emptyList())
     }
+
+    private fun ProgressService.getProgress(
+        positionId: UUID,
+        playerColor: PlayerColor,
+        principal: AuthenticatedPrincipal,
+        minEvalLoss: Double,
+    ) = getProgress(positionId, playerColor, account.id, principal, minEvalLoss)
 
     private fun stubEvents(
         color: PlayerColor,

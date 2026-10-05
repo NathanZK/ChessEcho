@@ -1,23 +1,25 @@
 package com.chessecho.service
 
+import com.chessecho.domain.AccountConnection
 import com.chessecho.domain.AsyncJob
 import com.chessecho.domain.ChessAccount
 import com.chessecho.domain.Platform
 import com.chessecho.dto.AccountAssociationRequest
 import com.chessecho.dto.ChessAccountResponse
 import com.chessecho.dto.ImportGamesRequest
+import com.chessecho.repository.AccountConnectionRepository
 import com.chessecho.repository.AppUserRepository
 import com.chessecho.repository.ChessAccountRepository
 import com.chessecho.service.auth.AuthenticatedPrincipal
 import com.chessecho.web.UnauthenticatedException
-import org.springframework.dao.DataIntegrityViolationException
+import org.springframework.jdbc.core.ConnectionCallback
+import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.stereotype.Service
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionTemplate
 import java.util.Locale
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * The single authorization boundary for account-backed data. A provider
@@ -27,14 +29,11 @@ import java.util.concurrent.ConcurrentHashMap
 class AccountOwnershipService(
     private val chessAccountRepository: ChessAccountRepository,
     private val appUserRepository: AppUserRepository,
+    private val connectionRepository: AccountConnectionRepository,
+    private val jdbc: JdbcTemplate,
     transactionManager: PlatformTransactionManager,
 ) {
     private val operationTransaction = TransactionTemplate(transactionManager)
-    private val insertTransaction =
-        TransactionTemplate(transactionManager).apply {
-            propagationBehavior = TransactionTemplate.PROPAGATION_REQUIRES_NEW
-        }
-    private val keyLocks = ConcurrentHashMap<String, Any>()
 
     @Transactional(readOnly = true)
     fun listOwnedAccounts(principal: AuthenticatedPrincipal): List<ChessAccountResponse> =
@@ -48,50 +47,28 @@ class AccountOwnershipService(
     ): AssociationResult {
         val platform = normalizePlatform(request.platform)
         val username = normalizeUsername(request.username)
-        val key = "${platform.lowercase(Locale.ROOT)}\u0000${username.lowercase(Locale.ROOT)}"
-        val lock = keyLocks.computeIfAbsent(key) { Any() }
-        return synchronized(lock) {
+        // Return expected conflicts outside the transaction callback, so a caller can
+        // handle the limit without marking its surrounding transaction rollback-only.
+        val result =
             operationTransaction.execute {
-                val owner =
-                    appUserRepository.findById(principal.appUserId)
-                        .orElseThrow { AccountNotFoundException("Account owner not found") }
-                val existing = chessAccountRepository.findByPlatformAndUsernameForUpdate(platform, username)
-                if (existing != null) {
-                    val existingOwner = existing.user
-                    return@execute when {
-                        existingOwner == null -> {
-                            existing.user = owner
-                            AssociationResult(existing.toResponse(), created = false)
-                        }
-                        existingOwner.id == owner.id -> AssociationResult(existing.toResponse(), created = false)
-                        else -> throw AccountClaimConflictException()
+                val user =
+                    appUserRepository.findByIdForUpdate(principal.appUserId)
+                        ?: throw AccountNotFoundException("Account user not found")
+                val connection = connectionRepository.findByAppUserId(user.id)
+                if (connection != null) {
+                    val account = connection.chessAccount
+                    if (account.platform.equals(platform, ignoreCase = true) &&
+                        account.username.equals(username, ignoreCase = true)
+                    ) {
+                        return@execute AssociationResult(account.toResponse(), created = false)
                     }
+                    return@execute null
                 }
-
-                try {
-                    val created =
-                        insertTransaction.execute {
-                            chessAccountRepository.saveAndFlush(
-                                ChessAccount(
-                                    user = owner,
-                                    platform = platform,
-                                    username = username,
-                                ),
-                            )
-                        } ?: throw IllegalStateException("Account creation transaction returned no account")
-                    AssociationResult(created.toResponse(), created = true)
-                } catch (_: DataIntegrityViolationException) {
-                    val raced =
-                        chessAccountRepository.findByPlatformAndUsernameForUpdate(platform, username)
-                            ?: throw AccountClaimConflictException()
-                    if (raced.user?.id == owner.id) {
-                        AssociationResult(raced.toResponse(), created = false)
-                    } else {
-                        throw AccountClaimConflictException()
-                    }
-                }
-            } ?: throw IllegalStateException("Account association transaction returned no result")
-        }
+                val (account, created) = findOrCreateShared(platform, username)
+                connectionRepository.saveAndFlush(AccountConnection(appUser = user, chessAccount = account))
+                AssociationResult(account.toResponse(), created)
+            }
+        return result ?: throw AccountConnectionLimitReachedException()
     }
 
     @Transactional
@@ -99,11 +76,14 @@ class AccountOwnershipService(
         accountId: UUID,
         principal: AuthenticatedPrincipal,
     ) {
-        val account =
-            chessAccountRepository.findByIdForUpdate(accountId)
-                ?: throw AccountNotFoundException("Account not found: $accountId")
-        requireOwner(principal, account)
-        account.user = null
+        appUserRepository.findByIdForUpdate(principal.appUserId)
+            ?: throw AccountNotFoundException("Account user not found")
+        val connection = connectionRepository.findByAppUserId(principal.appUserId)
+        if (connection == null || connection.chessAccount.id != accountId) {
+            throw AccountNotFoundException("Account connection not found: $accountId")
+        }
+        connectionRepository.delete(connection)
+        connectionRepository.flush()
     }
 
     /**
@@ -121,6 +101,8 @@ class AccountOwnershipService(
                     .orElseThrow { AccountNotFoundException("Account not found: $accountId") }
             verifySnapshots(request, account)
             val resolvedPrincipal = principal ?: throw UnauthenticatedException()
+            appUserRepository.findByIdForUpdate(resolvedPrincipal.appUserId)
+                ?: throw AccountNotFoundException("Account user not found")
             requireOwner(resolvedPrincipal, account)
             return account
         }
@@ -130,7 +112,7 @@ class AccountOwnershipService(
         }
         val platform = normalizePlatform(request.platform?.name)
         val username = normalizeUsername(request.username)
-        return findOrCreateUnclaimed(platform, username)
+        return findOrCreateShared(platform, username).first
     }
 
     @Transactional(readOnly = true)
@@ -147,7 +129,6 @@ class AccountOwnershipService(
                 normalizeUsername(username),
             ) ?: throw AccountNotFoundException("Chess account not found")
 
-        if (account.user != null) throw UnauthenticatedException()
         return account
     }
 
@@ -169,8 +150,7 @@ class AccountOwnershipService(
      *
      * Shared data — games, occurrences, position stats, engine analysis — is owned by the
      * `ChessAccount` row itself, so any authenticated principal may read it for any account that
-     * exists. `account.user` is a mutable current-connection pointer and deliberately plays no part
-     * here; it stays authoritative only for claim/association and import-initiation flows.
+     * exists. Current connections deliberately play no part here.
      *
      * Personal state is *not* covered by this resolver: callers must still scope
      * `PuzzleSchedulingEvent` reads by `app_user_id`.
@@ -203,13 +183,27 @@ class AccountOwnershipService(
     }
 
     @Transactional(readOnly = true)
+    fun requireConnectedAccountForProgress(
+        accountId: UUID,
+        principal: AuthenticatedPrincipal,
+    ): ChessAccount {
+        val account =
+            chessAccountRepository.findById(accountId)
+                .orElseThrow { AccountNotFoundException("Account not found: $accountId") }
+        if (!connectionRepository.existsByAppUserIdAndChessAccountId(principal.appUserId, account.id)) {
+            throw AccountNotFoundException("Account connection not found: $accountId")
+        }
+        return account
+    }
+
+    @Transactional(readOnly = true)
     fun authorizeJob(
         job: AsyncJob,
         principal: AuthenticatedPrincipal?,
     ) {
         val account = job.chessAccount ?: throw AccountNotFoundException("Import account is unresolved")
         if (principal == null) {
-            if (account.user != null) throw UnauthenticatedException()
+            if (job.appUser != null) throw UnauthenticatedException()
         } else if (job.appUser?.id != principal.appUserId) {
             throw ForbiddenAccountException()
         }
@@ -234,27 +228,39 @@ class AccountOwnershipService(
         return normalized
     }
 
-    private fun findOrCreateUnclaimed(
+    private fun findOrCreateShared(
         platform: String,
         username: String,
-    ): ChessAccount {
-        val existing = chessAccountRepository.findByPlatformAndUsernameForUpdate(platform, username)
-        if (existing != null) {
-            if (existing.user != null) throw AccountClaimConflictException()
-            return existing
-        }
-
-        return try {
-            chessAccountRepository.saveAndFlush(
-                ChessAccount(
-                    user = null,
-                    platform = platform,
-                    username = username,
-                ),
-            )
-        } catch (_: DataIntegrityViolationException) {
-            throw AccountClaimConflictException()
-        }
+    ): Pair<ChessAccount, Boolean> {
+        val existing = chessAccountRepository.findByPlatformAndUsernameIgnoreCase(platform, username)
+        if (existing != null) return existing to false
+        val inserted =
+            jdbc.execute(
+                ConnectionCallback { connection ->
+                    // H2's PostgreSQL mode supports DO NOTHING, but not expression-index inference.
+                    val conflictTarget =
+                        if (connection.metaData.databaseProductName == "PostgreSQL") {
+                            " (lower(platform), lower(username))"
+                        } else {
+                            ""
+                        }
+                    connection.prepareStatement(
+                        "INSERT INTO chess_account (id, platform, username, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP) " +
+                            "ON CONFLICT$conflictTarget DO NOTHING",
+                    ).use { statement ->
+                        statement.setObject(1, UUID.randomUUID())
+                        statement.setString(2, platform)
+                        statement.setString(3, username)
+                        statement.executeUpdate()
+                    }
+                },
+            ) ?: throw IllegalStateException("Shared account insert returned no result")
+        // A separate statement sees a concurrent winner after ON CONFLICT waits
+        // for its commit under PostgreSQL's READ COMMITTED isolation.
+        val account =
+            chessAccountRepository.findByPlatformAndUsernameIgnoreCase(platform, username)
+                ?: throw IllegalStateException("Shared account insert returned no account")
+        return account to (inserted == 1)
     }
 
     private fun verifySnapshots(
@@ -275,7 +281,9 @@ class AccountOwnershipService(
         principal: AuthenticatedPrincipal,
         account: ChessAccount,
     ) {
-        if (account.user?.id != principal.appUserId) throw ForbiddenAccountException()
+        if (!connectionRepository.existsByAppUserIdAndChessAccountId(principal.appUserId, account.id)) {
+            throw ForbiddenAccountException()
+        }
     }
 
     private fun ChessAccount.toResponse(): ChessAccountResponse =
@@ -300,7 +308,7 @@ class AccountNotFoundException(message: String = "Account not found") : RuntimeE
 class ForbiddenAccountException(message: String = "The authenticated principal does not own this account") :
     RuntimeException(message)
 
-class AccountClaimConflictException(message: String = "The account is already owned by another principal") :
+class AccountConnectionLimitReachedException(message: String = "Disconnect the current account before connecting another account") :
     RuntimeException(message)
 
 class AccountSelectionRequiredException(message: String = "An accountId is required for authenticated private data") :

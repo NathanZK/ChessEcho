@@ -50,13 +50,16 @@ these registrations: `/api/logout`, `/api/dev/session`, `/api/accounts`,
 exempt. Other POST/DELETE routes do not acquire CSRF protection merely by using
 the same controller package.
 
-`AccountOwnershipService` is the application boundary for account-backed
-access. Guest username-based reads/imports resolve only unclaimed accounts;
-authenticated import/association operations verify current ownership.
-Authenticated shared-data reads using an account UUID require a principal and
-an existing account, but are not uniformly owner-only. Private training history
-is separately scoped by application user. A username, account UUID, or job UUID
-is not an authentication credential.
+`AccountOwnershipService` is the application boundary for account connections
+and account-backed access. `ChessAccount` holds shared identity and
+`AccountConnection` links users to accounts; many users may connect one account,
+but each user may have only one current connection. Guest username-based
+reads/imports ignore connection state. Authenticated imports and personal
+Progress require the caller's explicit current connection. Authenticated
+shared-data reads by account UUID require a principal and an existing account,
+not a current connection. Personal history is separately scoped by user and
+account. A username, account UUID, or job UUID is not an authentication
+credential.
 
 The `/api/admin` prefix is not an authorization policy. The human-move corpus
 controllers below have no principal parameter or invoked account guard, and
@@ -94,7 +97,7 @@ flowchart TB
     List[GET /api/accounts] --> Accounts[AccountOwnershipService]
     Associate[POST /api/accounts] --> Accounts
     Disconnect["DELETE /api/accounts/{accountId}/connection"] --> Accounts
-    Accounts --> AccountRows[(ChessAccountRepository)]
+    Accounts --> AccountRows[(AccountConnectionRepository and ChessAccountRepository)]
 ```
 
 The dev-session route exists only under the `{dev, local}` profile allowlist
@@ -108,16 +111,16 @@ absent. The table records the response and access boundary for each route.
 | `GET /api/me` | `SessionController`; required `AuthenticatedPrincipal` → `CurrentUserResponse`. | 200 `CurrentUserResponse`. | Required session; absent/expired session is 401. |
 | `POST /api/logout` | `SessionController`; optional configured session-cookie value → `IdentitySessionService.revokeSession` when present → cookie clear. | 204, idempotent. | CSRF; no principal required. |
 | `POST /api/dev/session` | `DevSessionController`; servlet request → `DevIdentityProvider.claims` → `IdentitySessionService.establishSession` → session cookie and `CurrentUserResponse`. | 200 `CurrentUserResponse`. | CSRF; conditional profile/property route, otherwise 404. |
-| `GET /api/accounts` | `AccountController`; required principal → `AccountOwnershipService.listOwnedAccounts` → `ChessAccountRepository`. | 200 list of `ChessAccountResponse`. | Required session; returns accounts owned by that user. |
-| `POST /api/accounts` | `AccountController`; principal and `AccountAssociationRequest` JSON → `AccountOwnershipService` → locked/transactional `ChessAccountRepository` insert or claim. | 201 when created; 200 when already associated. | Required session and CSRF. Concurrent claim conflicts map to 409. |
-| `DELETE /api/accounts/{accountId}/connection` | `AccountController`; UUID path value and principal → `AccountOwnershipService.disconnect` → locked account row; clears the mutable owner link. | 204. | Required session and CSRF. |
+| `GET /api/accounts` | `AccountController`; required principal → `AccountOwnershipService.listOwnedAccounts` → `AccountConnectionRepository` and `ChessAccountRepository`. | 200 zero-or-one `ChessAccountResponse` list. | Required session; returns the caller's current connection. |
+| `POST /api/accounts` | `AccountController`; principal and `AccountAssociationRequest` JSON → `AccountOwnershipService` → locked user row, shared account lookup/create, and connection insert. | 201 when the shared account is new; 200 when already present or idempotently connected. | Required session and CSRF. A different second connection returns `409 ACCOUNT_CONNECTION_LIMIT_REACHED`. |
+| `DELETE /api/accounts/{accountId}/connection` | `AccountController`; UUID path value and principal → `AccountOwnershipService.disconnect` → locked user row and connection deletion. | 204. | Required session and CSRF; removes only the caller's connection. |
 
 ## Imports and game reads
 
 ```mermaid
 %%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false}}}%%
 flowchart TB
-    Start[POST /api/games/import] --> Own[Resolve guest or owned account]
+    Start[POST /api/games/import] --> Own[Resolve guest username or connected account ID]
     Own --> Job[(Persist immutable AsyncJob)]
     Job --> Accepted[202 ImportJobResponse]
     Job --> Worker["@Async worker claims job and reloads snapshot"]
@@ -156,9 +159,9 @@ default.
 
 | Method and path | Controller inputs and execution/data path | Response | Access boundary |
 |---|---|---|---|
-| `POST /api/games/import` | `GameImportController`; optional principal and validated `ImportGamesRequest` JSON → `GameImportService.createImportJob` → account resolution and persisted immutable `AsyncJob`; submits job ID to `@Async executeImportJob`. | 202 `ImportJobResponse`. | Optional session and CSRF. Guests can import only unclaimed usernames; authenticated requests select an owned account UUID. |
-| `GET /api/jobs/{id}` | `GameImportController`; UUID and optional principal → direct `AsyncJobRepository` load plus optional `ArchiveDerivedProcessingRepository` status lookup → `AccountOwnershipService.authorizeJob` → `JobStatusResponse`. | 200 `JobStatusResponse`. | Optional session; guests can poll only while the account is unclaimed, authenticated callers only when they initiated the job. Missing or unresolved jobs map to 404. |
-| `GET /api/games` | `GameController`; optional query inputs `username`, `platform` (default `CHESS_COM`), `accountId`, Spring `Pageable`; optional principal → `GameService` → `AccountOwnershipService` and `GameRepository` → `Page<GameDto>`. | 200 page of `GameDto`. | Optional session. Authenticated reads select an account UUID; username-based guest reads resolve only unclaimed accounts. |
+| `POST /api/games/import` | `GameImportController`; optional principal and validated `ImportGamesRequest` JSON → `GameImportService.createImportJob` → connection check and persisted immutable `AsyncJob`; submits job ID to `@Async executeImportJob`. | 202 `ImportJobResponse`. | Optional session and CSRF. Guests select by username regardless of connection state; authenticated requests require an explicit currently connected account UUID. |
+| `GET /api/jobs/{id}` | `GameImportController`; UUID and optional principal → direct `AsyncJobRepository` load plus optional `ArchiveDerivedProcessingRepository` status lookup → `AccountOwnershipService.authorizeJob` → `JobStatusResponse`. | 200 `JobStatusResponse`. | Optional session; guests may poll guest-started jobs regardless of later connections, and authenticated callers only jobs they initiated. Missing or unresolved jobs map to 404. |
+| `GET /api/games` | `GameController`; optional query inputs `username`, `platform` (default `CHESS_COM`), `accountId`, Spring `Pageable`; optional principal → `GameService` → `AccountOwnershipService` and `GameRepository` → `Page<GameDto>`. | 200 page of `GameDto`. | Optional session. Authenticated reads select any existing account UUID; username-based guest reads ignore connection state. |
 
 ## Weaknesses and puzzles
 
@@ -186,7 +189,7 @@ and [practical weakness prioritization](practical-weakness-prioritization.md).
 
 | Method and path | Controller inputs and execution/data path | Response | Access boundary |
 |---|---|---|---|
-| `GET /api/positions/weaknesses` | `WeaknessController`; optional `platform`, `username`, `accountId`, `minEvalLoss` (default 0.8), `minMistakeCount` (default 3), `page` (default 0), `size` (default 20); required `playerColor`; optional principal → `WeaknessCalculationService` → occurrence/game, engine/move-evaluation, practical-evidence, and account-scoped scheduling reads → page slice. | 200 list of `WeaknessResponse`. | Optional session; account selection follows guest/private versus authenticated shared-read rules. GET is CSRF-exempt. |
+| `GET /api/positions/weaknesses` | `WeaknessController`; optional `platform`, `username`, `accountId`, `minEvalLoss` (default 0.8), `minMistakeCount` (default 3), `page` (default 0), `size` (default 20); required `playerColor`; optional principal → `WeaknessCalculationService` → occurrence/game, engine/move-evaluation, practical-evidence, and account-scoped scheduling reads → page slice. | 200 list of `WeaknessResponse`. | Optional session; authenticated shared reads select any existing account ID, while guest username reads ignore connection state. GET is CSRF-exempt. |
 | `GET /api/puzzles` | `PuzzleController`; optional `platform`, `username`, `accountId`, `minEvalLoss` (default 0.8), `minMistakeCount` (default 3), `limit` (default 5), `page` (default 0); required `playerColor`; optional principal → same weakness read path → `PuzzleResponse` mapping. | 200 list of `PuzzleResponse`. | Optional session; account selection follows the weakness route rules. GET is CSRF-exempt. |
 
 ## Continuation and move evaluation
@@ -229,22 +232,23 @@ flowchart TB
     EventController --> EventRepos[(AccountOwnership, occurrence, user, event repositories)]
     EventRepos --> EventResponse[202 accepted or 404]
     ProgressRoute["GET /api/positions/{positionId}/progress"] --> Progress[ProgressService]
-    Progress --> ProgressRepos[(Owned accounts, occurrences, SOLVED events, engine analysis)]
+    Progress --> ProgressRepos[(Selected connection, occurrences, user SOLVED events, engine analysis)]
     ProgressRepos --> ProgressResponse[ProgressResponse]
 ```
 
 A training attempt is saved through `TrainingAttemptService`; a scheduling
 event is written directly by `PuzzleEventController` after resolving the
 account and matching occurrence. `ProgressService` computes baseline and
-intervals in memory from the authenticated user's owned-account occurrences,
-their `Game.playedAt` values, SOLVED events, and engine evaluations. It does
-not persist derived progress.
+intervals in memory from the explicitly selected current connection's
+occurrences, their `Game.playedAt` values, the authenticated user's SOLVED
+events for that account, and engine evaluations. It does not persist derived
+progress.
 
 | Method and path | Controller inputs and execution/data path | Response | Access boundary |
 |---|---|---|---|
 | `POST /api/puzzles/attempt` | `TrainingAttemptRequest` JSON and optional principal → `TrainingAttemptService` validates timing/outcome, optionally resolves `accountId`, then saves `TrainingAttemptRepository` and optional user reference. | 200 `TrainingAttemptResponse`. | Optional session; authenticated attempts must select an account, and account UUIDs require a session. No CSRF registration. |
-| `POST /api/puzzles/events` | `PuzzleEventRequest` JSON (`positionId`, `playerColor`, retained `eventType`, `accountId`) and required principal → direct `AccountOwnershipService.resolveSharedAccount`, `PositionOccurrenceRepository` lookup, `AppUserRepository` reference, then `PuzzleSchedulingEventRepository.save`. Removed or unknown enum values fail JSON binding with 400; no matching occurrence is 404. | 202 empty body; 400 validation/selection errors; 404 for unknown account or occurrence. | Required session; selected account must exist but need not be owned by the caller. No CSRF registration. |
-| `GET /api/positions/{positionId}/progress` | `ProgressController`; UUID path value, required `playerColor` and positive finite `minEvalLoss`, required principal → `ProgressService` reads owned accounts, occurrences, user's SOLVED events, and engine evaluation; classifies mistakes using the selected Weaknesses threshold and computes baseline/intervals in memory. | 200 `ProgressResponse`; 400 `VALIDATION_ERROR` for an invalid threshold. | Required session; absent/expired session is 401. No derived progress row is written. |
+| `POST /api/puzzles/events` | `PuzzleEventRequest` JSON and required principal → direct `AccountOwnershipService.resolveSharedAccount`, `PositionOccurrenceRepository` lookup, `AppUserRepository` reference, then `PuzzleSchedulingEventRepository.save`. | 202 empty body; 404 if no matching occurrence. | Required session. No CSRF registration. |
+| `GET /api/positions/{positionId}/progress` | `ProgressController`; UUID path value, required `playerColor`, current connected `accountId`, positive finite `minEvalLoss`, and principal → `ProgressService` verifies the connection and reads that account's occurrences plus the user's SOLVED events and engine evaluation; classifies mistakes using the selected Weaknesses threshold and computes baseline/intervals in memory. | 200 `ProgressResponse`; 400 for missing selection or invalid threshold; 404 for unknown/unconnected account. | Required session and current connection. No derived progress row is written. |
 
 See [position progress](../specs/position-progress.md) for interval boundaries,
 late-import handling, and evidence rules.

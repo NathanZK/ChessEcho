@@ -3,8 +3,11 @@ package com.chessecho.controller
 import com.chessecho.config.SessionCookieProperties
 import com.chessecho.config.SessionWebConfig
 import com.chessecho.dto.AccountAssociationRequest
-import com.chessecho.service.AccountClaimConflictException
+import com.chessecho.dto.ChessAccountResponse
+import com.chessecho.service.AccountConnectionLimitReachedException
+import com.chessecho.service.AccountNotFoundException
 import com.chessecho.service.AccountOwnershipService
+import com.chessecho.service.AssociationResult
 import com.chessecho.service.auth.AuthenticatedPrincipal
 import com.chessecho.service.auth.IdentitySessionService
 import com.chessecho.web.AuthenticatedPrincipalArgumentResolver
@@ -28,6 +31,7 @@ import org.springframework.http.MediaType
 import org.springframework.test.context.TestPropertySource
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.delete
+import org.springframework.test.web.servlet.get
 import org.springframework.test.web.servlet.post
 import java.util.UUID
 
@@ -53,10 +57,63 @@ class AccountControllerTest {
     private lateinit var identitySessionService: IdentitySessionService
 
     @Test
-    fun `POST accounts rejects foreign ownership claims with ACCOUNT_CLAIM_CONFLICT`() {
+    fun `POST returns the unchanged account summary with 201 for creation and 200 for reuse`() {
+        val principal = AuthenticatedPrincipal(UUID.randomUUID(), devPrincipal = false)
+        val account = ChessAccountResponse(UUID.randomUUID(), "CHESS_COM", "StoredCase")
+        whenever(identitySessionService.resolveSession("good-secret")).thenReturn(principal)
+        whenever(accountOwnershipService.associate(any(), any<AccountAssociationRequest>()))
+            .thenReturn(AssociationResult(account, true), AssociationResult(account, false))
+
+        listOf(201, 200).forEach { expectedStatus ->
+            mockMvc.post("/api/accounts") {
+                contentType = MediaType.APPLICATION_JSON
+                content = """{"platform":"CHESS_COM","username":"storedcase"}"""
+                cookie(Cookie("CHESSECHO_SESSION", "good-secret"), Cookie("XSRF-TOKEN", "csrf-1"))
+                header("X-XSRF-TOKEN", "csrf-1")
+            }.andExpect {
+                status { isEqualTo(expectedStatus) }
+                content { json("""{"id":"${account.id}","platform":"CHESS_COM","username":"StoredCase"}""", true) }
+            }
+        }
+    }
+
+    @Test
+    fun `GET returns a zero or one element summary array`() {
+        val principal = AuthenticatedPrincipal(UUID.randomUUID(), devPrincipal = false)
+        val account = ChessAccountResponse(UUID.randomUUID(), "CHESS_COM", "player")
+        whenever(identitySessionService.resolveSession("good-secret")).thenReturn(principal)
+        whenever(accountOwnershipService.listOwnedAccounts(principal)).thenReturn(emptyList(), listOf(account))
+
+        listOf("[]", """[{"id":"${account.id}","platform":"CHESS_COM","username":"player"}]""").forEach { expected ->
+            mockMvc.get("/api/accounts") {
+                cookie(Cookie("CHESSECHO_SESSION", "good-secret"))
+            }.andExpect {
+                status { isOk() }
+                content { json(expected, true) }
+            }
+        }
+    }
+
+    @Test
+    fun `DELETE missing caller connection returns ACCOUNT_NOT_FOUND`() {
         val principal = AuthenticatedPrincipal(UUID.randomUUID(), devPrincipal = false)
         whenever(identitySessionService.resolveSession("good-secret")).thenReturn(principal)
-        doThrow(AccountClaimConflictException())
+        doThrow(AccountNotFoundException()).whenever(accountOwnershipService).disconnect(any(), eq(principal))
+
+        mockMvc.delete("/api/accounts/${UUID.randomUUID()}/connection") {
+            cookie(Cookie("CHESSECHO_SESSION", "good-secret"), Cookie("XSRF-TOKEN", "csrf-1"))
+            header("X-XSRF-TOKEN", "csrf-1")
+        }.andExpect {
+            status { isNotFound() }
+            jsonPath("$.error") { value("ACCOUNT_NOT_FOUND") }
+        }
+    }
+
+    @Test
+    fun `POST accounts rejects a second active connection with ACCOUNT_CONNECTION_LIMIT_REACHED`() {
+        val principal = AuthenticatedPrincipal(UUID.randomUUID(), devPrincipal = false)
+        whenever(identitySessionService.resolveSession("good-secret")).thenReturn(principal)
+        doThrow(AccountConnectionLimitReachedException())
             .whenever(accountOwnershipService)
             .associate(any(), any<AccountAssociationRequest>())
 
@@ -67,7 +124,7 @@ class AccountControllerTest {
             header("X-XSRF-TOKEN", "csrf-1")
         }.andExpect {
             status { isConflict() }
-            jsonPath("$.error") { value("ACCOUNT_CLAIM_CONFLICT") }
+            jsonPath("$.error") { value("ACCOUNT_CONNECTION_LIMIT_REACHED") }
         }
     }
 
@@ -94,6 +151,7 @@ class AccountControllerTest {
             header("X-XSRF-TOKEN", "csrf-1")
         }.andExpect {
             status { isNoContent() }
+            content { string("") }
         }
 
         verify(accountOwnershipService).disconnect(eq(accountId), eq(principal))

@@ -46,23 +46,11 @@ interface ChessAccountRepository : JpaRepository<ChessAccount, UUID> {
         @Param("id") id: UUID,
     ): ChessAccount?
 
-    fun findAllByUserIdOrderByCreatedAtAsc(userId: UUID): List<ChessAccount>
-
-    fun findByIdAndUserId(
-        id: UUID,
-        userId: UUID,
-    ): ChessAccount?
-
-    fun findByIdAndUserIdIsNull(id: UUID): ChessAccount?
-
     @Query(
-        "SELECT ca FROM ChessAccount ca " +
-            "WHERE LOWER(ca.platform) = LOWER(:platform) " +
-            "AND LOWER(ca.username) = LOWER(:username) " +
-            "AND ca.user IS NULL",
+        "SELECT c.chessAccount FROM AccountConnection c WHERE c.appUser.id = :userId " +
+            "ORDER BY c.connectedAt ASC, c.chessAccount.id ASC",
     )
-    fun findUnclaimedByPlatformAndUsername(
-        @Param("platform") platform: String,
-        @Param("username") username: String,
-    ): ChessAccount?
+    fun findAllByUserIdOrderByCreatedAtAsc(
+        @Param("userId") userId: UUID,
+    ): List<ChessAccount>
 }

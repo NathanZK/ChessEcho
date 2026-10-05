@@ -1,5 +1,6 @@
 package com.chessecho.service
 
+import com.chessecho.domain.AccountConnection
 import com.chessecho.domain.AppUser
 import com.chessecho.domain.AsyncJob
 import com.chessecho.domain.ChessAccount
@@ -9,6 +10,9 @@ import com.chessecho.domain.SchedulingEventType
 import com.chessecho.domain.TrainingAttempt
 import com.chessecho.domain.TrainingAttemptMode
 import com.chessecho.domain.TrainingAttemptOutcome
+import com.chessecho.dto.AccountAssociationRequest
+import com.chessecho.dto.ImportGamesRequest
+import com.chessecho.repository.AccountConnectionRepository
 import com.chessecho.repository.AppUserRepository
 import com.chessecho.repository.ChessAccountRepository
 import com.chessecho.repository.PositionRepository
@@ -28,7 +32,7 @@ import kotlin.test.assertFailsWith
 /**
  * Issue #457, task T5. Shared account-derived data is owned by the `ChessAccount`, not by
  * whichever user currently points at it, so resolving an account for a *shared* read must check
- * only that the row exists. `ChessAccount.user` remains the gate for claim/ownership flows.
+ * only that the row exists. Active connections gate import/ownership flows.
  */
 @SpringBootTest
 @ActiveProfiles("test")
@@ -38,6 +42,9 @@ class AccountOwnershipServiceTest {
 
     @Autowired
     private lateinit var appUserRepository: AppUserRepository
+
+    @Autowired
+    private lateinit var connections: AccountConnectionRepository
 
     @Autowired
     private lateinit var chessAccountRepository: ChessAccountRepository
@@ -61,8 +68,10 @@ class AccountOwnershipServiceTest {
 
     private fun account(owner: AppUser?): ChessAccount =
         chessAccountRepository.save(
-            ChessAccount(user = owner, platform = "CHESS_COM", username = "u${UUID.randomUUID().toString().take(8)}"),
-        )
+            ChessAccount(platform = "CHESS_COM", username = "u${UUID.randomUUID().toString().take(8)}"),
+        ).also { account ->
+            if (owner != null) connections.saveAndFlush(AccountConnection(appUser = owner, chessAccount = account))
+        }
 
     private fun principalFor(user: AppUser) = AuthenticatedPrincipal(user.id, devPrincipal = false)
 
@@ -131,7 +140,8 @@ class AccountOwnershipServiceTest {
         val initiator = user()
         val newOwner = user()
         val account = account(initiator)
-        account.user = newOwner
+        ownership.disconnect(account.id, principalFor(initiator))
+        ownership.associate(principalFor(newOwner), AccountAssociationRequest("CHESS_COM", account.username))
         val job = AsyncJob(chessAccount = account, appUser = initiator, username = account.username, platform = account.platform)
 
         ownership.authorizeJob(job, principalFor(initiator))
@@ -166,10 +176,42 @@ class AccountOwnershipServiceTest {
     }
 
     @Test
-    fun `authorizeJob keeps guest visibility blocked for a claimed account`() {
+    fun `authorizeJob retains guest visibility after the account is connected`() {
         val job = AsyncJob(chessAccount = account(user()), username = "guest", platform = "CHESS_COM")
 
-        assertFailsWith<UnauthenticatedException> { ownership.authorizeJob(job, null) }
+        ownership.authorizeJob(job, null)
+    }
+
+    @Test
+    fun `guest import and username reads ignore connection state`() {
+        val connectedAccount = account(user())
+
+        val resolvedImport =
+            ownership.resolveImportAccount(
+                ImportGamesRequest(platform = com.chessecho.domain.Platform.CHESS_COM, username = connectedAccount.username),
+                null,
+            )
+        val resolvedRead =
+            ownership.resolvePrivateRead(
+                com.chessecho.domain.Platform.CHESS_COM,
+                connectedAccount.username,
+                null,
+            )
+
+        assertEquals(connectedAccount.id, resolvedImport.id)
+        assertEquals(connectedAccount.id, resolvedRead.id)
+    }
+
+    @Test
+    fun `authenticated import rejects a known but unconnected account`() {
+        val connectedByAnotherUser = account(user())
+
+        assertFailsWith<ForbiddenAccountException> {
+            ownership.resolveImportAccount(
+                ImportGamesRequest(accountId = connectedByAnotherUser.id),
+                principalFor(user()),
+            )
+        }
     }
 
     @Test
@@ -215,7 +257,8 @@ class AccountOwnershipServiceTest {
 
         ownership.disconnect(account.id, principalFor(owner))
 
-        assertEquals(null, chessAccountRepository.findById(account.id).orElseThrow().user)
+        assertEquals(0, ownership.listOwnedAccounts(principalFor(owner)).size)
+        assertEquals(account.id, chessAccountRepository.findById(account.id).orElseThrow().id)
         assertEquals(event.id, puzzleSchedulingEventRepository.findById(event.id).orElseThrow().id)
         assertEquals(attempt.id, trainingAttemptRepository.findById(attempt.id).orElseThrow().id)
         assertEquals(
@@ -224,9 +267,7 @@ class AccountOwnershipServiceTest {
                 .map { it.id },
         )
 
-        val reconnectedAccount = chessAccountRepository.findById(account.id).orElseThrow()
-        reconnectedAccount.user = owner
-        chessAccountRepository.saveAndFlush(reconnectedAccount)
+        ownership.associate(principalFor(owner), AccountAssociationRequest("CHESS_COM", account.username))
 
         assertEquals(
             listOf(event.id),
@@ -237,14 +278,28 @@ class AccountOwnershipServiceTest {
     }
 
     @Test
-    fun `disconnect rejects a principal who does not own the account`() {
+    fun `disconnect returns not found for a missing caller connection`() {
         val owner = user()
         val account = account(owner)
         val stranger = principalFor(user())
 
-        assertFailsWith<ForbiddenAccountException> {
+        assertFailsWith<AccountNotFoundException> {
             ownership.disconnect(account.id, stranger)
         }
-        assertEquals(owner.id, chessAccountRepository.findById(account.id).orElseThrow().user?.id)
+        assertEquals(account.id, ownership.listOwnedAccounts(principalFor(owner)).single().id)
+    }
+
+    @Test
+    fun `disconnect removes only the caller link and repeated disconnect returns not found`() {
+        val first = user()
+        val second = user()
+        val account = account(first)
+        ownership.associate(principalFor(second), AccountAssociationRequest("CHESS_COM", account.username))
+
+        ownership.disconnect(account.id, principalFor(first))
+
+        assertEquals(0, ownership.listOwnedAccounts(principalFor(first)).size)
+        assertEquals(account.id, ownership.listOwnedAccounts(principalFor(second)).single().id)
+        assertFailsWith<AccountNotFoundException> { ownership.disconnect(account.id, principalFor(first)) }
     }
 }

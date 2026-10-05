@@ -47,6 +47,7 @@ const defaultProps = {
   positionId: 'position-1',
   playerColor: 'BLACK' as const,
   minEvalLoss: 0.3,
+  accountId: 'account-1',
   sessionStatus: 'authenticated' as const,
   onBack: vi.fn(),
 };
@@ -65,7 +66,7 @@ describe('PositionProgressView', () => {
     render(<PositionProgressView {...defaultProps} />);
 
     await waitFor(() => {
-      expect(api.fetchPositionProgress).toHaveBeenCalledWith('position-1', 'BLACK', 0.3);
+      expect(api.fetchPositionProgress).toHaveBeenCalledWith('position-1', 'BLACK', 'account-1', 0.3);
       expect(screen.getByText(response.assessment)).toBeInTheDocument();
     });
 
@@ -118,7 +119,7 @@ describe('PositionProgressView', () => {
     const { rerender } = render(<PositionProgressView {...defaultProps} />);
 
     rerender(<PositionProgressView {...defaultProps} minEvalLoss={0.5} />);
-    expect(api.fetchPositionProgress).toHaveBeenLastCalledWith('position-1', 'BLACK', 0.5);
+    expect(api.fetchPositionProgress).toHaveBeenLastCalledWith('position-1', 'BLACK', 'account-1', 0.5);
     await act(async () => {
       resolveOld(response);
     });

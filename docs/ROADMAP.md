@@ -1,0 +1,3 @@
+- [x] M1: Establish shared account-connection persistence and account APIs.
+- [x] M2: Enforce connection-scoped imports, guest access, and Progress selection.
+- [x] M3: Complete frontend flows, living documentation, and integration verification.

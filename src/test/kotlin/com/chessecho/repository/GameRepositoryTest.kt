@@ -26,7 +26,7 @@ class GameRepositoryTest {
     @Test
     fun `should find platform game ids by chess account and in list`() {
         val user = appUserRepository.save(AppUser(email = "test@example.com"))
-        val account = chessAccountRepository.save(ChessAccount(user = user, platform = "CHESS_COM", username = "testuser"))
+        val account = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = "testuser"))
 
         val game1 =
             Game(

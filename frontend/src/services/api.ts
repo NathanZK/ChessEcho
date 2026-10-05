@@ -190,7 +190,7 @@ export async function fetchAccounts(): Promise<AccountSummary[]> {
   const response = await fetch(`${API_BASE_URL}/accounts`, { credentials: 'include' });
   if (!response.ok) throw new Error(`Failed to load accounts: ${response.status}`);
   const body: unknown = await response.json();
-  if (!Array.isArray(body) || !body.every(isAccountSummary)) {
+  if (!Array.isArray(body) || body.length > 1 || !body.every(isAccountSummary)) {
     throw new Error('Failed to load accounts: unexpected response body');
   }
   return body;
@@ -602,9 +602,12 @@ function isPositionProgressResponse(value: unknown): value is PositionProgressRe
 export async function fetchPositionProgress(
   positionId: string,
   playerColor: 'WHITE' | 'BLACK',
-  minEvalLoss: number
+  accountId: string | undefined,
+  minEvalLoss: number,
 ): Promise<PositionProgressResponse> {
-  const url = `${API_BASE_URL}/positions/${encodeURIComponent(positionId)}/progress?playerColor=${encodeURIComponent(playerColor)}&minEvalLoss=${encodeURIComponent(minEvalLoss)}`;
+  const params = new URLSearchParams({ playerColor, minEvalLoss: String(minEvalLoss) });
+  if (accountId) params.set('accountId', accountId);
+  const url = `${API_BASE_URL}/positions/${encodeURIComponent(positionId)}/progress?${params}`;
   const response = await fetch(url, { credentials: 'include' });
   if (!response.ok) {
     throw new Error(`Failed to load position progress: ${response.status}`);

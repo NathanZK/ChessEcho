@@ -101,7 +101,6 @@ abstract class PracticalWeaknessAuthenticatedSchedulingContract {
         account =
             chessAccountRepository.save(
                 ChessAccount(
-                    user = null,
                     platform = "CHESS_COM",
                     username = "practical-${UUID.randomUUID().toString().take(8)}",
                 ),

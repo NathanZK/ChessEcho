@@ -1,7 +1,6 @@
 package com.chessecho.service
 
 import com.chessecho.config.PracticalEvidenceProperties
-import com.chessecho.domain.AppUser
 import com.chessecho.domain.ChessAccount
 import com.chessecho.domain.Game
 import com.chessecho.domain.Position
@@ -299,7 +298,6 @@ class PracticalEvidenceServiceTest {
 
     private fun account(username: String): ChessAccount =
         ChessAccount(
-            user = AppUser(email = "$username-${nextId++}@test.com"),
             platform = "CHESS_COM",
             username = username,
         )

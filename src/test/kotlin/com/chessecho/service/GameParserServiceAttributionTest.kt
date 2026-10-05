@@ -39,7 +39,7 @@ class GameParserServiceAttributionTest {
     @Test
     fun `parseAndSavePositions attributes ONLY White moves to user when user is White`() {
         val appUser = AppUser(email = "gotham@example.com")
-        val chessAccount = ChessAccount(user = appUser, platform = "CHESS_COM", username = "gothamchess")
+        val chessAccount = ChessAccount(platform = "CHESS_COM", username = "gothamchess")
         val game =
             Game(
                 chessAccount = chessAccount,
@@ -83,7 +83,7 @@ class GameParserServiceAttributionTest {
     @Test
     fun `parseAndSavePositions attributes ONLY Black moves to user when user is Black`() {
         val appUser = AppUser(email = "gotham@example.com")
-        val chessAccount = ChessAccount(user = appUser, platform = "CHESS_COM", username = "gothamchess")
+        val chessAccount = ChessAccount(platform = "CHESS_COM", username = "gothamchess")
         val game =
             Game(
                 chessAccount = chessAccount,
@@ -127,7 +127,7 @@ class GameParserServiceAttributionTest {
     @Test
     fun `parseAndSavePositions creates 0 occurrences when account username matches neither White nor Black`() {
         val appUser = AppUser(email = "gotham@example.com")
-        val chessAccount = ChessAccount(user = appUser, platform = "CHESS_COM", username = "gothamchess")
+        val chessAccount = ChessAccount(platform = "CHESS_COM", username = "gothamchess")
         val game =
             Game(
                 chessAccount = chessAccount,
@@ -159,7 +159,7 @@ class GameParserServiceAttributionTest {
     @Test
     fun `parseAndSavePositions creates 0 occurrences when account username matches both White and Black`() {
         val appUser = AppUser(email = "gotham@example.com")
-        val chessAccount = ChessAccount(user = appUser, platform = "CHESS_COM", username = "gothamchess")
+        val chessAccount = ChessAccount(platform = "CHESS_COM", username = "gothamchess")
         val game =
             Game(
                 chessAccount = chessAccount,

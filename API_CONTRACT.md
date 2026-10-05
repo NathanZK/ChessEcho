@@ -4,15 +4,18 @@ This document outlines the API contract for all REST endpoints available in Ches
 
 ---
 
-## 1. Account Association and Ownership
+## 1. Connected Chess.com Accounts
 
-Authenticated account association is the only way to claim a durable Chess.com
-account. `userId`, a username, an account UUID stored in the browser, and a job
-UUID are never bearer credentials.
+Chess.com identity and imported data are shared. Multiple users may connect the
+same account, while each user may have at most one active connection. A user
+must disconnect before connecting a different account. `userId`, a username,
+an account UUID stored in the browser, and a job UUID are never bearer
+credentials.
 
 ### `GET /api/accounts`
 
-Requires a live `CHESSECHO_SESSION` and returns the caller's accounts:
+Requires a live `CHESSECHO_SESSION` and returns the caller's zero-or-one active
+connections:
 
 ```json
 [
@@ -30,21 +33,25 @@ case-insensitive `(platform, username)`.
 {"platform": "chess_com", "username": " Hikaru "}
 ```
 
-`201 Created` creates or claims an unclaimed account; `200 OK` is an idempotent
-repeat by the same owner; `401 UNAUTHENTICATED` means no live session;
-`409 ACCOUNT_CLAIM_CONFLICT` means another owner already claimed the identity;
-`403 CSRF_FAILED` means the double-submit pair is missing or mismatched.
+`201 Created` creates the shared account and first connection; `200 OK` links
+an existing account or repeats the caller's existing connection. A second,
+different connection returns `409 ACCOUNT_CONNECTION_LIMIT_REACHED`; disconnect
+the current account before connecting another. `401 UNAUTHENTICATED` means no
+live session; `403 CSRF_FAILED` means the double-submit pair is missing or
+mismatched.
 
 ### `DELETE /api/accounts/{accountId}/connection`
 
-Requires the current account owner, a live session, and a matching CSRF token.
-Returns `204 No Content` and clears only the connection pointer; shared imported
-data and the user's training history remain available for later reconnection.
+Requires a live session and a matching CSRF token. Returns `204 No Content` and
+removes only the caller's connection; shared imported data and the user's
+training history remain stored and become available again after reconnection.
+If the caller has no matching connection, the endpoint returns `404
+ACCOUNT_NOT_FOUND`.
 
 ---
 
 ## 2. Start Import Job
-Initiates an asynchronous game import job from Chess.com or Lichess.
+Initiates an asynchronous game import job from Chess.com.
 
 - **Endpoint:** `POST /api/games/import`
 - **Content-Type:** `application/json`
@@ -68,16 +75,20 @@ There are two mutually exclusive selector forms:
   `username` values are metadata snapshots and must match the selected account
   when supplied.
 * **Guest:** omit `accountId` (or send JSON `null`) and supply both `platform`
-  and `username`. The server creates or reuses an explicitly unclaimed account.
+  and `username`. The server creates or reuses the shared account, regardless
+  of whether any user has connected it.
 
-A valid session plus a guest-shaped body never falls back to an unclaimed
-username: it returns `400 ACCOUNT_SELECTION_REQUIRED`. A selected account with
+A valid session plus a guest-shaped body never falls back to the guest
+username selector: it returns `400 ACCOUNT_SELECTION_REQUIRED`. A selected account with
 an inconsistent snapshot returns `400 ACCOUNT_SELECTION_MISMATCH`. Both forms
 require CSRF, including a guest request with no session cookie.
 
-Authenticated import creation requires that the caller currently owns the
-selected account. The created job records the initiating user independently of
-later disconnect or reconnect operations.
+Authenticated import creation requires that the caller currently connects the
+selected account. It requires an explicit `accountId`, even when the caller has
+only one connection. Missing selection returns `400 ACCOUNT_SELECTION_REQUIRED`;
+an unknown ID returns `404 ACCOUNT_NOT_FOUND`; a known but unconnected ID
+returns `403 FORBIDDEN`. The created job records its initiating user
+independently of later disconnect or reconnect operations.
 
 ### Curl Example
 ```bash
@@ -114,15 +125,21 @@ Validation failed (e.g. invalid time controls, missing fields).
 ```
 
 #### `409 Conflict`
-An active import job is already running for this user/platform combination.
+An active import job is already running for this account.
 ```json
 {
   "error": "CONFLICT",
   "details": [
-    "An active import job is already running."
+    "An active import job already exists for account 'account-uuid'."
   ]
 }
 ```
+
+#### Account-selection and authorization errors
+
+Authenticated requests without `accountId` return `400 ACCOUNT_SELECTION_REQUIRED`.
+Unknown account IDs return `404 ACCOUNT_NOT_FOUND`; known accounts not currently
+connected to the caller return `403 FORBIDDEN`.
 
 ---
 
@@ -158,9 +175,10 @@ curl http://localhost:8080/api/jobs/3fa85f64-5717-4562-b3fc-2c963f66afa6
 The response also includes the persisted platform, username, date bounds,
 canonical sorted time controls, and player color when the job is resolved.
 `READY` jobs are immutable commands. `UNRESOLVED` or malformed jobs fail closed.
-A guest can poll only a job for an unclaimed account. An authenticated caller can
-poll only jobs initiated by that user, even if another user later connects the
-account.
+A guest can poll only guest-started jobs (`app_user_id` is null), regardless of
+whether a user connects the account later. An authenticated caller can poll only
+jobs initiated by that user, even if the account is disconnected or connected
+by another user.
 There is at most one `QUEUED`/`PROCESSING` job per account.
 
 `status` tracks game ingestion and becomes `COMPLETED` before Stockfish analysis starts.
@@ -188,7 +206,8 @@ Retrieves a paginated list of imported games for a specified player and platform
 ### Query Parameters
 - `accountId` (UUID, authenticated form): Selects an existing account for shared
   imported-game reads; the caller need not currently own the connection.
-- `username` and `platform` (guest form): Select an unclaimed account together.
+- `username` and `platform` (guest form): Select a shared account together;
+  connection state does not restrict guest username reads.
 - `page` (int, optional, default: 0): Zero-indexed page number.
 - `size` (int, optional, default: 20): Page size limit.
 - `sort` (string, optional): Sorting specification.
@@ -282,9 +301,10 @@ curl "http://localhost:8080/api/positions/weaknesses?platform=CHESS_COM&username
 
 Returns the authenticated user's actual-game performance for an exact position and player color, divided into a historical baseline and intervals that start at successful puzzle decisions.
 
-- **Endpoint:** `GET /api/positions/{positionId}/progress?playerColor={WHITE|BLACK}&minEvalLoss={value}`
-- **Query parameter:** `minEvalLoss` is required, finite, and positive. Progress uses the threshold from the successful Weaknesses request that produced the selected row. The frontend snapshots it with the selection; later global filter changes do not alter the request. Missing, malformed, zero, negative, NaN, or infinite values return HTTP 400 with the existing structured `VALIDATION_ERROR` body. Invalid requests never fall back to a fixed threshold.
-- **Authentication:** Requires the existing authenticated session. The service resolves the user's account and scopes occurrences and training events to that user, account, exact position, and color.
+- **Endpoint:** `GET /api/positions/{positionId}/progress?playerColor={WHITE|BLACK}&accountId={UUID}&minEvalLoss={value}`
+- **Query parameters:** `accountId` must identify the caller's current connection. `minEvalLoss` is required, finite, and positive; Progress uses the threshold from the successful Weaknesses request that produced the selected row. The frontend snapshots it with the selection; later global filter changes do not alter the request. Missing, malformed, zero, negative, NaN, or infinite values return HTTP 400 with the existing structured `VALIDATION_ERROR` body. Invalid requests never fall back to a fixed threshold.
+- **Authentication:** Requires the existing authenticated session. The service scopes occurrences and training events to that user, selected account, exact position, and color; it never falls back to another account.
+- **Selection errors:** Missing `accountId` returns `400 ACCOUNT_SELECTION_REQUIRED`. Unknown or unconnected account IDs return `404 ACCOUNT_NOT_FOUND`.
 - **Response fields:** `positionId` is a UUID; `playerColor` is `WHITE` or `BLACK`; `baseline` is null or an object with ISO-8601 `occurredAt`, 0–100 rates, and positive `sourceEncounterCount`.
 - Each point has a UUID `checkpointId`, ISO-8601 `occurredAt`, 0–100 rates, positive `attempts`, and boolean `open`. Changes are finite numbers or null; `assessment` is a string.
 - `currentIntervalState` is `NO_CHECKPOINT`, `OPEN_AWAITING_EVIDENCE`, or `MEASURED_OPEN`; `excludedUndatedEncounters` is a non-negative integer.
@@ -338,7 +358,7 @@ Retrieves position puzzles created from detected player weaknesses for interacti
 
 ### Query Parameters
 - `accountId` (UUID, authenticated form), or normalized `platform` + `username`
-  in guest mode.
+  in guest mode. Guest username reads are independent of connection state.
 - `playerColor` (PlayerColor enum, required): `WHITE` or `BLACK`.
 - `minEvalLoss` (double, optional, default: `0.8`): Minimum engine evaluation loss, in pawns, required for a move to be classified as a mistake. A lower value means a stricter definition of a mistake.
 - `minMistakeCount` (int, optional, default: `3`): Minimum mistake count threshold.

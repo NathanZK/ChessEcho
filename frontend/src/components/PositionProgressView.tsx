@@ -15,6 +15,7 @@ interface PositionProgressViewProps {
   positionId: string;
   playerColor: 'WHITE' | 'BLACK';
   minEvalLoss: number;
+  accountId?: string;
   sessionStatus: SessionState['status'];
   onBack: () => void;
 }
@@ -262,12 +263,13 @@ export function PositionProgressView({
   positionId,
   playerColor,
   minEvalLoss,
+  accountId,
   sessionStatus,
   onBack,
 }: PositionProgressViewProps) {
   const [loadState, setLoadState] = useState<LoadState | null>(null);
   const [retryToken, setRetryToken] = useState(0);
-  const requestKey = `${positionId}:${playerColor}:${minEvalLoss}`;
+  const requestKey = `${positionId}:${playerColor}:${accountId ?? ''}:${minEvalLoss}`;
   const visibleLoadState =
     loadState?.requestKey === requestKey ? loadState : { status: 'loading' as const };
   const intervalStateMessage =
@@ -276,10 +278,10 @@ export function PositionProgressView({
       : null;
 
   useEffect(() => {
-    if (sessionStatus !== 'authenticated') return;
+    if (sessionStatus !== 'authenticated' || !accountId) return;
 
     let isCurrentRequest = true;
-    fetchPositionProgress(positionId, playerColor, minEvalLoss)
+    fetchPositionProgress(positionId, playerColor, accountId, minEvalLoss)
       .then((progress) => {
         if (isCurrentRequest) setLoadState({ requestKey, status: 'loaded', progress });
       })
@@ -290,7 +292,7 @@ export function PositionProgressView({
     return () => {
       isCurrentRequest = false;
     };
-  }, [positionId, playerColor, minEvalLoss, requestKey, retryToken, sessionStatus]);
+  }, [positionId, playerColor, accountId, minEvalLoss, requestKey, retryToken, sessionStatus]);
 
   return (
     <section className="mx-auto w-full max-w-5xl px-4 py-6 lg:px-8" aria-labelledby="progress-heading">
@@ -339,13 +341,19 @@ export function PositionProgressView({
         </div>
       )}
 
-      {sessionStatus === 'authenticated' && visibleLoadState.status === 'loading' && (
+      {sessionStatus === 'authenticated' && !accountId && (
+        <p role="status" className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">
+          Connect a Chess.com account to view position progress.
+        </p>
+      )}
+
+      {sessionStatus === 'authenticated' && accountId && visibleLoadState.status === 'loading' && (
         <p role="status" className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">
           Loading position progress…
         </p>
       )}
 
-      {sessionStatus === 'authenticated' && visibleLoadState.status === 'error' && (
+      {sessionStatus === 'authenticated' && accountId && visibleLoadState.status === 'error' && (
         <div role="alert" className="rounded-xl border border-rose-900/60 bg-rose-950/30 p-5">
           <p className="text-sm text-rose-200">We couldn&apos;t load position progress. Please try again.</p>
           <button
@@ -362,7 +370,7 @@ export function PositionProgressView({
         </div>
       )}
 
-      {sessionStatus === 'authenticated' && visibleLoadState.status === 'loaded' && (
+      {sessionStatus === 'authenticated' && accountId && visibleLoadState.status === 'loaded' && (
         <div className="space-y-5">
           <div className="rounded-xl border border-emerald-900/60 bg-emerald-950/20 p-5">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-emerald-300">

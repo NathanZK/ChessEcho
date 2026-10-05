@@ -6,7 +6,6 @@ import com.chessecho.dto.ProgressBaseline
 import com.chessecho.dto.ProgressIntervalState
 import com.chessecho.dto.ProgressPoint
 import com.chessecho.dto.ProgressResponse
-import com.chessecho.repository.ChessAccountRepository
 import com.chessecho.repository.EngineAnalysisRepository
 import com.chessecho.repository.PositionOccurrenceRepository
 import com.chessecho.repository.PuzzleSchedulingEventRepository
@@ -18,7 +17,7 @@ import java.util.UUID
 
 @Service
 class ProgressService(
-    private val chessAccountRepository: ChessAccountRepository,
+    private val accountOwnershipService: AccountOwnershipService,
     private val positionOccurrenceRepository: PositionOccurrenceRepository,
     private val puzzleSchedulingEventRepository: PuzzleSchedulingEventRepository,
     private val engineAnalysisRepository: EngineAnalysisRepository,
@@ -28,19 +27,12 @@ class ProgressService(
     fun getProgress(
         positionId: UUID,
         playerColor: PlayerColor,
+        accountId: UUID,
         principal: AuthenticatedPrincipal,
         minEvalLoss: Double,
     ): ProgressResponse {
         require(minEvalLoss.isFinite() && minEvalLoss > 0.0) { "minEvalLoss must be positive and finite" }
-
-        val account =
-            chessAccountRepository.findAllByUserIdOrderByCreatedAtAsc(principal.appUserId)
-                .firstOrNull { account ->
-                    positionOccurrenceRepository
-                        .findProgressOccurrences(account.id, positionId, playerColor.name)
-                        .isNotEmpty()
-                }
-                ?: throw AccountNotFoundException("No owned account has progress for position $positionId")
+        val account = accountOwnershipService.requireConnectedAccountForProgress(accountId, principal)
 
         val occurrences = positionOccurrenceRepository.findProgressOccurrences(account.id, positionId, playerColor.name)
         val checkpoints =

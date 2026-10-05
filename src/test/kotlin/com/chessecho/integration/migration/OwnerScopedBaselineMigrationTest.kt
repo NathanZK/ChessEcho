@@ -16,6 +16,7 @@ class OwnerScopedBaselineMigrationTest : PostgresMigrationTestFixture() {
                 "auth_identity",
                 "auth_session",
                 "chess_account",
+                "account_connection",
                 "game",
                 "position",
                 "position_occurrence",
@@ -36,7 +37,7 @@ class OwnerScopedBaselineMigrationTest : PostgresMigrationTestFixture() {
                 FROM information_schema.tables
                 WHERE table_schema = 'public'
                   AND table_name IN (
-                    'app_user', 'auth_identity', 'auth_session', 'chess_account',
+                    'app_user', 'auth_identity', 'auth_session', 'chess_account', 'account_connection',
                     'game', 'position', 'position_occurrence', 'engine_analysis',
                     'engine_move_evaluation', 'user_position_weakness', 'user_position_stats',
                     'imported_archive', 'archive_derived_processing',
@@ -51,12 +52,18 @@ class OwnerScopedBaselineMigrationTest : PostgresMigrationTestFixture() {
             query(
                 "SELECT is_nullable FROM information_schema.columns WHERE table_name = 'chess_account' AND column_name = 'user_id'",
             )
-        assertEquals(1, nullableUserId.size)
-        assertEquals("YES", nullableUserId.first()["is_nullable"])
+        assertEquals(0, nullableUserId.size)
+        assertColumnNullable("account_connection", "app_user_id", false)
+        assertColumnNullable("account_connection", "chess_account_id", false)
+        assertColumnDataType("account_connection", "connected_at", "timestamp with time zone")
+        assertColumnDefault("account_connection", "connected_at")
+        assertUniqueConstraint("account_connection", "app_user_id")
+        assertUniqueConstraint("account_connection", "app_user_id", "chess_account_id")
+        assertForeignKey("account_connection", "app_user_id", "app_user", "id")
+        assertForeignKey("account_connection", "chess_account_id", "chess_account", "id")
 
         assertColumnNullable("app_user", "email", true)
         assertIndex("chess_account", "platform", expression = "lower")
-        assertForeignKey("chess_account", "user_id", "app_user", "id")
         assertIndex("auth_identity", "app_user_id")
         assertIndex("auth_identity", "issuer, subject", unique = true)
         assertForeignKey("auth_identity", "app_user_id", "app_user", "id")
@@ -296,8 +303,8 @@ class OwnerScopedBaselineMigrationTest : PostgresMigrationTestFixture() {
             statement.executeUpdate("INSERT INTO app_user (id) VALUES ('$userId')")
             statement.executeUpdate(
                 """
-                INSERT INTO chess_account (id, user_id, platform, username)
-                VALUES ('$accountId', '$userId', 'CHESS_COM', 'deletion-test')
+                INSERT INTO chess_account (id, platform, username)
+                VALUES ('$accountId', 'CHESS_COM', 'deletion-test')
                 """.trimIndent(),
             )
             statement.executeUpdate(
@@ -321,6 +328,52 @@ class OwnerScopedBaselineMigrationTest : PostgresMigrationTestFixture() {
             ).single()
         assertEquals(null, retained["chess_account_id"])
         assertEquals("UNRESOLVED", retained["configuration_state"])
+    }
+
+    @Test
+    fun `connection constraints are named and both foreign keys cascade only the links`() {
+        val columns =
+            query(
+                "SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'account_connection'",
+            ).map { it["column_name"].toString() }.toSet()
+        assertEquals(setOf("id", "app_user_id", "chess_account_id", "connected_at"), columns)
+        assertColumnNullable("account_connection", "connected_at", false)
+        val primaryKey =
+            query(
+                "SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint " +
+                    "WHERE conrelid = 'account_connection'::regclass AND contype = 'p'",
+            )
+        assertEquals("PRIMARY KEY (id)", primaryKey.single()["definition"])
+        val names =
+            query(
+                "SELECT conname FROM pg_constraint WHERE conrelid = 'account_connection'::regclass AND contype = 'u'",
+            ).map { it["conname"].toString() }.toSet()
+        assertEquals(setOf("uk_account_connection_user", "uk_account_connection_user_account"), names)
+        val foreignKeys =
+            query(
+                "SELECT confdeltype FROM pg_constraint WHERE conrelid = 'account_connection'::regclass AND contype = 'f'",
+            )
+        assertEquals(2, foreignKeys.size)
+        assertTrue(foreignKeys.all { it["confdeltype"].toString() == "c" })
+
+        val accountId = java.util.UUID.randomUUID()
+        val first = java.util.UUID.randomUUID()
+        val second = java.util.UUID.randomUUID()
+        connection.createStatement().use { statement ->
+            statement.executeUpdate("INSERT INTO app_user (id) VALUES ('$first'), ('$second')")
+            statement.executeUpdate(
+                "INSERT INTO chess_account (id, platform, username) VALUES ('$accountId', 'CHESS_COM', 'cascade-$accountId')",
+            )
+            statement.executeUpdate(
+                "INSERT INTO account_connection (app_user_id, chess_account_id) VALUES ('$first', '$accountId'), ('$second', '$accountId')",
+            )
+            statement.executeUpdate("DELETE FROM app_user WHERE id = '$first'")
+        }
+        assertEquals(1, query("SELECT id FROM account_connection WHERE chess_account_id = '$accountId'").size)
+        assertEquals(1, query("SELECT id FROM chess_account WHERE id = '$accountId'").size)
+        connection.createStatement().use { it.executeUpdate("DELETE FROM chess_account WHERE id = '$accountId'") }
+        assertEquals(0, query("SELECT id FROM account_connection WHERE chess_account_id = '$accountId'").size)
+        assertEquals(1, query("SELECT id FROM app_user WHERE id = '$second'").size)
     }
 
     private fun assertColumnNullable(

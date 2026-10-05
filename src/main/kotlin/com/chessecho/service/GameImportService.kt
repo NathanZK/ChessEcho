@@ -113,8 +113,8 @@ class GameImportService(
         request: ImportGamesRequest,
         principal: AuthenticatedPrincipal?,
     ): AsyncJob {
-        val account = accountOwnershipService.resolveImportAccount(request, principal)
         return transactionTemplate.execute {
+            val account = accountOwnershipService.resolveImportAccount(request, principal)
             val lockedAccount =
                 chessAccountRepository.findByIdForUpdate(account.id)
                     ?: throw AccountNotFoundException("Import account not found: ${account.id}")

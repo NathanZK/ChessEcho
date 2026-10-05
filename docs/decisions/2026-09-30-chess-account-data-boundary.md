@@ -2,21 +2,32 @@
 
 ## Context
 
-Chess.com account identity and imported game data are shared, while puzzle history and training attempts belong to an individual user. A mutable account connection can change independently of imported data and in-flight jobs.
+Chess.com account identity and imported game data are shared, while puzzle
+history and training attempts belong to an individual user. Account connections
+can change independently of imported data and in-flight jobs.
 
-## Choice
+## Current choice — issue #503
 
-- Keep shared imported data on `ChessAccount`; treat its user pointer as the current connection and import-initiation authorization only.
-- Scope authenticated personal training rows by both `AppUser` and `ChessAccount`; disconnect preserves these rows.
-- Attribute authenticated import jobs and emitted personal events to the initiating `AppUser`. Only that user may read authenticated job status.
-- Permit authenticated shared-data reads for any existing account. Guest reads, imports, and job-status access remain limited to unclaimed accounts.
-- Use Approach B: direct nullable `app_user_id` relationships rather than a separate connection entity.
-- Use `ON DELETE NO ACTION` for the new user foreign keys until account deletion/erasure has an explicit product policy.
-- Preserve guest replay protection with a PostgreSQL partial unique index using `NULLS NOT DISTINCT`; the Flyway baseline defines the pre-deployment schema.
+- Keep shared identity and imported data on `ChessAccount`; do not store a single user pointer there.
+- Link users to accounts through `AccountConnection`, with unique `(app_user_id, chess_account_id)` and unique `app_user_id`; many users may connect the same account, but a user may have only one active connection.
+- Lock the user row while connecting, disconnecting, and authorizing authenticated import creation. A user must disconnect before connecting a different account.
+- Allow guest imports and username-based shared-data reads regardless of connection state. Authenticated imports require an explicit currently connected account ID.
+- Authorize authenticated job status by immutable initiating user and guest job status by guest initiation, independent of later account connections.
+- Require an explicit current account connection for personal Progress. Scope personal scheduling events, progress, and training attempts by both user and account; disconnect retains this data for reconnection.
+- Delete only the connection row on disconnect. Its user/account foreign keys cascade connection-row deletion; existing account, job, and history delete policies remain unchanged.
+- Preserve PostgreSQL source-linked replay protection with a partial `NULLS NOT DISTINCT` unique index. Update the pre-deployment V1 baseline in place; no deployed-data backfill is required.
+
+## Superseded choice
+
+The earlier pre-deployment design used a nullable `app_user_id` on
+`ChessAccount` as an exclusive owner pointer, allowed guests only while an
+account was unclaimed, and rejected another user's connection with
+`ACCOUNT_CLAIM_CONFLICT`. Issue #503 replaces that model with shared account
+identity and per-user connection rows.
 
 ## Ruled out
 
-- Using the mutable account connection owner as the personal-history owner or job-status principal.
+- Using the mutable current connection to determine personal-history ownership or job-status access.
+- Deleting shared data or personal training history when a user disconnects.
 - Cascading user deletion into training history or audit jobs without an approved deletion policy.
-- A connection entity without a concrete lifecycle or metadata requirement.
-- Expressing the partial PostgreSQL uniqueness rule as a table-wide JPA unique constraint.
+- Expressing the PostgreSQL partial uniqueness rule as a table-wide JPA unique constraint.
