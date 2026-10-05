@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AccountAssociationError, associateAccount, disconnectAccount, fetchAccounts } from '../services/api';
+import {
+  AccountAssociationError,
+  associateAccount,
+  disconnectAccount,
+  fetchAccounts,
+  startAccountImportJob,
+  startImportJob,
+} from '../services/api';
 
 function response(status: number, body: unknown): Response {
   return {
@@ -9,7 +16,7 @@ function response(status: number, body: unknown): Response {
   } as Response;
 }
 
-describe('owned account API contract', () => {
+describe('connected account API contract', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn());
     document.cookie = 'XSRF-TOKEN=account-csrf; path=/';
@@ -49,6 +56,17 @@ describe('owned account API contract', () => {
     await expect(fetchAccounts()).rejects.toThrow(/unexpected response body/i);
   });
 
+  it('rejects account lists containing more than one connection', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      response(200, [
+        { id: 'account-1', platform: 'CHESS_COM', username: 'hikaru' },
+        { id: 'account-2', platform: 'CHESS_COM', username: 'magnus' },
+      ])
+    );
+
+    await expect(fetchAccounts()).rejects.toThrow(/unexpected response body/i);
+  });
+
   it('associates a Chess.com username with credentials and the CSRF token', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       response(201, { id: 'account-2', platform: 'CHESS_COM', username: 'new-player' })
@@ -73,7 +91,7 @@ describe('owned account API contract', () => {
 
   it('preserves the HTTP status and API code for account-association errors', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
-      response(409, { error: 'ACCOUNT_CLAIM_CONFLICT', details: ['Account already claimed'] })
+      response(409, { error: 'ACCOUNT_CONNECTION_LIMIT_REACHED' })
     );
 
     const error = await associateAccount('CHESS_COM', 'other-player').catch((reason: unknown) => reason);
@@ -81,8 +99,8 @@ describe('owned account API contract', () => {
     expect(error).toBeInstanceOf(AccountAssociationError);
     expect(error).toMatchObject({
       status: 409,
-      code: 'ACCOUNT_CLAIM_CONFLICT',
-      message: 'ACCOUNT_CLAIM_CONFLICT',
+      code: 'ACCOUNT_CONNECTION_LIMIT_REACHED',
+      message: 'ACCOUNT_CONNECTION_LIMIT_REACHED',
     });
   });
 
@@ -153,5 +171,46 @@ describe('owned account API contract', () => {
       status: 403,
       message: 'FORBIDDEN',
     });
+  });
+
+  it('submits authenticated imports with the explicit connected account ID', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      response(202, { jobId: 'job-1', status: 'QUEUED' })
+    );
+
+    await startAccountImportJob({
+      accountId: 'account-3',
+      username: 'hikaru',
+      timeControls: ['BLITZ'],
+      playerColor: 'WHITE',
+    });
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0];
+    expect(String(url)).toContain('/games/import');
+    expect(init?.method).toBe('POST');
+    expect(JSON.parse(String(init?.body))).toEqual({
+      accountId: 'account-3',
+      platform: 'CHESS_COM',
+      username: 'hikaru',
+      timeControls: ['BLITZ'],
+      playerColor: 'WHITE',
+    });
+  });
+
+  it('keeps guest imports username-based', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      response(202, { jobId: 'job-2', status: 'QUEUED' })
+    );
+
+    await startImportJob('guest-player', 'CHESS_COM', ['RAPID'], 'BOTH');
+
+    const [, init] = vi.mocked(fetch).mock.calls[0];
+    expect(JSON.parse(String(init?.body))).toMatchObject({
+      username: 'guest-player',
+      platform: 'CHESS_COM',
+      timeControls: ['RAPID'],
+      playerColor: 'BOTH',
+    });
+    expect(JSON.parse(String(init?.body))).not.toHaveProperty('accountId');
   });
 });

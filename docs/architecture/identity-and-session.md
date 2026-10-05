@@ -1,10 +1,8 @@
 # Identity and Session Foundation
 
-This document describes the provider-neutral identity and server-side session
-foundation introduced by [issue #113](https://github.com/NathanZK/ChessEcho/issues/113),
-implementing the first slice of the architecture approved in issue #79 (decisions
-D1, D2, and D7), together with the owner boundary from issue #252. It still does
-not select or integrate a production identity provider.
+This document describes provider-neutral identity and server-side sessions, and
+how authenticated and guest capabilities interact with connected Chess.com
+accounts. It does not select or integrate a production identity provider.
 
 ## Goals
 
@@ -141,22 +139,28 @@ can never restore a prior user's data.
 
 | Capability | Guest | Authenticated |
 |---|---|---|
-| Import Chess.com games and poll an unclaimed job | Allowed with CSRF | Allowed for owned account IDs |
-| Read unclaimed practice puzzles and weakness analysis | Allowed after session bootstrap resolves | Allowed for owned account IDs |
+| Import Chess.com games | Allowed by username with CSRF, regardless of connection state | Requires explicit ID of the caller's current connection |
+| Poll import jobs | Allowed for guest-started jobs, regardless of later connections | Allowed only for jobs initiated by the caller |
+| Read games, puzzles, and weakness analysis | Allowed by username, regardless of connection state | Allowed for any existing account ID |
+| Read personal Progress | Sign-in required | Requires explicit ID of the caller's current connection |
 | Continue puzzles, evaluate moves, and use analysis UI | Allowed | Allowed |
-| Persist private history across devices or associate data with an internal owner | Not allowed | `POST /api/accounts` claims an account |
-| Access private games, weaknesses, puzzles, or jobs after claim | Not allowed | Required owner principal and account UUID |
+| Connect or disconnect a Chess.com account | Not allowed | `POST /api/accounts` and `DELETE /api/accounts/{accountId}/connection`; one active connection per user |
+| Persist personal training history across devices | Not allowed | Training data is scoped to the authenticated user and selected account |
 
-### Issue #252 ownership rules
+### Connected Chess.com account rules
 
-`ChessAccount.user_id` is nullable only for an explicitly unclaimed guest
-account. Every private and derived row is reached through its
-`chess_account_id`; callers cannot authorize with a username, email, local
-storage value, or job ID. Authenticated reads and imports select an account by
-UUID and verify `user_id`; guest reads and imports can select only an unclaimed
-canonical `(platform, username)` identity. Claiming is atomic under a row lock
-and the case-insensitive unique index, so one owner wins a race and another
-receives `409 ACCOUNT_CLAIM_CONFLICT`.
+`ChessAccount` stores the shared, case-insensitive `(platform, username)`
+identity. `AccountConnection` links users to accounts; an account may be linked
+by many users, while each user has at most one current connection. The database
+enforces that per-user limit. A username, account UUID, or job UUID is a
+selector, not an authentication credential.
+
+Authenticated shared-data reads by account ID require a live principal and an
+existing account, but do not require a current connection. Guest imports and
+username-based reads are independent of connection state. Authenticated
+imports and personal Progress require an explicit ID of the caller's current
+connection; a missing import/Progress selection returns
+`400 ACCOUNT_SELECTION_REQUIRED`.
 
 `POST /api/games/import` persists the complete immutable command snapshot:
 account, normalized provider identity, date bounds, sorted time controls, and
@@ -165,8 +169,9 @@ player color. Workers reload that snapshot and fail closed with
 `READY`/`UNRESOLVED` state and the supported status, platform, color, date, and
 time-control checks are enforced by the baseline database and the domain.
 The active-job partial unique index permits only one queued or processing job
-per account. `GET /api/jobs/{id}` rechecks the persisted relationship on every
-poll and never treats the returned `accountId` as a credential.
+per account. `GET /api/jobs/{id}` authorizes signed-in callers by immutable
+initiator and guests by guest initiation (`app_user_id IS NULL`), not by the
+account's current connections.
 
 `GET /api/me` returning `401` is a valid guest state, not an application error.
 Authentication gates must be applied only to capabilities that require durable

@@ -42,7 +42,7 @@ class GameServiceTest {
     @Test
     fun `should return paginated games if account found`() {
         val user = AppUser(email = "test@test.com")
-        val account = ChessAccount(user = user, platform = "CHESS_COM", username = "user")
+        val account = ChessAccount(platform = "CHESS_COM", username = "user")
         val game =
             Game(
                 chessAccount = account,

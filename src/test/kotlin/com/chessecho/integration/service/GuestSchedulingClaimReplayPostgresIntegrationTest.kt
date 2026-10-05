@@ -10,16 +10,20 @@ import com.chessecho.domain.PlayerColor
 import com.chessecho.domain.PuzzleSchedulingEvent
 import com.chessecho.domain.TimeControl
 import com.chessecho.domain.UserPositionWeakness
+import com.chessecho.dto.AccountAssociationRequest
 import com.chessecho.dto.ImportGamesRequest
+import com.chessecho.repository.AccountConnectionRepository
 import com.chessecho.repository.AppUserRepository
 import com.chessecho.repository.ArchiveDerivedProcessingRepository
 import com.chessecho.repository.AsyncJobRepository
 import com.chessecho.repository.ChessAccountRepository
 import com.chessecho.repository.EngineAnalysisRepository
+import com.chessecho.repository.GameRepository
 import com.chessecho.repository.ImportedArchiveRepository
 import com.chessecho.repository.PositionOccurrenceRepository
 import com.chessecho.repository.PuzzleSchedulingEventRepository
 import com.chessecho.repository.UserPositionWeaknessRepository
+import com.chessecho.service.AccountOwnershipService
 import com.chessecho.service.ChessComClient
 import com.chessecho.service.EngineAnalysisOrchestrator
 import com.chessecho.service.GameImportService
@@ -40,7 +44,6 @@ import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -63,6 +66,12 @@ class GuestSchedulingClaimReplayPostgresIntegrationTest {
     private lateinit var gameImportService: GameImportService
 
     @Autowired
+    private lateinit var ownership: AccountOwnershipService
+
+    @Autowired
+    private lateinit var connections: AccountConnectionRepository
+
+    @Autowired
     private lateinit var appUserRepository: AppUserRepository
 
     @Autowired
@@ -70,6 +79,9 @@ class GuestSchedulingClaimReplayPostgresIntegrationTest {
 
     @Autowired
     private lateinit var chessAccountRepository: ChessAccountRepository
+
+    @Autowired
+    private lateinit var gameRepository: GameRepository
 
     @Autowired
     private lateinit var positionOccurrenceRepository: PositionOccurrenceRepository
@@ -109,7 +121,7 @@ class GuestSchedulingClaimReplayPostgresIntegrationTest {
 
         val account =
             assertNotNull(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "hikaru"))
-        assertNull(account.user, "an import with no signed-in principal must produce a guest account")
+        assertFalse(connections.existsByChessAccountId(account.id), "a guest import must not create a user connection")
 
         val occurrences = positionOccurrenceRepository.findByChessAccountIdAndPlayerColor(account.id, "WHITE")
         assertFalse(occurrences.isEmpty(), "the fixture archive must yield occurrences to claim")
@@ -203,10 +215,8 @@ class GuestSchedulingClaimReplayPostgresIntegrationTest {
         }
 
         val initiatingUser = appUserRepository.save(AppUser(email = "replay-${UUID.randomUUID()}@example.com"))
-        val authenticatedAccount = chessAccountRepository.findById(account.id).orElseThrow()
-        authenticatedAccount.user = initiatingUser
-        chessAccountRepository.saveAndFlush(authenticatedAccount)
         val principal = AuthenticatedPrincipal(initiatingUser.id, devPrincipal = false)
+        ownership.associate(principal, AccountAssociationRequest(account.platform, account.username))
 
         // Authenticated claims occupy a separate `(app_user_id, occurrence, event_type)` namespace.
         // Exercise that namespace through the import worker too, including conflict recovery on replay.
@@ -241,6 +251,26 @@ class GuestSchedulingClaimReplayPostgresIntegrationTest {
         assertEquals(
             authenticatedClaimKeys,
             authenticatedClaimsAfterReplay.map { it.sourceOccurrence?.id to it.eventType }.toSet(),
+        )
+
+        val gameIdsBeforeConnectedGuestReplay =
+            gameRepository.findAllByChessAccountOrderByPlayedAtDesc(account).map { it.id }.toSet()
+        forceArchiveRederivation(account.id)
+        val connectedGuestReplay = gameImportService.createImportJob(importRequest())
+        gameImportService.executeImportJob(connectedGuestReplay.id)
+        assertEquals("COMPLETED", awaitTerminalJob(connectedGuestReplay.id).status)
+        assertEquals(
+            gameIdsBeforeConnectedGuestReplay,
+            gameRepository.findAllByChessAccountOrderByPlayedAtDesc(account).map { it.id }.toSet(),
+            "guest replay after connection must reuse the shared games",
+        )
+        assertEquals(
+            claimedIds,
+            puzzleSchedulingEventRepository.findAll()
+                .filter { it.sourceOccurrence != null && it.appUser == null }
+                .map { it.id }
+                .toSet(),
+            "guest replay after connection must preserve the guest claim rows",
         )
         assertEquals(authenticatedClaimIds, authenticatedClaimsAfterReplay.map { it.id }.toSet())
         assertEquals(authenticatedClaims.size, authenticatedClaimsAfterReplay.size)

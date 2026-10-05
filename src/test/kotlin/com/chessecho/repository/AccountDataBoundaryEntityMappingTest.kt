@@ -1,5 +1,6 @@
 package com.chessecho.repository
 
+import com.chessecho.domain.AccountConnection
 import com.chessecho.domain.AppUser
 import com.chessecho.domain.AsyncJob
 import com.chessecho.domain.ChessAccount
@@ -15,8 +16,11 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest
+import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager
+import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.dao.InvalidDataAccessApiUsageException
 import org.springframework.test.context.ActiveProfiles
+import java.time.Instant
 import kotlin.test.assertFailsWith
 
 /**
@@ -31,6 +35,47 @@ import kotlin.test.assertFailsWith
 class AccountDataBoundaryEntityMappingTest {
     @Autowired
     private lateinit var appUserRepository: AppUserRepository
+
+    @Autowired
+    private lateinit var connections: AccountConnectionRepository
+
+    @Autowired
+    private lateinit var entityManager: TestEntityManager
+
+    @Test
+    fun `shared account links map user account and connection timestamp`() {
+        val first = appUserRepository.save(AppUser(email = "connection-first@example.com"))
+        val second = appUserRepository.save(AppUser(email = "connection-second@example.com"))
+        val account = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = "shared-mapping"))
+        val firstLink =
+            connections.saveAndFlush(
+                AccountConnection(
+                    appUser = first,
+                    chessAccount = account,
+                    connectedAt = Instant.parse("2026-10-05T13:30:00.123457Z"),
+                ),
+            )
+        connections.saveAndFlush(AccountConnection(appUser = second, chessAccount = account))
+        entityManager.clear()
+
+        val reloaded = connections.findById(firstLink.id).orElseThrow()
+        assertEquals(first.id, reloaded.appUser.id)
+        assertEquals(account.id, reloaded.chessAccount.id)
+        assertEquals(firstLink.connectedAt, reloaded.connectedAt)
+        assertEquals(2, connections.findAll().size)
+    }
+
+    @Test
+    fun `a user cannot persist a second active account connection`() {
+        val user = appUserRepository.save(AppUser(email = "single-connection@example.com"))
+        val first = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = "mapping-first"))
+        val second = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = "mapping-second"))
+        connections.saveAndFlush(AccountConnection(appUser = user, chessAccount = first))
+
+        assertFailsWith<DataIntegrityViolationException> {
+            connections.saveAndFlush(AccountConnection(appUser = user, chessAccount = second))
+        }
+    }
 
     @Autowired
     private lateinit var chessAccountRepository: ChessAccountRepository
@@ -50,7 +95,7 @@ class AccountDataBoundaryEntityMappingTest {
     @Test
     fun `scheduling events persist with and without an app user`() {
         val user = appUserRepository.save(AppUser(email = "scheduling@example.com"))
-        val account = chessAccountRepository.save(ChessAccount(user = user, platform = "CHESS_COM", username = "sched"))
+        val account = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = "sched"))
         val position = positionRepository.save(Position(hash = "sched-hash", fen = "sched-fen"))
 
         val attributed =

@@ -46,7 +46,6 @@ class SharedGameServiceReadIntegrationTest {
         val account =
             chessAccountRepository.save(
                 ChessAccount(
-                    user = owner,
                     platform = Platform.CHESS_COM.name,
                     username = "u${UUID.randomUUID().toString().take(8)}",
                 ),

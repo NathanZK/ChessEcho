@@ -17,9 +17,6 @@ import { MonthPicker } from './MonthPicker';
 
 export type AccountConnectionStatus = 'loading' | 'connected' | 'unconnected' | 'error';
 
-const ACCOUNT_CLAIM_CONFLICT_MESSAGE =
-  "This Chess.com account is connected under another ChessEcho sign-in. Verify that you're signed in to the right ChessEcho account, or choose a Chess.com account you can connect.";
-
 interface ImportGamesViewProps {
   connectedUsername?: string;
   connectedAccountId?: string;
@@ -197,8 +194,9 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
       setAssociationError(
         err instanceof AccountAssociationError &&
           err.status === 409 &&
-          err.code === 'ACCOUNT_CLAIM_CONFLICT'
-          ? ACCOUNT_CLAIM_CONFLICT_MESSAGE
+          err.code === 'ACCOUNT_CONNECTION_LIMIT_REACHED' &&
+          connectedAccount
+          ? `Only one Chess.com account can be connected at a time. Disconnect ${connectedAccount.username} before connecting another account.`
           : err instanceof Error
             ? err.message
             : 'Failed to connect Chess.com account'

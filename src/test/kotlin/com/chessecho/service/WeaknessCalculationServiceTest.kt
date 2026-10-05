@@ -3,7 +3,6 @@ package com.chessecho.service
 import com.chessecho.config.ComparatorMethod
 import com.chessecho.config.ConfidenceMethod
 import com.chessecho.config.PracticalEvidenceProperties
-import com.chessecho.domain.AppUser
 import com.chessecho.domain.ChessAccount
 import com.chessecho.domain.EngineAnalysis
 import com.chessecho.domain.Game
@@ -87,7 +86,7 @@ class WeaknessCalculationServiceTest {
 
     @Test
     fun `test dynamic minEvalLoss changes mistakeCount and classifies moves accurately`() {
-        val account = ChessAccount(user = AppUser(email = "test@test.com"), platform = "CHESS_COM", username = "nathan")
+        val account = ChessAccount(platform = "CHESS_COM", username = "nathan")
         val position = Position(hash = "hash", fen = "fen")
 
         `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "nathan")).thenReturn(account)
@@ -188,7 +187,7 @@ class WeaknessCalculationServiceTest {
 
     @Test
     fun `test playerColor BOTH calls queries with BOTH color parameter`() {
-        val account = ChessAccount(user = AppUser(email = "test@test.com"), platform = "CHESS_COM", username = "nathan")
+        val account = ChessAccount(platform = "CHESS_COM", username = "nathan")
         `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "nathan")).thenReturn(account)
         `when`(
             positionOccurrenceRepository.findWeaknessAggregations(
@@ -206,7 +205,7 @@ class WeaknessCalculationServiceTest {
 
     @Test
     fun `test changing minEvalLoss does not trigger Stockfish analysis`() {
-        val account = ChessAccount(user = AppUser(email = "test@test.com"), platform = "CHESS_COM", username = "nathan")
+        val account = ChessAccount(platform = "CHESS_COM", username = "nathan")
         `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "nathan")).thenReturn(account)
         `when`(
             positionOccurrenceRepository.findWeaknessAggregations(
@@ -226,7 +225,7 @@ class WeaknessCalculationServiceTest {
 
     @Test
     fun `test bestMove is never classified as a historical mistake`() {
-        val account = ChessAccount(user = AppUser(email = "test@test.com"), platform = "CHESS_COM", username = "nathan")
+        val account = ChessAccount(platform = "CHESS_COM", username = "nathan")
         val position = Position(hash = "hash_qh4", fen = "fen_qh4")
 
         `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "nathan")).thenReturn(account)
@@ -316,7 +315,7 @@ class WeaknessCalculationServiceTest {
 
     @Test
     fun `test lastSeenAt derives from newest occurrence timestamp and prefers playedAt`() {
-        val account = ChessAccount(user = AppUser(email = "test@test.com"), platform = "CHESS_COM", username = "nathan")
+        val account = ChessAccount(platform = "CHESS_COM", username = "nathan")
         val position = Position(hash = "hash1", fen = "fen1")
         `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "nathan")).thenReturn(account)
 
@@ -383,7 +382,7 @@ class WeaknessCalculationServiceTest {
 
     @Test
     fun `test lastSeenAt falls back to createdAt when playedAt is null`() {
-        val account = ChessAccount(user = AppUser(email = "test@test.com"), platform = "CHESS_COM", username = "nathan")
+        val account = ChessAccount(platform = "CHESS_COM", username = "nathan")
         val position = Position(hash = "hash2", fen = "fen2")
         `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "nathan")).thenReturn(account)
 
@@ -434,7 +433,7 @@ class WeaknessCalculationServiceTest {
 
     @Test
     fun `test recent weaknesses rank higher than otherwise equivalent older weaknesses`() {
-        val account = ChessAccount(user = AppUser(email = "test@test.com"), platform = "CHESS_COM", username = "nathan")
+        val account = ChessAccount(platform = "CHESS_COM", username = "nathan")
         val posRecent = Position(hash = "recentHash", fen = "recentFen")
         val posOld = Position(hash = "oldHash", fen = "oldFen")
         `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "nathan")).thenReturn(account)
@@ -522,7 +521,6 @@ class WeaknessCalculationServiceTest {
     fun `ranking on orders lower objective poor evidence before higher objective successful evidence`() {
         val account =
             ChessAccount(
-                user = AppUser(email = "recommendation-order@test.com"),
                 platform = "CHESS_COM",
                 username = "recommendation-order",
             )
@@ -674,7 +672,7 @@ class WeaknessCalculationServiceTest {
 
     @Test
     fun `practical integration scopes by color uses all rows passes INACCURATE and applies total order`() {
-        val account = ChessAccount(user = AppUser(email = "scope@test.com"), platform = "CHESS_COM", username = "scope-user")
+        val account = ChessAccount(platform = "CHESS_COM", username = "scope-user")
         val firstPosition =
             Position(
                 id = UUID.fromString("00000000-0000-0000-0000-000000000001"),
@@ -871,7 +869,7 @@ class WeaknessCalculationServiceTest {
         playedAt: Instant? = null,
     ): Game =
         Game(
-            chessAccount = ChessAccount(user = AppUser(email = "t"), platform = "P", username = "U"),
+            chessAccount = ChessAccount(platform = "P", username = "U"),
             platformGameId = platformGameId,
             timeControl = "bullet",
             pgn = "pgn",

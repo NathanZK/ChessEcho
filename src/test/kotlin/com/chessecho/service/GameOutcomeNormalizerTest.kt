@@ -1,6 +1,5 @@
 package com.chessecho.service
 
-import com.chessecho.domain.AppUser
 import com.chessecho.domain.ChessAccount
 import com.chessecho.domain.Game
 import org.junit.jupiter.api.Test
@@ -236,7 +235,6 @@ class GameOutcomeNormalizerTest {
         Game(
             chessAccount =
                 ChessAccount(
-                    user = AppUser(email = "outcome@test.com"),
                     platform = "CHESS_COM",
                     username = "account",
                 ),

@@ -1,5 +1,6 @@
 package com.chessecho.integration.controller
 
+import com.chessecho.domain.AccountConnection
 import com.chessecho.domain.ChessAccount
 import com.chessecho.domain.EngineAnalysis
 import com.chessecho.domain.Game
@@ -12,6 +13,8 @@ import com.chessecho.domain.SchedulingEventType
 import com.chessecho.domain.TrainingAttempt
 import com.chessecho.domain.TrainingAttemptMode
 import com.chessecho.domain.TrainingAttemptOutcome
+import com.chessecho.dto.AccountAssociationRequest
+import com.chessecho.repository.AccountConnectionRepository
 import com.chessecho.repository.AppUserRepository
 import com.chessecho.repository.ChessAccountRepository
 import com.chessecho.repository.EngineAnalysisRepository
@@ -20,6 +23,7 @@ import com.chessecho.repository.PositionOccurrenceRepository
 import com.chessecho.repository.PositionRepository
 import com.chessecho.repository.PuzzleSchedulingEventRepository
 import com.chessecho.repository.TrainingAttemptRepository
+import com.chessecho.service.AccountOwnershipService
 import com.chessecho.service.auth.IdentitySessionService
 import com.chessecho.service.auth.VerifiedIdentityClaims
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -61,6 +65,9 @@ class ProgressControllerIntegrationTest {
     private lateinit var chessAccountRepository: ChessAccountRepository
 
     @Autowired
+    private lateinit var connections: AccountConnectionRepository
+
+    @Autowired
     private lateinit var gameRepository: GameRepository
 
     @Autowired
@@ -78,6 +85,9 @@ class ProgressControllerIntegrationTest {
     @Autowired
     private lateinit var engineAnalysisRepository: EngineAnalysisRepository
 
+    @Autowired
+    private lateinit var accountOwnershipService: AccountOwnershipService
+
     @ParameterizedTest
     @NullSource
     @ValueSource(strings = ["invalid", "", "0", "-0.3", "NaN", "Infinity", "-Infinity", "1e309"])
@@ -93,12 +103,19 @@ class ProgressControllerIntegrationTest {
                 ),
                 devPrincipal = false,
             )
+        val account = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = subject))
+        connections.saveAndFlush(
+            AccountConnection(
+                appUser = appUserRepository.findById(session.principal.appUserId).orElseThrow(),
+                chessAccount = account,
+            ),
+        )
         val headers = HttpHeaders().apply { add(HttpHeaders.COOKIE, "CHESSECHO_SESSION=${session.rawSecret}") }
         val query = threshold?.let { "&minEvalLoss=$it" }.orEmpty()
 
         val response =
             restTemplate.exchange(
-                "/api/positions/${UUID.randomUUID()}/progress?playerColor=WHITE$query",
+                "/api/positions/${UUID.randomUUID()}/progress?accountId=${account.id}&playerColor=WHITE$query",
                 HttpMethod.GET,
                 HttpEntity<Void>(headers),
                 String::class.java,
@@ -125,7 +142,8 @@ class ProgressControllerIntegrationTest {
                 devPrincipal = false,
             )
         val user = appUserRepository.findById(session.principal.appUserId).orElseThrow()
-        val account = chessAccountRepository.save(ChessAccount(user = user, platform = "CHESS_COM", username = subject))
+        val account = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = subject))
+        connections.saveAndFlush(AccountConnection(appUser = user, chessAccount = account))
         val position = positionRepository.save(Position(hash = UUID.randomUUID().toString(), fen = "8/8/8/8/8/8/8/8 w - -"))
         val analysis = EngineAnalysis(position = position, depth = 16, baselineEvalCp = 0, bestMove = "best", bestMoveEvalCp = 0)
         (0 until 26).forEach { index ->
@@ -165,7 +183,7 @@ class ProgressControllerIntegrationTest {
 
         val response =
             restTemplate.exchange(
-                "/api/positions/${position.id}/progress?playerColor=WHITE&minEvalLoss=0.3",
+                "/api/positions/${position.id}/progress?accountId=${account.id}&playerColor=WHITE&minEvalLoss=0.3",
                 HttpMethod.GET,
                 HttpEntity<Void>(headers),
                 String::class.java,
@@ -208,12 +226,12 @@ class ProgressControllerIntegrationTest {
         val account =
             chessAccountRepository.save(
                 ChessAccount(
-                    user = user,
                     platform = "CHESS_COM",
                     username = subject,
                     createdAt = firstPlayedAt.minusSeconds(60 * 60 * 24),
                 ),
             )
+        connections.saveAndFlush(AccountConnection(appUser = user, chessAccount = account))
         val position =
             positionRepository.save(
                 Position(hash = UUID.randomUUID().toString(), fen = "8/8/8/8/8/8/8/8 ${if (color == PlayerColor.WHITE) "w" else "b"} - -"),
@@ -224,7 +242,7 @@ class ProgressControllerIntegrationTest {
             )
         val otherAccount =
             chessAccountRepository.save(
-                ChessAccount(user = user, platform = "CHESS_COM", username = "$subject-other", createdAt = firstPlayedAt),
+                ChessAccount(platform = "CHESS_COM", username = "$subject-other", createdAt = firstPlayedAt),
             )
         val results = if (color == PlayerColor.WHITE) listOf("win", "resigned", "agreed") else listOf("resigned", "win", "agreed")
         results.withIndex().reversed().forEach { (index, result) ->
@@ -384,7 +402,7 @@ class ProgressControllerIntegrationTest {
 
         val response =
             restTemplate.exchange(
-                "/api/positions/${position.id}/progress?playerColor=${color.name}&minEvalLoss=0.3",
+                "/api/positions/${position.id}/progress?accountId=${account.id}&playerColor=${color.name}&minEvalLoss=0.3",
                 HttpMethod.GET,
                 HttpEntity<Void>(headers),
                 String::class.java,
@@ -432,6 +450,88 @@ class ProgressControllerIntegrationTest {
             "Your mistake rate stayed the same, and your win rate has decreased.",
             body["assessment"].textValue(),
         )
+
+        val unconnectedAccountResponse =
+            restTemplate.exchange(
+                "/api/positions/${position.id}/progress?accountId=${otherAccount.id}&playerColor=${color.name}&minEvalLoss=0.3",
+                HttpMethod.GET,
+                HttpEntity<Void>(headers),
+                String::class.java,
+            )
+        assertEquals(HttpStatus.NOT_FOUND, unconnectedAccountResponse.statusCode)
+        assertEquals("ACCOUNT_NOT_FOUND", objectMapper.readTree(unconnectedAccountResponse.body).path("error").asText())
+
+        accountOwnershipService.disconnect(account.id, session.principal)
+        val disconnectedResponse =
+            restTemplate.exchange(
+                "/api/positions/${position.id}/progress?accountId=${account.id}&playerColor=${color.name}&minEvalLoss=0.3",
+                HttpMethod.GET,
+                HttpEntity<Void>(headers),
+                String::class.java,
+            )
+        assertEquals(HttpStatus.NOT_FOUND, disconnectedResponse.statusCode)
+
+        accountOwnershipService.associate(
+            session.principal,
+            AccountAssociationRequest(platform = "CHESS_COM", username = account.username),
+        )
+        val reconnectedResponse =
+            restTemplate.exchange(
+                "/api/positions/${position.id}/progress?accountId=${account.id}&playerColor=${color.name}&minEvalLoss=0.3",
+                HttpMethod.GET,
+                HttpEntity<Void>(headers),
+                String::class.java,
+            )
+        assertEquals(HttpStatus.OK, reconnectedResponse.statusCode)
+        assertEquals(1, objectMapper.readTree(reconnectedResponse.body).path("baseline").path("sourceEncounterCount").asInt())
+    }
+
+    @Test
+    fun `authenticated progress requires an explicit connected account`() {
+        val subject = "progress-selection-${UUID.randomUUID()}"
+        val session =
+            identitySessionService.establishSession(
+                VerifiedIdentityClaims(
+                    issuer = "integration-test",
+                    subject = subject,
+                    emailSnapshot = "$subject@example.test",
+                    emailVerified = true,
+                ),
+                devPrincipal = false,
+            )
+        val account = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = subject))
+        val positionId = UUID.randomUUID()
+        val headers = HttpHeaders().apply { add(HttpHeaders.COOKIE, "CHESSECHO_SESSION=${session.rawSecret}") }
+
+        val missingSelection =
+            restTemplate.exchange(
+                "/api/positions/$positionId/progress?playerColor=WHITE&minEvalLoss=0.3",
+                HttpMethod.GET,
+                HttpEntity<Void>(headers),
+                String::class.java,
+            )
+        assertEquals(HttpStatus.BAD_REQUEST, missingSelection.statusCode)
+        assertEquals("ACCOUNT_SELECTION_REQUIRED", objectMapper.readTree(missingSelection.body).path("error").asText())
+
+        val unconnectedSelection =
+            restTemplate.exchange(
+                "/api/positions/$positionId/progress?accountId=${account.id}&playerColor=WHITE&minEvalLoss=0.3",
+                HttpMethod.GET,
+                HttpEntity<Void>(headers),
+                String::class.java,
+            )
+        assertEquals(HttpStatus.NOT_FOUND, unconnectedSelection.statusCode)
+        assertEquals("ACCOUNT_NOT_FOUND", objectMapper.readTree(unconnectedSelection.body).path("error").asText())
+
+        val unknownSelection =
+            restTemplate.exchange(
+                "/api/positions/$positionId/progress?accountId=${UUID.randomUUID()}&playerColor=WHITE&minEvalLoss=0.3",
+                HttpMethod.GET,
+                HttpEntity<Void>(headers),
+                String::class.java,
+            )
+        assertEquals(HttpStatus.NOT_FOUND, unknownSelection.statusCode)
+        assertEquals("ACCOUNT_NOT_FOUND", objectMapper.readTree(unknownSelection.body).path("error").asText())
     }
 
     @Test

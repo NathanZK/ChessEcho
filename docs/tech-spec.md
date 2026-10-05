@@ -33,14 +33,25 @@ entry:
   - Backend outbound Chess.com requests use configured `CHESS_PUBAPI_USERNAME` and `CHESS_PUBAPI_CONTACT` for the required User-Agent. See `README.md`.
 
 contract:
-  - **Chess accounts**: `POST /api/accounts` connects an account; `GET /api/accounts` lists the caller's connections; `DELETE /api/accounts/{accountId}/connection` disconnects it. See `API_CONTRACT.md` and `docs/specs/connected-account-state.md`.
+  - **Chess accounts**:
+    - `ChessAccount` stores shared identity; `AccountConnection` links users.
+    - Multiple users may connect one account; each user may have one active connection.
+    - See `API_CONTRACT.md` and `docs/specs/connected-account-state.md`.
   - **Authentication/session**: `POST /api/register`, `POST /api/login`, `GET /api/me`, and `POST /api/logout`; session cookie `CHESSECHO_SESSION`. See `docs/architecture/identity-and-session.md`.
   - **Header account state**: The Header distinguishes guests, signed-in users without a connected Chess.com account, and signed-in users with one.
   - **Development session**: `POST /api/dev/session` exists only under `dev`/`local` profiles with `chessecho.auth.dev-mode.enabled=true`; otherwise it returns 404 (`DevSessionController`).
-  - **Import and jobs**: `POST /api/games/import` requires the authenticated user's connected account; `GET /api/jobs/{id}` is available to the initiating user, or to guests only while the account is unclaimed.
-  - **Account data access**: authenticated shared-data reads select any existing account by `accountId`; guest reads use platform and username for an unclaimed account. Personal training reads are scoped to the authenticated user and selected account.
-  - **Analysis and practice**: `/api/positions/weaknesses` and `/api/positions/{positionId}/progress` expose weakness and progress reads; `/api/puzzles`, `/api/puzzles/continuation`, `/api/puzzles/evaluate-move`, `/api/puzzles/attempt`, and `/api/puzzles/events` support puzzles, continuation, evaluation, attempts, and events.
-  - **Position Progress**: Uses the selected weakness's captured evaluation-loss threshold for mistake classification. Dated encounters, baseline, and `SOLVED` intervals remain as documented in `docs/specs/position-progress.md`.
+  - **Import and jobs**:
+    - Authenticated imports require `accountId` for the caller's current connection.
+    - Guests import by username regardless of connection state.
+    - Authenticated job polling is initiator-only; guest jobs remain pollable after connections change.
+  - **Account data access**:
+    - Authenticated shared-data reads select any existing account by `accountId`.
+    - Guest imports and username-based reads ignore connection state.
+    - Personal Progress requires the caller's current connection and scopes history to the user/account pair.
+  - **Analysis and practice**:
+    - `/api/positions/weaknesses` exposes weakness reads; `/api/positions/{positionId}/progress` requires `playerColor`, a connected `accountId`, and the selected `minEvalLoss`.
+    - `/api/puzzles`, `/api/puzzles/continuation`, `/api/puzzles/evaluate-move`, `/api/puzzles/attempt`, and `/api/puzzles/events` support practice.
+  - **Position Progress**: Dated actual-game encounters form a separate historical baseline and one aggregate observation per interval started by a persisted `SOLVED` puzzle event. Intervals use `Game.playedAt`, remain reconstructible after late imports, and reuse `GameOutcomeNormalizer`; see `docs/specs/position-progress.md`.
   - **Actual-game results display**:
     - The Weaknesses Library displays supplied W/D/L, score rate, and eligible-game count without confidence classifications or training comparisons.
     - Null scores or zero eligible games show neutral unavailable-score wording; absent practical evidence omits the block.
@@ -50,7 +61,7 @@ contract:
   - **Errors and security**: API errors use structured responses; state-changing requests require the session's double-submit CSRF token. See `API_CONTRACT.md`.
 
 flow:
-  - import: `POST /api/games/import` → resolve owned or unclaimed account → async job fetches and replays Chess.com games → store position occurrences.
+  - import: guest submits a username or authenticated user selects a current connection → async job fetches and replays shared Chess.com games → store position occurrences.
   - analysis: import ingestion completes → positions reached ≥5 times (`EngineAnalysisOrchestrator`) → Stockfish depth 16 (`EngineAnalysisService`) → stored position and move evaluations.
   - weakness: weakness/puzzle request → account-derived aggregation plus the caller's account-scoped training history → paginated weaknesses or puzzles.
   - practice: puzzle move → evaluate/continue/attempt/event endpoints → feedback and recorded training events.
@@ -63,7 +74,10 @@ invariant:
   - `userId`, usernames, account UUIDs, and job UUIDs are never bearer credentials (`API_CONTRACT.md`).
   - Authenticated shared reads select an existing account by UUID; personal history is scoped to `(app_user_id, chess_account_id)`.
   - The Header shows “No Chess.com account connected” only after account loading confirms the user has no connections; authenticated users always retain Sign out.
-  - Authenticated import creation requires the current account owner; status reads require the immutable initiating user. Guests can read/import only unclaimed accounts.
+  - Each user has at most one active connection; multiple users may connect a shared Chess.com identity.
+  - Authenticated imports require the explicit current connection; authenticated status reads require the immutable initiator.
+  - Guest username reads/imports ignore connection state; guest jobs remain pollable after connections change.
+  - Position Progress uses the selected weakness threshold and requires an explicit currently connected account.
   - `AsyncJob` rejects updates that change its persisted import configuration, including account, date range, time controls, and player color.
   - Before deployment, schema evolution updates the V1 baseline rather than adding synthetic Flyway versions. See `docs/engineering/repository-conventions.md`.
 
@@ -77,7 +91,8 @@ constraint:
 convention:
   - **Quality checks**: backend `./gradlew ktlintCheck` and `./gradlew test`; frontend `npm run lint`, `npx tsc --noEmit`, `npm run test`, and `npm run build` from `frontend/`.
   - **Error handling**: exceptions map to structured JSON errors with codes in `GlobalExceptionHandler`; codes are listed in `API_CONTRACT.md`.
-  - **Security**: server-side sessions, double-submit CSRF on state changes, connection-owner checks for import initiation, initiator-only authenticated job status, and per-user personal-state scoping; see `docs/architecture/identity-and-session.md` and `docs/specs/account-data-boundary.md`.
+  - **Security**: server-side sessions, double-submit CSRF on state changes, and connection checks for authenticated imports and Progress.
+  - **Access control**: authenticated job status is initiator-only; personal state is scoped per user. See `docs/architecture/identity-and-session.md` and `docs/specs/account-data-boundary.md`.
   - **Tests**: backend tests under `src/test/kotlin/com/chessecho/{controller,service,repository,integration,...}`; integration tests use Testcontainers PostgreSQL.
   - **CI**: `.github/workflows/ci.yml` runs backend ktlint and tests (Java 21) and frontend lint, typecheck, Vitest, and build (Node 20).
   - **Persistence**: follow the pre-deployment baseline-first migration convention in `docs/engineering/repository-conventions.md`.

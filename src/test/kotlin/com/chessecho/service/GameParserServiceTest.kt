@@ -64,7 +64,7 @@ class GameParserServiceTest {
         }
 
         val appUser = AppUser(email = "test@example.com")
-        val chessAccount = ChessAccount(user = appUser, platform = "CHESS_COM", username = "tester")
+        val chessAccount = ChessAccount(platform = "CHESS_COM", username = "tester")
         val game =
             Game(
                 chessAccount = chessAccount,
@@ -120,7 +120,7 @@ class GameParserServiceTest {
         whenever(positionRepository.saveAll(any<List<Position>>())).thenAnswer { it.getArgument<List<Position>>(0) }
 
         val appUser = AppUser(email = "test@example.com")
-        val chessAccount = ChessAccount(user = appUser, platform = "CHESS_COM", username = "tester")
+        val chessAccount = ChessAccount(platform = "CHESS_COM", username = "tester")
 
         // Game 1: 1. d3 d6 2. e3 e6 (2 White positions)
         val game1 =
@@ -164,7 +164,7 @@ class GameParserServiceTest {
         whenever(positionRepository.saveAll(any<List<Position>>())).thenAnswer { it.getArgument<List<Position>>(0) }
 
         val appUser = AppUser(email = "test@example.com")
-        val chessAccount = ChessAccount(user = appUser, platform = "CHESS_COM", username = "tester")
+        val chessAccount = ChessAccount(platform = "CHESS_COM", username = "tester")
 
         // Game 1: King moves and returns, losing castling rights (3 White positions: before e4, before Ke2, before Ke1)
         val game1 =
@@ -211,7 +211,7 @@ class GameParserServiceTest {
         val nativeParser = GameParserService(positionRepository, positionOccurrenceRepository, postgresqlMetadataDataSource())
 
         val appUser = AppUser(email = "test@example.com")
-        val chessAccount = ChessAccount(user = appUser, platform = "CHESS_COM", username = "tester")
+        val chessAccount = ChessAccount(platform = "CHESS_COM", username = "tester")
         val game =
             Game(
                 chessAccount = chessAccount,
@@ -264,7 +264,7 @@ class GameParserServiceTest {
 
     private fun sampleGame(id: String): Game =
         Game(
-            chessAccount = ChessAccount(user = AppUser(email = "branch@example.com"), platform = "CHESS_COM", username = "tester"),
+            chessAccount = ChessAccount(platform = "CHESS_COM", username = "tester"),
             platformGameId = id,
             whiteUsername = "tester",
             blackUsername = "opponent",
@@ -288,7 +288,7 @@ class GameParserServiceTest {
         whenever(positionRepository.findByHashIn(any())).thenReturn(emptyList())
         whenever(positionRepository.saveAll(any<List<Position>>())).thenAnswer { it.getArgument<List<Position>>(0) }
 
-        val account = ChessAccount(user = AppUser(email = "identity@example.com"), platform = "CHESS_COM", username = "tester")
+        val account = ChessAccount(platform = "CHESS_COM", username = "tester")
         val firstGame =
             Game(
                 chessAccount = account,
@@ -372,7 +372,7 @@ class GameParserServiceTest {
             it.getArgument<List<PositionOccurrence>>(0).also(persistedOccurrences::addAll)
         }
 
-        val account = ChessAccount(user = AppUser(email = "retry@example.com"), platform = "CHESS_COM", username = "tester")
+        val account = ChessAccount(platform = "CHESS_COM", username = "tester")
         val game =
             Game(
                 chessAccount = account,

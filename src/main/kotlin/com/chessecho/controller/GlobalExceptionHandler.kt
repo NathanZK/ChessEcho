@@ -1,7 +1,7 @@
 package com.chessecho.controller
 
 import com.chessecho.dto.ErrorResponse
-import com.chessecho.service.AccountClaimConflictException
+import com.chessecho.service.AccountConnectionLimitReachedException
 import com.chessecho.service.AccountNotFoundException
 import com.chessecho.service.AccountSelectionMismatchException
 import com.chessecho.service.AccountSelectionRequiredException
@@ -70,11 +70,16 @@ class GlobalExceptionHandler {
             .status(HttpStatus.FORBIDDEN)
             .body(ErrorResponse(error = "FORBIDDEN", details = listOf(ex.message ?: "Forbidden")))
 
-    @ExceptionHandler(AccountClaimConflictException::class)
-    fun handleAccountClaimConflict(ex: AccountClaimConflictException): ResponseEntity<ErrorResponse> =
+    @ExceptionHandler(AccountConnectionLimitReachedException::class)
+    fun handleAccountConnectionLimit(ex: AccountConnectionLimitReachedException): ResponseEntity<ErrorResponse> =
         ResponseEntity
             .status(HttpStatus.CONFLICT)
-            .body(ErrorResponse(error = "ACCOUNT_CLAIM_CONFLICT", details = listOf(ex.message ?: "Account claim conflict")))
+            .body(
+                ErrorResponse(
+                    error = "ACCOUNT_CONNECTION_LIMIT_REACHED",
+                    details = listOf(ex.message ?: "Account connection limit reached"),
+                ),
+            )
 
     @ExceptionHandler(AccountSelectionRequiredException::class)
     fun handleAccountSelectionRequired(ex: AccountSelectionRequiredException): ResponseEntity<ErrorResponse> =

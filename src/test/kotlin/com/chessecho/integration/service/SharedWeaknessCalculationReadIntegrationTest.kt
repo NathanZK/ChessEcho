@@ -93,7 +93,6 @@ class SharedWeaknessCalculationReadIntegrationTest {
         account =
             chessAccountRepository.save(
                 ChessAccount(
-                    user = connector,
                     platform = Platform.CHESS_COM.name,
                     username = "u${UUID.randomUUID().toString().take(8)}",
                 ),

@@ -83,7 +83,7 @@ class PuzzleControllerIntegrationTest {
     @BeforeEach
     fun setup() {
         val user = appUserRepository.save(AppUser(email = "puzzle_integration@test.com"))
-        account = chessAccountRepository.save(ChessAccount(user = null, platform = "CHESS_COM", username = "puzzleuser"))
+        account = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = "puzzleuser"))
 
         val game =
             gameRepository.save(
@@ -393,7 +393,7 @@ class PuzzleControllerIntegrationTest {
     @Test
     fun `test puzzles endpoint for username gothamchess as white with minEvalLoss 0,3 returns non-empty result`() {
         val user = appUserRepository.save(AppUser(email = "gotham@test.com"))
-        val gothamAccount = chessAccountRepository.save(ChessAccount(user = null, platform = "CHESS_COM", username = "gothamchess"))
+        val gothamAccount = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = "gothamchess"))
 
         val game =
             gameRepository.save(
@@ -467,7 +467,7 @@ class PuzzleControllerIntegrationTest {
     @Test
     fun `end to end acceptableMoves includes MultiPV engine candidates while movesPlayed contains only user history`() {
         val user = appUserRepository.save(AppUser(email = "multipv_e2e@test.com"))
-        val account = chessAccountRepository.save(ChessAccount(user = null, platform = "CHESS_COM", username = "multipvuser"))
+        val account = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = "multipvuser"))
 
         val game =
             gameRepository.save(

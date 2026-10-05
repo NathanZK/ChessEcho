@@ -1185,7 +1185,7 @@ class GameImportServiceIntegrationTest {
         val appUser = appUserRepository.save(com.chessecho.domain.AppUser(email = "batch@test.com"))
         val account =
             chessAccountRepository.save(
-                com.chessecho.domain.ChessAccount(user = appUser, platform = "CHESS_COM", username = "batchuser"),
+                com.chessecho.domain.ChessAccount(platform = "CHESS_COM", username = "batchuser"),
             )
         val dummyGame = gameRepository.save(com.chessecho.domain.Game(chessAccount = account, platformGameId = "dummy1", pgn = "1. e4"))
 

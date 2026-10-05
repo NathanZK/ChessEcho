@@ -121,7 +121,6 @@ class AsyncJobConcurrencyIntegrationTest {
     private fun seedAccount(username: String) {
         chessAccountRepository.saveAndFlush(
             ChessAccount(
-                user = null,
                 platform = Platform.CHESS_COM.name,
                 username = username,
             ),

@@ -106,7 +106,7 @@ class PuzzleSchedulingEventRepositoryTest {
     fun `findHistory keeps one user's training state separate across accounts`() {
         val accountY =
             chessAccountRepository.save(
-                ChessAccount(user = alice, platform = "CHESS_COM", username = "shared-y"),
+                ChessAccount(platform = "CHESS_COM", username = "shared-y"),
             )
         val eventX = saveEvent(alice, SchedulingEventType.SOLVED)
         val eventY =

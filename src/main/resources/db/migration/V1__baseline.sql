@@ -49,7 +49,6 @@ CREATE INDEX idx_auth_session_token_hash ON auth_session (token_hash);
 CREATE TABLE chess_account
 (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id    UUID REFERENCES app_user (id) ON DELETE SET NULL,
     platform   VARCHAR(20)  NOT NULL,
     username   VARCHAR(255) NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -59,8 +58,19 @@ CREATE TABLE chess_account
 
 CREATE UNIQUE INDEX uk_chess_account_platform_username_ci
     ON chess_account (lower(platform), lower(username));
-CREATE INDEX idx_chess_account_user_id ON chess_account (user_id);
 CREATE INDEX idx_chess_account_platform_username ON chess_account (platform, username);
+
+CREATE TABLE account_connection
+(
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    app_user_id      UUID NOT NULL REFERENCES app_user (id) ON DELETE CASCADE,
+    chess_account_id UUID NOT NULL REFERENCES chess_account (id) ON DELETE CASCADE,
+    connected_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uk_account_connection_user_account UNIQUE (app_user_id, chess_account_id),
+    CONSTRAINT uk_account_connection_user UNIQUE (app_user_id)
+);
+
+CREATE INDEX idx_account_connection_account ON account_connection (chess_account_id);
 
 CREATE TABLE async_job
 (

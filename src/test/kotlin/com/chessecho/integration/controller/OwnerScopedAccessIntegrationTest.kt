@@ -11,6 +11,7 @@ import org.springframework.http.HttpEntity
 import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
+import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
 import org.springframework.test.context.ActiveProfiles
 import java.util.UUID
@@ -73,7 +74,7 @@ class OwnerScopedAccessIntegrationTest {
     }
 
     @Test
-    fun `guest can read an unclaimed username but cannot claim an owned account`() {
+    fun `guest can read an unconnected username and two users can connect the same account`() {
         val owner = session("owner-${UUID.randomUUID()}")
         val other = session("other-${UUID.randomUUID()}")
         val username = "unclaimed-${UUID.randomUUID()}"
@@ -83,7 +84,30 @@ class OwnerScopedAccessIntegrationTest {
         }
 
         assertEquals(HttpStatus.CREATED, claim(owner, username).statusCode)
-        assertEquals(HttpStatus.CONFLICT, claim(other, username).statusCode)
+        assertEquals(HttpStatus.OK, claim(other, username).statusCode)
+        privateReads(username).forEach { path ->
+            assertEquals(HttpStatus.OK, get(path, null).statusCode, "guests can still read connected shared data: $path")
+        }
+    }
+
+    @Test
+    fun `guest can import a connected account and poll the guest job`() {
+        val owner = session("owner-${UUID.randomUUID()}")
+        val username = "guest-import-${UUID.randomUUID()}"
+
+        val guestImport = startGuestImport(username)
+        assertEquals(HttpStatus.ACCEPTED, guestImport.statusCode)
+        val job = objectMapper.readTree(guestImport.body)
+        val accountId = job.path("accountId").asText()
+        val jobPath = "/api/jobs/${job.path("jobId").asText()}"
+
+        val connection = claim(owner, username)
+        assertEquals(HttpStatus.OK, connection.statusCode)
+        assertEquals(accountId, accountId(connection))
+        assertEquals(HttpStatus.OK, get(jobPath, null).statusCode, "connecting the account must not revoke guest job access")
+        privateReads(username).forEach { path ->
+            assertEquals(HttpStatus.OK, get(path, null).statusCode, "guest read must remain public after connection: $path")
+        }
     }
 
     @Test
@@ -145,6 +169,25 @@ class OwnerScopedAccessIntegrationTest {
                 {"accountId":"$accountId","platform":"CHESS_COM","username":"$username",
                  "timeControls":["BLITZ"],"playerColor":"BOTH"}
                 """.trimIndent(),
+                headers,
+            ),
+            String::class.java,
+        )
+    }
+
+    private fun startGuestImport(username: String): ResponseEntity<String> {
+        val csrf = "guest-import-csrf"
+        val headers =
+            HttpHeaders().apply {
+                add(HttpHeaders.COOKIE, "$csrfCookie=$csrf")
+                add(csrfHeader, csrf)
+                contentType = MediaType.APPLICATION_JSON
+            }
+        return restTemplate.exchange(
+            "/api/games/import",
+            HttpMethod.POST,
+            HttpEntity(
+                """{"platform":"CHESS_COM","username":"$username","timeControls":["BLITZ"],"playerColor":"BOTH"}""",
                 headers,
             ),
             String::class.java,

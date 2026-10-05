@@ -221,7 +221,7 @@ Move-order transpositions that produce legally identical positions are grouped t
 
 Imported games and position occurrences belong to a `ChessAccount` and are shared account data, not data owned by the user who imported them. Engine analysis is shared by position, while weakness ranking is calculated for the selected account.
 
-**Asynchronous import job** — when a game import is started, the backend creates a job record and executes the pipeline asynchronously. Live game progress is checkpointed after each archive. Game ingestion and the subsequent Stockfish analysis have independent statuses on the same job, and the frontend polls both every two seconds. Authenticated imports require the account's current owner, and only the initiating user can poll that job; guests can poll jobs only while the account is unclaimed.
+**Asynchronous import job** — when a game import is started, the backend creates a job record and executes the pipeline asynchronously. Live game progress is checkpointed after each archive. Game ingestion and the subsequent Stockfish analysis have independent statuses on the same job, and the frontend polls both every two seconds. Authenticated imports require the caller's explicit current connection; guests import by username regardless of connection state. Authenticated job polling is limited to the initiating user, while guests can poll guest-started jobs even after an account is connected.
 
 **Stockfish analysis** — qualifying positions are analyzed by spawning Stockfish as a subprocess. The baseline position evaluation and the evaluation of each historically played move are stored. Analysis runs at depth 16.
 
@@ -350,7 +350,7 @@ history, decay, and pagination remain active.
 
 ## Known Limitations
 
-- **Optional authentication.** Guests can import and view unclaimed accounts; registered users can connect accounts and initiate imports. Authenticated users may read shared imported data, while personal training history and job status remain scoped to their initiating user. Unclaimed guest data is not suited to public multi-user deployment.
+- **Optional authentication.** Guests can import and read shared Chess.com data by username regardless of connection state. Multiple users may connect the same Chess.com account, while each user may have only one active connection. Authenticated imports and personal Progress require the caller's explicit current connection; personal training history survives disconnect and is available again after reconnect.
 - **Chess.com only.** Lichess is not currently implemented.
 - **Engine analysis can take several minutes for large histories.** A player with thousands of games may have many qualifying positions, each requiring individual analysis.
 - **Stockfish runs sequentially as a subprocess.** A new process is spawned per position analysis. There is no persistent engine connection or analysis pool. This is the primary performance bottleneck for large imports.

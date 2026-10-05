@@ -9,6 +9,7 @@ import com.chessecho.domain.Platform
 import com.chessecho.domain.PlayerColor
 import com.chessecho.domain.TimeControl
 import com.chessecho.domain.UserPositionWeakness
+import com.chessecho.dto.AccountAssociationRequest
 import com.chessecho.dto.ImportGamesRequest
 import com.chessecho.repository.AppUserRepository
 import com.chessecho.repository.ArchiveDerivedProcessingRepository
@@ -22,6 +23,7 @@ import com.chessecho.repository.PositionRepository
 import com.chessecho.repository.PuzzleSchedulingEventRepository
 import com.chessecho.repository.UserPositionStatsRepository
 import com.chessecho.repository.UserPositionWeaknessRepository
+import com.chessecho.service.AccountOwnershipService
 import com.chessecho.service.ChessComClient
 import com.chessecho.service.EngineAnalysisOrchestrator
 import com.chessecho.service.GameImportService
@@ -48,13 +50,15 @@ import kotlin.test.assertTrue
  *
  * An `AsyncJob` is a durable command, not a projection of a later request. It must record the
  * `AppUser` that initiated it, and every piece of per-user state it later writes must be
- * attributed to *that* user — never to whoever happens to hold `ChessAccount.user` by the time
+ * attributed to *that* user — never to whoever happens to connect the account by the time
  * the worker finishes. See plan Sections 3.2 and 3.3.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
 class GameImportServiceAttributionIntegrationTest {
     @Autowired private lateinit var gameImportService: GameImportService
+
+    @Autowired private lateinit var ownership: AccountOwnershipService
 
     @Autowired private lateinit var asyncJobRepository: AsyncJobRepository
 
@@ -151,8 +155,8 @@ class GameImportServiceAttributionIntegrationTest {
 
     @Test
     fun `scheduling events follow the initiating user even after the account is reconnected to someone else`() {
-        // User A owns the account when the job is created, then disconnects and B connects before
-        // the worker runs. Deriving attribution from `ChessAccount.user` at emit time would hand
+        // User A connects the account when the job is created, then disconnects and B connects before
+        // the worker runs. Deriving attribution from the current connection at emit time would hand
         // A's in-flight work to B; the job's own stored user must win.
         val account = connectedAccount(userA)
         val principal = AuthenticatedPrincipal(userA.id, false)
@@ -163,6 +167,7 @@ class GameImportServiceAttributionIntegrationTest {
         reopenDerivedProcessing(account)
 
         val job = gameImportService.createImportJob(importRequest(account.id), principal)
+        ownership.disconnect(account.id, principal)
         reconnectTo(account, userB)
         gameImportService.executeImportJob(job.id)
 
@@ -230,17 +235,16 @@ class GameImportServiceAttributionIntegrationTest {
         }
     }
 
-    private fun connectedAccount(user: AppUser): ChessAccount =
-        chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "hikaru")
-            ?: chessAccountRepository.save(ChessAccount(user = user, platform = "CHESS_COM", username = "hikaru"))
+    private fun connectedAccount(user: AppUser): ChessAccount {
+        val result = ownership.associate(AuthenticatedPrincipal(user.id, false), AccountAssociationRequest("CHESS_COM", "hikaru"))
+        return chessAccountRepository.findById(result.account.id).orElseThrow()
+    }
 
     private fun reconnectTo(
         account: ChessAccount,
         user: AppUser,
     ) {
-        val reloaded = assertNotNull(chessAccountRepository.findById(account.id).orElse(null))
-        reloaded.user = user
-        chessAccountRepository.saveAndFlush(reloaded)
+        ownership.associate(AuthenticatedPrincipal(user.id, false), AccountAssociationRequest(account.platform, account.username))
     }
 
     private fun seedWeaknessesForOccurrences(account: ChessAccount) {

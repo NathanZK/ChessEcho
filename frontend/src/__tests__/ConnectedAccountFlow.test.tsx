@@ -10,6 +10,7 @@ const accountApi = vi.hoisted(() => ({
   fetchAccounts: vi.fn(),
   associateAccount: vi.fn(),
   disconnectAccount: vi.fn(),
+  fetchPositionProgress: vi.fn(),
   startAccountImportJob: vi.fn(),
   startImportJob: vi.fn(),
   pollJobStatus: vi.fn(),
@@ -43,12 +44,25 @@ vi.mock('react-chessboard', () => ({
 }));
 
 vi.mock('../components/WeaknessesList', () => ({
-  WeaknessesList: ({ username, accountId }: { username?: string; accountId?: string }) => (
+  WeaknessesList: ({
+    username,
+    accountId,
+    onViewProgress,
+  }: {
+    username?: string;
+    accountId?: string;
+    onViewProgress?: (positionId: string, playerColor: 'WHITE' | 'BLACK', minEvalLoss: number) => void;
+  }) => (
     <div
       data-testid="weaknesses-list"
       data-username={username}
       data-account-id={accountId}
-    />
+      data-progress-enabled={String(!!onViewProgress)}
+    >
+      <button type="button" onClick={() => onViewProgress?.('position-1', 'BLACK', 0.3)}>
+        View account progress
+      </button>
+    </div>
   ),
 }));
 
@@ -102,6 +116,17 @@ describe('connected Chess.com account flow', () => {
     vi.mocked(api.fetchAccounts).mockResolvedValue([]);
     vi.mocked(api.associateAccount).mockResolvedValue(serverAccount);
     vi.mocked(api.disconnectAccount).mockResolvedValue(undefined);
+    vi.mocked(api.fetchPositionProgress).mockResolvedValue({
+      positionId: 'position-1',
+      playerColor: 'BLACK',
+      baseline: null,
+      points: [],
+      currentIntervalState: 'NO_CHECKPOINT',
+      excludedUndatedEncounters: 0,
+      mistakeRateChange: null,
+      winRateChange: null,
+      assessment: 'Retained account history is available.',
+    });
     vi.mocked(api.startAccountImportJob).mockResolvedValue({ jobId: 'account-job', status: 'QUEUED' });
     vi.mocked(api.startImportJob).mockResolvedValue({ jobId: 'guest-job', status: 'QUEUED' });
     vi.mocked(api.fetchPuzzles).mockResolvedValue([]);
@@ -188,6 +213,25 @@ describe('connected Chess.com account flow', () => {
     expect(api.startImportJob).not.toHaveBeenCalled();
   });
 
+  it('prevents an authenticated username-only import when no account is connected', async () => {
+    vi.mocked(api.fetchCurrentSession).mockResolvedValueOnce({
+      status: 'authenticated',
+      userId: 'user-1',
+    });
+    vi.mocked(api.fetchAccounts).mockResolvedValueOnce([]);
+
+    openImportView();
+    expect(await screen.findByText('No Chess.com account connected. Connect an account before importing.'))
+      .toBeInTheDocument();
+    fireEvent.change(await screen.findByPlaceholderText(/e\.g\. Hikaru/i), {
+      target: { value: 'username-only-player' },
+    });
+    expect(screen.getByRole('button', { name: /start import/i })).toBeDisabled();
+
+    expect(api.startAccountImportJob).not.toHaveBeenCalled();
+    expect(api.startImportJob).not.toHaveBeenCalled();
+  });
+
   it('shows the connected Chess.com username while selecting weaknesses by account UUID', async () => {
     const accountId = '550e8400-e29b-41d4-a716-446655440470';
     const chessUsername = 'chess-player-470';
@@ -225,7 +269,7 @@ describe('connected Chess.com account flow', () => {
     expect(api.fetchAccounts).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps account-association failures visible and retryable without starting an import', async () => {
+  it('keeps transient account-association failures visible and retryable', async () => {
     vi.mocked(api.fetchCurrentSession).mockResolvedValueOnce({
       status: 'authenticated',
       userId: 'user-1',
@@ -233,10 +277,10 @@ describe('connected Chess.com account flow', () => {
     vi.mocked(api.fetchAccounts).mockResolvedValueOnce([]);
     vi.mocked(api.associateAccount)
       .mockRejectedValueOnce(
-        new api.AccountAssociationError(409, 'ACCOUNT_CLAIM_CONFLICT', 'ACCOUNT_CLAIM_CONFLICT')
+        new api.AccountAssociationError(503, null, 'Failed to associate account: 503')
       )
       .mockRejectedValueOnce(
-        new api.AccountAssociationError(409, 'ACCOUNT_CLAIM_CONFLICT', 'ACCOUNT_CLAIM_CONFLICT')
+        new api.AccountAssociationError(503, null, 'Failed to associate account: 503')
       )
       .mockResolvedValueOnce(serverAccount);
 
@@ -246,16 +290,15 @@ describe('connected Chess.com account flow', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: /connect chess\.com account/i }));
 
-    const conflictMessage =
-      "This Chess.com account is connected under another ChessEcho sign-in. Verify that you're signed in to the right ChessEcho account, or choose a Chess.com account you can connect.";
-    expect(await screen.findByText(conflictMessage)).toBeInTheDocument();
+    const failureMessage = 'Failed to associate account: 503';
+    expect(await screen.findByText(failureMessage)).toBeInTheDocument();
     expect(screen.queryByText('Chess.com Connected')).not.toBeInTheDocument();
     expect(localStorage.getItem('chessecho_active_account')).toBeNull();
     expect(api.startAccountImportJob).not.toHaveBeenCalled();
     expect(api.startImportJob).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: /connect chess\.com account/i }));
-    expect(await screen.findByText(conflictMessage)).toBeInTheDocument();
+    expect(await screen.findByText(failureMessage)).toBeInTheDocument();
     expect(screen.queryByText('Chess.com Connected')).not.toBeInTheDocument();
     expect(localStorage.getItem('chessecho_active_account')).toBeNull();
     expect(api.associateAccount).toHaveBeenCalledTimes(2);
@@ -268,14 +311,14 @@ describe('connected Chess.com account flow', () => {
     expect(screen.getByText('server-player')).toBeInTheDocument();
   });
 
-  it('preserves and can import a different confirmed account after a claim conflict', async () => {
+  it('preserves the current account and explains how to switch after a connection-limit error', async () => {
     vi.mocked(api.fetchCurrentSession).mockResolvedValueOnce({
       status: 'authenticated',
       userId: 'user-1',
     });
     vi.mocked(api.fetchAccounts).mockResolvedValueOnce([serverAccount]);
     vi.mocked(api.associateAccount).mockRejectedValueOnce(
-      new api.AccountAssociationError(409, 'ACCOUNT_CLAIM_CONFLICT', 'ACCOUNT_CLAIM_CONFLICT')
+      new api.AccountAssociationError(409, 'ACCOUNT_CONNECTION_LIMIT_REACHED', 'ACCOUNT_CONNECTION_LIMIT_REACHED')
     );
 
     openImportView();
@@ -284,11 +327,8 @@ describe('connected Chess.com account flow', () => {
     fireEvent.change(username, { target: { value: 'other-player' } });
     fireEvent.click(screen.getByRole('button', { name: /connect chess\.com account/i }));
 
-    expect(
-      await screen.findByText(
-        "This Chess.com account is connected under another ChessEcho sign-in. Verify that you're signed in to the right ChessEcho account, or choose a Chess.com account you can connect."
-      )
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/only one chess\.com account can be connected at a time/i)).toBeInTheDocument();
+    expect(screen.getByText(/disconnect.*server-player.*before connecting another/i)).toBeInTheDocument();
     expect(screen.getByText('Connected Chess.com account: server-player')).toBeInTheDocument();
     expect(JSON.parse(localStorage.getItem('chessecho_active_account') ?? '{}')).toMatchObject({
       id: serverAccount.id,
@@ -309,7 +349,7 @@ describe('connected Chess.com account flow', () => {
 
   it.each([
     [409, 'CONFLICT', 'CONFLICT'],
-    [400, 'ACCOUNT_CLAIM_CONFLICT', 'ACCOUNT_CLAIM_CONFLICT'],
+    [400, 'ACCOUNT_CONNECTION_LIMIT_REACHED', 'ACCOUNT_CONNECTION_LIMIT_REACHED'],
   ])('keeps the existing error message when status/code do not both match (%s, %s)', async (
     status,
     code,
@@ -331,7 +371,7 @@ describe('connected Chess.com account flow', () => {
     fireEvent.click(screen.getByRole('button', { name: /connect chess\.com account/i }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent(message);
-    expect(screen.queryByText(/connected under another ChessEcho sign-in/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/only one chess\.com account can be connected/i)).not.toBeInTheDocument();
     expect(api.startAccountImportJob).not.toHaveBeenCalled();
     expect(api.startImportJob).not.toHaveBeenCalled();
   });
@@ -416,6 +456,22 @@ describe('connected Chess.com account flow', () => {
     expect(api.startAccountImportJob).not.toHaveBeenCalled();
   });
 
+  it('routes guests to the sign-in prompt when opening private progress', async () => {
+    vi.mocked(api.fetchCurrentSession).mockResolvedValueOnce({ status: 'unauthenticated' });
+
+    render(<Home />);
+    fireEvent.click(await screen.findByRole('button', { name: /Weaknesses Library/i }));
+
+    const progressButton = await screen.findByRole('button', { name: /view account progress/i });
+    await waitFor(() => {
+      expect(screen.getByTestId('weaknesses-list')).toHaveAttribute('data-progress-enabled', 'true');
+    });
+    fireEvent.click(progressButton);
+
+    expect(await screen.findByRole('heading', { name: /sign in to view progress/i })).toBeInTheDocument();
+    expect(api.fetchPositionProgress).not.toHaveBeenCalled();
+  });
+
   it('calls the disconnect endpoint and clears active account state only after it succeeds', async () => {
     vi.mocked(api.fetchCurrentSession).mockResolvedValueOnce({
       status: 'authenticated',
@@ -452,6 +508,34 @@ describe('connected Chess.com account flow', () => {
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Sign In' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Register' })).not.toBeInTheDocument();
+  });
+
+  it('reconnects the same account and loads progress using its retained account identity', async () => {
+    vi.mocked(api.fetchCurrentSession).mockResolvedValueOnce({
+      status: 'authenticated',
+      userId: 'user-1',
+    });
+    vi.mocked(api.fetchAccounts).mockResolvedValueOnce([serverAccount]);
+    vi.mocked(api.associateAccount).mockResolvedValueOnce(serverAccount);
+
+    openImportView();
+    expect(await screen.findByText('Chess.com Connected')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^disconnect$/i }));
+    await waitFor(() => expect(api.disconnectAccount).toHaveBeenCalledWith(serverAccount.id));
+    await waitFor(() => expect(screen.queryByText('Chess.com Connected')).not.toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /connect chess\.com account/i }));
+    await waitFor(() => expect(api.associateAccount).toHaveBeenCalledWith('CHESS_COM', serverAccount.username));
+    expect(await screen.findByText('Chess.com Connected')).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem('chessecho_active_account') ?? '{}')).toMatchObject({
+      id: serverAccount.id,
+      username: serverAccount.username,
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /weaknesses library/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /view account progress/i }));
+    expect(await screen.findByText('Retained account history is available.')).toBeInTheDocument();
+    expect(api.fetchPositionProgress).toHaveBeenCalledWith('position-1', 'BLACK', serverAccount.id, 0.3);
   });
 
   it('reconciles a disconnect 404 against an empty account list without reporting success', async () => {

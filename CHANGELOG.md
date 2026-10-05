@@ -5,7 +5,7 @@
 ### Added
 
 - Sign-in users can reveal or re-mask their password with an accessible visibility toggle.
-- Signed-in users can connect or disconnect Chess.com accounts, and personal training history remains scoped to the user/account pair after disconnecting.
+- Multiple users can connect the same Chess.com account, while each user can have one active connection; personal training history remains scoped to the user/account pair after disconnecting.
 - Authenticated import jobs retain their initiating user for personal-event attribution and job-status authorization.
 
 ### Changed
@@ -15,7 +15,9 @@
 - Weaknesses Library actual-game results show W/D/L, score rate, and eligible-game count without internal evidence labels or training comparisons.
 - Position Progress shows a historical baseline and a latest measured interval summary while retaining every measured observation in its chart; the summary shows open/closed status, while chronological chart labels and tooltips omit it. The assessment compares mistake and win rates with the baseline; empty-interval and undated-game states remain explicit.
 - Position Progress now classifies mistakes using the threshold from the selected Weaknesses result.
-- Account-claim conflicts explain when a Chess.com account is connected under another ChessEcho sign-in without changing the selected account or starting an import.
+- Connection-limit conflicts explain that users must disconnect their current account before connecting another one.
+- Guest username reads and imports remain available regardless of account connections; guest-started jobs stay guest-pollable after a connection is added.
+- Authenticated Progress requests select the current connected account explicitly, and guest Progress navigation opens sign-in without requesting private history.
 
 ### Fixed
 

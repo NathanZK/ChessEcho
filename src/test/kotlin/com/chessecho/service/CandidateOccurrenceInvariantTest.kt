@@ -33,7 +33,7 @@ class CandidateOccurrenceInvariantTest {
     @Test
     fun `Case A - User A + White + 4 occurrences must NOT qualify`() {
         val userA = appUserRepository.save(AppUser(email = "userA_a@example.com"))
-        val accountA = chessAccountRepository.save(ChessAccount(user = userA, platform = "CHESS_COM", username = "userA_a"))
+        val accountA = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = "userA_a"))
         val posA = positionRepository.save(Position(hash = "hash_A", fen = "fen_A"))
 
         userPositionStatsRepository.save(
@@ -47,7 +47,7 @@ class CandidateOccurrenceInvariantTest {
     @Test
     fun `Case B - User A + White + 5 occurrences MUST qualify`() {
         val userA = appUserRepository.save(AppUser(email = "userA_b@example.com"))
-        val accountA = chessAccountRepository.save(ChessAccount(user = userA, platform = "CHESS_COM", username = "userA_b"))
+        val accountA = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = "userA_b"))
         val posB = positionRepository.save(Position(hash = "hash_B", fen = "fen_B"))
 
         userPositionStatsRepository.save(
@@ -61,7 +61,7 @@ class CandidateOccurrenceInvariantTest {
     @Test
     fun `Case C - User A + White 4 and Black 1 must NOT qualify`() {
         val userA = appUserRepository.save(AppUser(email = "userA_c@example.com"))
-        val accountA = chessAccountRepository.save(ChessAccount(user = userA, platform = "CHESS_COM", username = "userA_c"))
+        val accountA = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = "userA_c"))
         val posC = positionRepository.save(Position(hash = "hash_C", fen = "fen_C"))
 
         userPositionStatsRepository.save(
@@ -78,9 +78,9 @@ class CandidateOccurrenceInvariantTest {
     @Test
     fun `Case D - User A 4 + User B 1 must NOT qualify for User A`() {
         val userA = appUserRepository.save(AppUser(email = "userA_d@example.com"))
-        val accountA = chessAccountRepository.save(ChessAccount(user = userA, platform = "CHESS_COM", username = "userA_d"))
+        val accountA = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = "userA_d"))
         val userB = appUserRepository.save(AppUser(email = "userB_d@example.com"))
-        val accountB = chessAccountRepository.save(ChessAccount(user = userB, platform = "CHESS_COM", username = "userB_d"))
+        val accountB = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = "userB_d"))
 
         val posD = positionRepository.save(Position(hash = "hash_D", fen = "fen_D"))
 
@@ -98,7 +98,7 @@ class CandidateOccurrenceInvariantTest {
     @Test
     fun `Case E - User A White 5 + Black 2 qualifies White`() {
         val userA = appUserRepository.save(AppUser(email = "userA_e@example.com"))
-        val accountA = chessAccountRepository.save(ChessAccount(user = userA, platform = "CHESS_COM", username = "userA_e"))
+        val accountA = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = "userA_e"))
         val posE = positionRepository.save(Position(hash = "hash_E", fen = "fen_E"))
 
         userPositionStatsRepository.save(
@@ -115,7 +115,7 @@ class CandidateOccurrenceInvariantTest {
     @Test
     fun `Case F - User A White 5 + Black 5 both qualify independently`() {
         val userA = appUserRepository.save(AppUser(email = "userA_f@example.com"))
-        val accountA = chessAccountRepository.save(ChessAccount(user = userA, platform = "CHESS_COM", username = "userA_f"))
+        val accountA = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = "userA_f"))
         val posF = positionRepository.save(Position(hash = "hash_F", fen = "fen_F"))
 
         userPositionStatsRepository.save(
