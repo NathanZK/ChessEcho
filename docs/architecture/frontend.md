@@ -263,12 +263,11 @@ account ID; guest attempts omit it. This route is also absent from
 and [request/response DTO](../../src/main/kotlin/com/chessecho/dto/TrainingAttemptRequest.kt)
 define the boundary.
 
-**Open question — timed attempt identifier:** `StopwatchTimer` and
-`CountdownTimer` generate `attempt-*` strings, while the backend request DTO
-types `attemptId` as a UUID. The frontend service tests stub `fetch` and do not
-verify this value against the controller's deserializer. Whether the wire
-identifier should be a UUID or a string needs resolution; the routed UI
-currently shows only its generic timing-submission error on a rejected request.
+`StopwatchTimer` and `CountdownTimer` generate UUIDs with
+`crypto.randomUUID()` (HTTPS or localhost). The production API client sends the
+current attempt ID unchanged, matching the backend's UUID request field.
+The routed UI shows its generic timing-submission error on a rejected request;
+it does not use the response ID for correlation.
 
 Line exploration has three frontend modes:
 
