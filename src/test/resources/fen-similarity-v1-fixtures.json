@@ -1,0 +1,25 @@
+{
+  "startFen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+  "fixtures": [
+    {
+      "id": "A",
+      "sequenceA": "d2d4 g8f6 g1f3 d7d5 h2h3",
+      "sequenceB": "g1f3 d7d5 d2d4 g8f6 h2h3"
+    },
+    {
+      "id": "B",
+      "sequenceA": "e2e4 c7c5 g1f3 d7d6 d2d4 c5d4 f3d4",
+      "sequenceB": "e2e4 d7d6 d2d4 c7c5 g1f3 c5d4 f3d4"
+    },
+    {
+      "id": "C",
+      "sequenceA": "c2c4 e7e6 d2d4 d7d5 b1c3 g8f6",
+      "sequenceB": "d2d4 d7d5 c2c4 e7e6 b1c3 g8f6"
+    },
+    {
+      "id": "D",
+      "sequenceA": "e2e4 e7e5 g1f3 b8c6 f1b5 a7a6 b5a4 g8f6",
+      "sequenceB": "e2e4 e7e5 g1f3 b8c6 f1b5 g8f6 b5a4 a7a6"
+    }
+  ]
+}
