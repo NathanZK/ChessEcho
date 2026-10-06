@@ -172,7 +172,9 @@ derived decision duration meets the inclusive threshold. The UI displays the
 duration, board/position, move, color, opponent, date, ply, and game link.
 Occurrences remain individually pageable and are not grouped. Long decision
 time is not presented as move quality; no engine evaluation or training action
-is part of this view.
+is part of this view. Each occurrence can launch Line Exploration from its
+returned pre-move FEN; the historical move and game link remain context and are
+not used as an answer or position reconstruction.
 
 The view distinguishes session/account loading, account-loading errors,
 unconnected accounts, search loading, empty results, request errors, and
@@ -269,12 +271,23 @@ evaluation services as other exploration sessions.
 
 Puzzle-only settings, weakness labels, feedback/outcome cards, timer controls,
 hint, puzzle navigation, blindfold entry, and puzzle statistics are suppressed
-for supplied sessions. Puzzle-event recording is not used; timed-training
-state and any prior blindfold session are cleared when entering. Undo, redo,
-reset, board flip/sound, and the shared Line Exploration modes remain
-available. Exiting clears the supplied session and returns to the existing
-empty Practice Puzzles state instead of showing a solved-puzzle result. Real
-puzzle and weakness sessions retain their existing labels and controls.
+for supplied sessions. Puzzle-event recording is not used; the ordinary manual
+entry clears timed-training state and any prior blindfold session when entering.
+Undo, redo, reset, board flip/sound, and the shared Line Exploration modes
+remain available. Exiting an ordinary manual session clears the supplied
+session and returns to the existing empty Practice Puzzles state instead of
+showing a solved-puzzle result.
+
+The Long Decisions action reuses this supplied-position route with the
+occurrence's FEN unchanged, so its side-to-move field remains authoritative.
+For this launch origin only, `Home` keeps the Long Decisions view mounted while
+hidden and snapshots the selected puzzle, board undo/redo history, feedback,
+and timer attempt. An active stopwatch or countdown is paused during exploration
+and resumes from its saved elapsed/remaining time on return; an inactive timer
+stays inactive. Exiting Line Exploration returns to the same results and query.
+An invalid occurrence FEN leaves the current results and puzzle state in place
+with a launch error. These preservation rules do not change the ordinary manual
+entry or its exit behavior.
 
 ```mermaid
 %%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false, "diagramPadding": 120}}}%%

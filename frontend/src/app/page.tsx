@@ -1,10 +1,11 @@
 'use client';
 
 import React, { useState, useSyncExternalStore } from 'react';
+import { Chess } from 'chess.js';
 import { Header, TabType } from '@/components/Header';
 import type { PositionExplorationStart } from '@/components/ExplorePositionModal';
 import { EvalBar } from '@/components/EvalBar';
-import { ChessBoardArea } from '@/components/ChessBoardArea';
+import { ChessBoardArea, type ChessBoardHistorySnapshot } from '@/components/ChessBoardArea';
 import { BlinfoldBoardWrapper } from '@/components/BlinfoldBoardWrapper';
 import { NotationExchangeUI } from '@/components/NotationExchangeUI';
 import { useBlindfoldSession } from '@/hooks/useBlindfoldSession';
@@ -48,6 +49,40 @@ type PuzzleFeedbackState = {
   status: 'IDLE' | 'CORRECT' | 'HISTORICAL_MISTAKE' | 'INCORRECT' | 'EXPLORING';
   lastMove?: string;
   historicalInfo?: { timesPlayed: number; averageLoss: number };
+};
+
+type TimerAttempt = {
+  puzzle: Puzzle;
+  mode: 'STOPWATCH' | 'COUNTDOWN';
+  allowedMs: number;
+  timer: StopwatchTimer | CountdownTimer;
+  hasExpired: boolean;
+};
+
+type LongDecisionReturnSnapshot = {
+  activePuzzle: Puzzle | null;
+  currentPuzzleIndex: number;
+  initialMoveHistorySan: string[];
+  initialMoveHistoryStartFen: string | undefined;
+  currentBoardFen: string;
+  boardHistory: ChessBoardHistorySnapshot | null;
+  currentEvalCp: number;
+  isEvalUnknown: boolean;
+  evalHistory: number[];
+  feedbackHistory: PuzzleFeedbackState[];
+  historyIndex: number;
+  moveHistory: string[];
+  hintSquare: string | undefined;
+  feedback: PuzzleFeedbackState;
+  showPuzzleSettings: boolean;
+  isBoardFlipped: boolean;
+  timerMode: 'STOPWATCH' | 'COUNTDOWN' | null;
+  timerElapsedMs: number;
+  timerAllowedMs: number;
+  timerExpired: boolean;
+  timerSubmissionError: string | null;
+  timerAttempt: TimerAttempt | null;
+  timerWasRunning: boolean;
 };
 
 function errorMessageOf(e: unknown): string | undefined {
@@ -237,6 +272,14 @@ export default function Home() {
   const [activePuzzle, setActivePuzzle] = useState<Puzzle | null>(null);
   const [initialMoveHistorySan, setInitialMoveHistorySan] = useState<string[]>([]);
   const [initialMoveHistoryStartFen, setInitialMoveHistoryStartFen] = useState<string | undefined>();
+  const [boardHistorySnapshot, setBoardHistorySnapshot] = useState<ChessBoardHistorySnapshot | null>(null);
+  const boardHistorySnapshotRef = React.useRef<ChessBoardHistorySnapshot | null>(null);
+  const longDecisionReturnSnapshotRef = React.useRef<LongDecisionReturnSnapshot | null>(null);
+  const [hasLongDecisionReturnContext, setHasLongDecisionReturnContext] = useState(false);
+  const handleBoardHistoryChange = React.useCallback((snapshot: ChessBoardHistorySnapshot) => {
+    boardHistorySnapshotRef.current = snapshot;
+    setBoardHistorySnapshot(snapshot);
+  }, []);
   const suppliedPositionCounterRef = React.useRef(0);
   const [loadedPuzzleContext, setLoadedPuzzleContext] = useState('');
   const [isLoadingPuzzles, setIsLoadingPuzzles] = useState<boolean>(true);
@@ -273,6 +316,10 @@ export default function Home() {
     handleSetUsername(undefined);
     activeAccountStore.set(undefined);
     clearLiveJobState();
+    longDecisionReturnSnapshotRef.current = null;
+    setHasLongDecisionReturnContext(false);
+    boardHistorySnapshotRef.current = null;
+    setBoardHistorySnapshot(null);
     activeJobStore.set(null);
     setAccountStatus('unconnected');
     setPuzzlesList([]);
@@ -360,13 +407,7 @@ export default function Home() {
 
   // Timed training state
   const timerRef = React.useRef<StopwatchTimer | CountdownTimer | null>(null);
-  const timerAttemptRef = React.useRef<{
-    puzzle: Puzzle;
-    mode: 'STOPWATCH' | 'COUNTDOWN';
-    allowedMs: number;
-    timer: StopwatchTimer | CountdownTimer;
-    hasExpired: boolean;
-  } | null>(null);
+  const timerAttemptRef = React.useRef<TimerAttempt | null>(null);
   const [timerMode, setTimerMode] = useState<'STOPWATCH' | 'COUNTDOWN' | null>(null);
   const [timerElapsedMs, setTimerElapsedMs] = useState<number>(0);
   const [timerAllowedMs, setTimerAllowedMs] = useState<number>(30000);
@@ -420,6 +461,7 @@ export default function Home() {
   });
 
   React.useEffect(() => {
+    if (hasLongDecisionReturnContext) return;
     if (!activePuzzle || !timerMode) {
       timerRef.current = null;
       timerAttemptRef.current = null;
@@ -474,7 +516,7 @@ export default function Home() {
       clearTimeout(initId);
       clearInterval(intervalId);
     };
-  }, [activePuzzle, timerMode, timerAllowedMs]);
+  }, [activePuzzle, timerMode, timerAllowedMs, hasLongDecisionReturnContext]);
 
   const requestBlindfoldChessEchoMove = React.useCallback(async (fen: string) => {
     const response = await fetchPuzzleContinuation(fen, 'ENGINE');
@@ -558,7 +600,7 @@ export default function Home() {
 
   const [currentEvalCp, setCurrentEvalCp] = useState<number>(35);
   const [isEvalUnknown, setIsEvalUnknown] = useState<boolean>(false);
-  const [, setMoveHistory] = useState<string[]>([]);
+  const [moveHistory, setMoveHistory] = useState<string[]>([]);
   const [hintSquare, setHintSquare] = useState<string | undefined>(undefined);
 
   const [feedback, setFeedback] = useState<{
@@ -907,13 +949,18 @@ export default function Home() {
     setChallengeActiveCandidateByFen({});
   };
 
-  const handleExplorePosition = (position: PositionExplorationStart) => {
+  const handleExplorePosition = (
+    position: PositionExplorationStart,
+    preserveReturnState = false,
+  ) => {
     suppliedPositionCounterRef.current += 1;
     blindfold.exit();
-    setTimerMode(null);
-    setTimerElapsedMs(0);
-    setTimerExpired(false);
-    setTimerSubmissionError(null);
+    if (!preserveReturnState) {
+      setTimerMode(null);
+      setTimerElapsedMs(0);
+      setTimerExpired(false);
+      setTimerSubmissionError(null);
+    }
     const sideToMove = position.fen.trim().split(/\s+/)[1];
     setActivePuzzle({
       puzzleId: `supplied-position-${Date.now()}-${suppliedPositionCounterRef.current}`,
@@ -939,6 +986,64 @@ export default function Home() {
     handleEnterExploration(undefined, undefined, position.fen, 35, true);
   };
 
+  const handleLongDecisionExplorePosition = (fen: string): boolean => {
+    try {
+      new Chess(fen);
+    } catch {
+      return false;
+    }
+
+    const timerAttempt = timerAttemptRef.current;
+    const timerWasRunning = timerAttempt?.timer.isRunning() ?? false;
+    let timerShouldResume = timerWasRunning;
+    let elapsedMs = timerElapsedMs;
+    if (timerWasRunning && timerAttempt) {
+      if (timerAttempt.timer instanceof StopwatchTimer) {
+        elapsedMs = timerAttempt.timer.pause();
+      } else {
+        const remainingMs = timerAttempt.timer.pause();
+        elapsedMs = timerAttempt.allowedMs - remainingMs;
+        if (remainingMs === 0 && !timerAttempt.hasExpired) {
+          timerAttempt.hasExpired = true;
+          timerShouldResume = false;
+          setTimerExpired(true);
+          soundService.playSound('completion');
+          void submitTimerAttempt('EXPIRED');
+        }
+      }
+      setTimerElapsedMs(elapsedMs);
+    }
+
+    longDecisionReturnSnapshotRef.current = {
+      activePuzzle,
+      currentPuzzleIndex,
+      initialMoveHistorySan,
+      initialMoveHistoryStartFen,
+      currentBoardFen,
+      boardHistory: boardHistorySnapshotRef.current ?? boardHistorySnapshot,
+      currentEvalCp,
+      isEvalUnknown,
+      evalHistory,
+      feedbackHistory,
+      historyIndex,
+      moveHistory,
+      hintSquare,
+      feedback,
+      showPuzzleSettings,
+      isBoardFlipped,
+      timerMode,
+      timerElapsedMs: elapsedMs,
+      timerAllowedMs,
+      timerExpired: timerExpired || (timerAttempt?.hasExpired ?? false),
+      timerSubmissionError,
+      timerAttempt,
+      timerWasRunning: timerShouldResume,
+    };
+    setHasLongDecisionReturnContext(true);
+    handleExplorePosition({ fen, sanHistory: [] }, true);
+    return true;
+  };
+
   const handleExitExploration = () => {
     setIsExplorationActive(false);
     setExplorationPlayMode(undefined);
@@ -951,6 +1056,40 @@ export default function Home() {
     setChallengeBranchesByFen({});
     setChallengeActiveCandidateByFen({});
     setExplorationDecisionMove(null);
+    const returnSnapshot = longDecisionReturnSnapshotRef.current;
+    if (returnSnapshot) {
+      setActivePuzzle(returnSnapshot.activePuzzle);
+      setCurrentPuzzleIndex(returnSnapshot.currentPuzzleIndex);
+      setInitialMoveHistorySan(returnSnapshot.initialMoveHistorySan);
+      setInitialMoveHistoryStartFen(returnSnapshot.initialMoveHistoryStartFen);
+      setCurrentBoardFen(returnSnapshot.currentBoardFen);
+      boardHistorySnapshotRef.current = returnSnapshot.boardHistory;
+      setBoardHistorySnapshot(returnSnapshot.boardHistory);
+      setCurrentEvalCp(returnSnapshot.currentEvalCp);
+      setIsEvalUnknown(returnSnapshot.isEvalUnknown);
+      setEvalHistory(returnSnapshot.evalHistory);
+      setFeedbackHistory(returnSnapshot.feedbackHistory);
+      setHistoryIndex(returnSnapshot.historyIndex);
+      setMoveHistory(returnSnapshot.moveHistory);
+      setHintSquare(returnSnapshot.hintSquare);
+      setFeedback(returnSnapshot.feedback);
+      setShowPuzzleSettings(returnSnapshot.showPuzzleSettings);
+      setIsBoardFlipped(returnSnapshot.isBoardFlipped);
+      setTimerMode(returnSnapshot.timerMode);
+      setTimerElapsedMs(returnSnapshot.timerElapsedMs);
+      setTimerAllowedMs(returnSnapshot.timerAllowedMs);
+      setTimerExpired(returnSnapshot.timerExpired);
+      setTimerSubmissionError(returnSnapshot.timerSubmissionError);
+      timerAttemptRef.current = returnSnapshot.timerAttempt;
+      timerRef.current = returnSnapshot.timerAttempt?.timer ?? null;
+      if (returnSnapshot.timerWasRunning) {
+        returnSnapshot.timerAttempt?.timer.resume();
+      }
+      longDecisionReturnSnapshotRef.current = null;
+      setHasLongDecisionReturnContext(false);
+      changeTab('long-decisions');
+      return;
+    }
     if (activePuzzle?.source === 'supplied') {
       setActivePuzzle(null);
       setInitialMoveHistorySan([]);
@@ -985,6 +1124,8 @@ export default function Home() {
     setFeedback({ status: 'IDLE' });
     setHistoryIndex(0);
     setMoveHistory([]);
+    boardHistorySnapshotRef.current = null;
+    setBoardHistorySnapshot(null);
     setHintSquare(undefined);
     setIsEvalUnknown(false);
     setCurrentBoardFen(puzzle.fen);
@@ -1829,6 +1970,10 @@ export default function Home() {
                   <ChessBoardArea
                     key={activePuzzle.source === 'supplied' ? activePuzzle.puzzleId : 'puzzle-board'}
                     initialFen={activePuzzle.fen}
+                    initialBoardHistory={
+                      activePuzzle.source === 'supplied' ? null : boardHistorySnapshot
+                    }
+                    onBoardHistoryChange={handleBoardHistoryChange}
                     initialMoveHistorySan={
                       activePuzzle.source === 'supplied' ? initialMoveHistorySan : undefined
                     }
@@ -2002,14 +2147,17 @@ export default function Home() {
           )
         )}
 
-        {activeTab === 'long-decisions' && (
-          <LongDecisionsView
-            accountId={connectedAccount?.id}
-            sessionStatus={sessionStatus}
-            accountStatus={accountStatus}
-            onRetryAccountLoad={retryAccountLoad}
-            onNavigateImport={() => changeTab('import')}
-          />
+        {(activeTab === 'long-decisions' || hasLongDecisionReturnContext) && (
+          <div hidden={activeTab !== 'long-decisions'}>
+            <LongDecisionsView
+              accountId={connectedAccount?.id}
+              sessionStatus={sessionStatus}
+              accountStatus={accountStatus}
+              onRetryAccountLoad={retryAccountLoad}
+              onNavigateImport={() => changeTab('import')}
+              onExplorePosition={handleLongDecisionExplorePosition}
+            />
+          </div>
         )}
 
         {/* TAB 3: IMPORT GAMES */}
