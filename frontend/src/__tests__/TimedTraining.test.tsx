@@ -56,6 +56,21 @@ describe('timed training timers', () => {
     expect(timer.isRunning()).toBe(false);
   });
 
+  it('pauses and resumes a stopwatch without changing its attempt or elapsed time', () => {
+    const timer = new StopwatchTimer();
+    const attemptId = timer.startNewAttempt();
+    timer.start(1_000);
+
+    timer.pause(1_750);
+    expect(timer.getElapsed(2_000)).toBe(750);
+    expect(timer.isRunning()).toBe(false);
+
+    timer.resume(5_000);
+    expect(timer.getElapsed(5_250)).toBe(1_000);
+    expect(timer.getCurrentAttemptId()).toBe(attemptId);
+    expect(timer.isRunning()).toBe(true);
+  });
+
   it('isolates attempts when a puzzle is reset', () => {
     const timer = new StopwatchTimer();
     const firstAttempt = timer.startNewAttempt();
@@ -77,6 +92,19 @@ describe('timed training timers', () => {
     expect(timer.isExpired(6_000)).toBe(true);
     expect(timer.getOutcome()).toBe('EXPIRED');
     expect(timer.canSubmit()).toBe(false);
+  });
+
+  it('pauses and resumes a countdown with the same remaining time and attempt', () => {
+    const timer = new CountdownTimer(5_000);
+    const attemptId = timer.startNewAttempt();
+    timer.start(1_000);
+
+    timer.pause(2_500);
+    expect(timer.getRemaining(3_000)).toBe(3_500);
+
+    timer.resume(5_000);
+    expect(timer.getRemaining(5_500)).toBe(3_000);
+    expect(timer.getCurrentAttemptId()).toBe(attemptId);
   });
 
   it('submits the complete timing payload', async () => {

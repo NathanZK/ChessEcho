@@ -13,6 +13,7 @@ interface LongDecisionsViewProps {
   accountStatus: AccountStatus;
   onRetryAccountLoad?: () => void;
   onNavigateImport?: () => void;
+  onExplorePosition?: (fen: string) => boolean | void;
 }
 
 interface SubmittedQuery {
@@ -45,6 +46,7 @@ export const LongDecisionsView: React.FC<LongDecisionsViewProps> = ({
   accountStatus,
   onRetryAccountLoad,
   onNavigateImport,
+  onExplorePosition,
 }) => {
   const [timeControl, setTimeControl] = useState<LongDecisionTimeControl>('BULLET');
   const [thresholdInput, setThresholdInput] = useState('30');
@@ -58,6 +60,7 @@ export const LongDecisionsView: React.FC<LongDecisionsViewProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
   const [submittedAccountId, setSubmittedAccountId] = useState<string | null>(null);
+  const [explorationErrorId, setExplorationErrorId] = useState<string | null>(null);
   const requestVersion = useRef(0);
   const loadingMore = useRef(false);
 
@@ -78,6 +81,7 @@ export const LongDecisionsView: React.FC<LongDecisionsViewProps> = ({
     setIsLoadingMore(false);
     setError(null);
     setLoadMoreError(null);
+    setExplorationErrorId(null);
 
     try {
       const result = await fetchLongDecisions(
@@ -292,6 +296,25 @@ export const LongDecisionsView: React.FC<LongDecisionsViewProps> = ({
                   >
                     Open game
                   </a>
+                  {onExplorePosition && (
+                    <>
+                      <button
+                        className="text-left text-sm font-semibold text-emerald-300 underline decoration-emerald-700 underline-offset-4 hover:text-emerald-200"
+                        onClick={() => {
+                          const started = onExplorePosition(occurrence.fen);
+                          setExplorationErrorId(started === false ? occurrence.id : null);
+                        }}
+                        type="button"
+                      >
+                        Explore this position
+                      </button>
+                      {explorationErrorId === occurrence.id && (
+                        <p className="text-sm text-rose-300" role="alert">
+                          Could not start exploration for this position. Your current state was not changed.
+                        </p>
+                      )}
+                    </>
+                  )}
                 </div>
               </article>
             ))}

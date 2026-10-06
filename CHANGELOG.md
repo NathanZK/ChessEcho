@@ -5,6 +5,7 @@
 ### Added
 
 - Long Decisions searches imported positions by broad time control and an absolute decision-time threshold.
+- Long Decisions occurrences can launch Line Exploration from their exact pre-move FEN and return without losing search results or selected puzzle/timer state.
 - Sign-in users can reveal or re-mask their password with an accessible visibility toggle.
 - Multiple users can connect the same Chess.com account, while each user can have one active connection; personal training history remains scoped to the user/account pair after disconnecting.
 - Authenticated import jobs retain their initiating user for personal-event attribution and job-status authorization.

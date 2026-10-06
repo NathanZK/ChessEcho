@@ -21,10 +21,17 @@ import {
 
 export const CHALLENGE_MAX_EVAL_LOSS = 0.20;
 
+export interface ChessBoardHistorySnapshot {
+  fens: string[];
+  index: number;
+}
+
 interface ChessBoardAreaProps {
   initialDecisionEnabled?: boolean;
   blindfoldMode?: boolean;
   initialFen: string;
+  initialBoardHistory?: ChessBoardHistorySnapshot | null;
+  onBoardHistoryChange?: (snapshot: ChessBoardHistorySnapshot) => void;
   initialMoveHistorySan?: string[];
   initialMoveHistoryStartFen?: string;
   showPuzzleControls?: boolean;
@@ -72,6 +79,8 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   initialDecisionEnabled = true,
   blindfoldMode = false,
   initialFen,
+  initialBoardHistory,
+  onBoardHistoryChange,
   initialMoveHistorySan = [],
   initialMoveHistoryStartFen,
   showPuzzleControls = true,
@@ -104,15 +113,30 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   isChallengeComplete = false,
   onMoveEvaluationPendingChange,
 }) => {
-  const [game, setGame] = useState<Chess>(() =>
-    createChessGameAtPosition(initialFen, initialMoveHistorySan, initialMoveHistoryStartFen)
-  );
-  const [gameHistory, setGameHistory] = useState<Chess[]>(() => [
-    createChessGameAtPosition(initialFen, initialMoveHistorySan, initialMoveHistoryStartFen),
-  ]);
+  const createInitialHistory = (snapshot?: ChessBoardHistorySnapshot | null) => {
+    if (
+      snapshot &&
+      snapshot.fens[0] === initialFen &&
+      Number.isInteger(snapshot.index) &&
+      snapshot.index >= 0 &&
+      snapshot.index < snapshot.fens.length
+    ) {
+      const history = snapshot.fens.map((fen) => new Chess(fen));
+      return { games: history, fens: snapshot.fens, index: snapshot.index };
+    }
+    const initialGame = createChessGameAtPosition(
+      initialFen,
+      initialMoveHistorySan,
+      initialMoveHistoryStartFen,
+    );
+    return { games: [initialGame], fens: [initialFen], index: 0 };
+  };
+  const [initialHistory] = useState(() => createInitialHistory(initialBoardHistory));
+  const [game, setGame] = useState<Chess>(() => initialHistory.games[initialHistory.index]);
+  const [gameHistory, setGameHistory] = useState<Chess[]>(() => initialHistory.games);
   const currentBoardFenRef = useRef<string>(initialFen);
-  const [fenHistory, setFenHistory] = useState<string[]>([initialFen]);
-  const [historyIndex, setHistoryIndex] = useState<number>(0);
+  const [fenHistory, setFenHistory] = useState<string[]>(() => initialHistory.fens);
+  const [historyIndex, setHistoryIndex] = useState<number>(() => initialHistory.index);
   const [customSquareStyles, setCustomSquareStyles] = useState<Record<string, React.CSSProperties>>({});
   const pendingEvaluationsRef = useRef(0);
 
@@ -155,6 +179,10 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
     setCustomSquareStyles({});
     setFenNotification({ fen: initialFen });
   }
+
+  useEffect(() => {
+    onBoardHistoryChange?.({ fens: fenHistory, index: historyIndex });
+  }, [fenHistory, historyIndex, onBoardHistoryChange]);
 
   // Delivered in the same commit as the render that produced the position, so a
   // deferred notification can never overwrite a newer position with a stale one.

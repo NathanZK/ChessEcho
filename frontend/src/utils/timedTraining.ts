@@ -16,16 +16,26 @@ export class StopwatchTimer {
   }
 
   stop(currentTimeMs: number = performance.now()): number {
-    if (!this.running || !this.startTimeMs) return 0;
+    if (!this.running || this.startTimeMs === null) return this.elapsedBeforeStop;
     this.elapsedBeforeStop = Math.round(currentTimeMs - this.startTimeMs);
     this.running = false;
     this.startTimeMs = null;
     return this.elapsedBeforeStop;
   }
 
+  pause(currentTimeMs: number = performance.now()): number {
+    return this.stop(currentTimeMs);
+  }
+
+  resume(currentTimeMs: number = performance.now()): void {
+    if (this.running) return;
+    this.startTimeMs = currentTimeMs - this.elapsedBeforeStop;
+    this.running = true;
+  }
+
   getElapsed(currentTimeMs: number = performance.now()): number {
     if (!this.running) return this.elapsedBeforeStop;
-    if (!this.startTimeMs) return 0;
+    if (this.startTimeMs === null) return this.elapsedBeforeStop;
     return Math.round(currentTimeMs - this.startTimeMs);
   }
 
@@ -54,6 +64,7 @@ export class CountdownTimer {
   private allowedMs: number;
   private expired: boolean = false;
   private currentAttemptId: string | null = null;
+  private remainingBeforePause: number | null = null;
 
   constructor(allowedMs: number) {
     this.allowedMs = allowedMs;
@@ -68,10 +79,26 @@ export class CountdownTimer {
   start(currentTimeMs: number = performance.now()): void {
     this.startTimeMs = currentTimeMs;
     this.expired = false;
+    this.remainingBeforePause = null;
+  }
+
+  pause(currentTimeMs: number = performance.now()): number {
+    const remaining = this.getRemaining(currentTimeMs);
+    if (this.startTimeMs !== null && remaining > 0) {
+      this.remainingBeforePause = remaining;
+      this.startTimeMs = null;
+    }
+    return remaining;
+  }
+
+  resume(currentTimeMs: number = performance.now()): void {
+    if (this.startTimeMs !== null || this.expired || this.remainingBeforePause === null) return;
+    this.startTimeMs = currentTimeMs - (this.allowedMs - this.remainingBeforePause);
+    this.remainingBeforePause = null;
   }
 
   getRemaining(currentTimeMs: number = performance.now()): number {
-    if (!this.startTimeMs) return this.allowedMs;
+    if (this.startTimeMs === null) return this.remainingBeforePause ?? this.allowedMs;
     const elapsed = Math.round(currentTimeMs - this.startTimeMs);
     const remaining = Math.max(0, this.allowedMs - elapsed);
     if (remaining === 0) {
@@ -87,6 +114,11 @@ export class CountdownTimer {
   reset(): void {
     this.startTimeMs = null;
     this.expired = false;
+    this.remainingBeforePause = null;
+  }
+
+  isRunning(): boolean {
+    return this.startTimeMs !== null && !this.expired;
   }
 
   getOutcome(): string {
