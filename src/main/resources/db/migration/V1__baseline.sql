@@ -220,8 +220,10 @@ CREATE TABLE position_occurrence
     ply_number       INT         NOT NULL,
     move_played      VARCHAR(20) NOT NULL,
     player_color     VARCHAR(10) NOT NULL,
+    decision_time_ms BIGINT,
     created_at       TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT ck_position_occurrence_ply CHECK (ply_number >= 0),
+    CONSTRAINT ck_position_occurrence_decision_time CHECK (decision_time_ms IS NULL OR decision_time_ms >= 0),
     CONSTRAINT uk_position_occurrence_identity UNIQUE (game_id, position_id, ply_number, player_color),
     CONSTRAINT ck_position_occurrence_player_color CHECK (player_color IN ('WHITE', 'BLACK'))
 );

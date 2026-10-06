@@ -161,7 +161,7 @@ function expectWideTopHeader() {
   expectNoClassTokens(requireElement(brandText.querySelector('p'), 'brand subtitle'), ['break-words', 'leading-tight']);
 
   const navButtons = Array.from(nav.querySelectorAll('button'));
-  expect(navButtons).toHaveLength(3);
+  expect(navButtons).toHaveLength(4);
   navButtons.forEach((button) => {
     expectNoClassTokens(button, ['shrink-0', '2xl:w-full', '2xl:min-w-0', '2xl:justify-start']);
     expectNoClassTokens(requireElement(button.querySelector('span'), 'navigation label'), [
@@ -856,7 +856,7 @@ describe('Puzzles Tab Features and Fixes', () => {
       expectNoClassTokens(nav, ['space-x-1']);
 
       const navButtons = Array.from(nav.querySelectorAll('button'));
-      expect(navButtons).toHaveLength(3);
+      expect(navButtons).toHaveLength(4);
       navButtons.forEach((button) => {
         expectClassTokens(button, ['shrink-0', '2xl:w-full', '2xl:min-w-0', '2xl:justify-start']);
         const label = requireElement(button.querySelector('span'), 'navigation label');
@@ -1053,7 +1053,7 @@ describe('Puzzles Tab Features and Fixes', () => {
       ]);
       expectNoClassTokens(nav, ['space-x-1']);
       const navButtons = Array.from(nav.querySelectorAll('button'));
-      expect(navButtons).toHaveLength(3);
+      expect(navButtons).toHaveLength(4);
       navButtons.forEach((button) => {
         expectClassTokens(button, ['shrink-0', '2xl:w-full', '2xl:min-w-0', '2xl:justify-start']);
         expectClassTokens(requireElement(button.querySelector('span'), 'navigation label'), [

@@ -1,11 +1,11 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Compass, Swords, Target, Download, User } from 'lucide-react';
+import { Compass, Swords, Target, Download, User, Clock3 } from 'lucide-react';
 import type { AccountSummary } from '../services/api';
 import { ExplorePositionModal, type PositionExplorationStart } from './ExplorePositionModal';
 
-export type TabType = 'puzzles' | 'weaknesses' | 'import';
+export type TabType = 'puzzles' | 'weaknesses' | 'long-decisions' | 'import';
 
 export type HeaderSessionStatus = 'loading' | 'authenticated' | 'unauthenticated' | 'error';
 export type HeaderAccountStatus = 'loading' | 'connected' | 'unconnected' | 'error';
@@ -93,7 +93,7 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* Center 3-Tab Navigation */}
+        {/* Center 4-Tab Navigation */}
         <nav
           className={`flex items-center bg-slate-950 p-1.5 rounded-xl border border-slate-800 ${
             isPuzzlesLayout
@@ -154,6 +154,28 @@ export const Header: React.FC<HeaderProps> = ({
                 {weaknessCount}
               </span>
             )}
+          </button>
+
+          <button
+            onClick={() => setActiveTab('long-decisions')}
+            className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-200 cursor-pointer ${
+              isPuzzlesLayout ? 'shrink-0 2xl:w-full 2xl:min-w-0 2xl:justify-start' : ''
+            } ${
+              activeTab === 'long-decisions'
+                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/40'
+                : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
+            }`}
+          >
+            <Clock3 className="w-4 h-4" />
+            <span
+              className={
+                isPuzzlesLayout
+                  ? '2xl:min-w-0 2xl:whitespace-normal 2xl:text-left 2xl:leading-tight'
+                  : ''
+              }
+            >
+              Long Decisions
+            </span>
           </button>
 
           <button

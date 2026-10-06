@@ -1,14 +1,15 @@
 # ChessEcho Technical Specification
 
-purpose:      Find recurring chess positions where players repeatedly make weaker moves, then provide personalized practice.
+purpose:      Identify recurring chess weaknesses and individual decisions that consume significant time, then support relevant practice and exploration.
 
 user:         Chess players analyzing imported games and practicing recurring positions.
 
-use-case:     Import games → identify recurring positions → analyze moves with Stockfish → rank weaknesses → practice with interactive puzzles.
+use-case:     Import games → analyze recurring positions with Stockfish → rank weaknesses → practice with interactive puzzles.
+              Search imported games by broad time control and absolute decision-time threshold → inspect qualifying occurrences.
 
 architecture:
   - **Backend**: Kotlin/Spring Boot REST API; persistence, authentication, game import and analysis, puzzle/progress APIs, and internal corpus administration.
-  - **Frontend**: Next.js single-page application (`frontend/src/app/page.tsx`) with Import Games, Weaknesses Library, and Practice Puzzles tabs; separate `login` and `register` routes.
+  - **Frontend**: Next.js single-page application (`frontend/src/app/page.tsx`) with Import Games, Long Decisions, Weaknesses Library, and Practice Puzzles tabs; separate `login` and `register` routes.
   - **Frontend layers**: `app` routes, `components` UI, `services/api.ts` backend client, `utils` helpers; tests in `frontend/src/__tests__`. Current route, state, and API-to-UI traces: [frontend architecture](architecture/frontend.md).
   - **Persistence**: PostgreSQL stores users, accounts, games, positions, occurrences, analysis, jobs, training events, and human-move corpus data.
   - **Analysis flow**: imported games are replayed; positions use four-field FEN identity; qualifying positions are evaluated by Stockfish; weakness ranking is calculated per account.
@@ -52,6 +53,7 @@ contract:
     - `/api/positions/weaknesses` exposes weakness reads; `/api/positions/{positionId}/progress` requires `playerColor`, a connected `accountId`, and the selected `minEvalLoss`.
     - `/api/puzzles`, `/api/puzzles/continuation`, `/api/puzzles/evaluate-move`, `/api/puzzles/attempt`, and `/api/puzzles/events` support practice.
   - **Position Progress**: Dated actual-game encounters form a separate historical baseline and one aggregate observation per interval started by a persisted `SOLVED` puzzle event. Intervals use `Game.playedAt`, remain reconstructible after late imports, and reuse `GameOutcomeNormalizer`; see `docs/specs/position-progress.md`.
+  - **Long Decisions**: Individual occurrences expose reliable account-player decision durations derived from PGN clocks; the account-scoped API filters by broad time control and an inclusive absolute threshold. See `docs/specs/long-decision-occurrences.md`.
   - **Puzzle attempt counts**: Authenticated user/account/position/color counts separate submitted SOLVED and FAILED initial answers, with replay-safe identities; see [puzzle attempt counts](specs/puzzle-attempt-count.md).
   - **Actual-game results display**:
     - The Weaknesses Library displays supplied W/D/L, score rate, and eligible-game count without confidence classifications or training comparisons.
@@ -66,6 +68,7 @@ flow:
   - analysis: import ingestion completes → positions reached ≥5 times (`EngineAnalysisOrchestrator`) → Stockfish depth 16 (`EngineAnalysisService`) → stored position and move evaluations.
   - weakness: weakness/puzzle request → account-derived aggregation plus the caller's account-scoped training history → paginated weaknesses or puzzles.
   - practice: puzzle move → evaluate/continue/attempt/event endpoints → feedback and recorded training events.
+  - long decisions: authenticated account, broad time control, and absolute seconds threshold → query eligible occurrences → display each position, move, duration, and game context.
   - Import and ingestion details: `README.md` and `API_CONTRACT.md`.
 
 invariant:
@@ -79,6 +82,7 @@ invariant:
   - Authenticated imports require the explicit current connection; authenticated status reads require the immutable initiator.
   - Guest username reads/imports ignore connection state; guest jobs remain pollable after connections change.
   - Position Progress uses the selected weakness threshold and requires an explicit currently connected account.
+  - Decision-time results require complete usable account-player clock data for a game; an ineligible game contributes no decision durations, and move quality does not affect qualification.
   - `AsyncJob` rejects updates that change its persisted import configuration, including account, date range, time controls, and player color.
   - Before deployment, schema evolution updates the V1 baseline rather than adding synthetic Flyway versions. See `docs/engineering/repository-conventions.md`.
 

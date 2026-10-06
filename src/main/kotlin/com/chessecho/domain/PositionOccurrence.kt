@@ -53,6 +53,8 @@ class PositionOccurrence(
     val movePlayed: String,
     @Column(name = "player_color", nullable = false)
     val playerColor: String,
+    @Column(name = "decision_time_ms")
+    val decisionTimeMs: Long? = null,
     @Column(name = "created_at", nullable = false)
     val createdAt: Instant = Instant.now(),
 )

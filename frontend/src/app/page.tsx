@@ -11,6 +11,7 @@ import { useBlindfoldSession } from '@/hooks/useBlindfoldSession';
 import { usePuzzleAttemptCount } from '@/hooks/usePuzzleAttemptCount';
 import { PuzzleFeedbackPanel, type ChallengeSubmissionResult } from '@/components/PuzzleFeedbackPanel';
 import { WeaknessesList } from '@/components/WeaknessesList';
+import { LongDecisionsView } from '@/components/LongDecisionsView';
 import { PositionProgressView } from '@/components/PositionProgressView';
 import { ImportGamesView } from '@/components/ImportGamesView';
 import { Puzzle } from '@/mock/mockData';
@@ -1999,6 +2000,16 @@ export default function Home() {
               refreshKey={weaknessRefreshKey}
             />
           )
+        )}
+
+        {activeTab === 'long-decisions' && (
+          <LongDecisionsView
+            accountId={connectedAccount?.id}
+            sessionStatus={sessionStatus}
+            accountStatus={accountStatus}
+            onRetryAccountLoad={retryAccountLoad}
+            onNavigateImport={() => changeTab('import')}
+          />
         )}
 
         {/* TAB 3: IMPORT GAMES */}
