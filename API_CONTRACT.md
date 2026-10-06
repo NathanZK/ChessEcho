@@ -297,6 +297,32 @@ curl "http://localhost:8080/api/positions/weaknesses?platform=CHESS_COM&username
 ]
 ```
 
+### Long Decisions
+
+Returns individual imported position occurrences whose account player's
+derived decision duration meets the requested absolute threshold. Decision
+duration is independent of move quality.
+
+- **Endpoint:** `GET /api/positions/long-decisions`
+- **Authentication:** Requires the authenticated session. As with other shared
+  imported-data reads, `accountId` identifies an existing account; a current
+  connection is not required for the server-side read.
+- **Query parameters:** `accountId` (UUID), `timeControl` (`BULLET`,
+  `BLITZ`, `RAPID`, or `CLASSICAL`), `thresholdSeconds` (positive integer),
+  `page` (zero-indexed, default `0`), and `size` (default `20`, bounded to
+  `1`–`100`).
+- **Filtering:** Selects games by the broad `Game.timeControl` value and
+  occurrences with `decisionTimeMs >= thresholdSeconds * 1000`. Only games
+  with reliable clock data have decision durations; unusable games retain
+  ordinary occurrences but contribute no values to this query.
+- **Response:** A page object with `content`, `page`, `size`, `totalElements`,
+  `totalPages`, and `hasNext`. Each occurrence includes its ID and position ID,
+  FEN, player color, ply, played move, decision duration in milliseconds,
+  time control, platform game ID, game date, and opponent username. Occurrences
+  are not grouped by position.
+- **Errors:** Missing/invalid parameters and unsupported time controls return
+  `400`; unauthenticated requests return `401`; unknown accounts return `404`.
+
 ### Position Progress
 
 Returns the authenticated user's actual-game performance for an exact position and player color, divided into a historical baseline and intervals that start at successful puzzle decisions.

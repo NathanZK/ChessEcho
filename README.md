@@ -26,6 +26,7 @@ The goal is to change habits, not to memorize engine lines.
 
 - **Chess.com game import** via the public API — no credentials required
 - **Time-control filtering**: Blitz, Rapid, Bullet, Classical (select one or more)
+- **Long Decisions**: find individual positions where you spent at least a chosen number of seconds deciding, filtered by time control
 - **Color filtering**: analyze as White, Black, or Both
 - **Recurring position detection**: each imported game is replayed move-by-move; positions are normalized using four FEN fields (piece placement, side to move, castling rights, en passant)
 - **Stockfish analysis**: qualifying positions (reached 5+ times) are evaluated at depth 16; each historically played move is individually assessed

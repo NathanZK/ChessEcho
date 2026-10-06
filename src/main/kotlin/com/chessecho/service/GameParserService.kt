@@ -6,6 +6,7 @@ import com.chessecho.domain.PositionOccurrence
 import com.chessecho.repository.PositionOccurrenceRepository
 import com.chessecho.repository.PositionRepository
 import com.github.bhlangonijr.chesslib.Board
+import com.github.bhlangonijr.chesslib.move.MoveList
 import com.github.bhlangonijr.chesslib.pgn.PgnHolder
 import org.slf4j.LoggerFactory
 import org.springframework.jdbc.datasource.DataSourceUtils
@@ -14,6 +15,7 @@ import org.springframework.transaction.support.TransactionTemplate
 import java.io.File
 import java.util.UUID
 import javax.sql.DataSource
+import com.github.bhlangonijr.chesslib.game.Game as ParsedGame
 
 @Service
 class GameParserService(
@@ -21,6 +23,7 @@ class GameParserService(
     private val positionOccurrenceRepository: PositionOccurrenceRepository,
     private val dataSource: DataSource? = null,
     private val transactionTemplate: TransactionTemplate? = null,
+    private val pgnHeaderTagReader: PgnHeaderTagReader = PgnHeaderTagReader(),
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -91,6 +94,13 @@ class GameParserService(
                         continue
                     }
 
+                    val decisionTimes =
+                        deriveDecisionTimes(
+                            pgn = dbGame.pgn,
+                            parsedGame = chesslibGame,
+                            moves = moves,
+                            playerColor = userColor,
+                        )
                     val board = Board()
                     for ((index, move) in moves.withIndex()) {
                         val isWhiteTurn = index % 2 == 0
@@ -115,6 +125,7 @@ class GameParserService(
                                     plyNumber = index + 1,
                                     movePlayed = move.san,
                                     playerColor = userColor,
+                                    decisionTimeMs = decisionTimes[index + 1],
                                 ),
                             )
                         }
@@ -172,6 +183,7 @@ class GameParserService(
                     plyNumber = occurrence.plyNumber,
                     movePlayed = occurrence.movePlayed,
                     playerColor = occurrence.playerColor,
+                    decisionTimeMs = occurrence.decisionTimeMs,
                 )
             }
         // The durable guarantee for occurrence identity is the
@@ -187,7 +199,7 @@ class GameParserService(
                         .thenBy { it.playerColor },
                 )
                 .forEach { occurrence ->
-                    positionOccurrenceRepository.insertIfAbsent(
+                    positionOccurrenceRepository.insertOrRefreshDecisionTime(
                         occurrence.id,
                         occurrence.game.id,
                         occurrence.position.id,
@@ -195,28 +207,34 @@ class GameParserService(
                         occurrence.plyNumber,
                         occurrence.movePlayed,
                         occurrence.playerColor,
+                        occurrence.decisionTimeMs,
                         occurrence.createdAt,
                     )
                 }
         } else {
-            // Non-PostgreSQL fallback: reload the already-persisted identities for
-            // these games and skip them. This keeps sequential retries idempotent;
-            // a genuinely concurrent duplicate is still rejected by the unique
-            // constraint, which fails the derived unit so it can be retried.
-            val newOccurrences =
+            val existingOccurrences =
                 if (mappedOccurrences.isEmpty()) {
-                    positionOccurrenceRepository.saveAll(emptyList())
-                    emptyList()
+                    emptyMap()
                 } else {
-                    val existingOccurrences =
-                        positionOccurrenceRepository
-                            .findByGameIdIn(mappedOccurrences.map { it.game.id }.distinct())
-                            .associateBy { occurrenceKey(it.game.id, it.position.id, it.plyNumber, it.playerColor) }
-                    mappedOccurrences.filter { occurrence ->
-                        val key = occurrenceKey(occurrence.game.id, occurrence.position.id, occurrence.plyNumber, occurrence.playerColor)
-                        key !in existingOccurrences
-                    }
+                    positionOccurrenceRepository
+                        .findByGameIdIn(mappedOccurrences.map { it.game.id }.distinct())
+                        .associateBy { occurrenceKey(it.game.id, it.position.id, it.plyNumber, it.playerColor) }
                 }
+            val newOccurrences = mutableListOf<PositionOccurrence>()
+            mappedOccurrences.forEach { occurrence ->
+                val key = occurrenceKey(occurrence.game.id, occurrence.position.id, occurrence.plyNumber, occurrence.playerColor)
+                if (key in existingOccurrences) {
+                    positionOccurrenceRepository.updateDecisionTime(
+                        occurrence.game.id,
+                        occurrence.position.id,
+                        occurrence.plyNumber,
+                        occurrence.playerColor,
+                        occurrence.decisionTimeMs,
+                    )
+                } else {
+                    newOccurrences.add(occurrence)
+                }
+            }
             if (newOccurrences.isNotEmpty()) {
                 positionOccurrenceRepository.saveAll(newOccurrences)
             }
@@ -233,14 +251,100 @@ class GameParserService(
         playerColor: String,
     ): String = "$gameId:$positionId:$plyNumber:$playerColor"
 
+    private fun deriveDecisionTimes(
+        pgn: String,
+        parsedGame: ParsedGame,
+        moves: MoveList,
+        playerColor: String,
+    ): Map<Int, Long> {
+        val headers = pgnHeaderTagReader.read(pgn)
+        if (headers.status != PgnHeaderStatus.OK) return emptyMap()
+
+        val timeControl =
+            TIME_CONTROL_PATTERN.matchEntire(headers.timeControl.orEmpty())
+                ?: return emptyMap()
+        val baseSeconds = timeControl.groupValues[1].toLongOrNull() ?: return emptyMap()
+        val incrementText = timeControl.groupValues[2]
+        val incrementSeconds =
+            if (incrementText.isEmpty()) {
+                0L
+            } else {
+                incrementText.toLongOrNull() ?: return emptyMap()
+            }
+        if (baseSeconds <= 0) return emptyMap()
+        if (incrementText.isNotEmpty() && incrementSeconds <= 0) return emptyMap()
+        val baseClockMs = baseSeconds.toMillisecondsOrNull() ?: return emptyMap()
+        val incrementMs = incrementSeconds.toMillisecondsOrNull() ?: return emptyMap()
+
+        val comments = parsedGame.comments.orEmpty()
+        val moveTextStart = MOVE_TEXT_SEPARATOR.find(pgn)?.range?.last?.plus(1) ?: pgn.length
+        val sourceClockCount = CLOCK_TAG_START.findAll(pgn.substring(moveTextStart)).count()
+        val parsedClockCount = comments.values.sumOf { comment -> CLOCK_TAG_START.findAll(comment).count() }
+        if (sourceClockCount != parsedClockCount) return emptyMap()
+
+        var previousOwnClockMs: Long? = null
+        val result = mutableMapOf<Int, Long>()
+        for ((index, _) in moves.withIndex()) {
+            val isPlayerMove = (index % 2 == 0 && playerColor == "WHITE") || (index % 2 != 0 && playerColor == "BLACK")
+            if (!isPlayerMove) continue
+
+            val plyNumber = index + 1
+            val clocks =
+                CLOCK_TAG_PATTERN.findAll(comments[plyNumber].orEmpty())
+                    .map { it.groupValues[1].trim() }
+                    .toList()
+            if (clocks.size != 1) return emptyMap()
+            val postMoveClockMs = parseClockMs(clocks.single()) ?: return emptyMap()
+            val startingClockMs = previousOwnClockMs ?: baseClockMs
+            val decisionTimeMs =
+                try {
+                    Math.subtractExact(Math.addExact(startingClockMs, incrementMs), postMoveClockMs)
+                } catch (_: ArithmeticException) {
+                    return emptyMap()
+                }
+            if (decisionTimeMs < 0) return emptyMap()
+
+            result[plyNumber] = decisionTimeMs
+            previousOwnClockMs = postMoveClockMs
+        }
+        return result
+    }
+
+    private fun parseClockMs(value: String): Long? {
+        val match = CLOCK_VALUE_PATTERN.matchEntire(value) ?: return null
+        val hours = match.groupValues[1].toLongOrNull() ?: return null
+        val minutes = match.groupValues[2].toLongOrNull() ?: return null
+        val seconds = match.groupValues[3].toLongOrNull() ?: return null
+        val milliseconds = match.groupValues[4].padEnd(3, '0').toLongOrNull() ?: 0L
+        if (minutes > 59 || seconds > 59) return null
+
+        return try {
+            Math.addExact(
+                Math.addExact(
+                    Math.addExact(Math.multiplyExact(hours, 3_600_000L), Math.multiplyExact(minutes, 60_000L)),
+                    Math.multiplyExact(seconds, 1_000L),
+                ),
+                milliseconds,
+            )
+        } catch (_: ArithmeticException) {
+            null
+        }
+    }
+
+    private fun Long.toMillisecondsOrNull(): Long? =
+        try {
+            Math.multiplyExact(this, 1_000L)
+        } catch (_: ArithmeticException) {
+            null
+        }
+
     /**
-     * `ON CONFLICT ... DO NOTHING` is PostgreSQL-specific, so the native
-     * insert-if-absent statements are only issued when the live connection
-     * reports PostgreSQL. Every other datasource (and the repository-double
-     * unit tests, which supply no datasource at all) keeps the pre-existing
-     * JPA `saveAll` path. The probe result is cached because the datasource of
-     * a running application never changes product mid-flight, and the probe
-     * would otherwise borrow a connection once per batch.
+     * The conflict-safe occurrence upsert is PostgreSQL-specific, so its native
+     * statements are only issued when the live connection reports PostgreSQL.
+     * Other datasources use JPA inserts and timing-only updates. The probe result
+     * is cached because the datasource of a running application never changes
+     * product mid-flight, and the probe would otherwise borrow a connection once
+     * per batch.
      */
     private fun supportsConflictSafeInsert(): Boolean {
         val source = dataSource ?: return false
@@ -255,6 +359,12 @@ class GameParserService(
     }
 
     companion object {
+        private val TIME_CONTROL_PATTERN = Regex("""([1-9]\d*)(?:\+(\d+))?""")
+        private val CLOCK_TAG_START = Regex("""\[%clk\b""")
+        private val CLOCK_TAG_PATTERN = Regex("""\[%clk\s+([^\]]*)\]""")
+        private val CLOCK_VALUE_PATTERN = Regex("""(\d+):(\d{2}):(\d{2})(?:\.(\d{1,3}))?""")
+        private val MOVE_TEXT_SEPARATOR = Regex("""\r?\n[ \t]*\r?\n""")
+
         /**
          * Extracts the core structural components of a FEN string (piece placement, active color, castling, and en passant)
          * and computes a SHA-256 hash. This cleanly deduplicates transpositions while retaining strict chess rules.

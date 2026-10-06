@@ -1,8 +1,9 @@
 # Frontend architecture
 
 ChessEcho's frontend is a Next.js client application. `/` owns the Import Games,
-Weaknesses Library, and Practice Puzzles tabs; `/login` and `/register` are
-separate routes. The tabs are views inside the home route, not separate pages.
+Long Decisions, Weaknesses Library, and Practice Puzzles tabs; `/login` and
+`/register` are separate routes. The tabs are views inside the home route, not
+separate pages.
 The [README architecture overview](../../README.md#architecture) links this
 guide; backend processing is covered by issue
 [#425](https://github.com/NathanZK/ChessEcho/issues/425).
@@ -16,6 +17,7 @@ The [API contract](../../API_CONTRACT.md) defines request and response details.
 ## Route, session, and account boundary
 
 This route map leads to the focused flows below: [import and jobs](#import-games-and-job-monitoring),
+[long decisions](#long-decisions),
 [weaknesses and progress](#weaknesses-library-and-position-progress), and
 [practice and exploration](#practice-puzzles-and-exploration).
 
@@ -52,7 +54,7 @@ guest-eligible reads use a username after bootstrap resolves.
 
 | Route or view | UI and state owner | Data boundary and rendered outcome |
 | --- | --- | --- |
-| `/` — shared shell | `app/page.tsx` composes `Header`, `ImportGamesView`, `WeaknessesList`, `PositionProgressView`, and the practice board/feedback components. `Header` changes the selected tab. The tab is reflected in the URL hash and browser storage. | A single page switches among Import Games, Weaknesses Library, and Practice Puzzles; opening a tab does not navigate to another route. |
+| `/` — shared shell | `app/page.tsx` composes `Header`, `ImportGamesView`, `LongDecisionsView`, `WeaknessesList`, `PositionProgressView`, and the practice board/feedback components. `Header` changes the selected tab. The tab is reflected in the URL hash and browser storage. | A single page switches among Import Games, Long Decisions, Weaknesses Library, and Practice Puzzles; opening a tab does not navigate to another route. |
 | `/` — session and account context | `Home` bootstraps session state in memory, then loads connected accounts for an authenticated user. `browserStores.ts` retains selected display context. | `GET /api/me` establishes authenticated, unauthenticated, or error UI state. Only an authenticated response triggers `GET /api/accounts`; a valid empty list becomes unconnected, while a failed or malformed list becomes a retryable account-loading error. |
 | `/login` | `app/login/page.tsx` owns controlled email/password fields, password visibility, submit state, and error text. | `POST /api/login`; success navigates to `/`, while invalid credentials or request errors remain on the form with an alert. |
 | `/register` | `app/register/page.tsx` owns the equivalent registration form state and links to `/login`. | `POST /api/register`; success navigates to `/`, while registration or request errors remain on the form with an alert. |
@@ -68,7 +70,7 @@ Browser storage is display and recovery context, not proof of identity:
 
 | Browser state | Purpose | Authority |
 | --- | --- | --- |
-| Active tab and URL hash | Restore and navigate among the three home views. | Client display state. |
+| Active tab and URL hash | Restore and navigate among the four home views. | Client display state. |
 | Username and selected account summary | Reopen a guest selection or show a previously selected connected account. | The server session and `GET /api/accounts` determine authenticated identity and valid account selection. |
 | Active import job snapshot | Restore job progress after a page/tab revisit. | `GET /api/jobs/{id}` supplies current status and is rechecked by the server. |
 | Puzzle ID and puzzle filters | Restore the selected practice item and user-facing search preferences. | The puzzle response and current in-memory interaction determine the rendered board; persisted values do not grant access. |
@@ -158,6 +160,30 @@ authenticated user clears it. See
 for guest/account selection and polling transitions and
 [`ImportJobStore.test.tsx`](../../frontend/src/__tests__/ImportJobStore.test.tsx)
 for restored job context.
+
+## Long Decisions
+
+`LongDecisionsView` is available to authenticated users with a connected
+Chess.com account. The time-control selector chooses the games to search;
+the positive whole-number threshold is an absolute number of seconds. Search
+calls `GET /api/positions/long-decisions` with those independent values and
+the selected account UUID. A result is an individual position occurrence whose
+derived decision duration meets the inclusive threshold. The UI displays the
+duration, board/position, move, color, opponent, date, ply, and game link.
+Occurrences remain individually pageable and are not grouped. Long decision
+time is not presented as move quality; no engine evaluation or training action
+is part of this view.
+
+The view distinguishes session/account loading, account-loading errors,
+unconnected accounts, search loading, empty results, request errors, and
+pagination errors. Search and pagination retries are explicit. A newer search
+suppresses stale responses; results are only shown for the account used by the
+current query.
+
+Representative tests:
+[`LongDecisionsApi.test.ts`](../../frontend/src/__tests__/LongDecisionsApi.test.ts)
+and
+[`LongDecisionsView.test.tsx`](../../frontend/src/__tests__/LongDecisionsView.test.tsx).
 
 ## Weaknesses Library and position progress
 

@@ -326,6 +326,101 @@ export interface WeaknessResponse {
   practicalEvidence?: PracticalEvidenceResponse | null;
 }
 
+export type LongDecisionTimeControl = 'BULLET' | 'BLITZ' | 'RAPID' | 'CLASSICAL';
+
+export interface LongDecisionOccurrence {
+  id: string;
+  positionId: string;
+  fen: string;
+  playerColor: 'WHITE' | 'BLACK';
+  plyNumber: number;
+  movePlayed: string;
+  decisionTimeMs: number;
+  timeControl: LongDecisionTimeControl;
+  platformGameId: string;
+  playedAt: string | null;
+  opponentUsername: string | null;
+}
+
+export interface LongDecisionPageResponse {
+  content: LongDecisionOccurrence[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+  hasNext: boolean;
+}
+
+function isLongDecisionOccurrence(value: unknown): value is LongDecisionOccurrence {
+  if (typeof value !== 'object' || value === null) return false;
+  const occurrence = value as Record<string, unknown>;
+  return (
+    isUuid(occurrence.id) &&
+    isUuid(occurrence.positionId) &&
+    typeof occurrence.fen === 'string' &&
+    (occurrence.playerColor === 'WHITE' || occurrence.playerColor === 'BLACK') &&
+    Number.isSafeInteger(occurrence.plyNumber) &&
+    (occurrence.plyNumber as number) > 0 &&
+    typeof occurrence.movePlayed === 'string' &&
+    Number.isSafeInteger(occurrence.decisionTimeMs) &&
+    (occurrence.decisionTimeMs as number) >= 0 &&
+    (occurrence.timeControl === 'BULLET' ||
+      occurrence.timeControl === 'BLITZ' ||
+      occurrence.timeControl === 'RAPID' ||
+      occurrence.timeControl === 'CLASSICAL') &&
+    typeof occurrence.platformGameId === 'string' &&
+    (occurrence.playedAt === null || isProgressTimestamp(occurrence.playedAt)) &&
+    (occurrence.opponentUsername === null || typeof occurrence.opponentUsername === 'string')
+  );
+}
+
+function isLongDecisionPageResponse(value: unknown): value is LongDecisionPageResponse {
+  if (typeof value !== 'object' || value === null) return false;
+  const response = value as Record<string, unknown>;
+  return (
+    Array.isArray(response.content) &&
+    response.content.every(isLongDecisionOccurrence) &&
+    Number.isSafeInteger(response.page) &&
+    (response.page as number) >= 0 &&
+    Number.isSafeInteger(response.size) &&
+    (response.size as number) >= 1 &&
+    (response.size as number) <= 100 &&
+    Number.isSafeInteger(response.totalElements) &&
+    (response.totalElements as number) >= 0 &&
+    Number.isSafeInteger(response.totalPages) &&
+    (response.totalPages as number) >= 0 &&
+    typeof response.hasNext === 'boolean'
+  );
+}
+
+export async function fetchLongDecisions(
+  accountId: string,
+  timeControl: LongDecisionTimeControl,
+  thresholdSeconds: number,
+  page: number,
+  size: number
+): Promise<LongDecisionPageResponse> {
+  const params = new URLSearchParams({
+    accountId,
+    timeControl,
+    thresholdSeconds: String(thresholdSeconds),
+    page: String(page),
+    size: String(size),
+  });
+  const response = await fetch(`${API_BASE_URL}/positions/long-decisions?${params}`, {
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to load long decisions: ${response.status}`);
+  }
+
+  const body: unknown = await response.json().catch(() => null);
+  if (!isLongDecisionPageResponse(body)) {
+    throw new Error('Failed to load long decisions: unexpected response body');
+  }
+  return body;
+}
+
 export type ProgressIntervalState = 'NO_CHECKPOINT' | 'OPEN_AWAITING_EVIDENCE' | 'MEASURED_OPEN';
 
 export interface PositionProgressBaseline {

@@ -24,7 +24,7 @@ import kotlin.test.assertTrue
  * baseline migration.
  *
  * The H2-backed Spring integration tests cannot produce this evidence: H2 does
- * not implement `ON CONFLICT ... DO NOTHING`, so the production insert path is
+ * not implement PostgreSQL `ON CONFLICT`, so the production write path is
  * not even exercised there, and its locking is not the locking that decides
  * these races. Each statement below is read straight off the production
  * repository's `@Query` annotation, so this test cannot drift away from the
@@ -93,19 +93,19 @@ class DerivedProcessingPostgresConcurrencyTest : PostgresMigrationTestFixture() 
     }
 
     @Test
-    fun `concurrent replays of the same occurrence identity converge on one row`() {
+    fun `concurrent replays of the same occurrence identity converge and refresh timing`() {
         val workers = 8
         val barrier = CyclicBarrier(workers)
-        val sql = nativeStatementOf(PositionOccurrenceRepository::class.java, "insertIfAbsent")
+        val sql = nativeStatementOf(PositionOccurrenceRepository::class.java, "insertOrRefreshDecisionTime")
         val pool = Executors.newFixedThreadPool(workers)
         try {
             val results =
-                (1..workers).map {
+                (1..workers).map { decisionTimeMs ->
                     pool.submit<Result<Int>> {
                         runCatching {
                             newConnection().use { worker ->
                                 worker.prepareStatement(sql).use { statement ->
-                                    bindOccurrence(statement, UUID.randomUUID())
+                                    bindOccurrence(statement, UUID.randomUUID(), decisionTimeMs.toLong())
                                     barrier.await(10, TimeUnit.SECONDS)
                                     statement.executeUpdate()
                                 }
@@ -116,17 +116,24 @@ class DerivedProcessingPostgresConcurrencyTest : PostgresMigrationTestFixture() 
 
             assertTrue(
                 results.all { it.isSuccess },
-                "conflict-safe insertion must not surface a unique violation: ${results.mapNotNull { it.exceptionOrNull() }}",
+                "conflict-safe replay must not surface a unique violation: ${results.mapNotNull { it.exceptionOrNull() }}",
             )
             assertEquals(
-                1,
+                workers,
                 results.sumOf { it.getOrThrow() },
-                "exactly one concurrent writer may insert the logical occurrence",
+                "each insert or timing refresh must affect the one logical occurrence",
             )
         } finally {
             pool.shutdownNow()
         }
         assertEquals(1, countOccurrences(), "concurrent replay must leave exactly one occurrence row")
+        val persistedDecisionTime =
+            (
+                query(
+                    "SELECT decision_time_ms FROM position_occurrence",
+                ).single()["decision_time_ms"] as Number
+            ).toLong()
+        assertTrue(persistedDecisionTime in 1L..workers.toLong(), "the final duration must come from a replay writer")
     }
 
     @Test
@@ -199,6 +206,7 @@ class DerivedProcessingPostgresConcurrencyTest : PostgresMigrationTestFixture() 
     private fun bindOccurrence(
         statement: java.sql.PreparedStatement,
         id: UUID,
+        decisionTimeMs: Long,
     ) {
         statement.setObject(1, id)
         statement.setObject(2, gameId)
@@ -207,7 +215,8 @@ class DerivedProcessingPostgresConcurrencyTest : PostgresMigrationTestFixture() 
         statement.setInt(5, 7)
         statement.setString(6, "Nf3")
         statement.setString(7, "WHITE")
-        statement.setObject(8, java.sql.Timestamp.from(Instant.now()))
+        statement.setLong(8, decisionTimeMs)
+        statement.setObject(9, java.sql.Timestamp.from(Instant.now()))
     }
 
     private fun bindProcessing(

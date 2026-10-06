@@ -16,6 +16,7 @@ data class PgnHeaderTags(
     val variant: String? = null,
     val eco: String? = null,
     val ecoUrl: String? = null,
+    val timeControl: String? = null,
     val status: PgnHeaderStatus,
 )
 
@@ -164,6 +165,7 @@ class PgnHeaderTagReader {
             variant = retainedTags["Variant"],
             eco = retainedTags["ECO"],
             ecoUrl = retainedTags["ECOUrl"],
+            timeControl = retainedTags["TimeControl"],
             status = status,
         )
 
@@ -186,6 +188,6 @@ class PgnHeaderTagReader {
         private const val MAX_TAG_PAIRS = 32
         private const val MAX_LINE_LENGTH = 1_024
         private const val MIN_TAG_LENGTH = 6
-        private val RETAINED_TAGS = setOf("White", "Black", "Result", "Variant", "ECO", "ECOUrl")
+        private val RETAINED_TAGS = setOf("White", "Black", "Result", "Variant", "ECO", "ECOUrl", "TimeControl")
     }
 }

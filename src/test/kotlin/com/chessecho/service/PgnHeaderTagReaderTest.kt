@@ -35,6 +35,7 @@ class PgnHeaderTagReaderTest {
                 [Event "Live Chess"]
                 [Site "Chess.com"]
                 [White "alice"]
+                [TimeControl "600+5"]
 
                 1. e4
                 """.trimIndent(),
@@ -42,6 +43,7 @@ class PgnHeaderTagReaderTest {
 
         assertEquals("OK", result.status.name)
         assertEquals("alice", result.white)
+        assertEquals("600+5", result.timeControl)
         assertNull(result.black)
         assertNull(result.result)
         assertNull(result.variant)

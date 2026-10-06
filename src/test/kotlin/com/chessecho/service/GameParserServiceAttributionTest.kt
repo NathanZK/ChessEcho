@@ -14,6 +14,7 @@ import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
+import org.mockito.kotlin.verifyNoInteractions
 import org.mockito.kotlin.whenever
 import java.time.Instant
 import kotlin.test.assertEquals
@@ -149,11 +150,7 @@ class GameParserServiceAttributionTest {
         gameParserService.parseAndSavePositions(listOf(game))
 
         // No occurrences created for unmatched player game
-        val occurrencesCaptor = argumentCaptor<List<PositionOccurrence>>()
-        verify(positionOccurrenceRepository, times(1)).saveAll(occurrencesCaptor.capture())
-
-        val savedOccurrences = occurrencesCaptor.firstValue
-        assertEquals(0, savedOccurrences.size)
+        verifyNoInteractions(positionOccurrenceRepository)
     }
 
     @Test
@@ -181,10 +178,6 @@ class GameParserServiceAttributionTest {
         gameParserService.parseAndSavePositions(listOf(game))
 
         // Invalid dual identity -> 0 occurrences created
-        val occurrencesCaptor = argumentCaptor<List<PositionOccurrence>>()
-        verify(positionOccurrenceRepository, times(1)).saveAll(occurrencesCaptor.capture())
-
-        val savedOccurrences = occurrencesCaptor.firstValue
-        assertEquals(0, savedOccurrences.size)
+        verifyNoInteractions(positionOccurrenceRepository)
     }
 }

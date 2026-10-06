@@ -14,6 +14,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.AdditionalAnswers
 import org.mockito.kotlin.any
+import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.atLeastOnce
 import org.mockito.kotlin.doAnswer
@@ -207,7 +208,9 @@ class GameParserServiceTest {
         whenever(positionRepository.findByHashIn(any())).thenReturn(emptyList())
         whenever(positionRepository.findByHash(any())).thenReturn(null)
         whenever(positionRepository.insertIfAbsent(any(), any(), any(), any())).thenReturn(1)
-        whenever(positionOccurrenceRepository.insertIfAbsent(any(), any(), any(), any(), any(), any(), any(), any())).thenReturn(1)
+        whenever(
+            positionOccurrenceRepository.insertOrRefreshDecisionTime(any(), any(), any(), any(), any(), any(), any(), anyOrNull(), any()),
+        ).thenReturn(1)
         val nativeParser = GameParserService(positionRepository, positionOccurrenceRepository, postgresqlMetadataDataSource())
 
         val appUser = AppUser(email = "test@example.com")
@@ -240,7 +243,7 @@ class GameParserServiceTest {
         h2Parser.parseAndSavePositions(listOf(sampleGame("h2-game")))
 
         verify(positionOccurrenceRepository, never())
-            .insertIfAbsent(any(), any(), any(), any(), any(), any(), any(), any())
+            .insertOrRefreshDecisionTime(any(), any(), any(), any(), any(), any(), any(), anyOrNull(), any())
         verify(positionRepository, never()).insertIfAbsent(any(), any(), any(), any())
         verify(positionOccurrenceRepository).saveAll(any<List<PositionOccurrence>>())
     }
@@ -250,7 +253,9 @@ class GameParserServiceTest {
         whenever(positionRepository.findByHashIn(any())).thenReturn(emptyList())
         whenever(positionRepository.findByHash(any())).thenReturn(null)
         whenever(positionRepository.insertIfAbsent(any(), any(), any(), any())).thenReturn(1)
-        whenever(positionOccurrenceRepository.insertIfAbsent(any(), any(), any(), any(), any(), any(), any(), any()))
+        whenever(
+            positionOccurrenceRepository.insertOrRefreshDecisionTime(any(), any(), any(), any(), any(), any(), any(), anyOrNull(), any()),
+        )
             .thenReturn(1)
         val postgresParser =
             GameParserService(positionRepository, positionOccurrenceRepository, metadataDataSource("PostgreSQL"))
@@ -258,7 +263,7 @@ class GameParserServiceTest {
         postgresParser.parseAndSavePositions(listOf(sampleGame("pg-game")))
 
         verify(positionOccurrenceRepository, atLeastOnce())
-            .insertIfAbsent(any(), any(), any(), any(), any(), any(), any(), any())
+            .insertOrRefreshDecisionTime(any(), any(), any(), any(), any(), any(), any(), anyOrNull(), any())
         verify(positionOccurrenceRepository, never()).saveAll(any<List<PositionOccurrence>>())
     }
 

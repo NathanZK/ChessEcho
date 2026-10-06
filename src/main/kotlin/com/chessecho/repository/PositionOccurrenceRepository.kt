@@ -1,6 +1,8 @@
 package com.chessecho.repository
 
 import com.chessecho.domain.PositionOccurrence
+import org.springframework.data.domain.Page
+import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
@@ -13,14 +15,15 @@ interface PositionOccurrenceRepository : JpaRepository<PositionOccurrence, UUID>
     @Query(
         value = """
             INSERT INTO position_occurrence
-              (id, game_id, position_id, chess_account_id, ply_number, move_played, player_color, created_at)
+              (id, game_id, position_id, chess_account_id, ply_number, move_played, player_color, decision_time_ms, created_at)
             VALUES
-              (:id, :gameId, :positionId, :chessAccountId, :plyNumber, :movePlayed, :playerColor, :createdAt)
-            ON CONFLICT (game_id, position_id, ply_number, player_color) DO NOTHING
+              (:id, :gameId, :positionId, :chessAccountId, :plyNumber, :movePlayed, :playerColor, :decisionTimeMs, :createdAt)
+            ON CONFLICT (game_id, position_id, ply_number, player_color)
+            DO UPDATE SET decision_time_ms = EXCLUDED.decision_time_ms
         """,
         nativeQuery = true,
     )
-    fun insertIfAbsent(
+    fun insertOrRefreshDecisionTime(
         @Param("id") id: UUID,
         @Param("gameId") gameId: UUID,
         @Param("positionId") positionId: UUID,
@@ -28,10 +31,61 @@ interface PositionOccurrenceRepository : JpaRepository<PositionOccurrence, UUID>
         @Param("plyNumber") plyNumber: Int,
         @Param("movePlayed") movePlayed: String,
         @Param("playerColor") playerColor: String,
+        @Param("decisionTimeMs") decisionTimeMs: Long?,
         @Param("createdAt") createdAt: Instant,
     ): Int
 
     fun findByGameIdIn(gameIds: Collection<UUID>): List<PositionOccurrence>
+
+    @Query(
+        value = """
+            SELECT po FROM PositionOccurrence po
+            JOIN FETCH po.game g
+            JOIN FETCH po.position p
+            JOIN FETCH po.chessAccount a
+            WHERE po.chessAccount.id = :chessAccountId
+              AND UPPER(g.timeControl) = :timeControl
+              AND po.decisionTimeMs IS NOT NULL
+              AND po.decisionTimeMs >= :thresholdMs
+            ORDER BY CASE WHEN g.playedAt IS NULL THEN 1 ELSE 0 END ASC,
+                     g.playedAt DESC,
+                     po.plyNumber ASC,
+                     po.id ASC
+        """,
+        countQuery = """
+            SELECT COUNT(po) FROM PositionOccurrence po
+            JOIN po.game g
+            WHERE po.chessAccount.id = :chessAccountId
+              AND UPPER(g.timeControl) = :timeControl
+              AND po.decisionTimeMs IS NOT NULL
+              AND po.decisionTimeMs >= :thresholdMs
+        """,
+    )
+    fun findLongDecisionOccurrences(
+        @Param("chessAccountId") chessAccountId: UUID,
+        @Param("timeControl") timeControl: String,
+        @Param("thresholdMs") thresholdMs: Long,
+        pageable: Pageable,
+    ): Page<PositionOccurrence>
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+        """
+        UPDATE PositionOccurrence po
+        SET po.decisionTimeMs = :decisionTimeMs
+        WHERE po.game.id = :gameId
+          AND po.position.id = :positionId
+          AND po.plyNumber = :plyNumber
+          AND po.playerColor = :playerColor
+        """,
+    )
+    fun updateDecisionTime(
+        @Param("gameId") gameId: UUID,
+        @Param("positionId") positionId: UUID,
+        @Param("plyNumber") plyNumber: Int,
+        @Param("playerColor") playerColor: String,
+        @Param("decisionTimeMs") decisionTimeMs: Long?,
+    ): Int
 
     fun findByPositionId(positionId: UUID): List<PositionOccurrence>
 
