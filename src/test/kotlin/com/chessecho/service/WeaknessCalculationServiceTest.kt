@@ -167,6 +167,7 @@ class WeaknessCalculationServiceTest {
                 minMistakeCount = 1,
             )
 
+        println("WEAKNESSES SIZE: ${weaknesses.size}")
         assertEquals(1, weaknesses.size)
         val w = weaknesses[0]
         assertEquals(2, w.mistakeCount)
@@ -301,6 +302,7 @@ class WeaknessCalculationServiceTest {
                 minMistakeCount = 3,
             )
 
+        println("WEAKNESSES SIZE: ${weaknesses.size}")
         assertEquals(1, weaknesses.size)
         val w = weaknesses[0]
 
@@ -374,6 +376,7 @@ class WeaknessCalculationServiceTest {
                 minMistakeCount = 2,
             )
 
+        println("WEAKNESSES SIZE: ${weaknesses.size}")
         assertEquals(1, weaknesses.size)
         assertEquals(newerInstant, weaknesses[0].lastSeenAt)
         // Game URLs must be returned newest-first
@@ -427,6 +430,7 @@ class WeaknessCalculationServiceTest {
                 minMistakeCount = 1,
             )
 
+        println("WEAKNESSES SIZE: ${weaknesses.size}")
         assertEquals(1, weaknesses.size)
         assertEquals(occ.createdAt, weaknesses[0].lastSeenAt)
     }
@@ -970,7 +974,7 @@ class WeaknessCalculationServiceTest {
                 playerColor = eq("WHITE"),
                 minEvalLoss = eq(0.8),
                 minTimesReached = eq(5),
-                minMistakeCount = eq(3),
+                minMistakeCount = eq(3L),
             ),
         ).thenReturn(listOf(aggregation))
 
@@ -983,6 +987,7 @@ class WeaknessCalculationServiceTest {
                 minMistakeCount = 3,
             )
 
+        println("WEAKNESSES SIZE: ${weaknesses.size}")
         assertEquals(1, weaknesses.size)
         val w = weaknesses[0]
 
@@ -1133,7 +1138,7 @@ class WeaknessCalculationServiceTest {
                 playerColor = eq("WHITE"),
                 minEvalLoss = eq(0.8),
                 minTimesReached = eq(5),
-                minMistakeCount = eq(3),
+                minMistakeCount = eq(3L),
             ),
         ).thenReturn(listOf(aggregation))
 
@@ -1146,6 +1151,7 @@ class WeaknessCalculationServiceTest {
                 minMistakeCount = 3,
             )
 
+        println("WEAKNESSES SIZE: ${weaknesses.size}")
         assertEquals(1, weaknesses.size)
         val w = weaknesses[0]
 
@@ -1168,5 +1174,143 @@ class WeaknessCalculationServiceTest {
         // Ensure unsupported/null are not present
         assertTrue(!tcStats.containsKey("UNKNOWN"), "UNKNOWN should be excluded")
         assertTrue(!tcStats.containsKey("null"), "null should be excluded")
+    }
+
+    @Test
+    fun `test phase classification correctly partitions weaknesses and omits empty buckets`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "nathan")
+        val position = Position(hash = "hash-phase", fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "nathan")).thenReturn(account)
+
+        val analysis = EngineAnalysis(position = position, depth = 16, baselineEvalCp = 100, bestMove = "best", bestMoveEvalCp = 100)
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "BAD", evalCp = 0, evalLossFromBest = 1.0))
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "GOOD", evalCp = 100, evalLossFromBest = 0.0))
+
+        val occurrences = mutableListOf<PositionOccurrence>()
+
+        repeat(2) {
+            occurrences.add(
+                PositionOccurrence(
+                    game = mockGame("g1"),
+                    position = position,
+                    chessAccount = account,
+                    plyNumber = 1,
+                    movePlayed = "BAD",
+                    playerColor = "WHITE",
+                ),
+            )
+        }
+        occurrences.add(
+            PositionOccurrence(
+                game = mockGame("g1"),
+                position = position,
+                chessAccount = account,
+                plyNumber = 1,
+                movePlayed = "GOOD",
+                playerColor = "WHITE",
+            ),
+        )
+
+        occurrences.add(
+            PositionOccurrence(
+                game = mockGame("g2"),
+                position = position,
+                chessAccount = account,
+                plyNumber = 30,
+                movePlayed = "BAD",
+                playerColor = "WHITE",
+            ),
+        )
+
+        occurrences.add(
+            PositionOccurrence(
+                game = mockGame("g3"),
+                position = position,
+                chessAccount = account,
+                plyNumber = 60,
+                movePlayed = "BAD",
+                playerColor = "WHITE",
+            ),
+        )
+
+        occurrences.add(
+            PositionOccurrence(
+                game = mockGame("g6"),
+                position = position,
+                chessAccount = account,
+                plyNumber = 60,
+                movePlayed = "UNEVALUATED",
+                playerColor = "WHITE",
+            ),
+        )
+
+        `when`(
+            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(
+                eq(account.id),
+                eq("WHITE"),
+                any(),
+            ),
+        ).thenReturn(occurrences)
+
+        `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(any())).thenReturn(listOf(analysis))
+
+        val aggregation =
+            WeaknessAggregation(
+                positionId = position.id,
+                fen = position.fen,
+                playerColor = "WHITE",
+                timesReached = 6,
+                bestMove = "best",
+                baselineEvalCp = 100,
+                mistakeCount = 4,
+                averageLoss = 1.0,
+                rawTotalLoss = 4.0,
+            )
+
+        `when`(
+            positionOccurrenceRepository.findWeaknessAggregations(
+                chessAccountId = eq(account.id),
+                playerColor = eq("WHITE"),
+                minEvalLoss = eq(0.8),
+                minTimesReached = eq(5),
+                minMistakeCount = eq(3L),
+            ),
+        ).thenReturn(listOf(aggregation))
+
+        val weaknesses =
+            weaknessCalculationService.getWeaknesses(
+                Platform.CHESS_COM,
+                "nathan",
+                PlayerColor.WHITE,
+                minEvalLoss = 0.8,
+                minMistakeCount = 3,
+            )
+
+        println("WEAKNESSES SIZE: ${weaknesses.size}")
+        assertEquals(1, weaknesses.size)
+        val w = weaknesses[0]
+
+        assertEquals(4, w.mistakeCount)
+        assertEquals(6, w.timesReached)
+
+        val pStats = w.phaseStats
+        assertTrue(pStats != null, "phaseStats should not be null")
+
+        val openingStats = pStats!!["OPENING"]
+        assertTrue(openingStats != null, "OPENING stats missing")
+        assertEquals(3, openingStats!!.timesReached)
+        assertEquals(2, openingStats.mistakeCount)
+
+        val midStats = pStats["MIDDLEGAME"]
+        assertTrue(midStats != null, "MIDDLEGAME stats missing")
+        assertEquals(2, midStats!!.timesReached)
+        assertEquals(2, midStats.mistakeCount)
+
+        val endStats = pStats["ENDGAME"]
+        assertTrue(
+            endStats == null,
+            "ENDGAME stats should not be present because the FEN has 32 pieces and moveNumber > 14 forces MIDDLEGAME",
+        )
     }
 }

@@ -98,15 +98,18 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
   }
 
   const [timeControlFilter, setTimeControlFilter] = useState<'ALL' | 'BULLET' | 'BLITZ' | 'RAPID' | 'CLASSICAL'>('ALL');
+  const [phaseFilter, setPhaseFilter] = useState<'ALL' | 'OPENING' | 'MIDDLEGAME' | 'ENDGAME'>('ALL');
 
   const [weaknessResult, setWeaknessResult] = useState<{
     rows: WeaknessResponse[];
     minEvalLoss: number;
   }>({ rows: [], minEvalLoss });
   const rawWeaknesses = weaknessResult.rows;
-  const weaknesses = timeControlFilter === 'ALL' 
-    ? rawWeaknesses 
-    : rawWeaknesses.filter(w => w.timeControlStats && w.timeControlStats[timeControlFilter] && w.timeControlStats[timeControlFilter].timesReached > 0);
+  const weaknesses = rawWeaknesses.filter(w => {
+    const tcPass = timeControlFilter === 'ALL' || (w.timeControlStats && w.timeControlStats[timeControlFilter] && w.timeControlStats[timeControlFilter].timesReached > 0);
+    const phasePass = phaseFilter === 'ALL' || (w.phaseStats && w.phaseStats[phaseFilter] && w.phaseStats[phaseFilter].timesReached > 0);
+    return tcPass && phasePass;
+  });
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
@@ -379,6 +382,23 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
             ))}
           </div>
 
+          {/* Phase Filter */}
+          <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
+            {(['ALL', 'OPENING', 'MIDDLEGAME', 'ENDGAME'] as const).map((ph) => (
+              <button
+                key={ph}
+                onClick={() => setPhaseFilter(ph)}
+                className={`px-3 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
+                  phaseFilter === ph
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                {ph}
+              </button>
+            ))}
+          </div>
+
           {/* Shared Mistake Threshold Filter */}
           <div className="flex items-center space-x-2 bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800 text-xs font-semibold">
             <span className="text-slate-400">Mistake Threshold:</span>
@@ -468,10 +488,12 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                 activeColorInFen === 'b' ? 'BLACK' : activeColorInFen === 'w' ? 'WHITE' : 'WHITE';
                 
               const tcStats = timeControlFilter !== 'ALL' && item.timeControlStats ? item.timeControlStats[timeControlFilter] : null;
-              const displayMistakeRate = tcStats ? tcStats.mistakeRate * 100 : item.mistakeRate;
-              const displayMistakeCount = tcStats ? tcStats.mistakeCount : item.mistakeCount;
-              const displayTimesReached = tcStats ? tcStats.timesReached : item.timesReached;
-              const displayAverageLoss = tcStats ? tcStats.averageLoss : item.averageLoss;
+              const phStats = phaseFilter !== 'ALL' && item.phaseStats ? item.phaseStats[phaseFilter] : null;
+              
+              const displayMistakeRate = phStats ? phStats.mistakeRate * 100 : tcStats ? tcStats.mistakeRate * 100 : item.mistakeRate;
+              const displayMistakeCount = phStats ? phStats.mistakeCount : tcStats ? tcStats.mistakeCount : item.mistakeCount;
+              const displayTimesReached = phStats ? phStats.timesReached : tcStats ? tcStats.timesReached : item.timesReached;
+              const displayAverageLoss = phStats ? phStats.averageLoss : tcStats ? tcStats.averageLoss : item.averageLoss;
 
 
               return (

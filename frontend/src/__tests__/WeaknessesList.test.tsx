@@ -45,6 +45,14 @@ const mockWeaknessItem: WeaknessResponse = {
     'https://www.chess.com/game/live/10002',
   ],
   evalCp: 35,
+  phaseStats: {
+    MIDDLEGAME: {
+      timesReached: 10,
+      mistakeCount: 3,
+      mistakeRate: 0.3,
+      averageLoss: 1.0,
+    },
+  },
   practicalEvidence: {
     scope: 'POSITION',
     decisionSan: null,
@@ -593,6 +601,28 @@ describe('Weaknesses Tab MVP', () => {
       render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
       const container = screen.getByText(/Recurring Opening Weaknesses Library/i).closest('.max-w-\\[1536px\\]');
       expect(container).toBeInTheDocument();
+    });
+  });
+  describe('5. Phase Filter Interactions', () => {
+    it('filters weaknesses by phase and displays phase-specific stats when a phase filter is applied', async () => {
+      const itemWithOpening = {
+        ...mockWeaknessItem,
+        positionId: 'w-pos-opening',
+        phaseStats: {
+          OPENING: { timesReached: 20, mistakeCount: 5, mistakeRate: 0.25, averageLoss: 0.8 }
+        }
+      };
+
+      vi.mocked(api.fetchWeaknesses).mockResolvedValue([mockWeaknessItem, itemWithOpening]);
+
+      render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
+
+      const openingBtn = await screen.findByRole('button', { name: /^OPENING$/i });
+      fireEvent.click(openingBtn);
+
+      await waitFor(() => {
+        expect(screen.getByText('25.0% (5x)')).toBeInTheDocument();
+      });
     });
   });
 });

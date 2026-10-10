@@ -325,6 +325,14 @@ export interface WeaknessResponse {
   lastSeenAt?: string;
   practicalEvidence?: PracticalEvidenceResponse | null;
   timeControlStats?: Record<string, TimeControlStats>;
+  phaseStats?: Record<string, PhaseStats>;
+}
+
+export interface PhaseStats {
+  timesReached: number;
+  mistakeCount: number;
+  mistakeRate: number;
+  averageLoss: number;
 }
 
 export interface TimeControlStats {
