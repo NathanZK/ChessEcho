@@ -27,6 +27,15 @@ data class WeaknessResponse(
     val objectiveEvidenceState: ObjectiveEvidenceState,
     val evidenceCombination: EvidenceCombination?,
     val practicalEvidence: PracticalEvidenceResponse,
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    val timeControlStats: Map<String, TimeControlStats>? = null,
+)
+
+data class TimeControlStats(
+    val timesReached: Int,
+    val mistakeCount: Int,
+    val mistakeRate: Double,
+    val averageLoss: Double,
 )
 
 data class OpeningContext(

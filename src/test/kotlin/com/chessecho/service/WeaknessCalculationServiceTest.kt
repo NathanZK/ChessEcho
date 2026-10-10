@@ -867,13 +867,306 @@ class WeaknessCalculationServiceTest {
     private fun mockGame(
         platformGameId: String = "123",
         playedAt: Instant? = null,
+        timeControl: String? = "bullet",
     ): Game =
         Game(
             chessAccount = ChessAccount(platform = "P", username = "U"),
             platformGameId = platformGameId,
-            timeControl = "bullet",
+            timeControl = timeControl,
             pgn = "pgn",
             result = "win",
             playedAt = playedAt,
         )
+
+    @Test
+    fun `test time control partitions aggregate correctly and exclude unevaluated or unsupported occurrences`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "nathan")
+        val position = Position(hash = "hash_tc", fen = "fen_tc")
+
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "nathan")).thenReturn(account)
+
+        val analysis = EngineAnalysis(position = position, depth = 16, baselineEvalCp = 100, bestMove = "best", bestMoveEvalCp = 100)
+        analysis.moveEvaluations.add(
+            MoveEvaluation(engineAnalysis = analysis, move = "A", evalCp = 100, evalLossFromBest = 0.0),
+        ) // Not a mistake
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "B", evalCp = 20, evalLossFromBest = 0.8)) // Mistake
+        // Move "C" is unevaluated (missing)
+
+        val occ1 =
+            PositionOccurrence(
+                game = mockGame(timeControl = "BLITZ"),
+                position = position,
+                chessAccount = account,
+                plyNumber = 1,
+                movePlayed = "A",
+                playerColor = "WHITE",
+            )
+        val occ2 =
+            PositionOccurrence(
+                game = mockGame(timeControl = "BLITZ"),
+                position = position,
+                chessAccount = account,
+                plyNumber = 1,
+                movePlayed = "B",
+                playerColor = "WHITE",
+            )
+        val occ3 =
+            PositionOccurrence(
+                game = mockGame(timeControl = "BLITZ"),
+                position = position,
+                chessAccount = account,
+                plyNumber = 1,
+                movePlayed = "C",
+                playerColor = "WHITE",
+            )
+        val occ4 =
+            PositionOccurrence(
+                game = mockGame(timeControl = "RAPID"),
+                position = position,
+                chessAccount = account,
+                plyNumber = 1,
+                movePlayed = "B",
+                playerColor = "WHITE",
+            )
+        val occ5 =
+            PositionOccurrence(
+                game = mockGame(timeControl = "DAILY"),
+                position = position,
+                chessAccount = account,
+                plyNumber = 1,
+                movePlayed = "B",
+                playerColor = "WHITE",
+            )
+        val occ6 =
+            PositionOccurrence(
+                game = mockGame(timeControl = null),
+                position = position,
+                chessAccount = account,
+                plyNumber = 1,
+                movePlayed = "B",
+                playerColor = "WHITE",
+            )
+
+        `when`(
+            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(
+                eq(account.id),
+                eq("WHITE"),
+                any(),
+            ),
+        ).thenReturn(listOf(occ1, occ2, occ3, occ4, occ5, occ6))
+
+        `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(any())).thenReturn(listOf(analysis))
+
+        val aggregation =
+            WeaknessAggregation(
+                positionId = position.id, fen = position.fen, playerColor = "WHITE",
+                timesReached = 6, bestMove = "best", baselineEvalCp = 100,
+                mistakeCount = 4, averageLoss = 0.8, rawTotalLoss = 3.2,
+            )
+
+        `when`(
+            positionOccurrenceRepository.findWeaknessAggregations(
+                chessAccountId = eq(account.id),
+                playerColor = eq("WHITE"),
+                minEvalLoss = eq(0.8),
+                minTimesReached = eq(5),
+                minMistakeCount = eq(3),
+            ),
+        ).thenReturn(listOf(aggregation))
+
+        val weaknesses =
+            weaknessCalculationService.getWeaknesses(
+                Platform.CHESS_COM,
+                "nathan",
+                PlayerColor.WHITE,
+                minEvalLoss = 0.8,
+                minMistakeCount = 3,
+            )
+
+        assertEquals(1, weaknesses.size)
+        val w = weaknesses[0]
+
+        // Global counts
+        assertEquals(4, w.mistakeCount)
+
+        val tcStats = w.timeControlStats
+        assertTrue(tcStats != null, "timeControlStats should not be null")
+
+        // Check BLITZ
+        val blitzStats = tcStats!!["BLITZ"]
+        assertTrue(blitzStats != null, "BLITZ stats missing")
+        assertEquals(2, blitzStats!!.timesReached) // occ1, occ2. occ3 is unevaluated.
+        assertEquals(1, blitzStats.mistakeCount) // occ2
+        assertEquals(0.5, blitzStats.mistakeRate, 0.001) // 1 / 2
+        assertEquals(0.8, blitzStats.averageLoss, 0.001) // 0.8 / 1
+
+        // Check RAPID
+        val rapidStats = tcStats["RAPID"]
+        assertTrue(rapidStats != null, "RAPID stats missing")
+        assertEquals(1, rapidStats!!.timesReached)
+        assertEquals(1, rapidStats.mistakeCount)
+        assertEquals(1.0, rapidStats.mistakeRate, 0.001)
+        assertEquals(0.8, rapidStats.averageLoss, 0.001)
+
+        // Ensure unsupported/null are not present
+        assertTrue(!tcStats.containsKey("DAILY"), "DAILY should be excluded")
+        assertTrue(!tcStats.containsKey("null"), "null should be excluded")
+    }
+
+    @Test
+    fun `test concrete regression scenario for time control partitions`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "nathan")
+        val position = Position(hash = "hash_reg", fen = "fen_reg")
+
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "nathan")).thenReturn(account)
+
+        val analysis =
+            EngineAnalysis(
+                position = position,
+                depth = 16,
+                baselineEvalCp = 100,
+                bestMove = "best",
+                bestMoveEvalCp = 100,
+            )
+        analysis.moveEvaluations.add(
+            MoveEvaluation(engineAnalysis = analysis, move = "GOOD", evalCp = 100, evalLossFromBest = 0.0),
+        )
+        analysis.moveEvaluations.add(
+            MoveEvaluation(engineAnalysis = analysis, move = "BAD", evalCp = 20, evalLossFromBest = 0.8),
+        )
+
+        val occurrences = mutableListOf<PositionOccurrence>()
+
+        // 4 evaluated Bullet occurrences (2 good, 2 bad -> 2 mistakes)
+        occurrences.add(
+            PositionOccurrence(
+                game = mockGame(timeControl = "BULLET"),
+                position = position,
+                chessAccount = account,
+                plyNumber = 1,
+                movePlayed = "GOOD",
+                playerColor = "WHITE",
+            ),
+        )
+        occurrences.add(
+            PositionOccurrence(
+                game = mockGame(timeControl = "BULLET"),
+                position = position,
+                chessAccount = account,
+                plyNumber = 1,
+                movePlayed = "GOOD",
+                playerColor = "WHITE",
+            ),
+        )
+        occurrences.add(
+            PositionOccurrence(
+                game = mockGame(timeControl = "BULLET"),
+                position = position,
+                chessAccount = account,
+                plyNumber = 1,
+                movePlayed = "BAD",
+                playerColor = "WHITE",
+            ),
+        )
+        occurrences.add(
+            PositionOccurrence(
+                game = mockGame(timeControl = "BULLET"),
+                position = position,
+                chessAccount = account,
+                plyNumber = 1,
+                movePlayed = "BAD",
+                playerColor = "WHITE",
+            ),
+        )
+
+        // 6 evaluated occurrences with missing or unsupported time controls (5 good, 1 bad)
+        // This brings the global evaluated occurrences to 10 and global mistakes to 3.
+        occurrences.add(
+            PositionOccurrence(
+                game = mockGame(timeControl = null),
+                position = position,
+                chessAccount = account,
+                plyNumber = 1,
+                movePlayed = "BAD",
+                playerColor = "WHITE",
+            ),
+        )
+        for (i in 1..5) {
+            occurrences.add(
+                PositionOccurrence(
+                    game = mockGame(timeControl = "UNKNOWN"),
+                    position = position,
+                    chessAccount = account,
+                    plyNumber = 1,
+                    movePlayed = "GOOD",
+                    playerColor = "WHITE",
+                ),
+            )
+        }
+
+        `when`(
+            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(
+                eq(account.id),
+                eq("WHITE"),
+                any(),
+            ),
+        ).thenReturn(occurrences)
+
+        `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(any())).thenReturn(listOf(analysis))
+
+        val aggregation =
+            WeaknessAggregation(
+                positionId = position.id,
+                fen = position.fen,
+                playerColor = "WHITE",
+                timesReached = 10,
+                bestMove = "best",
+                baselineEvalCp = 100,
+                mistakeCount = 3,
+                averageLoss = 0.8,
+                rawTotalLoss = 2.4,
+            )
+
+        `when`(
+            positionOccurrenceRepository.findWeaknessAggregations(
+                chessAccountId = eq(account.id),
+                playerColor = eq("WHITE"),
+                minEvalLoss = eq(0.8),
+                minTimesReached = eq(5),
+                minMistakeCount = eq(3),
+            ),
+        ).thenReturn(listOf(aggregation))
+
+        val weaknesses =
+            weaknessCalculationService.getWeaknesses(
+                Platform.CHESS_COM,
+                "nathan",
+                PlayerColor.WHITE,
+                minEvalLoss = 0.8,
+                minMistakeCount = 3,
+            )
+
+        assertEquals(1, weaknesses.size)
+        val w = weaknesses[0]
+
+        // Global stats
+        assertEquals(3, w.mistakeCount)
+        assertEquals(10, w.timesReached)
+        assertEquals(30.0, w.mistakeRate, 0.001)
+
+        val tcStats = w.timeControlStats
+        assertTrue(tcStats != null, "timeControlStats should not be null")
+
+        // Bullet stats
+        val bulletStats = tcStats!!["BULLET"]
+        assertTrue(bulletStats != null, "BULLET stats missing")
+        assertEquals(4, bulletStats!!.timesReached)
+        assertEquals(2, bulletStats.mistakeCount)
+        assertEquals(0.5, bulletStats.mistakeRate, 0.001)
+        assertEquals(0.8, bulletStats.averageLoss, 0.001)
+
+        // Ensure unsupported/null are not present
+        assertTrue(!tcStats.containsKey("UNKNOWN"), "UNKNOWN should be excluded")
+        assertTrue(!tcStats.containsKey("null"), "null should be excluded")
+    }
 }

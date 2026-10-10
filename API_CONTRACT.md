@@ -274,6 +274,20 @@ curl "http://localhost:8080/api/positions/weaknesses?platform=CHESS_COM&username
     "mistakeCount": 4,
     "mistakeRate": 0.4,
     "averageLoss": 1.2,
+    "timeControlStats": {
+      "BLITZ": {
+        "timesReached": 6,
+        "mistakeCount": 2,
+        "mistakeRate": 0.333,
+        "averageLoss": 0.9
+      },
+      "RAPID": {
+        "timesReached": 4,
+        "mistakeCount": 2,
+        "mistakeRate": 0.5,
+        "averageLoss": 1.5
+      }
+    },
     "priority": 4.8,
     "bestMove": "Bb5",
     "acceptableMoves": [

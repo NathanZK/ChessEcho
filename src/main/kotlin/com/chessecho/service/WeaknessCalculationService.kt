@@ -156,6 +156,9 @@ class WeaknessCalculationService(
             val mistakeUrls = mutableListOf<String>()
             val mistakeGames = mutableListOf<com.chessecho.domain.Game>()
             val moveStats = mutableMapOf<String, Pair<Double, Int>>()
+            val tcTimesReached = mutableMapOf<String, Int>()
+            val tcMistakeCount = mutableMapOf<String, Int>()
+            val tcMistakeLoss = mutableMapOf<String, Double>()
 
             for (occurrence in sortedOccurrences) {
                 val moveEvaluation =
@@ -168,6 +171,13 @@ class WeaknessCalculationService(
                 moveStats[occurrence.movePlayed] =
                     previousLoss + evalLoss to previousCount + 1
 
+                val tc = occurrence.game.timeControl?.uppercase()
+                val supportedTcs = setOf("BULLET", "BLITZ", "RAPID", "CLASSICAL")
+                val isSupportedTc = tc != null && tc in supportedTcs
+                if (isSupportedTc) {
+                    tcTimesReached[tc!!] = (tcTimesReached[tc] ?: 0) + 1
+                }
+
                 if (evalLoss >= minEvalLoss) {
                     unweightedTotalLoss += evalLoss
                     val occurrenceDate = occurrence.game.playedAt ?: occurrence.createdAt
@@ -177,6 +187,10 @@ class WeaknessCalculationService(
                     mistakeCount++
                     mistakeUrls.add(gameUrl(account.platform, occurrence.game.platformGameId))
                     mistakeGames.add(occurrence.game)
+                    if (isSupportedTc) {
+                        tcMistakeCount[tc!!] = (tcMistakeCount[tc] ?: 0) + 1
+                        tcMistakeLoss[tc] = (tcMistakeLoss[tc] ?: 0.0) + evalLoss
+                    }
                 }
             }
 
@@ -210,6 +224,18 @@ class WeaknessCalculationService(
                 continue
             }
 
+            val timeControlStats =
+                tcTimesReached.mapValues { (tc, reached) ->
+                    val mCount = tcMistakeCount[tc] ?: 0
+                    val totalLoss = tcMistakeLoss[tc] ?: 0.0
+                    com.chessecho.dto.TimeControlStats(
+                        timesReached = reached,
+                        mistakeCount = mCount,
+                        mistakeRate = if (reached > 0) mCount.toDouble() / reached else 0.0,
+                        averageLoss = if (mCount > 0) totalLoss / mCount else 0.0,
+                    )
+                }.takeIf { it.isNotEmpty() }
+
             drafts.add(
                 ObjectiveWeaknessDraft(
                     positionId = aggregation.positionId,
@@ -232,6 +258,7 @@ class WeaknessCalculationService(
                     openingContext = openingContext(platform, mistakeGames),
                     evalCp = aggregation.baselineEvalCp,
                     lastSeenAt = lastSeenAt,
+                    timeControlStats = timeControlStats,
                 ),
             )
         }
@@ -315,6 +342,7 @@ class WeaknessCalculationService(
                         objectiveEvidenceState = ObjectiveEvidenceState.INACCURATE,
                         evidenceCombination = priorityDecision.evidenceCombination,
                         practicalEvidence = positionEvidence,
+                        timeControlStats = draft.timeControlStats,
                     )
                 }
 
@@ -566,6 +594,7 @@ class WeaknessCalculationService(
         val openingContext: OpeningContext?,
         val evalCp: Int?,
         val lastSeenAt: Instant?,
+        val timeControlStats: Map<String, com.chessecho.dto.TimeControlStats>? = null,
     ) {
         fun positionScope(chessAccountId: UUID): PracticalEvidenceScope =
             PracticalEvidenceScope(
