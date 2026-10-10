@@ -50,7 +50,7 @@ contract:
     - Guest imports and username-based reads ignore connection state.
     - Personal Progress requires the caller's current connection and scopes history to the user/account pair.
   - **Analysis and practice**:
-    - `/api/positions/weaknesses` exposes weakness reads; `/api/positions/{positionId}/progress` requires `playerColor`, a connected `accountId`, and the selected `minEvalLoss`.
+    - `/api/positions/weaknesses` exposes weakness reads (including time-control and phase partitioned stats); `/api/positions/{positionId}/progress` requires `playerColor`, a connected `accountId`, and the selected `minEvalLoss`.
     - `/api/puzzles`, `/api/puzzles/continuation`, `/api/puzzles/evaluate-move`, `/api/puzzles/attempt`, and `/api/puzzles/events` support practice.
   - **Position Progress**: Dated actual-game encounters form a separate historical baseline and one aggregate observation per interval started by a persisted `SOLVED` puzzle event. Intervals use `Game.playedAt`, remain reconstructible after late imports, and reuse `GameOutcomeNormalizer`; see `docs/specs/position-progress.md`.
   - **Long Decisions**: Individual occurrences expose reliable account-player decision durations derived from PGN clocks; the account-scoped API filters by broad time control and an inclusive absolute threshold. See `docs/specs/long-decision-occurrences.md`.
@@ -73,6 +73,7 @@ flow:
 
 invariant:
   - Position identity includes piece placement, side to move, castling rights, and en-passant availability.
+  - Partitioned statistics (time control and phase) are calculated in-memory and affect only their specific filters; they do not alter global candidate discovery thresholds or global totals.
   - Occurrence counts are scoped by account and player color.
   - Engine analysis is stored per position and shared across accounts; weakness ranking is computed per account.
   - `userId`, usernames, account UUIDs, and job UUIDs are never bearer credentials (`API_CONTRACT.md`).

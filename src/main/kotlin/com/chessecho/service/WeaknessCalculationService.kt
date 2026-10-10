@@ -159,6 +159,9 @@ class WeaknessCalculationService(
             val tcTimesReached = mutableMapOf<String, Int>()
             val tcMistakeCount = mutableMapOf<String, Int>()
             val tcMistakeLoss = mutableMapOf<String, Double>()
+            val phaseTimesReached = mutableMapOf<String, Int>()
+            val phaseMistakeCount = mutableMapOf<String, Int>()
+            val phaseMistakeLoss = mutableMapOf<String, Double>()
 
             for (occurrence in sortedOccurrences) {
                 val moveEvaluation =
@@ -178,6 +181,9 @@ class WeaknessCalculationService(
                     tcTimesReached[tc!!] = (tcTimesReached[tc] ?: 0) + 1
                 }
 
+                val phase = classifyPhase(aggregation.fen, occurrence.plyNumber)
+                phaseTimesReached[phase] = (phaseTimesReached[phase] ?: 0) + 1
+
                 if (evalLoss >= minEvalLoss) {
                     unweightedTotalLoss += evalLoss
                     val occurrenceDate = occurrence.game.playedAt ?: occurrence.createdAt
@@ -191,6 +197,8 @@ class WeaknessCalculationService(
                         tcMistakeCount[tc!!] = (tcMistakeCount[tc] ?: 0) + 1
                         tcMistakeLoss[tc] = (tcMistakeLoss[tc] ?: 0.0) + evalLoss
                     }
+                    phaseMistakeCount[phase] = (phaseMistakeCount[phase] ?: 0) + 1
+                    phaseMistakeLoss[phase] = (phaseMistakeLoss[phase] ?: 0.0) + evalLoss
                 }
             }
 
@@ -223,6 +231,18 @@ class WeaknessCalculationService(
             if (!(objectivePriority > 0.0)) {
                 continue
             }
+
+            val phaseStatsMap =
+                phaseTimesReached.mapValues { (phase, reached) ->
+                    val mCount = phaseMistakeCount[phase] ?: 0
+                    val totalLoss = phaseMistakeLoss[phase] ?: 0.0
+                    com.chessecho.dto.PhaseStats(
+                        timesReached = reached,
+                        mistakeCount = mCount,
+                        mistakeRate = if (reached > 0) mCount.toDouble() / reached else 0.0,
+                        averageLoss = if (mCount > 0) totalLoss / mCount else 0.0,
+                    )
+                }.takeIf { it.isNotEmpty() }
 
             val timeControlStats =
                 tcTimesReached.mapValues { (tc, reached) ->
@@ -259,6 +279,7 @@ class WeaknessCalculationService(
                     evalCp = aggregation.baselineEvalCp,
                     lastSeenAt = lastSeenAt,
                     timeControlStats = timeControlStats,
+                    phaseStats = phaseStatsMap,
                 ),
             )
         }
@@ -343,6 +364,7 @@ class WeaknessCalculationService(
                         evidenceCombination = priorityDecision.evidenceCombination,
                         practicalEvidence = positionEvidence,
                         timeControlStats = draft.timeControlStats,
+                        phaseStats = draft.phaseStats,
                     )
                 }
 
@@ -595,6 +617,7 @@ class WeaknessCalculationService(
         val evalCp: Int?,
         val lastSeenAt: Instant?,
         val timeControlStats: Map<String, com.chessecho.dto.TimeControlStats>? = null,
+        val phaseStats: Map<String, com.chessecho.dto.PhaseStats>? = null,
     ) {
         fun positionScope(chessAccountId: UUID): PracticalEvidenceScope =
             PracticalEvidenceScope(
@@ -613,5 +636,25 @@ class WeaknessCalculationService(
                 playerColor = playerColor,
                 decisionSan = san,
             )
+    }
+
+    private fun classifyPhase(
+        fen: String,
+        plyNumber: Int,
+    ): String {
+        val board = fen.substringBefore(" ")
+        val mmCount = board.count { it in "qQrRbBnN" }
+        val moveNumber = (plyNumber + 1) / 2
+
+        val ranks = board.split("/")
+        if (ranks.size < 8) return "OPENING" // fallback
+        val whiteFirstRank = ranks.last()
+        val blackEighthRank = ranks.first()
+
+        val backrankSparse = whiteFirstRank.count { it.isLetter() } < 4 || blackEighthRank.count { it.isLetter() } < 4
+
+        if (mmCount <= 6) return "ENDGAME"
+        if (mmCount <= 10 || backrankSparse || moveNumber > 14) return "MIDDLEGAME"
+        return "OPENING"
     }
 }

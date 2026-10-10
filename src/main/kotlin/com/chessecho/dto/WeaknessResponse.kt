@@ -29,9 +29,18 @@ data class WeaknessResponse(
     val practicalEvidence: PracticalEvidenceResponse,
     @JsonInclude(JsonInclude.Include.NON_NULL)
     val timeControlStats: Map<String, TimeControlStats>? = null,
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    val phaseStats: Map<String, PhaseStats>? = null,
 )
 
 data class TimeControlStats(
+    val timesReached: Int,
+    val mistakeCount: Int,
+    val mistakeRate: Double,
+    val averageLoss: Double,
+)
+
+data class PhaseStats(
     val timesReached: Int,
     val mistakeCount: Int,
     val mistakeRate: Double,
