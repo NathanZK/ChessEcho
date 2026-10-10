@@ -97,11 +97,17 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
     setColorFilter(activeColorFilter);
   }
 
+  const [timeControlFilter, setTimeControlFilter] = useState<'ALL' | 'BULLET' | 'BLITZ' | 'RAPID' | 'CLASSICAL'>('ALL');
+
   const [weaknessResult, setWeaknessResult] = useState<{
     rows: WeaknessResponse[];
     minEvalLoss: number;
   }>({ rows: [], minEvalLoss });
-  const weaknesses = weaknessResult.rows;
+  const rawWeaknesses = weaknessResult.rows;
+  const weaknesses = timeControlFilter === 'ALL' 
+    ? rawWeaknesses 
+    : rawWeaknesses.filter(w => w.timeControlStats && w.timeControlStats[timeControlFilter] && w.timeControlStats[timeControlFilter].timesReached > 0);
+
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -356,6 +362,23 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
             ))}
           </div>
 
+          {/* Time Control Filter */}
+          <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
+            {(['ALL', 'BULLET', 'BLITZ', 'RAPID', 'CLASSICAL'] as const).map((tc) => (
+              <button
+                key={tc}
+                onClick={() => setTimeControlFilter(tc)}
+                className={`px-3 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
+                  timeControlFilter === tc
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                {tc}
+              </button>
+            ))}
+          </div>
+
           {/* Shared Mistake Threshold Filter */}
           <div className="flex items-center space-x-2 bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800 text-xs font-semibold">
             <span className="text-slate-400">Mistake Threshold:</span>
@@ -443,6 +466,13 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
               const activeColorInFen = item.fen ? item.fen.split(' ')[1] : 'w';
               const playerColor: 'WHITE' | 'BLACK' =
                 activeColorInFen === 'b' ? 'BLACK' : activeColorInFen === 'w' ? 'WHITE' : 'WHITE';
+                
+              const tcStats = timeControlFilter !== 'ALL' && item.timeControlStats ? item.timeControlStats[timeControlFilter] : null;
+              const displayMistakeRate = tcStats ? tcStats.mistakeRate * 100 : item.mistakeRate;
+              const displayMistakeCount = tcStats ? tcStats.mistakeCount : item.mistakeCount;
+              const displayTimesReached = tcStats ? tcStats.timesReached : item.timesReached;
+              const displayAverageLoss = tcStats ? tcStats.averageLoss : item.averageLoss;
+
 
               return (
                 <div
@@ -509,21 +539,21 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                             <div className="text-[10px] text-slate-400 font-medium">Mistake Rate</div>
                             <div className="text-xs font-bold text-amber-400 mt-0.5 flex items-center justify-center gap-1">
                               <Flame className="w-3.5 h-3.5 text-amber-500" />
-                              {item.mistakeRate.toFixed(1)}% ({item.mistakeCount}x)
+                              {displayMistakeRate.toFixed(1)}% ({displayMistakeCount}x)
                             </div>
                           </div>
 
                           <div className="bg-slate-950/80 p-2 rounded-xl border border-slate-800">
                             <div className="text-[10px] text-slate-400 font-medium">Times Reached</div>
                             <div className="text-xs font-bold text-slate-200 mt-0.5">
-                              {item.timesReached}
+                              {displayTimesReached}
                             </div>
                           </div>
 
                           <div className="bg-slate-950/80 p-2 rounded-xl border border-slate-800">
-                            <div className="text-[10px] text-slate-400 font-medium">Avg Eval Loss</div>
+                            <div className="text-[10px] text-slate-400 font-medium">Avg Mistake Loss</div>
                             <div className="text-xs font-bold text-rose-400 mt-0.5">
-                              -{item.averageLoss.toFixed(2)} pawns
+                              -{displayAverageLoss.toFixed(2)} pawns
                             </div>
                           </div>
                         </div>

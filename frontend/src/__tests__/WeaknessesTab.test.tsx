@@ -413,4 +413,64 @@ describe('Weaknesses Tab MVP', () => {
       expect(container).toBeInTheDocument();
     });
   });
+  describe('5. Time Control Partitions UI', () => {
+    it('updates displayed statistics and filters out empty categories when a time control is selected', async () => {
+      const itemWithPartitions: WeaknessResponse = {
+        ...mockWeaknessItem,
+        timesReached: 10,
+        mistakeCount: 5,
+        mistakeRate: 50.0,
+        averageLoss: 1.0,
+        timeControlStats: {
+          'BLITZ': {
+            timesReached: 5,
+            mistakeCount: 2,
+            mistakeRate: 0.4,
+            averageLoss: 1.5,
+          },
+          'RAPID': {
+            timesReached: 5,
+            mistakeCount: 3,
+            mistakeRate: 0.6,
+            averageLoss: 0.8,
+          }
+        }
+      };
+
+      const emptyBlitzItem: WeaknessResponse = {
+        ...mockWeaknessItem,
+        positionId: 'w-pos-999',
+        timesReached: 10,
+        timeControlStats: {
+          'RAPID': {
+            timesReached: 10,
+            mistakeCount: 5,
+            mistakeRate: 0.5,
+            averageLoss: 1.0,
+          }
+        }
+      };
+
+      vi.mocked(api.fetchWeaknesses).mockResolvedValue([itemWithPartitions, emptyBlitzItem]);
+
+      render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
+
+      // Wait for list to load
+      await waitFor(() => {
+        expect(screen.getAllByText('50.0% (5x)')[0]).toBeInTheDocument(); // Global stat
+        expect(screen.getAllByText('Avg Mistake Loss').length).toBeGreaterThan(0); // Label check
+      });
+
+      // Change Time Control to BLITZ
+      const blitzFilterBtn = screen.getByRole('button', { name: /^BLITZ$/i });
+      fireEvent.click(blitzFilterBtn);
+
+      await waitFor(() => {
+        // Should only show one card now (emptyBlitzItem should be filtered out)
+        expect(screen.getByText('40.0% (2x)')).toBeInTheDocument(); // Partitioned stat
+        expect(screen.getByText('-1.50 pawns')).toBeInTheDocument(); // Partitioned average loss
+        expect(screen.queryByText('50.0% (5x)')).not.toBeInTheDocument(); // Global stat is gone
+      });
+    });
+  });
 });

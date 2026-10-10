@@ -324,6 +324,14 @@ export interface WeaknessResponse {
   evalCp?: number;
   lastSeenAt?: string;
   practicalEvidence?: PracticalEvidenceResponse | null;
+  timeControlStats?: Record<string, TimeControlStats>;
+}
+
+export interface TimeControlStats {
+  timesReached: number;
+  mistakeCount: number;
+  mistakeRate: number;
+  averageLoss: number;
 }
 
 export type LongDecisionTimeControl = 'BULLET' | 'BLITZ' | 'RAPID' | 'CLASSICAL';
