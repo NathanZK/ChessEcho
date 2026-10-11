@@ -11,6 +11,7 @@ jobs:
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
+      docker: ${{ steps.filter.outputs.docker }}
     steps:
       - uses: actions/checkout@v4
       - name: Reject tracked agent workflow runtime state
@@ -41,6 +42,16 @@ jobs:
               - 'frontend/**'
               - '.github/workflows/ci.yml'
               - 'API_CONTRACT.md'
+            docker:
+              - 'Dockerfile'
+              - '.dockerignore'
+              - 'src/**'
+              - 'gradle/**'
+              - 'build.gradle.kts'
+              - 'settings.gradle.kts'
+              - 'gradlew'
+              - 'gradlew.bat'
+              - '.github/workflows/ci.yml'
   build:
     needs: changes
     if: ${{ needs.changes.outputs.backend == 'true' }}
@@ -73,3 +84,23 @@ jobs:
       - run: npx tsc --noEmit
       - run: npx vitest run
       - run: npm run build
+
+  docker:
+    needs: changes
+    if: ${{ needs.changes.outputs.docker == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend Docker image
+        run: docker build -t chessecho-backend:test .
+      - name: Smoke check container runtime and app.jar
+        run: |
+          docker run --rm --entrypoint java chessecho-backend:test -version
+          docker run --rm --entrypoint test chessecho-backend:test -s /app/app.jar
+      - name: Smoke check Stockfish UCI handshake
+        run: |
+          set -eo pipefail
+          output=$(printf "uci\nquit\n" | timeout 15s docker run --rm -i --entrypoint stockfish chessecho-backend:test)
+          echo "$output"
+          echo "$output" | grep -q "uciok"
+

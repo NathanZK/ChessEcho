@@ -111,20 +111,11 @@ Data is persisted in a named Docker volume (`postgres_data`).
 
 ### 4. Start the Backend
 
-**Option A — Docker (recommended)**
+Running the backend requires the PostgreSQL database to be running first (`make db-up`).
 
-```bash
-make app-build   # builds the Docker image
-make app-up      # starts the application container on port 8080
-```
+**Option A — Run locally with Gradle (recommended for development)**
 
-Or start both database and application together:
-
-```bash
-make up
-```
-
-**Option B — Run locally with Gradle**
+This is the standard inner loop for backend development, offering fast compilation, incremental builds, and IDE debugging. Requires Java 21 and Stockfish installed locally.
 
 ```bash
 CHESS_PUBAPI_USERNAME=your_chesscom_username \
@@ -139,7 +130,34 @@ SPRING_DATASOURCE_PASSWORD=chessecho_pass \
 >
 > **Note:** The default `SPRING_DATASOURCE_URL` in `application.yml` points to `postgres:5432` (the Docker Compose hostname). When running the backend outside Docker, you must override the URL to `localhost:5432` as shown above.
 
+**Option B — Docker (container workflow)**
 
+Runs the backend inside Docker without requiring a local Java 21 JDK or Stockfish installation, useful for verifying container parity. Local image building is optional and not required for normal Gradle-based development.
+
+```bash
+make app-build   # builds the Docker image
+make app-up      # starts the application container on port 8080
+```
+
+Or start both database and application together:
+
+```bash
+make up
+```
+
+To inspect container logs:
+
+```bash
+make app-logs          # follow application logs
+make app-logs-static   # print last 50 application log lines
+make db-logs           # follow database logs
+```
+
+To stop only the application container:
+
+```bash
+make app-down
+```
 
 The backend starts on **http://localhost:8080**.
 Swagger UI is available at **http://localhost:8080/swagger-ui.html**.
@@ -162,7 +180,7 @@ NEXT_PUBLIC_API_URL=http://your-backend-host/api npm run dev
 ### Stop Everything
 
 ```bash
-make down
+make down   # stops and removes both application and database containers
 ```
 
 ---

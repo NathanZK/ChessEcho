@@ -22,7 +22,7 @@ RUN ./gradlew bootJar -x test --no-daemon
 # Pin base image to specific digest for reproducible builds and security auditing
 FROM eclipse-temurin:21-jre-alpine@sha256:3f08b13888f595cc49edabea7250ba69499ba25602b267da591720769400e08c
 WORKDIR /app
-RUN apk add --no-cache --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing stockfish || true
+RUN apk add --no-cache --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing stockfish
 COPY --from=builder /app/build/libs/*.jar app.jar
 EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "app.jar"]
