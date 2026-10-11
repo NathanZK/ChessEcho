@@ -4,6 +4,16 @@ name: CI
   pull_request:
     branches:
       - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   changes:
@@ -14,6 +24,8 @@ jobs:
       docker: ${{ steps.filter.outputs.docker }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Reject tracked agent workflow runtime state
         run: |
           if [ -n "$(git ls-files -- '.agent-workflow/**')" ]; then
@@ -33,6 +45,7 @@ jobs:
               - 'gradlew'
               - 'gradlew.bat'
               - 'Dockerfile'
+              - '.dockerignore'
               - 'docker-compose.yml'
               - 'Makefile'
               - '.env.example'
@@ -86,9 +99,9 @@ jobs:
       - run: npm run build
 
   docker:
-    needs: changes
+    needs: [changes, build]
     if: ${{ needs.changes.outputs.docker == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
       - name: Build backend Docker image
@@ -103,4 +116,17 @@ jobs:
           output=$(printf "uci\nquit\n" | timeout 15s docker run --rm -i --entrypoint stockfish chessecho-backend:test)
           echo "$output"
           echo "$output" | grep -q "uciok"
+      - name: Log in to Docker Hub
+        if: github.repository == 'NathanZK/ChessEcho' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Publish backend Docker image
+        if: github.repository == 'NathanZK/ChessEcho' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          docker tag chessecho-backend:test nathanzk/chessecho-backend:sha-${{ github.sha }}
+          docker tag chessecho-backend:test nathanzk/chessecho-backend:latest
+          docker push nathanzk/chessecho-backend:sha-${{ github.sha }}
+          docker push nathanzk/chessecho-backend:latest
 
