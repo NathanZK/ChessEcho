@@ -100,7 +100,14 @@ jobs:
 
   docker:
     needs: [changes, build]
-    if: ${{ needs.changes.outputs.docker == 'true' }}
+    if: |
+      always() &&
+      needs.changes.result == 'success' &&
+      needs.changes.outputs.docker == 'true' &&
+      (
+        (needs.changes.outputs.backend == 'true' && needs.build.result == 'success') ||
+        (needs.changes.outputs.backend == 'false' && needs.build.result == 'skipped')
+      )
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
@@ -129,4 +136,23 @@ jobs:
           docker tag chessecho-backend:test nathanzk/chessecho-backend:latest
           docker push nathanzk/chessecho-backend:sha-${{ github.sha }}
           docker push nathanzk/chessecho-backend:latest
+
+  ci-gate:
+    name: CI Gate
+    needs: [changes, build, frontend, docker]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify component job results
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          BACKEND_FILTER: ${{ needs.changes.outputs.backend }}
+          BACKEND_RESULT: ${{ needs.build.result }}
+          FRONTEND_FILTER: ${{ needs.changes.outputs.frontend }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+          DOCKER_FILTER: ${{ needs.changes.outputs.docker }}
+          DOCKER_RESULT: ${{ needs.docker.result }}
+        run: ./scripts/ci_gate.sh
 
