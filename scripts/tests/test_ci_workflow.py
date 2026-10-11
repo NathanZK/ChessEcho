@@ -136,5 +136,67 @@ class DependencyReviewWorkflowTest(unittest.TestCase):
         self.assertEqual(step.get("with", {}).get("fail-on-severity"), "high")
 
 
+class CodeqlWorkflowTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.workflow_path = REPOSITORY_ROOT / ".github" / "workflows" / "codeql.yml"
+        cls.raw_content = cls.workflow_path.read_text(encoding="utf-8")
+        cls.workflow = yaml.safe_load(cls.raw_content)
+
+    def test_workflow_triggers_and_permissions(self):
+        self.assertIn("'on':", self.raw_content)
+        triggers = self.workflow.get("on") or self.workflow.get(True)
+        self.assertIsInstance(triggers, dict)
+        self.assertIn("push", triggers)
+        self.assertEqual(triggers["push"]["branches"], ["main"])
+        self.assertIn("pull_request", triggers)
+        self.assertEqual(triggers["pull_request"]["branches"], ["main"])
+        self.assertIn("schedule", triggers)
+
+        permissions = self.workflow.get("permissions", {})
+        self.assertEqual(permissions.get("security-events"), "write")
+        self.assertEqual(permissions.get("contents"), "read")
+
+    def test_matrix_languages_and_build_modes(self):
+        jobs = self.workflow.get("jobs", {})
+        self.assertIn("analyze", jobs)
+        job = jobs["analyze"]
+        strategy = job.get("strategy", {})
+        matrix = strategy.get("matrix", {})
+        matrix_include = matrix.get("include", [])
+
+        lang_to_mode = {item["language"]: item["build-mode"] for item in matrix_include}
+        self.assertIn("actions", lang_to_mode)
+        self.assertEqual(lang_to_mode["actions"], "none")
+
+        self.assertIn("javascript-typescript", lang_to_mode)
+        self.assertEqual(lang_to_mode["javascript-typescript"], "none")
+
+        self.assertIn("python", lang_to_mode)
+        self.assertEqual(lang_to_mode["python"], "none")
+
+        self.assertIn("java-kotlin", lang_to_mode)
+        self.assertEqual(lang_to_mode["java-kotlin"], "manual")
+
+    def test_manual_build_steps_configured(self):
+        jobs = self.workflow.get("jobs", {})
+        job = jobs["analyze"]
+        steps = job.get("steps", [])
+
+        # Check Java 21 setup step
+        java_steps = [s for s in steps if "actions/setup-java" in s.get("uses", "")]
+        self.assertTrue(len(java_steps) >= 1, "Expected actions/setup-java step")
+        java_step = java_steps[0]
+        self.assertEqual(str(java_step.get("with", {}).get("java-version")), "21")
+        self.assertIn("matrix.build-mode == 'manual'", java_step.get("if", ""))
+
+        # Check build step
+        build_steps = [s for s in steps if "./gradlew" in s.get("run", "")]
+        self.assertTrue(len(build_steps) >= 1, "Expected ./gradlew build step")
+        build_step = build_steps[0]
+        self.assertIn("matrix.build-mode == 'manual'", build_step.get("if", ""))
+
+
 if __name__ == "__main__":
     unittest.main()
+
