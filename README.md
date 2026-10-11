@@ -159,6 +159,65 @@ To stop only the application container:
 make app-down
 ```
 
+**Option C — Run pre-built Docker image from Docker Hub (no local build)**
+
+Runs the published backend container alongside PostgreSQL without needing to clone the source repository or build the image locally.
+
+> **Note:** The pre-built Docker image (`nathanzk/chessecho-backend:latest`) is published natively for **`linux/arm64` (Apple Silicon)**. If you are on a different architecture, use Option A (local Gradle) or Option B (local Docker build).
+
+1. **Create a shared network:**
+   Containers must share a user-defined network so the backend can resolve the database hostname (`chessecho-postgres`) via Docker DNS:
+   ```bash
+   docker network create chessecho-net
+   ```
+
+2. **Start PostgreSQL:**
+   ```bash
+   docker run -d \
+     --name chessecho-postgres \
+     --network chessecho-net \
+     -p 5432:5432 \
+     -e POSTGRES_DB=chessecho \
+     -e POSTGRES_USER=chessecho \
+     -e POSTGRES_PASSWORD=chessecho_pass \
+     -v postgres_data:/var/lib/postgresql/data \
+     postgres:16-alpine
+   ```
+
+3. **Start the pre-built backend:**
+   ```bash
+   docker run -d \
+     --name chessecho-app \
+     --network chessecho-net \
+     -p 8080:8080 \
+     -e SPRING_DATASOURCE_URL=jdbc:postgresql://chessecho-postgres:5432/chessecho \
+     -e SPRING_DATASOURCE_USERNAME=chessecho \
+     -e SPRING_DATASOURCE_PASSWORD=chessecho_pass \
+     -e STOCKFISH_PATH=stockfish \
+     -e CHESS_PUBAPI_USERNAME=your_chesscom_username \
+     -e CHESS_PUBAPI_CONTACT=your_email@example.com \
+     nathanzk/chessecho-backend:latest
+   ```
+
+4. **Inspect logs:**
+   ```bash
+   docker logs chessecho-app -f
+   ```
+
+5. **Update to the latest published image:**
+   ```bash
+   docker pull nathanzk/chessecho-backend:latest
+   docker stop chessecho-app && docker rm chessecho-app
+   # Re-run step 3
+   ```
+
+6. **Stop and tear down the standalone environment:**
+   ```bash
+   docker stop chessecho-app chessecho-postgres
+   docker rm chessecho-app chessecho-postgres
+   docker network rm chessecho-net
+   ```
+
 The backend starts on **http://localhost:8080**.
 Swagger UI is available at **http://localhost:8080/swagger-ui.html**.
 
