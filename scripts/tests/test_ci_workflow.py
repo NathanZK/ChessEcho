@@ -79,5 +79,62 @@ class CiWorkflowStructureTest(unittest.TestCase):
         self.assertIn("DOCKER_RESULT", env)
 
 
+class DependencySubmissionWorkflowTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.workflow_path = REPOSITORY_ROOT / ".github" / "workflows" / "dependency-submission.yml"
+        cls.raw_content = cls.workflow_path.read_text(encoding="utf-8")
+        cls.workflow = yaml.safe_load(cls.raw_content)
+
+    def test_workflow_triggers_and_permissions(self):
+        self.assertIn("'on':", self.raw_content)
+        triggers = self.workflow.get("on") or self.workflow.get(True)
+        self.assertIsInstance(triggers, dict)
+        self.assertIn("push", triggers)
+        self.assertEqual(triggers["push"]["branches"], ["main"])
+        self.assertIn("workflow_dispatch", triggers)
+        self.assertEqual(self.workflow.get("permissions"), {"contents": "write"})
+
+    def test_job_and_step_configuration(self):
+        jobs = self.workflow.get("jobs", {})
+        self.assertIn("dependency-submission", jobs)
+        job = jobs["dependency-submission"]
+        self.assertEqual(job.get("runs-on"), "ubuntu-latest")
+        steps = job.get("steps", [])
+        uses = [s.get("uses", "") for s in steps]
+        self.assertTrue(any("actions/checkout" in u for u in uses))
+        self.assertTrue(any("actions/setup-java" in u for u in uses))
+        self.assertTrue(any("gradle/actions/dependency-submission" in u for u in uses))
+
+
+class DependencyReviewWorkflowTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.workflow_path = REPOSITORY_ROOT / ".github" / "workflows" / "dependency-review.yml"
+        cls.raw_content = cls.workflow_path.read_text(encoding="utf-8")
+        cls.workflow = yaml.safe_load(cls.raw_content)
+
+    def test_workflow_triggers_and_permissions(self):
+        self.assertIn("'on':", self.raw_content)
+        triggers = self.workflow.get("on") or self.workflow.get(True)
+        self.assertIsInstance(triggers, dict)
+        self.assertIn("pull_request", triggers)
+        self.assertEqual(triggers["pull_request"]["branches"], ["main"])
+        self.assertEqual(self.workflow.get("permissions"), {"contents": "read"})
+
+    def test_job_and_step_configuration(self):
+        jobs = self.workflow.get("jobs", {})
+        self.assertIn("dependency-review", jobs)
+        job = jobs["dependency-review"]
+        self.assertEqual(job.get("runs-on"), "ubuntu-latest")
+        steps = job.get("steps", [])
+        uses = [s.get("uses", "") for s in steps]
+        self.assertTrue(any("actions/checkout" in u for u in uses))
+        review_steps = [s for s in steps if "actions/dependency-review-action" in s.get("uses", "")]
+        self.assertEqual(len(review_steps), 1)
+        step = review_steps[0]
+        self.assertEqual(step.get("with", {}).get("fail-on-severity"), "high")
+
+
 if __name__ == "__main__":
     unittest.main()
