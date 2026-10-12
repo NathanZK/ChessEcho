@@ -36,25 +36,62 @@ relevant environment) is deployed, this convention no longer applies for that
 work: new schema changes must be added as new, additive, versioned Flyway
 migrations, and the existing baseline must not be rewritten.
 
-## Minimal issue contract
+## Minimal issue contract and information layering
 
-New product issues should use the structure in
+Product issues use the structure in
 [`.github/ISSUE_TEMPLATE/product-issue.md`](../../.github/ISSUE_TEMPLATE/product-issue.md):
-product intent, acceptance criteria, repository constraints (including
-deployment/migration state), and validation. The template records the
-information an implementation agent needs without prescribing architecture.
+problem, goal, relevant failure modes, repository constraints, and observable
+acceptance criteria.
 
-Each acceptance criterion must pair an observable outcome with an appropriate
-verification method and evidence an independent reviewer can inspect or
-reproduce. Follow the template's criterion-specific evidence guidance: identify
-relevant revision/setup/state, state reachability, and limitations, and ensure
-combined evidence establishes the same claimed behavior. Rendered UI criteria
-require visual evidence; user-flow criteria also require evidence of the
-specified flow. Screenshots do not prove interaction/reachability, and interaction
-tests do not prove visual correctness. Non-rendered work uses suitable non-visual
-evidence. Keep auxiliary scope/context details conditional on material relevance
-and applicable validation separate from acceptance evidence; implementer reports
-and self-confirming tests do not establish the intended outcome.
+To keep issues scanable and avoid redundant documentation, responsibilities are
+layered across the workflow:
+
+- **Issue:** Defines *what* and *why*—observable symptoms, desired outcome,
+  concrete failure modes, repository constraints, and testable acceptance
+  criteria. Does not prescribe detailed internal architecture or test step sequences.
+- **Specification (`docs/staging/specs/`):** Defines technical contracts, component
+  interactions, data models, schema changes, and error shapes before implementation.
+- **Plan (`docs/staging/plans/`):** Decomposes work into executable TDD tasks,
+  listing modified files, task sequencing, and targeted test commands.
+- **Pull request (`.github/PULL_REQUEST_TEMPLATE.md`):** Summarizes what changed
+  and provides independently reviewable verification evidence.
+
+## Verification and review standards
+
+Reviewers and agents follow shared verification standards rather than
+re-specifying evidence doctrine in every issue:
+
+### Evidence doctrine
+
+- **Self-reports are not evidence:** An implementer's report of "passed" or "manually
+  verified" is a claim. Independent review requires inspectable supporting evidence
+  (test executions, command outputs, visual artifacts, or empirical measurements).
+- **Behavioral testing:** Tests must exercise the intended behavior rather than
+  merely asserting the implementation's own output or mocking away the unit under test.
+- **Visual vs. interaction evidence:** Rendered UI changes require reviewable visual
+  evidence from the running application (e.g. screenshots with sufficient surrounding
+  context). Screenshots demonstrate visual appearance under captured conditions, not
+  reachability or interaction. Interactive flows require reproducible interaction tests
+  or explicit manual steps. Non-rendered work requires suitable non-visual evidence.
+- **Attributable evidence:** Verification artifacts must be attributable to the
+  reviewed revision and state, identifying any mocks, fixtures, or limitations.
+
+### Risk-informed verification
+
+Verification rigor should scale proportionately with the change's risk and failure modes:
+
+- **Routine changes:** Verified with standard unit/component tests, linting, and type checking.
+- **Rendered UI state:** Verified with running-app visual proof plus flow interaction coverage.
+- **Concurrency & data integrity:** Multi-worker, database, or race-condition risks
+  warrant targeted integration tests (e.g. PostgreSQL Testcontainers).
+- **Consequential business logic:** High-consequence, algorithmically dense business rules,
+  scoring formulas, or security boundaries may specify targeted mutation testing
+  (via PIT or Stryker) to audit whether assertions detect plausible logic errors.
+  When mutation testing is performed, surviving equivalent or benign mutants must be
+  documented rather than forcing an arbitrary 100% kill score. Mutation testing is
+  an opt-in, risk-driven tool, not a mandatory gate for routine changes.
+
+## Out-of-scope and workflow conventions
 
 Repository conventions and approved task scope take precedence over workflow defaults. Do not create repository conventions or artifacts, including documentation or changelogs, solely to satisfy a workflow unless the approved scope or an existing repository convention calls for them.
 
