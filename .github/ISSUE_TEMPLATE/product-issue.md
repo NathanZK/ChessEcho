@@ -45,43 +45,19 @@ or file ownership merely to fill out the issue.
 
 ## Acceptance criteria
 
-- For each criterion, state the observable outcome, appropriate verification
-  method, and evidence an independent reviewer can inspect or reproduce.
-  Identify what is checked, the relevant setup/state, and the expected result.
-  Methods may differ or combine: programmatic checks, rendered UI/UX inspection,
-  repository/documentation inspection, or empirical analysis. Use only those
-  needed to establish the criterion, not every evidence type.
-
-Evidence must be attributable to the reviewed implementation. Where relevant,
-identify the reviewed revision, setup/state, how the state was reached, and
-mocks, fixtures, manual state changes, or other limitations affecting what the
-evidence proves. The relationship between criterion, method, setup/state, and
-evidence must be inspectable or reproducible. Multiple evidence items must
-establish the same claimed behavior/state, not merely look convincing separately
-while describing unrelated revisions, constructed states, or execution paths.
-
-Changed rendered UI appearance/state requires reviewable visual evidence from
-the running application; where screenshots are the available mechanism, include
-a screenshot of the relevant state with enough surrounding UI to judge the
-claimed property. A screenshot proves appearance only under its captured
-conditions, not interaction or reachability. Interactive criteria also require
-reproducible interaction evidence; interaction tests do not establish visual
-correctness. For user-flow criteria, establish that the rendered state is reached
-through the specified flow, not just an independently constructed component/state.
-Backend-only and non-rendered criteria need appropriate non-visual evidence, not
-screenshots. This does not mandate end-to-end tests, a real backend for every
-screenshot, or a universal browser/device matrix.
-
-An implementer's "passed" or "manually verified" report is not itself evidence,
-even if it references a test or screenshot. Inspect the supporting evidence:
-tests must exercise the intended behavior rather than merely assert the
-implementation's own output or mock away the behavior being changed.
+- List observable, verifiable outcomes defining success. State what is checked,
+  the relevant condition/state, and the expected result.
+- State any essential task-specific verification methods (for example, running
+  UI inspection, concurrency integration tests, or targeted mutation testing
+  for consequential business logic).
+- Follow the shared verification and evidence standards in
+  docs/engineering/repository-conventions.md.
 
 ## Validation
 
-List applicable validation separately from criterion-specific evidence. Record
-exact commands and results, or manual checks and observed outcomes; a passing
-lint/typecheck/build or test suite does not by itself establish every criterion.
+List applicable validation commands (or non-default/targeted checks). A passing
+lint, type-check, build, or test suite does not by itself establish that every
+criterion has been satisfied. Standard repository validation:
 
 - Backend: `./gradlew ktlintCheck` and `./gradlew test` (or narrower,
   targeted commands if this issue does not touch the backend).
@@ -91,5 +67,5 @@ lint/typecheck/build or test suite does not by itself establish every criterion.
 
 <!--
 See docs/engineering/repository-conventions.md for the default pre-deployment
-assumption and the baseline-first migration convention.
+assumption, baseline-first migration convention, and evidence standards.
 -->
