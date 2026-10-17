@@ -181,6 +181,7 @@ class EngineAnalysisServiceTest {
             eq(analysisId),
             eq("c4"),
             eq(10),
+            anyOrNull(),
             eq(0.30),
         )
         // The write transaction must re-read authoritative persisted state after the idempotent insert
@@ -253,7 +254,7 @@ class EngineAnalysisServiceTest {
         verify(stockfishService, never()).analyze(any(), any(), any())
         verify(engineAnalysisRepository, never()).save(any())
         verify(engineAnalysisRepository, never()).saveAndFlush(any())
-        verify(engineAnalysisRepository, never()).insertMoveEvaluationIfAbsent(any(), any(), any(), anyOrNull(), anyOrNull())
+        verify(engineAnalysisRepository, never()).insertMoveEvaluationIfAbsent(any(), any(), any(), anyOrNull(), anyOrNull(), anyOrNull())
     }
 
     @Test
@@ -516,5 +517,241 @@ class EngineAnalysisServiceTest {
         analyzeWithOverride.call(engineAnalysisService, position, 1)
 
         verify(stockfishService).analyzeMultiPv(fen, 16, 1)
+    }
+
+    @Test
+    fun `calculateEvalLoss handles Scenario 1 Centipawn vs Centipawn`() {
+        // Equal evaluation
+        assertEquals(0.0, EngineAnalysisService.calculateEvalLoss(EvalScore(100, null), EvalScore(100, null)))
+        // Exact mistake boundary (0.80 pawns)
+        assertEquals(0.80, EngineAnalysisService.calculateEvalLoss(EvalScore(100, null), EvalScore(20, null)))
+        // Better move played
+        assertEquals(0.0, EngineAnalysisService.calculateEvalLoss(EvalScore(100, null), EvalScore(200, null)))
+        // Cap at 20.0
+        assertEquals(20.0, EngineAnalysisService.calculateEvalLoss(EvalScore(500, null), EvalScore(-2000, null)))
+    }
+
+    @Test
+    fun `calculateEvalLoss handles Scenario 2 Winning Mate vs Winning Mate Prolongation`() {
+        // Equal mate
+        assertEquals(0.0, EngineAnalysisService.calculateEvalLoss(EvalScore(null, 1), EvalScore(null, 1)))
+        // Faster mate found
+        assertEquals(0.0, EngineAnalysisService.calculateEvalLoss(EvalScore(null, 3), EvalScore(null, 1)))
+        // Slight prolongation (mate 2 instead of mate 1)
+        assertEquals(0.10, EngineAnalysisService.calculateEvalLoss(EvalScore(null, 1), EvalScore(null, 2)))
+        // Mate 3 instead of mate 1
+        assertEquals(0.20, EngineAnalysisService.calculateEvalLoss(EvalScore(null, 1), EvalScore(null, 3)))
+        // Mate 5 instead of mate 1
+        assertEquals(0.40, EngineAnalysisService.calculateEvalLoss(EvalScore(null, 1), EvalScore(null, 5)))
+        // Capped at 0.50 (< 0.80, remains acceptable move)
+        assertEquals(0.50, EngineAnalysisService.calculateEvalLoss(EvalScore(null, 1), EvalScore(null, 10)))
+    }
+
+    @Test
+    fun `calculateEvalLoss handles Scenario 3 Winning Mate vs Centipawns`() {
+        // Threw away forced mate to high advantage
+        assertEquals(8.0, EngineAnalysisService.calculateEvalLoss(EvalScore(null, 1), EvalScore(800, null)))
+        assertEquals(8.0, EngineAnalysisService.calculateEvalLoss(EvalScore(null, 1), EvalScore(500, null)))
+        // Threw away forced mate to slight advantage
+        assertEquals(11.0, EngineAnalysisService.calculateEvalLoss(EvalScore(null, 1), EvalScore(200, null)))
+        // Threw away forced mate to equal position
+        assertEquals(13.0, EngineAnalysisService.calculateEvalLoss(EvalScore(null, 1), EvalScore(0, null)))
+        // Threw away forced mate to losing position (capped at 15.0)
+        assertEquals(15.0, EngineAnalysisService.calculateEvalLoss(EvalScore(null, 1), EvalScore(-300, null)))
+    }
+
+    @Test
+    fun `calculateEvalLoss handles Scenario 4 Winning Mate vs Losing Mate`() {
+        // Blundered into mate in 1 (highest loss)
+        assertEquals(19.5, EngineAnalysisService.calculateEvalLoss(EvalScore(null, 1), EvalScore(null, -1)))
+        assertEquals(19.0, EngineAnalysisService.calculateEvalLoss(EvalScore(null, 1), EvalScore(null, -2)))
+        assertEquals(17.5, EngineAnalysisService.calculateEvalLoss(EvalScore(null, 1), EvalScore(null, -5)))
+        // Capped at 15.0 for slow mate
+        assertEquals(15.0, EngineAnalysisService.calculateEvalLoss(EvalScore(null, 1), EvalScore(null, -10)))
+    }
+
+    @Test
+    fun `calculateEvalLoss handles Scenario 5 Centipawns vs Losing Mate`() {
+        // From +2.00 into mate in 1
+        assertEquals(16.5, EngineAnalysisService.calculateEvalLoss(EvalScore(200, null), EvalScore(null, -1)))
+        assertEquals(14.5, EngineAnalysisService.calculateEvalLoss(EvalScore(200, null), EvalScore(null, -5)))
+        // From 0.00 into mate in 1
+        assertEquals(14.5, EngineAnalysisService.calculateEvalLoss(EvalScore(0, null), EvalScore(null, -1)))
+        assertEquals(12.5, EngineAnalysisService.calculateEvalLoss(EvalScore(0, null), EvalScore(null, -5)))
+        // From -2.00 into mate in 1
+        assertEquals(14.5, EngineAnalysisService.calculateEvalLoss(EvalScore(-200, null), EvalScore(null, -1)))
+        // Cap at 20.0
+        assertEquals(20.0, EngineAnalysisService.calculateEvalLoss(EvalScore(1500, null), EvalScore(null, -1)))
+    }
+
+    @Test
+    fun `calculateEvalLoss handles Scenario 6 Centipawns vs Winning Mate`() {
+        assertEquals(0.0, EngineAnalysisService.calculateEvalLoss(EvalScore(200, null), EvalScore(null, 2)))
+    }
+
+    @Test
+    fun `calculateEvalLoss handles Scenario 7 Losing Mate Defense Shortening vs Prolongation`() {
+        // Equal defense
+        assertEquals(0.0, EngineAnalysisService.calculateEvalLoss(EvalScore(null, -5), EvalScore(null, -5)))
+        // Prolonged defense (held out longer)
+        assertEquals(0.0, EngineAnalysisService.calculateEvalLoss(EvalScore(null, -5), EvalScore(null, -6)))
+        // Shortened defense by 1 move (mate in 4 instead of 5 -> 1.0 >= 0.80)
+        assertEquals(1.0, EngineAnalysisService.calculateEvalLoss(EvalScore(null, -5), EvalScore(null, -4)))
+        // Shortened defense by 2 moves (mate in 3 instead of 5 -> 2.0)
+        assertEquals(2.0, EngineAnalysisService.calculateEvalLoss(EvalScore(null, -5), EvalScore(null, -3)))
+        // Shortened defense to mate in 1 (mate in 1 instead of 5 -> 4.0)
+        assertEquals(4.0, EngineAnalysisService.calculateEvalLoss(EvalScore(null, -5), EvalScore(null, -1)))
+        // Capped at 5.0
+        assertEquals(5.0, EngineAnalysisService.calculateEvalLoss(EvalScore(null, -10), EvalScore(null, -1)))
+    }
+
+    @Test
+    fun `calculateEvalLoss handles Scenario 8 Losing Mate Escape vs Inconclusive Horizon Effect`() {
+        // Proven escape to winning mate
+        assertEquals(0.0, EngineAnalysisService.calculateEvalLoss(EvalScore(null, -5), EvalScore(null, 2)))
+        // Proven escape to equal or positive centipawns
+        assertEquals(0.0, EngineAnalysisService.calculateEvalLoss(EvalScore(null, -5), EvalScore(0, null)))
+        assertEquals(0.0, EngineAnalysisService.calculateEvalLoss(EvalScore(null, -5), EvalScore(150, null)))
+        // Inconclusive horizon effect (negative centipawns): cannot prove escape, returns null
+        kotlin.test.assertNull(EngineAnalysisService.calculateEvalLoss(EvalScore(null, -5), EvalScore(-500, null)))
+    }
+
+    @Test
+    fun `calculateEvalLoss handles Precedence, Nulls, and Semantic Equality`() {
+        // Null / missing evaluations strictly return null, never 0.0
+        kotlin.test.assertNull(EngineAnalysisService.calculateEvalLoss(null, EvalScore(100, null)))
+        kotlin.test.assertNull(EngineAnalysisService.calculateEvalLoss(EvalScore(100, null), null))
+        kotlin.test.assertNull(EngineAnalysisService.calculateEvalLoss(EvalScore(null, null), EvalScore(100, null)))
+        kotlin.test.assertNull(EngineAnalysisService.calculateEvalLoss(EvalScore(100, null), EvalScore(null, null)))
+        // Illegal mate = 0 returns null
+        kotlin.test.assertNull(EngineAnalysisService.calculateEvalLoss(EvalScore(null, 0), EvalScore(100, null)))
+        kotlin.test.assertNull(EngineAnalysisService.calculateEvalLoss(EvalScore(100, null), EvalScore(null, 0)))
+        // Semantic equality: mate takes precedence over cp
+        assertEquals(0.0, EngineAnalysisService.calculateEvalLoss(EvalScore(500, 2), EvalScore(100, 2)))
+    }
+
+    @Test
+    fun `analyzePosition full analysis populates mate evals with mutual exclusivity without fallback`() {
+        val positionId = UUID.randomUUID()
+        val fen = "6k1/5ppp/8/8/8/8/5PPP/4R1K1 w - - 0 1"
+        val position = Position(id = positionId, hash = "mate_pos", fen = fen)
+
+        whenever(positionOccurrenceRepository.findDistinctMovesByPositionId(positionId)).thenReturn(listOf("Re8#", "h3"))
+        whenever(engineAnalysisRepository.findByPositionIdWithMoveEvaluations(positionId)).thenReturn(null)
+
+        val engineCandidates =
+            listOf(
+                EngineCandidate("Re8#", EvalScore(cp = null, mate = 1)),
+                EngineCandidate("h3", EvalScore(cp = 200, mate = null)),
+            )
+        whenever(stockfishService.analyzeMultiPv(fen, 16, 5)).thenReturn(engineCandidates)
+
+        engineAnalysisService.analyzePosition(position)
+
+        val captor = argumentCaptor<EngineAnalysis>()
+        verify(engineAnalysisRepository, times(1)).saveAndFlush(captor.capture())
+
+        val saved = captor.firstValue
+        assertEquals("Re8#", saved.bestMove)
+        assertEquals(1, saved.bestMoveEvalMate)
+        kotlin.test.assertNull(saved.bestMoveEvalCp)
+        assertEquals(1, saved.baselineEvalMate)
+        kotlin.test.assertNull(saved.baselineEvalCp)
+
+        val re8Eval = saved.moveEvaluations.find { it.move == "Re8#" }
+        val h3Eval = saved.moveEvaluations.find { it.move == "h3" }
+
+        assertNotNull(re8Eval)
+        assertNotNull(h3Eval)
+
+        assertEquals(1, re8Eval.evalMate)
+        kotlin.test.assertNull(re8Eval.evalCp)
+        assertEquals(0.0, re8Eval.evalLossFromBest)
+
+        kotlin.test.assertNull(h3Eval.evalMate)
+        assertEquals(200, h3Eval.evalCp)
+        assertEquals(11.0, h3Eval.evalLossFromBest)
+    }
+
+    @Test
+    fun `completeMissingMoveEvaluations with mate baseline evaluates candidates against mate and persists evalMate without 0_0 fallback`() {
+        val positionId = UUID.randomUUID()
+        val fen = "8/8/8/8/8/8/8/4k2K w - - 0 1"
+        val existingAnalysisId = UUID.randomUUID()
+        val existingAnalysis =
+            EngineAnalysis(
+                id = existingAnalysisId,
+                position = Position(id = positionId, hash = "losing_pos", fen = fen),
+                depth = 16,
+                bestMove = "Kh2",
+                bestMoveEvalMate = -5,
+                baselineEvalMate = -5,
+            )
+
+        whenever(positionOccurrenceRepository.findDistinctMovesByPositionId(positionId))
+            .thenReturn(listOf("Kh2", "Kf8", "h6", "g6"))
+        whenever(engineAnalysisRepository.findByPositionIdWithMoveEvaluations(positionId))
+            .thenReturn(existingAnalysis)
+
+        // MultiPV top candidates
+        whenever(stockfishService.analyzeMultiPv(fen, 16, 5)).thenReturn(
+            listOf(
+                EngineCandidate("Kh2", EvalScore(cp = null, mate = -5)),
+                EngineCandidate("Kf8", EvalScore(cp = null, mate = -3)),
+            ),
+        )
+        // Secondary 1-ply search for remaining historical moves
+        whenever(stockfishService.analyze(fen, 16, listOf("h6", "g6"))).thenReturn(
+            mapOf(
+                "h6" to PositionAnalysis(bestMove = "Kh8", score = EvalScore(cp = -500, mate = null)),
+                "g6" to PositionAnalysis(bestMove = "Kh8", score = EvalScore(cp = null, mate = -6)),
+            ),
+        )
+        // Repo read inside completeMissingMoveEvaluations
+        whenever(engineAnalysisRepository.findByIdWithMoveEvaluations(existingAnalysisId)).thenReturn(
+            EngineAnalysis(
+                id = existingAnalysisId,
+                position = Position(id = positionId, hash = "losing_pos", fen = fen),
+                depth = 16,
+                bestMove = "Kh2",
+                bestMoveEvalMate = -5,
+                baselineEvalMate = -5,
+            ).apply {
+                moveEvaluations.add(MoveEvaluation(engineAnalysis = this, move = "Kh2", evalMate = -5, evalLossFromBest = 0.0))
+                moveEvaluations.add(MoveEvaluation(engineAnalysis = this, move = "Kf8", evalMate = -3, evalLossFromBest = 2.0))
+                moveEvaluations.add(MoveEvaluation(engineAnalysis = this, move = "h6", evalCp = -500, evalLossFromBest = null))
+                moveEvaluations.add(MoveEvaluation(engineAnalysis = this, move = "g6", evalMate = -6, evalLossFromBest = 0.0))
+            },
+        )
+
+        val position = Position(id = positionId, hash = "losing_pos", fen = fen)
+        engineAnalysisService.analyzePosition(position)
+
+        // Verify native insertMoveEvaluationIfAbsent calls
+        verify(engineAnalysisRepository).insertMoveEvaluationIfAbsent(
+            id = any(),
+            engineAnalysisId = eq(existingAnalysisId),
+            move = eq("Kf8"),
+            evalCp = eq(null),
+            evalMate = eq(-3),
+            evalLossFromBest = eq(2.0),
+        )
+        // strictly null, not 0.0!
+        verify(engineAnalysisRepository).insertMoveEvaluationIfAbsent(
+            id = any(),
+            engineAnalysisId = eq(existingAnalysisId),
+            move = eq("h6"),
+            evalCp = eq(-500),
+            evalMate = eq(null),
+            evalLossFromBest = eq(null),
+        )
+        verify(engineAnalysisRepository).insertMoveEvaluationIfAbsent(
+            id = any(),
+            engineAnalysisId = eq(existingAnalysisId),
+            move = eq("g6"),
+            evalCp = eq(null),
+            evalMate = eq(-6),
+            evalLossFromBest = eq(0.0),
+        )
     }
 }

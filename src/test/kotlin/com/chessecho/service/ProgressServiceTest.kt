@@ -881,6 +881,37 @@ class ProgressServiceTest {
             occurredAt = occurredAt,
         )
 
+    @Test
+    fun `evaluates forced-mate positions counting checkmate blunders as mistakes and prolongation as non-mistakes`() {
+        stubOccurrences(
+            PlayerColor.WHITE,
+            listOf(
+                occurrence(PlayerColor.WHITE, "loss", index = 0),
+                occurrence(PlayerColor.WHITE, "win", index = 1),
+            ),
+        )
+        val analysis =
+            EngineAnalysis(
+                position = position,
+                depth = 16,
+                baselineEvalMate = 1,
+                bestMove = "Re8#",
+                bestMoveEvalMate = 1,
+            )
+        analysis.moveEvaluations.add(
+            MoveEvaluation(engineAnalysis = analysis, move = "move-0", evalMate = -1, evalLossFromBest = 19.5),
+        )
+        analysis.moveEvaluations.add(
+            MoveEvaluation(engineAnalysis = analysis, move = "move-1", evalMate = 3, evalLossFromBest = 0.20),
+        )
+        whenever(analysisRepository.findByPositionIdWithMoveEvaluations(position.id)).thenReturn(analysis)
+
+        val baseline = service.getProgress(position.id, PlayerColor.WHITE, principal, minEvalLoss = 0.8).baseline!!
+
+        assertEquals(2, baseline.sourceEncounterCount)
+        assertEquals(50.0, baseline.mistakeRate)
+    }
+
     private fun occurrence(
         color: PlayerColor,
         sourceResult: String,

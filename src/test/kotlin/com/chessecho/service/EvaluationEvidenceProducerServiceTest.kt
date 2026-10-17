@@ -454,6 +454,24 @@ class EvaluationEvidenceProducerServiceTest {
     }
 
     @Test
+    fun `evaluates forced-mate position without requiring centipawn presence`() {
+        val harness =
+            singleDecisionHarness(
+                bestMoveEvalCp = null,
+                moveEvalCp = null,
+                bestMoveEvalMate = 1,
+                moveEvalMate = 2,
+                persistedLoss = 0.10,
+            )
+
+        harness.producer.produce(harness.input)
+
+        val snapshotCaptor = argumentCaptor<EvaluationEvidenceSnapshot>()
+        verify(harness.snapshotService).persist(snapshotCaptor.capture(), eq(harness.input.referencePopulation))
+        assertEquals(0.10, snapshotCaptor.firstValue.rows.single().loss)
+    }
+
+    @Test
     fun `rejects a returned verification fact with a mismatched position hash`() {
         val harness =
             singleDecisionHarness(
@@ -712,6 +730,8 @@ class EvaluationEvidenceProducerServiceTest {
         evaluatedMove: String = "e4",
         declareDifferentPlayer: Boolean = false,
         calculatedLoss: Double = 0.75,
+        bestMoveEvalMate: Int? = null,
+        moveEvalMate: Int? = null,
     ): SingleDecisionHarness {
         val account = ChessAccount(platform = "CHESS_COM", username = "player")
         val position = Position(hash = "single-position-hash", fen = "position-fen")
@@ -720,11 +740,13 @@ class EvaluationEvidenceProducerServiceTest {
         val analysis =
             analysis(position).also {
                 it.bestMoveEvalCp = bestMoveEvalCp
+                it.bestMoveEvalMate = bestMoveEvalMate
                 it.moveEvaluations.add(
                     MoveEvaluation(
                         engineAnalysis = it,
                         move = evaluatedMove,
                         evalCp = moveEvalCp,
+                        evalMate = moveEvalMate,
                         evalLossFromBest = persistedLoss,
                     ),
                 )

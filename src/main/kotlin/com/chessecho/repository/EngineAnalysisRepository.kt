@@ -66,8 +66,8 @@ interface EngineAnalysisRepository : JpaRepository<EngineAnalysis, UUID> {
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query(
         value = """
-            INSERT INTO engine_move_evaluation (id, engine_analysis_id, move, eval_cp, eval_loss_from_best)
-            VALUES (:id, :engineAnalysisId, :move, :evalCp, :evalLossFromBest)
+            INSERT INTO engine_move_evaluation (id, engine_analysis_id, move, eval_cp, eval_mate, eval_loss_from_best)
+            VALUES (:id, :engineAnalysisId, :move, :evalCp, :evalMate, :evalLossFromBest)
             ON CONFLICT (engine_analysis_id, move) DO NOTHING
         """,
         nativeQuery = true,
@@ -77,6 +77,7 @@ interface EngineAnalysisRepository : JpaRepository<EngineAnalysis, UUID> {
         @Param("engineAnalysisId") engineAnalysisId: UUID,
         @Param("move") move: String,
         @Param("evalCp") evalCp: Int?,
+        @Param("evalMate") evalMate: Int? = null,
         @Param("evalLossFromBest") evalLossFromBest: Double?,
     ): Int
 }

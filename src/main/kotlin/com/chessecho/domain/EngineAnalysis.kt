@@ -27,7 +27,9 @@ class EngineAnalysis(
     @Column(nullable = false)
     val depth: Int,
     @Column(name = "baseline_eval_cp")
-    val baselineEvalCp: Int?,
+    val baselineEvalCp: Int? = null,
+    @Column(name = "baseline_eval_mate")
+    val baselineEvalMate: Int? = null,
     @Column(name = "best_move")
     val bestMove: String?,
     /**
@@ -39,9 +41,18 @@ class EngineAnalysis(
      * has eval_cp = -80 (-0.80 pawns), the loss is 1.00 pawn.
      */
     @Column(name = "best_move_eval_cp")
-    var bestMoveEvalCp: Int?,
+    var bestMoveEvalCp: Int? = null,
+    @Column(name = "best_move_eval_mate")
+    var bestMoveEvalMate: Int? = null,
     @OneToMany(mappedBy = "engineAnalysis", cascade = [CascadeType.ALL], orphanRemoval = true)
     val moveEvaluations: MutableList<MoveEvaluation> = mutableListOf(),
     @Column(name = "analyzed_at", nullable = false)
     val analyzedAt: Instant = Instant.now(),
-)
+) {
+    init {
+        require(baselineEvalMate == null || baselineEvalMate != 0) { "baselineEvalMate cannot be 0" }
+        require(bestMoveEvalMate == null || bestMoveEvalMate != 0) { "bestMoveEvalMate cannot be 0" }
+        require(baselineEvalCp == null || baselineEvalMate == null) { "baselineEvalCp and baselineEvalMate are mutually exclusive" }
+        require(bestMoveEvalCp == null || bestMoveEvalMate == null) { "bestMoveEvalCp and bestMoveEvalMate are mutually exclusive" }
+    }
+}

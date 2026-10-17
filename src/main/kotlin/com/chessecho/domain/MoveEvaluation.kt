@@ -27,7 +27,9 @@ class MoveEvaluation(
     @Column(nullable = false)
     val move: String,
     @Column(name = "eval_cp")
-    val evalCp: Int?,
+    val evalCp: Int? = null,
+    @Column(name = "eval_mate")
+    val evalMate: Int? = null,
     /**
      * Represents the evaluation loss of this move relative to Stockfish's best move,
      * from the perspective of the player making the move.
@@ -43,4 +45,9 @@ class MoveEvaluation(
      */
     @Column(name = "eval_loss_from_best")
     val evalLossFromBest: Double?,
-)
+) {
+    init {
+        require(evalMate == null || evalMate != 0) { "evalMate cannot be 0" }
+        require(evalCp == null || evalMate == null) { "evalCp and evalMate are mutually exclusive" }
+    }
+}

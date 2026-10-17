@@ -240,10 +240,16 @@ CREATE TABLE engine_analysis
     position_id      UUID        NOT NULL REFERENCES position (id) ON DELETE CASCADE,
     depth            INT         NOT NULL,
     baseline_eval_cp INT,
+    baseline_eval_mate INT,
     best_move        VARCHAR(10),
     best_move_eval_cp INT,
+    best_move_eval_mate INT,
     analyzed_at      TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT ck_engine_analysis_depth CHECK (depth > 0),
+    CONSTRAINT ck_engine_analysis_baseline_eval_mate CHECK (baseline_eval_mate IS NULL OR baseline_eval_mate <> 0),
+    CONSTRAINT ck_engine_analysis_best_move_eval_mate CHECK (best_move_eval_mate IS NULL OR best_move_eval_mate <> 0),
+    CONSTRAINT ck_engine_analysis_baseline_eval_excl CHECK (baseline_eval_cp IS NULL OR baseline_eval_mate IS NULL),
+    CONSTRAINT ck_engine_analysis_best_move_eval_excl CHECK (best_move_eval_cp IS NULL OR best_move_eval_mate IS NULL),
     CONSTRAINT uk_engine_analysis_position UNIQUE (position_id)
 );
 
@@ -255,7 +261,10 @@ CREATE TABLE engine_move_evaluation
     engine_analysis_id UUID             NOT NULL REFERENCES engine_analysis (id) ON DELETE CASCADE,
     move               VARCHAR(10)      NOT NULL,
     eval_cp            INT,
+    eval_mate          INT,
     eval_loss_from_best DOUBLE PRECISION,
+    CONSTRAINT ck_engine_move_evaluation_eval_mate CHECK (eval_mate IS NULL OR eval_mate <> 0),
+    CONSTRAINT ck_engine_move_evaluation_eval_excl CHECK (eval_cp IS NULL OR eval_mate IS NULL),
     CONSTRAINT uk_engine_move_evaluation_analysis_move UNIQUE (engine_analysis_id, move)
 );
 

@@ -68,7 +68,11 @@ class ProgressService(
             }
 
             val occurrence = datedOccurrence.occurrence
-            val loss = evaluations[occurrence.movePlayed]?.weaknessEvaluationLoss(analysis?.bestMoveEvalCp)
+            val loss =
+                evaluations[occurrence.movePlayed]?.weaknessEvaluationLoss(
+                    analysis?.bestMoveEvalCp,
+                    analysis?.bestMoveEvalMate,
+                )
             val won =
                 gameOutcomeNormalizer.normalize(
                     occurrence.game,

@@ -1,6 +1,7 @@
 package com.chessecho.service
 
 import com.chessecho.domain.EngineAnalysis
+import com.chessecho.domain.MoveEvaluation
 import com.chessecho.domain.PositionOccurrence
 import com.chessecho.repository.EngineAnalysisRepository
 import com.chessecho.repository.PositionOccurrenceRepository
@@ -166,7 +167,7 @@ class EvaluationEvidenceProducerService(
                 throw EvaluationEvidenceIntegrityException("A selected operational move has missing or ambiguous evaluation")
             }
             val evaluation = matchingMoves.single()
-            val loss = validLoss(analysis, evaluation.evalCp, evaluation.evalLossFromBest)
+            val loss = validLoss(analysis, evaluation)
             val outcome =
                 gameOutcomeNormalizer.normalize(
                     operational.game,
@@ -209,15 +210,30 @@ class EvaluationEvidenceProducerService(
 
     private fun validLoss(
         analysis: EngineAnalysis,
-        moveEvalCp: Int?,
-        persistedLoss: Double?,
+        evaluation: MoveEvaluation,
     ): Double {
-        val bestMoveEvalCp = analysis.bestMoveEvalCp
-        if (bestMoveEvalCp == null || moveEvalCp == null) {
-            throw EvaluationEvidenceIntegrityException("A selected operational move is missing required centipawn evidence")
+        val hasBestScore = analysis.bestMoveEvalCp != null || analysis.bestMoveEvalMate != null
+        val hasMoveScore = evaluation.evalCp != null || evaluation.evalMate != null
+        if (!hasBestScore || !hasMoveScore) {
+            throw EvaluationEvidenceIntegrityException("A selected operational move is missing required evaluation evidence")
         }
         val loss =
-            persistedLoss ?: engineAnalysisService.calculateEvalLoss(bestMoveEvalCp, moveEvalCp)
+            evaluation.evalLossFromBest
+                ?: if (analysis.bestMoveEvalMate == null && evaluation.evalMate == null) {
+                    val bestCp = analysis.bestMoveEvalCp
+                    val moveCp = evaluation.evalCp
+                    if (bestCp == null || moveCp == null) {
+                        throw EvaluationEvidenceIntegrityException(
+                            "A selected operational move is missing required evaluation evidence",
+                        )
+                    }
+                    engineAnalysisService.calculateEvalLoss(bestCp, moveCp)
+                } else {
+                    EngineAnalysisService.calculateEvalLoss(
+                        EvalScore(analysis.bestMoveEvalCp, analysis.bestMoveEvalMate),
+                        EvalScore(evaluation.evalCp, evaluation.evalMate),
+                    )
+                }
                 ?: throw EvaluationEvidenceIntegrityException("A selected operational move has no valid evaluation loss")
         if (!loss.isFinite() || loss < 0.0) {
             throw EvaluationEvidenceIntegrityException("A selected operational move has an invalid evaluation loss")

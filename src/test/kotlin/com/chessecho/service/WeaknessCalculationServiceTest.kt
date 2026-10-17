@@ -21,6 +21,7 @@ import com.chessecho.repository.PuzzleSchedulingEventRepository
 import com.chessecho.repository.WeaknessAggregation
 import com.chessecho.service.auth.AuthenticatedPrincipal
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -2187,5 +2188,125 @@ class WeaknessCalculationServiceTest {
             )
         assertEquals(1, weaknesses.size)
         assertTrue(weaknesses[0].openingContext == null, "Opening context should be null for mismatched ECO tags")
+    }
+
+    @Test
+    fun `test forced-mate outcomes checkmate blunders excluded from acceptableMoves, prolongation retained, null loss excluded`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "nathan")
+        val position = Position(hash = "hash_mate", fen = "6k1/5ppp/8/8/8/8/5PPP/4R1K1 w - - 0 1")
+
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "nathan")).thenReturn(account)
+
+        val analysis =
+            EngineAnalysis(
+                position = position,
+                depth = 16,
+                bestMove = "Re8#",
+                bestMoveEvalMate = 1,
+                baselineEvalMate = 1,
+            )
+        // Acceptable best move (loss 0.0)
+        analysis.moveEvaluations.add(
+            MoveEvaluation(engineAnalysis = analysis, move = "Re8#", evalMate = 1, evalLossFromBest = 0.0),
+        )
+        // Acceptable winning mate prolongation (mate in 3 -> loss 0.20 < 0.80)
+        analysis.moveEvaluations.add(
+            MoveEvaluation(engineAnalysis = analysis, move = "Qxf7+", evalMate = 3, evalLossFromBest = 0.20),
+        )
+        // Checkmate blunder into losing mate (loss 19.5 >= 0.80)
+        analysis.moveEvaluations.add(
+            MoveEvaluation(engineAnalysis = analysis, move = "f3", evalMate = -1, evalLossFromBest = 19.5),
+        )
+        // Unevaluated move (null loss)
+        analysis.moveEvaluations.add(
+            MoveEvaluation(engineAnalysis = analysis, move = "a3", evalLossFromBest = null),
+        )
+
+        val occ1 =
+            PositionOccurrence(
+                game = mockGame(),
+                position = position,
+                chessAccount = account,
+                plyNumber = 1,
+                movePlayed = "f3",
+                playerColor = "WHITE",
+            )
+        val occ2 =
+            PositionOccurrence(
+                game = mockGame(),
+                position = position,
+                chessAccount = account,
+                plyNumber = 3,
+                movePlayed = "f3",
+                playerColor = "WHITE",
+            )
+        val occ3 =
+            PositionOccurrence(
+                game = mockGame(),
+                position = position,
+                chessAccount = account,
+                plyNumber = 5,
+                movePlayed = "a3",
+                playerColor = "WHITE",
+            )
+
+        `when`(
+            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(
+                eq(account.id),
+                eq("WHITE"),
+                any(),
+            ),
+        ).thenReturn(listOf(occ1, occ2, occ3))
+
+        `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(any())).thenReturn(listOf(analysis))
+
+        val aggregation =
+            WeaknessAggregation(
+                positionId = position.id,
+                fen = position.fen,
+                playerColor = "WHITE",
+                timesReached = 3,
+                bestMove = "Re8#",
+                baselineEvalCp = null,
+                mistakeCount = 2,
+                averageLoss = 19.5,
+                rawTotalLoss = 39.0,
+            )
+
+        `when`(
+            positionOccurrenceRepository.findWeaknessAggregations(
+                chessAccountId = eq(account.id),
+                playerColor = eq("WHITE"),
+                minEvalLoss = eq(0.8),
+                minTimesReached = eq(2),
+                minMistakeCount = eq(2L),
+            ),
+        ).thenReturn(listOf(aggregation))
+
+        val weaknesses =
+            weaknessCalculationService.getWeaknesses(
+                Platform.CHESS_COM,
+                "nathan",
+                PlayerColor.WHITE,
+                minEvalLoss = 0.8,
+                minTimesReached = 2,
+                minMistakeCount = 2,
+            )
+
+        assertEquals(1, weaknesses.size)
+        val w = weaknesses[0]
+        assertEquals(2, w.mistakeCount)
+
+        // Acceptable moves must contain Re8# and Qxf7+, but exclude f3 (blunder) and a3 (null loss)
+        val acceptableMovesList = w.acceptableMoves.map { it.move }
+        assertTrue(acceptableMovesList.contains("Re8#"), "Should contain best move Re8#")
+        assertTrue(acceptableMovesList.contains("Qxf7+"), "Should contain prolongation move Qxf7+")
+        assertFalse(acceptableMovesList.contains("f3"), "Should exclude checkmate blunder f3")
+        assertFalse(acceptableMovesList.contains("a3"), "Should exclude unevaluated move a3")
+
+        // Moves played must only contain f3; a3 must be skipped
+        assertEquals(1, w.movesPlayed.size)
+        assertEquals("f3", w.movesPlayed[0].move)
+        assertEquals(2, w.movesPlayed[0].timesPlayed)
     }
 }
