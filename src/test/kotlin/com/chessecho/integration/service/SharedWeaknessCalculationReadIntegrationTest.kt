@@ -222,4 +222,80 @@ class SharedWeaknessCalculationReadIntegrationTest {
         assertEquals(positionB.id, weaknessesFor(stranger).first().positionId)
         assertEquals(positionA.id, weaknessesFor(connector).first().positionId)
     }
+
+    @Test
+    fun `findWeaknessAggregations produces equivalent mistake count and average loss to in-memory calculation on null evalLossFromBest`() {
+        val positionC =
+            positionRepository.save(
+                Position(
+                    hash = "h-${UUID.randomUUID()}",
+                    fen = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",
+                ),
+            )
+        userPositionStatsRepository.save(
+            UserPositionStats(chessAccount = account, position = positionC, playerColor = "WHITE", timesReached = 5),
+        )
+        for (i in 1..5) {
+            positionOccurrenceRepository.save(
+                PositionOccurrence(
+                    game = game,
+                    position = positionC,
+                    chessAccount = account,
+                    plyNumber = i,
+                    movePlayed = if (i <= 3) "a3" else "Nf3",
+                    playerColor = "WHITE",
+                ),
+            )
+        }
+        val analysisC =
+            engineAnalysisRepository.save(
+                EngineAnalysis(
+                    position = positionC,
+                    depth = 16,
+                    baselineEvalCp = 100,
+                    bestMove = "Nf3",
+                    bestMoveEvalCp = 100,
+                    analyzedAt = Instant.now(),
+                ),
+            )
+        analysisC.moveEvaluations.add(
+            MoveEvaluation(engineAnalysis = analysisC, move = "Nf3", evalCp = 90, evalLossFromBest = null),
+        )
+        analysisC.moveEvaluations.add(
+            MoveEvaluation(engineAnalysis = analysisC, move = "a3", evalCp = -50, evalLossFromBest = null),
+        )
+        engineAnalysisRepository.save(analysisC)
+
+        val minEvalLoss = 0.8
+        val minTimesReached = 5
+        val minMistakeCount = 1
+
+        val aggregations =
+            positionOccurrenceRepository.findWeaknessAggregations(
+                chessAccountId = account.id,
+                playerColor = "WHITE",
+                minEvalLoss = minEvalLoss,
+                minTimesReached = minTimesReached,
+                minMistakeCount = minMistakeCount.toLong(),
+            )
+        val agg = aggregations.firstOrNull { it.positionId == positionC.id }
+        assertTrue(agg != null, "Aggregation query must return positionC")
+
+        val inMemoryResults =
+            weaknessCalculationService.getWeaknesses(
+                platform = Platform.CHESS_COM,
+                username = account.username,
+                playerColor = PlayerColor.WHITE,
+                principal = AuthenticatedPrincipal(connector.id, devPrincipal = false),
+                accountId = account.id,
+                minEvalLoss = minEvalLoss,
+                minTimesReached = minTimesReached,
+                minMistakeCount = minMistakeCount,
+            )
+        val inMemory = inMemoryResults.firstOrNull { it.positionId == positionC.id }
+        assertTrue(inMemory != null, "In-memory weakness calculation must return positionC")
+
+        assertEquals(agg!!.mistakeCount?.toInt(), inMemory!!.mistakeCount)
+        assertEquals(agg.averageLoss ?: 0.0, inMemory.averageLoss, 1e-4)
+    }
 }

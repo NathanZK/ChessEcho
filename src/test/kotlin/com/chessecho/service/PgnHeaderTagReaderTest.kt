@@ -50,6 +50,13 @@ class PgnHeaderTagReaderTest {
     }
 
     @Test
+    fun `parses minimal six-character tag pair`() {
+        val result = reader.read("[A \"\"]\n\n1. e4 e5")
+
+        assertEquals("OK", result.status.name)
+    }
+
+    @Test
     fun `reads optional opening metadata tags`() {
         val result =
             reader.read(

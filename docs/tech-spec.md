@@ -74,6 +74,7 @@ flow:
 invariant:
   - Position identity includes piece placement, side to move, castling rights, and en-passant availability.
   - Partitioned statistics (time control and phase) are calculated in-memory and affect only their specific filters; they do not alter global candidate discovery thresholds or global totals.
+  - Phase classification follows a 4-rule precedence: (1) corrupt FEN fallback (< 8 ranks) defaults to `OPENING`; (2) reduced-piece endgame (`mmCount <= 6`) evaluates to `ENDGAME`; (3) middlegame conditions (`mmCount <= 10 || backrankSparse || moveNumber > 14`) evaluate to `MIDDLEGAME` (< 4 pieces on White rank 1 or Black rank 8; `moveNumber = (plyNumber + 1) / 2`); (4) default to `OPENING`.
   - Occurrence counts are scoped by account and player color.
   - Engine analysis is stored per position and shared across accounts; weakness ranking is computed per account.
   - `userId`, usernames, account UUIDs, and job UUIDs are never bearer credentials (`API_CONTRACT.md`).

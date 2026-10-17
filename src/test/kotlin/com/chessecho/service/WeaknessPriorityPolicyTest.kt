@@ -257,6 +257,14 @@ class WeaknessPriorityPolicyTest {
     }
 
     @Test
+    fun `constructor validates properties and rejects invalid configuration`() {
+        val invalidProperties = PracticalEvidenceProperties(policyVersion = "")
+        assertThrows<IllegalArgumentException> {
+            WeaknessPriorityPolicy(invalidProperties)
+        }
+    }
+
+    @Test
     fun `inclusive property boundaries adjustment zero and null window are valid`() {
         listOf(0.0, 1.0).forEach { rate ->
             calibrated(comparator = rate, difference = 0.0)
