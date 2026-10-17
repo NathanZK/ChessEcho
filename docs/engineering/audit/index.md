@@ -19,6 +19,7 @@ This document serves as the durable evidence repository for opt-in PIT mutation 
 | `PgnHeaderTagReader` | `PgnHeaderTagReaderTest` | Service Unit | 102 | 85 (83%) | 15 (15%) | 2 (2%) | 85% | 2026-10-17 |
 | `PracticalEvidenceService` | `PracticalEvidenceServiceTest` | Service Unit | 41 | 35 (85%) | 5 (12%) | 1 (2%) | 88% | 2026-10-17 |
 | `WeaknessCalculationService` | `WeaknessCalculationServiceTest` | Service Unit | 245 | 179 (73%) | 51 (21%) | 15 (6%) | 78% | 2026-10-17 |
+| `MoveEvaluationService` | `MoveEvaluationServiceTest` | Service Unit | 30 | 29 (97%) | 1 (3%) | 0 (0%) | 97% | 2026-10-18 |
 
 ---
 
@@ -211,13 +212,38 @@ This document serves as the durable evidence repository for opt-in PIT mutation 
 - **Uncovered Branches**:
   - Optional fallback paths when auxiliary repositories are null.
 
+### 2.11 `com.chessecho.service.MoveEvaluationService` (Issue [#557](https://github.com/NathanZK/ChessEcho/issues/557))
+
+- **Issue / PR**: Issue [#557](https://github.com/NathanZK/ChessEcho/issues/557)
+- **Test Suite**: `com.chessecho.service.MoveEvaluationServiceTest`
+- **Execution Command**:
+  ```bash
+  ./gradlew pitest \
+    -Ppitest.targetClasses="com.chessecho.service.MoveEvaluationService*" \
+    -Ppitest.targetTests="com.chessecho.service.MoveEvaluationServiceTest*"
+  ```
+- **Results**: 30 generated, 29 killed (97%), 1 survived (3%), 0 no coverage (0%); 97% test strength.
+- **Meaningful Gaps Killed**:
+  - *Winning forced-mate distance & arithmetic*: Line 98 mate arithmetic mutators (`* 10` and `-`) killed by asserting faster mate-in-1 (`bestEvalCp = 9990`) scores higher than slower mate-in-2 (`evalCp = 9980`) and candidate within tolerance has `evalLoss = 0.10` and is `acceptable = true`.
+  - *Winning-mate blunder rejection*: Line 98 condition negations and centipawn blunder mutators killed by asserting blunder into centipawns (`cp = 200`, `evalLoss = 97.90`) or opponent mate (`mate = -1`, `evalLoss = 199.80`) is marked `acceptable = false`.
+  - *Losing forced-mate defense prolongation*: Line 98 negative mate arithmetic mutators (`-10000 - mate * 10`) killed by asserting prolonged defense mate-in-(-2) (`bestEvalCp = -9980`) scores higher than immediate checkmate mate-in-(-1) (`evalCp = -9990`) with `evalLoss = 0.10` and `acceptable = true` per threshold comparison.
+  - *Mate-to-centipawn blunder concealment*: Line 98 `EmptyObjectReturnValsMutator` (substituting return with 0) killed by asserting blunder from neutral draw (`cp = 0`) into opponent mate (`mate = -1`) produces `bestEvalCp = 0`, `evalCp = -9990`, `evalLoss = 99.90`, and `acceptable = false`.
+  - *Single-move forced-mate evaluation*: Line 66 single analysis integration verified when candidate is outside MultiPV=5 and produces mate score.
+  - *Null evaluation branches*: Line 95 `score == null` and line 100 `EvalScore(cp = null, mate = null)` `EmptyObjectReturnValsMutator` killed by asserting `evalCp = null`, `evalLoss = 0.0`, and `acceptable = true` against non-zero baseline (`bestCp = 100`).
+  - *Error boundaries*: Line 30 invalid FEN handling (`IllegalArgumentException`) and line 53 empty Stockfish candidate handling (`IllegalStateException`) verified with descriptive message assertions; line 46 unparseable move message verified.
+- **Accepted Surviving Mutants**:
+  - 1 boundary condition mutation on Line 98 (`ConditionalsBoundaryMutator` changing `score.mate > 0` to `>= 0`) accepted as an equivalent mutant on non-zero domain values (Taxonomy Category 5), since chess engine mate distances are non-zero integers (+1, +2, -1, -2).
+- **Uncovered Branches**: None (0 no coverage).
+
 ---
 
 ## 3. Candidate Classes Not Yet Assessed
 
 In accordance with [mutation-testing.md](../mutation-testing.md) and QA Strategy [#547](https://github.com/NathanZK/ChessEcho/issues/547), the following pure domain calculation units remain candidates for future focused audits:
 
+- [x] `com.chessecho.service.MoveEvaluationService` (`MoveEvaluationServiceTest`) — Interactive move evaluation, forced-mate centipawn score conversion, and exploration tolerance. (Audited in [#557](https://github.com/NathanZK/ChessEcho/issues/557))
 - [x] `com.chessecho.service.WeaknessCalculationService` (`WeaknessCalculationServiceTest`) — Account-scoped weakness prioritization and statistical ranking formulas. (Audited in [#553](https://github.com/NathanZK/ChessEcho/issues/553) / PR [#555](https://github.com/NathanZK/ChessEcho/pull/555))
 - [ ] `com.chessecho.service.ProgressService` (`ProgressServiceTest`) — Historical interval baseline construction and progress delta calculations.
 - [ ] `com.chessecho.service.EvaluationEvidenceProducerService` (`EvaluationEvidenceProducerServiceTest`) — Deterministic evaluation snapshot producer and verification rules.
 - [x] `com.chessecho.service.PracticalEvidenceService` (`PracticalEvidenceServiceTest`) — Practical weakness score calculations and confidence thresholds. (Audited in [#553](https://github.com/NathanZK/ChessEcho/issues/553) / PR [#555](https://github.com/NathanZK/ChessEcho/pull/555))
+
