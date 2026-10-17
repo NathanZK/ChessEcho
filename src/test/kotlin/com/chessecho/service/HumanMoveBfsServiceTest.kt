@@ -27,8 +27,11 @@ import org.mockito.Mockito.verify
 import org.mockito.junit.jupiter.MockitoExtension
 import org.mockito.kotlin.any
 import org.mockito.kotlin.argumentCaptor
+import org.mockito.kotlin.eq
+import org.mockito.kotlin.mock
 import org.mockito.kotlin.times
 import org.mockito.kotlin.whenever
+import org.slf4j.LoggerFactory
 import java.util.UUID
 
 @ExtendWith(MockitoExtension::class)
@@ -1798,5 +1801,410 @@ class HumanMoveBfsServiceTest {
         order.verify(humanMoveDistributionRepository).saveAll(anyList())
         assertTrue(stores.distributions.isNotEmpty(), "successful batch must persist distribution rows")
         assertEquals(2, stores.seenGameUrls.size)
+    }
+
+    // ── Issue #563: PIT Mutation Hardening for HumanMoveBfsTraversal ────────
+
+    @Test
+    fun `isRatingInBand verifies boundaries across all rating bands`() {
+        // Specific contracts required by issue #563
+        assertFalse(HumanMoveBfsTraversal.isRatingInBand(999, RatingBand.BAND_1000_1200))
+        assertTrue(HumanMoveBfsTraversal.isRatingInBand(1000, RatingBand.BAND_1000_1200))
+        assertTrue(HumanMoveBfsTraversal.isRatingInBand(1200, RatingBand.BAND_1000_1200))
+        assertFalse(HumanMoveBfsTraversal.isRatingInBand(1201, RatingBand.BAND_1000_1200))
+
+        assertFalse(HumanMoveBfsTraversal.isRatingInBand(2199, RatingBand.BAND_2200_PLUS))
+        assertTrue(HumanMoveBfsTraversal.isRatingInBand(2200, RatingBand.BAND_2200_PLUS))
+        assertTrue(HumanMoveBfsTraversal.isRatingInBand(2500, RatingBand.BAND_2200_PLUS))
+
+        // Exhaustive boundary testing across all declared rating bands
+        for (band in RatingBand.entries) {
+            val parts = band.value.split("-")
+            if (parts.size == 2) {
+                val min = parts[0].toInt()
+                val max = parts[1].toInt()
+                assertFalse(HumanMoveBfsTraversal.isRatingInBand(min - 1, band), "Rating ${min - 1} must be out of band $band")
+                assertTrue(HumanMoveBfsTraversal.isRatingInBand(min, band), "Rating $min must be in band $band")
+                assertTrue(HumanMoveBfsTraversal.isRatingInBand(max, band), "Rating $max must be in band $band")
+                assertFalse(HumanMoveBfsTraversal.isRatingInBand(max + 1, band), "Rating ${max + 1} must be out of band $band")
+            } else if (band.value.endsWith("+")) {
+                val min = band.value.dropLast(1).toInt()
+                assertFalse(HumanMoveBfsTraversal.isRatingInBand(min - 1, band), "Rating ${min - 1} must be out of band $band")
+                assertTrue(HumanMoveBfsTraversal.isRatingInBand(min, band), "Rating $min must be in band $band")
+                assertTrue(HumanMoveBfsTraversal.isRatingInBand(min + 300, band), "Rating ${min + 300} must be in band $band")
+            }
+        }
+
+        // Malformed band strings return false
+        val malformedBand = mock<RatingBand>()
+        whenever(malformedBand.value).thenReturn("foo-bar")
+        assertFalse(HumanMoveBfsTraversal.isRatingInBand(1000, malformedBand))
+        whenever(malformedBand.value).thenReturn("1000-bar")
+        assertFalse(HumanMoveBfsTraversal.isRatingInBand(1000, malformedBand))
+        whenever(malformedBand.value).thenReturn("foo+")
+        assertFalse(HumanMoveBfsTraversal.isRatingInBand(1000, malformedBand))
+        whenever(malformedBand.value).thenReturn("invalid")
+        assertFalse(HumanMoveBfsTraversal.isRatingInBand(1000, malformedBand))
+    }
+
+    @Test
+    fun `sink error notification on archive list failure proceeds to subsequent seeds`() {
+        val traversal = HumanMoveBfsTraversal(chessComClient, LoggerFactory.getLogger(HumanMoveBfsTraversal::class.java))
+        val sink = mock<HumanMoveBfsSink>()
+        val bounds =
+            HumanMoveBfsBounds(
+                targetBand = RatingBand.BAND_1000_1200,
+                seedPlayers = listOf("seedPlayer1", "seedPlayer2"),
+                excludedPlayers = emptyList(),
+                maxQualifyingGames = null,
+                maxGamesPerPlayer = 10,
+                maxPlayers = null,
+                maxDepth = 0,
+            )
+
+        val timeoutException = RuntimeException("archive connection timeout")
+        whenever(chessComClient.fetchArchiveUrls("seedplayer1")).thenThrow(timeoutException)
+        whenever(chessComClient.fetchArchiveUrls("seedplayer2")).thenReturn(emptyList())
+
+        val result = traversal.traverse(bounds, sink)
+
+        verify(sink).onArchiveListFailure(eq("seedplayer1"), eq(timeoutException))
+        verify(chessComClient).fetchArchiveUrls("seedplayer2")
+        assertEquals(2, result.playersVisited)
+    }
+
+    @Test
+    fun `sink error notification on monthly games failure proceeds to subsequent archives`() {
+        val traversal = HumanMoveBfsTraversal(chessComClient, LoggerFactory.getLogger(HumanMoveBfsTraversal::class.java))
+        val sink = mock<HumanMoveBfsSink>()
+        val bounds =
+            HumanMoveBfsBounds(
+                targetBand = RatingBand.BAND_1000_1200,
+                seedPlayers = listOf("p1"),
+                excludedPlayers = emptyList(),
+                maxQualifyingGames = null,
+                maxGamesPerPlayer = 10,
+                maxPlayers = null,
+                maxDepth = 0,
+            )
+
+        val olderArchive = "https://api.chess.com/pub/player/p1/games/2024/01"
+        val newerArchive = "https://api.chess.com/pub/player/p1/games/2024/02"
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(olderArchive, newerArchive))
+
+        val http500Exception = RuntimeException("games HTTP 500")
+        // Traversal reverses archiveUrls, so newerArchive is fetched first
+        whenever(chessComClient.fetchMonthlyGames(newerArchive)).thenThrow(http500Exception)
+        whenever(chessComClient.fetchMonthlyGames(olderArchive)).thenReturn(emptyList())
+
+        traversal.traverse(bounds, sink)
+
+        verify(sink).onMonthlyGamesFailure(eq(newerArchive), eq(http500Exception))
+        verify(chessComClient).fetchMonthlyGames(olderArchive)
+    }
+
+    @Test
+    fun `traversal terminates at exact maxGamesPerPlayer boundary and skips remaining games and archives`() {
+        val traversal = HumanMoveBfsTraversal(chessComClient, LoggerFactory.getLogger(HumanMoveBfsTraversal::class.java))
+        val sink = mock<HumanMoveBfsSink>()
+        whenever(sink.alreadyContributed(any())).thenReturn(emptySet())
+        whenever(sink.accept(any())).thenReturn(true)
+
+        val bounds =
+            HumanMoveBfsBounds(
+                targetBand = RatingBand.BAND_1000_1200,
+                seedPlayers = listOf("p1"),
+                excludedPlayers = emptyList(),
+                maxQualifyingGames = null,
+                maxGamesPerPlayer = 2,
+                maxPlayers = null,
+                maxDepth = 0,
+            )
+
+        val olderArchive = "https://api.chess.com/pub/player/p1/games/2024/01"
+        val newerArchive = "https://api.chess.com/pub/player/p1/games/2024/02"
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(olderArchive, newerArchive))
+
+        val gamesNewer = (1..5).map { rapidGame("http://newer-$it", "p1", 1100, "p2", 1150) }
+        whenever(chessComClient.fetchMonthlyGames(newerArchive)).thenReturn(gamesNewer.reversed())
+
+        val result = traversal.traverse(bounds, sink)
+
+        assertEquals(2, result.gamesInspected)
+        assertEquals(2, result.rapidGames)
+        assertEquals(2, result.qualifyingGames)
+        verify(sink, times(2)).accept(any())
+        verify(chessComClient, never()).fetchMonthlyGames(olderArchive)
+    }
+
+    @Test
+    fun `traversal terminates at exact maxQualifyingGames boundary and halts subsequent game and archive processing`() {
+        val traversal = HumanMoveBfsTraversal(chessComClient, LoggerFactory.getLogger(HumanMoveBfsTraversal::class.java))
+        val sink = mock<HumanMoveBfsSink>()
+        whenever(sink.alreadyContributed(any())).thenReturn(emptySet())
+        whenever(sink.accept(any())).thenReturn(true)
+
+        val bounds =
+            HumanMoveBfsBounds(
+                targetBand = RatingBand.BAND_1000_1200,
+                seedPlayers = listOf("p1", "p2"),
+                excludedPlayers = emptyList(),
+                maxQualifyingGames = 3,
+                maxGamesPerPlayer = 10,
+                maxPlayers = null,
+                maxDepth = 0,
+            )
+
+        val olderArchive = "https://api.chess.com/pub/player/p1/games/2024/01"
+        val newerArchive = "https://api.chess.com/pub/player/p1/games/2024/02"
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(olderArchive, newerArchive))
+
+        val gamesNewer = (1..10).map { rapidGame("http://game-$it", "p1", 1100, "p2", 1150) }
+        whenever(chessComClient.fetchMonthlyGames(newerArchive)).thenReturn(gamesNewer.reversed())
+
+        val result = traversal.traverse(bounds, sink)
+
+        assertEquals(3, result.qualifyingGames)
+        assertEquals("MAX_QUALIFYING_GAMES", result.stopReason)
+        verify(sink, times(3)).accept(any())
+        verify(chessComClient, never()).fetchMonthlyGames(olderArchive)
+        verify(chessComClient, never()).fetchArchiveUrls("p2")
+    }
+
+    @Test
+    fun `traversal terminates at maxQualifyingGames before starting next player`() {
+        val traversal = HumanMoveBfsTraversal(chessComClient, LoggerFactory.getLogger(HumanMoveBfsTraversal::class.java))
+        val sink = mock<HumanMoveBfsSink>()
+        whenever(sink.alreadyContributed(any())).thenReturn(emptySet())
+        whenever(sink.accept(any())).thenReturn(true)
+
+        val bounds =
+            HumanMoveBfsBounds(
+                targetBand = RatingBand.BAND_1000_1200,
+                seedPlayers = listOf("p1", "p2"),
+                excludedPlayers = emptyList(),
+                maxQualifyingGames = 2,
+                maxGamesPerPlayer = 10,
+                maxPlayers = null,
+                maxDepth = 0,
+            )
+
+        val archiveUrl = "https://api.chess.com/pub/player/p1/games/2024/01"
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
+        val games = (1..2).map { rapidGame("http://p1-game-$it", "p1", 1100, "opp", 1150) }
+        whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(games)
+
+        val result = traversal.traverse(bounds, sink)
+
+        assertEquals(1, result.playersVisited)
+        assertEquals(2, result.qualifyingGames)
+        assertEquals("MAX_QUALIFYING_GAMES", result.stopReason)
+        verify(chessComClient, never()).fetchArchiveUrls("p2")
+    }
+
+    @Test
+    fun `traversal terminates at exact maxPlayers boundary`() {
+        val traversal = HumanMoveBfsTraversal(chessComClient, LoggerFactory.getLogger(HumanMoveBfsTraversal::class.java))
+        val sink = mock<HumanMoveBfsSink>()
+
+        val bounds =
+            HumanMoveBfsBounds(
+                targetBand = RatingBand.BAND_1000_1200,
+                seedPlayers = listOf("p1", "p2", "p3"),
+                excludedPlayers = emptyList(),
+                maxQualifyingGames = null,
+                maxGamesPerPlayer = 10,
+                maxPlayers = 1,
+                maxDepth = 0,
+            )
+
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(emptyList())
+
+        val result = traversal.traverse(bounds, sink)
+
+        assertEquals(1, result.playersVisited)
+        assertEquals("MAX_PLAYERS", result.stopReason)
+        verify(chessComClient, never()).fetchArchiveUrls("p2")
+        verify(chessComClient, never()).fetchArchiveUrls("p3")
+    }
+
+    @Test
+    fun `variant chess games are filtered out and do not increment rapidGames or submit to sink`() {
+        val traversal = HumanMoveBfsTraversal(chessComClient, LoggerFactory.getLogger(HumanMoveBfsTraversal::class.java))
+        val sink = mock<HumanMoveBfsSink>()
+        whenever(sink.alreadyContributed(any())).thenReturn(emptySet())
+        whenever(sink.accept(any())).thenReturn(true)
+
+        val bounds =
+            HumanMoveBfsBounds(
+                targetBand = RatingBand.BAND_1000_1200,
+                seedPlayers = listOf("p1"),
+                excludedPlayers = emptyList(),
+                maxQualifyingGames = null,
+                maxGamesPerPlayer = 10,
+                maxPlayers = null,
+                maxDepth = 0,
+            )
+
+        val archiveUrl = "https://api.chess.com/pub/player/p1/games/2024/01"
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
+
+        val standardGame = rapidGame("http://standard", "p1", 1100, "p2", 1150)
+        val chess960Game =
+            mapOf(
+                "url" to "http://chess960",
+                "rules" to "chess960",
+                "time_class" to "rapid",
+                "white" to mapOf("username" to "p1", "rating" to 1100),
+                "black" to mapOf("username" to "p2", "rating" to 1150),
+                "pgn" to "[Event \"Live Chess\"]\n[Result \"1-0\"]\n\n1. e4 e5 1-0",
+            )
+        val nullRulesGame =
+            mapOf(
+                "url" to "http://nullrules",
+                "time_class" to "rapid",
+                "white" to mapOf("username" to "p1", "rating" to 1100),
+                "black" to mapOf("username" to "p2", "rating" to 1150),
+                "pgn" to "[Event \"Live Chess\"]\n[Result \"1-0\"]\n\n1. e4 e5 1-0",
+            )
+        whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(listOf(chess960Game, standardGame, nullRulesGame))
+
+        val result = traversal.traverse(bounds, sink)
+
+        assertEquals(3, result.gamesInspected)
+        assertEquals(2, result.rapidGames, "chess960 must be skipped, standard and null rules must count")
+        assertEquals(2, result.qualifyingGames)
+        val captor = argumentCaptor<HumanMoveBfsQualifyingGame>()
+        verify(sink, times(2)).accept(captor.capture())
+        assertTrue(captor.allValues.none { it.rules == "chess960" })
+    }
+
+    @Test
+    fun `processGamePgn handles corrupt PGN gracefully returning PARSE_FAILED`() {
+        val traversal = HumanMoveBfsTraversal(chessComClient, LoggerFactory.getLogger(HumanMoveBfsTraversal::class.java))
+        val observations = mutableMapOf<Pair<String, String>, Int>()
+        val fenByHash = mutableMapOf<String, String>()
+        val occurrences = mutableListOf<HumanMoveCorpusOccurrence>()
+
+        val corruptPgn =
+            """
+            [Event "Corrupt Move Syntax"]
+            [Result "*"]
+
+            1. e9 1-0
+            """.trimIndent()
+
+        val outcome =
+            traversal.processGamePgn(
+                pgn = corruptPgn,
+                isWhiteInBand = true,
+                isBlackInBand = true,
+                observations = observations,
+                fenByHash = fenByHash,
+                occurrences = occurrences,
+            )
+
+        assertEquals(HumanMoveBfsPgnOutcome.PARSE_FAILED, outcome)
+        assertTrue(observations.isEmpty())
+        assertTrue(fenByHash.isEmpty())
+        assertTrue(occurrences.isEmpty())
+    }
+
+    @Test
+    fun `processGamePgn detects non-standard initial FEN returning NON_STANDARD_START`() {
+        val traversal = HumanMoveBfsTraversal(chessComClient, LoggerFactory.getLogger(HumanMoveBfsTraversal::class.java))
+        val observations = mutableMapOf<Pair<String, String>, Int>()
+        val fenByHash = mutableMapOf<String, String>()
+        val occurrences = mutableListOf<HumanMoveCorpusOccurrence>()
+
+        val nonStandardPgn =
+            "[Event \"Custom FEN Game\"]\n[SetUp \"1\"]\n[FEN \"4k3/8/8/8/8/8/8/4K3 w - - 0 1\"]\n[Result \"*\"]\n\n1. Kd2 Kd7 *"
+
+        val outcome =
+            traversal.processGamePgn(
+                pgn = nonStandardPgn,
+                isWhiteInBand = true,
+                isBlackInBand = true,
+                observations = observations,
+                fenByHash = fenByHash,
+                occurrences = occurrences,
+            )
+
+        assertEquals(HumanMoveBfsPgnOutcome.NON_STANDARD_START, outcome)
+        assertTrue(observations.isEmpty())
+        assertTrue(fenByHash.isEmpty())
+        assertTrue(occurrences.isEmpty())
+    }
+
+    @Test
+    fun `processGamePgn parses valid game and correctly populates observations and occurrences with preMovePly`() {
+        val traversal = HumanMoveBfsTraversal(chessComClient, LoggerFactory.getLogger(HumanMoveBfsTraversal::class.java))
+        val observations = mutableMapOf<Pair<String, String>, Int>()
+        val fenByHash = mutableMapOf<String, String>()
+        val occurrences = mutableListOf<HumanMoveCorpusOccurrence>()
+
+        val standardPgn =
+            """
+            [Event "Live Chess"]
+            [Result "1-0"]
+
+            1. e4 e5 2. Nf3 Nc6 1-0
+            """.trimIndent()
+
+        val outcome =
+            traversal.processGamePgn(
+                pgn = standardPgn,
+                isWhiteInBand = true,
+                isBlackInBand = true,
+                observations = observations,
+                fenByHash = fenByHash,
+                occurrences = occurrences,
+            )
+
+        assertEquals(HumanMoveBfsPgnOutcome.PARSED, outcome)
+        assertEquals(4, occurrences.size)
+        assertEquals(1, occurrences[0].preMovePly)
+        assertEquals("e4", occurrences[0].movePlayed)
+        assertEquals(2, occurrences[1].preMovePly)
+        assertEquals("e5", occurrences[1].movePlayed)
+        assertEquals(3, occurrences[2].preMovePly)
+        assertEquals("Nf3", occurrences[2].movePlayed)
+        assertEquals(4, occurrences[3].preMovePly)
+        assertEquals("Nc6", occurrences[3].movePlayed)
+        assertTrue(observations.isNotEmpty())
+        assertTrue(fenByHash.isNotEmpty())
+    }
+
+    @Test
+    fun `traversal returns exact uniqueGamesProcessed metric`() {
+        val traversal = HumanMoveBfsTraversal(chessComClient, LoggerFactory.getLogger(HumanMoveBfsTraversal::class.java))
+        val sink = mock<HumanMoveBfsSink>()
+        whenever(sink.alreadyContributed(any())).thenReturn(emptySet())
+        whenever(sink.accept(any())).thenReturn(true)
+
+        val bounds =
+            HumanMoveBfsBounds(
+                targetBand = RatingBand.BAND_1000_1200,
+                seedPlayers = listOf("p1"),
+                excludedPlayers = emptyList(),
+                maxQualifyingGames = null,
+                maxGamesPerPlayer = 10,
+                maxPlayers = null,
+                maxDepth = 0,
+            )
+
+        val archiveUrl = "https://api.chess.com/pub/player/p1/games/2024/01"
+        whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archiveUrl))
+        val games =
+            listOf(
+                rapidGame("http://game1", "p1", 1100, "p2", 1150),
+                rapidGame("http://game2", "p1", 1100, "p3", 1150),
+                rapidGame("http://game3", "p1", 1100, "p4", 1150),
+            )
+        whenever(chessComClient.fetchMonthlyGames(archiveUrl)).thenReturn(games)
+
+        val result = traversal.traverse(bounds, sink)
+
+        assertEquals(3, result.uniqueGamesProcessed)
     }
 }
