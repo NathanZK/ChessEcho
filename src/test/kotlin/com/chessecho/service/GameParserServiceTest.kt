@@ -56,6 +56,12 @@ class GameParserServiceTest {
     }
 
     @Test
+    fun `parseAndSavePositions returns emptySet when games list is empty`() {
+        val result = gameParserService.parseAndSavePositions(emptyList())
+        assertEquals(emptySet(), result)
+    }
+
+    @Test
     fun `parseAndSavePositions extracts positions correctly`() {
         // Mock DB dependencies
         whenever(positionRepository.findByHashIn(any())).thenReturn(emptyList())
@@ -84,7 +90,7 @@ class GameParserServiceTest {
                 playedAt = Instant.now(),
             )
 
-        gameParserService.parseAndSavePositions(listOf(game))
+        val affectedPositionIds = gameParserService.parseAndSavePositions(listOf(game))
 
         // 3 decision plies for White: e4, Nf3, Bb5
         val positionsCaptor = argumentCaptor<List<Position>>()
@@ -92,6 +98,8 @@ class GameParserServiceTest {
 
         val savedPositions = positionsCaptor.firstValue
         assertEquals(3, savedPositions.size)
+        assertEquals(3, affectedPositionIds.size)
+        assertEquals(savedPositions.map { it.id }.toSet(), affectedPositionIds)
 
         // Before e4 (startpos)
         val hashStartFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -"
@@ -146,7 +154,7 @@ class GameParserServiceTest {
                 playedAt = Instant.now(),
             )
 
-        gameParserService.parseAndSavePositions(listOf(game1, game2))
+        val affectedPositionIds = gameParserService.parseAndSavePositions(listOf(game1, game2))
 
         val positionsCaptor = argumentCaptor<List<Position>>()
         verify(positionRepository, times(1)).saveAll(positionsCaptor.capture())
@@ -157,6 +165,8 @@ class GameParserServiceTest {
         // The start position is shared in both games.
         // Total unique White positions across G1 and G2 = 3.
         assertEquals(3, savedPositions.size, "Transpositions must generate the exact same hash and deduplicate")
+        assertEquals(3, affectedPositionIds.size)
+        assertEquals(savedPositions.map { it.id }.toSet(), affectedPositionIds)
     }
 
     @Test
@@ -190,7 +200,7 @@ class GameParserServiceTest {
                 playedAt = Instant.now(),
             )
 
-        gameParserService.parseAndSavePositions(listOf(game1, game2))
+        val affectedPositionIds = gameParserService.parseAndSavePositions(listOf(game1, game2))
 
         val positionsCaptor = argumentCaptor<List<Position>>()
         verify(positionRepository, times(1)).saveAll(positionsCaptor.capture())
@@ -201,6 +211,8 @@ class GameParserServiceTest {
         // Ply 5 (before 3. Ke1 vs before 3. Ng1) differ due to piece placement & castling rights.
         // Total unique White positions = 2 shared + 1 unique G1 + 1 unique G2 = 4.
         assertEquals(4, savedPositions.size, "Different castling rights must generate different hashes")
+        assertEquals(4, affectedPositionIds.size)
+        assertEquals(savedPositions.map { it.id }.toSet(), affectedPositionIds)
     }
 
     @Test

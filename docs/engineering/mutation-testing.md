@@ -82,6 +82,10 @@ rm -rf build/reports/pitest/
 ./gradlew clean
 ```
 
+### Durable Audit Index
+
+Historical mutation testing audit results across assessed candidate classes and test suites are documented and indexed in [docs/engineering/audit/index.md](audit/index.md).
+
 ---
 
 ## 3. Qualitative Runtime Expectations
