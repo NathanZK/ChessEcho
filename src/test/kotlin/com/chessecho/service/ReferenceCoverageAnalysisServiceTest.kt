@@ -1,9 +1,13 @@
 package com.chessecho.service
 
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertDoesNotThrow
+import org.junit.jupiter.api.assertThrows
 import java.util.UUID
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class ReferenceCoverageAnalysisServiceTest {
     private val service = ReferenceCoverageAnalysisService()
@@ -140,6 +144,79 @@ class ReferenceCoverageAnalysisServiceTest {
         } catch (error: ReferenceCoverageAnalysisIntegrityException) {
             assertEquals(true, error.message!!.contains("verified occurrence"))
         }
+    }
+
+    @Test
+    fun `accepts valid zero loss engine moves without reporting them as weakness at positive thresholds`() {
+        val rows = listOf(row("alice", "pos_zero_loss", 0.0, 1, "g1"))
+        val input =
+            ReferenceCoverageAnalysisInput(
+                referencePositions = setOf("pos_zero_loss"),
+                players = players("alice"),
+                rows = rows,
+                analysisVersion = "e6-v1",
+            )
+
+        val result = assertDoesNotThrow { service.analyze(input) }
+
+        val playerAnalysis = result.byPlayer.getValue("alice")
+        assertFalse(playerAnalysis.weaknessPositions.at(0.30).contains("pos_zero_loss"))
+        assertEquals(PositionCoverage(0, 0, null), playerAnalysis.at(0.30))
+    }
+
+    @Test
+    fun `includes exact threshold boundary occurrences in shared positions`() {
+        val rows = listOf(row("alice", "pos_exact", 0.50, 1, "g1"))
+        val input =
+            ReferenceCoverageAnalysisInput(
+                referencePositions = setOf("pos_exact"),
+                players = players("alice"),
+                rows = rows,
+                analysisVersion = "e6-v1",
+            )
+
+        val result = service.analyze(input)
+        val playerAnalysis = result.byPlayer.getValue("alice")
+
+        assertTrue(playerAnalysis.sharedPositions.at(0.50).contains("pos_exact"))
+        assertFalse(playerAnalysis.sharedPositions.at(0.80).contains("pos_exact"))
+        assertEquals(1, playerAnalysis.coverageByThreshold.getValue(0.50).sharedPositionCount)
+    }
+
+    @Test
+    fun `rejects player map when map key does not match player declared identity`() {
+        val mismatched = mapOf("alice" to EvaluationEvidencePlayer(UUID.randomUUID(), "bob"))
+        val input =
+            ReferenceCoverageAnalysisInput(
+                referencePositions = setOf("pos1"),
+                players = mismatched,
+                rows = emptyList(),
+                analysisVersion = "e6-v1",
+            )
+
+        val exception =
+            assertThrows<ReferenceCoverageAnalysisIntegrityException> {
+                service.analyze(input)
+            }
+        assertTrue(exception.message!!.contains("declared players are invalid"))
+    }
+
+    @Test
+    fun `rejects player map when player identity is blank`() {
+        val blankPlayer = mapOf("" to EvaluationEvidencePlayer(UUID.randomUUID(), ""))
+        val input =
+            ReferenceCoverageAnalysisInput(
+                referencePositions = setOf("pos1"),
+                players = blankPlayer,
+                rows = emptyList(),
+                analysisVersion = "e6-v1",
+            )
+
+        val exception =
+            assertThrows<ReferenceCoverageAnalysisIntegrityException> {
+                service.analyze(input)
+            }
+        assertTrue(exception.message!!.contains("declared players are invalid"))
     }
 
     private fun players(vararg names: String) =
