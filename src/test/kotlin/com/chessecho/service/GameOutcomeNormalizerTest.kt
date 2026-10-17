@@ -116,6 +116,25 @@ class GameOutcomeNormalizerTest {
     }
 
     @Test
+    fun `scores authoritative legacy White occurrence when account matches White`() {
+        val normalized =
+            normalizer.normalize(
+                game(
+                    result = "win",
+                    whiteUsername = "account",
+                    blackUsername = "opponent",
+                    pgn = header(white = "account", black = "opponent", result = "1-0"),
+                ),
+                "WHITE",
+                "account",
+            )
+
+        assertEquals("WIN", normalized.outcome?.name)
+        assertEquals("CORROBORATED", normalized.sideCorroboration.name)
+        assertNull(normalized.exclusionReason)
+    }
+
+    @Test
     fun `unavailable attribution remains scoreable from authoritative stored color`() {
         val normalized =
             normalizer.normalize(

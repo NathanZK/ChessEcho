@@ -11,10 +11,15 @@ import com.chessecho.domain.Platform
 import com.chessecho.domain.PlayerColor
 import com.chessecho.domain.Position
 import com.chessecho.domain.PositionOccurrence
+import com.chessecho.domain.PuzzleSchedulingEvent
+import com.chessecho.domain.SchedulingEventType
+import com.chessecho.dto.WeaknessResponse
 import com.chessecho.repository.ChessAccountRepository
 import com.chessecho.repository.EngineAnalysisRepository
 import com.chessecho.repository.PositionOccurrenceRepository
+import com.chessecho.repository.PuzzleSchedulingEventRepository
 import com.chessecho.repository.WeaknessAggregation
+import com.chessecho.service.auth.AuthenticatedPrincipal
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -33,6 +38,7 @@ import org.mockito.kotlin.eq
 import org.mockito.kotlin.never
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
+import org.springframework.test.util.ReflectionTestUtils
 import java.time.Instant
 import java.util.UUID
 
@@ -52,6 +58,12 @@ class WeaknessCalculationServiceTest {
 
     @Mock
     private lateinit var weaknessPriorityPolicy: WeaknessPriorityPolicy
+
+    @Mock
+    private lateinit var puzzleSchedulingEventRepository: PuzzleSchedulingEventRepository
+
+    @Mock
+    private lateinit var adaptivePuzzleSchedulingPolicy: AdaptivePuzzleSchedulingPolicy
 
     @InjectMocks
     private lateinit var weaknessCalculationService: WeaknessCalculationService
@@ -82,6 +94,27 @@ class WeaknessCalculationServiceTest {
                 invocation.getArgument(2),
             )
         }
+
+        lenient().`when`(
+            puzzleSchedulingEventRepository.findHistory(
+                any(),
+                any(),
+                any(),
+                any(),
+            ),
+        ).thenReturn(emptyList())
+
+        lenient().`when`(
+            adaptivePuzzleSchedulingPolicy.schedule(
+                any(),
+                any(),
+                any(),
+                any(),
+            ),
+        ).thenAnswer { invocation -> invocation.getArgument<Double>(0) }
+
+        ReflectionTestUtils.setField(weaknessCalculationService, "puzzleSchedulingEventRepository", puzzleSchedulingEventRepository)
+        ReflectionTestUtils.setField(weaknessCalculationService, "adaptivePuzzleSchedulingPolicy", adaptivePuzzleSchedulingPolicy)
     }
 
     @Test
@@ -1301,16 +1334,858 @@ class WeaknessCalculationServiceTest {
         assertTrue(openingStats != null, "OPENING stats missing")
         assertEquals(3, openingStats!!.timesReached)
         assertEquals(2, openingStats.mistakeCount)
+        assertEquals(2.0 / 3.0, openingStats.mistakeRate, 1e-4)
+        assertEquals(1.0, openingStats.averageLoss, 1e-4)
 
         val midStats = pStats["MIDDLEGAME"]
         assertTrue(midStats != null, "MIDDLEGAME stats missing")
         assertEquals(2, midStats!!.timesReached)
         assertEquals(2, midStats.mistakeCount)
+        assertEquals(1.0, midStats.mistakeRate, 1e-4)
+        assertEquals(1.0, midStats.averageLoss, 1e-4)
 
         val endStats = pStats["ENDGAME"]
         assertTrue(
             endStats == null,
             "ENDGAME stats should not be present because the FEN has 32 pieces and moveNumber > 14 forces MIDDLEGAME",
         )
+    }
+
+    private fun testSinglePhaseClassification(
+        fen: String,
+        plyNumber: Int,
+    ): String {
+        val account = ChessAccount(platform = "CHESS_COM", username = "phaseUser")
+        val position = Position(hash = "pos-phase-${UUID.randomUUID()}", fen = fen)
+
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "phaseUser")).thenReturn(account)
+
+        val analysis = EngineAnalysis(position = position, depth = 16, baselineEvalCp = 100, bestMove = "best", bestMoveEvalCp = 100)
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "BAD", evalCp = 0, evalLossFromBest = 1.0))
+
+        val occurrences =
+            listOf(
+                PositionOccurrence(
+                    game = mockGame("g1"),
+                    position = position,
+                    chessAccount = account,
+                    plyNumber = plyNumber,
+                    movePlayed = "BAD",
+                    playerColor = "WHITE",
+                ),
+            )
+
+        `when`(
+            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(
+                eq(account.id),
+                eq("WHITE"),
+                any(),
+            ),
+        ).thenReturn(occurrences)
+
+        `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(any())).thenReturn(listOf(analysis))
+
+        val aggregation =
+            WeaknessAggregation(
+                positionId = position.id,
+                fen = position.fen,
+                playerColor = "WHITE",
+                timesReached = 1,
+                bestMove = "best",
+                baselineEvalCp = 100,
+                mistakeCount = 1,
+                averageLoss = 1.0,
+                rawTotalLoss = 1.0,
+            )
+
+        `when`(
+            positionOccurrenceRepository.findWeaknessAggregations(
+                chessAccountId = eq(account.id),
+                playerColor = eq("WHITE"),
+                minEvalLoss = eq(0.8),
+                minTimesReached = eq(1),
+                minMistakeCount = eq(1L),
+            ),
+        ).thenReturn(listOf(aggregation))
+
+        val weaknesses =
+            weaknessCalculationService.getWeaknesses(
+                Platform.CHESS_COM,
+                "phaseUser",
+                PlayerColor.WHITE,
+                minEvalLoss = 0.8,
+                minTimesReached = 1,
+                minMistakeCount = 1,
+            )
+        assertEquals(1, weaknesses.size)
+        val phaseStats = weaknesses[0].phaseStats
+        assertTrue(phaseStats != null, "phaseStats must not be null")
+        assertEquals(1, phaseStats!!.size, "Expected exactly one classified phase")
+        return phaseStats.keys.first()
+    }
+
+    @Test
+    fun `test phase classification corrupt FEN with fewer than 8 ranks defaults to OPENING`() {
+        val corruptFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP w KQkq - 0 1"
+        assertEquals("OPENING", testSinglePhaseClassification(corruptFen, plyNumber = 40))
+    }
+
+    @Test
+    fun `test phase classification exact mmCount boundary at 6 and heavy piece endgame are ENDGAME`() {
+        // Heavy-piece endgame (Q+R vs Q+R, mmCount = 4)
+        val heavyEndgameFen = "4k2r/4q3/8/8/8/8/4Q3/4K2R w - - 0 1"
+        assertEquals("ENDGAME", testSinglePhaseClassification(heavyEndgameFen, plyNumber = 10))
+
+        // Exact mmCount = 6 boundary (Black: r, b, r; White: R, B, R)
+        val mm6Fen = "r2k1b1r/8/8/8/8/8/8/R2K1B1R w - - 0 1"
+        assertEquals("ENDGAME", testSinglePhaseClassification(mm6Fen, plyNumber = 10))
+    }
+
+    @Test
+    fun `test phase classification exact mmCount boundary at 10 is queenless middlegame and 11 can be OPENING`() {
+        // mmCount = 10 boundary: Queenless middlegame (5 pieces on each side)
+        val mm10Fen = "r1b1kbnr/8/8/8/8/8/8/R1B1KBNR w - - 0 1"
+        assertEquals("MIDDLEGAME", testSinglePhaseClassification(mm10Fen, plyNumber = 2))
+
+        // mmCount = 11: 11 minor/major pieces, both backranks populated (>= 4 non-pawn pieces), early move
+        val mm11Fen = "r1b1kbnr/8/8/8/8/8/4N3/R1B1KBNR w - - 0 1"
+        assertEquals("OPENING", testSinglePhaseClassification(mm11Fen, plyNumber = 2))
+    }
+
+    @Test
+    fun `test phase classification home-rank sparsity triggers MIDDLEGAME when mmCount greater than 6`() {
+        // White rank 1 has only 3 pieces (R, K, R < 4), Black rank 8 has 8 pieces, mmCount = 12 > 6
+        val sparseWhiteRank1Fen = "rnbqkbnr/8/8/8/8/8/2NN4/R3K2R w - - 0 1"
+        assertEquals("MIDDLEGAME", testSinglePhaseClassification(sparseWhiteRank1Fen, plyNumber = 2))
+
+        // Black rank 8 has only 3 pieces (r, k, r < 4), White rank 1 has 8 pieces, mmCount = 12 > 6
+        val sparseBlackRank8Fen = "r3k2r/2nn4/8/8/8/8/8/RNBQKBNR w - - 0 1"
+        assertEquals("MIDDLEGAME", testSinglePhaseClassification(sparseBlackRank8Fen, plyNumber = 2))
+    }
+
+    @Test
+    fun `test phase classification populated backranks with mmCount greater than 10 before move 15 remains OPENING`() {
+        val standardFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        assertEquals("OPENING", testSinglePhaseClassification(standardFen, plyNumber = 20))
+    }
+
+    @Test
+    fun `test phase classification move number boundary transitions from OPENING at ply 28 to MIDDLEGAME at ply 29 and 30`() {
+        val standardFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+
+        // Ply 28 -> move 14 -> OPENING
+        assertEquals("OPENING", testSinglePhaseClassification(standardFen, plyNumber = 28))
+
+        // Ply 29 -> move 15 -> MIDDLEGAME
+        assertEquals("MIDDLEGAME", testSinglePhaseClassification(standardFen, plyNumber = 29))
+
+        // Ply 30 -> move 15 -> MIDDLEGAME
+        assertEquals("MIDDLEGAME", testSinglePhaseClassification(standardFen, plyNumber = 30))
+    }
+
+    @Test
+    fun `test authenticated scheduling delegates history query with correct scoping and mappings`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "schedUser")
+        val position = Position(hash = "pos-sched", fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+        val appUserId = UUID.randomUUID()
+        val principal = AuthenticatedPrincipal(appUserId = appUserId, devPrincipal = false)
+
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "schedUser")).thenReturn(account)
+
+        val analysis = EngineAnalysis(position = position, depth = 16, baselineEvalCp = 100, bestMove = "best", bestMoveEvalCp = 100)
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "BAD", evalCp = 0, evalLossFromBest = 1.0))
+
+        val game = mockGame("g-sched")
+        val occurrence =
+            PositionOccurrence(
+                game = game,
+                position = position,
+                chessAccount = account,
+                plyNumber = 1,
+                movePlayed = "BAD",
+                playerColor = "WHITE",
+            )
+
+        `when`(
+            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(
+                eq(account.id),
+                eq("WHITE"),
+                any(),
+            ),
+        ).thenReturn(listOf(occurrence))
+
+        `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(any())).thenReturn(listOf(analysis))
+
+        val aggregation =
+            WeaknessAggregation(
+                positionId = position.id,
+                fen = position.fen,
+                playerColor = "WHITE",
+                timesReached = 1,
+                bestMove = "best",
+                baselineEvalCp = 100,
+                mistakeCount = 1,
+                averageLoss = 1.0,
+                rawTotalLoss = 1.0,
+            )
+
+        `when`(
+            positionOccurrenceRepository.findWeaknessAggregations(
+                chessAccountId = eq(account.id),
+                playerColor = eq("WHITE"),
+                minEvalLoss = eq(0.8),
+                minTimesReached = eq(1),
+                minMistakeCount = eq(1L),
+            ),
+        ).thenReturn(listOf(aggregation))
+
+        val eventTime = Instant.now().minusSeconds(120)
+        val schedulingEventEntity =
+            PuzzleSchedulingEvent(
+                chessAccount = account,
+                position = position,
+                playerColor = "WHITE",
+                eventType = SchedulingEventType.GAME_MISTAKE,
+                occurredAt = eventTime,
+                sourceOccurrence = occurrence,
+            )
+
+        `when`(
+            puzzleSchedulingEventRepository.findHistory(
+                eq(appUserId),
+                eq(account.id),
+                eq(setOf(position.id)),
+                eq("WHITE"),
+            ),
+        ).thenReturn(listOf(schedulingEventEntity))
+
+        val eventsCaptor = argumentCaptor<List<com.chessecho.service.SchedulingEvent>>()
+        val positionIdCaptor = argumentCaptor<UUID>()
+        val priorityCaptor = argumentCaptor<Double>()
+        val timeCaptor = argumentCaptor<Instant>()
+
+        `when`(
+            adaptivePuzzleSchedulingPolicy.schedule(
+                priorityCaptor.capture(),
+                positionIdCaptor.capture(),
+                eventsCaptor.capture(),
+                timeCaptor.capture(),
+            ),
+        ).thenReturn(42.0)
+
+        val weaknesses =
+            weaknessCalculationService.getWeaknesses(
+                Platform.CHESS_COM,
+                "schedUser",
+                PlayerColor.WHITE,
+                minEvalLoss = 0.8,
+                minTimesReached = 1,
+                minMistakeCount = 1,
+                principal = principal,
+            )
+
+        assertEquals(1, weaknesses.size)
+
+        // Verify query delegation scoping
+        verify(puzzleSchedulingEventRepository).findHistory(
+            appUserId,
+            account.id,
+            setOf(position.id),
+            "WHITE",
+        )
+
+        // Verify policy invocation arguments
+        assertEquals(position.id, positionIdCaptor.firstValue)
+        assertEquals(weaknesses[0].recommendationPriority, priorityCaptor.firstValue)
+        assertEquals(1, eventsCaptor.firstValue.size)
+        val mappedEvent = eventsCaptor.firstValue[0]
+        assertEquals(SchedulingEventType.GAME_MISTAKE, mappedEvent.type)
+        assertEquals(eventTime, mappedEvent.occurredAt)
+        assertEquals(occurrence.id, mappedEvent.sourceOccurrenceId)
+    }
+
+    @Test
+    fun `test authenticated scheduling re-ranks weaknesses by scheduledScore with secondary tiebreakers`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "schedTiebreaker")
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "schedTiebreaker")).thenReturn(account)
+
+        val posA = Position(hash = "hash-A", fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+        val posB = Position(hash = "hash-B", fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1")
+
+        val analysisA = EngineAnalysis(position = posA, depth = 16, baselineEvalCp = 100, bestMove = "bestA", bestMoveEvalCp = 100)
+        analysisA.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysisA, move = "BAD", evalCp = 0, evalLossFromBest = 1.0))
+        val analysisB = EngineAnalysis(position = posB, depth = 16, baselineEvalCp = 100, bestMove = "bestB", bestMoveEvalCp = 100)
+        analysisB.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysisB, move = "BAD", evalCp = 0, evalLossFromBest = 1.0))
+
+        val occurrences =
+            listOf(
+                PositionOccurrence(
+                    game = mockGame("gA"),
+                    position = posA,
+                    chessAccount = account,
+                    plyNumber = 1,
+                    movePlayed = "BAD",
+                    playerColor = "WHITE",
+                ),
+                PositionOccurrence(
+                    game = mockGame("gB"),
+                    position = posB,
+                    chessAccount = account,
+                    plyNumber = 2,
+                    movePlayed = "BAD",
+                    playerColor = "WHITE",
+                ),
+            )
+
+        `when`(
+            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(
+                eq(account.id),
+                eq("WHITE"),
+                any(),
+            ),
+        ).thenReturn(occurrences)
+        `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(any())).thenReturn(listOf(analysisA, analysisB))
+
+        val aggA =
+            WeaknessAggregation(
+                positionId = posA.id,
+                fen = posA.fen,
+                playerColor = "WHITE",
+                timesReached = 1,
+                bestMove = "bestA",
+                baselineEvalCp = 100,
+                mistakeCount = 1,
+                averageLoss = 1.0,
+                rawTotalLoss = 1.0,
+            )
+        val aggB =
+            WeaknessAggregation(
+                positionId = posB.id,
+                fen = posB.fen,
+                playerColor = "WHITE",
+                timesReached = 1,
+                bestMove = "bestB",
+                baselineEvalCp = 100,
+                mistakeCount = 1,
+                averageLoss = 1.0,
+                rawTotalLoss = 1.0,
+            )
+
+        `when`(
+            positionOccurrenceRepository.findWeaknessAggregations(
+                eq(account.id),
+                eq("WHITE"),
+                eq(0.8),
+                eq(1),
+                eq(1L),
+            ),
+        ).thenReturn(listOf(aggA, aggB))
+
+        val principal = AuthenticatedPrincipal(appUserId = UUID.randomUUID(), devPrincipal = false)
+
+        // Test 1: scheduledScore DESC re-ranks regardless of baseline recommendation priority
+        `when`(adaptivePuzzleSchedulingPolicy.schedule(any(), eq(posA.id), any(), any())).thenReturn(5.0)
+        `when`(adaptivePuzzleSchedulingPolicy.schedule(any(), eq(posB.id), any(), any())).thenReturn(10.0)
+
+        val reRanked =
+            weaknessCalculationService.getWeaknesses(
+                Platform.CHESS_COM,
+                "schedTiebreaker",
+                PlayerColor.WHITE,
+                minEvalLoss = 0.8,
+                minTimesReached = 1,
+                minMistakeCount = 1,
+                principal = principal,
+            )
+        assertEquals(listOf(posB.id, posA.id), reRanked.map { it.positionId })
+
+        // Test 2: Secondary tiebreaker positionId.toString() ASC when scheduledScore and priorities are equal
+        `when`(adaptivePuzzleSchedulingPolicy.schedule(any(), any(), any(), any())).thenReturn(10.0)
+        val tiedResults =
+            weaknessCalculationService.getWeaknesses(
+                Platform.CHESS_COM,
+                "schedTiebreaker",
+                PlayerColor.WHITE,
+                minEvalLoss = 0.8,
+                minTimesReached = 1,
+                minMistakeCount = 1,
+                principal = principal,
+            )
+        assertEquals(2, tiedResults.size)
+        val expectedFirst = if (posA.id.toString() < posB.id.toString()) posA.id else posB.id
+        assertEquals(expectedFirst, tiedResults[0].positionId)
+    }
+
+    @Test
+    fun `test authenticated scheduling zero-history parity with unauthenticated baseline`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "schedZero")
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "schedZero")).thenReturn(account)
+
+        val pos1 = Position(hash = "hash-1", fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+        val pos2 = Position(hash = "hash-2", fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1")
+
+        val analysis1 =
+            EngineAnalysis(
+                position = pos1,
+                depth = 16,
+                baselineEvalCp = 100,
+                bestMove = "best1",
+                bestMoveEvalCp = 100,
+            )
+        analysis1.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis1, move = "BAD", evalCp = 0, evalLossFromBest = 1.0))
+        val analysis2 =
+            EngineAnalysis(
+                position = pos2,
+                depth = 16,
+                baselineEvalCp = 100,
+                bestMove = "best2",
+                bestMoveEvalCp = 100,
+            )
+        analysis2.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis2, move = "BAD", evalCp = 0, evalLossFromBest = 1.0))
+
+        val occurrences =
+            listOf(
+                PositionOccurrence(
+                    game = mockGame("g1"),
+                    position = pos1,
+                    chessAccount = account,
+                    plyNumber = 1,
+                    movePlayed = "BAD",
+                    playerColor = "WHITE",
+                ),
+                PositionOccurrence(
+                    game = mockGame("g2"),
+                    position = pos2,
+                    chessAccount = account,
+                    plyNumber = 2,
+                    movePlayed = "BAD",
+                    playerColor = "WHITE",
+                ),
+            )
+
+        `when`(
+            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(
+                eq(account.id),
+                eq("WHITE"),
+                any(),
+            ),
+        ).thenReturn(occurrences)
+        `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(any())).thenReturn(listOf(analysis1, analysis2))
+
+        val agg1 =
+            WeaknessAggregation(
+                positionId = pos1.id,
+                fen = pos1.fen,
+                playerColor = "WHITE",
+                timesReached = 1,
+                bestMove = "best1",
+                baselineEvalCp = 100,
+                mistakeCount = 1,
+                averageLoss = 1.0,
+                rawTotalLoss = 1.0,
+            )
+        val agg2 =
+            WeaknessAggregation(
+                positionId = pos2.id,
+                fen = pos2.fen,
+                playerColor = "WHITE",
+                timesReached = 1,
+                bestMove = "best2",
+                baselineEvalCp = 100,
+                mistakeCount = 1,
+                averageLoss = 1.0,
+                rawTotalLoss = 1.0,
+            )
+
+        `when`(
+            positionOccurrenceRepository.findWeaknessAggregations(
+                eq(account.id),
+                eq("WHITE"),
+                eq(0.8),
+                eq(1),
+                eq(1L),
+            ),
+        ).thenReturn(listOf(agg1, agg2))
+
+        val guestWeaknesses =
+            weaknessCalculationService.getWeaknesses(
+                Platform.CHESS_COM,
+                "schedZero",
+                PlayerColor.WHITE,
+                minEvalLoss = 0.8,
+                minTimesReached = 1,
+                minMistakeCount = 1,
+                principal = null,
+            )
+
+        val principal = AuthenticatedPrincipal(appUserId = UUID.randomUUID(), devPrincipal = false)
+        `when`(puzzleSchedulingEventRepository.findHistory(any(), any(), any(), any())).thenReturn(emptyList())
+        `when`(adaptivePuzzleSchedulingPolicy.schedule(any(), any(), eq(emptyList()), any())).thenAnswer { it.getArgument<Double>(0) }
+
+        val authenticatedWeaknesses =
+            weaknessCalculationService.getWeaknesses(
+                Platform.CHESS_COM,
+                "schedZero",
+                PlayerColor.WHITE,
+                minEvalLoss = 0.8,
+                minTimesReached = 1,
+                minMistakeCount = 1,
+                principal = principal,
+            )
+
+        assertEquals(guestWeaknesses.map { it.positionId }, authenticatedWeaknesses.map { it.positionId })
+    }
+
+    @Test
+    fun `test authenticated scheduling graceful fallback when policy is null or repository is null`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "schedFallback")
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "schedFallback")).thenReturn(account)
+
+        val pos = Position(hash = "hash-fb", fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+        val analysis =
+            EngineAnalysis(
+                position = pos,
+                depth = 16,
+                baselineEvalCp = 100,
+                bestMove = "best",
+                bestMoveEvalCp = 100,
+            )
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "BAD", evalCp = 0, evalLossFromBest = 1.0))
+        val occurrences =
+            listOf(
+                PositionOccurrence(
+                    game = mockGame("g"),
+                    position = pos,
+                    chessAccount = account,
+                    plyNumber = 1,
+                    movePlayed = "BAD",
+                    playerColor = "WHITE",
+                ),
+            )
+
+        `when`(
+            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(
+                eq(account.id),
+                eq("WHITE"),
+                any(),
+            ),
+        ).thenReturn(occurrences)
+        `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(any())).thenReturn(listOf(analysis))
+        val agg =
+            WeaknessAggregation(
+                positionId = pos.id,
+                fen = pos.fen,
+                playerColor = "WHITE",
+                timesReached = 1,
+                bestMove = "best",
+                baselineEvalCp = 100,
+                mistakeCount = 1,
+                averageLoss = 1.0,
+                rawTotalLoss = 1.0,
+            )
+        `when`(
+            positionOccurrenceRepository.findWeaknessAggregations(
+                eq(account.id),
+                eq("WHITE"),
+                eq(0.8),
+                eq(1),
+                eq(1L),
+            ),
+        ).thenReturn(listOf(agg))
+
+        val principal = AuthenticatedPrincipal(appUserId = UUID.randomUUID(), devPrincipal = false)
+
+        // Fallback 1: adaptivePuzzleSchedulingPolicy == null
+        ReflectionTestUtils.setField(weaknessCalculationService, "adaptivePuzzleSchedulingPolicy", null)
+        val nullPolicyResult =
+            weaknessCalculationService.getWeaknesses(
+                Platform.CHESS_COM,
+                "schedFallback",
+                PlayerColor.WHITE,
+                minEvalLoss = 0.8,
+                minTimesReached = 1,
+                minMistakeCount = 1,
+                principal = principal,
+            )
+        assertEquals(1, nullPolicyResult.size)
+
+        // Restore policy, null out repository
+        ReflectionTestUtils.setField(weaknessCalculationService, "adaptivePuzzleSchedulingPolicy", adaptivePuzzleSchedulingPolicy)
+        ReflectionTestUtils.setField(weaknessCalculationService, "puzzleSchedulingEventRepository", null)
+        val nullRepoResult =
+            weaknessCalculationService.getWeaknesses(
+                Platform.CHESS_COM,
+                "schedFallback",
+                PlayerColor.WHITE,
+                minEvalLoss = 0.8,
+                minTimesReached = 1,
+                minMistakeCount = 1,
+                principal = principal,
+            )
+        assertEquals(1, nullRepoResult.size)
+    }
+
+    @Test
+    fun `test WeaknessResponse DTO does not expose scheduledScore field`() {
+        val declaredFieldNames = WeaknessResponse::class.java.declaredFields.map { it.name }
+        assertTrue("scheduledScore" !in declaredFieldNames, "WeaknessResponse DTO must not expose scheduledScore")
+    }
+
+    @Test
+    fun `test top-level averageLoss and objective priority arithmetic with multiple occurrences and rawRate less than 1`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "arithmeticUser")
+        val position = Position(hash = "pos-arithmetic", fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "arithmeticUser")).thenReturn(account)
+
+        val analysis = EngineAnalysis(position = position, depth = 16, baselineEvalCp = 100, bestMove = "best", bestMoveEvalCp = 100)
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "BAD1", evalCp = -20, evalLossFromBest = 1.2))
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "BAD2", evalCp = 20, evalLossFromBest = 0.8))
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "GOOD", evalCp = 90, evalLossFromBest = 0.1))
+
+        val gameToday = mockGame("g-today")
+        val occurrences =
+            listOf(
+                PositionOccurrence(
+                    game = gameToday,
+                    position = position,
+                    chessAccount = account,
+                    plyNumber = 1,
+                    movePlayed = "BAD1",
+                    playerColor = "WHITE",
+                ),
+                PositionOccurrence(
+                    game = gameToday,
+                    position = position,
+                    chessAccount = account,
+                    plyNumber = 2,
+                    movePlayed = "BAD2",
+                    playerColor = "WHITE",
+                ),
+                PositionOccurrence(
+                    game = gameToday,
+                    position = position,
+                    chessAccount = account,
+                    plyNumber = 3,
+                    movePlayed = "GOOD",
+                    playerColor = "WHITE",
+                ),
+                PositionOccurrence(
+                    game = gameToday,
+                    position = position,
+                    chessAccount = account,
+                    plyNumber = 4,
+                    movePlayed = "GOOD",
+                    playerColor = "WHITE",
+                ),
+            )
+
+        `when`(
+            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(
+                eq(account.id),
+                eq("WHITE"),
+                any(),
+            ),
+        ).thenReturn(occurrences)
+        `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(any())).thenReturn(listOf(analysis))
+
+        val aggregation =
+            WeaknessAggregation(
+                positionId = position.id,
+                fen = position.fen,
+                playerColor = "WHITE",
+                timesReached = 4,
+                bestMove = "best",
+                baselineEvalCp = 100,
+                mistakeCount = 2,
+                averageLoss = 1.0,
+                rawTotalLoss = 2.0,
+            )
+
+        `when`(
+            positionOccurrenceRepository.findWeaknessAggregations(
+                chessAccountId = eq(account.id),
+                playerColor = eq("WHITE"),
+                minEvalLoss = eq(0.8),
+                minTimesReached = eq(4),
+                minMistakeCount = eq(2L),
+            ),
+        ).thenReturn(listOf(aggregation))
+
+        val weaknesses =
+            weaknessCalculationService.getWeaknesses(
+                Platform.CHESS_COM,
+                "arithmeticUser",
+                PlayerColor.WHITE,
+                minEvalLoss = 0.8,
+                minTimesReached = 4,
+                minMistakeCount = 2,
+            )
+
+        assertEquals(1, weaknesses.size)
+        val w = weaknesses[0]
+        assertEquals(2, w.mistakeCount)
+        assertEquals(4, w.timesReached)
+        assertEquals(50.0, w.mistakeRate)
+        assertEquals(1.0, w.averageLoss, 1e-4)
+        assertEquals(1.0, w.priority, 1e-4)
+    }
+
+    @Test
+    fun `test opening context consensus matching ECO and ECOUrl returns openingContext`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "ecoUser")
+        val position = Position(hash = "pos-eco-match", fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "ecoUser")).thenReturn(account)
+
+        val pgnMatch = "[ECO \"B23\"]\n[ECOUrl \"https://www.chess.com/openings/Sicilian-Defense\"]\n[White \"ecoUser\"]\n\n1. e4 c5 2. Nc3"
+        val game1 = Game(chessAccount = account, platformGameId = "g-eco-1", pgn = pgnMatch)
+        val game2 = Game(chessAccount = account, platformGameId = "g-eco-2", pgn = pgnMatch)
+
+        val analysis = EngineAnalysis(position = position, depth = 16, baselineEvalCp = 100, bestMove = "best", bestMoveEvalCp = 100)
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "BAD", evalCp = 0, evalLossFromBest = 1.0))
+
+        val occurrences =
+            listOf(
+                PositionOccurrence(
+                    game = game1,
+                    position = position,
+                    chessAccount = account,
+                    plyNumber = 1,
+                    movePlayed = "BAD",
+                    playerColor = "WHITE",
+                ),
+                PositionOccurrence(
+                    game = game2,
+                    position = position,
+                    chessAccount = account,
+                    plyNumber = 2,
+                    movePlayed = "BAD",
+                    playerColor = "WHITE",
+                ),
+            )
+
+        `when`(
+            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(
+                eq(account.id),
+                eq("WHITE"),
+                any(),
+            ),
+        ).thenReturn(occurrences)
+        `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(any())).thenReturn(listOf(analysis))
+        val agg =
+            WeaknessAggregation(
+                positionId = position.id,
+                fen = position.fen,
+                playerColor = "WHITE",
+                timesReached = 2,
+                bestMove = "best",
+                baselineEvalCp = 100,
+                mistakeCount = 2,
+                averageLoss = 1.0,
+                rawTotalLoss = 2.0,
+            )
+        `when`(
+            positionOccurrenceRepository.findWeaknessAggregations(
+                eq(account.id),
+                eq("WHITE"),
+                eq(0.8),
+                eq(2),
+                eq(2L),
+            ),
+        ).thenReturn(listOf(agg))
+
+        val weaknesses =
+            weaknessCalculationService.getWeaknesses(
+                Platform.CHESS_COM,
+                "ecoUser",
+                PlayerColor.WHITE,
+                minEvalLoss = 0.8,
+                minTimesReached = 2,
+                minMistakeCount = 2,
+            )
+        assertEquals(1, weaknesses.size)
+        val opening = weaknesses[0].openingContext
+        assertTrue(opening != null, "Opening context should be present for matching consensus")
+        assertEquals("B23", opening!!.eco)
+        assertEquals("https://www.chess.com/openings/Sicilian-Defense", opening.ecoUrl)
+    }
+
+    @Test
+    fun `test opening context non-consensus and missing tags return null openingContext`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "ecoMismatchUser")
+        val position = Position(hash = "pos-eco-mismatch", fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "ecoMismatchUser")).thenReturn(account)
+
+        val pgn1 = "[ECO \"B23\"]\n[ECOUrl \"https://www.chess.com/openings/Sicilian-Defense\"]\n\n"
+        val pgn2 = "[ECO \"B20\"]\n[ECOUrl \"https://www.chess.com/openings/Sicilian-Defense-Other\"]\n\n"
+        val game1 = Game(chessAccount = account, platformGameId = "g-mismatch-1", pgn = pgn1)
+        val game2 = Game(chessAccount = account, platformGameId = "g-mismatch-2", pgn = pgn2)
+
+        val analysis = EngineAnalysis(position = position, depth = 16, baselineEvalCp = 100, bestMove = "best", bestMoveEvalCp = 100)
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "BAD", evalCp = 0, evalLossFromBest = 1.0))
+
+        val occurrences =
+            listOf(
+                PositionOccurrence(
+                    game = game1,
+                    position = position,
+                    chessAccount = account,
+                    plyNumber = 1,
+                    movePlayed = "BAD",
+                    playerColor = "WHITE",
+                ),
+                PositionOccurrence(
+                    game = game2,
+                    position = position,
+                    chessAccount = account,
+                    plyNumber = 2,
+                    movePlayed = "BAD",
+                    playerColor = "WHITE",
+                ),
+            )
+
+        `when`(
+            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(
+                eq(account.id),
+                eq("WHITE"),
+                any(),
+            ),
+        ).thenReturn(occurrences)
+        `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(any())).thenReturn(listOf(analysis))
+        val agg =
+            WeaknessAggregation(
+                positionId = position.id,
+                fen = position.fen,
+                playerColor = "WHITE",
+                timesReached = 2,
+                bestMove = "best",
+                baselineEvalCp = 100,
+                mistakeCount = 2,
+                averageLoss = 1.0,
+                rawTotalLoss = 2.0,
+            )
+        `when`(
+            positionOccurrenceRepository.findWeaknessAggregations(
+                eq(account.id),
+                eq("WHITE"),
+                eq(0.8),
+                eq(2),
+                eq(2L),
+            ),
+        ).thenReturn(listOf(agg))
+
+        val weaknesses =
+            weaknessCalculationService.getWeaknesses(
+                Platform.CHESS_COM,
+                "ecoMismatchUser",
+                PlayerColor.WHITE,
+                minEvalLoss = 0.8,
+                minTimesReached = 2,
+                minMistakeCount = 2,
+            )
+        assertEquals(1, weaknesses.size)
+        assertTrue(weaknesses[0].openingContext == null, "Opening context should be null for mismatched ECO tags")
     }
 }

@@ -283,6 +283,50 @@ class PracticalEvidenceServiceTest {
         verify(normalizer, times(1)).normalize(eq(repeatedGame), eq("WHITE"), eq(account.username))
     }
 
+    @Test
+    fun `scores multi-draw scenarios with exact scoreRate weighting`() {
+        val account = account("alice")
+        val position = position("draws")
+
+        // 1 win, 2 draws, 1 loss -> eligible = 4 -> (1 + 0.5 * 2) / 4 = 0.5
+        val gWin = game(account, "g-win", "win")
+        val gDraw1 = game(account, "g-d1", "agreed")
+        val gDraw2 = game(account, "g-d2", "repetition")
+        val gLoss = game(account, "g-loss", "checkmated")
+
+        val rows4 =
+            listOf(
+                occurrence(account, position, gWin, "WHITE", "e4"),
+                occurrence(account, position, gDraw1, "WHITE", "e4"),
+                occurrence(account, position, gDraw2, "WHITE", "e4"),
+                occurrence(account, position, gLoss, "WHITE", "e4"),
+            )
+        val scope4 = PracticalEvidenceScope(account.id, position.id, "WHITE")
+
+        val summary4 = service().summarize(account.id, account.username, rows4, setOf(scope4), asOf).getValue(scope4)
+        assertEquals(4, summary4.eligibleGames)
+        assertEquals(1, summary4.wins)
+        assertEquals(2, summary4.draws)
+        assertEquals(1, summary4.losses)
+        assertEquals(0.5, summary4.scoreRate)
+
+        // 0 wins, 3 draws, 1 loss -> eligible = 4 -> (0 + 0.5 * 3) / 4 = 0.375
+        val gDraw3 = game(account, "g-d3", "stalemate")
+        val rows3Draws =
+            listOf(
+                occurrence(account, position, gDraw1, "WHITE", "e4"),
+                occurrence(account, position, gDraw2, "WHITE", "e4"),
+                occurrence(account, position, gDraw3, "WHITE", "e4"),
+                occurrence(account, position, gLoss, "WHITE", "e4"),
+            )
+        val summary3Draws = service().summarize(account.id, account.username, rows3Draws, setOf(scope4), asOf).getValue(scope4)
+        assertEquals(4, summary3Draws.eligibleGames)
+        assertEquals(0, summary3Draws.wins)
+        assertEquals(3, summary3Draws.draws)
+        assertEquals(1, summary3Draws.losses)
+        assertEquals(0.375, summary3Draws.scoreRate)
+    }
+
     private fun service(observationWindowDays: Long? = null): PracticalEvidenceService =
         PracticalEvidenceService(
             GameOutcomeNormalizer(PgnHeaderTagReader()),
