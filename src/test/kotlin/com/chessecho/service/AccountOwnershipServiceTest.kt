@@ -4,6 +4,7 @@ import com.chessecho.domain.AccountConnection
 import com.chessecho.domain.AppUser
 import com.chessecho.domain.AsyncJob
 import com.chessecho.domain.ChessAccount
+import com.chessecho.domain.Platform
 import com.chessecho.domain.Position
 import com.chessecho.domain.PuzzleSchedulingEvent
 import com.chessecho.domain.SchedulingEventType
@@ -212,6 +213,60 @@ class AccountOwnershipServiceTest {
                 principalFor(user()),
             )
         }
+    }
+
+    @Test
+    fun `resolveImportAccount throws on conflicting platform snapshot`() {
+        val owner = user()
+        val account =
+            chessAccountRepository.save(
+                ChessAccount(platform = "OTHER_PLATFORM", username = "u${UUID.randomUUID().toString().take(8)}"),
+            ).also {
+                connections.saveAndFlush(AccountConnection(appUser = owner, chessAccount = it))
+            }
+        val request =
+            ImportGamesRequest(
+                accountId = account.id,
+                platform = Platform.CHESS_COM,
+                username = account.username,
+            )
+
+        assertFailsWith<AccountSelectionMismatchException> {
+            ownership.resolveImportAccount(request, principalFor(owner))
+        }
+    }
+
+    @Test
+    fun `resolveImportAccount throws on conflicting username snapshot`() {
+        val owner = user()
+        val account = account(owner)
+        val request =
+            ImportGamesRequest(
+                accountId = account.id,
+                platform = Platform.CHESS_COM,
+                username = "conflicting-username",
+            )
+
+        assertFailsWith<AccountSelectionMismatchException> {
+            ownership.resolveImportAccount(request, principalFor(owner))
+        }
+    }
+
+    @Test
+    fun `resolveImportAccount succeeds when platform and username match snapshots`() {
+        val owner = user()
+        val account = account(owner)
+        val request =
+            ImportGamesRequest(
+                accountId = account.id,
+                platform = Platform.CHESS_COM,
+                username = account.username,
+            )
+
+        val resolved = ownership.resolveImportAccount(request, principalFor(owner))
+        assertEquals(account.id, resolved.id)
+        assertEquals(account.platform, resolved.platform)
+        assertEquals(account.username, resolved.username)
     }
 
     @Test

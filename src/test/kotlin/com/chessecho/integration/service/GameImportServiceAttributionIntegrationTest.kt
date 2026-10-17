@@ -24,6 +24,7 @@ import com.chessecho.repository.PuzzleSchedulingEventRepository
 import com.chessecho.repository.UserPositionStatsRepository
 import com.chessecho.repository.UserPositionWeaknessRepository
 import com.chessecho.service.AccountOwnershipService
+import com.chessecho.service.AnalysisOutcome
 import com.chessecho.service.ChessComClient
 import com.chessecho.service.EngineAnalysisOrchestrator
 import com.chessecho.service.GameImportService
@@ -32,6 +33,7 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
+import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.whenever
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -189,6 +191,96 @@ class GameImportServiceAttributionIntegrationTest {
         val events = puzzleSchedulingEventRepository.findAll()
         assertTrue(events.isNotEmpty())
         assertEquals(setOf<UUID?>(null), events.map { it.appUser?.id }.toSet())
+    }
+
+    @Test
+    fun `executeImportJob records progress counters, analysis lifecycle, and position IDs`() {
+        val account = connectedAccount(userA)
+        val job = gameImportService.createImportJob(importRequest(account.id), AuthenticatedPrincipal(userA.id, false))
+
+        val positionsCaptor = argumentCaptor<Set<UUID>>()
+        var intermediateStatus: String? = null
+        var intermediateAnalysisStatus: String? = null
+        var intermediateImported = -1
+        var intermediateProcessed = -1
+        var intermediateEligible = -1
+
+        whenever(engineAnalysisOrchestrator.analyzeAffectedPositions(positionsCaptor.capture())).thenAnswer {
+            val inFlight = asyncJobRepository.findById(job.id).orElseThrow()
+            intermediateStatus = inFlight.status
+            intermediateAnalysisStatus = inFlight.analysisStatus
+            intermediateImported = inFlight.gamesImported
+            intermediateProcessed = inFlight.gamesProcessed
+            intermediateEligible = inFlight.eligibleGamesSelected
+            AnalysisOutcome()
+        }
+
+        gameImportService.executeImportJob(job.id)
+        val finalJob = awaitTerminal(job.id)
+
+        assertEquals("COMPLETED", intermediateStatus)
+        assertEquals("ANALYZING", intermediateAnalysisStatus)
+        assertEquals(1, intermediateImported)
+        assertEquals(1, intermediateProcessed)
+        assertEquals(1, intermediateEligible)
+
+        assertEquals("COMPLETED", finalJob.status)
+        assertEquals("COMPLETED", finalJob.analysisStatus)
+        assertEquals(1, finalJob.gamesImported)
+        assertEquals(0, finalJob.gamesSkipped)
+        assertEquals(1, finalJob.gamesProcessed)
+        assertEquals(1, finalJob.eligibleGamesSelected)
+
+        val forwardedPositions = positionsCaptor.firstValue
+        assertTrue(forwardedPositions.isNotEmpty(), "Parser-derived positions must be forwarded to orchestrator")
+        val savedPositions = positionRepository.findAll()
+        assertEquals(savedPositions.map { it.id }.toSet(), forwardedPositions)
+    }
+
+    @Test
+    fun `executeImportJob sets analysisStatus to FAILED when position analysis fails`() {
+        val account = connectedAccount(userA)
+        val job = gameImportService.createImportJob(importRequest(account.id), AuthenticatedPrincipal(userA.id, false))
+        whenever(engineAnalysisOrchestrator.analyzeAffectedPositions(any())).thenReturn(
+            AnalysisOutcome(failedPositionIds = setOf(UUID.randomUUID())),
+        )
+
+        gameImportService.executeImportJob(job.id)
+        val terminalJob = awaitTerminal(job.id)
+        assertEquals("COMPLETED", terminalJob.status)
+        assertEquals("FAILED", terminalJob.analysisStatus)
+    }
+
+    @Test
+    fun `executeImportJob sets analysisStatus to FAILED when orchestrator throws an exception`() {
+        val account = connectedAccount(userA)
+        val job = gameImportService.createImportJob(importRequest(account.id), AuthenticatedPrincipal(userA.id, false))
+        whenever(engineAnalysisOrchestrator.analyzeAffectedPositions(any())).thenThrow(
+            RuntimeException("Engine failure"),
+        )
+
+        gameImportService.executeImportJob(job.id)
+        val terminalJob = awaitTerminal(job.id)
+        assertEquals("COMPLETED", terminalJob.status)
+        assertEquals("FAILED", terminalJob.analysisStatus)
+    }
+
+    @Test
+    fun `executeImportJob records skipped games on repeated archive import`() {
+        val account = connectedAccount(userA)
+        val principal = AuthenticatedPrincipal(userA.id, false)
+        val firstJob = gameImportService.createImportJob(importRequest(account.id), principal)
+        gameImportService.executeImportJob(firstJob.id)
+        awaitTerminal(firstJob.id)
+
+        val secondJob = gameImportService.createImportJob(importRequest(account.id), principal)
+        gameImportService.executeImportJob(secondJob.id)
+        val finalJob = awaitTerminal(secondJob.id)
+
+        assertEquals("COMPLETED", finalJob.status)
+        assertEquals(0, finalJob.gamesImported)
+        assertTrue(finalJob.gamesSkipped > 0, "Repeated archive import must increment gamesSkipped")
+        assertTrue(finalJob.gamesProcessed > 0, "Repeated archive import must increment gamesProcessed")
     }
 
     /**

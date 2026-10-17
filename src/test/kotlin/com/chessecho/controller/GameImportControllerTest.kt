@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.doThrow
 import org.mockito.kotlin.eq
+import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.context.properties.EnableConfigurationProperties
@@ -95,7 +96,33 @@ class GameImportControllerTest {
             status { isAccepted() }
             jsonPath("$.jobId") { exists() }
             jsonPath("$.status") { value("QUEUED") }
+            jsonPath("$.configurationState") { doesNotExist() }
         }
+
+        verify(gameImportService).executeImportJob(job.id)
+    }
+
+    @Test
+    fun `POST games import includes configurationState when chessAccount is associated`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "hikaru")
+        val job =
+            AsyncJob(
+                username = "hikaru",
+                platform = "CHESS_COM",
+                chessAccount = account,
+                configurationState = AsyncJob.CONFIGURATION_READY,
+            )
+        whenever(gameImportService.createImportJob(any())).thenReturn(job)
+
+        mockMvc.post("/api/games/import") {
+            contentType = MediaType.APPLICATION_JSON
+            content = objectMapper.writeValueAsString(validRequest)
+        }.andExpect {
+            status { isAccepted() }
+            jsonPath("$.configurationState") { value("READY") }
+        }
+
+        verify(gameImportService).executeImportJob(job.id)
     }
 
     @Test
@@ -122,6 +149,36 @@ class GameImportControllerTest {
         }.andExpect {
             status { isBadRequest() }
             jsonPath("$.error") { value("VALIDATION_ERROR") }
+        }
+    }
+
+    @Test
+    fun `POST games import returns 400 when fromDate is after toDate`() {
+        val request = validRequest + ("fromDate" to "2024-05") + ("toDate" to "2024-01")
+
+        mockMvc.post("/api/games/import") {
+            contentType = MediaType.APPLICATION_JSON
+            content = objectMapper.writeValueAsString(request)
+        }.andExpect {
+            status { isBadRequest() }
+            jsonPath("$.error") { value("VALIDATION_ERROR") }
+        }
+    }
+
+    @Test
+    fun `POST games import accepts equal fromDate and toDate`() {
+        val job = AsyncJob(username = "hikaru", platform = "CHESS_COM", fromDate = "2024-01", toDate = "2024-01")
+        whenever(gameImportService.createImportJob(any())).thenReturn(job)
+
+        val request = validRequest + ("fromDate" to "2024-01") + ("toDate" to "2024-01")
+
+        mockMvc.post("/api/games/import") {
+            contentType = MediaType.APPLICATION_JSON
+            content = objectMapper.writeValueAsString(request)
+        }.andExpect {
+            status { isAccepted() }
+            jsonPath("$.fromDate") { value("2024-01") }
+            jsonPath("$.toDate") { value("2024-01") }
         }
     }
 
@@ -378,6 +435,9 @@ class GameImportControllerTest {
             // A durable archive exists, but it belongs to an earlier month than
             // the one this job requested.
             "2024-02" to ArchiveDerivedStatus.FAILED,
+            // An archive matching currentMonth exists, but must be excluded by the
+            // strict upper boundary clamp (< currentMonth).
+            currentMonth to ArchiveDerivedStatus.COMPLETED,
         )
 
         mockMvc.get("/api/jobs/$jobId")

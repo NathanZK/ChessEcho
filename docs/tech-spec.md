@@ -100,6 +100,7 @@ convention:
   - **Security**: server-side sessions, double-submit CSRF on state changes, and connection checks for authenticated imports and Progress.
   - **Access control**: authenticated job status is initiator-only; personal state is scoped per user. See `docs/architecture/identity-and-session.md` and `docs/specs/account-data-boundary.md`.
   - **Tests**: backend tests under `src/test/kotlin/com/chessecho/{controller,service,repository,integration,...}`; integration tests use Testcontainers PostgreSQL.
+  - **Mutation testing**: opt-in PIT audits per `docs/engineering/mutation-testing.md`; verified audit records indexed in `docs/engineering/audit/index.md`.
   - **CI**: `.github/workflows/ci.yml` runs backend ktlint and tests (Java 21) and frontend lint, typecheck, Vitest, and build (Node 20).
   - **Persistence**: follow the pre-deployment baseline-first migration convention in `docs/engineering/repository-conventions.md`.
   - **Workflow**: keep changes issue-focused and target pull requests at `main`; follow the repository conventions in `AGENTS.md`.
