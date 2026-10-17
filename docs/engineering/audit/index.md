@@ -21,6 +21,7 @@ This document serves as the durable evidence repository for opt-in PIT mutation 
 | `WeaknessCalculationService` | `WeaknessCalculationServiceTest` | Service Unit | 245 | 179 (73%) | 51 (21%) | 15 (6%) | 78% | 2026-10-17 |
 | `MoveEvaluationService` | `MoveEvaluationServiceTest` | Service Unit | 30 | 29 (97%) | 1 (3%) | 0 (0%) | 97% | 2026-10-18 |
 | `HumanMoveBfsTraversal` | `HumanMoveBfsServiceTest` | Service Unit | 136 | 122 (90%) | 14 (10%) | 0 (0%) | 90% | 2026-10-18 |
+| `EvaluationEvidenceSnapshotService` | `EvaluationEvidenceSnapshotTest` | Service Unit | 346 | 126 (36%) | 23 (7%) | 197 (57%) | 85% | 2026-10-18 |
 
 ---
 
@@ -258,6 +259,27 @@ This document serves as the durable evidence repository for opt-in PIT mutation 
   - 3 local logging increment mutators (`playerGamesInspected`, `newOpponentsDiscovered`, `playerQualifyingGames`) that only feed `log.info` parameters.
   - 1 redundant `chesslibGame.loadMoveText()` call where `PgnHolder.loadPgn()` already pre-loads move text.
 - **Uncovered Branches**: None (0 no coverage; line coverage 99%).
+
+### 2.13 `com.chessecho.service.EvaluationEvidenceSnapshotService`
+
+- **Test Suite**: `com.chessecho.service.EvaluationEvidenceSnapshotTest`
+- **Execution Command**:
+  ```bash
+  ./gradlew pitest \
+    -Ppitest.targetClasses="com.chessecho.service.EvaluationEvidenceSnapshotService*" \
+    -Ppitest.targetTests="com.chessecho.service.EvaluationEvidenceSnapshotTest*"
+  ```
+- **Results**: 346 generated, 126 killed (36%), 23 survived, 197 no coverage; 85% test strength.
+- **Meaningful Gaps Killed**:
+  1. *Zero and Unit Boundaries*: Configuration (`minMistakeCount = 0`, `minTimesReached = 0`), reference population (`coveredPrefix = 50, prefixN = 50`, `prefixN = 1`, `minObservations = 0`, `distributionSha256 = null`), and row boundaries (`preMovePly = 1`, `loss = 0.0`, `engineDepth = 1`) verified along with rejection of sub-boundary negative/zero values (ConditionalsBoundaryMutator on lines 108–109, 115–117, 128, 132–133).
+  2. *Referential & Digest Integrity*: 64-character hex requirements for `contentDigest` and `distributionSha256`, rejection of duplicate player identities and blank identities, unknown row player references, and `practicalEligible` without `practicalCandidate` enforced (NegateConditionalsMutator on lines 118–119, 122, 127, 147).
+  3. *Entry Gate Enforcement*: Verification that `bind` and `reconstruct` unconditionally invoke `validate(snapshot)` before downstream logic (VoidMethodCallMutator on lines 158 and 166).
+  4. *Practical Evidence Aggregation Math*: Multi-game evidence counting distinguishing candidate, eligible, ineligible, and excluded games, accumulation of wins, draws, and losses, and exact threshold boundary evaluations (MathMutator and ConditionalsBoundaryMutator on lines 342, 350, 351).
+- **Accepted Surviving Mutants**:
+  - 13 synthetic compiler bytecode null-checks (`Intrinsics.checkNotNull*`) on non-null references across lines 146, 342, 349–351, and compiler-generated lambda returns in `canonicalize` (line 399) (Taxonomy Category 3).
+  - 10 synthetic Kotlin stdlib inlined collection checks (`isEmpty` / integer overflow `throwCountOverflow` in `all`, `any`, and `count`) on non-empty collections (Taxonomy Category 3).
+- **Uncovered Branches**:
+  - 197 mutants in database persistence methods (`persist`, `readVerifiedPersisted`, `reconstructPersisted`, `loadRows`, etc.) requiring PostgreSQL Testcontainers are deferred to `EvaluationEvidenceSnapshotPostgresIntegrationTest`.
 
 ---
 
