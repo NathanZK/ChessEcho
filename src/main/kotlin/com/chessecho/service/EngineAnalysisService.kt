@@ -35,6 +35,119 @@ class EngineAnalysisService(
         // (e.g. a future bug breaking the `mergedCandidates.distinct()` invariant). Treating *any* 23505 as
         // the expected position_id race would silently mask that as a resolved race instead of surfacing it.
         private const val ENGINE_ANALYSIS_POSITION_UNIQUE_CONSTRAINT = "uk_engine_analysis_position"
+
+        /**
+         * Calculates evaluation loss in pawns relative to Stockfish's best move.
+         *
+         * Scores must be pre-normalized to the perspective of the player to move in the baseline position
+         * (positive scores indicate advantage for the player to move; root-relative distance).
+         */
+        internal fun calculateEvalLoss(
+            bestScore: EvalScore?,
+            moveScore: EvalScore?,
+        ): Double? {
+            if (bestScore == null || moveScore == null) return null
+            val bestHasScore = bestScore.cp != null || bestScore.mate != null
+            val moveHasScore = moveScore.cp != null || moveScore.mate != null
+            if (!bestHasScore || !moveHasScore) return null
+            if (bestScore.mate == 0 || moveScore.mate == 0) return null
+
+            // Inconclusive losing-mate defense: negative centipawns after losing mate cannot prove an escape
+            if (bestScore.mate != null && bestScore.mate < 0 &&
+                moveScore.mate == null && moveScore.cp != null && moveScore.cp < 0
+            ) {
+                return null
+            }
+
+            // Semantic equality: check mate equality first, or cp equality
+            if (bestScore.mate != null && moveScore.mate != null && bestScore.mate == moveScore.mate) {
+                return 0.0
+            }
+            if (bestScore.mate == null && moveScore.mate == null &&
+                bestScore.cp != null && moveScore.cp != null && bestScore.cp == moveScore.cp
+            ) {
+                return 0.0
+            }
+
+            val loss =
+                when {
+                    // 1. Both centipawns
+                    bestScore.mate == null && moveScore.mate == null -> {
+                        val bestCp = bestScore.cp ?: return null
+                        val moveCp = moveScore.cp ?: return null
+                        maxOf(0.0, (bestCp - moveCp) / 100.0)
+                    }
+
+                    // 2. Winning Mate vs Winning Mate
+                    bestScore.mate != null && bestScore.mate > 0 && moveScore.mate != null && moveScore.mate > 0 -> {
+                        if (moveScore.mate <= bestScore.mate) {
+                            0.0
+                        } else {
+                            minOf(0.50, (moveScore.mate - bestScore.mate) * 0.10)
+                        }
+                    }
+
+                    // 3. Winning Mate vs Centipawns
+                    bestScore.mate != null && bestScore.mate > 0 && moveScore.mate == null -> {
+                        val moveCp = moveScore.cp ?: return null
+                        (8.0 + maxOf(0.0, 5.0 - moveCp / 100.0)).coerceIn(8.0, 15.0)
+                    }
+
+                    // 4. Winning Mate vs Losing Mate
+                    bestScore.mate != null && bestScore.mate > 0 && moveScore.mate != null && moveScore.mate < 0 -> {
+                        val d = kotlin.math.abs(moveScore.mate)
+                        (15.0 + maxOf(0, 10 - d) * 0.50).coerceIn(15.0, 20.0)
+                    }
+
+                    // 5. Centipawn Best vs Losing Mate
+                    bestScore.mate == null && moveScore.mate != null && moveScore.mate < 0 -> {
+                        val bestCp = bestScore.cp ?: return null
+                        val base = maxOf(0.0, bestCp / 100.0)
+                        val d = kotlin.math.abs(moveScore.mate)
+                        (base + 10.0 + maxOf(0, 10 - d) * 0.50).coerceIn(10.0, 20.0)
+                    }
+
+                    // 6. Centipawn Best vs Winning Mate
+                    bestScore.mate == null && moveScore.mate != null && moveScore.mate > 0 -> {
+                        0.0
+                    }
+
+                    // 7. Losing Mate vs Losing Mate
+                    bestScore.mate != null && bestScore.mate < 0 && moveScore.mate != null && moveScore.mate < 0 -> {
+                        val bestDist = kotlin.math.abs(bestScore.mate)
+                        val moveDist = kotlin.math.abs(moveScore.mate)
+                        if (moveDist >= bestDist) {
+                            0.0
+                        } else {
+                            minOf(5.0, (bestDist - moveDist) * 1.0)
+                        }
+                    }
+
+                    // 8. Losing Mate vs Proven Escape (winning mate or non-negative cp)
+                    bestScore.mate != null && bestScore.mate < 0 -> {
+                        if (moveScore.mate != null && moveScore.mate > 0) {
+                            0.0
+                        } else if (moveScore.mate == null && moveScore.cp != null && moveScore.cp >= 0) {
+                            0.0
+                        } else {
+                            null
+                        }
+                    }
+
+                    else -> null
+                }
+
+            return loss?.coerceIn(0.0, 20.0)
+        }
+
+        internal fun calculateEvalLoss(
+            bestMoveEvalCp: Int?,
+            moveEvalCp: Int?,
+        ): Double? =
+            calculateEvalLoss(
+                bestMoveEvalCp?.let { EvalScore(it, null) },
+                moveEvalCp?.let { EvalScore(it, null) },
+            )
     }
 
     /**
@@ -160,22 +273,22 @@ class EngineAnalysisService(
 
             val evaluatedMap = mutableMapOf<String, EvalScore>()
             var bestMove: String? = null
-            var bestMoveEvalCp: Int? = null
+            var bestScore: EvalScore? = null
             var candidateEvalDurationMs = 0L
 
             if (rank1Candidate != null) {
                 // Primary path: MultiPV search returned engine candidates (rank 1 = best move)
                 bestMove = rank1Candidate.move
-                bestMoveEvalCp = rank1Candidate.score.cp
+                bestScore = rank1Candidate.score
                 engineCandidates.forEach { candidate ->
                     evaluatedMap[candidate.move] = candidate.score
                 }
 
                 log.info(
-                    "BEFORE baseline Stockfish analysis: positionId={} bestMove={} baselineEvalCp={} depth={}",
+                    "BEFORE baseline Stockfish analysis: positionId={} bestMove={} bestScore={} depth={}",
                     positionId,
                     bestMove,
-                    bestMoveEvalCp,
+                    bestScore,
                     depth,
                 )
 
@@ -218,7 +331,7 @@ class EngineAnalysisService(
                     analysisResults["baseline"]
                         ?: throw IllegalStateException("Baseline analysis missing for position $positionId")
                 bestMove = baselineResult.bestMove
-                bestMoveEvalCp = analysisResults[bestMove]?.score?.cp ?: baselineResult.score.cp
+                bestScore = analysisResults[bestMove]?.score ?: baselineResult.score
 
                 mergedCandidates.forEach { move ->
                     val result = analysisResults[move]
@@ -230,28 +343,33 @@ class EngineAnalysisService(
 
             // AFTER baseline Stockfish analysis
             log.info(
-                "Baseline analysis completed: positionId={} bestMove={} baselineEvalCp={} depth={} durationMs={}",
+                "Baseline analysis completed: positionId={} bestMove={} bestScore={} depth={} durationMs={}",
                 positionId,
                 bestMove,
-                bestMoveEvalCp,
+                bestScore,
                 depth,
                 candidateEvalDurationMs,
             )
+
+            val evalCp = if (bestScore?.mate != null) null else bestScore?.cp
+            val evalMate = bestScore?.mate
 
             val candidateAnalysis =
                 EngineAnalysis(
                     position = position,
                     depth = depth,
-                    baselineEvalCp = bestMoveEvalCp,
+                    baselineEvalCp = evalCp,
+                    baselineEvalMate = evalMate,
                     bestMove = bestMove ?: "",
-                    bestMoveEvalCp = bestMoveEvalCp,
+                    bestMoveEvalCp = evalCp,
+                    bestMoveEvalMate = evalMate,
                     analyzedAt = Instant.now(),
                 )
 
             mergedCandidates.forEach { move ->
                 val score = evaluatedMap[move]
                 if (score != null) {
-                    val evalLoss = calculateEvalLoss(bestMoveEvalCp, score.cp) ?: 0.0
+                    val evalLoss = calculateEvalLoss(bestScore, score)
                     val evalStr = score.cp?.let { "${it}cp" } ?: score.mate?.let { "mate $it" } ?: "N/A"
                     val origin =
                         when {
@@ -273,7 +391,8 @@ class EngineAnalysisService(
                         MoveEvaluation(
                             engineAnalysis = candidateAnalysis,
                             move = move,
-                            evalCp = score.cp,
+                            evalCp = if (score.mate != null) null else score.cp,
+                            evalMate = score.mate,
                             evalLossFromBest = evalLoss,
                         ),
                     )
@@ -356,10 +475,15 @@ class EngineAnalysisService(
             }
 
             // AFTER candidate analysis (log per evaluated candidate at DEBUG level)
+            val baselineScore =
+                EvalScore(
+                    cp = if (existingAnalysis.bestMoveEvalMate != null) null else existingAnalysis.bestMoveEvalCp,
+                    mate = existingAnalysis.bestMoveEvalMate,
+                )
             missingMoves.forEach { move ->
                 val score = evaluatedMap[move]
                 if (score != null) {
-                    val evalLoss = calculateEvalLoss(existingAnalysis.bestMoveEvalCp, score.cp) ?: 0.0
+                    val evalLoss = calculateEvalLoss(baselineScore, score)
                     val evalStr = score.cp?.let { "${it}cp" } ?: score.mate?.let { "mate $it" } ?: "N/A"
                     val origin =
                         when {
@@ -489,15 +613,21 @@ class EngineAnalysisService(
         if (stillMissing.isEmpty()) return
 
         transactionTemplate.executeWithoutResult {
+            val baselineScore =
+                EvalScore(
+                    cp = if (analysis.bestMoveEvalMate != null) null else analysis.bestMoveEvalCp,
+                    mate = analysis.bestMoveEvalMate,
+                )
             stillMissing.forEach { move ->
                 val score = evaluatedMap.getValue(move)
-                val evalLoss = calculateEvalLoss(analysis.bestMoveEvalCp, score.cp) ?: 0.0
+                val evalLoss = calculateEvalLoss(baselineScore, score)
                 engineAnalysisRepository.insertMoveEvaluationIfAbsent(
-                    UUID.randomUUID(),
-                    analysis.id,
-                    move,
-                    score.cp,
-                    evalLoss,
+                    id = UUID.randomUUID(),
+                    engineAnalysisId = analysis.id,
+                    move = move,
+                    evalCp = if (score.mate != null) null else score.cp,
+                    evalMate = score.mate,
+                    evalLossFromBest = evalLoss,
                 )
             }
 
@@ -559,10 +689,7 @@ class EngineAnalysisService(
     internal fun calculateEvalLoss(
         bestMoveEvalCp: Int?,
         moveEvalCp: Int?,
-    ): Double? {
-        if (bestMoveEvalCp == null || moveEvalCp == null) return null
-        return maxOf(0.0, (bestMoveEvalCp - moveEvalCp) / 100.0)
-    }
+    ): Double? = Companion.calculateEvalLoss(bestMoveEvalCp, moveEvalCp)
 
     private data class AnalysisSnapshot(
         val historicalMoves: List<String>,

@@ -229,7 +229,7 @@ class StockfishService {
      * @param sendCommand A function to send commands to Stockfish's stdin
      * @return The analysis results containing best move and evaluation score
      */
-    private fun runGoDepth(
+    internal fun runGoDepth(
         fen: String,
         uciMove: String?,
         depth: Int,
@@ -247,13 +247,19 @@ class StockfishService {
         while (true) {
             val line = reader.readLine() ?: break
 
-            if (line.startsWith("info depth $depth ") || line.startsWith("info depth $depth\t")) {
-                // Invert score for historical moves (1 ply later) to normalize to baseline player-to-move perspective
+            if (line.startsWith("info ") && line.contains(" score ")) {
+                // Invert score for candidate moves (1 ply later) to normalize to baseline player-to-move perspective
                 val invertScore = uciMove != null
                 val parsedScore = parseEngineScore(line, invertScore)
                 if (parsedScore != null) {
-                    if (parsedScore.cp != null) cp = parsedScore.cp
-                    if (parsedScore.mate != null) mate = parsedScore.mate
+                    if (parsedScore.cp != null) {
+                        cp = parsedScore.cp
+                        mate = null
+                    }
+                    if (parsedScore.mate != null) {
+                        mate = parsedScore.mate
+                        cp = null
+                    }
                 }
             }
 
@@ -311,7 +317,21 @@ class StockfishService {
                 return if (type == "cp") {
                     EvalScore(cp = if (invert) -value else value, mate = null)
                 } else if (type == "mate") {
-                    EvalScore(cp = null, mate = if (invert) -value else value)
+                    if (!invert) {
+                        // Baseline position (root): value == 0 is an unanalyzable terminal position
+                        if (value == 0) null else EvalScore(cp = null, mate = value)
+                    } else {
+                        // Candidate move evaluation: evaluated 1 ply after baseline move.
+                        // Convert to root-relative distance from baseline position.
+                        when {
+                            // Delivered checkmate immediately
+                            value == 0 -> EvalScore(cp = null, mate = 1)
+                            // Opponent mated in -value moves -> player mates in (-value + 1)
+                            value < 0 -> EvalScore(cp = null, mate = -(value) + 1)
+                            // Opponent mates in value moves -> player gets mated in value moves
+                            else -> EvalScore(cp = null, mate = -value)
+                        }
+                    }
                 } else {
                     null
                 }

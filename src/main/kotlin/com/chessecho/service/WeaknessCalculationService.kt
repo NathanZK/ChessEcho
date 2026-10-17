@@ -168,7 +168,10 @@ class WeaknessCalculationService(
                     analysis.moveEvaluations.find {
                         it.move == occurrence.movePlayed
                     } ?: continue
-                val evalLoss = moveEvaluation.weaknessEvaluationLoss(bestMoveEvalCp) ?: 0.0
+                val evalLoss =
+                    moveEvaluation.weaknessEvaluationLoss(bestMoveEvalCp, analysis.bestMoveEvalMate)
+                        ?: continue
+
                 val (previousLoss, previousCount) =
                     moveStats.getOrDefault(occurrence.movePlayed, 0.0 to 0)
                 moveStats[occurrence.movePlayed] =
@@ -208,8 +211,10 @@ class WeaknessCalculationService(
 
             val acceptableMoves =
                 analysis.moveEvaluations
-                    .map { moveEvaluation ->
-                        val loss = moveEvaluation.weaknessEvaluationLoss(bestMoveEvalCp) ?: 0.0
+                    .mapNotNull { moveEvaluation ->
+                        val loss =
+                            moveEvaluation.weaknessEvaluationLoss(bestMoveEvalCp, analysis.bestMoveEvalMate)
+                                ?: return@mapNotNull null
                         AcceptableMove(move = moveEvaluation.move, evalLoss = loss)
                     }.filter { it.evalLoss < minEvalLoss }
                     .sortedBy { it.evalLoss }

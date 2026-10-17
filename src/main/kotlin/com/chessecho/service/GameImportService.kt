@@ -846,13 +846,10 @@ class GameImportService(
                 val analysis = engineAnalysisRepository.findByPositionIdWithMoveEvaluations(occurrence.position.id)
                 val moveEvaluation = analysis?.moveEvaluations?.firstOrNull { it.move == occurrence.movePlayed }
                 val loss =
-                    moveEvaluation?.evalLossFromBest
-                        ?: analysis?.let {
-                            val best = it.bestMoveEvalCp
-                            val move = moveEvaluation?.evalCp
-                            if (best != null && move != null) ((best - move).coerceAtLeast(0) / 100.0) else 0.0
-                        }
-                        ?: 0.0
+                    moveEvaluation?.weaknessEvaluationLoss(
+                        analysis?.bestMoveEvalCp,
+                        analysis?.bestMoveEvalMate,
+                    )
                 val occurredAt = occurrence.game.playedAt ?: occurrence.game.createdAt
                 claimSchedulingEvent(
                     PuzzleSchedulingEvent(
@@ -865,22 +862,24 @@ class GameImportService(
                         occurredAt = occurredAt,
                     ),
                 )
-                claimSchedulingEvent(
-                    PuzzleSchedulingEvent(
-                        appUser = initiatingUser,
-                        chessAccount = occurrence.chessAccount,
-                        position = occurrence.position,
-                        playerColor = occurrence.playerColor,
-                        eventType =
-                            if (loss >= WeaknessCalculationService.DEFAULT_MIN_EVAL_LOSS) {
-                                SchedulingEventType.GAME_MISTAKE
-                            } else {
-                                SchedulingEventType.GAME_HANDLED_SUCCESSFULLY
-                            },
-                        sourceOccurrence = occurrence,
-                        occurredAt = occurredAt,
-                    ),
-                )
+                if (loss != null) {
+                    claimSchedulingEvent(
+                        PuzzleSchedulingEvent(
+                            appUser = initiatingUser,
+                            chessAccount = occurrence.chessAccount,
+                            position = occurrence.position,
+                            playerColor = occurrence.playerColor,
+                            eventType =
+                                if (loss >= WeaknessCalculationService.DEFAULT_MIN_EVAL_LOSS) {
+                                    SchedulingEventType.GAME_MISTAKE
+                                } else {
+                                    SchedulingEventType.GAME_HANDLED_SUCCESSFULLY
+                                },
+                            sourceOccurrence = occurrence,
+                            occurredAt = occurredAt,
+                        ),
+                    )
+                }
             }
     }
 
