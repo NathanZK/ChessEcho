@@ -10,6 +10,8 @@ import org.mockito.kotlin.mock
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class EngineMoveProviderTest {
@@ -42,6 +44,7 @@ class EngineMoveProviderTest {
 
         // Rank 1 (0.00 loss)
         assertEquals("e5", result[0].move)
+        assertEquals("rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2", result[0].resultingFen)
         assertEquals(100, result[0].evalCp)
         assertEquals(0.00, result[0].evalLoss!!, 0.001)
         assertEquals("ENGINE", result[0].providerType)
@@ -131,6 +134,7 @@ class EngineMoveProviderTest {
 
         assertEquals(1, result.size)
         assertEquals("c5", result[0].move)
+        assertEquals("rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq c6 0 2", result[0].resultingFen)
         assertEquals("ENGINE", result[0].providerType)
         assertEquals(15, result[0].evalCp)
         assertEquals(0.0, result[0].evalLoss)
@@ -145,5 +149,95 @@ class EngineMoveProviderTest {
         val result = engineMoveProvider.getContinuationCandidates(fen)
 
         assertTrue(result.isEmpty())
+    }
+
+    @Test
+    fun `getContinuationCandidates retains candidates with mate scores and null centipawn evaluations`() {
+        val fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
+        val candidates =
+            listOf(
+                EngineCandidate("e5", EvalScore(cp = null, mate = 1)),
+                EngineCandidate("c5", EvalScore(cp = null, mate = 2)),
+            )
+
+        whenever(stockfishService.analyzeMultiPv(eq(fen), eq(16), eq(5))).thenReturn(candidates)
+
+        val result = engineMoveProvider.getContinuationCandidates(fen)
+
+        assertEquals(2, result.size)
+        assertEquals("e5", result[0].move)
+        assertNull(result[0].evalCp)
+        assertNull(result[0].evalLoss)
+
+        assertEquals("c5", result[1].move)
+        assertNull(result[1].evalCp)
+        assertNull(result[1].evalLoss)
+    }
+
+    @Test
+    fun `getContinuationCandidates excludes invalid engine moves in MultiPV analysis`() {
+        val fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
+        val candidates =
+            listOf(
+                EngineCandidate("(none)", EvalScore(cp = 100, mate = null)),
+                EngineCandidate("", EvalScore(cp = 80, mate = null)),
+                EngineCandidate("   ", EvalScore(cp = 70, mate = null)),
+                EngineCandidate("e5", EvalScore(cp = 60, mate = null)),
+            )
+
+        whenever(stockfishService.analyzeMultiPv(eq(fen), eq(16), eq(5))).thenReturn(candidates)
+
+        val result = engineMoveProvider.getContinuationCandidates(fen)
+
+        assertEquals(1, result.size)
+        assertEquals("e5", result[0].move)
+    }
+
+    @Test
+    fun `getContinuationCandidates excludes invalid engine moves in baseline fallback analysis`() {
+        val fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
+        whenever(stockfishService.analyzeMultiPv(eq(fen), eq(16), eq(5))).thenReturn(emptyList())
+
+        val fallbackMap = mapOf("baseline" to PositionAnalysis(bestMove = "(none)", score = EvalScore(cp = 50, mate = null)))
+        whenever(stockfishService.analyze(fen, 16, emptyList())).thenReturn(fallbackMap)
+
+        val result = engineMoveProvider.getContinuationCandidates(fen)
+
+        assertTrue(result.isEmpty())
+    }
+
+    @Test
+    fun `getContinuationCandidates drops candidates whose moves cannot be legally applied to the board`() {
+        val fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
+        val candidates =
+            listOf(
+                EngineCandidate("O-O", EvalScore(cp = 100, mate = null)),
+                EngineCandidate("invalidMove", EvalScore(cp = 90, mate = null)),
+                EngineCandidate("e5", EvalScore(cp = 80, mate = null)),
+            )
+
+        whenever(stockfishService.analyzeMultiPv(eq(fen), eq(16), eq(5))).thenReturn(candidates)
+
+        val result = engineMoveProvider.getContinuationCandidates(fen)
+
+        assertEquals(1, result.size)
+        assertEquals("e5", result[0].move)
+        assertEquals("rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2", result[0].resultingFen)
+    }
+
+    @Test
+    fun `isValidEngineMove rejects invalid engine moves including none blank and empty`() {
+        val method =
+            EngineMoveProvider::class.java.getDeclaredMethod("isValidEngineMove", String::class.java).apply {
+                isAccessible = true
+            }
+
+        fun invokeIsValid(move: String?): Boolean = method.invoke(engineMoveProvider, move) as Boolean
+
+        assertFalse(invokeIsValid("(none)"))
+        assertFalse(invokeIsValid(""))
+        assertFalse(invokeIsValid("   "))
+        assertFalse(invokeIsValid(null))
+        assertTrue(invokeIsValid("e5"))
     }
 }
