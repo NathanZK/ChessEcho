@@ -5,6 +5,7 @@ plugins {
     kotlin("plugin.spring") version "2.0.0"
     kotlin("plugin.jpa") version "2.0.0"
     id("org.jlleitschuh.gradle.ktlint") version "12.1.1"
+    id("info.solidsoft.pitest") version "1.15.0"
 }
 
 group = "com.chessecho"
@@ -60,4 +61,46 @@ tasks.withType<Test> {
 ktlint {
     verbose.set(true)
     outputToConsole.set(true)
+}
+
+pitest {
+    pitestVersion.set("1.15.8")
+    junit5PluginVersion.set("1.2.1")
+    outputFormats.set(setOf("HTML", "XML"))
+    timestampedReports.set(false)
+
+    val targetClassesProp = providers.gradleProperty("pitest.targetClasses").orNull?.takeIf { it.isNotBlank() }
+    val targetTestsProp = providers.gradleProperty("pitest.targetTests").orNull?.takeIf { it.isNotBlank() }
+
+    val hasTargetClasses = targetClassesProp != null
+    val hasTargetTests = targetTestsProp != null
+
+    if (hasTargetClasses xor hasTargetTests) {
+        throw InvalidUserDataException(
+            "Both 'pitest.targetClasses' and 'pitest.targetTests' must be specified together, but only one was provided.",
+        )
+    }
+
+    val (effectiveTargetClasses, effectiveTargetTests) =
+        if (hasTargetClasses && hasTargetTests) {
+            val parsedClasses = targetClassesProp!!.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+            if (parsedClasses.isEmpty()) {
+                throw InvalidUserDataException(
+                    "'pitest.targetClasses' was provided but contains no usable target patterns.",
+                )
+            }
+            val parsedTests = targetTestsProp!!.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+            if (parsedTests.isEmpty()) {
+                throw InvalidUserDataException(
+                    "'pitest.targetTests' was provided but contains no usable target patterns.",
+                )
+            }
+            parsedClasses to parsedTests
+        } else {
+            listOf("com.chessecho.service.AdaptivePuzzleSchedulingPolicy*") to
+                listOf("com.chessecho.service.AdaptivePuzzleSchedulingPolicyTest*")
+        }
+
+    targetClasses.set(effectiveTargetClasses)
+    targetTests.set(effectiveTargetTests)
 }
