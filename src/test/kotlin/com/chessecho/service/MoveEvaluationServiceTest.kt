@@ -2,6 +2,7 @@ package com.chessecho.service
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -206,5 +207,192 @@ class MoveEvaluationServiceTest {
         assertEquals(0.50, result.evalLoss)
         assertEquals(0.30, result.threshold)
         assertFalse(result.acceptable)
+    }
+
+    @Test
+    fun `11 Winning forced mate-in-1 scores higher than mate-in-2 and candidate is acceptable within tolerance`() {
+        whenever(stockfishService.analyzeMultiPv(eq(whiteFen), any(), eq(5))).thenReturn(
+            listOf(
+                EngineCandidate(move = "Bb5", score = EvalScore(cp = null, mate = 1)),
+                EngineCandidate(move = "Bc4", score = EvalScore(cp = null, mate = 2)),
+            ),
+        )
+
+        val result = moveEvaluationService.evaluateMove(whiteFen, "Bc4")
+
+        assertEquals("Bb5", result.bestMove)
+        assertEquals("Bc4", result.move)
+        assertEquals(9990, result.bestEvalCp)
+        assertEquals(9980, result.evalCp)
+        assertEquals(0.10, result.evalLoss)
+        assertTrue(result.acceptable)
+    }
+
+    @Test
+    fun `12 Blunder from winning forced mate into centipawn advantage is rejected with large loss`() {
+        whenever(stockfishService.analyzeMultiPv(eq(whiteFen), any(), eq(5))).thenReturn(
+            listOf(
+                EngineCandidate(move = "Bb5", score = EvalScore(cp = null, mate = 1)),
+                EngineCandidate(move = "h3", score = EvalScore(cp = 200, mate = null)),
+            ),
+        )
+
+        val result = moveEvaluationService.evaluateMove(whiteFen, "h3")
+
+        assertEquals("Bb5", result.bestMove)
+        assertEquals("h3", result.move)
+        assertEquals(9990, result.bestEvalCp)
+        assertEquals(200, result.evalCp)
+        assertEquals(97.90, result.evalLoss)
+        assertFalse(result.acceptable)
+    }
+
+    @Test
+    fun `13 Blunder from winning forced mate into opponent forced mate is rejected with large loss`() {
+        whenever(stockfishService.analyzeMultiPv(eq(whiteFen), any(), eq(5))).thenReturn(
+            listOf(
+                EngineCandidate(move = "Bb5", score = EvalScore(cp = null, mate = 1)),
+                EngineCandidate(move = "h3", score = EvalScore(cp = null, mate = -1)),
+            ),
+        )
+
+        val result = moveEvaluationService.evaluateMove(whiteFen, "h3")
+
+        assertEquals("Bb5", result.bestMove)
+        assertEquals("h3", result.move)
+        assertEquals(9990, result.bestEvalCp)
+        assertEquals(-9990, result.evalCp)
+        assertEquals(199.80, result.evalLoss)
+        assertFalse(result.acceptable)
+    }
+
+    @Test
+    fun `14 Longer defense against forced mate scores higher than immediate checkmate and is acceptable within tolerance`() {
+        whenever(stockfishService.analyzeMultiPv(eq(whiteFen), any(), eq(5))).thenReturn(
+            listOf(
+                EngineCandidate(move = "Bb5", score = EvalScore(cp = null, mate = -2)),
+                EngineCandidate(move = "Bc4", score = EvalScore(cp = null, mate = -1)),
+            ),
+        )
+
+        val result = moveEvaluationService.evaluateMove(whiteFen, "Bc4")
+
+        assertEquals("Bb5", result.bestMove)
+        assertEquals("Bc4", result.move)
+        assertEquals(-9980, result.bestEvalCp)
+        assertEquals(-9990, result.evalCp)
+        assertEquals(0.10, result.evalLoss)
+        assertTrue(result.acceptable)
+    }
+
+    @Test
+    fun `15 Blunder from neutral drawn position into opponent forced mate is rejected with large loss`() {
+        whenever(stockfishService.analyzeMultiPv(eq(whiteFen), any(), eq(5))).thenReturn(
+            listOf(
+                EngineCandidate(move = "Bb5", score = EvalScore(cp = 0, mate = null)),
+                EngineCandidate(move = "h3", score = EvalScore(cp = null, mate = -1)),
+            ),
+        )
+
+        val result = moveEvaluationService.evaluateMove(whiteFen, "h3")
+
+        assertEquals("Bb5", result.bestMove)
+        assertEquals("h3", result.move)
+        assertEquals(0, result.bestEvalCp)
+        assertEquals(-9990, result.evalCp)
+        assertEquals(99.90, result.evalLoss)
+        assertFalse(result.acceptable)
+    }
+
+    @Test
+    fun `16 User move NOT present in MultiPV=5 can evaluate forced-mate score via single move evaluation`() {
+        whenever(stockfishService.analyzeMultiPv(eq(whiteFen), any(), eq(5))).thenReturn(
+            listOf(
+                EngineCandidate(move = "Bb5", score = EvalScore(cp = 80, mate = null)),
+            ),
+        )
+        whenever(stockfishService.evaluateSingleMove(eq(whiteFen), eq("Be2"), any())).thenReturn(
+            PositionAnalysis(bestMove = "Bb5", score = EvalScore(cp = null, mate = 1)),
+        )
+
+        val result = moveEvaluationService.evaluateMove(whiteFen, "Be2")
+
+        assertEquals("Bb5", result.bestMove)
+        assertEquals("Be2", result.move)
+        assertEquals(80, result.bestEvalCp)
+        assertEquals(9990, result.evalCp)
+        assertEquals(0.0, result.evalLoss)
+        assertTrue(result.acceptable)
+        verify(stockfishService).evaluateSingleMove(eq(whiteFen), eq("Be2"), any())
+    }
+
+    @Test
+    fun `17 Single move evaluation returning null score results in null evalCp, zero evalLoss, and acceptable`() {
+        whenever(stockfishService.analyzeMultiPv(eq(whiteFen), any(), eq(5))).thenReturn(
+            listOf(
+                EngineCandidate(move = "Bb5", score = EvalScore(cp = 100, mate = null)),
+            ),
+        )
+        whenever(stockfishService.evaluateSingleMove(eq(whiteFen), eq("Be2"), any())).thenReturn(null)
+
+        val result = moveEvaluationService.evaluateMove(whiteFen, "Be2")
+
+        assertEquals("Bb5", result.bestMove)
+        assertEquals("Be2", result.move)
+        assertEquals(100, result.bestEvalCp)
+        assertNull(result.evalCp)
+        assertEquals(0.0, result.evalLoss)
+        assertTrue(result.acceptable)
+    }
+
+    @Test
+    fun `18 User candidate with non-null score but null cp and null mate returns null evalCp, zero evalLoss, and is acceptable`() {
+        whenever(stockfishService.analyzeMultiPv(eq(whiteFen), any(), eq(5))).thenReturn(
+            listOf(
+                EngineCandidate(move = "Bb5", score = EvalScore(cp = 100, mate = null)),
+                EngineCandidate(move = "Bc4", score = EvalScore(cp = null, mate = null)),
+            ),
+        )
+
+        val result = moveEvaluationService.evaluateMove(whiteFen, "Bc4")
+
+        assertEquals("Bb5", result.bestMove)
+        assertEquals("Bc4", result.move)
+        assertEquals(100, result.bestEvalCp)
+        assertNull(result.evalCp)
+        assertEquals(0.0, result.evalLoss)
+        assertTrue(result.acceptable)
+    }
+
+    @Test
+    fun `19 Invalid FEN position throws IllegalArgumentException with descriptive message`() {
+        val ex =
+            assertThrows(IllegalArgumentException::class.java) {
+                moveEvaluationService.evaluateMove("invalid-fen-string", "e4")
+            }
+
+        assertTrue(ex.message?.contains("Invalid FEN position") == true)
+    }
+
+    @Test
+    fun `20 Empty Stockfish MultiPV candidates throws IllegalStateException with descriptive message`() {
+        whenever(stockfishService.analyzeMultiPv(eq(whiteFen), any(), eq(5))).thenReturn(emptyList())
+
+        val ex =
+            assertThrows(IllegalStateException::class.java) {
+                moveEvaluationService.evaluateMove(whiteFen, "Bb5")
+            }
+
+        assertTrue(ex.message?.contains("Stockfish produced no candidate moves") == true)
+    }
+
+    @Test
+    fun `21 Illegal or unparseable SAN move throws IllegalArgumentException with descriptive message`() {
+        val ex =
+            assertThrows(IllegalArgumentException::class.java) {
+                moveEvaluationService.evaluateMove(whiteFen, "e8")
+            }
+
+        assertTrue(ex.message?.contains("Illegal or unparseable move") == true)
     }
 }
