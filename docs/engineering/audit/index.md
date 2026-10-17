@@ -20,6 +20,7 @@ This document serves as the durable evidence repository for opt-in PIT mutation 
 | `PracticalEvidenceService` | `PracticalEvidenceServiceTest` | Service Unit | 41 | 35 (85%) | 5 (12%) | 1 (2%) | 88% | 2026-10-17 |
 | `WeaknessCalculationService` | `WeaknessCalculationServiceTest` | Service Unit | 245 | 179 (73%) | 51 (21%) | 15 (6%) | 78% | 2026-10-17 |
 | `MoveEvaluationService` | `MoveEvaluationServiceTest` | Service Unit | 30 | 29 (97%) | 1 (3%) | 0 (0%) | 97% | 2026-10-18 |
+| `HumanMoveBfsTraversal` | `HumanMoveBfsServiceTest` | Service Unit | 136 | 122 (90%) | 14 (10%) | 0 (0%) | 90% | 2026-10-18 |
 
 ---
 
@@ -234,6 +235,29 @@ This document serves as the durable evidence repository for opt-in PIT mutation 
 - **Accepted Surviving Mutants**:
   - 1 boundary condition mutation on Line 98 (`ConditionalsBoundaryMutator` changing `score.mate > 0` to `>= 0`) accepted as an equivalent mutant on non-zero domain values (Taxonomy Category 5), since chess engine mate distances are non-zero integers (+1, +2, -1, -2).
 - **Uncovered Branches**: None (0 no coverage).
+
+### 2.12 `com.chessecho.service.HumanMoveBfsTraversal` (Issue [#563](https://github.com/NathanZK/ChessEcho/issues/563))
+
+- **Issue / PR**: Issue [#563](https://github.com/NathanZK/ChessEcho/issues/563)
+- **Test Suite**: `com.chessecho.service.HumanMoveBfsServiceTest`
+- **Execution Command**:
+  ```bash
+  ./gradlew pitest \
+    -Ppitest.targetClasses="com.chessecho.service.HumanMoveBfsTraversal*" \
+    -Ppitest.targetTests="com.chessecho.service.HumanMoveBfsServiceTest*"
+  ```
+- **Results**: 136 generated, 122 killed (90%), 14 survived (10%), 0 no coverage (0%); 90% test strength (96.8% excluding compiler null-checks).
+- **Meaningful Gaps Killed**:
+  - *Rating band qualification*: All boundary comparisons in `isRatingInBand` (`min - 1`, `min`, `max`, `max + 1` for range bands, `min - 1`, `min`, `min + 300` for plus bands) and malformed band handling killed all 10 mutators on lines 362–369.
+  - *Sink failure notification*: VoidMethodCallMutator on lines 129 (`sink.onArchiveListFailure`) and 152 (`sink.onMonthlyGamesFailure`) verified via explicit Mockito verifications and continuation assertions.
+  - *Quota and boundary termination*: Boundary mutators on lines 112, 144, 145, 169 killed by asserting exact termination and resource bounding for `maxGamesPerPlayer`, `maxQualifyingGames`, and `maxPlayers`.
+  - *Variant chess rule filtering*: NegateConditionalsMutators on lines 175 and 176 killed by asserting `chess960` games are skipped while standard `chess` and `null` rules qualify.
+  - *PGN parse outcomes and metrics*: PGN parse error handling (`HumanMoveBfsPgnOutcome.PARSE_FAILED`), non-standard start detection (`NON_STANDARD_START`), valid move numbering (`preMovePly = index + 1`), and `result.uniqueGamesProcessed` metric accuracy verified.
+- **Accepted Surviving Mutants**:
+  - 10 synthetic Kotlin compiler null-checks (`Intrinsics.checkNotNull*`) on stdlib and library return values (Taxonomy Category 3).
+  - 3 local logging increment mutators (`playerGamesInspected`, `newOpponentsDiscovered`, `playerQualifyingGames`) that only feed `log.info` parameters.
+  - 1 redundant `chesslibGame.loadMoveText()` call where `PgnHolder.loadPgn()` already pre-loads move text.
+- **Uncovered Branches**: None (0 no coverage; line coverage 99%).
 
 ---
 
