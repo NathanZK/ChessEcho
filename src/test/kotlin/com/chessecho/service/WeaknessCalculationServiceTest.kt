@@ -39,6 +39,7 @@ import org.mockito.kotlin.eq
 import org.mockito.kotlin.never
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
+import org.mockito.kotlin.whenever
 import org.springframework.test.util.ReflectionTestUtils
 import java.time.Instant
 import java.time.temporal.ChronoUnit
@@ -63,6 +64,9 @@ class WeaknessCalculationServiceTest {
 
     @Mock
     private lateinit var puzzleSchedulingEventRepository: PuzzleSchedulingEventRepository
+
+    @Mock
+    private lateinit var accountOwnershipService: AccountOwnershipService
 
     @Mock
     private lateinit var adaptivePuzzleSchedulingPolicy: AdaptivePuzzleSchedulingPolicy
@@ -2482,5 +2486,259 @@ class WeaknessCalculationServiceTest {
                 minEvalLoss = 0.0,
             )
         assertTrue(result.isEmpty())
+    }
+
+    @Test
+    fun `test getWeaknesses throws AccountSelectionRequiredException when principal is present without accountId`() {
+        val principal = AuthenticatedPrincipal(appUserId = UUID.randomUUID(), devPrincipal = false)
+        ReflectionTestUtils.setField(weaknessCalculationService, "accountOwnershipService", accountOwnershipService)
+        whenever(accountOwnershipService.resolvePrivateRead(Platform.CHESS_COM, "nathan", principal))
+            .thenThrow(AccountSelectionRequiredException())
+
+        assertThrows<AccountSelectionRequiredException> {
+            weaknessCalculationService.getWeaknesses(
+                platform = Platform.CHESS_COM,
+                username = "nathan",
+                playerColor = PlayerColor.WHITE,
+                principal = principal,
+                accountId = null,
+            )
+        }
+
+        verify(accountOwnershipService).resolvePrivateRead(Platform.CHESS_COM, "nathan", principal)
+        verify(chessAccountRepository, never()).findByPlatformAndUsernameIgnoreCase(any(), any())
+    }
+
+    @Test
+    fun `test getWeaknesses delegates to resolveSharedAccount when accountId is provided`() {
+        val principal = AuthenticatedPrincipal(appUserId = UUID.randomUUID(), devPrincipal = false)
+        val accountId = UUID.randomUUID()
+        val account = ChessAccount(id = accountId, platform = "CHESS_COM", username = "nathan")
+
+        ReflectionTestUtils.setField(weaknessCalculationService, "accountOwnershipService", accountOwnershipService)
+        whenever(accountOwnershipService.resolveSharedAccount(accountId, principal)).thenReturn(account)
+
+        `when`(positionOccurrenceRepository.countByChessAccountId(accountId)).thenReturn(0)
+        `when`(
+            positionOccurrenceRepository.countByChessAccountIdAndPlayerColorOrBoth(
+                accountId,
+                "WHITE",
+            ),
+        ).thenReturn(0)
+        `when`(
+            positionOccurrenceRepository.findWeaknessAggregations(
+                chessAccountId = accountId,
+                playerColor = "WHITE",
+                minEvalLoss = WeaknessCalculationService.DEFAULT_MIN_EVAL_LOSS,
+                minTimesReached = WeaknessCalculationService.DEFAULT_MIN_TIMES_REACHED,
+                minMistakeCount = WeaknessCalculationService.DEFAULT_MIN_MISTAKE_COUNT.toLong(),
+            ),
+        ).thenReturn(emptyList())
+
+        val result =
+            weaknessCalculationService.getWeaknesses(
+                platform = Platform.CHESS_COM,
+                username = "nathan",
+                playerColor = PlayerColor.WHITE,
+                principal = principal,
+                accountId = accountId,
+            )
+
+        assertTrue(result.isEmpty())
+        verify(accountOwnershipService).resolveSharedAccount(accountId, principal)
+        verify(chessAccountRepository, never()).findByPlatformAndUsernameIgnoreCase(any(), any())
+    }
+
+    private fun setupDualColorPositionOccurrences(
+        account: ChessAccount,
+        position: Position,
+    ) {
+        `when`(positionOccurrenceRepository.countByChessAccountId(account.id)).thenReturn(10)
+        `when`(
+            positionOccurrenceRepository.countByChessAccountIdAndPlayerColorOrBoth(
+                account.id,
+                "BOTH",
+            ),
+        ).thenReturn(10)
+
+        val occWhite =
+            (1..5).map {
+                PositionOccurrence(
+                    game = mockGame(),
+                    position = position,
+                    chessAccount = account,
+                    plyNumber = 1,
+                    movePlayed = "e4",
+                    playerColor = "WHITE",
+                )
+            }
+        val occBlack =
+            (1..5).map {
+                PositionOccurrence(
+                    game = mockGame(),
+                    position = position,
+                    chessAccount = account,
+                    plyNumber = 1,
+                    movePlayed = "e4",
+                    playerColor = "BLACK",
+                )
+            }
+
+        `when`(
+            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(
+                eq(account.id),
+                eq("BOTH"),
+                eq(setOf(position.id)),
+            ),
+        ).thenReturn(occWhite + occBlack)
+
+        val analysis =
+            EngineAnalysis(
+                position = position,
+                depth = 16,
+                baselineEvalCp = 100,
+                bestMove = "e4",
+                bestMoveEvalCp = 100,
+            )
+        analysis.moveEvaluations.add(
+            MoveEvaluation(
+                engineAnalysis = analysis,
+                move = "e4",
+                evalCp = -50,
+                evalLossFromBest = 1.5,
+            ),
+        )
+
+        `when`(
+            engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(setOf(position.id)),
+        ).thenReturn(listOf(analysis))
+
+        val aggWhite =
+            WeaknessAggregation(
+                positionId = position.id,
+                fen = position.fen,
+                playerColor = "WHITE",
+                timesReached = 5,
+                bestMove = "e4",
+                baselineEvalCp = 100,
+                mistakeCount = 5,
+                averageLoss = 1.5,
+                rawTotalLoss = 7.5,
+            )
+        val aggBlack =
+            WeaknessAggregation(
+                positionId = position.id,
+                fen = position.fen,
+                playerColor = "BLACK",
+                timesReached = 5,
+                bestMove = "e4",
+                baselineEvalCp = 100,
+                mistakeCount = 5,
+                averageLoss = 1.5,
+                rawTotalLoss = 7.5,
+            )
+
+        // Intentionally return WHITE first from repository so that the test verifies active tie-breaking by .thenBy { it.playerColor }
+        `when`(
+            positionOccurrenceRepository.findWeaknessAggregations(
+                chessAccountId = account.id,
+                playerColor = "BOTH",
+                minEvalLoss = WeaknessCalculationService.DEFAULT_MIN_EVAL_LOSS,
+                minTimesReached = WeaknessCalculationService.DEFAULT_MIN_TIMES_REACHED,
+                minMistakeCount = WeaknessCalculationService.DEFAULT_MIN_MISTAKE_COUNT.toLong(),
+            ),
+        ).thenReturn(listOf(aggWhite, aggBlack))
+    }
+
+    @Test
+    fun `test dual-color tie breaking orders by playerColor ascending in unauthenticated baseline sort`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "nathan")
+        val position = Position(id = UUID.randomUUID(), hash = "dual_pos_hash", fen = "dual_pos_fen")
+
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "nathan")).thenReturn(account)
+        setupDualColorPositionOccurrences(account, position)
+
+        val weaknesses =
+            weaknessCalculationService.getWeaknesses(
+                platform = Platform.CHESS_COM,
+                username = "nathan",
+                playerColor = PlayerColor.BOTH,
+                principal = null,
+                accountId = null,
+            )
+
+        assertEquals(2, weaknesses.size)
+        assertEquals(weaknesses[0].positionId, weaknesses[1].positionId)
+        assertEquals(weaknesses[0].priority, weaknesses[1].priority)
+        assertEquals(weaknesses[0].recommendationPriority, weaknesses[1].recommendationPriority)
+        assertEquals("BLACK", weaknesses[0].playerColor)
+        assertEquals("WHITE", weaknesses[1].playerColor)
+    }
+
+    @Test
+    fun `test dual-color tie breaking orders by playerColor ascending in authenticated unscheduled sort`() {
+        val principal = AuthenticatedPrincipal(appUserId = UUID.randomUUID(), devPrincipal = false)
+        val accountId = UUID.randomUUID()
+        val account = ChessAccount(id = accountId, platform = "CHESS_COM", username = "nathan")
+        val position = Position(id = UUID.randomUUID(), hash = "dual_pos_hash_unsched", fen = "dual_pos_fen_unsched")
+
+        whenever(accountOwnershipService.resolveSharedAccount(accountId, principal)).thenReturn(account)
+        setupDualColorPositionOccurrences(account, position)
+
+        val unscheduledService =
+            WeaknessCalculationService(
+                chessAccountRepository = chessAccountRepository,
+                positionOccurrenceRepository = positionOccurrenceRepository,
+                engineAnalysisRepository = engineAnalysisRepository,
+                practicalEvidenceService = practicalEvidenceService,
+                weaknessPriorityPolicy = weaknessPriorityPolicy,
+            )
+        ReflectionTestUtils.setField(unscheduledService, "accountOwnershipService", accountOwnershipService)
+
+        val weaknesses =
+            unscheduledService.getWeaknesses(
+                platform = Platform.CHESS_COM,
+                username = "nathan",
+                playerColor = PlayerColor.BOTH,
+                principal = principal,
+                accountId = accountId,
+            )
+
+        assertEquals(2, weaknesses.size)
+        assertEquals(weaknesses[0].positionId, weaknesses[1].positionId)
+        assertEquals(weaknesses[0].priority, weaknesses[1].priority)
+        assertEquals(weaknesses[0].recommendationPriority, weaknesses[1].recommendationPriority)
+        assertEquals("BLACK", weaknesses[0].playerColor)
+        assertEquals("WHITE", weaknesses[1].playerColor)
+    }
+
+    @Test
+    fun `test dual-color tie breaking orders by playerColor ascending in authenticated scheduled sort`() {
+        val principal = AuthenticatedPrincipal(appUserId = UUID.randomUUID(), devPrincipal = false)
+        val accountId = UUID.randomUUID()
+        val account = ChessAccount(id = accountId, platform = "CHESS_COM", username = "nathan")
+        val position = Position(id = UUID.randomUUID(), hash = "dual_pos_hash_sched", fen = "dual_pos_fen_sched")
+
+        ReflectionTestUtils.setField(weaknessCalculationService, "accountOwnershipService", accountOwnershipService)
+        whenever(accountOwnershipService.resolveSharedAccount(accountId, principal)).thenReturn(account)
+        setupDualColorPositionOccurrences(account, position)
+
+        whenever(adaptivePuzzleSchedulingPolicy.schedule(any(), any(), any(), any())).thenReturn(10.0)
+
+        val weaknesses =
+            weaknessCalculationService.getWeaknesses(
+                platform = Platform.CHESS_COM,
+                username = "nathan",
+                playerColor = PlayerColor.BOTH,
+                principal = principal,
+                accountId = accountId,
+            )
+
+        assertEquals(2, weaknesses.size)
+        assertEquals(weaknesses[0].positionId, weaknesses[1].positionId)
+        assertEquals(weaknesses[0].priority, weaknesses[1].priority)
+        assertEquals(weaknesses[0].recommendationPriority, weaknesses[1].recommendationPriority)
+        assertEquals("BLACK", weaknesses[0].playerColor)
+        assertEquals("WHITE", weaknesses[1].playerColor)
     }
 }
