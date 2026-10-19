@@ -199,6 +199,128 @@ class GameDecisionTimeParserTest {
         )
     }
 
+    @Test
+    fun `derives decision time of zero milliseconds for instant moves`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "tester")
+        val game =
+            game(
+                account = account,
+                white = "tester",
+                pgn =
+                    """
+                    [White "tester"]
+                    [Black "opponent"]
+                    [TimeControl "60"]
+
+                    1. e4 {[%clk 0:01:00]} e5 2. Nf3 {[%clk 0:01:00]} *
+                    """.trimIndent(),
+            )
+
+        parser.parseAndSavePositions(listOf(game))
+
+        val occurrences = argumentCaptor<List<PositionOccurrence>>()
+        org.mockito.kotlin.verify(occurrenceRepository).saveAll(occurrences.capture())
+        assertEquals(
+            listOf(0L, 0L),
+            occurrences.firstValue.sortedBy { it.plyNumber }.map { it.decisionTimeMs },
+        )
+    }
+
+    @Test
+    fun `rejects pgn time control with explicit zero increment`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "tester")
+        val game =
+            game(
+                account = account,
+                white = "tester",
+                pgn =
+                    """
+                    [White "tester"]
+                    [Black "opponent"]
+                    [TimeControl "60+0"]
+
+                    1. e4 {[%clk 0:01:00]} e5 2. Nf3 {[%clk 0:00:58]} *
+                    """.trimIndent(),
+            )
+
+        parser.parseAndSavePositions(listOf(game))
+
+        val occurrences = argumentCaptor<List<PositionOccurrence>>()
+        org.mockito.kotlin.verify(occurrenceRepository).saveAll(occurrences.capture())
+        assertEquals(2, occurrences.firstValue.size)
+        assertEquals(2, occurrences.firstValue.count { it.decisionTimeMs == null })
+    }
+
+    @Test
+    fun `parses clock boundary values with 59 minutes and 59 seconds`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "tester")
+        val game =
+            game(
+                account = account,
+                white = "tester",
+                pgn =
+                    """
+                    [White "tester"]
+                    [Black "opponent"]
+                    [TimeControl "3600"]
+
+                    1. e4 {[%clk 0:59:00]} e5 2. Nf3 {[%clk 0:58:59]} *
+                    """.trimIndent(),
+            )
+
+        parser.parseAndSavePositions(listOf(game))
+
+        val occurrences = argumentCaptor<List<PositionOccurrence>>()
+        org.mockito.kotlin.verify(occurrenceRepository).saveAll(occurrences.capture())
+        assertEquals(
+            listOf(60_000L, 1_000L),
+            occurrences.firstValue.sortedBy { it.plyNumber }.map { it.decisionTimeMs },
+        )
+    }
+
+    @Test
+    fun `rejects malformed clock values exceeding 59 minutes or 59 seconds`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "tester")
+        val invalidMinutesGame =
+            game(
+                account = account,
+                white = "tester",
+                pgn =
+                    """
+                    [White "tester"]
+                    [Black "opponent"]
+                    [TimeControl "3600"]
+
+                    1. e4 {[%clk 0:60:00]} e5 *
+                    """.trimIndent(),
+            )
+        parser.parseAndSavePositions(listOf(invalidMinutesGame))
+
+        val occurrences1 = argumentCaptor<List<PositionOccurrence>>()
+        org.mockito.kotlin.verify(occurrenceRepository).saveAll(occurrences1.capture())
+        assertEquals(1, occurrences1.firstValue.size)
+        assertEquals(null, occurrences1.firstValue.single().decisionTimeMs)
+
+        val invalidSecondsGame =
+            game(
+                account = account,
+                white = "tester",
+                pgn =
+                    """
+                    [White "tester"]
+                    [Black "opponent"]
+                    [TimeControl "60"]
+
+                    1. e4 {[%clk 0:00:60]} e5 *
+                    """.trimIndent(),
+            )
+        parser.parseAndSavePositions(listOf(invalidSecondsGame))
+
+        val occurrences2 = argumentCaptor<List<PositionOccurrence>>()
+        org.mockito.kotlin.verify(occurrenceRepository, org.mockito.kotlin.times(2)).saveAll(occurrences2.capture())
+        assertEquals(null, occurrences2.secondValue.single().decisionTimeMs)
+    }
+
     private fun game(
         account: ChessAccount,
         white: String,
