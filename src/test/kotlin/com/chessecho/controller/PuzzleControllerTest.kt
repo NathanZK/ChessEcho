@@ -1,8 +1,11 @@
 package com.chessecho.controller
 
+import com.chessecho.domain.ContinuationMode
 import com.chessecho.dto.TrainingAttemptRequest
 import com.chessecho.dto.TrainingAttemptResponse
 import com.chessecho.service.TrainingAttemptService
+import com.chessecho.service.continuation.ContinuationResult
+import com.chessecho.service.continuation.ContinuationService
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
@@ -13,6 +16,7 @@ import org.mockito.kotlin.verifyNoInteractions
 import org.mockito.kotlin.whenever
 import org.springframework.http.MediaType
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
@@ -22,10 +26,16 @@ import java.util.UUID
 
 class PuzzleControllerTest {
     private val trainingAttemptService: TrainingAttemptService = mock()
+    private val continuationService: ContinuationService = mock()
     private val objectMapper = jacksonObjectMapper().findAndRegisterModules()
     private val mockMvc =
         MockMvcBuilders
-            .standaloneSetup(PuzzleController(trainingAttemptService = trainingAttemptService))
+            .standaloneSetup(
+                PuzzleController(
+                    trainingAttemptService = trainingAttemptService,
+                    continuationService = continuationService,
+                ),
+            )
             .setControllerAdvice(GlobalExceptionHandler())
             .setMessageConverters(MappingJackson2HttpMessageConverter(objectMapper))
             .build()
@@ -85,5 +95,26 @@ class PuzzleControllerTest {
             .andExpect(jsonPath("$.error").value("VALIDATION_ERROR"))
 
         verifyNoInteractions(trainingAttemptService)
+    }
+
+    @Test
+    fun `getContinuation returns 404 Not Found when candidates list is empty`() {
+        val fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        whenever(continuationService.getContinuation(fen = fen, mode = ContinuationMode.ENGINE, ratingBand = null))
+            .thenReturn(
+                ContinuationResult(
+                    fen = fen,
+                    requestedMode = ContinuationMode.ENGINE,
+                    effectiveProvider = "ENGINE",
+                    candidates = emptyList(),
+                ),
+            )
+
+        mockMvc
+            .perform(
+                get("/api/puzzles/continuation")
+                    .param("fen", fen)
+                    .param("mode", "ENGINE"),
+            ).andExpect(status().isNotFound)
     }
 }

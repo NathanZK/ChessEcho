@@ -264,4 +264,60 @@ class ChessComClientTest {
         assertEquals(20L, sleepDurations[0])
         assertEquals(10L, sleepDurations[1])
     }
+
+    @Test
+    fun `fetchArchiveUrls returns emptyList when body is null or archives key is missing`() {
+        whenever(mockResponseSpec.body(Map::class.java)).thenReturn(null)
+        val nullResult = client.fetchArchiveUrls("hikaru")
+        assertEquals(emptyList<String>(), nullResult)
+
+        whenever(mockResponseSpec.body(Map::class.java)).thenReturn(mapOf("unrelated" to "data"))
+        val missingKeyResult = client.fetchArchiveUrls("hikaru")
+        assertEquals(emptyList<String>(), missingKeyResult)
+    }
+
+    @Test
+    fun `fetchMonthlyGames returns null when body is null or games key is missing`() {
+        whenever(mockResponseSpec.body(Map::class.java)).thenReturn(null)
+        val nullResult = client.fetchMonthlyGames("https://api.chess.com/pub/player/hikaru/games/2024/01")
+        assertNull(nullResult)
+
+        whenever(mockResponseSpec.body(Map::class.java)).thenReturn(mapOf("unrelated" to "data"))
+        val missingKeyResult = client.fetchMonthlyGames("https://api.chess.com/pub/player/hikaru/games/2024/01")
+        assertNull(missingKeyResult)
+    }
+
+    @Test
+    fun `transient HTTP errors exceeding maxRetries throw underlying RestClientResponseException`() {
+        val gatewayError =
+            HttpServerErrorException.create(
+                HttpStatus.BAD_GATEWAY,
+                "Bad Gateway",
+                HttpHeaders.EMPTY,
+                ByteArray(0),
+                null,
+            )
+        whenever(mockResponseSpec.body(Map::class.java)).thenThrow(gatewayError)
+
+        val thrown =
+            assertThrows<HttpServerErrorException> {
+                client.fetchArchiveUrls("hikaru")
+            }
+
+        assertEquals(HttpStatus.BAD_GATEWAY, thrown.statusCode)
+        // 1 initial attempt + 3 retries = 4 total calls
+        verify(mockResponseSpec, times(4)).body(Map::class.java)
+    }
+
+    @Test
+    fun `non-HTTP network exceptions propagate immediately without retry`() {
+        whenever(mockResponseSpec.body(Map::class.java))
+            .thenThrow(org.springframework.web.client.ResourceAccessException("Connection timeout"))
+
+        assertThrows<org.springframework.web.client.ResourceAccessException> {
+            client.fetchArchiveUrls("hikaru")
+        }
+
+        verify(mockResponseSpec, times(1)).body(Map::class.java)
+    }
 }

@@ -416,6 +416,181 @@ class GameParserServiceTest {
         whenever(metadata.databaseProductName).thenReturn("PostgreSQL")
         return dataSource
     }
+
+    @Test
+    fun `isStandardStartFen correctly identifies standard start FEN and rejects variant FENs`() {
+        val standardFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        assertTrue(GameParserService.isStandardStartFen(standardFen))
+        assertTrue(GameParserService.isStandardStartFen("  $standardFen  "))
+
+        val chess960Fen = "qrbnknbr/pppppppp/8/8/8/8/PPPPPPPP/QRBNKNBR w KQkq - 0 1"
+        kotlin.test.assertFalse(GameParserService.isStandardStartFen(chess960Fen))
+
+        val customSetupFen = "rnbqkbnr/pppppppp/8/8/8/8/1PPPPPPP/RNBQKBNR w KQkq - 0 1"
+        kotlin.test.assertFalse(GameParserService.isStandardStartFen(customSetupFen))
+
+        kotlin.test.assertFalse(GameParserService.isStandardStartFen(""))
+        kotlin.test.assertFalse(GameParserService.isStandardStartFen("   "))
+    }
+
+    @Test
+    fun `parseAndSavePositions skips occurrence extraction for games with non-standard start FEN`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "tester")
+        val variantGame =
+            Game(
+                chessAccount = account,
+                platformGameId = "chess960-game",
+                whiteUsername = "tester",
+                blackUsername = "opponent",
+                pgn =
+                    """
+                    [Event "Chess960 Live"]
+                    [SetUp "1"]
+                    [FEN "qrbnknbr/pppppppp/8/8/8/8/PPPPPPPP/QRBNKNBR w KQkq - 0 1"]
+                    [White "tester"]
+                    [Black "opponent"]
+
+                    1. c4 c5 2. b3 b6 1/2-1/2
+                    """.trimIndent(),
+                timeControl = "600",
+                playedAt = Instant.now(),
+            )
+
+        val affected = gameParserService.parseAndSavePositions(listOf(variantGame))
+
+        assertTrue(affected.isEmpty(), "Non-standard starting FEN games should produce empty affected position set")
+        verify(positionOccurrenceRepository, never()).saveAll(any<List<PositionOccurrence>>())
+    }
+
+    @Test
+    fun `deriveDecisionTimes handles millisecond and hour clock formats in clk comments`() {
+        whenever(positionRepository.findByHashIn(any())).thenReturn(emptyList())
+        whenever(positionRepository.saveAll(any<List<Position>>())).thenAnswer { it.getArgument<List<Position>>(0) }
+
+        val account = ChessAccount(platform = "CHESS_COM", username = "tester")
+        val game =
+            Game(
+                chessAccount = account,
+                platformGameId = "clock-formats-game",
+                whiteUsername = "tester",
+                blackUsername = "opponent",
+                pgn =
+                    """
+                    [Event "Classical Game"]
+                    [White "tester"]
+                    [Black "opponent"]
+                    [TimeControl "7200"]
+
+                    1. e4 {[%clk 1:59:50]} 1... e5 {[%clk 1:59:55]} 2. Nf3 {[%clk 1:59:40.500]} 2... Nc6 {[%clk 1:59:45]} 1/2-1/2
+                    """.trimIndent(),
+                timeControl = "7200",
+                playedAt = Instant.now(),
+            )
+
+        gameParserService.parseAndSavePositions(listOf(game))
+
+        val occurrences = argumentCaptor<List<PositionOccurrence>>()
+        verify(positionOccurrenceRepository).saveAll(occurrences.capture())
+        val captured = occurrences.firstValue
+        assertEquals(2, captured.size)
+
+        // Ply 1: 7200s (7,200,000ms) - 1:59:50 (7,190,000ms) = 10,000ms
+        assertEquals(10_000L, captured[0].decisionTimeMs)
+        // Ply 3: starting 7,190,000ms - 1:59:40.500 (7,180,500ms) = 9,500ms
+        assertEquals(9_500L, captured[1].decisionTimeMs)
+    }
+
+    @Test
+    fun `deriveDecisionTimes returns emptyMap on mismatched clock count or negative delta`() {
+        whenever(positionRepository.findByHashIn(any())).thenReturn(emptyList())
+        whenever(positionRepository.saveAll(any<List<Position>>())).thenAnswer { it.getArgument<List<Position>>(0) }
+
+        val account = ChessAccount(platform = "CHESS_COM", username = "tester")
+        // Mismatched clock count: PGN has extra %clk text
+        val mismatchedGame =
+            Game(
+                chessAccount = account,
+                platformGameId = "mismatched-clock-game",
+                whiteUsername = "tester",
+                blackUsername = "opponent",
+                pgn =
+                    """
+                    [Event "Mismatched Clock"]
+                    [White "tester"]
+                    [Black "opponent"]
+                    [TimeControl "600"]
+
+                    1. e4 {[%clk 0:09:50]} 1... e5 2. Nf3 Nc6 1/2-1/2
+                    """.trimIndent(),
+                timeControl = "600",
+                playedAt = Instant.now(),
+            )
+
+        // Negative delta: clock moves backwards (e.g. time increased without increment)
+        val negativeDeltaGame =
+            Game(
+                chessAccount = account,
+                platformGameId = "negative-delta-game",
+                whiteUsername = "tester",
+                blackUsername = "opponent",
+                pgn =
+                    """
+                    [Event "Negative Delta"]
+                    [White "tester"]
+                    [Black "opponent"]
+                    [TimeControl "600"]
+
+                    1. e4 {[%clk 0:10:30]} 1... e5 {[%clk 0:09:55]} 1/2-1/2
+                    """.trimIndent(),
+                timeControl = "600",
+                playedAt = Instant.now(),
+            )
+
+        gameParserService.parseAndSavePositions(listOf(mismatchedGame, negativeDeltaGame))
+
+        val occurrences = argumentCaptor<List<PositionOccurrence>>()
+        verify(positionOccurrenceRepository, times(1)).saveAll(occurrences.capture())
+        // Both games should have null decision times because deriveDecisionTimes returns emptyMap()
+        occurrences.allValues.flatten().forEach { occurrence ->
+            kotlin.test.assertNull(occurrence.decisionTimeMs, "Decision times must be null when clock data is invalid")
+        }
+    }
+
+    @Test
+    fun `parseAndSavePositions handles NAG annotations inline comments and variations in move text`() {
+        whenever(positionRepository.findByHashIn(any())).thenReturn(emptyList())
+        whenever(positionRepository.saveAll(any<List<Position>>())).thenAnswer { it.getArgument<List<Position>>(0) }
+
+        val account = ChessAccount(platform = "CHESS_COM", username = "tester")
+        val annotatedGame =
+            Game(
+                chessAccount = account,
+                platformGameId = "annotated-game",
+                whiteUsername = "tester",
+                blackUsername = "opponent",
+                pgn =
+                    """
+                    [Event "World Championship"]
+                    [White "tester"]
+                    [Black "opponent"]
+                    [TimeControl "600"]
+
+                    1. e4 $1 {best by test} (1. d4 d5 $2 2. c4) 1... e5 2. Nf3 $1 (2. f4 exf4) 2... Nc6 3. Bb5 {Ruy Lopez} 1/2-1/2
+                    """.trimIndent(),
+                timeControl = "600",
+                playedAt = Instant.now(),
+            )
+
+        val affected = gameParserService.parseAndSavePositions(listOf(annotatedGame))
+
+        val occurrences = argumentCaptor<List<PositionOccurrence>>()
+        verify(positionOccurrenceRepository).saveAll(occurrences.capture())
+        val captured = occurrences.firstValue
+        assertEquals(3, captured.size, "Should extract exactly 3 white user turns despite NAGs and variations")
+        assertEquals(listOf("e4", "Nf3", "Bb5"), captured.map { it.movePlayed })
+        assertEquals(listOf(1, 3, 5), captured.map { it.plyNumber })
+        assertEquals(3, affected.size)
+    }
 }
 
 @SpringBootTest
