@@ -1,6 +1,7 @@
 package com.chessecho.service
 
 import org.junit.jupiter.api.Test
+import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 import kotlin.test.assertEquals
@@ -108,6 +109,103 @@ class AdaptivePuzzleSchedulingPolicyTest {
         val second = policy.order(first, now)
 
         assertEquals(first.map { it.positionId }, second.map { it.positionId })
+    }
+
+    @Test
+    fun `failure boost increments by 0_5 per failure and clamps strictly at 3_0 ceiling`() {
+        val zeroFailures = policy.schedule(10.0, position, emptyList(), now)
+        val oneFailure = policy.schedule(10.0, position, List(1) { event(SchedulingEventType.FAILED, now) }, now)
+        val twoFailures = policy.schedule(10.0, position, List(2) { event(SchedulingEventType.FAILED, now) }, now)
+        val sixFailures = policy.schedule(10.0, position, List(6) { event(SchedulingEventType.FAILED, now) }, now)
+        val tenFailures = policy.schedule(10.0, position, List(10) { event(SchedulingEventType.FAILED, now) }, now)
+
+        assertEquals(10.0, zeroFailures, 0.001)
+        assertEquals(10.5, oneFailure, 0.001)
+        assertEquals(11.0, twoFailures, 0.001)
+        assertEquals(13.0, sixFailures, 0.001)
+        assertEquals(13.0, tenFailures, 0.001)
+    }
+
+    @Test
+    fun `game mistake boost decays exponentially across multi-day intervals`() {
+        val day0 = policy.schedule(10.0, position, listOf(event(SchedulingEventType.GAME_MISTAKE, now)), now)
+        val day14 =
+            policy.schedule(
+                10.0,
+                position,
+                listOf(event(SchedulingEventType.GAME_MISTAKE, now.minus(Duration.ofDays(14)))),
+                now,
+            )
+        val day28 =
+            policy.schedule(
+                10.0,
+                position,
+                listOf(event(SchedulingEventType.GAME_MISTAKE, now.minus(Duration.ofDays(28)))),
+                now,
+            )
+
+        assertEquals(22.0, day0, 0.0001)
+        assertEquals(14.41455, day14, 0.0001)
+        assertEquals(11.62402, day28, 0.0001)
+    }
+
+    @Test
+    fun `game handled successfully dampens urgency exponentially across multi-day intervals`() {
+        val day0 = policy.schedule(10.0, position, listOf(event(SchedulingEventType.GAME_HANDLED_SUCCESSFULLY, now)), now)
+        val day21 =
+            policy.schedule(
+                10.0,
+                position,
+                listOf(event(SchedulingEventType.GAME_HANDLED_SUCCESSFULLY, now.minus(Duration.ofDays(21)))),
+                now,
+            )
+        val day42 =
+            policy.schedule(
+                10.0,
+                position,
+                listOf(event(SchedulingEventType.GAME_HANDLED_SUCCESSFULLY, now.minus(Duration.ofDays(42)))),
+                now,
+            )
+
+        assertEquals(6.0, day0, 0.0001)
+        assertEquals(8.52848, day21, 0.0001)
+        assertEquals(9.45866, day42, 0.0001)
+    }
+
+    @Test
+    fun `solved cooldown deprioritizes position and decays across multi-day intervals`() {
+        val day0 = policy.schedule(10.0, position, listOf(event(SchedulingEventType.SOLVED, now)), now)
+        val day3 =
+            policy.schedule(
+                10.0,
+                position,
+                listOf(event(SchedulingEventType.SOLVED, now.minus(Duration.ofDays(3)))),
+                now,
+            )
+        val day6 =
+            policy.schedule(
+                10.0,
+                position,
+                listOf(event(SchedulingEventType.SOLVED, now.minus(Duration.ofDays(6)))),
+                now,
+            )
+
+        assertEquals(8.0, day0, 0.0001)
+        assertEquals(9.26424, day3, 0.0001)
+        assertEquals(9.72933, day6, 0.0001)
+    }
+
+    @Test
+    fun `schedule clamps negative accumulated score to zero floor`() {
+        val score =
+            policy.schedule(
+                1.0,
+                position,
+                listOf(event(SchedulingEventType.GAME_HANDLED_SUCCESSFULLY, now)),
+                now,
+            )
+
+        assertEquals(0.0, score, 0.0001)
     }
 
     private fun event(
