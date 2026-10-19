@@ -41,6 +41,7 @@ import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.springframework.test.util.ReflectionTestUtils
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 @ExtendWith(MockitoExtension::class)
@@ -1471,6 +1472,17 @@ class WeaknessCalculationServiceTest {
     }
 
     @Test
+    fun `test phase classification home-rank boundary at exactly 4 non-pawn pieces remains OPENING`() {
+        // White rank 1 has exactly 4 pieces (R, B, K, R), Black rank 8 has 8 pieces, rank 2 has N, mmCount = 11 > 10, move <= 14
+        val white4Fen = "rnbqkbnr/8/8/8/8/8/2N5/R1B1K2R w - - 0 1"
+        assertEquals("OPENING", testSinglePhaseClassification(white4Fen, plyNumber = 2))
+
+        // Black rank 8 has exactly 4 pieces (r, b, k, r), White rank 1 has 8 pieces, rank 7 has n, mmCount = 11 > 10, move <= 14
+        val black4Fen = "r1b1k2r/2n5/8/8/8/8/8/RNBQKBNR w - - 0 1"
+        assertEquals("OPENING", testSinglePhaseClassification(black4Fen, plyNumber = 2))
+    }
+
+    @Test
     fun `test phase classification move number boundary transitions from OPENING at ply 28 to MIDDLEGAME at ply 29 and 30`() {
         val standardFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
@@ -2308,5 +2320,167 @@ class WeaknessCalculationServiceTest {
         assertEquals(1, w.movesPlayed.size)
         assertEquals("f3", w.movesPlayed[0].move)
         assertEquals(2, w.movesPlayed[0].timesPlayed)
+    }
+
+    @Test
+    fun `test recency weighting attenuates priority for historical games based on days old`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "nathan")
+        val position = Position(hash = "hash-recency", fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "nathan")).thenReturn(account)
+
+        // Game played exactly 182 days ago (approx half a year)
+        val pastInstant = Instant.now().minus(182, ChronoUnit.DAYS)
+        val game = mockGame("gamePast", playedAt = pastInstant)
+
+        val occ =
+            PositionOccurrence(
+                game = game,
+                position = position,
+                chessAccount = account,
+                plyNumber = 1,
+                movePlayed = "e4",
+                playerColor = "WHITE",
+            )
+
+        val analysis = EngineAnalysis(position = position, depth = 16, baselineEvalCp = 100, bestMove = "d4", bestMoveEvalCp = 100)
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "e4", evalCp = 0, evalLossFromBest = 1.0))
+
+        `when`(positionOccurrenceRepository.countByChessAccountId(account.id)).thenReturn(1)
+        `when`(positionOccurrenceRepository.countByChessAccountIdAndPlayerColorOrBoth(account.id, "WHITE")).thenReturn(1)
+        `when`(
+            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(eq(account.id), eq("WHITE"), any()),
+        ).thenReturn(listOf(occ))
+        `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(any())).thenReturn(listOf(analysis))
+
+        val aggregation =
+            WeaknessAggregation(
+                positionId = position.id,
+                fen = position.fen,
+                playerColor = "WHITE",
+                timesReached = 1,
+                bestMove = "d4",
+                baselineEvalCp = 100,
+                mistakeCount = 1,
+                averageLoss = 1.0,
+                rawTotalLoss = 1.0,
+            )
+
+        `when`(
+            positionOccurrenceRepository.findWeaknessAggregations(
+                chessAccountId = eq(account.id),
+                playerColor = eq("WHITE"),
+                minEvalLoss = eq(0.8),
+                minTimesReached = eq(1),
+                minMistakeCount = eq(1L),
+            ),
+        ).thenReturn(listOf(aggregation))
+
+        val weaknesses =
+            weaknessCalculationService.getWeaknesses(
+                platform = Platform.CHESS_COM,
+                username = "nathan",
+                playerColor = PlayerColor.WHITE,
+                minEvalLoss = 0.8,
+                minTimesReached = 1,
+                minMistakeCount = 1,
+            )
+
+        assertEquals(1, weaknesses.size)
+        val w = weaknesses[0]
+
+        // daysOld between pastInstant and Instant.now() is 182 days
+        // expected weight = max(0.1, 1.0 - (182.0 / 365.0)) = 1.0 - 0.49863 = ~0.50137
+        // unmutated priority: priorityScore * (mistakeCount / timesReached) = 1.0 * weight * (1 / 1) = ~0.50137
+        // mutated MathMutator (daysOld * 365.0): 1.0 - (182 * 365.0) = -66429.0 -> clamped to 0.1 -> priority = 0.1
+        assertTrue(w.priority > 0.40, "Expected recency-weighted priority around 0.50, but was ${w.priority}")
+        assertEquals(1.0 - (182.0 / 365.0), w.priority, 0.05)
+    }
+
+    @Test
+    fun `test gameUrl generates lichess URL for LICHESS platform occurrences`() {
+        val account = ChessAccount(platform = "LICHESS", username = "lichessUser")
+        val position = Position(hash = "pos-lichess", fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "lichessUser")).thenReturn(account)
+
+        val game = mockGame(platformGameId = "gameLichess123")
+        val occ =
+            PositionOccurrence(
+                game = game,
+                position = position,
+                chessAccount = account,
+                plyNumber = 1,
+                movePlayed = "e4",
+                playerColor = "WHITE",
+            )
+        val analysis = EngineAnalysis(position = position, depth = 16, baselineEvalCp = 100, bestMove = "d4", bestMoveEvalCp = 100)
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "e4", evalCp = 0, evalLossFromBest = 1.0))
+
+        `when`(positionOccurrenceRepository.countByChessAccountId(account.id)).thenReturn(1)
+        `when`(positionOccurrenceRepository.countByChessAccountIdAndPlayerColorOrBoth(account.id, "WHITE")).thenReturn(1)
+        `when`(
+            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(eq(account.id), eq("WHITE"), any()),
+        ).thenReturn(listOf(occ))
+        `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(any())).thenReturn(listOf(analysis))
+
+        val aggregation =
+            WeaknessAggregation(
+                positionId = position.id,
+                fen = position.fen,
+                playerColor = "WHITE",
+                timesReached = 1,
+                bestMove = "d4",
+                baselineEvalCp = 100,
+                mistakeCount = 1,
+                averageLoss = 1.0,
+                rawTotalLoss = 1.0,
+            )
+
+        `when`(
+            positionOccurrenceRepository.findWeaknessAggregations(
+                chessAccountId = eq(account.id),
+                playerColor = eq("WHITE"),
+                minEvalLoss = eq(0.8),
+                minTimesReached = eq(1),
+                minMistakeCount = eq(1L),
+            ),
+        ).thenReturn(listOf(aggregation))
+
+        val weaknesses =
+            weaknessCalculationService.getWeaknesses(
+                platform = Platform.CHESS_COM,
+                username = "lichessUser",
+                playerColor = PlayerColor.WHITE,
+                minEvalLoss = 0.8,
+                minTimesReached = 1,
+                minMistakeCount = 1,
+            )
+
+        assertEquals(1, weaknesses.size)
+        assertEquals(listOf("https://lichess.org/gameLichess123"), weaknesses[0].gameUrls)
+    }
+
+    @Test
+    fun `test getWeaknesses accepts minEvalLoss of exactly zero without exception`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "nathan")
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "nathan")).thenReturn(account)
+        `when`(
+            positionOccurrenceRepository.findWeaknessAggregations(
+                chessAccountId = eq(account.id),
+                playerColor = eq("WHITE"),
+                minEvalLoss = eq(0.0),
+                minTimesReached = any(),
+                minMistakeCount = any(),
+            ),
+        ).thenReturn(emptyList())
+
+        // Must succeed without throwing IllegalArgumentException for boundary value 0.0
+        val result =
+            weaknessCalculationService.getWeaknesses(
+                platform = Platform.CHESS_COM,
+                username = "nathan",
+                playerColor = PlayerColor.WHITE,
+                minEvalLoss = 0.0,
+            )
+        assertTrue(result.isEmpty())
     }
 }
