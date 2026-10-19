@@ -133,4 +133,85 @@ class TrainingAttemptServiceTest {
             service.submit(request, null)
         }
     }
+
+    @Test
+    fun `boundary condition for elapsedMs allows exactly 0 ms and rejects negative`() {
+        val attemptId = UUID.randomUUID()
+        val requestZero =
+            TrainingAttemptRequest(
+                attemptId = attemptId,
+                puzzleId = "puzzle-1",
+                mode = "STOPWATCH",
+                elapsedMs = 0,
+                allowedMs = null,
+                outcome = "SUBMITTED",
+            )
+        whenever(repository.save(any<TrainingAttempt>())).thenAnswer { it.arguments[0] as TrainingAttempt }
+
+        val response = service.submit(requestZero, null)
+        assertEquals(0, response.elapsedMs)
+
+        val requestNegative = requestZero.copy(elapsedMs = -1)
+        val ex =
+            assertThrows(IllegalArgumentException::class.java) {
+                service.submit(requestNegative, null)
+            }
+        assertEquals("Elapsed time cannot be negative: -1ms", ex.message)
+    }
+
+    @Test
+    fun `allowedMs allows null and non-negative, rejects negative`() {
+        whenever(repository.save(any<TrainingAttempt>())).thenAnswer { it.arguments[0] as TrainingAttempt }
+
+        val baseRequest =
+            TrainingAttemptRequest(
+                attemptId = UUID.randomUUID(),
+                puzzleId = "puzzle-1",
+                mode = "COUNTDOWN",
+                elapsedMs = 1_000,
+                allowedMs = 0,
+                outcome = "SUBMITTED",
+            )
+
+        val responseZero = service.submit(baseRequest, null)
+        assertEquals(0, responseZero.allowedMs)
+
+        val responsePositive = service.submit(baseRequest.copy(allowedMs = 15_000), null)
+        assertEquals(15_000, responsePositive.allowedMs)
+
+        val responseNull = service.submit(baseRequest.copy(allowedMs = null), null)
+        assertEquals(null, responseNull.allowedMs)
+
+        val requestNegativeAllowed = baseRequest.copy(allowedMs = -1)
+        val ex =
+            assertThrows(IllegalArgumentException::class.java) {
+                service.submit(requestNegativeAllowed, null)
+            }
+        assertEquals("Allowed time cannot be negative: -1ms", ex.message)
+    }
+
+    @Test
+    fun `rejects invalid mode or outcome string values with descriptive exceptions`() {
+        val baseRequest =
+            TrainingAttemptRequest(
+                attemptId = UUID.randomUUID(),
+                puzzleId = "puzzle-1",
+                mode = "STOPWATCH",
+                elapsedMs = 1_000,
+                allowedMs = null,
+                outcome = "SUBMITTED",
+            )
+
+        val invalidModeEx =
+            assertThrows(IllegalArgumentException::class.java) {
+                service.submit(baseRequest.copy(mode = "SPRINT"), null)
+            }
+        assertEquals("Invalid timing mode: SPRINT", invalidModeEx.message)
+
+        val invalidOutcomeEx =
+            assertThrows(IllegalArgumentException::class.java) {
+                service.submit(baseRequest.copy(outcome = "GAVE_UP"), null)
+            }
+        assertEquals("Invalid outcome: GAVE_UP", invalidOutcomeEx.message)
+    }
 }

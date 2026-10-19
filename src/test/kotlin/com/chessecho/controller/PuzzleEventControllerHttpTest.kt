@@ -13,6 +13,7 @@ import com.chessecho.repository.AppUserRepository
 import com.chessecho.repository.PositionOccurrenceRepository
 import com.chessecho.repository.PuzzleSchedulingEventRepository
 import com.chessecho.service.AccountOwnershipService
+import com.chessecho.service.PuzzleSubmissionConflictException
 import com.chessecho.service.PuzzleSubmissionService
 import com.chessecho.service.auth.AuthenticatedPrincipal
 import com.chessecho.service.auth.IdentitySessionService
@@ -213,5 +214,46 @@ class PuzzleEventControllerHttpTest {
             jsonPath("$.error") { value("VALIDATION_ERROR") }
         }
         verify(submissionService, never()).count(any(), any(), any(), any())
+    }
+
+    @org.junit.jupiter.api.Test
+    fun `record returns 404 Not Found when position occurrence does not exist`() {
+        whenever(identitySessionService.resolveSession("valid-session")).thenReturn(principal)
+        whenever(accountOwnershipService.resolveSharedAccount(account.id, principal)).thenReturn(account)
+        whenever(
+            occurrenceRepository.findByChessAccountIdAndPlayerColorAndPositionIdIn(
+                account.id,
+                "WHITE",
+                listOf(position.id),
+            ),
+        ).thenReturn(emptyList())
+
+        mockMvc.post("/api/puzzles/events") {
+            cookie(Cookie("CHESSECHO_SESSION", "valid-session"))
+            contentType = MediaType.APPLICATION_JSON
+            content =
+                """{"positionId":"${position.id}","playerColor":"WHITE","eventType":"SOLVED","accountId":"${account.id}"}"""
+        }.andExpect {
+            status { isNotFound() }
+        }
+    }
+
+    @org.junit.jupiter.api.Test
+    fun `record returns 409 Conflict when PuzzleSubmissionConflictException is raised`() {
+        whenever(identitySessionService.resolveSession("valid-session")).thenReturn(principal)
+        whenever(submissionService.record(any(), any())).thenThrow(PuzzleSubmissionConflictException())
+
+        mockMvc.post("/api/puzzles/events") {
+            cookie(Cookie("CHESSECHO_SESSION", "valid-session"))
+            contentType = MediaType.APPLICATION_JSON
+            content =
+                """
+                {"positionId":"${position.id}","playerColor":"WHITE","eventType":"SOLVED",
+                 "accountId":"${account.id}","submissionId":"${UUID.randomUUID()}","submittedMove":"e4"}
+                """.trimIndent()
+        }.andExpect {
+            status { isConflict() }
+            jsonPath("$.error") { value("PUZZLE_SUBMISSION_CONFLICT") }
+        }
     }
 }
