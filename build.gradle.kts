@@ -104,3 +104,44 @@ pitest {
     targetClasses.set(effectiveTargetClasses)
     targetTests.set(effectiveTargetTests)
 }
+
+tasks.named("pitest") {
+    doFirst {
+        delete("build/reports/pitest")
+    }
+}
+
+val archivePitest =
+    tasks.register("archivePitest") {
+        group = "verification"
+        description = "Persists the generated PIT report outside build/ so it survives clean."
+        mustRunAfter("pitest")
+        doLast {
+            val pitestTask = tasks.findByName("pitest")
+            if (pitestTask != null && gradle.taskGraph.hasTask(pitestTask)) {
+                if (!pitestTask.state.executed || pitestTask.state.failure != null) {
+                    throw GradleException("Cannot persist PIT report: PIT execution did not complete successfully.")
+                }
+            }
+
+            val reportsDir = file("build/reports/pitest")
+            val mutationsXml = file("build/reports/pitest/mutations.xml")
+
+            if (!reportsDir.isDirectory || !mutationsXml.isFile || mutationsXml.length() == 0L) {
+                throw GradleException("Cannot persist PIT report: build/reports/pitest/mutations.xml does not exist or is empty.")
+            }
+
+            val destDir = file("pit-reports")
+            project.sync {
+                from(reportsDir)
+                into(destDir)
+            }
+            logger.lifecycle("Persisted PIT report to ${destDir.absolutePath}")
+        }
+    }
+
+if (providers.gradleProperty("pitest.archive").orNull?.toBoolean() == true) {
+    tasks.named("pitest") {
+        finalizedBy(archivePitest)
+    }
+}

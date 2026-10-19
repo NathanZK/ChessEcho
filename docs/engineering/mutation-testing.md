@@ -86,6 +86,36 @@ rm -rf build/reports/pitest/
 
 Historical mutation testing audit results across assessed candidate classes and test suites are documented and indexed in [docs/engineering/audit/index.md](audit/index.md).
 
+### Persisting Reports Outside `build/`
+
+By default, PIT reports are generated under `build/reports/pitest/` and are deleted whenever `./gradlew clean` runs.
+
+To preserve the generated mutation testing report across clean builds without committing build outputs into version control:
+
+1. **Automatic Persistence on Run**:
+   Execute PIT with `-Ppitest.archive=true` to automatically persist the report upon completion:
+   ```bash
+   ./gradlew pitest -Ppitest.archive=true
+   ```
+
+2. **On-Demand Copy of Existing Report**:
+   Copy an already-generated report without re-running PIT:
+   ```bash
+   ./gradlew archivePitest
+   ```
+   > [!NOTE]
+   > `./gradlew archivePitest` only copies an existing report from `build/reports/pitest/`. It does not implicitly execute PIT.
+
+3. **Storage Destination & Scope**:
+   - **Destination**: `pit-reports/` in the project root directory (outside `build/`).
+   - **Git Hygiene**: `/pit-reports/` is gitignored to avoid contaminating application source control.
+   - **Contents Preserved**: The full report directory tree is synchronized, preserving `mutations.xml`, root `index.html`, `style.css`, and all package HTML subdirectories.
+   - **Survival Semantics**: Persisted reports survive `./gradlew clean` (which only deletes `build/`). However, because this is a local, unversioned copy of the latest run, it does not survive repository checkout deletion, machine loss, or ephemeral container termination.
+
+4. **Stale Report & Failure Defense**:
+   - `pitest` deletes `build/reports/pitest/` at task startup (`doFirst`). If a PIT run fails early or crashes, no stale output from prior runs can linger.
+   - `archivePitest` validates that PIT did not fail and that `build/reports/pitest/mutations.xml` exists before synchronizing. If PIT failed or no report was generated, `archivePitest` throws an error and leaves the destination directory untouched.
+
 ---
 
 ## 3. Qualitative Runtime Expectations

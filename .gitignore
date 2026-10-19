@@ -35,3 +35,4 @@ out/
 ### Log files ###
 *.log
 .agent-workflow/
+/pit-reports/
