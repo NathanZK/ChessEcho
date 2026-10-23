@@ -13,7 +13,6 @@
     <ID>CastNullableToNonNullableType:EvaluationEvidenceSnapshotService.kt$EvaluationEvidenceSnapshotService$as</ID>
     <ID>CognitiveComplexMethod:EngineAnalysisService.kt$EngineAnalysisService$fun analyzePosition( position: Position, analysisMultiPv: Int?, )</ID>
     <ID>CognitiveComplexMethod:EngineAnalysisService.kt$EngineAnalysisService.Companion$internal fun calculateEvalLoss( bestScore: EvalScore?, moveScore: EvalScore?, ): Double?</ID>
-    <ID>CognitiveComplexMethod:EngineMoveProvider.kt$EngineMoveProvider$override fun getContinuationCandidates( fen: String, ratingBand: String?, ): List&lt;ContinuationCandidate&gt;</ID>
     <ID>CognitiveComplexMethod:GameImportService.kt$GameImportService$@Async fun executeImportJob(jobId: UUID)</ID>
     <ID>CognitiveComplexMethod:GameImportService.kt$GameImportService$private fun importMonth( account: ChessAccount, initiatingUser: AppUser?, archiveUrl: String, yearMonth: String, isPastMonth: Boolean, request: ImportGamesRequest, remainingCap: Int? = null, ): ImportMonthResult</ID>
     <ID>CognitiveComplexMethod:GameParserService.kt$GameParserService$private fun deriveDecisionTimes( pgn: String, parsedGame: ParsedGame, moves: MoveList, playerColor: String, ): Map&lt;Int, Long&gt;</ID>
@@ -27,12 +26,10 @@
     <ID>CognitiveComplexMethod:HumanMoveCorpusService.kt$HumanMoveCorpusService$fun runCorpus(request: HumanMoveCorpusRunRequest): HumanMoveCorpusRunResponse</ID>
     <ID>CognitiveComplexMethod:PgnHeaderTagReader.kt$PgnHeaderTagReader$fun read(pgn: String): PgnHeaderTags</ID>
     <ID>CognitiveComplexMethod:PgnHeaderTagReader.kt$PgnHeaderTagReader$private fun parseTag(line: String): PgnTag?</ID>
-    <ID>CognitiveComplexMethod:PracticalEvidenceService.kt$PracticalEvidenceService$fun summarize( chessAccountId: UUID, accountUsername: String, occurrences: List&lt;PositionOccurrence&gt;, scopes: Set&lt;PracticalEvidenceScope&gt;, asOf: Instant, ): Map&lt;PracticalEvidenceScope, PracticalEvidenceSummary&gt;</ID>
     <ID>CognitiveComplexMethod:ReferenceCoverageAnalysisService.kt$ReferenceCoverageAnalysisService$fun analyze(input: ReferenceCoverageAnalysisInput): ReferenceCoverageAnalysisResult</ID>
     <ID>CognitiveComplexMethod:StockfishService.kt$StockfishService$fun analyzeMultiPv( fen: String, depth: Int, multiPv: Int, ): List&lt;EngineCandidate&gt;</ID>
     <ID>CognitiveComplexMethod:StockfishService.kt$StockfishService$internal fun runGoDepth( fen: String, uciMove: String?, depth: Int, reader: BufferedReader, sendCommand: (String) -&gt; Unit, ): PositionAnalysis</ID>
     <ID>CognitiveComplexMethod:StockfishService.kt$StockfishService.Companion$fun parseEngineScore( line: String, invert: Boolean = false, ): EvalScore?</ID>
-    <ID>CognitiveComplexMethod:WeaknessCalculationService.kt$WeaknessCalculationService$@Transactional(readOnly = true) fun getWeaknesses( platform: Platform, username: String, playerColor: PlayerColor, minEvalLoss: Double = DEFAULT_MIN_EVAL_LOSS, minMistakeCount: Int = DEFAULT_MIN_MISTAKE_COUNT, minTimesReached: Int = DEFAULT_MIN_TIMES_REACHED, principal: AuthenticatedPrincipal? = null, accountId: UUID? = null, ): List&lt;WeaknessResponse&gt;</ID>
     <ID>ComplexCondition:CsrfEnforcementInterceptor.kt$CsrfEnforcementInterceptor$request.method.equals("GET", ignoreCase = true) || request.method.equals("HEAD", ignoreCase = true) || request.method.equals("OPTIONS", ignoreCase = true) || CorsUtils.isPreFlightRequest(request)</ID>
     <ID>ComplexCondition:EngineAnalysisService.kt$EngineAnalysisService.Companion$bestScore.mate != null &amp;&amp; bestScore.mate &lt; 0 &amp;&amp; moveScore.mate == null &amp;&amp; moveScore.cp != null &amp;&amp; moveScore.cp &lt; 0</ID>
     <ID>ComplexCondition:EngineAnalysisService.kt$EngineAnalysisService.Companion$bestScore.mate == null &amp;&amp; moveScore.mate == null &amp;&amp; bestScore.cp != null &amp;&amp; moveScore.cp != null &amp;&amp; bestScore.cp == moveScore.cp</ID>
@@ -60,15 +57,12 @@
     <ID>CyclomaticComplexMethod:HumanMoveCorpusPurgeService.kt$HumanMoveCorpusPurgeService$@Transactional fun purge( runId: UUID, contentDigest: String, ): HumanMoveCorpusPurgeResult</ID>
     <ID>CyclomaticComplexMethod:PgnHeaderTagReader.kt$PgnHeaderTagReader$fun read(pgn: String): PgnHeaderTags</ID>
     <ID>CyclomaticComplexMethod:PgnHeaderTagReader.kt$PgnHeaderTagReader$private fun parseTag(line: String): PgnTag?</ID>
-    <ID>CyclomaticComplexMethod:PracticalEvidenceService.kt$PracticalEvidenceService$fun summarize( chessAccountId: UUID, accountUsername: String, occurrences: List&lt;PositionOccurrence&gt;, scopes: Set&lt;PracticalEvidenceScope&gt;, asOf: Instant, ): Map&lt;PracticalEvidenceScope, PracticalEvidenceSummary&gt;</ID>
     <ID>CyclomaticComplexMethod:ReferenceCoverageAnalysisService.kt$ReferenceCoverageAnalysisService$fun analyze(input: ReferenceCoverageAnalysisInput): ReferenceCoverageAnalysisResult</ID>
     <ID>CyclomaticComplexMethod:RetainedEvaluationEvidence.kt$RetainedEvaluationEvidenceValidator$fun admit(evidence: RetainedEvaluationEvidence): RetainedEvaluationEvidence</ID>
     <ID>CyclomaticComplexMethod:StockfishService.kt$StockfishService$fun analyzeMultiPv( fen: String, depth: Int, multiPv: Int, ): List&lt;EngineCandidate&gt;</ID>
-    <ID>CyclomaticComplexMethod:WeaknessCalculationService.kt$WeaknessCalculationService$@Transactional(readOnly = true) fun getWeaknesses( platform: Platform, username: String, playerColor: PlayerColor, minEvalLoss: Double = DEFAULT_MIN_EVAL_LOSS, minMistakeCount: Int = DEFAULT_MIN_MISTAKE_COUNT, minTimesReached: Int = DEFAULT_MIN_TIMES_REACHED, principal: AuthenticatedPrincipal? = null, accountId: UUID? = null, ): List&lt;WeaknessResponse&gt;</ID>
     <ID>LargeClass:GameImportService.kt$GameImportService</ID>
     <ID>LongMethod:EngineAnalysisService.kt$EngineAnalysisService$fun analyzePosition( position: Position, analysisMultiPv: Int?, )</ID>
     <ID>LongMethod:EngineAnalysisService.kt$EngineAnalysisService.Companion$internal fun calculateEvalLoss( bestScore: EvalScore?, moveScore: EvalScore?, ): Double?</ID>
-    <ID>LongMethod:EngineMoveProvider.kt$EngineMoveProvider$override fun getContinuationCandidates( fen: String, ratingBand: String?, ): List&lt;ContinuationCandidate&gt;</ID>
     <ID>LongMethod:EvaluationEvidenceProducerService.kt$EvaluationEvidenceProducerService$private fun buildRows( input: EvaluationEvidenceProducerInput, operationalOccurrences: List&lt;PositionOccurrence&gt;, analyses: Map&lt;UUID, EngineAnalysis&gt;, matchingOccurrences: Map&lt;PositionPly, List&lt;UUID&gt;&gt;, ): List&lt;EvaluationEvidenceRow&gt;</ID>
     <ID>LongMethod:GameImportService.kt$GameImportService$@Async fun executeImportJob(jobId: UUID)</ID>
     <ID>LongMethod:GameImportService.kt$GameImportService$private fun emitSchedulingEvents( savedGames: List&lt;Game&gt;, initiatingUser: AppUser?, affectedPositionIds: Set&lt;UUID&gt;, )</ID>
@@ -89,15 +83,12 @@
     <ID>LongMethod:HumanMoveCorpusProjectionFinalizationService.kt$HumanMoveCorpusProjectionFinalizationService$@Transactional fun finalize(projectionId: UUID): HumanMoveCorpusProjectionFinalizeResponse</ID>
     <ID>LongMethod:HumanMoveCorpusPurgeService.kt$HumanMoveCorpusPurgeService$@Transactional fun purge( runId: UUID, contentDigest: String, ): HumanMoveCorpusPurgeResult</ID>
     <ID>LongMethod:PgnHeaderTagReader.kt$PgnHeaderTagReader$fun read(pgn: String): PgnHeaderTags</ID>
-    <ID>LongMethod:PracticalEvidenceService.kt$PracticalEvidenceService$fun summarize( chessAccountId: UUID, accountUsername: String, occurrences: List&lt;PositionOccurrence&gt;, scopes: Set&lt;PracticalEvidenceScope&gt;, asOf: Instant, ): Map&lt;PracticalEvidenceScope, PracticalEvidenceSummary&gt;</ID>
     <ID>LongMethod:ProgressService.kt$ProgressService$@Transactional(readOnly = true) fun getProgress( positionId: UUID, playerColor: PlayerColor, accountId: UUID, principal: AuthenticatedPrincipal, minEvalLoss: Double, ): ProgressResponse</ID>
     <ID>LongMethod:ReferenceCoverageAnalysisService.kt$ReferenceCoverageAnalysisService$fun analyze(input: ReferenceCoverageAnalysisInput): ReferenceCoverageAnalysisResult</ID>
     <ID>LongMethod:RetainedEvaluationEvidenceService.kt$RetainedEvaluationEvidenceService$@Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ) fun loadAndAdmit( sourceRunId: UUID, projectionId: UUID, analysisVersion: String, ): RetainedEvaluationEvidence</ID>
-    <ID>LongMethod:WeaknessCalculationService.kt$WeaknessCalculationService$@Transactional(readOnly = true) fun getWeaknesses( platform: Platform, username: String, playerColor: PlayerColor, minEvalLoss: Double = DEFAULT_MIN_EVAL_LOSS, minMistakeCount: Int = DEFAULT_MIN_MISTAKE_COUNT, minTimesReached: Int = DEFAULT_MIN_TIMES_REACHED, principal: AuthenticatedPrincipal? = null, accountId: UUID? = null, ): List&lt;WeaknessResponse&gt;</ID>
     <ID>MapGetWithNotNullAssertionOperator:EngineAnalysisService.kt$EngineAnalysisService$multiPvScoreMap[move]!!</ID>
     <ID>MapGetWithNotNullAssertionOperator:HumanMoveBfsService.kt$HumanMoveBfsService$fenByHash[hash]!!</ID>
     <ID>NestedBlockDepth:EngineAnalysisService.kt$EngineAnalysisService$fun analyzePosition( position: Position, analysisMultiPv: Int?, )</ID>
-    <ID>NestedBlockDepth:EngineMoveProvider.kt$EngineMoveProvider$override fun getContinuationCandidates( fen: String, ratingBand: String?, ): List&lt;ContinuationCandidate&gt;</ID>
     <ID>NestedBlockDepth:GameParserService.kt$GameParserService$private fun parseAndSavePositionsInternal(games: List&lt;Game&gt;): Set&lt;UUID&gt;</ID>
     <ID>NestedBlockDepth:HumanMoveBfsService.kt$HumanMoveBfsService$fun discoverPopulation(request: HumanMovePopulationDiscoveryRequest): HumanMovePopulationDiscoveryResponse</ID>
     <ID>NestedBlockDepth:HumanMoveBfsTraversal.kt$HumanMoveBfsTraversal$fun processGamePgn( pgn: String, isWhiteInBand: Boolean, isBlackInBand: Boolean, observations: MutableMap&lt;Pair&lt;String, String&gt;, Int&gt;, fenByHash: MutableMap&lt;String, String&gt;, occurrences: MutableList&lt;HumanMoveCorpusOccurrence&gt;? = null, ): HumanMoveBfsPgnOutcome</ID>
@@ -108,7 +99,6 @@
     <ID>NestedBlockDepth:HumanMoveCorpusArtifactVerifier.kt$HumanMoveCorpusArtifactVerifier$private fun readRecords( input: InputStream, maxRecordBytes: Int, consume: (JsonNode) -&gt; Unit, )</ID>
     <ID>NestedBlockDepth:StockfishService.kt$StockfishService$internal fun runGoDepth( fen: String, uciMove: String?, depth: Int, reader: BufferedReader, sendCommand: (String) -&gt; Unit, ): PositionAnalysis</ID>
     <ID>NestedBlockDepth:StockfishService.kt$StockfishService.Companion$fun parseEngineScore( line: String, invert: Boolean = false, ): EvalScore?</ID>
-    <ID>NestedBlockDepth:WeaknessCalculationService.kt$WeaknessCalculationService$@Transactional(readOnly = true) fun getWeaknesses( platform: Platform, username: String, playerColor: PlayerColor, minEvalLoss: Double = DEFAULT_MIN_EVAL_LOSS, minMistakeCount: Int = DEFAULT_MIN_MISTAKE_COUNT, minTimesReached: Int = DEFAULT_MIN_TIMES_REACHED, principal: AuthenticatedPrincipal? = null, accountId: UUID? = null, ): List&lt;WeaknessResponse&gt;</ID>
     <ID>SwallowedException:ChessComClient.kt$ChessComClient$e: Exception</ID>
     <ID>SwallowedException:ChessComClient.kt$ChessComClient$ex: HttpClientErrorException.NotFound</ID>
     <ID>SwallowedException:EvaluationEvidenceSnapshotService.kt$EvaluationEvidenceSnapshotService$exception: RuntimeException</ID>
