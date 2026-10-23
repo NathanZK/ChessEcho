@@ -1,0 +1,90 @@
+# Detekt configuration for ChessEcho backend
+# Pinned version: 1.23.7
+# buildUponDefaultConfig: false (only explicitly configured rules are active)
+
+potential-bugs:
+  active: true
+  AvoidReferentialEquality:
+    active: true
+    forbiddenTypePatterns:
+      - 'kotlin.String'
+  CastNullableToNonNullableType:
+    active: true
+  ElseCaseInsteadOfExhaustiveWhen:
+    active: true
+    ignoredSubjectTypes: []
+  EqualsAlwaysReturnsTrueOrFalse:
+    active: true
+  UnconditionalJumpStatementInLoop:
+    active: true
+  MapGetWithNotNullAssertionOperator:
+    active: true
+
+exceptions:
+  active: true
+  SwallowedException:
+    active: true
+    ignoredExceptionTypes: []
+    allowedExceptionNameRegex: '^(_|expected|ignored)$'
+  ThrowingExceptionFromFinally:
+    active: true
+  ExceptionRaisedInUnexpectedLocation:
+    active: true
+    methodNames:
+      - 'equals'
+      - 'hashCode'
+      - 'toString'
+  TooGenericExceptionThrown:
+    active: true
+    exceptionNames:
+      - 'Error'
+      - 'Exception'
+      - 'RuntimeException'
+      - 'Throwable'
+
+complexity:
+  active: true
+  CognitiveComplexMethod:
+    active: true
+    threshold: 15
+  CyclomaticComplexMethod:
+    active: true
+    threshold: 15
+  NestedBlockDepth:
+    active: true
+    threshold: 4
+  ComplexCondition:
+    active: true
+    threshold: 4
+  LongMethod:
+    active: true
+    threshold: 60
+  LargeClass:
+    active: true
+    threshold: 600
+
+comments:
+  active: true
+  OutdatedDocumentation:
+    active: true
+    matchTypeParameters: true
+    matchDeclarationsOrder: true
+    allowParamOnConstructorProperties: false
+  DeprecatedBlockTag:
+    active: true
+
+naming:
+  active: false
+  FunctionNaming:
+    active: false
+    excludes:
+      - '**/test/**'
+      - '**/*Test.kt'
+
+style:
+  active: false
+  MagicNumber:
+    active: false
+    excludes:
+      - '**/test/**'
+      - '**/*Test.kt'

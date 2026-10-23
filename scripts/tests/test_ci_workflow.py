@@ -78,6 +78,19 @@ class CiWorkflowStructureTest(unittest.TestCase):
         self.assertIn("DOCKER_FILTER", env)
         self.assertIn("DOCKER_RESULT", env)
 
+    def test_backend_build_detekt_step_and_path_filter(self):
+        jobs = self.workflow.get("jobs", {})
+        build_job = jobs.get("build", {})
+        steps = build_job.get("steps", [])
+        runs = [s.get("run", "") for s in steps]
+        self.assertIn("./gradlew detektMain detektTest", runs)
+
+        changes_job = jobs.get("changes", {})
+        steps = changes_job.get("steps", [])
+        filter_step = next(s for s in steps if s.get("id") == "filter")
+        filters_str = filter_step.get("with", {}).get("filters", "")
+        self.assertIn("config/detekt/**", filters_str)
+
 
 class DependencySubmissionWorkflowTest(unittest.TestCase):
     @classmethod
