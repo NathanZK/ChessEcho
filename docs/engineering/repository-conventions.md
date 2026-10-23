@@ -80,7 +80,9 @@ re-specifying evidence doctrine in every issue:
 
 Verification rigor should scale proportionately with the change's risk and failure modes:
 
-- **Routine changes:** Verified with standard unit/component tests, linting, and type checking.
+- **Routine changes:** Verified with standard unit/component tests, linting, and type checking:
+  - Backend validation: `./gradlew ktlintCheck`, `./gradlew detektMain detektTest`, and `./gradlew test`.
+  - Frontend validation: `npm run lint`, `npx tsc --noEmit`, `npm run test`, and `npm run build` from `frontend/`.
 - **Rendered UI state:** Verified with running-app visual proof plus flow interaction coverage.
 - **Concurrency & data integrity:** Multi-worker, database, or race-condition risks
   warrant targeted integration tests (e.g. PostgreSQL Testcontainers).
@@ -90,6 +92,22 @@ Verification rigor should scale proportionately with the change's risk and failu
   When mutation testing is performed, surviving equivalent or benign mutants must be
   documented rather than forcing an arbitrary 100% kill score. Mutation testing is
   an opt-in, risk-driven tool, not a mandatory gate for routine changes.
+
+## Backend static analysis (Detekt & ktlint)
+
+Backend static analysis pairs ktlint (formatting and lexical style) with Detekt (type-resolved semantic defect detection, complexity metrics, and documentation alignment):
+
+- **Toolchain & execution:** Detekt 1.23.7 runs with type resolution via `./gradlew detektMain detektTest`. Detekt tasks are wired into `./gradlew check` and CI's `build` job.
+- **Formatting authority:** Formatting is solely ktlint's domain. `detekt-formatting` is strictly prohibited to prevent rule duplication and competing auto-formatters.
+- **Enforced rule groups:**
+  - *Group A (Correctness & Exceptions):* `AvoidReferentialEquality` (String referential equality), `CastNullableToNonNullableType`, `ElseCaseInsteadOfExhaustiveWhen`, `EqualsAlwaysReturnsTrueOrFalse`, `UnconditionalJumpStatementInLoop`, `MapGetWithNotNullAssertionOperator`, `SwallowedException` (narrow exception name regex `^(_|expected|ignored)$`), `ThrowingExceptionFromFinally`, `ExceptionRaisedInUnexpectedLocation`, `TooGenericExceptionThrown`.
+  - *Group B (Complexity):* `CognitiveComplexMethod` (threshold 15), `CyclomaticComplexMethod` (threshold 15), `NestedBlockDepth` (threshold 4), `ComplexCondition` (threshold 4), `LongMethod` (threshold 60), and `LargeClass` (threshold 600).
+  - *Group C (KDoc):* `OutdatedDocumentation` (flags stale `@param` / `@property` tags against Kotlin signatures) and `DeprecatedBlockTag` (enforces `@Deprecated` annotations).
+- **Test-scoped accommodations:** Function naming in test source sets supports backtick-delimited descriptive test names; magic numbers in chess coordinate calculations and tests are permitted. Semantic correctness and exception handling rules remain fully active across test sources.
+- **Baseline and suppression policy:**
+  - Baselines (`config/detekt/baseline-main.xml` and `config/detekt/baseline-test.xml`) record pre-existing legacy issues and include provenance headers.
+  - New code and modifications introduced in pull requests must satisfy all blocking rules; new baseline entries must not be introduced for new development.
+  - In-source suppressions (`@Suppress("RuleName")`) must be narrowly scoped to the specific function or statement and must be accompanied by an explanatory comment justifying why immediate refactoring is unsuitable.
 
 ## Out-of-scope and workflow conventions
 
