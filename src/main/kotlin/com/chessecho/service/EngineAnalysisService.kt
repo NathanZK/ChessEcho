@@ -46,99 +46,118 @@ class EngineAnalysisService(
             bestScore: EvalScore?,
             moveScore: EvalScore?,
         ): Double? {
-            if (bestScore == null || moveScore == null) return null
-            val bestHasScore = bestScore.cp != null || bestScore.mate != null
-            val moveHasScore = moveScore.cp != null || moveScore.mate != null
-            if (!bestHasScore || !moveHasScore) return null
-            if (bestScore.mate == 0 || moveScore.mate == 0) return null
+            if (!hasValidScore(bestScore) || !hasValidScore(moveScore)) return null
+            val best = bestScore ?: return null
+            val move = moveScore ?: return null
 
-            // Inconclusive losing-mate defense: negative centipawns after losing mate cannot prove an escape
-            if (bestScore.mate != null && bestScore.mate < 0 &&
-                moveScore.mate == null && moveScore.cp != null && moveScore.cp < 0
-            ) {
-                return null
-            }
+            if (isInconclusiveLosingMateDefense(best, move)) return null
+            if (isSemanticallyEqualScore(best, move)) return 0.0
 
-            // Semantic equality: check mate equality first, or cp equality
-            if (bestScore.mate != null && moveScore.mate != null && bestScore.mate == moveScore.mate) {
-                return 0.0
-            }
-            if (bestScore.mate == null && moveScore.mate == null &&
-                bestScore.cp != null && moveScore.cp != null && bestScore.cp == moveScore.cp
-            ) {
-                return 0.0
-            }
-
-            val loss =
-                when {
-                    // 1. Both centipawns
-                    bestScore.mate == null && moveScore.mate == null -> {
-                        val bestCp = bestScore.cp ?: return null
-                        val moveCp = moveScore.cp ?: return null
-                        maxOf(0.0, (bestCp - moveCp) / 100.0)
-                    }
-
-                    // 2. Winning Mate vs Winning Mate
-                    bestScore.mate != null && bestScore.mate > 0 && moveScore.mate != null && moveScore.mate > 0 -> {
-                        if (moveScore.mate <= bestScore.mate) {
-                            0.0
-                        } else {
-                            minOf(0.50, (moveScore.mate - bestScore.mate) * 0.10)
-                        }
-                    }
-
-                    // 3. Winning Mate vs Centipawns
-                    bestScore.mate != null && bestScore.mate > 0 && moveScore.mate == null -> {
-                        val moveCp = moveScore.cp ?: return null
-                        (8.0 + maxOf(0.0, 5.0 - moveCp / 100.0)).coerceIn(8.0, 15.0)
-                    }
-
-                    // 4. Winning Mate vs Losing Mate
-                    bestScore.mate != null && bestScore.mate > 0 && moveScore.mate != null && moveScore.mate < 0 -> {
-                        val d = kotlin.math.abs(moveScore.mate)
-                        (15.0 + maxOf(0, 10 - d) * 0.50).coerceIn(15.0, 20.0)
-                    }
-
-                    // 5. Centipawn Best vs Losing Mate
-                    bestScore.mate == null && moveScore.mate != null && moveScore.mate < 0 -> {
-                        val bestCp = bestScore.cp ?: return null
-                        val base = maxOf(0.0, bestCp / 100.0)
-                        val d = kotlin.math.abs(moveScore.mate)
-                        (base + 10.0 + maxOf(0, 10 - d) * 0.50).coerceIn(10.0, 20.0)
-                    }
-
-                    // 6. Centipawn Best vs Winning Mate
-                    bestScore.mate == null && moveScore.mate != null && moveScore.mate > 0 -> {
-                        0.0
-                    }
-
-                    // 7. Losing Mate vs Losing Mate
-                    bestScore.mate != null && bestScore.mate < 0 && moveScore.mate != null && moveScore.mate < 0 -> {
-                        val bestDist = kotlin.math.abs(bestScore.mate)
-                        val moveDist = kotlin.math.abs(moveScore.mate)
-                        if (moveDist >= bestDist) {
-                            0.0
-                        } else {
-                            minOf(5.0, (bestDist - moveDist) * 1.0)
-                        }
-                    }
-
-                    // 8. Losing Mate vs Proven Escape (winning mate or non-negative cp)
-                    bestScore.mate != null && bestScore.mate < 0 -> {
-                        if (moveScore.mate != null && moveScore.mate > 0) {
-                            0.0
-                        } else if (moveScore.mate == null && moveScore.cp != null && moveScore.cp >= 0) {
-                            0.0
-                        } else {
-                            null
-                        }
-                    }
-
-                    else -> null
-                }
-
-            return loss?.coerceIn(0.0, 20.0)
+            return dispatchLossScenario(best, move)?.coerceIn(0.0, 20.0)
         }
+
+        private fun dispatchLossScenario(
+            best: EvalScore,
+            move: EvalScore,
+        ): Double? =
+            when {
+                best.mate == null && move.mate == null -> computeCentipawnLoss(best, move)
+                best.mate != null && best.mate > 0 -> computeWinningMateLoss(best.mate, move)
+                best.mate == null && move.mate != null -> computeCpBestVsMateLoss(best, move.mate)
+                best.mate != null && best.mate < 0 -> computeLosingMateLoss(best.mate, move)
+                else -> null
+            }
+
+        private fun hasValidScore(score: EvalScore?): Boolean {
+            if (score == null || score.mate == 0) return false
+            return score.cp != null || score.mate != null
+        }
+
+        private fun isInconclusiveLosingMateDefense(
+            bestScore: EvalScore,
+            moveScore: EvalScore,
+        ): Boolean {
+            val isLosingMateBest = bestScore.mate?.let { it < 0 } ?: false
+            val isNegativeCpMove = moveScore.mate == null && (moveScore.cp?.let { it < 0 } ?: false)
+            return isLosingMateBest && isNegativeCpMove
+        }
+
+        private fun isSemanticallyEqualScore(
+            bestScore: EvalScore,
+            moveScore: EvalScore,
+        ): Boolean =
+            when {
+                bestScore.mate != null && moveScore.mate != null -> bestScore.mate == moveScore.mate
+                bestScore.mate == null && moveScore.mate == null ->
+                    bestScore.cp != null && bestScore.cp == moveScore.cp
+                else -> false
+            }
+
+        private fun computeCentipawnLoss(
+            bestScore: EvalScore,
+            moveScore: EvalScore,
+        ): Double? {
+            val bestCp = bestScore.cp ?: return null
+            val moveCp = moveScore.cp ?: return null
+            return maxOf(0.0, (bestCp - moveCp) / 100.0)
+        }
+
+        private fun computeWinningMateLoss(
+            bestMate: Int,
+            moveScore: EvalScore,
+        ): Double? =
+            when {
+                moveScore.mate != null && moveScore.mate > 0 -> {
+                    if (moveScore.mate <= bestMate) {
+                        0.0
+                    } else {
+                        minOf(0.50, (moveScore.mate - bestMate) * 0.10)
+                    }
+                }
+                moveScore.mate == null -> {
+                    val moveCp = moveScore.cp ?: return null
+                    (8.0 + maxOf(0.0, 5.0 - moveCp / 100.0)).coerceIn(8.0, 15.0)
+                }
+                moveScore.mate < 0 -> {
+                    val d = kotlin.math.abs(moveScore.mate)
+                    (15.0 + maxOf(0, 10 - d) * 0.50).coerceIn(15.0, 20.0)
+                }
+                else -> null
+            }
+
+        private fun computeCpBestVsMateLoss(
+            bestScore: EvalScore,
+            moveMate: Int,
+        ): Double? =
+            when {
+                moveMate > 0 -> 0.0
+                moveMate < 0 -> {
+                    val bestCp = bestScore.cp ?: return null
+                    val base = maxOf(0.0, bestCp / 100.0)
+                    val d = kotlin.math.abs(moveMate)
+                    (base + 10.0 + maxOf(0, 10 - d) * 0.50).coerceIn(10.0, 20.0)
+                }
+                else -> null
+            }
+
+        private fun computeLosingMateLoss(
+            bestMate: Int,
+            moveScore: EvalScore,
+        ): Double? =
+            when {
+                moveScore.mate != null && moveScore.mate < 0 -> {
+                    val bestDist = kotlin.math.abs(bestMate)
+                    val moveDist = kotlin.math.abs(moveScore.mate)
+                    if (moveDist >= bestDist) {
+                        0.0
+                    } else {
+                        minOf(5.0, (bestDist - moveDist) * 1.0)
+                    }
+                }
+                moveScore.mate != null && moveScore.mate > 0 -> 0.0
+                moveScore.mate == null && moveScore.cp != null && moveScore.cp >= 0 -> 0.0
+                else -> null
+            }
 
         internal fun calculateEvalLoss(
             bestMoveEvalCp: Int?,
@@ -203,8 +222,67 @@ class EngineAnalysisService(
 
         val depth = 16
         val effectiveMultiPv = analysisMultiPv ?: multiPv
+        val engineCandidates = runMultiPvAnalysis(position, depth, effectiveMultiPv)
+        val engineCandidateMoves = engineCandidates.map { it.move }
+        val multiPvScoreMap = engineCandidates.associate { it.move to it.score }
 
-        // 1. BEFORE MultiPV analysis
+        val historicalMoves = snapshot.historicalMoves
+        val historicalSet = historicalMoves.toSet()
+        val engineSet = engineCandidateMoves.toSet()
+
+        val mergedCandidates = (historicalMoves + engineCandidateMoves).distinct()
+        val remainingHistoricalMoves = historicalMoves.filter { it !in multiPvScoreMap }
+
+        logCandidateMergeSummary(
+            positionId = positionId,
+            historicalMoves = historicalMoves,
+            engineCandidateMoves = engineCandidateMoves,
+            mergedCandidates = mergedCandidates,
+            remainingHistoricalMoves = remainingHistoricalMoves,
+            historicalSet = historicalSet,
+            engineSet = engineSet,
+            multiPvScoreMap = multiPvScoreMap,
+        )
+
+        if (snapshot.existingAnalysis == null) {
+            performFullAnalysis(
+                position = position,
+                depth = depth,
+                engineCandidates = engineCandidates,
+                remainingHistoricalMoves = remainingHistoricalMoves,
+                mergedCandidates = mergedCandidates,
+                historicalSet = historicalSet,
+                engineSet = engineSet,
+                multiPvScoreMap = multiPvScoreMap,
+            )
+        } else {
+            performIncrementalAnalysis(
+                position = position,
+                depth = depth,
+                existingAnalysis = snapshot.existingAnalysis,
+                mergedCandidates = mergedCandidates,
+                multiPvScoreMap = multiPvScoreMap,
+                historicalSet = historicalSet,
+                engineSet = engineSet,
+                totalStart = totalStart,
+            )
+        }
+
+        logOptimizationSummary(
+            positionId = positionId,
+            totalCandidates = mergedCandidates.size,
+            engineCandidatesCount = engineCandidateMoves.size,
+            remainingHistoricalCount = remainingHistoricalMoves.size,
+            totalDurationMs = System.currentTimeMillis() - totalStart,
+        )
+    }
+
+    private fun runMultiPvAnalysis(
+        position: Position,
+        depth: Int,
+        effectiveMultiPv: Int,
+    ): List<EngineCandidate> {
+        val positionId = position.id
         log.info(
             "BEFORE MultiPV analysis: positionId={} multiPv={} depth={}",
             positionId,
@@ -217,26 +295,45 @@ class EngineAnalysisService(
         val engineCandidates = stockfishService.analyzeMultiPv(position.fen, depth, effectiveMultiPv)
         val multiPvDurationMs = System.currentTimeMillis() - multiPvStart
 
-        val engineCandidateMoves = engineCandidates.map { it.move }
-        val multiPvScoreMap = engineCandidates.associate { it.move to it.score }
-
-        // AFTER MultiPV analysis
         log.info(
             "AFTER MultiPV analysis: positionId={} count={} durationMs={}",
             positionId,
             engineCandidates.size,
             multiPvDurationMs,
         )
+        return engineCandidates
+    }
 
-        val historicalMoves = snapshot.historicalMoves
-        val existingAnalysis = snapshot.existingAnalysis
-        val historicalSet = historicalMoves.toSet()
-        val engineSet = engineCandidateMoves.toSet()
+    private fun logOptimizationSummary(
+        positionId: UUID,
+        totalCandidates: Int,
+        engineCandidatesCount: Int,
+        remainingHistoricalCount: Int,
+        totalDurationMs: Long,
+    ) {
+        val avoidedSearches = totalCandidates - remainingHistoricalCount
+        log.info(
+            "Optimization summary: positionId={} totalCandidates={} reusedFromMultiPv={} " +
+                "requiringIndividualAnalysis={} avoidedStockfishSearches={} totalDurationMs={}",
+            positionId,
+            totalCandidates,
+            engineCandidatesCount,
+            remainingHistoricalCount,
+            avoidedSearches,
+            totalDurationMs,
+        )
+    }
 
-        val mergedCandidates = (historicalMoves + engineCandidateMoves).distinct()
-        val remainingHistoricalMoves = historicalMoves.filter { it !in multiPvScoreMap }
-
-        // Candidate merge summary logging (INFO for aggregate counts, DEBUG for full move lists)
+    private fun logCandidateMergeSummary(
+        positionId: UUID,
+        historicalMoves: List<String>,
+        engineCandidateMoves: List<String>,
+        mergedCandidates: List<String>,
+        remainingHistoricalMoves: List<String>,
+        historicalSet: Set<String>,
+        engineSet: Set<String>,
+        multiPvScoreMap: Map<String, EvalScore>,
+    ) {
         log.info(
             "Candidate merge summary: positionId={} historicalCount={} engineCount={} mergedCount={} secondaryAnalysisCount={}",
             positionId,
@@ -265,281 +362,372 @@ class EngineAnalysisService(
             val evalSource = if (move in multiPvScoreMap) "MULTIPV" else "HISTORICAL_SINGLE"
             log.debug("Merged candidate origin: positionId={} move={} origin={} evalSource={}", positionId, move, origin, evalSource)
         }
+    }
 
-        if (existingAnalysis == null) {
-            log.info("Performing full engine analysis for new position $positionId")
+    private fun performFullAnalysis(
+        position: Position,
+        depth: Int,
+        engineCandidates: List<EngineCandidate>,
+        remainingHistoricalMoves: List<String>,
+        mergedCandidates: List<String>,
+        historicalSet: Set<String>,
+        engineSet: Set<String>,
+        multiPvScoreMap: Map<String, EvalScore>,
+    ) {
+        val positionId = position.id
+        log.info("Performing full engine analysis for new position $positionId")
 
-            val rank1Candidate = engineCandidates.firstOrNull()
+        val (bestMove, bestScore, evaluatedMap, candidateEvalDurationMs) =
+            evaluateCandidatesForFullAnalysis(
+                position = position,
+                depth = depth,
+                engineCandidates = engineCandidates,
+                remainingHistoricalMoves = remainingHistoricalMoves,
+                mergedCandidates = mergedCandidates,
+            )
 
-            val evaluatedMap = mutableMapOf<String, EvalScore>()
-            var bestMove: String? = null
-            var bestScore: EvalScore? = null
-            var candidateEvalDurationMs = 0L
+        log.info(
+            "Baseline analysis completed: positionId={} bestMove={} bestScore={} depth={} durationMs={}",
+            positionId,
+            bestMove,
+            bestScore,
+            depth,
+            candidateEvalDurationMs,
+        )
 
+        val candidateAnalysis =
+            buildCandidateAnalysis(
+                position = position,
+                depth = depth,
+                bestMove = bestMove,
+                bestScore = bestScore,
+                mergedCandidates = mergedCandidates,
+                evaluatedMap = evaluatedMap,
+                historicalSet = historicalSet,
+                engineSet = engineSet,
+                multiPvScoreMap = multiPvScoreMap,
+            )
+
+        log.info(
+            "Candidate evaluation completed: positionId={} count={} durationMs={}",
+            positionId,
+            candidateAnalysis.moveEvaluations.size,
+            candidateEvalDurationMs,
+        )
+        log.info(
+            "BEFORE MoveEvaluation persistence: positionId={} count={}",
+            positionId,
+            candidateAnalysis.moveEvaluations.size,
+        )
+        log.debug("Moves to persist: positionId={} moves={}", positionId, candidateAnalysis.moveEvaluations.map { it.move })
+
+        val outcome = createOrAdoptAnalysis(candidateAnalysis, positionId)
+        if (!outcome.wonCreationRace) {
+            completeMissingMoveEvaluations(outcome.analysis, mergedCandidates, evaluatedMap)
+        }
+
+        log.info(
+            "AFTER MoveEvaluation persistence: positionId={} analysisId={} wonCreationRace={}",
+            positionId,
+            outcome.analysis.id,
+            outcome.wonCreationRace,
+        )
+    }
+
+    private fun evaluateCandidatesForFullAnalysis(
+        position: Position,
+        depth: Int,
+        engineCandidates: List<EngineCandidate>,
+        remainingHistoricalMoves: List<String>,
+        mergedCandidates: List<String>,
+    ): FullCandidateEvaluation {
+        val positionId = position.id
+        val rank1Candidate = engineCandidates.firstOrNull()
+        val evaluatedMap = mutableMapOf<String, EvalScore>()
+        val evalStart = System.currentTimeMillis()
+
+        val (bestMove, bestScore) =
             if (rank1Candidate != null) {
-                // Primary path: MultiPV search returned engine candidates (rank 1 = best move)
-                bestMove = rank1Candidate.move
-                bestScore = rank1Candidate.score
-                engineCandidates.forEach { candidate ->
-                    evaluatedMap[candidate.move] = candidate.score
-                }
-
                 log.info(
                     "BEFORE baseline Stockfish analysis: positionId={} bestMove={} bestScore={} depth={}",
                     positionId,
-                    bestMove,
-                    bestScore,
+                    rank1Candidate.move,
+                    rank1Candidate.score,
                     depth,
                 )
-
-                if (remainingHistoricalMoves.isNotEmpty()) {
-                    log.info(
-                        "BEFORE candidate evaluation: positionId={} candidateCount={}",
-                        positionId,
-                        remainingHistoricalMoves.size,
-                    )
-                    log.debug("Candidates requiring secondary analysis: positionId={} moves={}", positionId, remainingHistoricalMoves)
-                    val evalStart = System.currentTimeMillis()
-                    val remainingResults = stockfishService.analyze(position.fen, depth, remainingHistoricalMoves)
-                    candidateEvalDurationMs = System.currentTimeMillis() - evalStart
-                    remainingHistoricalMoves.forEach { move ->
-                        val result = remainingResults[move]
-                        if (result != null) {
-                            evaluatedMap[move] = result.score
-                        }
-                    }
-                } else {
-                    log.info(
-                        "Skipping secondary Stockfish search: all historical candidates captured in MultiPV top-N for positionId={}",
-                        positionId,
-                    )
-                }
+                evaluateMultiPvCandidates(position, depth, engineCandidates, remainingHistoricalMoves, evaluatedMap)
+                Pair(rank1Candidate.move, rank1Candidate.score)
             } else {
-                // Fallback path: MultiPV returned empty list, run full stockfishService.analyze
-                log.info("BEFORE baseline Stockfish analysis: positionId={} depth={}", positionId, depth)
-                log.info(
-                    "BEFORE candidate evaluation: positionId={} candidateCount={}",
-                    positionId,
-                    mergedCandidates.size,
-                )
-                log.debug("Fallback candidate moves: positionId={} moves={}", positionId, mergedCandidates)
-                val evalStart = System.currentTimeMillis()
-                val analysisResults = stockfishService.analyze(position.fen, depth, mergedCandidates)
-                candidateEvalDurationMs = System.currentTimeMillis() - evalStart
-
-                val baselineResult =
-                    analysisResults["baseline"]
-                        ?: throw IllegalStateException("Baseline analysis missing for position $positionId")
-                bestMove = baselineResult.bestMove
-                bestScore = analysisResults[bestMove]?.score ?: baselineResult.score
-
-                mergedCandidates.forEach { move ->
-                    val result = analysisResults[move]
-                    if (result != null) {
-                        evaluatedMap[move] = result.score
-                    }
-                }
+                evaluateFallbackCandidates(position, depth, mergedCandidates, evaluatedMap)
             }
 
-            // AFTER baseline Stockfish analysis
-            log.info(
-                "Baseline analysis completed: positionId={} bestMove={} bestScore={} depth={} durationMs={}",
-                positionId,
-                bestMove,
-                bestScore,
-                depth,
-                candidateEvalDurationMs,
-            )
+        val durationMs = System.currentTimeMillis() - evalStart
+        return FullCandidateEvaluation(
+            bestMove = bestMove,
+            bestScore = bestScore,
+            evaluatedMap = evaluatedMap,
+            durationMs = durationMs,
+        )
+    }
 
-            val evalCp = if (bestScore?.mate != null) null else bestScore?.cp
-            val evalMate = bestScore?.mate
-
-            val candidateAnalysis =
-                EngineAnalysis(
-                    position = position,
-                    depth = depth,
-                    baselineEvalCp = evalCp,
-                    baselineEvalMate = evalMate,
-                    bestMove = bestMove ?: "",
-                    bestMoveEvalCp = evalCp,
-                    bestMoveEvalMate = evalMate,
-                    analyzedAt = Instant.now(),
-                )
-
-            mergedCandidates.forEach { move ->
-                val score = evaluatedMap[move]
-                if (score != null) {
-                    val evalLoss = calculateEvalLoss(bestScore, score)
-                    val evalStr = score.cp?.let { "${it}cp" } ?: score.mate?.let { "mate $it" } ?: "N/A"
-                    val origin =
-                        when {
-                            move in historicalSet && move in engineSet -> "both"
-                            move in historicalSet -> "historical"
-                            else -> "engine"
-                        }
-                    val evalSource = if (move in multiPvScoreMap) "MULTIPV" else "HISTORICAL_SINGLE"
-                    log.debug(
-                        "Evaluated candidate: positionId={} move={} origin={} evalSource={} eval={} evalLossFromBest={}",
-                        positionId,
-                        move,
-                        origin,
-                        evalSource,
-                        evalStr,
-                        evalLoss,
-                    )
-                    candidateAnalysis.moveEvaluations.add(
-                        MoveEvaluation(
-                            engineAnalysis = candidateAnalysis,
-                            move = move,
-                            evalCp = if (score.mate != null) null else score.cp,
-                            evalMate = score.mate,
-                            evalLossFromBest = evalLoss,
-                        ),
-                    )
-                }
-            }
-
-            log.info(
-                "Candidate evaluation completed: positionId={} count={} durationMs={}",
-                positionId,
-                candidateAnalysis.moveEvaluations.size,
-                candidateEvalDurationMs,
-            )
-
-            // BEFORE/AFTER MoveEvaluation persistence
-            log.info(
-                "BEFORE MoveEvaluation persistence: positionId={} count={}",
-                positionId,
-                candidateAnalysis.moveEvaluations.size,
-            )
-            log.debug("Moves to persist: positionId={} moves={}", positionId, candidateAnalysis.moveEvaluations.map { it.move })
-
-            val outcome = createOrAdoptAnalysis(candidateAnalysis, positionId)
-            if (!outcome.wonCreationRace) {
-                // Another worker already committed the authoritative parent (and, atomically, its own
-                // children) before this attempt reached the database. Adopt its persisted identity and
-                // baseline rather than continuing from this worker's own pre-race computation, and make
-                // sure any candidate this worker evaluated - but the winner did not persist - still lands.
-                completeMissingMoveEvaluations(outcome.analysis, mergedCandidates, evaluatedMap)
-            }
-
-            log.info(
-                "AFTER MoveEvaluation persistence: positionId={} analysisId={} wonCreationRace={}",
-                positionId,
-                outcome.analysis.id,
-                outcome.wonCreationRace,
-            )
-        } else {
-            // Determine evaluated moves in memory from pre-fetched collection
-            val evaluatedMoves = existingAnalysis.moveEvaluations.map { it.move }.toSet()
-            val missingMoves = mergedCandidates.filter { it !in evaluatedMoves }
-
-            if (missingMoves.isEmpty()) {
-                log.debug("Position $positionId has no missing moves to analyze")
-                val totalDurationMs = System.currentTimeMillis() - totalStart
-                log.info("Total position analysis completed: positionId={} durationMs={}", positionId, totalDurationMs)
-                return
-            }
-
-            log.info("Analyzing ${missingMoves.size} missing moves for position $positionId")
-
-            val evaluatedMap = mutableMapOf<String, EvalScore>()
-
-            missingMoves.forEach { move ->
-                if (move in multiPvScoreMap) {
-                    evaluatedMap[move] = multiPvScoreMap[move]!!
-                }
-            }
-
-            val missingFromMultiPv = missingMoves.filter { it !in multiPvScoreMap }
-            var candidateEvalDurationMs = 0L
-            if (missingFromMultiPv.isNotEmpty()) {
-                // BEFORE candidate evaluation (incremental)
-                log.info(
-                    "BEFORE candidate evaluation (incremental): positionId={} candidateCount={}",
-                    positionId,
-                    missingFromMultiPv.size,
-                )
-                log.debug("Missing candidate moves requiring secondary analysis: positionId={} moves={}", positionId, missingFromMultiPv)
-
-                val evalStart = System.currentTimeMillis()
-                val analysisResults = stockfishService.analyze(position.fen, depth, missingFromMultiPv)
-                candidateEvalDurationMs = System.currentTimeMillis() - evalStart
-
-                missingFromMultiPv.forEach { move ->
-                    val result = analysisResults[move]
-                    if (result != null) {
-                        evaluatedMap[move] = result.score
-                    }
-                }
-            }
-
-            // AFTER candidate analysis (log per evaluated candidate at DEBUG level)
-            val baselineScore =
-                EvalScore(
-                    cp = if (existingAnalysis.bestMoveEvalMate != null) null else existingAnalysis.bestMoveEvalCp,
-                    mate = existingAnalysis.bestMoveEvalMate,
-                )
-            missingMoves.forEach { move ->
-                val score = evaluatedMap[move]
-                if (score != null) {
-                    val evalLoss = calculateEvalLoss(baselineScore, score)
-                    val evalStr = score.cp?.let { "${it}cp" } ?: score.mate?.let { "mate $it" } ?: "N/A"
-                    val origin =
-                        when {
-                            move in historicalSet && move in engineSet -> "both"
-                            move in historicalSet -> "historical"
-                            else -> "engine"
-                        }
-                    val evalSource = if (move in multiPvScoreMap) "MULTIPV" else "HISTORICAL_SINGLE"
-                    log.debug(
-                        "Evaluated candidate (incremental): positionId={} move={} origin={} evalSource={} eval={} evalLossFromBest={}",
-                        positionId,
-                        move,
-                        origin,
-                        evalSource,
-                        evalStr,
-                        evalLoss,
-                    )
-                }
-            }
-
-            log.info(
-                "Candidate evaluation completed: positionId={} count={} durationMs={}",
-                positionId,
-                evaluatedMap.size,
-                candidateEvalDurationMs,
-            )
-
-            // BEFORE/AFTER MoveEvaluation persistence
-            log.info(
-                "BEFORE MoveEvaluation persistence: positionId={} count={}",
-                positionId,
-                missingMoves.size,
-            )
-            log.debug("Missing moves to persist: positionId={} moves={}", positionId, missingMoves)
-
-            completeMissingMoveEvaluations(existingAnalysis, missingMoves, evaluatedMap)
-
-            log.info(
-                "AFTER MoveEvaluation persistence: positionId={} analysisId={}",
-                positionId,
-                existingAnalysis.id,
-            )
+    private fun evaluateMultiPvCandidates(
+        position: Position,
+        depth: Int,
+        engineCandidates: List<EngineCandidate>,
+        remainingHistoricalMoves: List<String>,
+        evaluatedMap: MutableMap<String, EvalScore>,
+    ) {
+        val positionId = position.id
+        engineCandidates.forEach { candidate ->
+            evaluatedMap[candidate.move] = candidate.score
         }
 
-        val totalDurationMs = System.currentTimeMillis() - totalStart
-        val avoidedSearches = mergedCandidates.size - remainingHistoricalMoves.size
+        if (remainingHistoricalMoves.isNotEmpty()) {
+            log.info(
+                "BEFORE candidate evaluation: positionId={} candidateCount={}",
+                positionId,
+                remainingHistoricalMoves.size,
+            )
+            log.debug("Candidates requiring secondary analysis: positionId={} moves={}", positionId, remainingHistoricalMoves)
+            val remainingResults = stockfishService.analyze(position.fen, depth, remainingHistoricalMoves)
+            remainingHistoricalMoves.forEach { move ->
+                remainingResults[move]?.let { evaluatedMap[move] = it.score }
+            }
+        } else {
+            log.info(
+                "Skipping secondary Stockfish search: all historical candidates captured in MultiPV top-N for positionId={}",
+                positionId,
+            )
+        }
+    }
+
+    private fun evaluateFallbackCandidates(
+        position: Position,
+        depth: Int,
+        mergedCandidates: List<String>,
+        evaluatedMap: MutableMap<String, EvalScore>,
+    ): Pair<String, EvalScore?> {
+        val positionId = position.id
+        log.info("BEFORE baseline Stockfish analysis: positionId={} depth={}", positionId, depth)
         log.info(
-            "Optimization summary: positionId={} totalCandidates={} reusedFromMultiPv={} " +
-                "requiringIndividualAnalysis={} avoidedStockfishSearches={} totalDurationMs={}",
+            "BEFORE candidate evaluation: positionId={} candidateCount={}",
             positionId,
             mergedCandidates.size,
-            engineCandidateMoves.size,
-            remainingHistoricalMoves.size,
-            avoidedSearches,
-            totalDurationMs,
         )
+        log.debug("Fallback candidate moves: positionId={} moves={}", positionId, mergedCandidates)
+        val analysisResults = stockfishService.analyze(position.fen, depth, mergedCandidates)
+
+        val baselineResult =
+            analysisResults["baseline"]
+                ?: throw IllegalStateException("Baseline analysis missing for position $positionId")
+        val bestMove = baselineResult.bestMove
+        val bestScore = analysisResults[bestMove]?.score ?: baselineResult.score
+
+        mergedCandidates.forEach { move ->
+            analysisResults[move]?.let { evaluatedMap[move] = it.score }
+        }
+        return Pair(bestMove, bestScore)
+    }
+
+    private fun buildCandidateAnalysis(
+        position: Position,
+        depth: Int,
+        bestMove: String,
+        bestScore: EvalScore?,
+        mergedCandidates: List<String>,
+        evaluatedMap: Map<String, EvalScore>,
+        historicalSet: Set<String>,
+        engineSet: Set<String>,
+        multiPvScoreMap: Map<String, EvalScore>,
+    ): EngineAnalysis {
+        val evalCp = if (bestScore?.mate != null) null else bestScore?.cp
+        val evalMate = bestScore?.mate
+
+        val candidateAnalysis =
+            EngineAnalysis(
+                position = position,
+                depth = depth,
+                baselineEvalCp = evalCp,
+                baselineEvalMate = evalMate,
+                bestMove = bestMove,
+                bestMoveEvalCp = evalCp,
+                bestMoveEvalMate = evalMate,
+                analyzedAt = Instant.now(),
+            )
+
+        mergedCandidates.forEach { move ->
+            val score = evaluatedMap[move]
+            if (score != null) {
+                candidateAnalysis.moveEvaluations.add(
+                    buildMoveEvaluation(
+                        positionId = position.id,
+                        candidateAnalysis = candidateAnalysis,
+                        move = move,
+                        score = score,
+                        bestScore = bestScore,
+                        historicalSet = historicalSet,
+                        engineSet = engineSet,
+                        multiPvScoreMap = multiPvScoreMap,
+                    ),
+                )
+            }
+        }
+        return candidateAnalysis
+    }
+
+    private fun buildMoveEvaluation(
+        positionId: UUID,
+        candidateAnalysis: EngineAnalysis,
+        move: String,
+        score: EvalScore,
+        bestScore: EvalScore?,
+        historicalSet: Set<String>,
+        engineSet: Set<String>,
+        multiPvScoreMap: Map<String, EvalScore>,
+    ): MoveEvaluation {
+        val evalLoss = calculateEvalLoss(bestScore, score)
+        val evalStr = score.cp?.let { "${it}cp" } ?: score.mate?.let { "mate $it" } ?: "N/A"
+        val origin =
+            when {
+                move in historicalSet && move in engineSet -> "both"
+                move in historicalSet -> "historical"
+                else -> "engine"
+            }
+        val evalSource = if (move in multiPvScoreMap) "MULTIPV" else "HISTORICAL_SINGLE"
+        log.debug(
+            "Evaluated candidate: positionId={} move={} origin={} evalSource={} eval={} evalLossFromBest={}",
+            positionId,
+            move,
+            origin,
+            evalSource,
+            evalStr,
+            evalLoss,
+        )
+        return MoveEvaluation(
+            engineAnalysis = candidateAnalysis,
+            move = move,
+            evalCp = if (score.mate != null) null else score.cp,
+            evalMate = score.mate,
+            evalLossFromBest = evalLoss,
+        )
+    }
+
+    private fun performIncrementalAnalysis(
+        position: Position,
+        depth: Int,
+        existingAnalysis: EngineAnalysis,
+        mergedCandidates: List<String>,
+        multiPvScoreMap: Map<String, EvalScore>,
+        historicalSet: Set<String>,
+        engineSet: Set<String>,
+        totalStart: Long,
+    ) {
+        val positionId = position.id
+        val evaluatedMoves = existingAnalysis.moveEvaluations.map { it.move }.toSet()
+        val missingMoves = mergedCandidates.filter { it !in evaluatedMoves }
+
+        if (missingMoves.isEmpty()) {
+            log.debug("Position $positionId has no missing moves to analyze")
+            val totalDurationMs = System.currentTimeMillis() - totalStart
+            log.info("Total position analysis completed: positionId={} durationMs={}", positionId, totalDurationMs)
+            return
+        }
+
+        log.info("Analyzing ${missingMoves.size} missing moves for position $positionId")
+
+        val evaluatedMap = mutableMapOf<String, EvalScore>()
+        missingMoves.forEach { move ->
+            multiPvScoreMap[move]?.let { evaluatedMap[move] = it }
+        }
+
+        val missingFromMultiPv = missingMoves.filter { it !in multiPvScoreMap }
+        var candidateEvalDurationMs = 0L
+        if (missingFromMultiPv.isNotEmpty()) {
+            log.info(
+                "BEFORE candidate evaluation (incremental): positionId={} candidateCount={}",
+                positionId,
+                missingFromMultiPv.size,
+            )
+            log.debug("Missing candidate moves requiring secondary analysis: positionId={} moves={}", positionId, missingFromMultiPv)
+
+            val evalStart = System.currentTimeMillis()
+            val analysisResults = stockfishService.analyze(position.fen, depth, missingFromMultiPv)
+            candidateEvalDurationMs = System.currentTimeMillis() - evalStart
+
+            missingFromMultiPv.forEach { move ->
+                analysisResults[move]?.let { evaluatedMap[move] = it.score }
+            }
+        }
+
+        logIncrementalEvaluations(
+            positionId = positionId,
+            existingAnalysis = existingAnalysis,
+            missingMoves = missingMoves,
+            evaluatedMap = evaluatedMap,
+            historicalSet = historicalSet,
+            engineSet = engineSet,
+            multiPvScoreMap = multiPvScoreMap,
+        )
+
+        log.info(
+            "Candidate evaluation completed: positionId={} count={} durationMs={}",
+            positionId,
+            evaluatedMap.size,
+            candidateEvalDurationMs,
+        )
+        log.info(
+            "BEFORE MoveEvaluation persistence: positionId={} count={}",
+            positionId,
+            missingMoves.size,
+        )
+        log.debug("Missing moves to persist: positionId={} moves={}", positionId, missingMoves)
+
+        completeMissingMoveEvaluations(existingAnalysis, missingMoves, evaluatedMap)
+
+        log.info(
+            "AFTER MoveEvaluation persistence: positionId={} analysisId={}",
+            positionId,
+            existingAnalysis.id,
+        )
+    }
+
+    private fun logIncrementalEvaluations(
+        positionId: UUID,
+        existingAnalysis: EngineAnalysis,
+        missingMoves: List<String>,
+        evaluatedMap: Map<String, EvalScore>,
+        historicalSet: Set<String>,
+        engineSet: Set<String>,
+        multiPvScoreMap: Map<String, EvalScore>,
+    ) {
+        val baselineScore =
+            EvalScore(
+                cp = if (existingAnalysis.bestMoveEvalMate != null) null else existingAnalysis.bestMoveEvalCp,
+                mate = existingAnalysis.bestMoveEvalMate,
+            )
+        missingMoves.forEach { move ->
+            val score = evaluatedMap[move]
+            if (score != null) {
+                val evalLoss = calculateEvalLoss(baselineScore, score)
+                val evalStr = score.cp?.let { "${it}cp" } ?: score.mate?.let { "mate $it" } ?: "N/A"
+                val origin =
+                    when {
+                        move in historicalSet && move in engineSet -> "both"
+                        move in historicalSet -> "historical"
+                        else -> "engine"
+                    }
+                val evalSource = if (move in multiPvScoreMap) "MULTIPV" else "HISTORICAL_SINGLE"
+                log.debug(
+                    "Evaluated candidate (incremental): positionId={} move={} origin={} evalSource={} eval={} evalLossFromBest={}",
+                    positionId,
+                    move,
+                    origin,
+                    evalSource,
+                    evalStr,
+                    evalLoss,
+                )
+            }
+        }
     }
 
     /**
@@ -699,5 +887,12 @@ class EngineAnalysisService(
     private data class CreationOutcome(
         val analysis: EngineAnalysis,
         val wonCreationRace: Boolean,
+    )
+
+    private data class FullCandidateEvaluation(
+        val bestMove: String,
+        val bestScore: EvalScore?,
+        val evaluatedMap: Map<String, EvalScore>,
+        val durationMs: Long,
     )
 }
