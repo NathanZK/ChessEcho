@@ -11,8 +11,6 @@
   <ManuallySuppressedIssues></ManuallySuppressedIssues>
   <CurrentIssues>
     <ID>CastNullableToNonNullableType:EvaluationEvidenceSnapshotService.kt$EvaluationEvidenceSnapshotService$as</ID>
-    <ID>CognitiveComplexMethod:EngineAnalysisService.kt$EngineAnalysisService$fun analyzePosition( position: Position, analysisMultiPv: Int?, )</ID>
-    <ID>CognitiveComplexMethod:EngineAnalysisService.kt$EngineAnalysisService.Companion$internal fun calculateEvalLoss( bestScore: EvalScore?, moveScore: EvalScore?, ): Double?</ID>
 
 
     <ID>CognitiveComplexMethod:HumanMoveBfsService.kt$HumanMoveBfsService$fun discoverPopulation(request: HumanMovePopulationDiscoveryRequest): HumanMovePopulationDiscoveryResponse</ID>
@@ -24,12 +22,7 @@
     <ID>CognitiveComplexMethod:HumanMoveCorpusService.kt$HumanMoveCorpusService$fun runCorpus(request: HumanMoveCorpusRunRequest): HumanMoveCorpusRunResponse</ID>
 
     <ID>CognitiveComplexMethod:ReferenceCoverageAnalysisService.kt$ReferenceCoverageAnalysisService$fun analyze(input: ReferenceCoverageAnalysisInput): ReferenceCoverageAnalysisResult</ID>
-    <ID>CognitiveComplexMethod:StockfishService.kt$StockfishService$fun analyzeMultiPv( fen: String, depth: Int, multiPv: Int, ): List&lt;EngineCandidate&gt;</ID>
-    <ID>CognitiveComplexMethod:StockfishService.kt$StockfishService$internal fun runGoDepth( fen: String, uciMove: String?, depth: Int, reader: BufferedReader, sendCommand: (String) -&gt; Unit, ): PositionAnalysis</ID>
-    <ID>CognitiveComplexMethod:StockfishService.kt$StockfishService.Companion$fun parseEngineScore( line: String, invert: Boolean = false, ): EvalScore?</ID>
     <ID>ComplexCondition:CsrfEnforcementInterceptor.kt$CsrfEnforcementInterceptor$request.method.equals("GET", ignoreCase = true) || request.method.equals("HEAD", ignoreCase = true) || request.method.equals("OPTIONS", ignoreCase = true) || CorsUtils.isPreFlightRequest(request)</ID>
-    <ID>ComplexCondition:EngineAnalysisService.kt$EngineAnalysisService.Companion$bestScore.mate != null &amp;&amp; bestScore.mate &lt; 0 &amp;&amp; moveScore.mate == null &amp;&amp; moveScore.cp != null &amp;&amp; moveScore.cp &lt; 0</ID>
-    <ID>ComplexCondition:EngineAnalysisService.kt$EngineAnalysisService.Companion$bestScore.mate == null &amp;&amp; moveScore.mate == null &amp;&amp; bestScore.cp != null &amp;&amp; moveScore.cp != null &amp;&amp; bestScore.cp == moveScore.cp</ID>
     <ID>ComplexCondition:EvaluationEvidenceProducerService.kt$EvaluationEvidenceProducerService$configuration.thresholds != EvaluationEvidenceSnapshotService.APPROVED_THRESHOLDS || configuration.platform != "CHESS_COM" || configuration.minMistakeCount &lt; 0 || configuration.minTimesReached &lt; 0 || configuration.color !in setOf("WHITE", "BLACK", "BOTH") || configuration.observationWindowDays != null</ID>
     <ID>ComplexCondition:EvaluationEvidenceProducerService.kt$EvaluationEvidenceProducerService$occurrence.sourceRunId != input.referencePopulation.sourceRunId || occurrence.contentDigest != input.referencePopulation.contentDigest || occurrence.coveredPrefix != input.referencePopulation.coveredPrefix || occurrence.qualifyingOrdinal !in 1..input.referencePopulation.prefixN || occurrence.positionHash != row.positionIdentity || occurrence.preMovePly != row.preMovePly</ID>
     <ID>ComplexCondition:EvaluationEvidenceSnapshotService.kt$EvaluationEvidenceSnapshotService$players.isEmpty() || players.size != players.map { it.id }.toSet().size || players.map { it.identity }.toSet().size != players.size || players.any { it.identity.isBlank() }</ID>
@@ -40,8 +33,6 @@
     <ID>ComplexCondition:RetainedEvaluationEvidence.kt$RetainedEvaluationEvidenceValidator$players.isEmpty() || players.map { it.id }.toSet().size != players.size || players.map { it.identity }.toSet().size != players.size || players.any { it.identity.isBlank() }</ID>
     <ID>ComplexCondition:RetainedEvaluationEvidence.kt$RetainedEvaluationEvidenceValidator$row.playerId !in declaredIds || occurrence.sourceRunId != population.sourceRunId || occurrence.qualifyingOrdinal !in 1..population.coveredPrefix || occurrence.providerGameId.isBlank() || occurrence.contentDigest != population.contentDigest || occurrence.coveredPrefix != population.coveredPrefix || occurrence.positionHash != row.positionIdentity || occurrence.preMovePly != row.preMovePly || occurrence.movePlayed.isBlank()</ID>
     <ID>ComplexCondition:RetainedEvaluationEvidenceService.kt$RetainedEvaluationEvidenceService$population.contentDigest != projection.contentDigest || population.sourceRunId != projection.sourceRunId || population.prefixN != projection.prefixN || population.ratingBand != projection.ratingBand || population.minObservations != projection.minObservations || population.calculationVersion != projection.calculationVersion</ID>
-    <ID>CyclomaticComplexMethod:EngineAnalysisService.kt$EngineAnalysisService$fun analyzePosition( position: Position, analysisMultiPv: Int?, )</ID>
-    <ID>CyclomaticComplexMethod:EngineAnalysisService.kt$EngineAnalysisService.Companion$internal fun calculateEvalLoss( bestScore: EvalScore?, moveScore: EvalScore?, ): Double?</ID>
 
 
     <ID>CyclomaticComplexMethod:HumanMoveBfsService.kt$HumanMoveBfsService$fun discoverPopulation(request: HumanMovePopulationDiscoveryRequest): HumanMovePopulationDiscoveryResponse</ID>
@@ -53,9 +44,6 @@
 
     <ID>CyclomaticComplexMethod:ReferenceCoverageAnalysisService.kt$ReferenceCoverageAnalysisService$fun analyze(input: ReferenceCoverageAnalysisInput): ReferenceCoverageAnalysisResult</ID>
     <ID>CyclomaticComplexMethod:RetainedEvaluationEvidence.kt$RetainedEvaluationEvidenceValidator$fun admit(evidence: RetainedEvaluationEvidence): RetainedEvaluationEvidence</ID>
-    <ID>CyclomaticComplexMethod:StockfishService.kt$StockfishService$fun analyzeMultiPv( fen: String, depth: Int, multiPv: Int, ): List&lt;EngineCandidate&gt;</ID>
-    <ID>LongMethod:EngineAnalysisService.kt$EngineAnalysisService$fun analyzePosition( position: Position, analysisMultiPv: Int?, )</ID>
-    <ID>LongMethod:EngineAnalysisService.kt$EngineAnalysisService.Companion$internal fun calculateEvalLoss( bestScore: EvalScore?, moveScore: EvalScore?, ): Double?</ID>
     <ID>LongMethod:EvaluationEvidenceProducerService.kt$EvaluationEvidenceProducerService$private fun buildRows( input: EvaluationEvidenceProducerInput, operationalOccurrences: List&lt;PositionOccurrence&gt;, analyses: Map&lt;UUID, EngineAnalysis&gt;, matchingOccurrences: Map&lt;PositionPly, List&lt;UUID&gt;&gt;, ): List&lt;EvaluationEvidenceRow&gt;</ID>
 
     <ID>LongMethod:HumanMoveBfsService.kt$HumanMoveBfsService$fun discoverPopulation(request: HumanMovePopulationDiscoveryRequest): HumanMovePopulationDiscoveryResponse</ID>
@@ -76,9 +64,7 @@
     <ID>LongMethod:ProgressService.kt$ProgressService$@Transactional(readOnly = true) fun getProgress( positionId: UUID, playerColor: PlayerColor, accountId: UUID, principal: AuthenticatedPrincipal, minEvalLoss: Double, ): ProgressResponse</ID>
     <ID>LongMethod:ReferenceCoverageAnalysisService.kt$ReferenceCoverageAnalysisService$fun analyze(input: ReferenceCoverageAnalysisInput): ReferenceCoverageAnalysisResult</ID>
     <ID>LongMethod:RetainedEvaluationEvidenceService.kt$RetainedEvaluationEvidenceService$@Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ) fun loadAndAdmit( sourceRunId: UUID, projectionId: UUID, analysisVersion: String, ): RetainedEvaluationEvidence</ID>
-    <ID>MapGetWithNotNullAssertionOperator:EngineAnalysisService.kt$EngineAnalysisService$multiPvScoreMap[move]!!</ID>
     <ID>MapGetWithNotNullAssertionOperator:HumanMoveBfsService.kt$HumanMoveBfsService$fenByHash[hash]!!</ID>
-    <ID>NestedBlockDepth:EngineAnalysisService.kt$EngineAnalysisService$fun analyzePosition( position: Position, analysisMultiPv: Int?, )</ID>
     <ID>NestedBlockDepth:HumanMoveBfsService.kt$HumanMoveBfsService$fun discoverPopulation(request: HumanMovePopulationDiscoveryRequest): HumanMovePopulationDiscoveryResponse</ID>
     <ID>NestedBlockDepth:HumanMoveBfsTraversal.kt$HumanMoveBfsTraversal$fun processGamePgn( pgn: String, isWhiteInBand: Boolean, isBlackInBand: Boolean, observations: MutableMap&lt;Pair&lt;String, String&gt;, Int&gt;, fenByHash: MutableMap&lt;String, String&gt;, occurrences: MutableList&lt;HumanMoveCorpusOccurrence&gt;? = null, ): HumanMoveBfsPgnOutcome</ID>
     <ID>NestedBlockDepth:HumanMoveBfsTraversal.kt$HumanMoveBfsTraversal$fun traverse( bounds: HumanMoveBfsBounds, sink: HumanMoveBfsSink, ): HumanMoveBfsTraversalResult</ID>
@@ -86,8 +72,6 @@
     <ID>NestedBlockDepth:HumanMoveCorpusArtifactCodec.kt$HumanMoveCorpusArtifactCodec$fun spoolZip( archive: Path, tempDirectory: Path, maxArchiveBytes: Long, maxExpandedEntryBytes: Long, ): List&lt;EntryFile&gt;</ID>
     <ID>NestedBlockDepth:HumanMoveCorpusArtifactCodec.kt$HumanMoveCorpusArtifactCodec$fun writeZip( entries: List&lt;EntryFile&gt;, outputPath: Path, maxArchiveBytes: Long, )</ID>
     <ID>NestedBlockDepth:HumanMoveCorpusArtifactVerifier.kt$HumanMoveCorpusArtifactVerifier$private fun readRecords( input: InputStream, maxRecordBytes: Int, consume: (JsonNode) -&gt; Unit, )</ID>
-    <ID>NestedBlockDepth:StockfishService.kt$StockfishService$internal fun runGoDepth( fen: String, uciMove: String?, depth: Int, reader: BufferedReader, sendCommand: (String) -&gt; Unit, ): PositionAnalysis</ID>
-    <ID>NestedBlockDepth:StockfishService.kt$StockfishService.Companion$fun parseEngineScore( line: String, invert: Boolean = false, ): EvalScore?</ID>
 
     <ID>SwallowedException:EvaluationEvidenceSnapshotService.kt$EvaluationEvidenceSnapshotService$exception: RuntimeException</ID>
     <ID>SwallowedException:HumanMoveCorpusArtifactCodec.kt$HumanMoveCorpusArtifactCodec$e: Exception</ID>

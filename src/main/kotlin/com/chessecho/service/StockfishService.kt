@@ -47,27 +47,37 @@ class StockfishService {
             writer.flush()
         }
 
-        sendCommand("uci")
-        var line: String?
+        val rankMap =
+            try {
+                sendCommand("uci")
+                waitForToken(reader, "uciok")
+                sendCommand("setoption name MultiPV value $multiPv")
+                sendCommand("isready")
+                waitForToken(reader, "readyok")
+                sendCommand("position fen $fen")
+                sendCommand("go depth $depth")
+                collectMultiPvRanks(reader)
+            } finally {
+                terminateProcess(process, ::sendCommand)
+            }
+
+        return toEngineCandidates(fen, rankMap)
+    }
+
+    private fun waitForToken(
+        reader: BufferedReader,
+        token: String,
+    ) {
         while (true) {
-            line = reader.readLine()
-            if (line == "uciok" || line == null) break
+            val line = reader.readLine() ?: break
+            if (line == token) break
         }
+    }
 
-        sendCommand("setoption name MultiPV value $multiPv")
-        sendCommand("isready")
-        while (true) {
-            line = reader.readLine()
-            if (line == "readyok" || line == null) break
-        }
-
-        sendCommand("position fen $fen")
-        sendCommand("go depth $depth")
-
+    private fun collectMultiPvRanks(reader: BufferedReader): Map<Int, Pair<String, EvalScore>> {
         val rankMap = mutableMapOf<Int, Pair<String, EvalScore>>()
-
         while (true) {
-            line = reader.readLine() ?: break
+            val line = reader.readLine() ?: break
 
             if (line.startsWith("info ") && line.contains(" multipv ")) {
                 val parsed = parseMultiPvLine(line)
@@ -81,14 +91,28 @@ class StockfishService {
                 break
             }
         }
+        return rankMap
+    }
 
-        sendCommand("quit")
-        process.waitFor(5, TimeUnit.SECONDS)
-        if (process.isAlive) {
-            process.destroyForcibly()
+    private fun terminateProcess(
+        process: Process,
+        sendCommand: (String) -> Unit,
+    ) {
+        try {
+            sendCommand("quit")
+            process.waitFor(5, TimeUnit.SECONDS)
+        } finally {
+            if (process.isAlive) {
+                process.destroyForcibly()
+            }
         }
+    }
 
-        return rankMap.entries
+    private fun toEngineCandidates(
+        fen: String,
+        rankMap: Map<Int, Pair<String, EvalScore>>,
+    ): List<EngineCandidate> =
+        rankMap.entries
             .sortedBy { it.key }
             .mapNotNull { entry ->
                 val rank = entry.key
@@ -102,7 +126,6 @@ class StockfishService {
                     EngineCandidate(move = sanMove, score = score)
                 }
             }
-    }
 
     /**
      * Analyzes an untouched base FEN position independently to determine its baseline evaluation and engine best move,
@@ -248,18 +271,10 @@ class StockfishService {
             val line = reader.readLine() ?: break
 
             if (line.startsWith("info ") && line.contains(" score ")) {
-                // Invert score for candidate moves (1 ply later) to normalize to baseline player-to-move perspective
-                val invertScore = uciMove != null
-                val parsedScore = parseEngineScore(line, invertScore)
+                val parsedScore = parseEngineScore(line, invert = uciMove != null)
                 if (parsedScore != null) {
-                    if (parsedScore.cp != null) {
-                        cp = parsedScore.cp
-                        mate = null
-                    }
-                    if (parsedScore.mate != null) {
-                        mate = parsedScore.mate
-                        cp = null
-                    }
+                    cp = parsedScore.cp
+                    mate = parsedScore.mate
                 }
             }
 
@@ -310,33 +325,35 @@ class StockfishService {
             if (!line.contains(" score ")) return null
             val tokens = line.split("\\s+".toRegex())
             val scoreIdx = tokens.indexOf("score")
-            if (scoreIdx != -1 && scoreIdx + 2 < tokens.size) {
-                val type = tokens[scoreIdx + 1]
-                val value = tokens[scoreIdx + 2].toIntOrNull() ?: return null
+            if (scoreIdx == -1 || scoreIdx + 2 >= tokens.size) return null
 
-                return if (type == "cp") {
-                    EvalScore(cp = if (invert) -value else value, mate = null)
-                } else if (type == "mate") {
-                    if (!invert) {
-                        // Baseline position (root): value == 0 is an unanalyzable terminal position
-                        if (value == 0) null else EvalScore(cp = null, mate = value)
-                    } else {
-                        // Candidate move evaluation: evaluated 1 ply after baseline move.
-                        // Convert to root-relative distance from baseline position.
-                        when {
-                            // Delivered checkmate immediately
-                            value == 0 -> EvalScore(cp = null, mate = 1)
-                            // Opponent mated in -value moves -> player mates in (-value + 1)
-                            value < 0 -> EvalScore(cp = null, mate = -(value) + 1)
-                            // Opponent mates in value moves -> player gets mated in value moves
-                            else -> EvalScore(cp = null, mate = -value)
-                        }
-                    }
-                } else {
-                    null
+            val type = tokens[scoreIdx + 1]
+            val value = tokens[scoreIdx + 2].toIntOrNull() ?: return null
+
+            return when (type) {
+                "cp" -> parseCpScore(value, invert)
+                "mate" -> parseMateScore(value, invert)
+                else -> null
+            }
+        }
+
+        private fun parseCpScore(
+            value: Int,
+            invert: Boolean,
+        ): EvalScore = EvalScore(cp = if (invert) -value else value, mate = null)
+
+        private fun parseMateScore(
+            value: Int,
+            invert: Boolean,
+        ): EvalScore? =
+            if (!invert) {
+                if (value == 0) null else EvalScore(cp = null, mate = value)
+            } else {
+                when {
+                    value == 0 -> EvalScore(cp = null, mate = 1)
+                    value < 0 -> EvalScore(cp = null, mate = -value + 1)
+                    else -> EvalScore(cp = null, mate = -value)
                 }
             }
-            return null
-        }
     }
 }
