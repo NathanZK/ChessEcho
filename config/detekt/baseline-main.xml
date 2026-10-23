@@ -13,10 +13,8 @@
     <ID>CastNullableToNonNullableType:EvaluationEvidenceSnapshotService.kt$EvaluationEvidenceSnapshotService$as</ID>
     <ID>CognitiveComplexMethod:EngineAnalysisService.kt$EngineAnalysisService$fun analyzePosition( position: Position, analysisMultiPv: Int?, )</ID>
     <ID>CognitiveComplexMethod:EngineAnalysisService.kt$EngineAnalysisService.Companion$internal fun calculateEvalLoss( bestScore: EvalScore?, moveScore: EvalScore?, ): Double?</ID>
-    <ID>CognitiveComplexMethod:GameImportService.kt$GameImportService$@Async fun executeImportJob(jobId: UUID)</ID>
-    <ID>CognitiveComplexMethod:GameImportService.kt$GameImportService$private fun importMonth( account: ChessAccount, initiatingUser: AppUser?, archiveUrl: String, yearMonth: String, isPastMonth: Boolean, request: ImportGamesRequest, remainingCap: Int? = null, ): ImportMonthResult</ID>
-    <ID>CognitiveComplexMethod:GameParserService.kt$GameParserService$private fun deriveDecisionTimes( pgn: String, parsedGame: ParsedGame, moves: MoveList, playerColor: String, ): Map&lt;Int, Long&gt;</ID>
-    <ID>CognitiveComplexMethod:GameParserService.kt$GameParserService$private fun parseAndSavePositionsInternal(games: List&lt;Game&gt;): Set&lt;UUID&gt;</ID>
+
+
     <ID>CognitiveComplexMethod:HumanMoveBfsService.kt$HumanMoveBfsService$fun discoverPopulation(request: HumanMovePopulationDiscoveryRequest): HumanMovePopulationDiscoveryResponse</ID>
     <ID>CognitiveComplexMethod:HumanMoveBfsTraversal.kt$HumanMoveBfsTraversal$fun traverse( bounds: HumanMoveBfsBounds, sink: HumanMoveBfsSink, ): HumanMoveBfsTraversalResult</ID>
     <ID>CognitiveComplexMethod:HumanMoveCorpusArtifactCodec.kt$HumanMoveCorpusArtifactCodec$fun spoolZip( archive: Path, tempDirectory: Path, maxArchiveBytes: Long, maxExpandedEntryBytes: Long, ): List&lt;EntryFile&gt;</ID>
@@ -24,8 +22,7 @@
     <ID>CognitiveComplexMethod:HumanMoveCorpusArtifactVerifier.kt$HumanMoveCorpusArtifactVerifier$private fun readRecords( input: InputStream, maxRecordBytes: Int, consume: (JsonNode) -&gt; Unit, )</ID>
     <ID>CognitiveComplexMethod:HumanMoveCorpusGameWriter.kt$HumanMoveCorpusGameWriter$@Transactional fun commitGame( runId: UUID, candidate: HumanMoveCorpusCandidate, ): HumanMoveCorpusCommitResult</ID>
     <ID>CognitiveComplexMethod:HumanMoveCorpusService.kt$HumanMoveCorpusService$fun runCorpus(request: HumanMoveCorpusRunRequest): HumanMoveCorpusRunResponse</ID>
-    <ID>CognitiveComplexMethod:PgnHeaderTagReader.kt$PgnHeaderTagReader$fun read(pgn: String): PgnHeaderTags</ID>
-    <ID>CognitiveComplexMethod:PgnHeaderTagReader.kt$PgnHeaderTagReader$private fun parseTag(line: String): PgnTag?</ID>
+
     <ID>CognitiveComplexMethod:ReferenceCoverageAnalysisService.kt$ReferenceCoverageAnalysisService$fun analyze(input: ReferenceCoverageAnalysisInput): ReferenceCoverageAnalysisResult</ID>
     <ID>CognitiveComplexMethod:StockfishService.kt$StockfishService$fun analyzeMultiPv( fen: String, depth: Int, multiPv: Int, ): List&lt;EngineCandidate&gt;</ID>
     <ID>CognitiveComplexMethod:StockfishService.kt$StockfishService$internal fun runGoDepth( fen: String, uciMove: String?, depth: Int, reader: BufferedReader, sendCommand: (String) -&gt; Unit, ): PositionAnalysis</ID>
@@ -45,29 +42,22 @@
     <ID>ComplexCondition:RetainedEvaluationEvidenceService.kt$RetainedEvaluationEvidenceService$population.contentDigest != projection.contentDigest || population.sourceRunId != projection.sourceRunId || population.prefixN != projection.prefixN || population.ratingBand != projection.ratingBand || population.minObservations != projection.minObservations || population.calculationVersion != projection.calculationVersion</ID>
     <ID>CyclomaticComplexMethod:EngineAnalysisService.kt$EngineAnalysisService$fun analyzePosition( position: Position, analysisMultiPv: Int?, )</ID>
     <ID>CyclomaticComplexMethod:EngineAnalysisService.kt$EngineAnalysisService.Companion$internal fun calculateEvalLoss( bestScore: EvalScore?, moveScore: EvalScore?, ): Double?</ID>
-    <ID>CyclomaticComplexMethod:GameImportService.kt$GameImportService$@Async fun executeImportJob(jobId: UUID)</ID>
-    <ID>CyclomaticComplexMethod:GameImportService.kt$GameImportService$private fun importMonth( account: ChessAccount, initiatingUser: AppUser?, archiveUrl: String, yearMonth: String, isPastMonth: Boolean, request: ImportGamesRequest, remainingCap: Int? = null, ): ImportMonthResult</ID>
-    <ID>CyclomaticComplexMethod:GameParserService.kt$GameParserService$private fun deriveDecisionTimes( pgn: String, parsedGame: ParsedGame, moves: MoveList, playerColor: String, ): Map&lt;Int, Long&gt;</ID>
-    <ID>CyclomaticComplexMethod:GameParserService.kt$GameParserService$private fun parseAndSavePositionsInternal(games: List&lt;Game&gt;): Set&lt;UUID&gt;</ID>
+
+
     <ID>CyclomaticComplexMethod:HumanMoveBfsService.kt$HumanMoveBfsService$fun discoverPopulation(request: HumanMovePopulationDiscoveryRequest): HumanMovePopulationDiscoveryResponse</ID>
     <ID>CyclomaticComplexMethod:HumanMoveBfsTraversal.kt$HumanMoveBfsTraversal$fun traverse( bounds: HumanMoveBfsBounds, sink: HumanMoveBfsSink, ): HumanMoveBfsTraversalResult</ID>
     <ID>CyclomaticComplexMethod:HumanMoveCorpusArtifactCodec.kt$HumanMoveCorpusArtifactCodec$fun spoolZip( archive: Path, tempDirectory: Path, maxArchiveBytes: Long, maxExpandedEntryBytes: Long, ): List&lt;EntryFile&gt;</ID>
     <ID>CyclomaticComplexMethod:HumanMoveCorpusArtifactVerifier.kt$HumanMoveCorpusArtifactVerifier$fun verify( archive: Path, expectedDigest: String, limits: Limits, ): VerifiedCorpusArtifact</ID>
     <ID>CyclomaticComplexMethod:HumanMoveCorpusGameWriter.kt$HumanMoveCorpusGameWriter$@Transactional fun commitGame( runId: UUID, candidate: HumanMoveCorpusCandidate, ): HumanMoveCorpusCommitResult</ID>
     <ID>CyclomaticComplexMethod:HumanMoveCorpusPurgeService.kt$HumanMoveCorpusPurgeService$@Transactional fun purge( runId: UUID, contentDigest: String, ): HumanMoveCorpusPurgeResult</ID>
-    <ID>CyclomaticComplexMethod:PgnHeaderTagReader.kt$PgnHeaderTagReader$fun read(pgn: String): PgnHeaderTags</ID>
-    <ID>CyclomaticComplexMethod:PgnHeaderTagReader.kt$PgnHeaderTagReader$private fun parseTag(line: String): PgnTag?</ID>
+
     <ID>CyclomaticComplexMethod:ReferenceCoverageAnalysisService.kt$ReferenceCoverageAnalysisService$fun analyze(input: ReferenceCoverageAnalysisInput): ReferenceCoverageAnalysisResult</ID>
     <ID>CyclomaticComplexMethod:RetainedEvaluationEvidence.kt$RetainedEvaluationEvidenceValidator$fun admit(evidence: RetainedEvaluationEvidence): RetainedEvaluationEvidence</ID>
     <ID>CyclomaticComplexMethod:StockfishService.kt$StockfishService$fun analyzeMultiPv( fen: String, depth: Int, multiPv: Int, ): List&lt;EngineCandidate&gt;</ID>
-    <ID>LargeClass:GameImportService.kt$GameImportService</ID>
     <ID>LongMethod:EngineAnalysisService.kt$EngineAnalysisService$fun analyzePosition( position: Position, analysisMultiPv: Int?, )</ID>
     <ID>LongMethod:EngineAnalysisService.kt$EngineAnalysisService.Companion$internal fun calculateEvalLoss( bestScore: EvalScore?, moveScore: EvalScore?, ): Double?</ID>
     <ID>LongMethod:EvaluationEvidenceProducerService.kt$EvaluationEvidenceProducerService$private fun buildRows( input: EvaluationEvidenceProducerInput, operationalOccurrences: List&lt;PositionOccurrence&gt;, analyses: Map&lt;UUID, EngineAnalysis&gt;, matchingOccurrences: Map&lt;PositionPly, List&lt;UUID&gt;&gt;, ): List&lt;EvaluationEvidenceRow&gt;</ID>
-    <ID>LongMethod:GameImportService.kt$GameImportService$@Async fun executeImportJob(jobId: UUID)</ID>
-    <ID>LongMethod:GameImportService.kt$GameImportService$private fun emitSchedulingEvents( savedGames: List&lt;Game&gt;, initiatingUser: AppUser?, affectedPositionIds: Set&lt;UUID&gt;, )</ID>
-    <ID>LongMethod:GameImportService.kt$GameImportService$private fun importMonth( account: ChessAccount, initiatingUser: AppUser?, archiveUrl: String, yearMonth: String, isPastMonth: Boolean, request: ImportGamesRequest, remainingCap: Int? = null, ): ImportMonthResult</ID>
-    <ID>LongMethod:GameParserService.kt$GameParserService$private fun parseAndSavePositionsInternal(games: List&lt;Game&gt;): Set&lt;UUID&gt;</ID>
+
     <ID>LongMethod:HumanMoveBfsService.kt$HumanMoveBfsService$fun discoverPopulation(request: HumanMovePopulationDiscoveryRequest): HumanMovePopulationDiscoveryResponse</ID>
     <ID>LongMethod:HumanMoveBfsService.kt$HumanMoveBfsService$fun runBfs(request: HumanMoveBfsRequest): HumanMoveBfsResponse</ID>
     <ID>LongMethod:HumanMoveBfsTraversal.kt$HumanMoveBfsTraversal$fun traverse( bounds: HumanMoveBfsBounds, sink: HumanMoveBfsSink, ): HumanMoveBfsTraversalResult</ID>
@@ -82,14 +72,13 @@
     <ID>LongMethod:HumanMoveCorpusOccurrenceService.kt$HumanMoveCorpusOccurrenceService$private fun verifySourcePrefix( sourceRunId: UUID, coveredPrefix: Int, )</ID>
     <ID>LongMethod:HumanMoveCorpusProjectionFinalizationService.kt$HumanMoveCorpusProjectionFinalizationService$@Transactional fun finalize(projectionId: UUID): HumanMoveCorpusProjectionFinalizeResponse</ID>
     <ID>LongMethod:HumanMoveCorpusPurgeService.kt$HumanMoveCorpusPurgeService$@Transactional fun purge( runId: UUID, contentDigest: String, ): HumanMoveCorpusPurgeResult</ID>
-    <ID>LongMethod:PgnHeaderTagReader.kt$PgnHeaderTagReader$fun read(pgn: String): PgnHeaderTags</ID>
+
     <ID>LongMethod:ProgressService.kt$ProgressService$@Transactional(readOnly = true) fun getProgress( positionId: UUID, playerColor: PlayerColor, accountId: UUID, principal: AuthenticatedPrincipal, minEvalLoss: Double, ): ProgressResponse</ID>
     <ID>LongMethod:ReferenceCoverageAnalysisService.kt$ReferenceCoverageAnalysisService$fun analyze(input: ReferenceCoverageAnalysisInput): ReferenceCoverageAnalysisResult</ID>
     <ID>LongMethod:RetainedEvaluationEvidenceService.kt$RetainedEvaluationEvidenceService$@Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ) fun loadAndAdmit( sourceRunId: UUID, projectionId: UUID, analysisVersion: String, ): RetainedEvaluationEvidence</ID>
     <ID>MapGetWithNotNullAssertionOperator:EngineAnalysisService.kt$EngineAnalysisService$multiPvScoreMap[move]!!</ID>
     <ID>MapGetWithNotNullAssertionOperator:HumanMoveBfsService.kt$HumanMoveBfsService$fenByHash[hash]!!</ID>
     <ID>NestedBlockDepth:EngineAnalysisService.kt$EngineAnalysisService$fun analyzePosition( position: Position, analysisMultiPv: Int?, )</ID>
-    <ID>NestedBlockDepth:GameParserService.kt$GameParserService$private fun parseAndSavePositionsInternal(games: List&lt;Game&gt;): Set&lt;UUID&gt;</ID>
     <ID>NestedBlockDepth:HumanMoveBfsService.kt$HumanMoveBfsService$fun discoverPopulation(request: HumanMovePopulationDiscoveryRequest): HumanMovePopulationDiscoveryResponse</ID>
     <ID>NestedBlockDepth:HumanMoveBfsTraversal.kt$HumanMoveBfsTraversal$fun processGamePgn( pgn: String, isWhiteInBand: Boolean, isBlackInBand: Boolean, observations: MutableMap&lt;Pair&lt;String, String&gt;, Int&gt;, fenByHash: MutableMap&lt;String, String&gt;, occurrences: MutableList&lt;HumanMoveCorpusOccurrence&gt;? = null, ): HumanMoveBfsPgnOutcome</ID>
     <ID>NestedBlockDepth:HumanMoveBfsTraversal.kt$HumanMoveBfsTraversal$fun traverse( bounds: HumanMoveBfsBounds, sink: HumanMoveBfsSink, ): HumanMoveBfsTraversalResult</ID>
@@ -99,8 +88,7 @@
     <ID>NestedBlockDepth:HumanMoveCorpusArtifactVerifier.kt$HumanMoveCorpusArtifactVerifier$private fun readRecords( input: InputStream, maxRecordBytes: Int, consume: (JsonNode) -&gt; Unit, )</ID>
     <ID>NestedBlockDepth:StockfishService.kt$StockfishService$internal fun runGoDepth( fen: String, uciMove: String?, depth: Int, reader: BufferedReader, sendCommand: (String) -&gt; Unit, ): PositionAnalysis</ID>
     <ID>NestedBlockDepth:StockfishService.kt$StockfishService.Companion$fun parseEngineScore( line: String, invert: Boolean = false, ): EvalScore?</ID>
-    <ID>SwallowedException:ChessComClient.kt$ChessComClient$e: Exception</ID>
-    <ID>SwallowedException:ChessComClient.kt$ChessComClient$ex: HttpClientErrorException.NotFound</ID>
+
     <ID>SwallowedException:EvaluationEvidenceSnapshotService.kt$EvaluationEvidenceSnapshotService$exception: RuntimeException</ID>
     <ID>SwallowedException:HumanMoveCorpusArtifactCodec.kt$HumanMoveCorpusArtifactCodec$e: Exception</ID>
     <ID>SwallowedException:HumanMoveCorpusArtifactCodec.kt$HumanMoveCorpusArtifactCodec$e: ZipException</ID>

@@ -113,7 +113,7 @@ class ChessComClient(
             try {
                 return requestCall()
             } catch (ex: HttpClientErrorException.NotFound) {
-                log.warn("Chess.com resource not found (404): $url")
+                log.debug("Chess.com resource not found (404): {}", url, ex)
                 return null
             } catch (ex: RestClientResponseException) {
                 val statusCode = ex.statusCode.value()
@@ -169,6 +169,7 @@ class ChessComClient(
             val millis = Duration.between(now, target).toMillis()
             if (millis > 0) millis else properties.initialBackoffMs
         } catch (e: Exception) {
+            log.debug("Failed to parse Retry-After header '{}'", header, e)
             null
         }
     }
