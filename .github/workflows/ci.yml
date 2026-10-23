@@ -40,6 +40,7 @@ jobs:
             backend:
               - 'src/**'
               - 'gradle/**'
+              - 'config/detekt/**'
               - 'build.gradle.kts'
               - 'settings.gradle.kts'
               - 'gradlew'
@@ -76,6 +77,7 @@ jobs:
           java-version: '21'
           distribution: 'temurin'
       - run: ./gradlew ktlintCheck
+      - run: ./gradlew detektMain detektTest
       - run: ./gradlew test
 
   frontend:

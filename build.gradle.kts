@@ -6,6 +6,7 @@ plugins {
     kotlin("plugin.jpa") version "2.0.0"
     id("org.jlleitschuh.gradle.ktlint") version "12.1.1"
     id("info.solidsoft.pitest") version "1.15.0"
+    id("io.gitlab.arturbosch.detekt") version "1.23.7"
 }
 
 group = "com.chessecho"
@@ -103,4 +104,31 @@ pitest {
 
     targetClasses.set(effectiveTargetClasses)
     targetTests.set(effectiveTargetTests)
+}
+
+detekt {
+    toolVersion = "1.23.7"
+    config.setFrom(files("$rootDir/config/detekt/detekt.yml"))
+    buildUponDefaultConfig = false
+    baseline = file("$rootDir/config/detekt/baseline.xml")
+}
+
+// Spring Boot dependency-management plugin overrides Kotlin compiler dependencies in the
+// detekt configuration to Spring Boot's BOM version (2.0.0). Restore Detekt's compiled version
+// (2.0.10) for its dedicated execution configuration per https://detekt.dev/docs/gettingstarted/gradle#dependencies
+configurations.matching { it.name == "detekt" }.all {
+    resolutionStrategy.eachDependency {
+        if (requested.group == "org.jetbrains.kotlin") {
+            useVersion(io.gitlab.arturbosch.detekt.getSupportedKotlinVersion())
+        }
+    }
+}
+
+tasks.named("check") {
+    dependsOn("detektMain", "detektTest")
+}
+
+// Disable untyped detekt task so check executes type-resolved detektMain and detektTest
+tasks.named("detekt") {
+    enabled = false
 }

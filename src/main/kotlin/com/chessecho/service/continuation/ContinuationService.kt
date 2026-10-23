@@ -27,6 +27,7 @@ class ContinuationService(
      *
      * @param fen The baseline position in FEN notation.
      * @param mode The requested domain continuation mode (ENGINE or HUMAN). Defaults to ContinuationMode.ENGINE.
+     * @param ratingBand The optional rating band filter for human continuation candidates.
      * @return [ContinuationResult] containing starting FEN, requestedMode, effectiveProvider, and collection of [ContinuationCandidate]s.
      */
     fun getContinuation(
