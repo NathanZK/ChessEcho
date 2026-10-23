@@ -327,6 +327,40 @@ class PracticalEvidenceServiceTest {
         assertEquals(0.375, summary3Draws.scoreRate)
     }
 
+    @Test
+    fun `ScopeOutcomeTally toSummary computes score rate correctly`() {
+        val scope = PracticalEvidenceScope(java.util.UUID.randomUUID(), java.util.UUID.randomUUID(), "WHITE")
+        val tally =
+            ScopeOutcomeTally(
+                wins = 2,
+                draws = 1,
+                losses = 1,
+                ineligibleGames = 0,
+                excludedGames = 0,
+                sideCorroborationConflictGames = 0,
+            )
+        val summary = tally.toSummary(scope, candidateGames = 4)
+        assertEquals(4, summary.eligibleGames)
+        assertEquals(0.625, summary.scoreRate!!, 0.001)
+    }
+
+    @Test
+    fun `ScopeOutcomeTally toSummary returns null score rate when eligible games is zero`() {
+        val scope = PracticalEvidenceScope(java.util.UUID.randomUUID(), java.util.UUID.randomUUID(), "WHITE")
+        val tally =
+            ScopeOutcomeTally(
+                wins = 0,
+                draws = 0,
+                losses = 0,
+                ineligibleGames = 2,
+                excludedGames = 1,
+                sideCorroborationConflictGames = 0,
+            )
+        val summary = tally.toSummary(scope, candidateGames = 3)
+        assertEquals(0, summary.eligibleGames)
+        assertNull(summary.scoreRate)
+    }
+
     private fun service(observationWindowDays: Long? = null): PracticalEvidenceService =
         PracticalEvidenceService(
             GameOutcomeNormalizer(PgnHeaderTagReader()),

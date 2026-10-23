@@ -240,4 +240,30 @@ class EngineMoveProviderTest {
         assertFalse(invokeIsValid(null))
         assertTrue(invokeIsValid("e5"))
     }
+
+    @Test
+    fun `extractMultiPvCandidates extracts valid candidates within threshold`() {
+        val fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
+        val candidates =
+            listOf(
+                EngineCandidate("e5", EvalScore(cp = 100, mate = null)),
+                EngineCandidate("c5", EvalScore(cp = 70, mate = null)),
+            )
+        val extracted = engineMoveProvider.extractMultiPvCandidates(fen, candidates, 100)
+        assertEquals(2, extracted.size)
+        assertEquals("e5", extracted[0].move)
+        assertEquals("c5", extracted[1].move)
+    }
+
+    @Test
+    fun `resolveFallbackCandidate resolves baseline best move`() {
+        val fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
+        val fallbackMap = mapOf("baseline" to PositionAnalysis(bestMove = "c5", score = EvalScore(cp = 15, mate = null)))
+        whenever(stockfishService.analyze(fen, 16, emptyList())).thenReturn(fallbackMap)
+
+        val fallback = engineMoveProvider.resolveFallbackCandidate(fen)
+        assertEquals("c5", fallback?.move)
+        assertEquals(15, fallback?.evalCp)
+        assertEquals(0.0, fallback?.evalLoss)
+    }
 }
