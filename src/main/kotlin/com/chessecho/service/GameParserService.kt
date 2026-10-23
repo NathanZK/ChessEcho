@@ -44,105 +44,137 @@ class GameParserService(
     private fun parseAndSavePositionsInternal(games: List<Game>): Set<UUID> {
         if (games.isEmpty()) return emptySet()
 
+        val (allPositions, occurrences) = parseGamesToPositionsAndOccurrences(games)
+        val existingPositions = persistPositions(allPositions)
+        val mappedOccurrences = mapOccurrences(occurrences, existingPositions)
+        persistOccurrences(mappedOccurrences)
+
+        return mappedOccurrences.map { it.position.id }.toSet()
+    }
+
+    private fun parseGamesToPositionsAndOccurrences(games: List<Game>): Pair<Map<String, Position>, List<PositionOccurrence>> {
         val allPositions = mutableMapOf<String, Position>()
         val occurrences = mutableListOf<PositionOccurrence>()
 
         for (dbGame in games) {
-            val file = File.createTempFile("game_parse", ".pgn")
-            try {
-                file.writeText(dbGame.pgn)
-                val pgnHolder = PgnHolder(file.absolutePath)
-                pgnHolder.loadPgn()
+            parseSingleGame(dbGame, allPositions, occurrences)
+        }
+        return Pair(allPositions, occurrences)
+    }
 
-                if (pgnHolder.game.isNotEmpty()) {
-                    val chesslibGame = pgnHolder.game.first()
-                    val initialFen = chesslibGame.fen
-                    if (initialFen != null && initialFen.isNotBlank() && !isStandardStartFen(initialFen)) {
-                        continue
-                    }
+    private fun parseSingleGame(
+        dbGame: Game,
+        allPositions: MutableMap<String, Position>,
+        occurrences: MutableList<PositionOccurrence>,
+    ) {
+        val file = File.createTempFile("game_parse", ".pgn")
+        try {
+            file.writeText(dbGame.pgn)
+            val pgnHolder = PgnHolder(file.absolutePath)
+            pgnHolder.loadPgn()
 
-                    chesslibGame.loadMoveText()
-                    val moves = chesslibGame.halfMoves
-
-                    val accountUsername = dbGame.chessAccount.username
-                    val matchesWhite =
-                        dbGame.whiteUsername?.equals(accountUsername, ignoreCase = true) == true ||
-                            chesslibGame.whitePlayer?.name?.equals(accountUsername, ignoreCase = true) == true
-                    val matchesBlack =
-                        dbGame.blackUsername?.equals(accountUsername, ignoreCase = true) == true ||
-                            chesslibGame.blackPlayer?.name?.equals(accountUsername, ignoreCase = true) == true
-
-                    val userColor =
-                        when {
-                            matchesWhite && !matchesBlack -> "WHITE"
-                            matchesBlack && !matchesWhite -> "BLACK"
-                            else -> {
-                                log.warn(
-                                    "Game {} skipped for occurrence creation: account '{}' matched {} player identities " +
-                                        "(White: {}, Black: {})",
-                                    dbGame.id,
-                                    accountUsername,
-                                    if (matchesWhite && matchesBlack) "both" else "neither",
-                                    dbGame.whiteUsername ?: chesslibGame.whitePlayer?.name,
-                                    dbGame.blackUsername ?: chesslibGame.blackPlayer?.name,
-                                )
-                                null
-                            }
-                        }
-
-                    if (userColor == null) {
-                        continue
-                    }
-
-                    val decisionTimes =
-                        deriveDecisionTimes(
-                            pgn = dbGame.pgn,
-                            parsedGame = chesslibGame,
-                            moves = moves,
-                            playerColor = userColor,
-                        )
-                    val board = Board()
-                    for ((index, move) in moves.withIndex()) {
-                        val isWhiteTurn = index % 2 == 0
-                        val isUserTurn = (isWhiteTurn && userColor == "WHITE") || (!isWhiteTurn && userColor == "BLACK")
-
-                        if (isUserTurn) {
-                            // Capture the position BEFORE the move is made
-                            val rawFen = board.fen
-                            val hash = generateHash(rawFen)
-
-                            // Add to our batch
-                            val position =
-                                allPositions.getOrPut(hash) {
-                                    Position(hash = hash, fen = rawFen)
-                                }
-
-                            occurrences.add(
-                                PositionOccurrence(
-                                    game = dbGame,
-                                    position = position,
-                                    chessAccount = dbGame.chessAccount,
-                                    plyNumber = index + 1,
-                                    movePlayed = move.san,
-                                    playerColor = userColor,
-                                    decisionTimeMs = decisionTimes[index + 1],
-                                ),
-                            )
-                        }
-
-                        // Now make the move for the next iteration
-                        board.doMove(move)
-                    }
-                }
-            } catch (e: Exception) {
-                log.error("Failed to parse game ${dbGame.id}", e)
-                throw IllegalStateException("Failed to derive positions for game ${dbGame.id}", e)
-            } finally {
-                file.delete()
+            if (pgnHolder.game.isNotEmpty()) {
+                processParsedGame(dbGame, pgnHolder.game.first(), allPositions, occurrences)
             }
+        } catch (e: Exception) {
+            log.error("Failed to parse game ${dbGame.id}", e)
+            throw IllegalStateException("Failed to derive positions for game ${dbGame.id}", e)
+        } finally {
+            file.delete()
+        }
+    }
+
+    private fun processParsedGame(
+        dbGame: Game,
+        chesslibGame: ParsedGame,
+        allPositions: MutableMap<String, Position>,
+        occurrences: MutableList<PositionOccurrence>,
+    ) {
+        val initialFen = chesslibGame.fen
+        if (initialFen != null && initialFen.isNotBlank() && !isStandardStartFen(initialFen)) {
+            return
         }
 
-        // Fetch existing positions before conflict-safe insertion to avoid unnecessary writes.
+        chesslibGame.loadMoveText()
+        val moves = chesslibGame.halfMoves
+        val userColor = determineUserColor(dbGame, chesslibGame) ?: return
+
+        val decisionTimes =
+            deriveDecisionTimes(
+                pgn = dbGame.pgn,
+                parsedGame = chesslibGame,
+                moves = moves,
+                playerColor = userColor,
+            )
+
+        traverseGameMoves(dbGame, moves, userColor, decisionTimes, allPositions, occurrences)
+    }
+
+    private fun determineUserColor(
+        dbGame: Game,
+        chesslibGame: ParsedGame,
+    ): String? {
+        val accountUsername = dbGame.chessAccount.username
+        val matchesWhite =
+            dbGame.whiteUsername?.equals(accountUsername, ignoreCase = true) == true ||
+                chesslibGame.whitePlayer?.name?.equals(accountUsername, ignoreCase = true) == true
+        val matchesBlack =
+            dbGame.blackUsername?.equals(accountUsername, ignoreCase = true) == true ||
+                chesslibGame.blackPlayer?.name?.equals(accountUsername, ignoreCase = true) == true
+
+        return when {
+            matchesWhite && !matchesBlack -> "WHITE"
+            matchesBlack && !matchesWhite -> "BLACK"
+            else -> {
+                log.warn(
+                    "Game {} skipped for occurrence creation: account '{}' matched {} player identities " +
+                        "(White: {}, Black: {})",
+                    dbGame.id,
+                    accountUsername,
+                    if (matchesWhite && matchesBlack) "both" else "neither",
+                    dbGame.whiteUsername ?: chesslibGame.whitePlayer?.name,
+                    dbGame.blackUsername ?: chesslibGame.blackPlayer?.name,
+                )
+                null
+            }
+        }
+    }
+
+    private fun traverseGameMoves(
+        dbGame: Game,
+        moves: MoveList,
+        userColor: String,
+        decisionTimes: Map<Int, Long>,
+        allPositions: MutableMap<String, Position>,
+        occurrences: MutableList<PositionOccurrence>,
+    ) {
+        val board = Board()
+        for ((index, move) in moves.withIndex()) {
+            val isWhiteTurn = index % 2 == 0
+            val isUserTurn = (isWhiteTurn && userColor == "WHITE") || (!isWhiteTurn && userColor == "BLACK")
+
+            if (isUserTurn) {
+                val rawFen = board.fen
+                val hash = generateHash(rawFen)
+                val position = allPositions.getOrPut(hash) { Position(hash = hash, fen = rawFen) }
+
+                occurrences.add(
+                    PositionOccurrence(
+                        game = dbGame,
+                        position = position,
+                        chessAccount = dbGame.chessAccount,
+                        plyNumber = index + 1,
+                        movePlayed = move.san,
+                        playerColor = userColor,
+                        decisionTimeMs = decisionTimes[index + 1],
+                    ),
+                )
+            }
+            board.doMove(move)
+        }
+    }
+
+    private fun persistPositions(allPositions: Map<String, Position>): MutableMap<String, Position> {
         val existingPositions =
             positionRepository.findByHashIn(allPositions.keys.toList())
                 .associateBy { it.hash }
@@ -150,98 +182,110 @@ class GameParserService(
 
         val newPositions = allPositions.values.filter { !existingPositions.containsKey(it.hash) }
         if (supportsConflictSafeInsert()) {
-            // Let PostgreSQL arbitrate concurrent creation without replacing the canonical winner.
-            val fallbackPositions = mutableListOf<Position>()
-            newPositions.sortedBy { it.hash }.forEach { position ->
-                existingPositions[position.hash] = position
-                val inserted = positionRepository.insertIfAbsent(position.id, position.hash, position.fen, position.createdAt)
-                if (inserted == 0 && positionRepository.findByHash(position.hash) == null) {
-                    fallbackPositions.add(position)
-                }
-            }
-            positionRepository.flush()
-
-            // Resolve every hash again so conflict losers use the winner's canonical ID.
-            positionRepository.findByHashIn(allPositions.keys.toList()).forEach { existingPositions[it.hash] = it }
-
-            // Keep repository-backed unit-test doubles compatible when they do not model native inserts.
-            if (fallbackPositions.isNotEmpty()) {
-                positionRepository.saveAll(fallbackPositions).forEach { existingPositions[it.hash] = it }
-            }
+            insertPositionsConflictSafe(newPositions, allPositions.keys.toList(), existingPositions)
         } else {
             positionRepository.saveAll(newPositions).forEach { existingPositions[it.hash] = it }
         }
+        return existingPositions
+    }
 
-        // Now map occurrences to the real persisted positions
-        val mappedOccurrences =
-            occurrences.map { occurrence ->
-                val persistedPosition = existingPositions[occurrence.position.hash]!!
-                PositionOccurrence(
-                    game = occurrence.game,
-                    position = persistedPosition,
-                    chessAccount = occurrence.chessAccount,
-                    plyNumber = occurrence.plyNumber,
-                    movePlayed = occurrence.movePlayed,
-                    playerColor = occurrence.playerColor,
-                    decisionTimeMs = occurrence.decisionTimeMs,
-                )
-            }
-        // The durable guarantee for occurrence identity is the
-        // uk_position_occurrence_identity unique constraint on
-        // (game_id, position_id, ply_number, player_color); both write paths
-        // below only decide how a replay avoids provoking it.
-        if (supportsConflictSafeInsert()) {
-            mappedOccurrences
-                .sortedWith(
-                    compareBy<PositionOccurrence> { it.game.id.toString() }
-                        .thenBy { it.position.id.toString() }
-                        .thenBy { it.plyNumber }
-                        .thenBy { it.playerColor },
-                )
-                .forEach { occurrence ->
-                    positionOccurrenceRepository.insertOrRefreshDecisionTime(
-                        occurrence.id,
-                        occurrence.game.id,
-                        occurrence.position.id,
-                        occurrence.chessAccount.id,
-                        occurrence.plyNumber,
-                        occurrence.movePlayed,
-                        occurrence.playerColor,
-                        occurrence.decisionTimeMs,
-                        occurrence.createdAt,
-                    )
-                }
-        } else {
-            val existingOccurrences =
-                if (mappedOccurrences.isEmpty()) {
-                    emptyMap()
-                } else {
-                    positionOccurrenceRepository
-                        .findByGameIdIn(mappedOccurrences.map { it.game.id }.distinct())
-                        .associateBy { occurrenceKey(it.game.id, it.position.id, it.plyNumber, it.playerColor) }
-                }
-            val newOccurrences = mutableListOf<PositionOccurrence>()
-            mappedOccurrences.forEach { occurrence ->
-                val key = occurrenceKey(occurrence.game.id, occurrence.position.id, occurrence.plyNumber, occurrence.playerColor)
-                if (key in existingOccurrences) {
-                    positionOccurrenceRepository.updateDecisionTime(
-                        occurrence.game.id,
-                        occurrence.position.id,
-                        occurrence.plyNumber,
-                        occurrence.playerColor,
-                        occurrence.decisionTimeMs,
-                    )
-                } else {
-                    newOccurrences.add(occurrence)
-                }
-            }
-            if (newOccurrences.isNotEmpty()) {
-                positionOccurrenceRepository.saveAll(newOccurrences)
+    private fun insertPositionsConflictSafe(
+        newPositions: List<Position>,
+        allHashes: List<String>,
+        existingPositions: MutableMap<String, Position>,
+    ) {
+        val fallbackPositions = mutableListOf<Position>()
+        newPositions.sortedBy { it.hash }.forEach { position ->
+            existingPositions[position.hash] = position
+            val inserted = positionRepository.insertIfAbsent(position.id, position.hash, position.fen, position.createdAt)
+            if (inserted == 0 && positionRepository.findByHash(position.hash) == null) {
+                fallbackPositions.add(position)
             }
         }
+        positionRepository.flush()
 
-        // Return the set of affected position IDs
-        return mappedOccurrences.map { it.position.id }.toSet()
+        positionRepository.findByHashIn(allHashes).forEach { existingPositions[it.hash] = it }
+
+        if (fallbackPositions.isNotEmpty()) {
+            positionRepository.saveAll(fallbackPositions).forEach { existingPositions[it.hash] = it }
+        }
+    }
+
+    private fun mapOccurrences(
+        occurrences: List<PositionOccurrence>,
+        existingPositions: Map<String, Position>,
+    ): List<PositionOccurrence> =
+        occurrences.map { occurrence ->
+            val persistedPosition = existingPositions.getValue(occurrence.position.hash)
+            PositionOccurrence(
+                game = occurrence.game,
+                position = persistedPosition,
+                chessAccount = occurrence.chessAccount,
+                plyNumber = occurrence.plyNumber,
+                movePlayed = occurrence.movePlayed,
+                playerColor = occurrence.playerColor,
+                decisionTimeMs = occurrence.decisionTimeMs,
+            )
+        }
+
+    private fun persistOccurrences(mappedOccurrences: List<PositionOccurrence>) {
+        if (supportsConflictSafeInsert()) {
+            persistOccurrencesConflictSafe(mappedOccurrences)
+        } else {
+            persistOccurrencesJpa(mappedOccurrences)
+        }
+    }
+
+    private fun persistOccurrencesConflictSafe(mappedOccurrences: List<PositionOccurrence>) {
+        mappedOccurrences
+            .sortedWith(
+                compareBy<PositionOccurrence> { it.game.id.toString() }
+                    .thenBy { it.position.id.toString() }
+                    .thenBy { it.plyNumber }
+                    .thenBy { it.playerColor },
+            )
+            .forEach { occurrence ->
+                positionOccurrenceRepository.insertOrRefreshDecisionTime(
+                    occurrence.id,
+                    occurrence.game.id,
+                    occurrence.position.id,
+                    occurrence.chessAccount.id,
+                    occurrence.plyNumber,
+                    occurrence.movePlayed,
+                    occurrence.playerColor,
+                    occurrence.decisionTimeMs,
+                    occurrence.createdAt,
+                )
+            }
+    }
+
+    private fun persistOccurrencesJpa(mappedOccurrences: List<PositionOccurrence>) {
+        val existingOccurrences =
+            if (mappedOccurrences.isEmpty()) {
+                emptyMap()
+            } else {
+                positionOccurrenceRepository
+                    .findByGameIdIn(mappedOccurrences.map { it.game.id }.distinct())
+                    .associateBy { occurrenceKey(it.game.id, it.position.id, it.plyNumber, it.playerColor) }
+            }
+        val newOccurrences = mutableListOf<PositionOccurrence>()
+        mappedOccurrences.forEach { occurrence ->
+            val key = occurrenceKey(occurrence.game.id, occurrence.position.id, occurrence.plyNumber, occurrence.playerColor)
+            if (key in existingOccurrences) {
+                positionOccurrenceRepository.updateDecisionTime(
+                    occurrence.game.id,
+                    occurrence.position.id,
+                    occurrence.plyNumber,
+                    occurrence.playerColor,
+                    occurrence.decisionTimeMs,
+                )
+            } else {
+                newOccurrences.add(occurrence)
+            }
+        }
+        if (newOccurrences.isNotEmpty()) {
+            positionOccurrenceRepository.saveAll(newOccurrences)
+        }
     }
 
     private fun occurrenceKey(
@@ -260,30 +304,55 @@ class GameParserService(
         val headers = pgnHeaderTagReader.read(pgn)
         if (headers.status != PgnHeaderStatus.OK) return emptyMap()
 
-        val timeControl =
-            TIME_CONTROL_PATTERN.matchEntire(headers.timeControl.orEmpty())
-                ?: return emptyMap()
-        val baseSeconds = timeControl.groupValues[1].toLongOrNull() ?: return emptyMap()
+        val clockConfig = parseClockConfig(headers.timeControl.orEmpty()) ?: return emptyMap()
+        val comments = parsedGame.comments.orEmpty()
+        if (!validateClockCounts(pgn, comments)) return emptyMap()
+
+        return calculatePlyDecisionTimes(moves, playerColor, comments, clockConfig) ?: emptyMap()
+    }
+
+    private data class ClockConfig(
+        val baseClockMs: Long,
+        val incrementMs: Long,
+    )
+
+    private fun parseClockConfig(timeControlText: String): ClockConfig? {
+        val timeControl = TIME_CONTROL_PATTERN.matchEntire(timeControlText) ?: return null
+        val baseSeconds = timeControl.groupValues[1].toLongOrNull() ?: return null
         val incrementText = timeControl.groupValues[2]
         val incrementSeconds =
             if (incrementText.isEmpty()) {
                 0L
             } else {
-                incrementText.toLongOrNull() ?: return emptyMap()
+                incrementText.toLongOrNull() ?: return null
             }
-        if (baseSeconds <= 0) return emptyMap()
-        if (incrementText.isNotEmpty() && incrementSeconds <= 0) return emptyMap()
-        val baseClockMs = baseSeconds.toMillisecondsOrNull() ?: return emptyMap()
-        val incrementMs = incrementSeconds.toMillisecondsOrNull() ?: return emptyMap()
+        if (baseSeconds <= 0) return null
+        if (incrementText.isNotEmpty() && incrementSeconds <= 0) return null
 
-        val comments = parsedGame.comments.orEmpty()
+        val baseClockMs = baseSeconds.toMillisecondsOrNull() ?: return null
+        val incrementMs = incrementSeconds.toMillisecondsOrNull() ?: return null
+        return ClockConfig(baseClockMs, incrementMs)
+    }
+
+    private fun validateClockCounts(
+        pgn: String,
+        comments: Map<Int, String>,
+    ): Boolean {
         val moveTextStart = MOVE_TEXT_SEPARATOR.find(pgn)?.range?.last?.plus(1) ?: pgn.length
         val sourceClockCount = CLOCK_TAG_START.findAll(pgn.substring(moveTextStart)).count()
         val parsedClockCount = comments.values.sumOf { comment -> CLOCK_TAG_START.findAll(comment).count() }
-        if (sourceClockCount != parsedClockCount) return emptyMap()
+        return sourceClockCount == parsedClockCount
+    }
 
+    private fun calculatePlyDecisionTimes(
+        moves: MoveList,
+        playerColor: String,
+        comments: Map<Int, String>,
+        config: ClockConfig,
+    ): Map<Int, Long>? {
         var previousOwnClockMs: Long? = null
         val result = mutableMapOf<Int, Long>()
+
         for ((index, _) in moves.withIndex()) {
             val isPlayerMove = (index % 2 == 0 && playerColor == "WHITE") || (index % 2 != 0 && playerColor == "BLACK")
             if (!isPlayerMove) continue
@@ -293,16 +362,16 @@ class GameParserService(
                 CLOCK_TAG_PATTERN.findAll(comments[plyNumber].orEmpty())
                     .map { it.groupValues[1].trim() }
                     .toList()
-            if (clocks.size != 1) return emptyMap()
-            val postMoveClockMs = parseClockMs(clocks.single()) ?: return emptyMap()
-            val startingClockMs = previousOwnClockMs ?: baseClockMs
+            if (clocks.size != 1) return null
+            val postMoveClockMs = parseClockMs(clocks.single()) ?: return null
+            val startingClockMs = previousOwnClockMs ?: config.baseClockMs
             val decisionTimeMs =
                 try {
-                    Math.subtractExact(Math.addExact(startingClockMs, incrementMs), postMoveClockMs)
+                    Math.subtractExact(Math.addExact(startingClockMs, config.incrementMs), postMoveClockMs)
                 } catch (_: ArithmeticException) {
-                    return emptyMap()
+                    return null
                 }
-            if (decisionTimeMs < 0) return emptyMap()
+            if (decisionTimeMs < 0) return null
 
             result[plyNumber] = decisionTimeMs
             previousOwnClockMs = postMoveClockMs
