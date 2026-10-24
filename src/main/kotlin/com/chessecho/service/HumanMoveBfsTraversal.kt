@@ -3,6 +3,7 @@ package com.chessecho.service
 import com.chessecho.domain.RatingBand
 import com.chessecho.domain.TimeControl
 import com.github.bhlangonijr.chesslib.Board
+import com.github.bhlangonijr.chesslib.move.MoveList
 import com.github.bhlangonijr.chesslib.pgn.PgnHolder
 import org.slf4j.Logger
 import java.io.File
@@ -65,6 +66,33 @@ internal data class HumanMoveBfsTraversalResult(
     val stopReason: String,
 )
 
+private data class TraversalState(
+    val visitedPlayers: MutableSet<String> = mutableSetOf(),
+    val queuedPlayers: MutableSet<String> = mutableSetOf(),
+    val excludedPlayers: Set<String>,
+    val seenGameUrls: MutableSet<String> = mutableSetOf(),
+    var currentFrontier: List<String>,
+    var depth: Int = 0,
+    var totalPlayersVisited: Int = 0,
+    var totalGamesInspected: Int = 0,
+    var totalRapidGames: Int = 0,
+    var totalQualifyingGames: Int = 0,
+    var stopReason: String = "",
+)
+
+private data class PlayerTraversalStats(
+    var gamesInspected: Int = 0,
+    var newRapidGamesInspected: Int = 0,
+    var qualifyingGames: Int = 0,
+    var newOpponentsDiscovered: Int = 0,
+)
+
+private data class ExtractedOpponent(
+    val username: String,
+    val rating: Int,
+    val isPlayerWhite: Boolean,
+)
+
 /**
  * The BFS loop previously inlined in [HumanMoveBfsService.runBfs], moved
  * without semantic change so both paths share one traversal and qualification
@@ -78,215 +106,263 @@ internal class HumanMoveBfsTraversal(
         bounds: HumanMoveBfsBounds,
         sink: HumanMoveBfsSink,
     ): HumanMoveBfsTraversalResult {
-        val targetBand = bounds.targetBand
-        val visitedPlayers = mutableSetOf<String>()
-        val queuedPlayers = mutableSetOf<String>()
-        val excludedPlayers = bounds.excludedPlayers.map { it.lowercase() }.toSet()
+        val state = initTraversalState(bounds)
 
-        var currentFrontier =
+        while (isFrontierActive(bounds, state)) {
+            log.info("--- BFS Depth: ${state.depth}, Frontier Size: ${state.currentFrontier.size} ---")
+            val nextFrontier = mutableSetOf<String>()
+
+            for (player in state.currentFrontier) {
+                if (checkPlayerStoppingCondition(bounds, state)) break
+                traversePlayer(player, bounds, sink, state, nextFrontier)
+            }
+
+            if (checkDepthOrStop(bounds, state)) break
+
+            state.currentFrontier = nextFrontier.toList()
+            state.depth++
+        }
+
+        finalizeStopReason(state)
+        return buildResult(state)
+    }
+
+    private fun isFrontierActive(
+        bounds: HumanMoveBfsBounds,
+        state: TraversalState,
+    ): Boolean = state.currentFrontier.isNotEmpty() && (bounds.maxDepth == null || state.depth <= bounds.maxDepth)
+
+    private fun checkDepthOrStop(
+        bounds: HumanMoveBfsBounds,
+        state: TraversalState,
+    ): Boolean {
+        if (state.stopReason.isNotEmpty()) return true
+        if (bounds.maxDepth != null && state.depth == bounds.maxDepth) {
+            state.stopReason = "MAX_DEPTH"
+            return true
+        }
+        return false
+    }
+
+    private fun finalizeStopReason(state: TraversalState) {
+        if (state.stopReason.isEmpty() && state.currentFrontier.isEmpty()) {
+            state.stopReason = "EMPTY_FRONTIER"
+        }
+    }
+
+    private fun buildResult(state: TraversalState): HumanMoveBfsTraversalResult =
+        HumanMoveBfsTraversalResult(
+            playersVisited = state.totalPlayersVisited,
+            depthReached = state.depth,
+            gamesInspected = state.totalGamesInspected,
+            rapidGames = state.totalRapidGames,
+            qualifyingGames = state.totalQualifyingGames,
+            uniqueGamesProcessed = state.seenGameUrls.size,
+            stopReason = state.stopReason,
+        )
+
+    private fun initTraversalState(bounds: HumanMoveBfsBounds): TraversalState {
+        val excludedPlayers = bounds.excludedPlayers.map { it.lowercase() }.toSet()
+        val currentFrontier =
             bounds.seedPlayers
                 .map { it.lowercase() }
                 .filterNot { it in excludedPlayers }
                 .distinct()
-        queuedPlayers.addAll(currentFrontier)
+        val state =
+            TraversalState(
+                excludedPlayers = excludedPlayers,
+                currentFrontier = currentFrontier,
+            )
+        state.queuedPlayers.addAll(currentFrontier)
+        return state
+    }
 
-        var depth = 0
+    private fun checkPlayerStoppingCondition(
+        bounds: HumanMoveBfsBounds,
+        state: TraversalState,
+    ): Boolean {
+        if (bounds.maxPlayers != null && state.totalPlayersVisited >= bounds.maxPlayers) {
+            state.stopReason = "MAX_PLAYERS"
+            return true
+        }
+        if (bounds.maxQualifyingGames != null && state.totalQualifyingGames >= bounds.maxQualifyingGames) {
+            state.stopReason = "MAX_QUALIFYING_GAMES"
+            return true
+        }
+        return false
+    }
 
-        var totalPlayersVisited = 0
-        var totalGamesInspected = 0
-        var totalRapidGames = 0
-        var totalQualifyingGames = 0
-        val seenGameUrls = mutableSetOf<String>()
+    private fun isPlayerBudgetReached(
+        bounds: HumanMoveBfsBounds,
+        state: TraversalState,
+        playerStats: PlayerTraversalStats,
+    ): Boolean =
+        (bounds.maxQualifyingGames != null && state.totalQualifyingGames >= bounds.maxQualifyingGames) ||
+            (playerStats.newRapidGamesInspected >= bounds.maxGamesPerPlayer)
 
-        var stopReason = ""
+    private fun traversePlayer(
+        player: String,
+        bounds: HumanMoveBfsBounds,
+        sink: HumanMoveBfsSink,
+        state: TraversalState,
+        nextFrontier: MutableSet<String>,
+    ) {
+        if (!state.visitedPlayers.add(player)) return
 
-        while (currentFrontier.isNotEmpty() && (bounds.maxDepth == null || depth <= bounds.maxDepth)) {
-            log.info("--- BFS Depth: $depth, Frontier Size: ${currentFrontier.size} ---")
-            val nextFrontier = mutableSetOf<String>()
+        state.totalPlayersVisited++
+        log.info("Processing player: $player")
 
-            for (player in currentFrontier) {
-                if (bounds.maxPlayers != null && totalPlayersVisited >= bounds.maxPlayers) {
-                    stopReason = "MAX_PLAYERS"
-                    break
-                }
-                if (bounds.maxQualifyingGames != null && totalQualifyingGames >= bounds.maxQualifyingGames) {
-                    stopReason = "MAX_QUALIFYING_GAMES"
-                    break
-                }
-
-                if (!visitedPlayers.add(player)) {
-                    continue
-                }
-
-                totalPlayersVisited++
-                log.info("Processing player: $player")
-
-                val archiveUrls =
-                    try {
-                        chessComClient.fetchArchiveUrls(player)
-                    } catch (e: Exception) {
-                        log.warn("Failed to fetch archives for $player: ${e.message}")
-                        sink.onArchiveListFailure(player, e)
-                        continue
-                    }
-
-                var playerGamesInspected = 0
-                // Counts only NEW (not previously seen/claimed) rapid games found
-                // for this player in this run. maxGamesPerPlayer bounds this
-                // per-run new-game budget, not the number of games merely
-                // inspected, so previously ingested games must not consume it.
-                var playerNewRapidGamesInspected = 0
-                var playerQualifyingGames = 0
-                var newOpponentsDiscovered = 0
-
-                // Process archives from newest to oldest
-                for (archiveUrl in archiveUrls.reversed()) {
-                    if (bounds.maxQualifyingGames != null && totalQualifyingGames >= bounds.maxQualifyingGames) break
-                    if (playerNewRapidGamesInspected >= bounds.maxGamesPerPlayer) break
-
-                    val games =
-                        try {
-                            chessComClient.fetchMonthlyGames(archiveUrl) ?: emptyList()
-                        } catch (e: Exception) {
-                            log.warn("Failed to fetch games from $archiveUrl: ${e.message}")
-                            sink.onMonthlyGamesFailure(archiveUrl, e)
-                            continue
-                        }
-
-                    // One round-trip per archive: skip any game the sink reports as
-                    // already contributed, so we do not waste PGN parsing on games
-                    // that will be filtered at the persistent-claim step anyway.
-                    val archiveUrlsInBatch = games.mapNotNull { it["url"] as? String }
-                    val alreadyClaimedUrls: Set<String> =
-                        if (archiveUrlsInBatch.isEmpty()) {
-                            emptySet()
-                        } else {
-                            sink.alreadyContributed(archiveUrlsInBatch)
-                        }
-
-                    // Process games from newest to oldest in the archive
-                    for (game in games.reversed()) {
-                        if (bounds.maxQualifyingGames != null && totalQualifyingGames >= bounds.maxQualifyingGames) break
-                        if (playerNewRapidGamesInspected >= bounds.maxGamesPerPlayer) break
-
-                        totalGamesInspected++
-                        playerGamesInspected++
-
-                        val rules = game["rules"] as? String
-                        if (rules != null && !rules.equals("chess", ignoreCase = true)) {
-                            continue
-                        }
-
-                        val timeClass = game["time_class"] as? String
-                        val timeControl = TimeControl.fromExternal(timeClass)
-                        if (timeControl != TimeControl.RAPID) {
-                            continue
-                        }
-
-                        totalRapidGames++
-
-                        val url = game["url"] as? String ?: continue
-                        if (!seenGameUrls.add(url)) {
-                            continue // Deduplicate games within this run
-                        }
-                        if (url in alreadyClaimedUrls) {
-                            continue // Already contributed by a prior batch / run / day
-                        }
-
-                        // Only games that are new (not previously claimed) count
-                        // toward this run's per-player new-game budget.
-                        playerNewRapidGamesInspected++
-
-                        val whiteData = game["white"] as? Map<*, *> ?: continue
-                        val blackData = game["black"] as? Map<*, *> ?: continue
-
-                        val whiteUsername = (whiteData["username"] as? String)?.lowercase() ?: continue
-                        val blackUsername = (blackData["username"] as? String)?.lowercase() ?: continue
-
-                        val whiteRating = (whiteData["rating"] as? Number)?.toInt() ?: 0
-                        val blackRating = (blackData["rating"] as? Number)?.toInt() ?: 0
-
-                        // Identify which side the traversed player occupies and derive the opponent.
-                        val isPlayerWhite = (whiteUsername == player)
-                        val opponent = if (isPlayerWhite) blackUsername else whiteUsername
-                        val opponentRating = if (isPlayerWhite) blackRating else whiteRating
-
-                        if (opponent in excludedPlayers) {
-                            // Excluded opponents must not affect traversal, attribution,
-                            // or the persistent seen-game claim.
-                            seenGameUrls.remove(url)
-                            continue
-                        }
-
-                        // Add opponent to frontier regardless of rating
-                        if (!visitedPlayers.contains(opponent) && !queuedPlayers.contains(opponent)) {
-                            if (nextFrontier.add(opponent)) {
-                                queuedPlayers.add(opponent)
-                                newOpponentsDiscovered++
-                            }
-                        }
-
-                        // A game only qualifies when the opponent's game-time rating is within the
-                        // target band.  Only the opponent's moves are attributed to the distribution;
-                        // the traversed player's own moves are never recorded.
-                        if (!isRatingInBand(opponentRating, targetBand)) continue
-
-                        val pgn = game["pgn"] as? String ?: continue
-
-                        val counted =
-                            sink.accept(
-                                HumanMoveBfsQualifyingGame(
-                                    url = url,
-                                    traversedPlayer = player,
-                                    opponent = opponent,
-                                    isPlayerWhite = isPlayerWhite,
-                                    opponentRating = opponentRating,
-                                    rules = rules,
-                                    timeClass = timeClass,
-                                    depth = depth,
-                                    pgn = pgn,
-                                ),
-                            )
-                        if (counted) {
-                            playerQualifyingGames++
-                            totalQualifyingGames++
-                        }
-                    }
-                }
-
-                log.info(
-                    "Player $player: $playerGamesInspected games inspected, " +
-                        "$playerQualifyingGames qualifying. " +
-                        "Added $newOpponentsDiscovered opponents.",
-                )
+        val archiveUrls =
+            try {
+                chessComClient.fetchArchiveUrls(player)
+            } catch (e: Exception) {
+                log.warn("Failed to fetch archives for $player: ${e.message}")
+                sink.onArchiveListFailure(player, e)
+                return
             }
 
-            if (stopReason.isNotEmpty()) {
-                break
-            }
-
-            if (bounds.maxDepth != null && depth == bounds.maxDepth && stopReason.isEmpty()) {
-                stopReason = "MAX_DEPTH"
-                break
-            }
-
-            currentFrontier = nextFrontier.toList()
-            depth++
+        val playerStats = PlayerTraversalStats()
+        for (archiveUrl in archiveUrls.reversed()) {
+            if (isPlayerBudgetReached(bounds, state, playerStats)) break
+            inspectPlayerArchive(archiveUrl, player, bounds, sink, state, nextFrontier, playerStats)
         }
 
-        if (stopReason.isEmpty() && currentFrontier.isEmpty()) {
-            stopReason = "EMPTY_FRONTIER"
-        }
-
-        return HumanMoveBfsTraversalResult(
-            playersVisited = totalPlayersVisited,
-            depthReached = depth,
-            gamesInspected = totalGamesInspected,
-            rapidGames = totalRapidGames,
-            qualifyingGames = totalQualifyingGames,
-            uniqueGamesProcessed = seenGameUrls.size,
-            stopReason = stopReason,
+        log.info(
+            "Player $player: ${playerStats.gamesInspected} games inspected, " +
+                "${playerStats.qualifyingGames} qualifying. " +
+                "Added ${playerStats.newOpponentsDiscovered} opponents.",
         )
+    }
+
+    private fun inspectPlayerArchive(
+        archiveUrl: String,
+        player: String,
+        bounds: HumanMoveBfsBounds,
+        sink: HumanMoveBfsSink,
+        state: TraversalState,
+        nextFrontier: MutableSet<String>,
+        playerStats: PlayerTraversalStats,
+    ) {
+        val games =
+            try {
+                chessComClient.fetchMonthlyGames(archiveUrl) ?: emptyList()
+            } catch (e: Exception) {
+                log.warn("Failed to fetch games from $archiveUrl: ${e.message}")
+                sink.onMonthlyGamesFailure(archiveUrl, e)
+                return
+            }
+
+        val archiveUrlsInBatch = games.mapNotNull { it["url"] as? String }
+        val alreadyClaimedUrls =
+            if (archiveUrlsInBatch.isEmpty()) {
+                emptySet()
+            } else {
+                sink.alreadyContributed(archiveUrlsInBatch)
+            }
+
+        for (game in games.reversed()) {
+            if (isPlayerBudgetReached(bounds, state, playerStats)) break
+            processCandidateGame(game, player, bounds, sink, state, nextFrontier, playerStats, alreadyClaimedUrls)
+        }
+    }
+
+    private fun isRapidGame(game: Map<*, *>): Boolean {
+        val rules = game["rules"] as? String
+        if (rules != null && !rules.equals("chess", ignoreCase = true)) return false
+        val timeClass = game["time_class"] as? String
+        return TimeControl.fromExternal(timeClass) == TimeControl.RAPID
+    }
+
+    private fun tryQueueOpponent(
+        opponentUsername: String,
+        state: TraversalState,
+        nextFrontier: MutableSet<String>,
+        playerStats: PlayerTraversalStats,
+    ) {
+        if (!state.visitedPlayers.contains(opponentUsername) && !state.queuedPlayers.contains(opponentUsername)) {
+            if (nextFrontier.add(opponentUsername)) {
+                state.queuedPlayers.add(opponentUsername)
+                playerStats.newOpponentsDiscovered++
+            }
+        }
+    }
+
+    private fun processCandidateGame(
+        game: Map<*, *>,
+        player: String,
+        bounds: HumanMoveBfsBounds,
+        sink: HumanMoveBfsSink,
+        state: TraversalState,
+        nextFrontier: MutableSet<String>,
+        playerStats: PlayerTraversalStats,
+        alreadyClaimedUrls: Set<String>,
+    ) {
+        state.totalGamesInspected++
+        playerStats.gamesInspected++
+
+        if (!isRapidGame(game)) return
+        state.totalRapidGames++
+
+        val url = game["url"] as? String ?: return
+        if (!state.seenGameUrls.add(url) || url in alreadyClaimedUrls) return
+
+        playerStats.newRapidGamesInspected++
+
+        val opponent = extractOpponent(game, player) ?: return
+        if (opponent.username in state.excludedPlayers) {
+            state.seenGameUrls.remove(url)
+            return
+        }
+
+        tryQueueOpponent(opponent.username, state, nextFrontier, playerStats)
+
+        if (!isRatingInBand(opponent.rating, bounds.targetBand)) return
+        val pgn = game["pgn"] as? String ?: return
+
+        dispatchQualifyingGame(url, player, opponent, game, pgn, sink, state, playerStats)
+    }
+
+    private fun dispatchQualifyingGame(
+        url: String,
+        player: String,
+        opponent: ExtractedOpponent,
+        game: Map<*, *>,
+        pgn: String,
+        sink: HumanMoveBfsSink,
+        state: TraversalState,
+        playerStats: PlayerTraversalStats,
+    ) {
+        val qualifyingGame =
+            HumanMoveBfsQualifyingGame(
+                url = url,
+                traversedPlayer = player,
+                opponent = opponent.username,
+                isPlayerWhite = opponent.isPlayerWhite,
+                opponentRating = opponent.rating,
+                rules = game["rules"] as? String,
+                timeClass = game["time_class"] as? String,
+                depth = state.depth,
+                pgn = pgn,
+            )
+
+        if (sink.accept(qualifyingGame)) {
+            playerStats.qualifyingGames++
+            state.totalQualifyingGames++
+        }
+    }
+
+    private fun extractOpponent(
+        game: Map<*, *>,
+        player: String,
+    ): ExtractedOpponent? {
+        val whiteData = game["white"] as? Map<*, *> ?: return null
+        val blackData = game["black"] as? Map<*, *> ?: return null
+        val whiteUsername = (whiteData["username"] as? String)?.lowercase() ?: return null
+        val blackUsername = (blackData["username"] as? String)?.lowercase() ?: return null
+        val isPlayerWhite = (whiteUsername == player)
+        val opponentUsername = if (isPlayerWhite) blackUsername else whiteUsername
+        val opponentRating = ((if (isPlayerWhite) blackData["rating"] else whiteData["rating"]) as? Number)?.toInt() ?: 0
+        return ExtractedOpponent(opponentUsername, opponentRating, isPlayerWhite)
     }
 
     /**
@@ -307,48 +383,57 @@ internal class HumanMoveBfsTraversal(
             val pgnHolder = PgnHolder(file.absolutePath)
             pgnHolder.loadPgn()
 
-            if (pgnHolder.game.isNotEmpty()) {
-                val chesslibGame = pgnHolder.game.first()
-                val initialFen = chesslibGame.fen
-                if (initialFen != null && initialFen.isNotBlank() && !GameParserService.isStandardStartFen(initialFen)) {
-                    return HumanMoveBfsPgnOutcome.NON_STANDARD_START
-                }
+            if (pgnHolder.game.isEmpty()) return HumanMoveBfsPgnOutcome.PARSED
 
-                chesslibGame.loadMoveText()
-                val moves = chesslibGame.halfMoves
-                val board = Board()
-
-                for ((index, move) in moves.withIndex()) {
-                    val isWhiteTurn = index % 2 == 0
-                    val isQualifyingTurn = (isWhiteTurn && isWhiteInBand) || (!isWhiteTurn && isBlackInBand)
-
-                    if (isQualifyingTurn) {
-                        val rawFen = board.fen
-                        val hash = GameParserService.generateHash(rawFen)
-                        val moveSan = move.san
-
-                        fenByHash[hash] = rawFen
-
-                        val key = Pair(hash, moveSan)
-                        observations[key] = observations.getOrDefault(key, 0) + 1
-                        occurrences?.add(
-                            HumanMoveCorpusOccurrence(
-                                preMovePly = index + 1,
-                                positionHash = hash,
-                                movePlayed = moveSan,
-                            ),
-                        )
-                    }
-
-                    board.doMove(move)
-                }
+            val chesslibGame = pgnHolder.game.first()
+            val initialFen = chesslibGame.fen
+            if (initialFen != null && initialFen.isNotBlank() && !GameParserService.isStandardStartFen(initialFen)) {
+                return HumanMoveBfsPgnOutcome.NON_STANDARD_START
             }
+
+            chesslibGame.loadMoveText()
+            recordMoveObservations(chesslibGame.halfMoves, isWhiteInBand, isBlackInBand, observations, fenByHash, occurrences)
             return HumanMoveBfsPgnOutcome.PARSED
         } catch (e: Exception) {
             log.debug("Failed to parse game: ${e.message}")
             return HumanMoveBfsPgnOutcome.PARSE_FAILED
         } finally {
             file.delete()
+        }
+    }
+
+    private fun recordMoveObservations(
+        moves: MoveList,
+        isWhiteInBand: Boolean,
+        isBlackInBand: Boolean,
+        observations: MutableMap<Pair<String, String>, Int>,
+        fenByHash: MutableMap<String, String>,
+        occurrences: MutableList<HumanMoveCorpusOccurrence>?,
+    ) {
+        val board = Board()
+        for ((index, move) in moves.withIndex()) {
+            val isWhiteTurn = index % 2 == 0
+            val isQualifyingTurn = (isWhiteTurn && isWhiteInBand) || (!isWhiteTurn && isBlackInBand)
+
+            if (isQualifyingTurn) {
+                val rawFen = board.fen
+                val hash = GameParserService.generateHash(rawFen)
+                val moveSan = move.san
+
+                fenByHash[hash] = rawFen
+
+                val key = Pair(hash, moveSan)
+                observations[key] = observations.getOrDefault(key, 0) + 1
+                occurrences?.add(
+                    HumanMoveCorpusOccurrence(
+                        preMovePly = index + 1,
+                        positionHash = hash,
+                        movePlayed = moveSan,
+                    ),
+                )
+            }
+
+            board.doMove(move)
         }
     }
 
