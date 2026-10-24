@@ -84,97 +84,86 @@ class PuzzleControllerIntegrationTest {
     fun setup() {
         val user = appUserRepository.save(AppUser(email = "puzzle_integration@test.com"))
         account = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = "puzzleuser"))
-
         val game =
             gameRepository.save(
-                Game(
-                    chessAccount = account,
-                    platformGameId = "game1",
-                    timeControl = "blitz",
-                    pgn = "test pgn",
-                    result = "win",
-                ),
+                Game(chessAccount = account, platformGameId = "game1", timeControl = "blitz", pgn = "test pgn", result = "win"),
             )
 
-        // Position 1: Big mistake (evalLoss = 2.0). 3 mistakes of Qh5, 2 good moves of e4
-        val position1 =
-            positionRepository.save(
-                Position(hash = "puzzlehash1", fen = "rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq e6 0 2"),
-            )
+        seedPuzzlePosition(
+            game = game,
+            hash = "puzzlehash1",
+            fen = "rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq e6 0 2",
+            mistakeMove = "Qh5",
+            mistakeLoss = 2.0,
+            mistakeCp = -150,
+            goodMove = "e4",
+            goodLoss = 0.05,
+            goodCp = 45,
+            bestMove = "e4",
+            bestEvalCp = 50,
+        )
+        seedPuzzlePosition(
+            game = game,
+            hash = "puzzlehash2",
+            fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
+            mistakeMove = "Bc4",
+            mistakeLoss = 0.5,
+            mistakeCp = -30,
+            goodMove = "d4",
+            goodLoss = 0.0,
+            goodCp = 20,
+            bestMove = "d4",
+            bestEvalCp = 20,
+        )
+    }
+
+    private fun seedPuzzlePosition(
+        game: Game,
+        hash: String,
+        fen: String,
+        mistakeMove: String,
+        mistakeLoss: Double,
+        mistakeCp: Int,
+        goodMove: String,
+        goodLoss: Double,
+        goodCp: Int,
+        bestMove: String,
+        bestEvalCp: Int,
+    ) {
+        val position = positionRepository.save(Position(hash = hash, fen = fen))
         userPositionStatsRepository.save(
-            UserPositionStats(
-                chessAccount = account,
-                position = position1,
-                playerColor = "WHITE",
-                timesReached = 5,
-            ),
+            UserPositionStats(chessAccount = account, position = position, playerColor = "WHITE", timesReached = 5),
         )
         for (i in 1..5) {
             positionOccurrenceRepository.save(
                 PositionOccurrence(
                     game = game,
-                    position = position1,
+                    position = position,
                     chessAccount = account,
                     plyNumber = i,
-                    movePlayed = if (i <= 3) "Qh5" else "e4",
+                    movePlayed = if (i <= 3) mistakeMove else goodMove,
                     playerColor = "WHITE",
                 ),
             )
         }
-        val analysis1 =
+        val analysis =
             engineAnalysisRepository.save(
                 EngineAnalysis(
-                    position = position1,
+                    position = position,
                     depth = 16,
-                    baselineEvalCp = 50,
-                    bestMove = "e4",
-                    bestMoveEvalCp = 50,
+                    baselineEvalCp = bestEvalCp,
+                    bestMove = bestMove,
+                    bestMoveEvalCp = bestEvalCp,
                     analyzedAt = Instant.now(),
                 ),
             )
-        analysis1.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis1, move = "e4", evalCp = 45, evalLossFromBest = 0.05))
-        analysis1.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis1, move = "Qh5", evalCp = -150, evalLossFromBest = 2.0))
-        engineAnalysisRepository.save(analysis1)
-
-        // Position 2: Medium mistake (evalLoss = 0.5). 3 mistakes of Bc4, 2 good moves of d4
-        val position2 =
-            positionRepository.save(
-                Position(hash = "puzzlehash2", fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"),
-            )
-        userPositionStatsRepository.save(
-            UserPositionStats(
-                chessAccount = account,
-                position = position2,
-                playerColor = "WHITE",
-                timesReached = 5,
-            ),
+        analysis.moveEvaluations.add(
+            MoveEvaluation(engineAnalysis = analysis, move = goodMove, evalCp = goodCp, evalLossFromBest = goodLoss),
         )
-        for (i in 1..5) {
-            positionOccurrenceRepository.save(
-                PositionOccurrence(
-                    game = game,
-                    position = position2,
-                    chessAccount = account,
-                    plyNumber = i,
-                    movePlayed = if (i <= 3) "Bc4" else "d4",
-                    playerColor = "WHITE",
-                ),
-            )
-        }
-        val analysis2 =
-            engineAnalysisRepository.save(
-                EngineAnalysis(
-                    position = position2,
-                    depth = 16,
-                    baselineEvalCp = 20,
-                    bestMove = "d4",
-                    bestMoveEvalCp = 20,
-                    analyzedAt = Instant.now(),
-                ),
-            )
-        analysis2.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis2, move = "d4", evalCp = 20, evalLossFromBest = 0.0))
-        analysis2.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis2, move = "Bc4", evalCp = -30, evalLossFromBest = 0.5))
-        engineAnalysisRepository.save(analysis2)
+        analysis.moveEvaluations.add(
+            MoveEvaluation(engineAnalysis = analysis, move = mistakeMove, evalCp = mistakeCp, evalLossFromBest = mistakeLoss),
+        )
+        engineAnalysisRepository.save(analysis)
     }
 
     @AfterEach
@@ -394,7 +383,6 @@ class PuzzleControllerIntegrationTest {
     fun `test puzzles endpoint for username gothamchess as white with minEvalLoss 0,3 returns non-empty result`() {
         val user = appUserRepository.save(AppUser(email = "gotham@test.com"))
         val gothamAccount = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = "gothamchess"))
-
         val game =
             gameRepository.save(
                 Game(
@@ -409,38 +397,7 @@ class PuzzleControllerIntegrationTest {
             positionRepository.save(
                 Position(hash = "gothamhash", fen = "rnbqkbnr/pp1pppp1/7p/2p5/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 0 3"),
             )
-
-        userPositionStatsRepository.save(
-            UserPositionStats(chessAccount = gothamAccount, position = position, playerColor = "WHITE", timesReached = 5),
-        )
-
-        for (i in 1..5) {
-            positionOccurrenceRepository.save(
-                PositionOccurrence(
-                    game = game,
-                    position = position,
-                    chessAccount = gothamAccount,
-                    plyNumber = i,
-                    movePlayed = if (i <= 3) "h3" else "d4",
-                    playerColor = "WHITE",
-                ),
-            )
-        }
-
-        val analysis =
-            engineAnalysisRepository.save(
-                EngineAnalysis(
-                    position = position,
-                    depth = 16,
-                    baselineEvalCp = 40,
-                    bestMove = "d4",
-                    bestMoveEvalCp = 40,
-                    analyzedAt = Instant.now(),
-                ),
-            )
-        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "d4", evalCp = 40, evalLossFromBest = 0.0))
-        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "h3", evalCp = -10, evalLossFromBest = 0.5))
-        engineAnalysisRepository.save(analysis)
+        seedGothamPosition(gothamAccount, game, position)
 
         val response =
             restTemplate.exchange(
@@ -464,11 +421,46 @@ class PuzzleControllerIntegrationTest {
         assertTrue(puzzles[0].gameUrls.isNotEmpty(), "PuzzleResponse should include non-empty gameUrls")
     }
 
+    private fun seedGothamPosition(
+        gothamAccount: ChessAccount,
+        game: Game,
+        position: Position,
+    ) {
+        userPositionStatsRepository.save(
+            UserPositionStats(chessAccount = gothamAccount, position = position, playerColor = "WHITE", timesReached = 5),
+        )
+        for (i in 1..5) {
+            positionOccurrenceRepository.save(
+                PositionOccurrence(
+                    game = game,
+                    position = position,
+                    chessAccount = gothamAccount,
+                    plyNumber = i,
+                    movePlayed = if (i <= 3) "h3" else "d4",
+                    playerColor = "WHITE",
+                ),
+            )
+        }
+        val analysis =
+            engineAnalysisRepository.save(
+                EngineAnalysis(
+                    position = position,
+                    depth = 16,
+                    baselineEvalCp = 40,
+                    bestMove = "d4",
+                    bestMoveEvalCp = 40,
+                    analyzedAt = Instant.now(),
+                ),
+            )
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "d4", evalCp = 40, evalLossFromBest = 0.0))
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "h3", evalCp = -10, evalLossFromBest = 0.5))
+        engineAnalysisRepository.save(analysis)
+    }
+
     @Test
     fun `end to end acceptableMoves includes MultiPV engine candidates while movesPlayed contains only user history`() {
         val user = appUserRepository.save(AppUser(email = "multipv_e2e@test.com"))
         val account = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = "multipvuser"))
-
         val game =
             gameRepository.save(
                 Game(
@@ -479,64 +471,19 @@ class PuzzleControllerIntegrationTest {
                     result = "win",
                 ),
             )
-
         val position =
             positionRepository.save(
                 Position(hash = "multipv_hash", fen = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3"),
             )
-
         userPositionStatsRepository.save(
             UserPositionStats(chessAccount = account, position = position, playerColor = "WHITE", timesReached = 5),
         )
 
-        // User played: 1 time Bc4 (good), 1 time Nf6 (acceptable historical move outside MultiPV top 3), 3 times Qh5 (blunder)
-        // User played 0 times Bb5 (engine only candidate)
-        for (i in 1..5) {
-            val move =
-                when (i) {
-                    1 -> "Bc4"
-                    2 -> "Nf6"
-                    else -> "Qh5"
-                }
-            positionOccurrenceRepository.save(
-                PositionOccurrence(
-                    game = game,
-                    position = position,
-                    chessAccount = account,
-                    plyNumber = i,
-                    movePlayed = move,
-                    playerColor = "WHITE",
-                ),
-            )
-        }
+        seedMultiPvOccurrences(game, position, account)
+        setupMultiPvEngineMocks(position.fen)
 
-        // Mock stockfishService.analyzeMultiPv to return top-3 engine candidates: Bc4 (rank 1 best), Bb5 (rank 2 engine-only), d4 (rank 3 engine-only)
-        val engineCandidates =
-            listOf(
-                EngineCandidate("Bc4", EvalScore(cp = 40, mate = null)),
-                EngineCandidate("Bb5", EvalScore(cp = 35, mate = null)),
-                EngineCandidate("d4", EvalScore(cp = 30, mate = null)),
-            )
-        whenever(stockfishService.analyzeMultiPv(position.fen, 16, 5)).thenReturn(engineCandidates)
-
-        // Secondary search mock for remaining historical moves "Nf6" and "Qh5"
-        val remainingMap =
-            mapOf(
-                "Qh5" to PositionAnalysis(bestMove = "g6", score = EvalScore(cp = -160, mate = null)),
-                "Nf6" to PositionAnalysis(bestMove = "d6", score = EvalScore(cp = 20, mate = null)),
-            )
-        whenever(
-            stockfishService.analyze(
-                org.mockito.kotlin.any(),
-                org.mockito.kotlin.any(),
-                org.mockito.kotlin.any(),
-            ),
-        ).thenReturn(remainingMap)
-
-        // 1. Execute normal engine analysis pipeline
         engineAnalysisService.analyzePosition(position)
 
-        // 2. Fetch puzzle via GET /api/puzzles
         val response =
             restTemplate.exchange(
                 "/api/puzzles?platform=CHESS_COM&username=multipvuser&playerColor=WHITE&minEvalLoss=0.5",
@@ -567,6 +514,49 @@ class PuzzleControllerIntegrationTest {
         // 6. Assert engine-only moves (Bb5, d4) NEVER bleed into movesPlayed
         assertTrue(!movesPlayedNames.contains("Bb5"), "movesPlayed must NOT contain engine candidate Bb5")
         assertTrue(!movesPlayedNames.contains("d4"), "movesPlayed must NOT contain engine candidate d4")
+    }
+
+    private fun seedMultiPvOccurrences(
+        game: Game,
+        position: Position,
+        account: ChessAccount,
+    ) {
+        for (i in 1..5) {
+            val move =
+                when (i) {
+                    1 -> "Bc4"
+                    2 -> "Nf6"
+                    else -> "Qh5"
+                }
+            positionOccurrenceRepository.save(
+                PositionOccurrence(
+                    game = game,
+                    position = position,
+                    chessAccount = account,
+                    plyNumber = i,
+                    movePlayed = move,
+                    playerColor = "WHITE",
+                ),
+            )
+        }
+    }
+
+    private fun setupMultiPvEngineMocks(fen: String) {
+        val engineCandidates =
+            listOf(
+                EngineCandidate("Bc4", EvalScore(cp = 40, mate = null)),
+                EngineCandidate("Bb5", EvalScore(cp = 35, mate = null)),
+                EngineCandidate("d4", EvalScore(cp = 30, mate = null)),
+            )
+        whenever(stockfishService.analyzeMultiPv(fen, 16, 5)).thenReturn(engineCandidates)
+        val remainingMap =
+            mapOf(
+                "Qh5" to PositionAnalysis(bestMove = "g6", score = EvalScore(cp = -160, mate = null)),
+                "Nf6" to PositionAnalysis(bestMove = "d6", score = EvalScore(cp = 20, mate = null)),
+            )
+        whenever(
+            stockfishService.analyze(org.mockito.kotlin.any(), org.mockito.kotlin.any(), org.mockito.kotlin.any()),
+        ).thenReturn(remainingMap)
     }
 
     @Test

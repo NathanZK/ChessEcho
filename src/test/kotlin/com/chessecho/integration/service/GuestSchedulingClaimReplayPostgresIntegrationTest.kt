@@ -3,11 +3,14 @@ package com.chessecho.integration.service
 import com.chessecho.domain.AppUser
 import com.chessecho.domain.ArchiveDerivedStatus
 import com.chessecho.domain.AsyncJob
+import com.chessecho.domain.ChessAccount
 import com.chessecho.domain.EngineAnalysis
 import com.chessecho.domain.MoveEvaluation
 import com.chessecho.domain.Platform
 import com.chessecho.domain.PlayerColor
+import com.chessecho.domain.PositionOccurrence
 import com.chessecho.domain.PuzzleSchedulingEvent
+import com.chessecho.domain.SchedulingEventType
 import com.chessecho.domain.TimeControl
 import com.chessecho.domain.UserPositionWeakness
 import com.chessecho.dto.AccountAssociationRequest
@@ -126,35 +129,7 @@ class GuestSchedulingClaimReplayPostgresIntegrationTest {
         val occurrences = positionOccurrenceRepository.findByChessAccountIdAndPlayerColor(account.id, "WHITE")
         assertFalse(occurrences.isEmpty(), "the fixture archive must yield occurrences to claim")
 
-        // Scheduling events are only emitted for occurrences that carry a weakness and an
-        // analysis, so seed those before forcing the claim-emitting replays.
-        occurrences.forEach { occurrence ->
-            userPositionWeaknessRepository.save(
-                UserPositionWeakness(
-                    chessAccount = account,
-                    position = occurrence.position,
-                    playerColor = occurrence.playerColor,
-                    mistakeCount = 1,
-                ),
-            )
-            val analysis =
-                EngineAnalysis(
-                    position = occurrence.position,
-                    depth = 12,
-                    baselineEvalCp = 20,
-                    bestMove = occurrence.movePlayed,
-                    bestMoveEvalCp = 20,
-                )
-            analysis.moveEvaluations.add(
-                MoveEvaluation(
-                    engineAnalysis = analysis,
-                    move = occurrence.movePlayed,
-                    evalCp = 20,
-                    evalLossFromBest = 0.0,
-                ),
-            )
-            engineAnalysisRepository.save(analysis)
-        }
+        seedWeaknessesAndAnalysesForOccurrences(account, occurrences)
 
         forceArchiveRederivation(account.id)
         val seeding = gameImportService.createImportJob(importRequest())
@@ -183,7 +158,53 @@ class GuestSchedulingClaimReplayPostgresIntegrationTest {
             "the replay must recover from the claim conflict rather than failing the job",
         )
 
-        // 6. Exactly the original rows survive - not replacements silently written by the replay.
+        assertGuestReplaySurvivingClaims(claimedIds, claimedKeys, claimed.size)
+
+        val initiatingUser = appUserRepository.save(AppUser(email = "replay-${UUID.randomUUID()}@example.com"))
+        val principal = AuthenticatedPrincipal(initiatingUser.id, devPrincipal = false)
+        ownership.associate(principal, AccountAssociationRequest(account.platform, account.username))
+
+        assertAuthenticatedImportAndReplay(account, initiatingUser, principal, claimedIds)
+    }
+
+    private fun seedWeaknessesAndAnalysesForOccurrences(
+        account: ChessAccount,
+        occurrences: List<PositionOccurrence>,
+    ) {
+        occurrences.forEach { occurrence ->
+            userPositionWeaknessRepository.save(
+                UserPositionWeakness(
+                    chessAccount = account,
+                    position = occurrence.position,
+                    playerColor = occurrence.playerColor,
+                    mistakeCount = 1,
+                ),
+            )
+            val analysis =
+                EngineAnalysis(
+                    position = occurrence.position,
+                    depth = 12,
+                    baselineEvalCp = 20,
+                    bestMove = occurrence.movePlayed,
+                    bestMoveEvalCp = 20,
+                )
+            analysis.moveEvaluations.add(
+                MoveEvaluation(
+                    engineAnalysis = analysis,
+                    move = occurrence.movePlayed,
+                    evalCp = 20,
+                    evalLossFromBest = 0.0,
+                ),
+            )
+            engineAnalysisRepository.save(analysis)
+        }
+    }
+
+    private fun assertGuestReplaySurvivingClaims(
+        claimedIds: Set<UUID>,
+        claimedKeys: Set<Pair<UUID?, SchedulingEventType>>,
+        claimedCount: Int,
+    ) {
         val afterReplay = puzzleSchedulingEventRepository.findAll().filter { it.sourceOccurrence != null }
         assertEquals(
             claimedKeys,
@@ -195,12 +216,11 @@ class GuestSchedulingClaimReplayPostgresIntegrationTest {
             "recovery must preserve the original claims rather than creating new ones",
         )
         assertEquals(
-            claimed.size,
+            claimedCount,
             afterReplay.size,
             "a replayed guest import must not duplicate source-linked scheduling events",
         )
 
-        // 7. Distinct event types for the same occurrence remain independently representable.
         val perOccurrence = afterReplay.groupBy { it.sourceOccurrence?.id }
         assertTrue(
             perOccurrence.values.any { it.map(PuzzleSchedulingEvent::eventType).toSet().size > 1 },
@@ -213,13 +233,14 @@ class GuestSchedulingClaimReplayPostgresIntegrationTest {
                 "occurrence $occurrenceId must hold at most one event per type",
             )
         }
+    }
 
-        val initiatingUser = appUserRepository.save(AppUser(email = "replay-${UUID.randomUUID()}@example.com"))
-        val principal = AuthenticatedPrincipal(initiatingUser.id, devPrincipal = false)
-        ownership.associate(principal, AccountAssociationRequest(account.platform, account.username))
-
-        // Authenticated claims occupy a separate `(app_user_id, occurrence, event_type)` namespace.
-        // Exercise that namespace through the import worker too, including conflict recovery on replay.
+    private fun assertAuthenticatedImportAndReplay(
+        account: ChessAccount,
+        initiatingUser: AppUser,
+        principal: AuthenticatedPrincipal,
+        claimedIds: Set<UUID>,
+    ) {
         forceArchiveRederivation(account.id)
         val authenticatedFirst = gameImportService.createImportJob(importRequest(account.id), principal)
         gameImportService.executeImportJob(authenticatedFirst.id)
@@ -253,6 +274,22 @@ class GuestSchedulingClaimReplayPostgresIntegrationTest {
             authenticatedClaimsAfterReplay.map { it.sourceOccurrence?.id to it.eventType }.toSet(),
         )
 
+        assertConnectedGuestReplay(
+            account = account,
+            claimedIds = claimedIds,
+            authenticatedClaimIds = authenticatedClaimIds,
+            authenticatedClaimsSize = authenticatedClaims.size,
+            authenticatedClaimsAfterReplay = authenticatedClaimsAfterReplay,
+        )
+    }
+
+    private fun assertConnectedGuestReplay(
+        account: ChessAccount,
+        claimedIds: Set<UUID>,
+        authenticatedClaimIds: Set<UUID>,
+        authenticatedClaimsSize: Int,
+        authenticatedClaimsAfterReplay: List<PuzzleSchedulingEvent>,
+    ) {
         val gameIdsBeforeConnectedGuestReplay =
             gameRepository.findAllByChessAccountOrderByPlayedAtDesc(account).map { it.id }.toSet()
         forceArchiveRederivation(account.id)
@@ -273,7 +310,7 @@ class GuestSchedulingClaimReplayPostgresIntegrationTest {
             "guest replay after connection must preserve the guest claim rows",
         )
         assertEquals(authenticatedClaimIds, authenticatedClaimsAfterReplay.map { it.id }.toSet())
-        assertEquals(authenticatedClaims.size, authenticatedClaimsAfterReplay.size)
+        assertEquals(authenticatedClaimsSize, authenticatedClaimsAfterReplay.size)
     }
 
     /**

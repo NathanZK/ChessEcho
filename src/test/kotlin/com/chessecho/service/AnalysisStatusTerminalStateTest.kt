@@ -85,8 +85,13 @@ class AnalysisStatusTerminalStateTest {
             outcomeType.memberProperties.singleOrNull { it.name == "failedPositionIds" }
                 ?: error("Aggregate analysis outcome must expose failedPositionIds")
 
+        val raw =
+            checkNotNull(failedPositionIds.getter.call(result)) {
+                "Aggregate analysis outcome must expose non-null failedPositionIds"
+            }
+
         @Suppress("UNCHECKED_CAST")
-        return AnalysisOutcomeContract(failedPositionIds.getter.call(result) as Set<UUID>)
+        return AnalysisOutcomeContract(raw as Set<UUID>)
     }
 
     private data class AnalysisOutcomeContract(

@@ -189,8 +189,13 @@ class Issue417AnalysisTerminalStateIntegrationTest {
                     "AsyncJob must durably expose failedPositionIds so a FAILED analysis identifies ${failedPositionIds.joinToString()}",
                 )
 
+        val raw =
+            checkNotNull(property.getter.call(job)) {
+                "AsyncJob failedPositionIds must not be null"
+            }
+
         @Suppress("UNCHECKED_CAST")
-        val persistedFailedPositionIds = property.getter.call(job) as Set<UUID>
+        val persistedFailedPositionIds = raw as Set<UUID>
         assertEquals(failedPositionIds, persistedFailedPositionIds)
     }
 }

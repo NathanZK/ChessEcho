@@ -1,6 +1,7 @@
 package com.chessecho.integration.controller
 
 import com.chessecho.domain.AccountConnection
+import com.chessecho.domain.AppUser
 import com.chessecho.domain.ChessAccount
 import com.chessecho.domain.EngineAnalysis
 import com.chessecho.domain.Game
@@ -24,8 +25,10 @@ import com.chessecho.repository.PositionRepository
 import com.chessecho.repository.PuzzleSchedulingEventRepository
 import com.chessecho.repository.TrainingAttemptRepository
 import com.chessecho.service.AccountOwnershipService
+import com.chessecho.service.auth.EstablishedSession
 import com.chessecho.service.auth.IdentitySessionService
 import com.chessecho.service.auth.VerifiedIdentityClaims
+import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
@@ -131,22 +134,101 @@ class ProgressControllerIntegrationTest {
     @Test
     fun `selected threshold returns 23 mistakes over 26 attempts`() {
         val subject = "progress-threshold-${UUID.randomUUID()}"
-        val session =
-            identitySessionService.establishSession(
-                VerifiedIdentityClaims(
-                    issuer = "integration-test",
-                    subject = subject,
-                    emailSnapshot = "$subject@example.test",
-                    emailVerified = true,
-                ),
-                devPrincipal = false,
-            )
+        val session = establishSession(subject)
         val user = appUserRepository.findById(session.principal.appUserId).orElseThrow()
         val account = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = subject))
         connections.saveAndFlush(AccountConnection(appUser = user, chessAccount = account))
         val position = positionRepository.save(Position(hash = UUID.randomUUID().toString(), fen = "8/8/8/8/8/8/8/8 w - -"))
+        seedProgressThresholdData(account, position, subject, mistakeCount = 23, totalAttempts = 26)
+
+        val headers = HttpHeaders().apply { add(HttpHeaders.COOKIE, "CHESSECHO_SESSION=${session.rawSecret}") }
+        val response =
+            restTemplate.exchange(
+                "/api/positions/${position.id}/progress?accountId=${account.id}&playerColor=WHITE&minEvalLoss=0.3",
+                HttpMethod.GET,
+                HttpEntity<Void>(headers),
+                String::class.java,
+            )
+
+        assertEquals(HttpStatus.OK, response.statusCode)
+        val baseline = objectMapper.readTree(response.body)["baseline"]
+        assertEquals(26, baseline["sourceEncounterCount"].intValue())
+        assertEquals(88.461538, baseline["mistakeRate"].doubleValue(), 0.000001)
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = PlayerColor::class, names = ["WHITE", "BLACK"])
+    fun `authenticated history returns scoped solved intervals and excludes undated encounters`(color: PlayerColor) {
+        val subject = "progress-${UUID.randomUUID()}"
+        val session = establishSession(subject)
+        val user = appUserRepository.findById(session.principal.appUserId).orElseThrow()
+        val foreignSession = establishSession("$subject-foreign")
+        val foreignUser = appUserRepository.findById(foreignSession.principal.appUserId).orElseThrow()
+
+        val firstPlayedAt = Instant.parse("2026-09-01T12:00:00Z")
+        val account =
+            chessAccountRepository.save(
+                ChessAccount(platform = "CHESS_COM", username = subject, createdAt = firstPlayedAt.minusSeconds(86400)),
+            )
+        connections.saveAndFlush(AccountConnection(appUser = user, chessAccount = account))
+        val otherAccount =
+            chessAccountRepository.save(
+                ChessAccount(platform = "CHESS_COM", username = "$subject-other", createdAt = firstPlayedAt),
+            )
+
+        val fen = if (color == PlayerColor.WHITE) "8/8/8/8/8/8/8/8 w - -" else "8/8/8/8/8/8/8/8 b - -"
+        val otherFen = if (color == PlayerColor.WHITE) "8/8/8/8/8/8/8/8 b - -" else "8/8/8/8/8/8/8/8 w - -"
+        val position = positionRepository.save(Position(hash = UUID.randomUUID().toString(), fen = fen))
+        val otherPosition = positionRepository.save(Position(hash = UUID.randomUUID().toString(), fen = otherFen))
+
+        val results = seedProgressHistoryGames(subject, account, position, color, firstPlayedAt)
+        seedUndatedOccurrences(subject, account, otherAccount, position, otherPosition, color)
+
+        seedCheckpointsAndAttempts(
+            user = user,
+            foreignUser = foreignUser,
+            account = account,
+            otherAccount = otherAccount,
+            position = position,
+            otherPosition = otherPosition,
+            color = color,
+            firstPlayedAt = firstPlayedAt,
+        )
+
+        val headers = HttpHeaders().apply { add(HttpHeaders.COOKIE, "CHESSECHO_SESSION=${session.rawSecret}") }
+        val response =
+            restTemplate.exchange(
+                "/api/positions/${position.id}/progress?accountId=${account.id}&playerColor=${color.name}&minEvalLoss=0.3",
+                HttpMethod.GET,
+                HttpEntity<Void>(headers),
+                String::class.java,
+            )
+
+        assertEquals(HttpStatus.OK, response.statusCode)
+        assertHistoryResponseJson(objectMapper.readTree(response.body), position, color, firstPlayedAt, results)
+        assertAccountLifecycle(account, otherAccount, position, color, headers, session)
+    }
+
+    private fun establishSession(subject: String) =
+        identitySessionService.establishSession(
+            VerifiedIdentityClaims(
+                issuer = "integration-test",
+                subject = subject,
+                emailSnapshot = "$subject@example.test",
+                emailVerified = true,
+            ),
+            devPrincipal = false,
+        )
+
+    private fun seedProgressThresholdData(
+        account: ChessAccount,
+        position: Position,
+        subject: String,
+        mistakeCount: Int,
+        totalAttempts: Int,
+    ): EngineAnalysis {
         val analysis = EngineAnalysis(position = position, depth = 16, baselineEvalCp = 0, bestMove = "best", bestMoveEvalCp = 0)
-        (0 until 26).forEach { index ->
+        (0 until totalAttempts).forEach { index ->
             val game =
                 gameRepository.save(
                     Game(
@@ -174,76 +256,20 @@ class ProgressControllerIntegrationTest {
                     engineAnalysis = analysis,
                     move = "move-$index",
                     evalCp = 0,
-                    evalLossFromBest = if (index < 23) 0.34 else 0.29,
+                    evalLossFromBest = if (index < mistakeCount) 0.34 else 0.29,
                 ),
             )
         }
-        engineAnalysisRepository.save(analysis)
-        val headers = HttpHeaders().apply { add(HttpHeaders.COOKIE, "CHESSECHO_SESSION=${session.rawSecret}") }
-
-        val response =
-            restTemplate.exchange(
-                "/api/positions/${position.id}/progress?accountId=${account.id}&playerColor=WHITE&minEvalLoss=0.3",
-                HttpMethod.GET,
-                HttpEntity<Void>(headers),
-                String::class.java,
-            )
-
-        assertEquals(HttpStatus.OK, response.statusCode)
-        val baseline = objectMapper.readTree(response.body)["baseline"]
-        assertEquals(26, baseline["sourceEncounterCount"].intValue())
-        assertEquals(88.461538, baseline["mistakeRate"].doubleValue(), 0.000001)
+        return engineAnalysisRepository.save(analysis)
     }
 
-    @ParameterizedTest
-    @EnumSource(value = PlayerColor::class, names = ["WHITE", "BLACK"])
-    fun `authenticated history returns scoped solved intervals and excludes undated encounters`(color: PlayerColor) {
-        val subject = "progress-${UUID.randomUUID()}"
-        val session =
-            identitySessionService.establishSession(
-                VerifiedIdentityClaims(
-                    issuer = "integration-test",
-                    subject = subject,
-                    emailSnapshot = "$subject@example.test",
-                    emailVerified = true,
-                ),
-                devPrincipal = false,
-            )
-        val user = appUserRepository.findById(session.principal.appUserId).orElseThrow()
-        val foreignSubject = "$subject-foreign"
-        val foreignSession =
-            identitySessionService.establishSession(
-                VerifiedIdentityClaims(
-                    issuer = "integration-test",
-                    subject = foreignSubject,
-                    emailSnapshot = "$foreignSubject@example.test",
-                    emailVerified = true,
-                ),
-                devPrincipal = false,
-            )
-        val foreignUser = appUserRepository.findById(foreignSession.principal.appUserId).orElseThrow()
-        val firstPlayedAt = Instant.parse("2026-09-01T12:00:00Z")
-        val account =
-            chessAccountRepository.save(
-                ChessAccount(
-                    platform = "CHESS_COM",
-                    username = subject,
-                    createdAt = firstPlayedAt.minusSeconds(60 * 60 * 24),
-                ),
-            )
-        connections.saveAndFlush(AccountConnection(appUser = user, chessAccount = account))
-        val position =
-            positionRepository.save(
-                Position(hash = UUID.randomUUID().toString(), fen = "8/8/8/8/8/8/8/8 ${if (color == PlayerColor.WHITE) "w" else "b"} - -"),
-            )
-        val otherPosition =
-            positionRepository.save(
-                Position(hash = UUID.randomUUID().toString(), fen = "8/8/8/8/8/8/8/8 ${if (color == PlayerColor.WHITE) "b" else "w"} - -"),
-            )
-        val otherAccount =
-            chessAccountRepository.save(
-                ChessAccount(platform = "CHESS_COM", username = "$subject-other", createdAt = firstPlayedAt),
-            )
+    private fun seedProgressHistoryGames(
+        subject: String,
+        account: ChessAccount,
+        position: Position,
+        color: PlayerColor,
+        firstPlayedAt: Instant,
+    ): List<String> {
         val results = if (color == PlayerColor.WHITE) listOf("win", "resigned", "agreed") else listOf("resigned", "win", "agreed")
         results.withIndex().reversed().forEach { (index, result) ->
             val game =
@@ -269,100 +295,132 @@ class ProgressControllerIntegrationTest {
                 ),
             )
         }
+        return results
+    }
 
-        fun addUndatedOccurrence(
-            occurrenceAccount: ChessAccount,
-            occurrencePosition: Position,
-            occurrenceColor: PlayerColor,
-            gameSuffix: String,
+    private fun seedUndatedOccurrences(
+        subject: String,
+        account: ChessAccount,
+        otherAccount: ChessAccount,
+        position: Position,
+        otherPosition: Position,
+        color: PlayerColor,
+    ) {
+        fun addUndated(
+            occAccount: ChessAccount,
+            occPos: Position,
+            occColor: PlayerColor,
+            suffix: String,
         ) {
             val game =
                 gameRepository.save(
                     Game(
-                        chessAccount = occurrenceAccount,
-                        platformGameId = "$subject-$gameSuffix",
+                        chessAccount = occAccount,
+                        platformGameId = "$subject-$suffix",
                         pgn = """[Result "*"]""",
                         result = "unknown",
                         playedAt = null,
-                        whiteUsername = occurrenceAccount.username,
+                        whiteUsername = occAccount.username,
                         blackUsername = "opponent",
                     ),
                 )
             occurrenceRepository.save(
                 PositionOccurrence(
                     game = game,
-                    position = occurrencePosition,
-                    chessAccount = occurrenceAccount,
+                    position = occPos,
+                    chessAccount = occAccount,
                     plyNumber = 1,
                     movePlayed = "Nf3",
-                    playerColor = occurrenceColor.name,
+                    playerColor = occColor.name,
                 ),
             )
         }
-        addUndatedOccurrence(account, position, color, "undated-scoped")
-        addUndatedOccurrence(
-            account,
-            position,
-            if (color == PlayerColor.WHITE) PlayerColor.BLACK else PlayerColor.WHITE,
-            "undated-other-color",
-        )
-        addUndatedOccurrence(account, otherPosition, color, "undated-other-position")
-        addUndatedOccurrence(otherAccount, position, color, "undated-other-account")
+        addUndated(account, position, color, "undated-scoped")
+        addUndated(account, position, if (color == PlayerColor.WHITE) PlayerColor.BLACK else PlayerColor.WHITE, "undated-other-color")
+        addUndated(account, otherPosition, color, "undated-other-position")
+        addUndated(otherAccount, position, color, "undated-other-account")
+    }
 
+    private fun seedCheckpointsAndAttempts(
+        user: AppUser,
+        foreignUser: AppUser,
+        account: ChessAccount,
+        otherAccount: ChessAccount,
+        position: Position,
+        otherPosition: Position,
+        color: PlayerColor,
+        firstPlayedAt: Instant,
+    ) {
         val firstCheckpointAt = firstPlayedAt.plusSeconds(30)
         val secondCheckpointAt = firstPlayedAt.plusSeconds(180)
-        val checkpoints =
+        seedCheckpoints(
+            user,
+            foreignUser,
+            account,
+            otherAccount,
+            position,
+            otherPosition,
+            color,
+            firstPlayedAt,
+            firstCheckpointAt,
+            secondCheckpointAt,
+        )
+        seedAttemptsAndBoundaryGame(user, account, position, color, firstCheckpointAt, secondCheckpointAt)
+    }
+
+    private fun seedCheckpoints(
+        user: AppUser,
+        foreignUser: AppUser,
+        account: ChessAccount,
+        otherAccount: ChessAccount,
+        position: Position,
+        otherPosition: Position,
+        color: PlayerColor,
+        firstPlayedAt: Instant,
+        firstCheckpointAt: Instant,
+        secondCheckpointAt: Instant,
+    ) {
+        fun chk(
+            u: AppUser,
+            a: ChessAccount,
+            p: Position,
+            c: String,
+            t: Instant,
+        ) = PuzzleSchedulingEvent(
+            appUser = u,
+            chessAccount = a,
+            position = p,
+            playerColor = c,
+            eventType = SchedulingEventType.SOLVED,
+            occurredAt = t,
+        )
+
+        puzzleSchedulingEventRepository.saveAll(
             listOf(
-                PuzzleSchedulingEvent(
-                    appUser = user,
-                    chessAccount = account,
-                    position = position,
-                    playerColor = color.name,
-                    eventType = SchedulingEventType.SOLVED,
-                    occurredAt = firstCheckpointAt,
+                chk(user, account, position, color.name, firstCheckpointAt),
+                chk(user, account, position, color.name, secondCheckpointAt),
+                chk(foreignUser, account, position, color.name, firstPlayedAt.minusSeconds(30)),
+                chk(user, otherAccount, position, color.name, firstPlayedAt.minusSeconds(30)),
+                chk(user, account, otherPosition, color.name, firstPlayedAt.minusSeconds(30)),
+                chk(
+                    user,
+                    account,
+                    position,
+                    if (color == PlayerColor.WHITE) PlayerColor.BLACK.name else PlayerColor.WHITE.name,
+                    firstPlayedAt.minusSeconds(30),
                 ),
-                PuzzleSchedulingEvent(
-                    appUser = user,
-                    chessAccount = account,
-                    position = position,
-                    playerColor = color.name,
-                    eventType = SchedulingEventType.SOLVED,
-                    occurredAt = secondCheckpointAt,
-                ),
-                PuzzleSchedulingEvent(
-                    appUser = foreignUser,
-                    chessAccount = account,
-                    position = position,
-                    playerColor = color.name,
-                    eventType = SchedulingEventType.SOLVED,
-                    occurredAt = firstPlayedAt.minusSeconds(30),
-                ),
-                PuzzleSchedulingEvent(
-                    appUser = user,
-                    chessAccount = otherAccount,
-                    position = position,
-                    playerColor = color.name,
-                    eventType = SchedulingEventType.SOLVED,
-                    occurredAt = firstPlayedAt.minusSeconds(30),
-                ),
-                PuzzleSchedulingEvent(
-                    appUser = user,
-                    chessAccount = account,
-                    position = otherPosition,
-                    playerColor = color.name,
-                    eventType = SchedulingEventType.SOLVED,
-                    occurredAt = firstPlayedAt.minusSeconds(30),
-                ),
-                PuzzleSchedulingEvent(
-                    appUser = user,
-                    chessAccount = account,
-                    position = position,
-                    playerColor = if (color == PlayerColor.WHITE) PlayerColor.BLACK.name else PlayerColor.WHITE.name,
-                    eventType = SchedulingEventType.SOLVED,
-                    occurredAt = firstPlayedAt.minusSeconds(30),
-                ),
-            )
-        puzzleSchedulingEventRepository.saveAll(checkpoints)
+            ),
+        )
+    }
+
+    private fun seedAttemptsAndBoundaryGame(
+        user: AppUser,
+        account: ChessAccount,
+        position: Position,
+        color: PlayerColor,
+        firstCheckpointAt: Instant,
+        secondCheckpointAt: Instant,
+    ) {
         trainingAttemptRepository.saveAll(
             TrainingAttemptOutcome.entries.map { outcome ->
                 TrainingAttempt(
@@ -380,7 +438,7 @@ class ProgressControllerIntegrationTest {
             gameRepository.save(
                 Game(
                     chessAccount = account,
-                    platformGameId = "$subject-checkpoint-boundary",
+                    platformGameId = "$user-checkpoint-boundary",
                     pgn = """[Result "*"]""",
                     result = "win",
                     playedAt = firstCheckpointAt,
@@ -398,18 +456,15 @@ class ProgressControllerIntegrationTest {
                 playerColor = color.name,
             ),
         )
-        val headers = HttpHeaders().apply { add(HttpHeaders.COOKIE, "CHESSECHO_SESSION=${session.rawSecret}") }
+    }
 
-        val response =
-            restTemplate.exchange(
-                "/api/positions/${position.id}/progress?accountId=${account.id}&playerColor=${color.name}&minEvalLoss=0.3",
-                HttpMethod.GET,
-                HttpEntity<Void>(headers),
-                String::class.java,
-            )
-
-        assertEquals(HttpStatus.OK, response.statusCode)
-        val body = objectMapper.readTree(response.body)
+    private fun assertHistoryResponseJson(
+        body: JsonNode,
+        position: Position,
+        color: PlayerColor,
+        firstPlayedAt: Instant,
+        results: List<String>,
+    ) {
         assertEquals(
             setOf(
                 "positionId",
@@ -450,7 +505,16 @@ class ProgressControllerIntegrationTest {
             "Your mistake rate stayed the same, and your win rate has decreased.",
             body["assessment"].textValue(),
         )
+    }
 
+    private fun assertAccountLifecycle(
+        account: ChessAccount,
+        otherAccount: ChessAccount,
+        position: Position,
+        color: PlayerColor,
+        headers: HttpHeaders,
+        session: EstablishedSession,
+    ) {
         val unconnectedAccountResponse =
             restTemplate.exchange(
                 "/api/positions/${position.id}/progress?accountId=${otherAccount.id}&playerColor=${color.name}&minEvalLoss=0.3",

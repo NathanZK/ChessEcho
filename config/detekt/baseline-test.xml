@@ -11,7 +11,6 @@
   <ManuallySuppressedIssues></ManuallySuppressedIssues>
   <CurrentIssues>
     <ID>CastNullableToNonNullableType:AccountDataBoundaryBaselineSchemaTest.kt$AccountDataBoundaryBaselineSchemaTest$as</ID>
-    <ID>CastNullableToNonNullableType:AnalysisStatusTerminalStateTest.kt$AnalysisStatusTerminalStateTest$as</ID>
     <ID>CastNullableToNonNullableType:DerivedProcessingPostgresConcurrencyTest.kt$DerivedProcessingPostgresConcurrencyTest$as</ID>
     <ID>CastNullableToNonNullableType:EngineMoveProviderTest.kt$EngineMoveProviderTest$as</ID>
     <ID>CastNullableToNonNullableType:EvaluationEvidenceSnapshotPostgresIntegrationTest.kt$EvaluationEvidenceSnapshotPostgresIntegrationTest$as</ID>
@@ -20,22 +19,16 @@
     <ID>CastNullableToNonNullableType:HumanMoveCorpusArtifactPostgresIntegrationTest.kt$HumanMoveCorpusArtifactPostgresIntegrationTest$as</ID>
     <ID>CastNullableToNonNullableType:HumanMoveCorpusPostgresIntegrationTest.kt$HumanMoveCorpusPostgresIntegrationTest$as</ID>
     <ID>CastNullableToNonNullableType:HumanMoveCorpusServiceTest.kt$HumanMoveCorpusServiceTest$as</ID>
-    <ID>CastNullableToNonNullableType:Issue417AnalysisTerminalStateIntegrationTest.kt$Issue417AnalysisTerminalStateIntegrationTest$as</ID>
     <ID>CastNullableToNonNullableType:SelectedPopulationVerificationPostgresIntegrationTest.kt$SelectedPopulationVerificationPostgresIntegrationTest$as</ID>
-    <ID>CastNullableToNonNullableType:TrainingAttemptServiceTest.kt$TrainingAttemptServiceTest$as</ID>
     <ID>CognitiveComplexMethod:HumanMoveBfsServiceTest.kt$HumanMoveBfsServiceTest$private fun makeRepositoryStateful(): StatefulStores</ID>
     <ID>CognitiveComplexMethod:HumanMoveCorpusPostgresIntegrationTest.kt$HumanMoveCorpusPostgresIntegrationTest$@Test fun `concurrent same-run commits yield unique contiguous ordinals with complete contributions, and runs stay isolated`()</ID>
-    <ID>CognitiveComplexMethod:ProgressControllerIntegrationTest.kt$ProgressControllerIntegrationTest$@ParameterizedTest @EnumSource(value = PlayerColor::class, names = ["WHITE", "BLACK"]) fun `authenticated history returns scoped solved intervals and excludes undated encounters`(color: PlayerColor)</ID>
     <ID>CyclomaticComplexMethod:HumanMoveCorpusPostgresIntegrationTest.kt$HumanMoveCorpusPostgresIntegrationTest$@Test fun `concurrent same-run commits yield unique contiguous ordinals with complete contributions, and runs stay isolated`()</ID>
-    <ID>CyclomaticComplexMethod:ProgressControllerIntegrationTest.kt$ProgressControllerIntegrationTest$@ParameterizedTest @EnumSource(value = PlayerColor::class, names = ["WHITE", "BLACK"]) fun `authenticated history returns scoped solved intervals and excludes undated encounters`(color: PlayerColor)</ID>
     <ID>LargeClass:EvaluationEvidenceProducerServiceTest.kt$EvaluationEvidenceProducerServiceTest</ID>
     <ID>LargeClass:EvaluationEvidenceSnapshotPostgresIntegrationTest.kt$EvaluationEvidenceSnapshotPostgresIntegrationTest</ID>
     <ID>LargeClass:EvaluationEvidenceSnapshotTest.kt$EvaluationEvidenceSnapshotTest</ID>
     <ID>LargeClass:GameImportServiceIntegrationTest.kt$GameImportServiceIntegrationTest</ID>
     <ID>LargeClass:HumanMoveBfsServiceTest.kt$HumanMoveBfsServiceTest</ID>
     <ID>LargeClass:HumanMoveCorpusPostgresIntegrationTest.kt$HumanMoveCorpusPostgresIntegrationTest</ID>
-    <ID>LargeClass:ProgressServiceTest.kt$ProgressServiceTest</ID>
-    <ID>LargeClass:WeaknessCalculationServiceTest.kt$WeaknessCalculationServiceTest</ID>
     <ID>LongMethod:EngineAnalysisServiceTest.kt$EngineAnalysisServiceTest$@Test fun `completeMissingMoveEvaluations with mate baseline evaluates candidates against mate and persists evalMate without 0_0 fallback`()</ID>
     <ID>LongMethod:EvaluationEvidenceProducerServiceTest.kt$EvaluationEvidenceProducerServiceTest$@Test fun `produces every selected game occurrence link for all matching reference occurrences`()</ID>
     <ID>LongMethod:EvaluationEvidenceProducerServiceTest.kt$EvaluationEvidenceProducerServiceTest$@Test fun `rejects selected decisions that have no exact in-population hash and ply match`()</ID>
@@ -53,48 +46,12 @@
     <ID>LongMethod:GameImportServiceIntegrationTest.kt$GameImportServiceIntegrationTest$@Test fun `gamesProcessed checkpoints and aggregates every examined entry once across archives`()</ID>
     <ID>LongMethod:GameImportServiceIntegrationTest.kt$GameImportServiceIntegrationTest$@Test fun `non matching games are ignored and do not increment gamesSkipped`()</ID>
     <ID>LongMethod:GameParserServiceTest.kt$GameParserServiceConcurrencyTest$@Test fun `concurrent parsers resolve opposite overlapping position order`()</ID>
-    <ID>LongMethod:GuestSchedulingClaimReplayPostgresIntegrationTest.kt$GuestSchedulingClaimReplayPostgresIntegrationTest$@Test fun `a replayed guest import recovers the existing claim instead of duplicating it`()</ID>
     <ID>LongMethod:HumanMoveBfsServiceTest.kt$HumanMoveBfsServiceTest$@Test fun `every non-empty combination of BFS bounds is accepted`()</ID>
     <ID>LongMethod:HumanMoveCorpusPostgresIntegrationTest.kt$HumanMoveCorpusPostgresIntegrationTest$@Test fun `post-binding occurrence rows reject tampering and rebinding`()</ID>
     <ID>LongMethod:HumanMoveCorpusPostgresIntegrationTest.kt$HumanMoveCorpusPostgresIntegrationTest$@Test fun `post-purge recovery preserves canonical location analysis and rejects missing substituted or mismatched evidence`()</ID>
     <ID>LongMethod:HumanMoveCorpusPostgresIntegrationTest.kt$HumanMoveCorpusPostgresIntegrationTest$private fun finalizedAndPurgedPopulation(label: String): FinalizedPopulation</ID>
-    <ID>LongMethod:OwnerScopedBaselineMigrationTest.kt$OwnerScopedBaselineMigrationTest$@Test fun `applies the single clean PostgreSQL baseline schema and rejects legacy V3 quarantine artifacts`()</ID>
-    <ID>LongMethod:OwnerScopedBaselineMigrationTest.kt$OwnerScopedBaselineMigrationTest$@Test fun `consolidates the schema into a single baseline migration with training attempt telemetry`()</ID>
-    <ID>LongMethod:PositionOccurrenceRepositoryTest.kt$PositionOccurrenceRepositoryTest$@Test fun `findWeaknessAggregations counts mate blunders and ignores unevaluated moves even when minEvalLoss is 0_0`()</ID>
-    <ID>LongMethod:PracticalWeaknessAuthenticatedSchedulingIntegrationTest.kt$PracticalWeaknessAuthenticatedSchedulingContract$@Test fun `both endpoints preserve practical ranking and authenticated scheduling page order`()</ID>
-    <ID>LongMethod:PracticalWeaknessControllerIntegrationTest.kt$PracticalWeaknessControllerIntegrationTest$@Test fun `ranking reorders both endpoints before their page boundaries`()</ID>
-    <ID>LongMethod:ProgressControllerIntegrationTest.kt$ProgressControllerIntegrationTest$@ParameterizedTest @EnumSource(value = PlayerColor::class, names = ["WHITE", "BLACK"]) fun `authenticated history returns scoped solved intervals and excludes undated encounters`(color: PlayerColor)</ID>
-    <ID>LongMethod:ProgressControllerIntegrationTest.kt$ProgressControllerIntegrationTest$@Test fun `selected threshold returns 23 mistakes over 26 attempts`()</ID>
-    <ID>LongMethod:ProgressServiceTest.kt$ProgressServiceTest$@Test fun `late imports update their historical baseline and closed interval without moving points backward`()</ID>
-    <ID>LongMethod:ProgressServiceTest.kt$ProgressServiceTest$@Test fun `multiple checkpoints create independent observations and compare against latest measured`()</ID>
-    <ID>LongMethod:PuzzleControllerIntegrationTest.kt$PuzzleControllerIntegrationTest$@BeforeEach fun setup()</ID>
-    <ID>LongMethod:PuzzleControllerIntegrationTest.kt$PuzzleControllerIntegrationTest$@Test fun `end to end acceptableMoves includes MultiPV engine candidates while movesPlayed contains only user history`()</ID>
-    <ID>LongMethod:PuzzleControllerIntegrationTest.kt$PuzzleControllerIntegrationTest$@Test fun `test puzzles endpoint for username gothamchess as white with minEvalLoss 0,3 returns non-empty result`()</ID>
     <ID>LongMethod:RetainedEvaluationEvidenceTest.kt$RetainedEvaluationEvidenceTest$private fun evidence(): RetainedEvaluationEvidence</ID>
     <ID>LongMethod:SelectedPopulationVerificationPostgresIntegrationTest.kt$SelectedPopulationVerificationPostgresIntegrationTest$private fun finalizedFixture(): Fixture</ID>
-    <ID>LongMethod:SharedWeaknessCalculationReadIntegrationTest.kt$SharedWeaknessCalculationReadIntegrationTest$@Test fun `findWeaknessAggregations produces equivalent mistake count and average loss to in-memory calculation on null evalLossFromBest`()</ID>
-    <ID>LongMethod:WeaknessCalculationServiceTest.kt$WeaknessCalculationServiceTest$@Test fun `practical integration scopes by color uses all rows passes INACCURATE and applies total order`()</ID>
-    <ID>LongMethod:WeaknessCalculationServiceTest.kt$WeaknessCalculationServiceTest$@Test fun `ranking on orders lower objective poor evidence before higher objective successful evidence`()</ID>
-    <ID>LongMethod:WeaknessCalculationServiceTest.kt$WeaknessCalculationServiceTest$@Test fun `test authenticated scheduling delegates history query with correct scoping and mappings`()</ID>
-    <ID>LongMethod:WeaknessCalculationServiceTest.kt$WeaknessCalculationServiceTest$@Test fun `test authenticated scheduling graceful fallback when policy is null or repository is null`()</ID>
-    <ID>LongMethod:WeaknessCalculationServiceTest.kt$WeaknessCalculationServiceTest$@Test fun `test authenticated scheduling re-ranks weaknesses by scheduledScore with secondary tiebreakers`()</ID>
-    <ID>LongMethod:WeaknessCalculationServiceTest.kt$WeaknessCalculationServiceTest$@Test fun `test authenticated scheduling zero-history parity with unauthenticated baseline`()</ID>
-    <ID>LongMethod:WeaknessCalculationServiceTest.kt$WeaknessCalculationServiceTest$@Test fun `test bestMove is never classified as a historical mistake`()</ID>
-    <ID>LongMethod:WeaknessCalculationServiceTest.kt$WeaknessCalculationServiceTest$@Test fun `test concrete regression scenario for time control partitions`()</ID>
-    <ID>LongMethod:WeaknessCalculationServiceTest.kt$WeaknessCalculationServiceTest$@Test fun `test dynamic minEvalLoss changes mistakeCount and classifies moves accurately`()</ID>
-    <ID>LongMethod:WeaknessCalculationServiceTest.kt$WeaknessCalculationServiceTest$@Test fun `test forced-mate outcomes checkmate blunders excluded from acceptableMoves, prolongation retained, null loss excluded`()</ID>
-    <ID>LongMethod:WeaknessCalculationServiceTest.kt$WeaknessCalculationServiceTest$@Test fun `test opening context consensus matching ECO and ECOUrl returns openingContext`()</ID>
-    <ID>LongMethod:WeaknessCalculationServiceTest.kt$WeaknessCalculationServiceTest$@Test fun `test opening context non-consensus and missing tags return null openingContext`()</ID>
-    <ID>LongMethod:WeaknessCalculationServiceTest.kt$WeaknessCalculationServiceTest$@Test fun `test phase classification correctly partitions weaknesses and omits empty buckets`()</ID>
-    <ID>LongMethod:WeaknessCalculationServiceTest.kt$WeaknessCalculationServiceTest$@Test fun `test recent weaknesses rank higher than otherwise equivalent older weaknesses`()</ID>
-    <ID>LongMethod:WeaknessCalculationServiceTest.kt$WeaknessCalculationServiceTest$@Test fun `test time control partitions aggregate correctly and exclude unevaluated or unsupported occurrences`()</ID>
-    <ID>LongMethod:WeaknessCalculationServiceTest.kt$WeaknessCalculationServiceTest$@Test fun `test top-level averageLoss and objective priority arithmetic with multiple occurrences and rawRate less than 1`()</ID>
-    <ID>LongMethod:WeaknessCalculationServiceTest.kt$WeaknessCalculationServiceTest$private fun setupDualColorPositionOccurrences( account: ChessAccount, position: Position, )</ID>
-    <ID>LongMethod:WeaknessCalculationServiceTest.kt$WeaknessCalculationServiceTest$private fun testSinglePhaseClassification( fen: String, plyNumber: Int, ): String</ID>
-    <ID>LongMethod:WeaknessControllerIntegrationTest.kt$WeaknessControllerIntegrationTest$@BeforeEach fun setup()</ID>
-    <ID>LongMethod:WeaknessControllerIntegrationTest.kt$WeaknessControllerIntegrationTest$@Test fun `test asymmetric occurrence play frequencies 20 total occurrences 15 for move A and 5 for move B`()</ID>
-    <ID>LongMethod:WeaknessControllerIntegrationTest.kt$WeaknessControllerIntegrationTest$@Test fun `test playerColor BOTH considers both WHITE and BLACK occurrences`()</ID>
-    <ID>LongMethod:WeaknessControllerIntegrationTest.kt$WeaknessControllerIntegrationTest$@Test fun `test weaknesses endpoint pagination with page size and priority ordering`()</ID>
     <ID>MapGetWithNotNullAssertionOperator:EvaluationEvidenceSnapshotPostgresIntegrationTest.kt$EvaluationEvidenceSnapshotPostgresIntegrationTest$result.byPlayer["evaluated"]!!</ID>
     <ID>MapGetWithNotNullAssertionOperator:EvaluationEvidenceSnapshotPostgresIntegrationTest.kt$EvaluationEvidenceSnapshotPostgresIntegrationTest$result.byPlayer["zero-row"]!!</ID>
     <ID>MapGetWithNotNullAssertionOperator:EvaluationEvidenceSnapshotPostgresIntegrationTest.kt$EvaluationEvidenceSnapshotPostgresIntegrationTest$result.locations["evaluated"]!!</ID>

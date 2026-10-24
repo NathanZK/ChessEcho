@@ -47,9 +47,36 @@ class PositionOccurrenceRepositoryTest {
                     blackUsername = "opponent",
                 ),
             )
-
         val position = positionRepository.save(Position(hash = "mate_agg_pos", fen = "6k1/5ppp/8/8/8/8/5PPP/4R1K1 w - - 0 1"))
 
+        setupMateBlunderAnalysis(position)
+        setupMateBlunderOccurrences(game, position, account)
+
+        val resultStandard =
+            positionOccurrenceRepository.findWeaknessAggregations(
+                chessAccountId = account.id,
+                playerColor = "WHITE",
+                minEvalLoss = 0.8,
+                minTimesReached = 1,
+                minMistakeCount = 1L,
+            )
+        assertEquals(1, resultStandard.size)
+        assertEquals(1L, resultStandard[0].mistakeCount)
+        assertEquals(19.5, resultStandard[0].rawTotalLoss)
+
+        val resultZeroThreshold =
+            positionOccurrenceRepository.findWeaknessAggregations(
+                chessAccountId = account.id,
+                playerColor = "WHITE",
+                minEvalLoss = 0.0,
+                minTimesReached = 1,
+                minMistakeCount = 1L,
+            )
+        assertEquals(1, resultZeroThreshold.size)
+        assertEquals(2L, resultZeroThreshold[0].mistakeCount)
+    }
+
+    private fun setupMateBlunderAnalysis(position: Position) {
         val analysis =
             EngineAnalysis(
                 position = position,
@@ -60,37 +87,19 @@ class PositionOccurrenceRepositoryTest {
                 bestMoveEvalCp = null,
                 bestMoveEvalMate = 1,
             )
-        // Move 1: Best move (0.0 loss)
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "Re8#", evalMate = 1, evalLossFromBest = 0.0))
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "f3", evalMate = -1, evalLossFromBest = 19.5))
         analysis.moveEvaluations.add(
-            MoveEvaluation(
-                engineAnalysis = analysis,
-                move = "Re8#",
-                evalMate = 1,
-                evalLossFromBest = 0.0,
-            ),
-        )
-        // Move 2: Checkmate blunder into losing mate (19.5 loss)
-        analysis.moveEvaluations.add(
-            MoveEvaluation(
-                engineAnalysis = analysis,
-                move = "f3",
-                evalMate = -1,
-                evalLossFromBest = 19.5,
-            ),
-        )
-        // Move 3: Unevaluated move (null loss)
-        analysis.moveEvaluations.add(
-            MoveEvaluation(
-                engineAnalysis = analysis,
-                move = "a3",
-                evalCp = null,
-                evalMate = null,
-                evalLossFromBest = null,
-            ),
+            MoveEvaluation(engineAnalysis = analysis, move = "a3", evalCp = null, evalMate = null, evalLossFromBest = null),
         )
         engineAnalysisRepository.saveAndFlush(analysis)
+    }
 
-        // Save 3 occurrences: Re8# (best), f3 (blunder), a3 (unevaluated)
+    private fun setupMateBlunderOccurrences(
+        game: Game,
+        position: Position,
+        account: ChessAccount,
+    ) {
         val occ1 =
             PositionOccurrence(
                 game = game,
@@ -119,31 +128,5 @@ class PositionOccurrenceRepositoryTest {
                 playerColor = "WHITE",
             )
         positionOccurrenceRepository.saveAllAndFlush(listOf(occ1, occ2, occ3))
-
-        // 1. With standard minEvalLoss = 0.8: only f3 is a mistake
-        val resultStandard =
-            positionOccurrenceRepository.findWeaknessAggregations(
-                chessAccountId = account.id,
-                playerColor = "WHITE",
-                minEvalLoss = 0.8,
-                minTimesReached = 1,
-                minMistakeCount = 1L,
-            )
-        assertEquals(1, resultStandard.size)
-        assertEquals(1L, resultStandard[0].mistakeCount)
-        assertEquals(19.5, resultStandard[0].rawTotalLoss)
-
-        // 2. With minEvalLoss = 0.0: Re8# (0.0) and f3 (19.5) are counted (2 mistakes).
-        // Unevaluated move a3 (evalLossFromBest is NULL) must evaluate to NULL and NOT be counted!
-        val resultZeroThreshold =
-            positionOccurrenceRepository.findWeaknessAggregations(
-                chessAccountId = account.id,
-                playerColor = "WHITE",
-                minEvalLoss = 0.0,
-                minTimesReached = 1,
-                minMistakeCount = 1L,
-            )
-        assertEquals(1, resultZeroThreshold.size)
-        assertEquals(2L, resultZeroThreshold[0].mistakeCount) // exactly 2, not 3!
     }
 }

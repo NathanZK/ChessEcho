@@ -132,28 +132,7 @@ abstract class PracticalWeaknessAuthenticatedSchedulingContract {
             }
         val initialWeaknesses = weaknesses()
         val initialPuzzles = puzzles()
-
-        assertEquals(initialExpected, initialWeaknesses.map { it["positionId"].asText() })
-        assertEquals(initialExpected, initialPuzzles.map { it["puzzleId"].asText() })
-        assertEquals(initialExpected.first(), weaknesses(page = 0).single()["positionId"].asText())
-        assertEquals(initialExpected.first(), puzzles(page = 0).single()["puzzleId"].asText())
-        assertEquals(initialExpected.last(), weaknesses(page = 1).single()["positionId"].asText())
-        assertEquals(initialExpected.last(), puzzles(page = 1).single()["puzzleId"].asText())
-
-        val byPosition = initialWeaknesses.associateBy { it["positionId"].asText() }
-        assertEquals(8.0, byPosition.getValue(poorPosition.id.toString())["priority"].asDouble(), 0.01)
-        assertEquals(9.0, byPosition.getValue(successfulPosition.id.toString())["priority"].asDouble(), 0.01)
-        assertEquals(
-            if (rankingEnabled) 10.0 else 8.0,
-            byPosition.getValue(poorPosition.id.toString())["recommendationPriority"].asDouble(),
-            0.01,
-        )
-        assertEquals(
-            if (rankingEnabled) 6.75 else 9.0,
-            byPosition.getValue(successfulPosition.id.toString())["recommendationPriority"].asDouble(),
-            0.01,
-        )
-        assertEquals(rankingEnabled, byPosition.getValue(poorPosition.id.toString())["practicalEvidence"]["rankingApplied"].asBoolean())
+        assertInitialRankingResults(initialWeaknesses, initialPuzzles, initialExpected)
 
         val scheduledPosition = candidate("scheduled", evalLoss = 1.4, outcome = "resigned")
         val appUser = appUserRepository.findById(schedulingUserId).orElseThrow()
@@ -188,6 +167,34 @@ abstract class PracticalWeaknessAuthenticatedSchedulingContract {
             assertEquals(expectedAfterScheduling[page], weaknesses(page = page).single()["positionId"].asText())
             assertEquals(expectedAfterScheduling[page], puzzles(page = page).single()["puzzleId"].asText())
         }
+    }
+
+    private fun assertInitialRankingResults(
+        initialWeaknesses: List<JsonNode>,
+        initialPuzzles: List<JsonNode>,
+        initialExpected: List<String>,
+    ) {
+        assertEquals(initialExpected, initialWeaknesses.map { it["positionId"].asText() })
+        assertEquals(initialExpected, initialPuzzles.map { it["puzzleId"].asText() })
+        assertEquals(initialExpected.first(), weaknesses(page = 0).single()["positionId"].asText())
+        assertEquals(initialExpected.first(), puzzles(page = 0).single()["puzzleId"].asText())
+        assertEquals(initialExpected.last(), weaknesses(page = 1).single()["positionId"].asText())
+        assertEquals(initialExpected.last(), puzzles(page = 1).single()["puzzleId"].asText())
+
+        val byPosition = initialWeaknesses.associateBy { it["positionId"].asText() }
+        assertEquals(8.0, byPosition.getValue(poorPosition.id.toString())["priority"].asDouble(), 0.01)
+        assertEquals(9.0, byPosition.getValue(successfulPosition.id.toString())["priority"].asDouble(), 0.01)
+        assertEquals(
+            if (rankingEnabled) 10.0 else 8.0,
+            byPosition.getValue(poorPosition.id.toString())["recommendationPriority"].asDouble(),
+            0.01,
+        )
+        assertEquals(
+            if (rankingEnabled) 6.75 else 9.0,
+            byPosition.getValue(successfulPosition.id.toString())["recommendationPriority"].asDouble(),
+            0.01,
+        )
+        assertEquals(rankingEnabled, byPosition.getValue(poorPosition.id.toString())["practicalEvidence"]["rankingApplied"].asBoolean())
     }
 
     private fun candidate(
