@@ -128,10 +128,10 @@ class DerivedProcessingPostgresConcurrencyTest : PostgresMigrationTestFixture() 
         }
         assertEquals(1, countOccurrences(), "concurrent replay must leave exactly one occurrence row")
         val persistedDecisionTime =
-            (
+            checkNotNull(
                 query(
                     "SELECT decision_time_ms FROM position_occurrence",
-                ).single()["decision_time_ms"] as Number
+                ).single()["decision_time_ms"] as? Number,
             ).toLong()
         assertTrue(persistedDecisionTime in 1L..workers.toLong(), "the final duration must come from a replay writer")
     }
@@ -250,9 +250,15 @@ class DerivedProcessingPostgresConcurrencyTest : PostgresMigrationTestFixture() 
         )
     }
 
-    private fun countOccurrences(): Int = (query("SELECT count(*) AS c FROM position_occurrence").single()["c"] as Number).toInt()
+    private fun countOccurrences(): Int {
+        val row = query("SELECT count(*) AS c FROM position_occurrence").single()
+        return checkNotNull(row["c"] as? Number).toInt()
+    }
 
-    private fun countProcessing(): Int = (query("SELECT count(*) AS c FROM archive_derived_processing").single()["c"] as Number).toInt()
+    private fun countProcessing(): Int {
+        val row = query("SELECT count(*) AS c FROM archive_derived_processing").single()
+        return checkNotNull(row["c"] as? Number).toInt()
+    }
 
     private fun statusOfProcessing(): String = query("SELECT status FROM archive_derived_processing").single()["status"].toString()
 

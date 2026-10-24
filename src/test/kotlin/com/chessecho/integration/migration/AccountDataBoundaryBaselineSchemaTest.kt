@@ -59,11 +59,11 @@ class AccountDataBoundaryBaselineSchemaTest : PostgresMigrationTestFixture() {
 
             val appUserFk =
                 foreignKeys.singleOrNull {
-                    (it["definition"] as String).contains("(app_user_id)")
+                    it["definition"]?.toString()?.contains("(app_user_id)") == true
                 }
             assertNotNull(appUserFk, "$table must have exactly one app_user_id foreign key")
             assertTrue(
-                (appUserFk["definition"] as String).contains("REFERENCES app_user(id)"),
+                appUserFk["definition"]?.toString()?.contains("REFERENCES app_user(id)") == true,
                 "$table.app_user_id must reference app_user(id); was ${appUserFk["definition"]}",
             )
 
@@ -146,13 +146,15 @@ class AccountDataBoundaryBaselineSchemaTest : PostgresMigrationTestFixture() {
         insertEvent(fixture, appUserId = null, occurrenceId = null, eventType = "SOLVED")
 
         val count =
-            query(
-                """
-                SELECT count(*) AS total
-                FROM puzzle_scheduling_event
-                WHERE position_id = '${fixture.position}' AND position_occurrence_id IS NULL
-                """.trimIndent(),
-            ).single()["total"] as Long
+            checkNotNull(
+                query(
+                    """
+                    SELECT count(*) AS total
+                    FROM puzzle_scheduling_event
+                    WHERE position_id = '${fixture.position}' AND position_occurrence_id IS NULL
+                    """.trimIndent(),
+                ).single()["total"] as? Long,
+            )
 
         assertEquals(4L, count)
     }
@@ -217,10 +219,10 @@ class AccountDataBoundaryBaselineSchemaTest : PostgresMigrationTestFixture() {
     }
 
     private fun countEvents(occurrenceId: String): Int =
-        (
+        checkNotNull(
             query(
                 "SELECT count(*) AS total FROM puzzle_scheduling_event WHERE position_occurrence_id = '$occurrenceId'",
-            ).single()["total"] as Long
+            ).single()["total"] as? Long,
         ).toInt()
 
     private fun insertReturningId(sql: String): String =

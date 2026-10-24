@@ -232,7 +232,7 @@ class EngineMoveProviderTest {
                 isAccessible = true
             }
 
-        fun invokeIsValid(move: String?): Boolean = method.invoke(engineMoveProvider, move) as Boolean
+        fun invokeIsValid(move: String?): Boolean = method.invoke(engineMoveProvider, move) == true
 
         assertFalse(invokeIsValid("(none)"))
         assertFalse(invokeIsValid(""))

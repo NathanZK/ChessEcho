@@ -188,7 +188,7 @@ class SelectedPopulationVerificationPostgresIntegrationTest {
         assertEquals(before, persistedCorpusState(fixture))
     }
 
-    private fun finalizedFixture(): Fixture {
+    private fun createAndFinishRun(): UUID {
         val runId =
             gameWriter.createRun(
                 HumanMoveCorpusRunRequest(
@@ -227,6 +227,10 @@ class SelectedPopulationVerificationPostgresIntegrationTest {
                 failureDetails = null,
             ),
         )
+        return runId
+    }
+
+    private fun exportAndFinalizeProjection(runId: UUID): Pair<String, UUID> {
         val exported = artifactService.export(HumanMoveCorpusExportRequest(runId, 2))
         val bytes = Files.readAllBytes(artifactService.archivePath(exported.contentDigest))
         importService.import(bytes, exported.contentDigest)
@@ -239,19 +243,29 @@ class SelectedPopulationVerificationPostgresIntegrationTest {
                 ),
             )
         projectionFinalizationService.finalize(materialized.projectionId)
-        val projection = projectionRepository.findById(materialized.projectionId).orElseThrow()
+        return exported.contentDigest to materialized.projectionId
+    }
+
+    private fun finalizedFixture(): Fixture {
+        val runId = createAndFinishRun()
+        val (digest, projectionId) = exportAndFinalizeProjection(runId)
+        val projection = projectionRepository.findById(projectionId).orElseThrow()
         val occurrences =
             jdbcTemplate.queryForList(
                 "SELECT id, qualifying_ordinal FROM human_move_corpus_occurrence " +
                     "WHERE source_run_id = ? ORDER BY qualifying_ordinal",
                 runId,
-            ).associate { (it["qualifying_ordinal"] as Number).toInt() to (it["id"] as UUID) }
+            ).associate {
+                val ordinal = checkNotNull(it["qualifying_ordinal"] as? Number).toInt()
+                val id = checkNotNull(it["id"] as? UUID)
+                ordinal to id
+            }
         return Fixture(
             runId = runId,
             projection = projection,
             population =
                 EvaluationReferencePopulation(
-                    contentDigest = exported.contentDigest,
+                    contentDigest = digest,
                     sourceRunId = runId,
                     coveredPrefix = 2,
                     prefixN = 1,

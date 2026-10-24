@@ -707,6 +707,33 @@ class GameParserServiceConcurrencyTest {
                 transposedBlackGame(accountTwo, "order-two-game", "order-two", "1. Nc3 Nc6 1/2-1/2"),
             )
         val insertBarrier = CountDownLatch(2)
+        val repositorySpy = createBarrierPositionRepositorySpy(insertBarrier)
+        val parser = GameParserService(repositorySpy, positionOccurrenceRepository, dataSource)
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val futures =
+                listOf(gameOne to listOf(gameOne, gameTwo), gameTwo to listOf(gameTwo, gameOne)).map { (game, games) ->
+                    executor.submit {
+                        transactionTemplate.execute {
+                            val account = chessAccountRepository.findById(game.chessAccount.id).orElseThrow()
+                            parser.parseAndSavePositions(remapGamesForAccount(account, games))
+                        }
+                    }
+                }
+
+            val failures =
+                futures.map { future ->
+                    runCatching { future.get(20, TimeUnit.SECONDS) }.exceptionOrNull()
+                }
+            assertTrue(failures.all { it == null }, "Unexpected PostgreSQL contention failure: ${failures.joinToString()}")
+            assertEquals(2, positionRepository.count())
+            assertEquals(2, positionOccurrenceRepository.count(), "concurrent replay must reconcile semantic occurrences")
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    private fun createBarrierPositionRepositorySpy(insertBarrier: CountDownLatch): PositionRepository {
         val insertCounts = ThreadLocal.withInitial { 0 }
         val repositorySpy =
             mock<PositionRepository>(
@@ -726,45 +753,26 @@ class GameParserServiceConcurrencyTest {
                 it.getArgument(3),
             )
         }.whenever(repositorySpy).insertIfAbsent(any(), any(), any(), any())
-
-        val parser = GameParserService(repositorySpy, positionOccurrenceRepository, dataSource)
-        val executor = Executors.newFixedThreadPool(2)
-        try {
-            val futures =
-                listOf(gameOne to listOf(gameOne, gameTwo), gameTwo to listOf(gameTwo, gameOne)).map { (game, games) ->
-                    executor.submit {
-                        transactionTemplate.execute {
-                            val account = chessAccountRepository.findById(game.chessAccount.id).orElseThrow()
-                            parser.parseAndSavePositions(
-                                games.map {
-                                    Game(
-                                        id = it.id,
-                                        chessAccount = account,
-                                        platformGameId = it.platformGameId,
-                                        pgn = it.pgn,
-                                        timeControl = it.timeControl,
-                                        playedAt = it.playedAt,
-                                        result = it.result,
-                                        whiteUsername = it.whiteUsername,
-                                        blackUsername = account.username,
-                                    )
-                                },
-                            )
-                        }
-                    }
-                }
-
-            val failures =
-                futures.map { future ->
-                    runCatching { future.get(20, TimeUnit.SECONDS) }.exceptionOrNull()
-                }
-            assertTrue(failures.all { it == null }, "Unexpected PostgreSQL contention failure: ${failures.joinToString()}")
-            assertEquals(2, positionRepository.count())
-            assertEquals(2, positionOccurrenceRepository.count(), "concurrent replay must reconcile semantic occurrences")
-        } finally {
-            executor.shutdownNow()
-        }
+        return repositorySpy
     }
+
+    private fun remapGamesForAccount(
+        account: ChessAccount,
+        games: List<Game>,
+    ): List<Game> =
+        games.map {
+            Game(
+                id = it.id,
+                chessAccount = account,
+                platformGameId = it.platformGameId,
+                pgn = it.pgn,
+                timeControl = it.timeControl,
+                playedAt = it.playedAt,
+                result = it.result,
+                whiteUsername = it.whiteUsername,
+                blackUsername = account.username,
+            )
+        }
 
     @Test
     fun `concurrent PostgreSQL parsers insert one semantic occurrence for the same game position`() {

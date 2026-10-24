@@ -727,31 +727,25 @@ class EngineAnalysisServiceTest {
         val position = Position(id = positionId, hash = "losing_pos", fen = fen)
         engineAnalysisService.analyzePosition(position)
 
-        // Verify native insertMoveEvaluationIfAbsent calls
+        verifyInsertMoveEvaluation(existingAnalysisId, "Kf8", null, -3, 2.0)
+        verifyInsertMoveEvaluation(existingAnalysisId, "h6", -500, null, null)
+        verifyInsertMoveEvaluation(existingAnalysisId, "g6", null, -6, 0.0)
+    }
+
+    private fun verifyInsertMoveEvaluation(
+        analysisId: UUID,
+        move: String,
+        evalCp: Int?,
+        evalMate: Int?,
+        evalLossFromBest: Double?,
+    ) {
         verify(engineAnalysisRepository).insertMoveEvaluationIfAbsent(
             id = any(),
-            engineAnalysisId = eq(existingAnalysisId),
-            move = eq("Kf8"),
-            evalCp = eq(null),
-            evalMate = eq(-3),
-            evalLossFromBest = eq(2.0),
-        )
-        // strictly null, not 0.0!
-        verify(engineAnalysisRepository).insertMoveEvaluationIfAbsent(
-            id = any(),
-            engineAnalysisId = eq(existingAnalysisId),
-            move = eq("h6"),
-            evalCp = eq(-500),
-            evalMate = eq(null),
-            evalLossFromBest = eq(null),
-        )
-        verify(engineAnalysisRepository).insertMoveEvaluationIfAbsent(
-            id = any(),
-            engineAnalysisId = eq(existingAnalysisId),
-            move = eq("g6"),
-            evalCp = eq(null),
-            evalMate = eq(-6),
-            evalLossFromBest = eq(0.0),
+            engineAnalysisId = eq(analysisId),
+            move = eq(move),
+            evalCp = eq(evalCp),
+            evalMate = eq(evalMate),
+            evalLossFromBest = eq(evalLossFromBest),
         )
     }
 }

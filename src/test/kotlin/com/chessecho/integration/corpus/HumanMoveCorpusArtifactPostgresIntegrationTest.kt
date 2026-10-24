@@ -182,13 +182,43 @@ class HumanMoveCorpusArtifactPostgresIntegrationTest {
         return hash.digest().joinToString("") { "%02x".format(it) }
     }
 
+    private fun zipRecords(records: Map<String, ByteArray>): ByteArray =
+        ByteArrayOutputStream().use { buffer ->
+            ZipOutputStream(buffer).use { zip ->
+                listOf("games.ndjson", "observations.ndjson", "manifest.json").forEach { name ->
+                    writeStoredEntry(zip, name, records.getValue(name))
+                }
+            }
+            buffer.toByteArray()
+        }
+
+    private fun writeStoredEntry(
+        zip: ZipOutputStream,
+        name: String,
+        data: ByteArray,
+    ) {
+        val crc = CRC32()
+        crc.update(data)
+        val entry =
+            ZipEntry(name).apply {
+                method = ZipEntry.STORED
+                time = 0
+                size = data.size.toLong()
+                compressedSize = data.size.toLong()
+                this.crc = crc.value
+            }
+        zip.putNextEntry(entry)
+        zip.write(data)
+        zip.closeEntry()
+    }
+
     private fun mutatedArtifact(
         source: Map<String, ByteArray>,
         modify: (MutableMap<String, ByteArray>) -> Unit,
     ): Pair<String, ByteArray> {
         val records = source.toMutableMap()
         modify(records)
-        val manifest = mapper.readTree(records.getValue("manifest.json")) as ObjectNode
+        val manifest = checkNotNull(mapper.readTree(records.getValue("manifest.json")) as? ObjectNode)
         listOf("games.ndjson" to "games", "observations.ndjson" to "observations").forEach { (entry, prefix) ->
             val bytes = records.getValue(entry)
             val hash = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
@@ -196,24 +226,7 @@ class HumanMoveCorpusArtifactPostgresIntegrationTest {
             manifest.put(if (prefix == "games") "gameBytes" else "observationBytes", bytes.size)
         }
         records["manifest.json"] = mapper.writeValueAsBytes(manifest)
-        val zipBytes =
-            ByteArrayOutputStream().use { buffer ->
-                ZipOutputStream(buffer).use { zip ->
-                    listOf("games.ndjson", "observations.ndjson", "manifest.json").forEach { name ->
-                        val data = records.getValue(name)
-                        val entry = ZipEntry(name)
-                        entry.method = ZipEntry.STORED
-                        entry.time = 0
-                        entry.size = data.size.toLong()
-                        entry.compressedSize = data.size.toLong()
-                        entry.crc = CRC32().apply { update(data) }.value
-                        zip.putNextEntry(entry)
-                        zip.write(data)
-                        zip.closeEntry()
-                    }
-                }
-                buffer.toByteArray()
-            }
+        val zipBytes = zipRecords(records)
         return canonicalDigest(records) to zipBytes
     }
 
@@ -253,7 +266,7 @@ class HumanMoveCorpusArtifactPostgresIntegrationTest {
             jdbc.queryForList(contributionSql.format("human_move_corpus_imported_game", "human_move_corpus_imported_observation"))
         assertEquals(sourceGames, importedGames, "every portable game field must survive import")
         assertEquals(sourceContributions, importedContributions, "every contribution must remain with its original game")
-        assertEquals(source.observationsRetained, importedContributions.sumOf { (it["observation_count"] as Number).toInt() })
+        assertEquals(source.observationsRetained, importedContributions.sumOf { checkNotNull(it["observation_count"] as? Number).toInt() })
         assertEquals(
             sourceRun,
             jdbc.queryForMap(
@@ -340,7 +353,7 @@ class HumanMoveCorpusArtifactPostgresIntegrationTest {
         val original = export(run, 1)
         val divergent =
             mutatedArtifact(entries(original.second)) { records ->
-                val game = mapper.readTree(records.getValue("games.ndjson").toString(Charsets.UTF_8).trim()) as ObjectNode
+                val game = checkNotNull(mapper.readTree(records.getValue("games.ndjson").toString(Charsets.UTF_8).trim()) as? ObjectNode)
                 val changedPgn = "[Event \"Different game\"]\n\n1. d4 d5 *"
                 val changedHash =
                     MessageDigest.getInstance("SHA-256")
@@ -475,7 +488,7 @@ class HumanMoveCorpusArtifactPostgresIntegrationTest {
             field: String,
             value: Any,
         ): String {
-            val node = mapper.readTree(line) as ObjectNode
+            val node = checkNotNull(mapper.readTree(line) as? ObjectNode)
             when (value) {
                 is Int -> node.put(field, value)
                 is String -> node.put(field, value)
@@ -503,11 +516,11 @@ class HumanMoveCorpusArtifactPostgresIntegrationTest {
                         lines(change(observations.first(), "positionFen", "8/8/8/8/8/8/8/8 w - -"), observations.last())
                 },
                 {
-                    val manifest = mapper.readTree(it.getValue("manifest.json")) as ObjectNode
+                    val manifest = checkNotNull(mapper.readTree(it.getValue("manifest.json")) as? ObjectNode)
                     it["manifest.json"] = mapper.writeValueAsBytes(manifest.put("ratingBand", "2000-2200"))
                 },
                 {
-                    val manifest = mapper.readTree(it.getValue("manifest.json")) as ObjectNode
+                    val manifest = checkNotNull(mapper.readTree(it.getValue("manifest.json")) as? ObjectNode)
                     it["manifest.json"] = mapper.writeValueAsBytes(manifest.put("formatVersion", 999))
                 },
             )
