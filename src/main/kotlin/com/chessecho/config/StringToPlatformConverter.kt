@@ -16,7 +16,7 @@ class StringToPlatformConverter : Converter<String, Platform> {
         return try {
             Platform.valueOf(normalized)
         } catch (e: IllegalArgumentException) {
-            throw IllegalArgumentException("Invalid platform '$source'. Supported platforms: CHESS_COM.")
+            throw IllegalArgumentException("Invalid platform '$source'. Supported platforms: CHESS_COM.", e)
         }
     }
 }

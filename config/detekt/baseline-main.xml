@@ -10,12 +10,5 @@
 <SmellBaseline>
   <ManuallySuppressedIssues></ManuallySuppressedIssues>
   <CurrentIssues>
-    <ID>ComplexCondition:CsrfEnforcementInterceptor.kt$CsrfEnforcementInterceptor$request.method.equals("GET", ignoreCase = true) || request.method.equals("HEAD", ignoreCase = true) || request.method.equals("OPTIONS", ignoreCase = true) || CorsUtils.isPreFlightRequest(request)</ID>
-    <ID>ComplexCondition:PuzzleSubmissionService.kt$PuzzleSubmissionService$stored.chessAccount.id != accountId || stored.position.id != request.positionId || stored.playerColor != request.playerColor || stored.eventType != request.eventType || stored.submittedMove != move</ID>
-    <ID>LongMethod:ProgressService.kt$ProgressService$@Transactional(readOnly = true) fun getProgress( positionId: UUID, playerColor: PlayerColor, accountId: UUID, principal: AuthenticatedPrincipal, minEvalLoss: Double, ): ProgressResponse</ID>
-    <ID>SwallowedException:MoveEvaluationService.kt$MoveEvaluationService$e: Exception</ID>
-    <ID>SwallowedException:StringToPlatformConverter.kt$StringToPlatformConverter$e: IllegalArgumentException</ID>
-    <ID>SwallowedException:StringToPlayerColorConverter.kt$StringToPlayerColorConverter$e: IllegalArgumentException</ID>
-    <ID>SwallowedException:TrainingAttemptService.kt$TrainingAttemptService$e: IllegalArgumentException</ID>
   </CurrentIssues>
 </SmellBaseline>

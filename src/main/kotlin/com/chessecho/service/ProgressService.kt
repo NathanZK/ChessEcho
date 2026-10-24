@@ -1,6 +1,8 @@
 package com.chessecho.service
 
+import com.chessecho.domain.EngineAnalysis
 import com.chessecho.domain.PlayerColor
+import com.chessecho.domain.PositionOccurrence
 import com.chessecho.domain.SchedulingEventType
 import com.chessecho.dto.ProgressBaseline
 import com.chessecho.dto.ProgressIntervalState
@@ -35,16 +37,55 @@ class ProgressService(
         val account = accountOwnershipService.requireConnectedAccountForProgress(accountId, principal)
 
         val occurrences = positionOccurrenceRepository.findProgressOccurrences(account.id, positionId, playerColor.name)
-        val checkpoints =
-            puzzleSchedulingEventRepository
-                .findHistory(principal.appUserId, account.id, listOf(positionId), playerColor.name)
-                .asSequence()
-                .filter { it.eventType == SchedulingEventType.SOLVED }
-                .map { Checkpoint(it.id, it.occurredAt) }
-                .sortedWith(compareBy<Checkpoint> { it.occurredAt }.thenBy { it.id.toString() })
-                .toList()
-
+        val checkpoints = fetchCheckpoints(principal.appUserId, account.id, positionId, playerColor)
         val analysis = engineAnalysisRepository.findByPositionIdWithMoveEvaluations(positionId)
+        val (baselineAccumulator, intervalAccumulators) =
+            accumulateOccurrences(
+                occurrences = occurrences,
+                checkpoints = checkpoints,
+                analysis = analysis,
+                accountUsername = account.username,
+                minEvalLoss = minEvalLoss,
+            )
+
+        val baseline = baselineAccumulator.toBaseline()
+        val points = toIntervalPoints(intervalAccumulators, checkpoints.lastOrNull())
+        val latestMeasured = intervalAccumulators.lastOrNull { it.accumulator.attempts > 0 }?.accumulator
+
+        return ProgressResponse(
+            positionId = positionId,
+            playerColor = playerColor.name,
+            baseline = baseline,
+            points = points,
+            currentIntervalState = resolveIntervalState(checkpoints, intervalAccumulators),
+            excludedUndatedEncounters = occurrences.count { it.game.playedAt == null },
+            mistakeRateChange = relativeChange(baseline?.mistakeRate, latestMeasured?.mistakeRate()),
+            winRateChange = relativeChange(baseline?.winRate, latestMeasured?.winRate()),
+            assessment = assessment(baseline, latestMeasured),
+        )
+    }
+
+    private fun fetchCheckpoints(
+        appUserId: UUID,
+        accountId: UUID,
+        positionId: UUID,
+        playerColor: PlayerColor,
+    ): List<Checkpoint> =
+        puzzleSchedulingEventRepository
+            .findHistory(appUserId, accountId, listOf(positionId), playerColor.name)
+            .asSequence()
+            .filter { it.eventType == SchedulingEventType.SOLVED }
+            .map { Checkpoint(it.id, it.occurredAt) }
+            .sortedWith(compareBy<Checkpoint> { it.occurredAt }.thenBy { it.id.toString() })
+            .toList()
+
+    private fun accumulateOccurrences(
+        occurrences: List<PositionOccurrence>,
+        checkpoints: List<Checkpoint>,
+        analysis: EngineAnalysis?,
+        accountUsername: String,
+        minEvalLoss: Double,
+    ): AccumulatedProgress {
         val evaluations = analysis?.moveEvaluations?.associateBy { it.move }.orEmpty()
         val baselineAccumulator = Accumulator()
         val intervalAccumulators = checkpoints.map { IntervalAccumulator(it, Accumulator()) }
@@ -77,7 +118,7 @@ class ProgressService(
                 gameOutcomeNormalizer.normalize(
                     occurrence.game,
                     occurrence.playerColor,
-                    account.username,
+                    accountUsername,
                 ).outcome == PracticalOutcome.WIN
             val accumulator =
                 if (latestCheckpointIndex < 0) {
@@ -88,37 +129,29 @@ class ProgressService(
             accumulator.add(datedOccurrence.playedAt, loss != null && loss.isFinite() && loss >= minEvalLoss, won)
         }
 
-        val baseline = baselineAccumulator.toBaseline()
-        val points =
-            intervalAccumulators.mapNotNull { interval ->
-                interval.accumulator.toPoint(
-                    checkpointId = interval.checkpoint.id,
-                    open = interval.checkpoint == checkpoints.lastOrNull(),
-                )
-            }
-        val latestMeasured = intervalAccumulators.lastOrNull { it.accumulator.attempts > 0 }?.accumulator
-        val mistakeChange = relativeChange(baseline?.mistakeRate, latestMeasured?.mistakeRate())
-        val winChange = relativeChange(baseline?.winRate, latestMeasured?.winRate())
-        val assessment = assessment(baseline, latestMeasured)
-        val currentIntervalState =
-            when {
-                checkpoints.isEmpty() -> ProgressIntervalState.NO_CHECKPOINT
-                intervalAccumulators.last().accumulator.attempts == 0 -> ProgressIntervalState.OPEN_AWAITING_EVIDENCE
-                else -> ProgressIntervalState.MEASURED_OPEN
-            }
-
-        return ProgressResponse(
-            positionId = positionId,
-            playerColor = playerColor.name,
-            baseline = baseline,
-            points = points,
-            currentIntervalState = currentIntervalState,
-            excludedUndatedEncounters = occurrences.count { it.game.playedAt == null },
-            mistakeRateChange = mistakeChange,
-            winRateChange = winChange,
-            assessment = assessment,
-        )
+        return AccumulatedProgress(baselineAccumulator, intervalAccumulators)
     }
+
+    private fun toIntervalPoints(
+        intervalAccumulators: List<IntervalAccumulator>,
+        lastCheckpoint: Checkpoint?,
+    ): List<ProgressPoint> =
+        intervalAccumulators.mapNotNull { interval ->
+            interval.accumulator.toPoint(
+                checkpointId = interval.checkpoint.id,
+                open = interval.checkpoint == lastCheckpoint,
+            )
+        }
+
+    private fun resolveIntervalState(
+        checkpoints: List<Checkpoint>,
+        intervalAccumulators: List<IntervalAccumulator>,
+    ): ProgressIntervalState =
+        when {
+            checkpoints.isEmpty() -> ProgressIntervalState.NO_CHECKPOINT
+            intervalAccumulators.last().accumulator.attempts == 0 -> ProgressIntervalState.OPEN_AWAITING_EVIDENCE
+            else -> ProgressIntervalState.MEASURED_OPEN
+        }
 
     private fun relativeChange(
         baselineRate: Double?,
@@ -163,9 +196,14 @@ class ProgressService(
 
     private data class Checkpoint(val id: UUID, val occurredAt: Instant)
 
-    private data class DatedOccurrence(val occurrence: com.chessecho.domain.PositionOccurrence, val playedAt: Instant)
+    private data class DatedOccurrence(val occurrence: PositionOccurrence, val playedAt: Instant)
 
     private data class IntervalAccumulator(val checkpoint: Checkpoint, val accumulator: Accumulator)
+
+    private data class AccumulatedProgress(
+        val baselineAccumulator: Accumulator,
+        val intervalAccumulators: List<IntervalAccumulator>,
+    )
 
     private class Accumulator {
         var occurredAt: Instant? = null

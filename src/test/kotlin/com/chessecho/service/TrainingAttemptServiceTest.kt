@@ -9,6 +9,7 @@ import com.chessecho.repository.TrainingAttemptRepository
 import com.chessecho.service.auth.AuthenticatedPrincipal
 import com.chessecho.web.UnauthenticatedException
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
@@ -207,11 +208,13 @@ class TrainingAttemptServiceTest {
                 service.submit(baseRequest.copy(mode = "SPRINT"), null)
             }
         assertEquals("Invalid timing mode: SPRINT", invalidModeEx.message)
+        assertNotNull(invalidModeEx.cause)
 
         val invalidOutcomeEx =
             assertThrows(IllegalArgumentException::class.java) {
                 service.submit(baseRequest.copy(outcome = "GAVE_UP"), null)
             }
         assertEquals("Invalid outcome: GAVE_UP", invalidOutcomeEx.message)
+        assertNotNull(invalidOutcomeEx.cause)
     }
 }

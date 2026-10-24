@@ -2,6 +2,7 @@ package com.chessecho.service
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -372,6 +373,7 @@ class MoveEvaluationServiceTest {
             }
 
         assertTrue(ex.message?.contains("Invalid FEN position") == true)
+        assertNotNull(ex.cause)
     }
 
     @Test
