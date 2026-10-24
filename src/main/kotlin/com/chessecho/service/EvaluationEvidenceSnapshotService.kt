@@ -94,7 +94,7 @@ data class PracticalEvidenceCounts(
     val losses: Int,
 )
 
-class EvaluationEvidenceIntegrityException(message: String) : RuntimeException(message)
+class EvaluationEvidenceIntegrityException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
 
 @Service
 class EvaluationEvidenceSnapshotService(
@@ -284,8 +284,7 @@ class EvaluationEvidenceSnapshotService(
             db.query(
                 "SELECT id, thresholds, roster_json FROM evaluation_evidence_snapshot WHERE source_run_id = ?",
                 { rs, _ ->
-                    val thresholdValues =
-                        (rs.getArray("thresholds").array as Array<*>).map { (it as Number).toDouble() }.toSet()
+                    val thresholdValues = extractThresholds(rs)
                     Triple(
                         rs.getObject("id", UUID::class.java),
                         thresholdValues,
@@ -627,8 +626,7 @@ class EvaluationEvidenceSnapshotService(
     }
 
     private fun readSnapshotMetadata(rs: java.sql.ResultSet): SnapshotMetadata {
-        val thresholds =
-            (rs.getArray("thresholds").array as Array<*>).map { (it as Number).toDouble() }.toSet()
+        val thresholds = extractThresholds(rs)
         return SnapshotMetadata(
             referencePopulation =
                 EvaluationReferencePopulation(
@@ -689,18 +687,35 @@ class EvaluationEvidenceSnapshotService(
                 }
                 players.toSet()
             } catch (exception: RuntimeException) {
-                throw EvaluationEvidenceIntegrityException("Retained evaluation evidence roster is invalid")
+                if (exception is EvaluationEvidenceIntegrityException) {
+                    throw exception
+                }
+                throw EvaluationEvidenceIntegrityException("Retained evaluation evidence roster is invalid", exception)
             }
         }
 
+    private fun extractThresholds(rs: java.sql.ResultSet): Set<Double> {
+        val sqlArray = rs.getArray("thresholds") ?: return emptySet()
+        val array = sqlArray.array as? Array<*> ?: return emptySet()
+        return array.filterIsInstance<Number>().map { it.toDouble() }.toSet()
+    }
+
     private fun validateRoster(players: Set<EvaluationEvidencePlayer>) {
-        if (players.isEmpty() || players.size != players.map { it.id }.toSet().size ||
-            players.map { it.identity }.toSet().size != players.size ||
-            players.any { it.identity.isBlank() }
-        ) {
+        if (!isValidRoster(players)) {
             throw EvaluationEvidenceIntegrityException("Retained evaluation evidence roster is invalid")
         }
     }
+
+    private fun isValidRoster(players: Set<EvaluationEvidencePlayer>): Boolean =
+        players.isNotEmpty() &&
+            hasUniqueIds(players) &&
+            hasValidIdentities(players)
+
+    private fun hasUniqueIds(players: Set<EvaluationEvidencePlayer>): Boolean = players.size == players.map { it.id }.toSet().size
+
+    private fun hasValidIdentities(players: Set<EvaluationEvidencePlayer>): Boolean =
+        players.map { it.identity }.toSet().size == players.size &&
+            players.none { it.identity.isBlank() }
 
     private fun requireJdbcTemplate(): JdbcTemplate =
         jdbcTemplate ?: throw IllegalStateException(

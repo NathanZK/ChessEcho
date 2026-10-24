@@ -53,14 +53,7 @@ class EvaluationEvidenceProducerService(
     }
 
     private fun validateInput(input: EvaluationEvidenceProducerInput) {
-        val configuration = input.configuration
-        if (configuration.thresholds != EvaluationEvidenceSnapshotService.APPROVED_THRESHOLDS ||
-            configuration.platform != "CHESS_COM" ||
-            configuration.minMistakeCount < 0 ||
-            configuration.minTimesReached < 0 ||
-            configuration.color !in setOf("WHITE", "BLACK", "BOTH") ||
-            configuration.observationWindowDays != null
-        ) {
+        if (!isValidConfiguration(input.configuration)) {
             throw EvaluationEvidenceIntegrityException("Invalid frozen evaluation-evidence configuration")
         }
         if (input.roster.map { it.id }.toSet().size != input.roster.size ||
@@ -70,6 +63,17 @@ class EvaluationEvidenceProducerService(
             throw EvaluationEvidenceIntegrityException("Evaluation-player roster is invalid")
         }
     }
+
+    private fun isValidConfiguration(configuration: EvaluationEvidenceConfiguration): Boolean =
+        configuration.thresholds == EvaluationEvidenceSnapshotService.APPROVED_THRESHOLDS &&
+            configuration.platform == "CHESS_COM" &&
+            configuration.observationWindowDays == null &&
+            isValidConfigurationBounds(configuration)
+
+    private fun isValidConfigurationBounds(configuration: EvaluationEvidenceConfiguration): Boolean =
+        configuration.minMistakeCount >= 0 &&
+            configuration.minTimesReached >= 0 &&
+            configuration.color in VALID_COLORS
 
     private fun loadSelectedOccurrences(ids: Set<UUID>): List<PositionOccurrence> {
         if (ids.isEmpty()) return emptyList()
@@ -148,65 +152,88 @@ class EvaluationEvidenceProducerService(
     ): List<EvaluationEvidenceRow> {
         val declaredPlayers = input.roster.associateBy { it.id }
         return operationalOccurrences.flatMap { operational ->
-            val playerId = operational.chessAccount.id
-            if (playerId !in declaredPlayers) {
-                throw EvaluationEvidenceIntegrityException(
-                    "A selected operational occurrence belongs to an undeclared player",
-                )
-            }
-            if (operational.game.chessAccount.id != playerId ||
-                operational.chessAccount.platform != input.configuration.platform
-            ) {
-                throw EvaluationEvidenceIntegrityException("Selected operational game/account facts are inconsistent")
-            }
-            val analysis =
-                analyses[operational.position.id]
-                    ?: throw EvaluationEvidenceIntegrityException("A selected operational position has no engine analysis")
-            val matchingMoves = analysis.moveEvaluations.filter { it.move == operational.movePlayed }
-            if (matchingMoves.size != 1) {
-                throw EvaluationEvidenceIntegrityException("A selected operational move has missing or ambiguous evaluation")
-            }
-            val evaluation = matchingMoves.single()
-            val loss = validLoss(analysis, evaluation)
-            val outcome =
-                gameOutcomeNormalizer.normalize(
-                    operational.game,
-                    operational.playerColor,
-                    operational.chessAccount.username,
-                ).outcome
-                    ?: throw EvaluationEvidenceIntegrityException("A selected operational game has no normalized outcome")
-            val observedOutcome =
-                when (outcome) {
-                    PracticalOutcome.WIN -> ObservedGameOutcome.WIN
-                    PracticalOutcome.DRAW -> ObservedGameOutcome.DRAW
-                    PracticalOutcome.LOSS -> ObservedGameOutcome.LOSS
-                }
-            val positionPly = PositionPly(operational.position.hash, operational.plyNumber)
-            val referenceMatches =
-                matchingOccurrences[positionPly]
-                    ?: throw EvaluationEvidenceIntegrityException("A selected operational decision has no matching reference occurrence")
-            referenceMatches.map { occurrenceId ->
-                EvaluationEvidenceRow(
-                    playerId = playerId,
-                    gameId = operational.game.id,
-                    occurrenceId = occurrenceId,
-                    positionIdentity = operational.position.hash,
-                    preMovePly = operational.plyNumber,
-                    move = operational.movePlayed,
-                    playerColor = operational.playerColor,
-                    loss = loss,
-                    engineDepth = analysis.depth,
-                    observedOutcome = observedOutcome,
-                    objectiveOutcome = null,
-                    practicalCandidate = null,
-                    practicalEligible = null,
-                    practicalWins = null,
-                    practicalDraws = null,
-                    practicalLosses = null,
-                )
-            }
+            buildOccurrenceRows(operational, input, declaredPlayers, analyses, matchingOccurrences)
         }.sortedWith(compareBy({ it.playerId }, { it.preMovePly }, { it.occurrenceId }, { it.gameId }))
     }
+
+    private fun buildOccurrenceRows(
+        operational: PositionOccurrence,
+        input: EvaluationEvidenceProducerInput,
+        declaredPlayers: Map<UUID, EvaluationEvidencePlayer>,
+        analyses: Map<UUID, EngineAnalysis>,
+        matchingOccurrences: Map<PositionPly, List<UUID>>,
+    ): List<EvaluationEvidenceRow> {
+        val playerId = operational.chessAccount.id
+        if (playerId !in declaredPlayers) {
+            throw EvaluationEvidenceIntegrityException(
+                "A selected operational occurrence belongs to an undeclared player",
+            )
+        }
+        if (operational.game.chessAccount.id != playerId ||
+            operational.chessAccount.platform != input.configuration.platform
+        ) {
+            throw EvaluationEvidenceIntegrityException("Selected operational game/account facts are inconsistent")
+        }
+        val analysis =
+            analyses[operational.position.id]
+                ?: throw EvaluationEvidenceIntegrityException("A selected operational position has no engine analysis")
+        val matchingMoves = analysis.moveEvaluations.filter { it.move == operational.movePlayed }
+        if (matchingMoves.size != 1) {
+            throw EvaluationEvidenceIntegrityException("A selected operational move has missing or ambiguous evaluation")
+        }
+        val evaluation = matchingMoves.single()
+        val loss = validLoss(analysis, evaluation)
+        val observedOutcome = resolveObservedOutcome(operational)
+        val positionPly = PositionPly(operational.position.hash, operational.plyNumber)
+        val referenceMatches =
+            matchingOccurrences[positionPly]
+                ?: throw EvaluationEvidenceIntegrityException("A selected operational decision has no matching reference occurrence")
+        return referenceMatches.map { occurrenceId ->
+            createEvaluationEvidenceRow(playerId, operational, occurrenceId, loss, analysis.depth, observedOutcome)
+        }
+    }
+
+    private fun resolveObservedOutcome(operational: PositionOccurrence): ObservedGameOutcome {
+        val outcome =
+            gameOutcomeNormalizer.normalize(
+                operational.game,
+                operational.playerColor,
+                operational.chessAccount.username,
+            ).outcome
+                ?: throw EvaluationEvidenceIntegrityException("A selected operational game has no normalized outcome")
+        return when (outcome) {
+            PracticalOutcome.WIN -> ObservedGameOutcome.WIN
+            PracticalOutcome.DRAW -> ObservedGameOutcome.DRAW
+            PracticalOutcome.LOSS -> ObservedGameOutcome.LOSS
+        }
+    }
+
+    private fun createEvaluationEvidenceRow(
+        playerId: UUID,
+        operational: PositionOccurrence,
+        occurrenceId: UUID,
+        loss: Double,
+        engineDepth: Int,
+        observedOutcome: ObservedGameOutcome,
+    ): EvaluationEvidenceRow =
+        EvaluationEvidenceRow(
+            playerId = playerId,
+            gameId = operational.game.id,
+            occurrenceId = occurrenceId,
+            positionIdentity = operational.position.hash,
+            preMovePly = operational.plyNumber,
+            move = operational.movePlayed,
+            playerColor = operational.playerColor,
+            loss = loss,
+            engineDepth = engineDepth,
+            observedOutcome = observedOutcome,
+            objectiveOutcome = null,
+            practicalCandidate = null,
+            practicalEligible = null,
+            practicalWins = null,
+            practicalDraws = null,
+            practicalLosses = null,
+        )
 
     private fun validLoss(
         analysis: EngineAnalysis,
@@ -254,20 +281,42 @@ class EvaluationEvidenceProducerService(
             val occurrence =
                 verified.occurrences[row.occurrenceId]
                     ?: throw EvaluationEvidenceIntegrityException("A proposed row has no verified reference occurrence")
-            if (occurrence.sourceRunId != input.referencePopulation.sourceRunId ||
-                occurrence.contentDigest != input.referencePopulation.contentDigest ||
-                occurrence.coveredPrefix != input.referencePopulation.coveredPrefix ||
-                occurrence.qualifyingOrdinal !in 1..input.referencePopulation.prefixN ||
-                occurrence.positionHash != row.positionIdentity ||
-                occurrence.preMovePly != row.preMovePly
-            ) {
+            if (!matchesVerifiedOccurrence(occurrence, input.referencePopulation, row)) {
                 throw EvaluationEvidenceIntegrityException("A verified reference occurrence does not match its proposed row")
             }
         }
     }
 
+    private fun matchesVerifiedOccurrence(
+        occurrence: RetainedReferenceOccurrence,
+        population: EvaluationReferencePopulation,
+        row: EvaluationEvidenceRow,
+    ): Boolean =
+        matchesPopulationIdentity(occurrence, population) &&
+            matchesRowCoordinates(occurrence, row)
+
+    private fun matchesPopulationIdentity(
+        occurrence: RetainedReferenceOccurrence,
+        population: EvaluationReferencePopulation,
+    ): Boolean =
+        occurrence.sourceRunId == population.sourceRunId &&
+            occurrence.contentDigest == population.contentDigest &&
+            occurrence.coveredPrefix == population.coveredPrefix &&
+            occurrence.qualifyingOrdinal in 1..population.prefixN
+
+    private fun matchesRowCoordinates(
+        occurrence: RetainedReferenceOccurrence,
+        row: EvaluationEvidenceRow,
+    ): Boolean =
+        occurrence.positionHash == row.positionIdentity &&
+            occurrence.preMovePly == row.preMovePly
+
     private data class PositionPly(
         val positionHash: String,
         val preMovePly: Int,
     )
+
+    companion object {
+        private val VALID_COLORS = setOf("WHITE", "BLACK", "BOTH")
+    }
 }
