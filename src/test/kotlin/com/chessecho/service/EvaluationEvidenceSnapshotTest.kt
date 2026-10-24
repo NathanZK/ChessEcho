@@ -753,4 +753,12 @@ class EvaluationEvidenceSnapshotTest {
         assertEquals(2, objective.getValue(0.50))
         assertEquals(1, objective.getValue(0.80))
     }
+
+    @Test
+    fun `evaluation evidence integrity exception preserves root cause`() {
+        val cause = IllegalArgumentException("root cause")
+        val exception = EvaluationEvidenceIntegrityException("roster error", cause)
+        assertEquals("roster error", exception.message)
+        assertEquals(cause, exception.cause)
+    }
 }
