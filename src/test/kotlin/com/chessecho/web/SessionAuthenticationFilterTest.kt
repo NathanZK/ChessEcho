@@ -5,12 +5,14 @@ import com.chessecho.service.auth.AuthenticatedPrincipal
 import com.chessecho.service.auth.IdentitySessionService
 import jakarta.servlet.http.Cookie
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
+import org.springframework.http.HttpHeaders
 import org.springframework.mock.web.MockFilterChain
 import org.springframework.mock.web.MockHttpServletRequest
 import org.springframework.mock.web.MockHttpServletResponse
@@ -27,7 +29,7 @@ import java.util.UUID
  */
 class SessionAuthenticationFilterTest {
     private val service = mock<IdentitySessionService>()
-    private val properties = SessionCookieProperties()
+    private val properties = SessionCookieProperties(cookie = SessionCookieProperties.Cookie(secure = false))
     private val filter = SessionAuthenticationFilter(service, properties)
 
     @Test
@@ -76,8 +78,51 @@ class SessionAuthenticationFilterTest {
 
         filter.doFilter(request, response, MockFilterChain())
 
-        val csrfCookie = response.getCookie(properties.csrf.cookieName)
-        assertNotNull(csrfCookie)
-        assertTrue(!csrfCookie!!.value.isNullOrBlank())
+        val setCookie = response.getHeader(HttpHeaders.SET_COOKIE)
+        assertNotNull(setCookie, "Response must include Set-Cookie header for CSRF token")
+        assertTrue(setCookie!!.startsWith("${properties.csrf.cookieName}="))
+        assertTrue(setCookie.contains("Path=${properties.cookie.path}"))
+        assertFalse(setCookie.contains("HttpOnly", ignoreCase = true))
+        assertFalse(setCookie.contains("Secure", ignoreCase = true))
+        assertFalse(setCookie.contains("SameSite", ignoreCase = true), "CSRF cookie must not declare SameSite policy")
+
+        val cookie = response.getCookie(properties.csrf.cookieName)
+        assertNotNull(cookie)
+        assertFalse(cookie!!.isHttpOnly)
+        assertFalse(cookie.secure)
+        assertEquals(properties.cookie.path, cookie.path)
+    }
+
+    @Test
+    fun `seeds Secure attribute on CSRF cookie when secure configuration is enabled`() {
+        val secureProps = SessionCookieProperties(cookie = SessionCookieProperties.Cookie(secure = true))
+        val secureFilter = SessionAuthenticationFilter(service, secureProps)
+        val request = MockHttpServletRequest("GET", "/api/me")
+        val response = MockHttpServletResponse()
+
+        secureFilter.doFilter(request, response, MockFilterChain())
+
+        val setCookie = response.getHeader(HttpHeaders.SET_COOKIE)
+        assertNotNull(setCookie)
+        assertTrue(setCookie!!.contains("Secure", ignoreCase = true))
+        assertFalse(setCookie.contains("HttpOnly", ignoreCase = true))
+        assertFalse(setCookie.contains("SameSite", ignoreCase = true))
+
+        val cookie = response.getCookie(secureProps.csrf.cookieName)
+        assertNotNull(cookie)
+        assertTrue(cookie!!.secure)
+        assertFalse(cookie.isHttpOnly)
+    }
+
+    @Test
+    fun `does not reseed CSRF cookie when already present on request`() {
+        val request = MockHttpServletRequest("GET", "/api/me")
+        request.setCookies(Cookie(properties.csrf.cookieName, "existing-token"))
+        val response = MockHttpServletResponse()
+
+        filter.doFilter(request, response, MockFilterChain())
+
+        assertNull(response.getHeader(HttpHeaders.SET_COOKIE))
+        assertNull(response.getCookie(properties.csrf.cookieName))
     }
 }

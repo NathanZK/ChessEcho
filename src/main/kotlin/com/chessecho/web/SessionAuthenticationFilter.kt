@@ -4,9 +4,10 @@ import com.chessecho.config.SessionCookieProperties
 import com.chessecho.service.auth.IdentitySessionService
 import com.chessecho.service.auth.SessionSecrets
 import jakarta.servlet.FilterChain
-import jakarta.servlet.http.Cookie
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
+import org.springframework.http.HttpHeaders
+import org.springframework.http.ResponseCookie
 import org.springframework.web.filter.OncePerRequestFilter
 
 /**
@@ -45,11 +46,13 @@ class SessionAuthenticationFilter(
             return
         }
         val token = SessionSecrets.generateSecret()
-        val cookie = Cookie(properties.csrf.cookieName, token)
-        cookie.isHttpOnly = false
-        cookie.path = properties.cookie.path
-        cookie.secure = properties.cookie.secure
-        response.addCookie(cookie)
+        val cookie =
+            ResponseCookie.from(properties.csrf.cookieName, token)
+                .httpOnly(false)
+                .path(properties.cookie.path)
+                .secure(properties.cookie.secure)
+                .build()
+        response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString())
     }
 
     private fun cookieValue(
