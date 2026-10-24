@@ -83,14 +83,36 @@ class HumanMoveCorpusProjectionFinalizationService(
                 projectionId,
             ).singleOrNull() ?: throw NoSuchElementException("Projection $projectionId not found")
         if (projection.finalized) {
-            if (!projection.verified) throw CorpusArtifactConflict("Projection $projectionId is finalized without verification")
-            retainedEvaluationEvidenceService.verifyFinalizedEvidenceIfEligible(projection.runId, projection.contentDigest)
-            return digestProjection(projectionId).also {
-                if (it.distributionSha256 != projection.expectedDigest) {
-                    throw CorpusArtifactConflict("Projection $projectionId differs from its verified distribution digest")
-                }
+            return handleAlreadyFinalized(projection, projectionId)
+        }
+        val (archive, verified) = verifyUnfinalizedPrerequisites(projection, projectionId)
+        val result = pruneSubThresholdRowsAndVerify(projectionId, projection.minObservations, projection.expectedDigest)
+        assertNoRawEvidenceMismatches(projection, projectionId)
+        occurrenceService.bindFinalizedEvidence(verified, archive)
+        jdbcTemplate.update(
+            "UPDATE human_move_corpus_projection SET finalized = true, verified = true WHERE id = ?",
+            projectionId,
+        )
+        return result
+    }
+
+    private fun handleAlreadyFinalized(
+        projection: ProjectionEvidence,
+        projectionId: UUID,
+    ): HumanMoveCorpusProjectionFinalizeResponse {
+        if (!projection.verified) throw CorpusArtifactConflict("Projection $projectionId is finalized without verification")
+        retainedEvaluationEvidenceService.verifyFinalizedEvidenceIfEligible(projection.runId, projection.contentDigest)
+        return digestProjection(projectionId).also {
+            if (it.distributionSha256 != projection.expectedDigest) {
+                throw CorpusArtifactConflict("Projection $projectionId differs from its verified distribution digest")
             }
         }
+    }
+
+    private fun verifyUnfinalizedPrerequisites(
+        projection: ProjectionEvidence,
+        projectionId: UUID,
+    ): Pair<java.nio.file.Path, com.chessecho.humanmove.artifact.VerifiedCorpusArtifact> {
         val archive =
             artifactService.verifiedArchivePath(projection.contentDigest)
                 ?: throw CorpusArtifactConflict("Projection $projectionId has no verified archive")
@@ -103,7 +125,14 @@ class HumanMoveCorpusProjectionFinalizationService(
         if (projection.expectedDigest != expected) {
             throw CorpusArtifactConflict("Projection $projectionId no longer matches the imported checkpoint-equivalent distribution")
         }
+        return archive to verified
+    }
 
+    private fun pruneSubThresholdRowsAndVerify(
+        projectionId: UUID,
+        minObservations: Int,
+        expectedDigest: String,
+    ): HumanMoveCorpusProjectionFinalizeResponse {
         jdbcTemplate.update(
             """
             DELETE FROM human_move_corpus_projection_row r
@@ -112,12 +141,19 @@ class HumanMoveCorpusProjectionFinalizationService(
                    WHERE s.projection_id = r.projection_id AND s.position_hash = r.position_hash) < ?
             """.trimIndent(),
             projectionId,
-            projection.minObservations,
+            minObservations,
         )
         val result = digestProjection(projectionId)
-        if (result.distributionSha256 != expected) {
+        if (result.distributionSha256 != expectedDigest) {
             throw CorpusArtifactConflict("Projection $projectionId does not match its checkpoint-equivalent distribution")
         }
+        return result
+    }
+
+    private fun assertNoRawEvidenceMismatches(
+        projection: ProjectionEvidence,
+        projectionId: UUID,
+    ) {
         val mismatches =
             jdbcTemplate.queryForObject(
                 """
@@ -146,12 +182,6 @@ class HumanMoveCorpusProjectionFinalizationService(
                 projectionId,
             )!!
         if (mismatches) throw CorpusArtifactConflict("Projection $projectionId rows differ from imported raw evidence")
-        occurrenceService.bindFinalizedEvidence(verified, archive)
-        jdbcTemplate.update(
-            "UPDATE human_move_corpus_projection SET finalized = true, verified = true WHERE id = ?",
-            projectionId,
-        )
-        return result
     }
 
     fun digestProjection(projectionId: UUID): HumanMoveCorpusProjectionFinalizeResponse {

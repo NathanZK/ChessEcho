@@ -10,26 +10,9 @@
 <SmellBaseline>
   <ManuallySuppressedIssues></ManuallySuppressedIssues>
   <CurrentIssues>
-
-
-    <ID>CognitiveComplexMethod:HumanMoveCorpusGameWriter.kt$HumanMoveCorpusGameWriter$@Transactional fun commitGame( runId: UUID, candidate: HumanMoveCorpusCandidate, ): HumanMoveCorpusCommitResult</ID>
-
     <ID>ComplexCondition:CsrfEnforcementInterceptor.kt$CsrfEnforcementInterceptor$request.method.equals("GET", ignoreCase = true) || request.method.equals("HEAD", ignoreCase = true) || request.method.equals("OPTIONS", ignoreCase = true) || CorsUtils.isPreFlightRequest(request)</ID>
-    <ID>ComplexCondition:HumanMoveCorpusOccurrenceService.kt$HumanMoveCorpusOccurrenceService$coveredPrefix &lt; 1 || coveredPrefix &gt; frontier || gameCount != coveredPrefix.toLong() || minimum != 1 || maximum != coveredPrefix || occurrenceCount == 0L || occurrenceCount != expectedOccurrences</ID>
     <ID>ComplexCondition:PuzzleSubmissionService.kt$PuzzleSubmissionService$stored.chessAccount.id != accountId || stored.position.id != request.positionId || stored.playerColor != request.playerColor || stored.eventType != request.eventType || stored.submittedMove != move</ID>
-
-
-    <ID>CyclomaticComplexMethod:HumanMoveCorpusGameWriter.kt$HumanMoveCorpusGameWriter$@Transactional fun commitGame( runId: UUID, candidate: HumanMoveCorpusCandidate, ): HumanMoveCorpusCommitResult</ID>
-
-
-    <ID>LongMethod:HumanMoveCorpusGameWriter.kt$HumanMoveCorpusGameWriter$@Transactional fun commitGame( runId: UUID, candidate: HumanMoveCorpusCandidate, ): HumanMoveCorpusCommitResult</ID>
-    <ID>LongMethod:HumanMoveCorpusGameWriter.kt$HumanMoveCorpusGameWriter$private fun verifyIdenticalContribution( existing: CommittedGame, candidate: HumanMoveCorpusCandidate, pgnSha256: String, observations: List&lt;HumanMoveCorpusObservedMove&gt;, occurrences: List&lt;HumanMoveCorpusOccurrence&gt;, )</ID>
-    <ID>LongMethod:HumanMoveCorpusMaterializationService.kt$HumanMoveCorpusMaterializationService$@Transactional fun materialize(request: HumanMoveCorpusMaterializeRequest): HumanMoveCorpusMaterializeResponse</ID>
-    <ID>LongMethod:HumanMoveCorpusOccurrenceService.kt$HumanMoveCorpusOccurrenceService$private fun verifySourcePrefix( sourceRunId: UUID, coveredPrefix: Int, )</ID>
-    <ID>LongMethod:HumanMoveCorpusProjectionFinalizationService.kt$HumanMoveCorpusProjectionFinalizationService$@Transactional fun finalize(projectionId: UUID): HumanMoveCorpusProjectionFinalizeResponse</ID>
-
     <ID>LongMethod:ProgressService.kt$ProgressService$@Transactional(readOnly = true) fun getProgress( positionId: UUID, playerColor: PlayerColor, accountId: UUID, principal: AuthenticatedPrincipal, minEvalLoss: Double, ): ProgressResponse</ID>
-
     <ID>SwallowedException:MoveEvaluationService.kt$MoveEvaluationService$e: Exception</ID>
     <ID>SwallowedException:StringToPlatformConverter.kt$StringToPlatformConverter$e: IllegalArgumentException</ID>
     <ID>SwallowedException:StringToPlayerColorConverter.kt$StringToPlayerColorConverter$e: IllegalArgumentException</ID>
