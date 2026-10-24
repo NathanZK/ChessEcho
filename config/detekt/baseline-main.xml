@@ -13,13 +13,10 @@
     <ID>CastNullableToNonNullableType:EvaluationEvidenceSnapshotService.kt$EvaluationEvidenceSnapshotService$as</ID>
 
 
-    <ID>CognitiveComplexMethod:HumanMoveBfsService.kt$HumanMoveBfsService$fun discoverPopulation(request: HumanMovePopulationDiscoveryRequest): HumanMovePopulationDiscoveryResponse</ID>
-    <ID>CognitiveComplexMethod:HumanMoveBfsTraversal.kt$HumanMoveBfsTraversal$fun traverse( bounds: HumanMoveBfsBounds, sink: HumanMoveBfsSink, ): HumanMoveBfsTraversalResult</ID>
     <ID>CognitiveComplexMethod:HumanMoveCorpusArtifactCodec.kt$HumanMoveCorpusArtifactCodec$fun spoolZip( archive: Path, tempDirectory: Path, maxArchiveBytes: Long, maxExpandedEntryBytes: Long, ): List&lt;EntryFile&gt;</ID>
     <ID>CognitiveComplexMethod:HumanMoveCorpusArtifactVerifier.kt$HumanMoveCorpusArtifactVerifier$fun verify( archive: Path, expectedDigest: String, limits: Limits, ): VerifiedCorpusArtifact</ID>
     <ID>CognitiveComplexMethod:HumanMoveCorpusArtifactVerifier.kt$HumanMoveCorpusArtifactVerifier$private fun readRecords( input: InputStream, maxRecordBytes: Int, consume: (JsonNode) -&gt; Unit, )</ID>
     <ID>CognitiveComplexMethod:HumanMoveCorpusGameWriter.kt$HumanMoveCorpusGameWriter$@Transactional fun commitGame( runId: UUID, candidate: HumanMoveCorpusCandidate, ): HumanMoveCorpusCommitResult</ID>
-    <ID>CognitiveComplexMethod:HumanMoveCorpusService.kt$HumanMoveCorpusService$fun runCorpus(request: HumanMoveCorpusRunRequest): HumanMoveCorpusRunResponse</ID>
 
     <ID>CognitiveComplexMethod:ReferenceCoverageAnalysisService.kt$ReferenceCoverageAnalysisService$fun analyze(input: ReferenceCoverageAnalysisInput): ReferenceCoverageAnalysisResult</ID>
     <ID>ComplexCondition:CsrfEnforcementInterceptor.kt$CsrfEnforcementInterceptor$request.method.equals("GET", ignoreCase = true) || request.method.equals("HEAD", ignoreCase = true) || request.method.equals("OPTIONS", ignoreCase = true) || CorsUtils.isPreFlightRequest(request)</ID>
@@ -35,8 +32,6 @@
     <ID>ComplexCondition:RetainedEvaluationEvidenceService.kt$RetainedEvaluationEvidenceService$population.contentDigest != projection.contentDigest || population.sourceRunId != projection.sourceRunId || population.prefixN != projection.prefixN || population.ratingBand != projection.ratingBand || population.minObservations != projection.minObservations || population.calculationVersion != projection.calculationVersion</ID>
 
 
-    <ID>CyclomaticComplexMethod:HumanMoveBfsService.kt$HumanMoveBfsService$fun discoverPopulation(request: HumanMovePopulationDiscoveryRequest): HumanMovePopulationDiscoveryResponse</ID>
-    <ID>CyclomaticComplexMethod:HumanMoveBfsTraversal.kt$HumanMoveBfsTraversal$fun traverse( bounds: HumanMoveBfsBounds, sink: HumanMoveBfsSink, ): HumanMoveBfsTraversalResult</ID>
     <ID>CyclomaticComplexMethod:HumanMoveCorpusArtifactCodec.kt$HumanMoveCorpusArtifactCodec$fun spoolZip( archive: Path, tempDirectory: Path, maxArchiveBytes: Long, maxExpandedEntryBytes: Long, ): List&lt;EntryFile&gt;</ID>
     <ID>CyclomaticComplexMethod:HumanMoveCorpusArtifactVerifier.kt$HumanMoveCorpusArtifactVerifier$fun verify( archive: Path, expectedDigest: String, limits: Limits, ): VerifiedCorpusArtifact</ID>
     <ID>CyclomaticComplexMethod:HumanMoveCorpusGameWriter.kt$HumanMoveCorpusGameWriter$@Transactional fun commitGame( runId: UUID, candidate: HumanMoveCorpusCandidate, ): HumanMoveCorpusCommitResult</ID>
@@ -46,9 +41,6 @@
     <ID>CyclomaticComplexMethod:RetainedEvaluationEvidence.kt$RetainedEvaluationEvidenceValidator$fun admit(evidence: RetainedEvaluationEvidence): RetainedEvaluationEvidence</ID>
     <ID>LongMethod:EvaluationEvidenceProducerService.kt$EvaluationEvidenceProducerService$private fun buildRows( input: EvaluationEvidenceProducerInput, operationalOccurrences: List&lt;PositionOccurrence&gt;, analyses: Map&lt;UUID, EngineAnalysis&gt;, matchingOccurrences: Map&lt;PositionPly, List&lt;UUID&gt;&gt;, ): List&lt;EvaluationEvidenceRow&gt;</ID>
 
-    <ID>LongMethod:HumanMoveBfsService.kt$HumanMoveBfsService$fun discoverPopulation(request: HumanMovePopulationDiscoveryRequest): HumanMovePopulationDiscoveryResponse</ID>
-    <ID>LongMethod:HumanMoveBfsService.kt$HumanMoveBfsService$fun runBfs(request: HumanMoveBfsRequest): HumanMoveBfsResponse</ID>
-    <ID>LongMethod:HumanMoveBfsTraversal.kt$HumanMoveBfsTraversal$fun traverse( bounds: HumanMoveBfsBounds, sink: HumanMoveBfsSink, ): HumanMoveBfsTraversalResult</ID>
     <ID>LongMethod:HumanMoveCorpusArtifactCodec.kt$HumanMoveCorpusArtifactCodec$fun spoolZip( archive: Path, tempDirectory: Path, maxArchiveBytes: Long, maxExpandedEntryBytes: Long, ): List&lt;EntryFile&gt;</ID>
     <ID>LongMethod:HumanMoveCorpusArtifactService.kt$HumanMoveCorpusArtifactService$@Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ) fun export(request: HumanMoveCorpusExportRequest): HumanMoveCorpusExportReceipt</ID>
     <ID>LongMethod:HumanMoveCorpusArtifactVerifier.kt$HumanMoveCorpusArtifactVerifier$fun verify( archive: Path, expectedDigest: String, limits: Limits, ): VerifiedCorpusArtifact</ID>
@@ -64,10 +56,6 @@
     <ID>LongMethod:ProgressService.kt$ProgressService$@Transactional(readOnly = true) fun getProgress( positionId: UUID, playerColor: PlayerColor, accountId: UUID, principal: AuthenticatedPrincipal, minEvalLoss: Double, ): ProgressResponse</ID>
     <ID>LongMethod:ReferenceCoverageAnalysisService.kt$ReferenceCoverageAnalysisService$fun analyze(input: ReferenceCoverageAnalysisInput): ReferenceCoverageAnalysisResult</ID>
     <ID>LongMethod:RetainedEvaluationEvidenceService.kt$RetainedEvaluationEvidenceService$@Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ) fun loadAndAdmit( sourceRunId: UUID, projectionId: UUID, analysisVersion: String, ): RetainedEvaluationEvidence</ID>
-    <ID>MapGetWithNotNullAssertionOperator:HumanMoveBfsService.kt$HumanMoveBfsService$fenByHash[hash]!!</ID>
-    <ID>NestedBlockDepth:HumanMoveBfsService.kt$HumanMoveBfsService$fun discoverPopulation(request: HumanMovePopulationDiscoveryRequest): HumanMovePopulationDiscoveryResponse</ID>
-    <ID>NestedBlockDepth:HumanMoveBfsTraversal.kt$HumanMoveBfsTraversal$fun processGamePgn( pgn: String, isWhiteInBand: Boolean, isBlackInBand: Boolean, observations: MutableMap&lt;Pair&lt;String, String&gt;, Int&gt;, fenByHash: MutableMap&lt;String, String&gt;, occurrences: MutableList&lt;HumanMoveCorpusOccurrence&gt;? = null, ): HumanMoveBfsPgnOutcome</ID>
-    <ID>NestedBlockDepth:HumanMoveBfsTraversal.kt$HumanMoveBfsTraversal$fun traverse( bounds: HumanMoveBfsBounds, sink: HumanMoveBfsSink, ): HumanMoveBfsTraversalResult</ID>
     <ID>NestedBlockDepth:HumanMoveCorpusArtifactCodec.kt$HumanMoveCorpusArtifactCodec$fun digestFiles(parts: List&lt;EntryFile&gt;): String</ID>
     <ID>NestedBlockDepth:HumanMoveCorpusArtifactCodec.kt$HumanMoveCorpusArtifactCodec$fun spoolZip( archive: Path, tempDirectory: Path, maxArchiveBytes: Long, maxExpandedEntryBytes: Long, ): List&lt;EntryFile&gt;</ID>
     <ID>NestedBlockDepth:HumanMoveCorpusArtifactCodec.kt$HumanMoveCorpusArtifactCodec$fun writeZip( entries: List&lt;EntryFile&gt;, outputPath: Path, maxArchiveBytes: Long, )</ID>

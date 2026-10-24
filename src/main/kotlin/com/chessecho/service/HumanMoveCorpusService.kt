@@ -6,6 +6,7 @@ import com.chessecho.dto.HumanMoveCorpusRunRequest
 import com.chessecho.dto.HumanMoveCorpusRunResponse
 import com.chessecho.repository.HumanMoveCorpusRunRepository
 import com.chessecho.service.HumanMoveCorpusGameWriter.Companion.toResponse
+import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.dao.TransientDataAccessException
 import org.springframework.stereotype.Service
@@ -17,6 +18,83 @@ import java.util.UUID
  * membership is run-scoped and never touches the legacy global seen-game
  * claim or `human_move_distribution`.
  */
+private class CorpusRunSink(
+    private val runId: UUID,
+    private val traversal: HumanMoveBfsTraversal,
+    private val commitAction: (UUID, HumanMoveCorpusCandidate) -> Unit,
+    private val log: Logger,
+) : HumanMoveBfsSink {
+    val fetchFailures = mutableListOf<String>()
+    var rejectedGames: Int = 0
+
+    override fun alreadyContributed(archiveGameUrls: List<String>): Set<String> = emptySet()
+
+    override fun accept(game: HumanMoveBfsQualifyingGame): Boolean {
+        val observations = mutableMapOf<Pair<String, String>, Int>()
+        val fenByHash = mutableMapOf<String, String>()
+        val occurrences = mutableListOf<HumanMoveCorpusOccurrence>()
+        val parse =
+            traversal.processGamePgn(
+                pgn = game.pgn,
+                isWhiteInBand = !game.isPlayerWhite,
+                isBlackInBand = game.isPlayerWhite,
+                observations = observations,
+                fenByHash = fenByHash,
+                occurrences = occurrences,
+            )
+        if (parse != HumanMoveBfsPgnOutcome.PARSED || observations.isEmpty() || occurrences.isEmpty()) {
+            rejectedGames++
+            val reason = if (parse == HumanMoveBfsPgnOutcome.PARSED) "ZERO_OBSERVATIONS" else parse.name
+            log.info("Corpus run $runId rejected game ${game.url}: $reason")
+            return false
+        }
+        val occurrenceAggregate =
+            occurrences.groupingBy { it.positionHash to it.movePlayed }.eachCount()
+        check(occurrenceAggregate == observations) {
+            "Occurrence and aggregate contributions diverged while parsing ${game.url}"
+        }
+        val candidate =
+            HumanMoveCorpusCandidate(
+                providerGameId = game.url,
+                traversedPlayer = game.traversedPlayer,
+                opponent = game.opponent,
+                opponentSide = if (game.isPlayerWhite) HumanMoveCorpusSide.BLACK else HumanMoveCorpusSide.WHITE,
+                opponentRating = game.opponentRating,
+                rules = game.rules,
+                timeClass = game.timeClass.orEmpty(),
+                bfsDepth = game.depth,
+                pgn = game.pgn,
+                observations =
+                    occurrenceAggregate
+                        .map { (key, count) ->
+                            HumanMoveCorpusObservedMove(
+                                key.first,
+                                fenByHash.getValue(key.first),
+                                key.second,
+                                count,
+                            )
+                        }.sortedWith(compareBy({ it.positionHash }, { it.movePlayed })),
+                occurrences = occurrences.sortedBy { it.preMovePly },
+            )
+        commitAction(runId, candidate)
+        return true
+    }
+
+    override fun onArchiveListFailure(
+        player: String,
+        error: Exception,
+    ) {
+        fetchFailures += "archives for player $player: ${error.message}"
+    }
+
+    override fun onMonthlyGamesFailure(
+        archiveUrl: String,
+        error: Exception,
+    ) {
+        fetchFailures += "games from $archiveUrl: ${error.message}"
+    }
+}
+
 @Service
 class HumanMoveCorpusService(
     private val chessComClient: ChessComClient,
@@ -38,109 +116,20 @@ class HumanMoveCorpusService(
         log.info("Started corpus run $runId for band ${targetBand.value} (sourceRevision=${request.sourceRevision})")
 
         val traversal = HumanMoveBfsTraversal(chessComClient, log)
-        val fetchFailures = mutableListOf<String>()
-        var rejectedGames = 0
+        val sink = CorpusRunSink(runId, traversal, ::commitWithRetry, log)
 
-        val sink =
-            object : HumanMoveBfsSink {
-                // Run-scoped membership: the traversal's in-run dedup is the only skip.
-                override fun alreadyContributed(archiveGameUrls: List<String>): Set<String> = emptySet()
+        val bounds =
+            HumanMoveBfsBounds(
+                targetBand = targetBand,
+                seedPlayers = request.seedPlayers,
+                excludedPlayers = request.excludedPlayers,
+                maxQualifyingGames = request.maxQualifyingGames,
+                maxGamesPerPlayer = request.maxGamesPerPlayer,
+                maxPlayers = request.maxPlayers,
+                maxDepth = request.maxDepth,
+            )
 
-                override fun accept(game: HumanMoveBfsQualifyingGame): Boolean {
-                    val observations = mutableMapOf<Pair<String, String>, Int>()
-                    val fenByHash = mutableMapOf<String, String>()
-                    val occurrences = mutableListOf<HumanMoveCorpusOccurrence>()
-                    val parse =
-                        traversal.processGamePgn(
-                            pgn = game.pgn,
-                            isWhiteInBand = !game.isPlayerWhite,
-                            isBlackInBand = game.isPlayerWhite,
-                            observations = observations,
-                            fenByHash = fenByHash,
-                            occurrences = occurrences,
-                        )
-                    if (parse != HumanMoveBfsPgnOutcome.PARSED || observations.isEmpty() || occurrences.isEmpty()) {
-                        rejectedGames++
-                        val reason = if (parse == HumanMoveBfsPgnOutcome.PARSED) "ZERO_OBSERVATIONS" else parse.name
-                        log.info("Corpus run $runId rejected game ${game.url}: $reason")
-                        return false
-                    }
-                    val occurrenceAggregate =
-                        occurrences.groupingBy { it.positionHash to it.movePlayed }.eachCount()
-                    check(occurrenceAggregate == observations) {
-                        "Occurrence and aggregate contributions diverged while parsing ${game.url}"
-                    }
-                    val candidate =
-                        HumanMoveCorpusCandidate(
-                            providerGameId = game.url,
-                            traversedPlayer = game.traversedPlayer,
-                            opponent = game.opponent,
-                            opponentSide = if (game.isPlayerWhite) HumanMoveCorpusSide.BLACK else HumanMoveCorpusSide.WHITE,
-                            opponentRating = game.opponentRating,
-                            rules = game.rules,
-                            timeClass = game.timeClass.orEmpty(),
-                            bfsDepth = game.depth,
-                            pgn = game.pgn,
-                            observations =
-                                occurrenceAggregate
-                                    .map { (key, count) ->
-                                        HumanMoveCorpusObservedMove(
-                                            key.first,
-                                            fenByHash.getValue(key.first),
-                                            key.second,
-                                            count,
-                                        )
-                                    }.sortedWith(compareBy({ it.positionHash }, { it.movePlayed })),
-                            occurrences = occurrences.sortedBy { it.preMovePly },
-                        )
-                    commitWithRetry(runId, candidate)
-                    return true
-                }
-
-                override fun onArchiveListFailure(
-                    player: String,
-                    error: Exception,
-                ) {
-                    fetchFailures += "archives for player $player: ${error.message}"
-                }
-
-                override fun onMonthlyGamesFailure(
-                    archiveUrl: String,
-                    error: Exception,
-                ) {
-                    fetchFailures += "games from $archiveUrl: ${error.message}"
-                }
-            }
-
-        val outcome =
-            try {
-                val result =
-                    traversal.traverse(
-                        HumanMoveBfsBounds(
-                            targetBand = targetBand,
-                            seedPlayers = request.seedPlayers,
-                            excludedPlayers = request.excludedPlayers,
-                            maxQualifyingGames = request.maxQualifyingGames,
-                            maxGamesPerPlayer = request.maxGamesPerPlayer,
-                            maxPlayers = request.maxPlayers,
-                            maxDepth = request.maxDepth,
-                        ),
-                        sink,
-                    )
-                HumanMoveCorpusRunOutcome(
-                    status = if (fetchFailures.isEmpty()) HumanMoveCorpusRunStatus.COMPLETED else HumanMoveCorpusRunStatus.INCOMPLETE,
-                    stopReason = result.stopReason,
-                    rejectedGameCount = rejectedGames,
-                    archiveFetchFailureCount = fetchFailures.size,
-                    failureDetails = fetchFailureDetails(fetchFailures),
-                )
-            } catch (e: CommitFailure) {
-                log.error("Corpus run $runId failed: ${e.message}", e.cause)
-                failedOutcome("COMMIT_FAILED", e.message, rejectedGames, fetchFailures)
-            } catch (e: Exception) {
-                log.error("Corpus run $runId failed unexpectedly", e)
-                failedOutcome("UNEXPECTED_ERROR", "${e.javaClass.simpleName}: ${e.message}", rejectedGames, fetchFailures)
-            }
+        val outcome = executeCorpusRun(traversal, bounds, sink, runId)
 
         log.info(
             "Corpus run $runId finished: status=${outcome.status} stopReason=${outcome.stopReason} " +
@@ -148,6 +137,34 @@ class HumanMoveCorpusService(
         )
         return gameWriter.finishRun(runId, outcome)
     }
+
+    private fun executeCorpusRun(
+        traversal: HumanMoveBfsTraversal,
+        bounds: HumanMoveBfsBounds,
+        sink: CorpusRunSink,
+        runId: UUID,
+    ): HumanMoveCorpusRunOutcome =
+        try {
+            val result = traversal.traverse(bounds, sink)
+            HumanMoveCorpusRunOutcome(
+                status =
+                    if (sink.fetchFailures.isEmpty()) {
+                        HumanMoveCorpusRunStatus.COMPLETED
+                    } else {
+                        HumanMoveCorpusRunStatus.INCOMPLETE
+                    },
+                stopReason = result.stopReason,
+                rejectedGameCount = sink.rejectedGames,
+                archiveFetchFailureCount = sink.fetchFailures.size,
+                failureDetails = fetchFailureDetails(sink.fetchFailures),
+            )
+        } catch (e: CommitFailure) {
+            log.error("Corpus run $runId failed: ${e.message}", e.cause)
+            failedOutcome("COMMIT_FAILED", e.message, sink.rejectedGames, sink.fetchFailures)
+        } catch (e: Exception) {
+            log.error("Corpus run $runId failed unexpectedly", e)
+            failedOutcome("UNEXPECTED_ERROR", "${e.javaClass.simpleName}: ${e.message}", sink.rejectedGames, sink.fetchFailures)
+        }
 
     fun listRuns(): List<HumanMoveCorpusRunResponse> = runRepository.findAllByOrderByCreatedAtDesc().map { it.toResponse() }
 
