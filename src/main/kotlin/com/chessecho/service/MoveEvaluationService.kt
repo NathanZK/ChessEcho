@@ -27,7 +27,7 @@ class MoveEvaluationService(
         try {
             board.loadFromFen(fen)
         } catch (e: Exception) {
-            throw IllegalArgumentException("Invalid FEN position: $fen")
+            throw IllegalArgumentException("Invalid FEN position: $fen", e)
         }
 
         val isLegal =
@@ -38,7 +38,7 @@ class MoveEvaluationService(
                 } else {
                     false
                 }
-            } catch (e: Exception) {
+            } catch (ignored: Exception) {
                 false
             }
 

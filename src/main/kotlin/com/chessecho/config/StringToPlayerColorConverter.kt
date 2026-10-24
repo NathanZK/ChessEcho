@@ -11,7 +11,7 @@ class StringToPlayerColorConverter : Converter<String, PlayerColor> {
         return try {
             PlayerColor.valueOf(trimmed.uppercase())
         } catch (e: IllegalArgumentException) {
-            throw IllegalArgumentException("Invalid playerColor '$source'. Must be WHITE, BLACK, or BOTH.")
+            throw IllegalArgumentException("Invalid playerColor '$source'. Must be WHITE, BLACK, or BOTH.", e)
         }
     }
 }

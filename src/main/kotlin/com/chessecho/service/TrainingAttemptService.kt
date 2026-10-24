@@ -48,14 +48,14 @@ class TrainingAttemptService(
             try {
                 TrainingAttemptMode.valueOf(request.mode)
             } catch (e: IllegalArgumentException) {
-                throw IllegalArgumentException("Invalid timing mode: ${request.mode}")
+                throw IllegalArgumentException("Invalid timing mode: ${request.mode}", e)
             }
 
         val outcome =
             try {
                 TrainingAttemptOutcome.valueOf(request.outcome)
             } catch (e: IllegalArgumentException) {
-                throw IllegalArgumentException("Invalid outcome: ${request.outcome}")
+                throw IllegalArgumentException("Invalid outcome: ${request.outcome}", e)
             }
 
         // Persist attempt with optional account ownership

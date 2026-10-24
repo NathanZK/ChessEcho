@@ -22,11 +22,7 @@ class CsrfEnforcementInterceptor(
         response: HttpServletResponse,
         handler: Any,
     ): Boolean {
-        if (request.method.equals("GET", ignoreCase = true) ||
-            request.method.equals("HEAD", ignoreCase = true) ||
-            request.method.equals("OPTIONS", ignoreCase = true) ||
-            CorsUtils.isPreFlightRequest(request)
-        ) {
+        if (isSafeMethod(request) || CorsUtils.isPreFlightRequest(request)) {
             return true
         }
         // Only enforce for real controller handlers; a static-resource fallback
@@ -42,8 +38,14 @@ class CsrfEnforcementInterceptor(
         return true
     }
 
+    private fun isSafeMethod(request: HttpServletRequest): Boolean = SAFE_METHODS.any { it.equals(request.method, ignoreCase = true) }
+
     private fun constantTimeEquals(
         a: String,
         b: String,
     ): Boolean = MessageDigest.isEqual(a.toByteArray(Charsets.UTF_8), b.toByteArray(Charsets.UTF_8))
+
+    companion object {
+        private val SAFE_METHODS = setOf("GET", "HEAD", "OPTIONS")
+    }
 }

@@ -1,5 +1,6 @@
 package com.chessecho.service
 
+import com.chessecho.domain.PuzzleSchedulingEvent
 import com.chessecho.domain.SchedulingEventType
 import com.chessecho.dto.PuzzleAttemptCountResponse
 import com.chessecho.dto.PuzzleEventRequest
@@ -47,13 +48,23 @@ class PuzzleSubmissionService(
         val stored =
             events.findByAppUserIdAndSubmissionId(principal.appUserId, submissionId)
                 ?: throw IllegalStateException("Persisted puzzle submission receipt is missing")
-        if (stored.chessAccount.id != accountId || stored.position.id != request.positionId ||
-            stored.playerColor != request.playerColor || stored.eventType != request.eventType || stored.submittedMove != move
-        ) {
+        if (!isMatchingSubmission(stored, accountId, request, move)) {
             throw PuzzleSubmissionConflictException()
         }
         return PuzzleSubmissionReceipt(submissionId)
     }
+
+    private fun isMatchingSubmission(
+        stored: PuzzleSchedulingEvent,
+        accountId: UUID,
+        request: PuzzleEventRequest,
+        move: String,
+    ): Boolean =
+        stored.chessAccount.id == accountId &&
+            stored.position.id == request.positionId &&
+            stored.playerColor == request.playerColor &&
+            stored.eventType == request.eventType &&
+            stored.submittedMove == move
 
     @Transactional(readOnly = true)
     fun count(
