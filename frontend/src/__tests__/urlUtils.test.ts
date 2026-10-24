@@ -83,11 +83,59 @@ describe('convertTo6chessUrl', () => {
     expect(result).toBe('https://www.6chess.com/game/live/172923974924?username=testuser&move=0');
   });
 
-  it('returns null when username is not provided', () => {
+  it('supports empty username in query parameters', () => {
     const chessComUrl = 'https://www.chess.com/game/live/172923974924';
     const result = convertTo6chessUrl(chessComUrl, '');
     
     // The function should still work with empty username, just with empty parameter
     expect(result).toBe('https://www.6chess.com/game/live/172923974924?username=&move=0');
+  });
+
+  describe('security and strict validation', () => {
+    it('returns null for prefix hostname lookalikes', () => {
+      expect(convertTo6chessUrl('https://evil-chess.com/game/live/12345', 'user')).toBeNull();
+      expect(convertTo6chessUrl('https://notchess.com/game/live/12345', 'user')).toBeNull();
+      expect(convertTo6chessUrl('https://attackerchess.com/game/daily/12345', 'user')).toBeNull();
+    });
+
+    it('returns null for suffix and attacker subdomain lookalikes', () => {
+      expect(convertTo6chessUrl('https://chess.com.attacker.com/game/live/12345', 'user')).toBeNull();
+      expect(convertTo6chessUrl('https://chess.com.evil.org/game/daily/12345', 'user')).toBeNull();
+    });
+
+    it('returns null for non-allowlisted subdomains of chess.com', () => {
+      expect(convertTo6chessUrl('https://blog.chess.com/game/live/12345', 'user')).toBeNull();
+      expect(convertTo6chessUrl('https://support.chess.com/game/live/12345', 'user')).toBeNull();
+    });
+
+    it('handles case-insensitive valid hostnames', () => {
+      expect(convertTo6chessUrl('https://WWW.CHESS.COM/game/live/12345', 'user')).toBe(
+        'https://www.6chess.com/game/live/12345?username=user&move=0'
+      );
+      expect(convertTo6chessUrl('https://Chess.Com/game/daily/12345', 'user')).toBe(
+        'https://www.6chess.com/game/daily/12345?username=user&move=0'
+      );
+    });
+
+    it('returns null for unsupported URL schemes', () => {
+      expect(convertTo6chessUrl('ftp://www.chess.com/game/live/12345', 'user')).toBeNull();
+      expect(convertTo6chessUrl('javascript://www.chess.com/game/live/12345', 'user')).toBeNull();
+    });
+
+    it('returns null for userinfo spoofing attempts', () => {
+      expect(convertTo6chessUrl('https://chess.com@evil.com/game/live/12345', 'user')).toBeNull();
+    });
+
+    it('returns null for unsupported game types', () => {
+      expect(convertTo6chessUrl('https://www.chess.com/game/puzzles/12345', 'user')).toBeNull();
+      expect(convertTo6chessUrl('https://www.chess.com/game/tactics/12345', 'user')).toBeNull();
+      expect(convertTo6chessUrl('https://www.chess.com/game/other/12345', 'user')).toBeNull();
+    });
+
+    it('returns null for invalid or path-traversal game IDs', () => {
+      expect(convertTo6chessUrl('https://www.chess.com/game/live/../12345', 'user')).toBeNull();
+      expect(convertTo6chessUrl('https://www.chess.com/game/live/123/extra/path', 'user')).toBeNull();
+      expect(convertTo6chessUrl('https://www.chess.com/game/live/invalid@id', 'user')).toBeNull();
+    });
   });
 });
