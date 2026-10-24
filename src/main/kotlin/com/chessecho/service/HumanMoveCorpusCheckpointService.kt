@@ -92,6 +92,15 @@ class HumanMoveCorpusCheckpointService(
         runId: UUID,
         n: Int,
     ) {
+        checkContiguousPrefix(runId, n)
+        checkCommittedContributions(runId, n)
+        checkCommittedHashes(runId, n)
+    }
+
+    private fun checkContiguousPrefix(
+        runId: UUID,
+        n: Int,
+    ) {
         val (count, min, max) =
             jdbcTemplate.queryForObject(
                 """
@@ -108,7 +117,12 @@ class HumanMoveCorpusCheckpointService(
                 "Run $runId prefix 1..$n is not contiguous: $count games, ordinals $min..$max",
             )
         }
+    }
 
+    private fun checkCommittedContributions(
+        runId: UUID,
+        n: Int,
+    ) {
         val incompleteOrdinals =
             jdbcTemplate.queryForList(
                 """
@@ -138,7 +152,12 @@ class HumanMoveCorpusCheckpointService(
                 "Run $runId games at ordinals $incompleteOrdinals do not match their committed contribution",
             )
         }
+    }
 
+    private fun checkCommittedHashes(
+        runId: UUID,
+        n: Int,
+    ) {
         val divergedHashes =
             jdbcTemplate.queryForList(
                 """

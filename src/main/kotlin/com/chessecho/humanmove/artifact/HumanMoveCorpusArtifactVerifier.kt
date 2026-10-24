@@ -54,108 +54,20 @@ object HumanMoveCorpusArtifactVerifier {
         expectedDigest: String,
         limits: Limits,
     ): VerifiedCorpusArtifact {
-        if (!expectedDigest.matches(Regex("[0-9a-f]{64}"))) {
-            throw CorpusArtifactInvalidException("expectedDigest must be a 64-character lowercase hex SHA-256 value")
-        }
-        if (Files.size(archive) > limits.maxArchiveBytes) {
-            throw CorpusArtifactInvalidException("Archive exceeds the configured maximum of ${limits.maxArchiveBytes} bytes")
-        }
-
-        val entries = HumanMoveCorpusArtifactCodec.spoolZip(archive, archive.parent, limits.maxArchiveBytes, limits.maxExpandedEntryBytes)
+        validateVerifyInputs(archive, expectedDigest, limits.maxArchiveBytes)
+        val entries =
+            HumanMoveCorpusArtifactCodec.spoolZip(
+                archive,
+                archive.parent,
+                limits.maxArchiveBytes,
+                limits.maxExpandedEntryBytes,
+            )
         try {
-            if (entries.sumOf { it.size } > limits.maxExpandedEntryBytes) {
-                throw CorpusArtifactInvalidException(
-                    "Expanded archive entries exceed the configured maximum of ${limits.maxExpandedEntryBytes} bytes",
-                )
-            }
-            if (!HumanMoveCorpusArtifactCodec.canonicalZipMatches(archive, entries, archive.parent, limits.maxArchiveBytes)) {
-                throw CorpusArtifactInvalidException("Archive is not the canonical v1 STORED ZIP (entry metadata or trailing bytes differ)")
-            }
-            val manifestFile = entries[2]
-            if (manifestFile.size > limits.maxRecordBytes) {
-                throw CorpusArtifactInvalidException("Manifest exceeds the configured maximum record size")
-            }
-            val manifestBytes = Files.readAllBytes(manifestFile.path)
-            val manifest = decodeManifest(HumanMoveCorpusArtifactCodec.readTree(manifestBytes))
-            if (manifest.formatVersion != SUPPORTED_FORMAT_VERSION) {
-                throw CorpusArtifactInvalidException("Unsupported artifact formatVersion ${manifest.formatVersion}")
-            }
-            if (manifest.snapshotKind != SNAPSHOT_KIND) {
-                throw CorpusArtifactInvalidException("Unsupported artifact snapshotKind '${manifest.snapshotKind}'")
-            }
-            if (manifest.coveredPrefix !in 1..limits.maxGames ||
-                manifest.gameCount !in 0..limits.maxGames ||
-                manifest.observationCount !in 0..limits.maxObservations
-            ) {
-                throw CorpusArtifactInvalidException("Manifest record counts exceed the configured limits")
-            }
-            if (manifest.gamesSha256 != entries[0].sha256 || manifest.observationsSha256 != entries[1].sha256) {
-                throw CorpusArtifactInvalidException("Manifest evidence hashes do not match the archived entries")
-            }
-            if (manifest.gameBytes != entries[0].size || manifest.observationBytes != entries[1].size) {
-                throw CorpusArtifactInvalidException("Manifest evidence lengths do not match the archived entries")
-            }
-            verifyRunMetadataConsistency(manifest)
-
-            val digest = HumanMoveCorpusArtifactCodec.digestFiles(entries)
-            if (digest != expectedDigest) {
-                throw CorpusArtifactConflict("Recomputed content digest does not match the supplied expected digest")
-            }
-
-            val expectedDistinct = IntArray(manifest.coveredPrefix + 1)
-            val expectedTotals = LongArray(manifest.coveredPrefix + 1)
-            var gameCount = 0
-            readRecords(entries[0].path, limits.maxRecordBytes) { node ->
-                val game = decodeGame(node)
-                gameCount++
-                if (gameCount > limits.maxGames || game.qualifyingOrdinal != gameCount) {
-                    throw CorpusArtifactInvalidException("games.ndjson must be exactly ordinal-sorted 1..${manifest.coveredPrefix}")
-                }
-                verifyPgnHash(game)
-                expectedDistinct[game.qualifyingOrdinal] = game.distinctMoveCount
-                expectedTotals[game.qualifyingOrdinal] = game.observationTotal.toLong()
-            }
-            if (gameCount != manifest.gameCount || gameCount != manifest.coveredPrefix) {
-                throw CorpusArtifactInvalidException("Game count does not match the manifest's covered prefix")
-            }
-
-            val observationCounts = IntArray(manifest.coveredPrefix + 1)
-            val observationTotals = LongArray(manifest.coveredPrefix + 1)
-            var observationCount = 0
-            var previous: HumanMoveCorpusObservationRecord? = null
-            readRecords(entries[1].path, limits.maxRecordBytes) { node ->
-                val observation = decodeObservation(node)
-                observationCount++
-                if (observationCount > limits.maxObservations) {
-                    throw CorpusArtifactInvalidException("Archive declares more observations than the configured maximum")
-                }
-                if (observation.qualifyingOrdinal !in 1..gameCount) {
-                    throw CorpusArtifactInvalidException("Observation refers to an ordinal outside the covered game prefix")
-                }
-                if (previous?.let { compareObservations(it, observation) >= 0 } == true) {
-                    throw CorpusArtifactInvalidException("observations.ndjson must be strictly ordinal/hash/move-sorted")
-                }
-                if (GameParserService.generateHash(observation.positionFen) != observation.positionHash) {
-                    throw CorpusArtifactInvalidException(
-                        "Observation positionHash ${observation.positionHash} does not match its declared positionFen",
-                    )
-                }
-                observationCounts[observation.qualifyingOrdinal]++
-                observationTotals[observation.qualifyingOrdinal] += observation.observationCount
-                previous = observation
-            }
-            if (observationCount != manifest.observationCount) {
-                throw CorpusArtifactInvalidException("Observation count does not match the manifest's declared count")
-            }
-            for (ordinal in 1..gameCount) {
-                if (observationCounts[ordinal] != expectedDistinct[ordinal] ||
-                    observationTotals[ordinal] != expectedTotals[ordinal]
-                ) {
-                    throw CorpusArtifactInvalidException(
-                        "Game $ordinal observationTotal/distinctMoveCount does not match its observations",
-                    )
-                }
-            }
+            validateArchiveStructure(archive, entries, limits)
+            val (manifest, manifestBytes) = validateAndLoadManifest(entries, limits)
+            val digest = verifyExpectedDigest(entries, expectedDigest)
+            val gameTotals = verifyGamesNdjson(entries[0].path, manifest, limits)
+            verifyObservationsNdjson(entries[1].path, manifest, limits, gameTotals)
 
             return VerifiedCorpusArtifact(
                 digest = digest,
@@ -164,6 +76,191 @@ object HumanMoveCorpusArtifactVerifier {
             )
         } finally {
             entries.forEach { Files.deleteIfExists(it.path) }
+        }
+    }
+
+    private fun validateVerifyInputs(
+        archive: Path,
+        expectedDigest: String,
+        maxArchiveBytes: Long,
+    ) {
+        if (!expectedDigest.matches(Regex("[0-9a-f]{64}"))) {
+            throw CorpusArtifactInvalidException("expectedDigest must be a 64-character lowercase hex SHA-256 value")
+        }
+        if (Files.size(archive) > maxArchiveBytes) {
+            throw CorpusArtifactInvalidException("Archive exceeds the configured maximum of $maxArchiveBytes bytes")
+        }
+    }
+
+    private fun validateArchiveStructure(
+        archive: Path,
+        entries: List<HumanMoveCorpusArtifactCodec.EntryFile>,
+        limits: Limits,
+    ) {
+        if (entries.sumOf { it.size } > limits.maxExpandedEntryBytes) {
+            throw CorpusArtifactInvalidException(
+                "Expanded archive entries exceed the configured maximum of ${limits.maxExpandedEntryBytes} bytes",
+            )
+        }
+        if (!HumanMoveCorpusArtifactCodec.canonicalZipMatches(
+                archive,
+                entries,
+                archive.parent,
+                limits.maxArchiveBytes,
+            )
+        ) {
+            throw CorpusArtifactInvalidException(
+                "Archive is not the canonical v1 STORED ZIP (entry metadata or trailing bytes differ)",
+            )
+        }
+    }
+
+    private data class ValidatedManifest(
+        val manifest: HumanMoveCorpusArtifactManifest,
+        val manifestBytes: ByteArray,
+    )
+
+    private fun validateAndLoadManifest(
+        entries: List<HumanMoveCorpusArtifactCodec.EntryFile>,
+        limits: Limits,
+    ): ValidatedManifest {
+        val manifestFile = entries[2]
+        if (manifestFile.size > limits.maxRecordBytes) {
+            throw CorpusArtifactInvalidException("Manifest exceeds the configured maximum record size")
+        }
+        val manifestBytes = Files.readAllBytes(manifestFile.path)
+        val manifest = decodeManifest(HumanMoveCorpusArtifactCodec.readTree(manifestBytes))
+        validateManifestInvariants(manifest, entries, limits)
+        verifyRunMetadataConsistency(manifest)
+        return ValidatedManifest(manifest, manifestBytes)
+    }
+
+    private fun validateManifestInvariants(
+        manifest: HumanMoveCorpusArtifactManifest,
+        entries: List<HumanMoveCorpusArtifactCodec.EntryFile>,
+        limits: Limits,
+    ) {
+        if (manifest.formatVersion != SUPPORTED_FORMAT_VERSION) {
+            throw CorpusArtifactInvalidException("Unsupported artifact formatVersion ${manifest.formatVersion}")
+        }
+        if (manifest.snapshotKind != SNAPSHOT_KIND) {
+            throw CorpusArtifactInvalidException("Unsupported artifact snapshotKind '${manifest.snapshotKind}'")
+        }
+        if (manifest.coveredPrefix !in 1..limits.maxGames ||
+            manifest.gameCount !in 0..limits.maxGames ||
+            manifest.observationCount !in 0..limits.maxObservations
+        ) {
+            throw CorpusArtifactInvalidException("Manifest record counts exceed the configured limits")
+        }
+        if (manifest.gamesSha256 != entries[0].sha256 || manifest.observationsSha256 != entries[1].sha256) {
+            throw CorpusArtifactInvalidException("Manifest evidence hashes do not match the archived entries")
+        }
+        if (manifest.gameBytes != entries[0].size || manifest.observationBytes != entries[1].size) {
+            throw CorpusArtifactInvalidException("Manifest evidence lengths do not match the archived entries")
+        }
+    }
+
+    private fun verifyExpectedDigest(
+        entries: List<HumanMoveCorpusArtifactCodec.EntryFile>,
+        expectedDigest: String,
+    ): String {
+        val digest = HumanMoveCorpusArtifactCodec.digestFiles(entries)
+        if (digest != expectedDigest) {
+            throw CorpusArtifactConflict("Recomputed content digest does not match the supplied expected digest")
+        }
+        return digest
+    }
+
+    private data class ExpectedGameTotals(
+        val expectedDistinct: IntArray,
+        val expectedTotals: LongArray,
+        val gameCount: Int,
+    )
+
+    private fun verifyGamesNdjson(
+        gamesPath: Path,
+        manifest: HumanMoveCorpusArtifactManifest,
+        limits: Limits,
+    ): ExpectedGameTotals {
+        val expectedDistinct = IntArray(manifest.coveredPrefix + 1)
+        val expectedTotals = LongArray(manifest.coveredPrefix + 1)
+        var gameCount = 0
+        readRecords(gamesPath, limits.maxRecordBytes) { node ->
+            val game = decodeGame(node)
+            gameCount++
+            if (gameCount > limits.maxGames || game.qualifyingOrdinal != gameCount) {
+                throw CorpusArtifactInvalidException("games.ndjson must be exactly ordinal-sorted 1..${manifest.coveredPrefix}")
+            }
+            verifyPgnHash(game)
+            expectedDistinct[game.qualifyingOrdinal] = game.distinctMoveCount
+            expectedTotals[game.qualifyingOrdinal] = game.observationTotal.toLong()
+        }
+        if (gameCount != manifest.gameCount || gameCount != manifest.coveredPrefix) {
+            throw CorpusArtifactInvalidException("Game count does not match the manifest's covered prefix")
+        }
+        return ExpectedGameTotals(expectedDistinct, expectedTotals, gameCount)
+    }
+
+    private fun verifyObservationsNdjson(
+        observationsPath: Path,
+        manifest: HumanMoveCorpusArtifactManifest,
+        limits: Limits,
+        gameTotals: ExpectedGameTotals,
+    ) {
+        val observationCounts = IntArray(manifest.coveredPrefix + 1)
+        val observationTotals = LongArray(manifest.coveredPrefix + 1)
+        var observationCount = 0
+        var previous: HumanMoveCorpusObservationRecord? = null
+        readRecords(observationsPath, limits.maxRecordBytes) { node ->
+            val observation = decodeObservation(node)
+            observationCount++
+            validateObservationRecord(observation, observationCount, limits, gameTotals.gameCount, previous)
+            observationCounts[observation.qualifyingOrdinal]++
+            observationTotals[observation.qualifyingOrdinal] += observation.observationCount
+            previous = observation
+        }
+        if (observationCount != manifest.observationCount) {
+            throw CorpusArtifactInvalidException("Observation count does not match the manifest's declared count")
+        }
+        validateObservationTotalsAgainstGames(gameTotals, observationCounts, observationTotals)
+    }
+
+    private fun validateObservationRecord(
+        observation: HumanMoveCorpusObservationRecord,
+        count: Int,
+        limits: Limits,
+        gameCount: Int,
+        previous: HumanMoveCorpusObservationRecord?,
+    ) {
+        if (count > limits.maxObservations) {
+            throw CorpusArtifactInvalidException("Archive declares more observations than the configured maximum")
+        }
+        if (observation.qualifyingOrdinal !in 1..gameCount) {
+            throw CorpusArtifactInvalidException("Observation refers to an ordinal outside the covered game prefix")
+        }
+        if (previous?.let { compareObservations(it, observation) >= 0 } == true) {
+            throw CorpusArtifactInvalidException("observations.ndjson must be strictly ordinal/hash/move-sorted")
+        }
+        if (GameParserService.generateHash(observation.positionFen) != observation.positionHash) {
+            throw CorpusArtifactInvalidException(
+                "Observation positionHash ${observation.positionHash} does not match its declared positionFen",
+            )
+        }
+    }
+
+    private fun validateObservationTotalsAgainstGames(
+        gameTotals: ExpectedGameTotals,
+        observationCounts: IntArray,
+        observationTotals: LongArray,
+    ) {
+        for (ordinal in 1..gameTotals.gameCount) {
+            if (observationCounts[ordinal] != gameTotals.expectedDistinct[ordinal] ||
+                observationTotals[ordinal] != gameTotals.expectedTotals[ordinal]
+            ) {
+                throw CorpusArtifactInvalidException(
+                    "Game $ordinal observationTotal/distinctMoveCount does not match its observations",
+                )
+            }
         }
     }
 
@@ -187,21 +284,21 @@ object HumanMoveCorpusArtifactVerifier {
         try {
             mapper.treeToValue(node, HumanMoveCorpusArtifactManifest::class.java)
         } catch (e: Exception) {
-            throw CorpusArtifactInvalidException("Malformed manifest: ${e.message}")
+            throw CorpusArtifactInvalidException("Malformed manifest: ${e.message}", e)
         }
 
     private fun decodeGame(node: JsonNode): HumanMoveCorpusGameRecord =
         try {
             mapper.treeToValue(node, HumanMoveCorpusGameRecord::class.java)
         } catch (e: Exception) {
-            throw CorpusArtifactInvalidException("Malformed game record: ${e.message}")
+            throw CorpusArtifactInvalidException("Malformed game record: ${e.message}", e)
         }
 
     private fun decodeObservation(node: JsonNode): HumanMoveCorpusObservationRecord =
         try {
             mapper.treeToValue(node, HumanMoveCorpusObservationRecord::class.java)
         } catch (e: Exception) {
-            throw CorpusArtifactInvalidException("Malformed observation record: ${e.message}")
+            throw CorpusArtifactInvalidException("Malformed observation record: ${e.message}", e)
         }
 
     private fun verifyPgnHash(game: HumanMoveCorpusGameRecord) {
@@ -267,37 +364,64 @@ object HumanMoveCorpusArtifactVerifier {
             val count = input.read(buffer)
             if (count < 0) break
             for (index in 0 until count) {
-                val value = buffer[index].toInt() and 0xff
-                if (value == '\n'.code) {
-                    if (record.size() == 0) {
-                        throw CorpusArtifactInvalidException("NDJSON contains an empty record")
-                    }
-                    val bytes = record.toByteArray()
-                    val text =
-                        try {
-                            Charsets.UTF_8.newDecoder()
-                                .onMalformedInput(CodingErrorAction.REPORT)
-                                .onUnmappableCharacter(CodingErrorAction.REPORT)
-                                .decode(ByteBuffer.wrap(bytes))
-                                .toString()
-                        } catch (e: Exception) {
-                            throw CorpusArtifactInvalidException("NDJSON contains malformed UTF-8")
-                        }
-                    if (!text.toByteArray(Charsets.UTF_8).contentEquals(bytes)) {
-                        throw CorpusArtifactInvalidException("NDJSON must be valid UTF-8")
-                    }
-                    consume(HumanMoveCorpusArtifactCodec.readTree(bytes))
-                    record.reset()
-                } else {
-                    if (record.size() >= maxRecordBytes) {
-                        throw CorpusArtifactInvalidException("A record exceeds the configured maximum record size")
-                    }
-                    record.write(value)
-                }
+                processRecordByte(buffer[index].toInt() and 0xff, record, maxRecordBytes, consume)
             }
         }
         if (record.size() > 0) {
             throw CorpusArtifactInvalidException("NDJSON must be LF-terminated")
+        }
+    }
+
+    private fun processRecordByte(
+        value: Int,
+        record: ByteArrayOutputStream,
+        maxRecordBytes: Int,
+        consume: (JsonNode) -> Unit,
+    ) {
+        if (value == '\n'.code) {
+            consumeRecordLine(record, consume)
+        } else {
+            appendRecordByte(value, record, maxRecordBytes)
+        }
+    }
+
+    private fun appendRecordByte(
+        value: Int,
+        record: ByteArrayOutputStream,
+        maxRecordBytes: Int,
+    ) {
+        if (record.size() >= maxRecordBytes) {
+            throw CorpusArtifactInvalidException("A record exceeds the configured maximum record size")
+        }
+        record.write(value)
+    }
+
+    private fun consumeRecordLine(
+        record: ByteArrayOutputStream,
+        consume: (JsonNode) -> Unit,
+    ) {
+        if (record.size() == 0) {
+            throw CorpusArtifactInvalidException("NDJSON contains an empty record")
+        }
+        val bytes = record.toByteArray()
+        validateUtf8Record(bytes)
+        consume(HumanMoveCorpusArtifactCodec.readTree(bytes))
+        record.reset()
+    }
+
+    private fun validateUtf8Record(bytes: ByteArray) {
+        val text =
+            try {
+                Charsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(bytes))
+                    .toString()
+            } catch (e: Exception) {
+                throw CorpusArtifactInvalidException("NDJSON contains malformed UTF-8", e)
+            }
+        if (!text.toByteArray(Charsets.UTF_8).contentEquals(bytes)) {
+            throw CorpusArtifactInvalidException("NDJSON must be valid UTF-8")
         }
     }
 

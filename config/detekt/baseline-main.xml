@@ -13,9 +13,6 @@
     <ID>CastNullableToNonNullableType:EvaluationEvidenceSnapshotService.kt$EvaluationEvidenceSnapshotService$as</ID>
 
 
-    <ID>CognitiveComplexMethod:HumanMoveCorpusArtifactCodec.kt$HumanMoveCorpusArtifactCodec$fun spoolZip( archive: Path, tempDirectory: Path, maxArchiveBytes: Long, maxExpandedEntryBytes: Long, ): List&lt;EntryFile&gt;</ID>
-    <ID>CognitiveComplexMethod:HumanMoveCorpusArtifactVerifier.kt$HumanMoveCorpusArtifactVerifier$fun verify( archive: Path, expectedDigest: String, limits: Limits, ): VerifiedCorpusArtifact</ID>
-    <ID>CognitiveComplexMethod:HumanMoveCorpusArtifactVerifier.kt$HumanMoveCorpusArtifactVerifier$private fun readRecords( input: InputStream, maxRecordBytes: Int, consume: (JsonNode) -&gt; Unit, )</ID>
     <ID>CognitiveComplexMethod:HumanMoveCorpusGameWriter.kt$HumanMoveCorpusGameWriter$@Transactional fun commitGame( runId: UUID, candidate: HumanMoveCorpusCandidate, ): HumanMoveCorpusCommitResult</ID>
 
     <ID>CognitiveComplexMethod:ReferenceCoverageAnalysisService.kt$ReferenceCoverageAnalysisService$fun analyze(input: ReferenceCoverageAnalysisInput): ReferenceCoverageAnalysisResult</ID>
@@ -32,41 +29,23 @@
     <ID>ComplexCondition:RetainedEvaluationEvidenceService.kt$RetainedEvaluationEvidenceService$population.contentDigest != projection.contentDigest || population.sourceRunId != projection.sourceRunId || population.prefixN != projection.prefixN || population.ratingBand != projection.ratingBand || population.minObservations != projection.minObservations || population.calculationVersion != projection.calculationVersion</ID>
 
 
-    <ID>CyclomaticComplexMethod:HumanMoveCorpusArtifactCodec.kt$HumanMoveCorpusArtifactCodec$fun spoolZip( archive: Path, tempDirectory: Path, maxArchiveBytes: Long, maxExpandedEntryBytes: Long, ): List&lt;EntryFile&gt;</ID>
-    <ID>CyclomaticComplexMethod:HumanMoveCorpusArtifactVerifier.kt$HumanMoveCorpusArtifactVerifier$fun verify( archive: Path, expectedDigest: String, limits: Limits, ): VerifiedCorpusArtifact</ID>
     <ID>CyclomaticComplexMethod:HumanMoveCorpusGameWriter.kt$HumanMoveCorpusGameWriter$@Transactional fun commitGame( runId: UUID, candidate: HumanMoveCorpusCandidate, ): HumanMoveCorpusCommitResult</ID>
-    <ID>CyclomaticComplexMethod:HumanMoveCorpusPurgeService.kt$HumanMoveCorpusPurgeService$@Transactional fun purge( runId: UUID, contentDigest: String, ): HumanMoveCorpusPurgeResult</ID>
 
     <ID>CyclomaticComplexMethod:ReferenceCoverageAnalysisService.kt$ReferenceCoverageAnalysisService$fun analyze(input: ReferenceCoverageAnalysisInput): ReferenceCoverageAnalysisResult</ID>
     <ID>CyclomaticComplexMethod:RetainedEvaluationEvidence.kt$RetainedEvaluationEvidenceValidator$fun admit(evidence: RetainedEvaluationEvidence): RetainedEvaluationEvidence</ID>
     <ID>LongMethod:EvaluationEvidenceProducerService.kt$EvaluationEvidenceProducerService$private fun buildRows( input: EvaluationEvidenceProducerInput, operationalOccurrences: List&lt;PositionOccurrence&gt;, analyses: Map&lt;UUID, EngineAnalysis&gt;, matchingOccurrences: Map&lt;PositionPly, List&lt;UUID&gt;&gt;, ): List&lt;EvaluationEvidenceRow&gt;</ID>
 
-    <ID>LongMethod:HumanMoveCorpusArtifactCodec.kt$HumanMoveCorpusArtifactCodec$fun spoolZip( archive: Path, tempDirectory: Path, maxArchiveBytes: Long, maxExpandedEntryBytes: Long, ): List&lt;EntryFile&gt;</ID>
-    <ID>LongMethod:HumanMoveCorpusArtifactService.kt$HumanMoveCorpusArtifactService$@Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ) fun export(request: HumanMoveCorpusExportRequest): HumanMoveCorpusExportReceipt</ID>
-    <ID>LongMethod:HumanMoveCorpusArtifactVerifier.kt$HumanMoveCorpusArtifactVerifier$fun verify( archive: Path, expectedDigest: String, limits: Limits, ): VerifiedCorpusArtifact</ID>
-    <ID>LongMethod:HumanMoveCorpusCheckpointService.kt$HumanMoveCorpusCheckpointService$private fun verifyPrefix( runId: UUID, n: Int, )</ID>
     <ID>LongMethod:HumanMoveCorpusGameWriter.kt$HumanMoveCorpusGameWriter$@Transactional fun commitGame( runId: UUID, candidate: HumanMoveCorpusCandidate, ): HumanMoveCorpusCommitResult</ID>
     <ID>LongMethod:HumanMoveCorpusGameWriter.kt$HumanMoveCorpusGameWriter$private fun verifyIdenticalContribution( existing: CommittedGame, candidate: HumanMoveCorpusCandidate, pgnSha256: String, observations: List&lt;HumanMoveCorpusObservedMove&gt;, occurrences: List&lt;HumanMoveCorpusOccurrence&gt;, )</ID>
-    <ID>LongMethod:HumanMoveCorpusImportService.kt$HumanMoveCorpusImportService$private fun publish(verified: VerifiedCorpusArtifact): HumanMoveCorpusImportReceipt</ID>
     <ID>LongMethod:HumanMoveCorpusMaterializationService.kt$HumanMoveCorpusMaterializationService$@Transactional fun materialize(request: HumanMoveCorpusMaterializeRequest): HumanMoveCorpusMaterializeResponse</ID>
     <ID>LongMethod:HumanMoveCorpusOccurrenceService.kt$HumanMoveCorpusOccurrenceService$private fun verifySourcePrefix( sourceRunId: UUID, coveredPrefix: Int, )</ID>
     <ID>LongMethod:HumanMoveCorpusProjectionFinalizationService.kt$HumanMoveCorpusProjectionFinalizationService$@Transactional fun finalize(projectionId: UUID): HumanMoveCorpusProjectionFinalizeResponse</ID>
-    <ID>LongMethod:HumanMoveCorpusPurgeService.kt$HumanMoveCorpusPurgeService$@Transactional fun purge( runId: UUID, contentDigest: String, ): HumanMoveCorpusPurgeResult</ID>
 
     <ID>LongMethod:ProgressService.kt$ProgressService$@Transactional(readOnly = true) fun getProgress( positionId: UUID, playerColor: PlayerColor, accountId: UUID, principal: AuthenticatedPrincipal, minEvalLoss: Double, ): ProgressResponse</ID>
     <ID>LongMethod:ReferenceCoverageAnalysisService.kt$ReferenceCoverageAnalysisService$fun analyze(input: ReferenceCoverageAnalysisInput): ReferenceCoverageAnalysisResult</ID>
     <ID>LongMethod:RetainedEvaluationEvidenceService.kt$RetainedEvaluationEvidenceService$@Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ) fun loadAndAdmit( sourceRunId: UUID, projectionId: UUID, analysisVersion: String, ): RetainedEvaluationEvidence</ID>
-    <ID>NestedBlockDepth:HumanMoveCorpusArtifactCodec.kt$HumanMoveCorpusArtifactCodec$fun digestFiles(parts: List&lt;EntryFile&gt;): String</ID>
-    <ID>NestedBlockDepth:HumanMoveCorpusArtifactCodec.kt$HumanMoveCorpusArtifactCodec$fun spoolZip( archive: Path, tempDirectory: Path, maxArchiveBytes: Long, maxExpandedEntryBytes: Long, ): List&lt;EntryFile&gt;</ID>
-    <ID>NestedBlockDepth:HumanMoveCorpusArtifactCodec.kt$HumanMoveCorpusArtifactCodec$fun writeZip( entries: List&lt;EntryFile&gt;, outputPath: Path, maxArchiveBytes: Long, )</ID>
-    <ID>NestedBlockDepth:HumanMoveCorpusArtifactVerifier.kt$HumanMoveCorpusArtifactVerifier$private fun readRecords( input: InputStream, maxRecordBytes: Int, consume: (JsonNode) -&gt; Unit, )</ID>
 
     <ID>SwallowedException:EvaluationEvidenceSnapshotService.kt$EvaluationEvidenceSnapshotService$exception: RuntimeException</ID>
-    <ID>SwallowedException:HumanMoveCorpusArtifactCodec.kt$HumanMoveCorpusArtifactCodec$e: Exception</ID>
-    <ID>SwallowedException:HumanMoveCorpusArtifactCodec.kt$HumanMoveCorpusArtifactCodec$e: ZipException</ID>
-    <ID>SwallowedException:HumanMoveCorpusArtifactCodec.kt$HumanMoveCorpusArtifactCodec$e: java.io.EOFException</ID>
-    <ID>SwallowedException:HumanMoveCorpusArtifactService.kt$HumanMoveCorpusArtifactService$e: java.nio.file.FileAlreadyExistsException</ID>
-    <ID>SwallowedException:HumanMoveCorpusArtifactVerifier.kt$HumanMoveCorpusArtifactVerifier$e: Exception</ID>
     <ID>SwallowedException:MoveEvaluationService.kt$MoveEvaluationService$e: Exception</ID>
     <ID>SwallowedException:StringToPlatformConverter.kt$StringToPlatformConverter$e: IllegalArgumentException</ID>
     <ID>SwallowedException:StringToPlayerColorConverter.kt$StringToPlayerColorConverter$e: IllegalArgumentException</ID>

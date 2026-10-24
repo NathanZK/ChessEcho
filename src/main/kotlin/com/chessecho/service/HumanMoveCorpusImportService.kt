@@ -1,6 +1,7 @@
 package com.chessecho.service
 
 import com.chessecho.humanmove.artifact.CorpusArtifactConflict
+import com.chessecho.humanmove.artifact.HumanMoveCorpusArtifactManifest
 import com.chessecho.humanmove.artifact.HumanMoveCorpusArtifactService
 import com.chessecho.humanmove.artifact.HumanMoveCorpusGameRecord
 import com.chessecho.humanmove.artifact.HumanMoveCorpusObservationRecord
@@ -69,6 +70,20 @@ class HumanMoveCorpusImportService(
         lockSource(jdbcTemplate, sourceRunId)
         occurrenceService.verifyImportEvidence(verified, archive)
 
+        recordOrVerifyImportMetadata(sourceRunId, manifest, requestJson, requestSha256, now)
+        verifyAndInsertCorpusGames(sourceRunId, manifest, archive)
+        recordImportSnapshot(sourceRunId, verified, manifest, now)
+
+        return HumanMoveCorpusImportReceipt(sourceRunId, verified.digest, manifest.coveredPrefix)
+    }
+
+    private fun recordOrVerifyImportMetadata(
+        sourceRunId: UUID,
+        manifest: HumanMoveCorpusArtifactManifest,
+        requestJson: String,
+        requestSha256: String,
+        now: OffsetDateTime,
+    ) {
         val existingImport =
             jdbcTemplate.query(
                 "SELECT rating_band, algorithm_version, source_revision, request_sha256 " +
@@ -102,7 +117,13 @@ class HumanMoveCorpusImportService(
         } else if (existingImport != declaredIdentity) {
             throw CorpusArtifactConflict("Corpus run $sourceRunId is already imported with different source configuration")
         }
+    }
 
+    private fun verifyAndInsertCorpusGames(
+        sourceRunId: UUID,
+        manifest: HumanMoveCorpusArtifactManifest,
+        archive: Path,
+    ) {
         val existingMaxOrdinal =
             jdbcTemplate.queryForObject(
                 "SELECT COALESCE(MAX(qualifying_ordinal), 0) FROM human_move_corpus_imported_game WHERE source_run_id = ?",
@@ -110,31 +131,46 @@ class HumanMoveCorpusImportService(
                 sourceRunId,
             )!!
         if (existingMaxOrdinal == 0) {
-            jdbcTemplate.query(
-                { connection ->
-                    connection.prepareStatement(
-                        "SELECT content_digest, covered_prefix FROM human_move_corpus_artifact_snapshot WHERE source_run_id = ?",
-                    ).apply {
-                        fetchSize = 16
-                        setObject(1, sourceRunId)
-                    }
-                },
-                RowCallbackHandler { rs ->
-                    val digest = rs.getString(1)
-                    val previous =
-                        artifactService.verifiedArchivePath(digest)
-                            ?: throw CorpusArtifactConflict("Prior snapshot $digest is unavailable for overlap verification")
-                    val common = minOf(rs.getInt(2), manifest.coveredPrefix)
-                    if (prefixFingerprint(previous, common) != prefixFingerprint(archive, common)) {
-                        throw CorpusArtifactConflict("Snapshot $digest diverges from the imported source corpus")
-                    }
-                },
-            )
+            verifyPriorSnapshotsMatch(sourceRunId, manifest.coveredPrefix, archive)
         }
         val overlapEnd = minOf(existingMaxOrdinal, manifest.coveredPrefix)
         if (overlapEnd > 0) verifyOverlap(sourceRunId, archive, overlapEnd)
         if (manifest.coveredPrefix > existingMaxOrdinal) insertSuffix(sourceRunId, archive, existingMaxOrdinal)
+    }
 
+    private fun verifyPriorSnapshotsMatch(
+        sourceRunId: UUID,
+        coveredPrefix: Int,
+        archive: Path,
+    ) {
+        jdbcTemplate.query(
+            { connection ->
+                connection.prepareStatement(
+                    "SELECT content_digest, covered_prefix FROM human_move_corpus_artifact_snapshot WHERE source_run_id = ?",
+                ).apply {
+                    fetchSize = 16
+                    setObject(1, sourceRunId)
+                }
+            },
+            RowCallbackHandler { rs ->
+                val digest = rs.getString(1)
+                val previous =
+                    artifactService.verifiedArchivePath(digest)
+                        ?: throw CorpusArtifactConflict("Prior snapshot $digest is unavailable for overlap verification")
+                val common = minOf(rs.getInt(2), coveredPrefix)
+                if (prefixFingerprint(previous, common) != prefixFingerprint(archive, common)) {
+                    throw CorpusArtifactConflict("Snapshot $digest diverges from the imported source corpus")
+                }
+            },
+        )
+    }
+
+    private fun recordImportSnapshot(
+        sourceRunId: UUID,
+        verified: VerifiedCorpusArtifact,
+        manifest: HumanMoveCorpusArtifactManifest,
+        now: OffsetDateTime,
+    ) {
         jdbcTemplate.update(
             "UPDATE human_move_corpus_import SET raw_available = true WHERE source_run_id = ?",
             sourceRunId,
@@ -151,7 +187,6 @@ class HumanMoveCorpusImportService(
             verified.manifestJson,
             now,
         )
-        return HumanMoveCorpusImportReceipt(sourceRunId, verified.digest, manifest.coveredPrefix)
     }
 
     fun verifyImportedEvidence(
