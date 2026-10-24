@@ -7,8 +7,8 @@ import java.time.Duration
  * Configuration for the identity/session cookie, CSRF double-submit tokens,
  * session lifetimes, and the development-only principal gate (prefix
  * `chessecho.auth`). All values have safe defaults so the foundation works
- * without external configuration; production overrides `cookie.secure` and the
- * timeouts per deployment (#79 D2).
+ * securely without external configuration; `cookie.secure` defaults to true
+ * for production transport safety (#615).
  */
 @ConfigurationProperties(prefix = "chessecho.auth")
 data class SessionCookieProperties(
@@ -19,7 +19,7 @@ data class SessionCookieProperties(
 ) {
     data class Cookie(
         val name: String = "CHESSECHO_SESSION",
-        val secure: Boolean = false,
+        val secure: Boolean = true,
         val sameSite: String = "Lax",
         val path: String = "/",
     )

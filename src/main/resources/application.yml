@@ -26,7 +26,7 @@ chessecho:
   auth:
     cookie:
       name: CHESSECHO_SESSION
-      secure: ${CHESSECHO_AUTH_COOKIE_SECURE:false}
+      secure: ${CHESSECHO_AUTH_COOKIE_SECURE:true}
       same-site: ${CHESSECHO_AUTH_COOKIE_SAME_SITE:Lax}
       path: /
     csrf:
