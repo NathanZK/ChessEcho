@@ -36,6 +36,21 @@ class HumanMoveCorpusPurgeService(
         contentDigest: String,
     ): HumanMoveCorpusPurgeResult {
         HumanMoveCorpusImportService.lockSource(jdbcTemplate, runId)
+        verifySnapshotOwnership(runId, contentDigest)
+        val (archive, verified) = verifyPurgeArchive(runId, contentDigest)
+        val rawCount = queryRawGameCount(runId, verified.manifest.coveredPrefix)
+
+        if (rawCount != 0) importService.verifyImportedEvidence(archive, verified)
+        verifyFinalizedProjections(runId, contentDigest, verified.manifest.coveredPrefix, rawCount)
+
+        val purged = executePurge(runId)
+        return HumanMoveCorpusPurgeResult(runId, contentDigest, purged)
+    }
+
+    private fun verifySnapshotOwnership(
+        runId: UUID,
+        contentDigest: String,
+    ) {
         val snapshotRunId =
             jdbcTemplate.query(
                 "SELECT source_run_id FROM human_move_corpus_artifact_snapshot WHERE content_digest = ?",
@@ -45,6 +60,17 @@ class HumanMoveCorpusPurgeService(
         if (snapshotRunId != runId) {
             throw CorpusArtifactConflict("Artifact snapshot $contentDigest does not belong to corpus run $runId")
         }
+    }
+
+    private data class PurgeArchiveEvidence(
+        val archive: java.nio.file.Path,
+        val verified: com.chessecho.humanmove.artifact.VerifiedCorpusArtifact,
+    )
+
+    private fun verifyPurgeArchive(
+        runId: UUID,
+        contentDigest: String,
+    ): PurgeArchiveEvidence {
         val archive =
             artifactService.verifiedArchivePath(contentDigest)
                 ?: throw CorpusArtifactConflict("Archived artifact $contentDigest is unavailable; raw evidence cannot be purged")
@@ -60,16 +86,31 @@ class HumanMoveCorpusPurgeService(
                 verified.manifest.coveredPrefix,
             )
         }
+        return PurgeArchiveEvidence(archive, verified)
+    }
+
+    private fun queryRawGameCount(
+        runId: UUID,
+        coveredPrefix: Int,
+    ): Int {
         val rawCount =
             jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM human_move_corpus_imported_game WHERE source_run_id = ?",
                 Int::class.java,
                 runId,
             )!!
-        if (rawCount != 0 && rawCount != verified.manifest.coveredPrefix) {
+        if (rawCount != 0 && rawCount != coveredPrefix) {
             throw CorpusArtifactConflict("Artifact must cover the complete imported corpus before purging its raw evidence")
         }
+        return rawCount
+    }
 
+    private fun verifyFinalizedProjections(
+        runId: UUID,
+        contentDigest: String,
+        coveredPrefix: Int,
+        rawCount: Int,
+    ) {
         val finalizedProjections =
             jdbcTemplate.query(
                 "SELECT id, distribution_sha256, min_observations FROM human_move_corpus_projection " +
@@ -77,27 +118,27 @@ class HumanMoveCorpusPurgeService(
                 { rs, _ -> Triple(rs.getObject(1, UUID::class.java), rs.getString(2), rs.getInt(3)) },
                 contentDigest,
                 runId,
-                verified.manifest.coveredPrefix,
+                coveredPrefix,
             )
         if (finalizedProjections.isEmpty()) {
             throw CorpusArtifactConflict(
                 "Corpus run $runId snapshot $contentDigest has no finalized projection yet; purge is not gated open",
             )
         }
-
-        if (rawCount != 0) importService.verifyImportedEvidence(archive, verified)
         finalizedProjections.forEach { (projectionId, digest, minObservations) ->
-            if (finalizationService.digestProjection(projectionId).distributionSha256 != digest ||
-                (
-                    rawCount != 0 &&
-                        finalizationService.expectedDigest(runId, verified.manifest.coveredPrefix, minObservations) != digest
-                )
-            ) {
+            val currentDigest = finalizationService.digestProjection(projectionId).distributionSha256
+            val matchesExpected =
+                rawCount == 0 ||
+                    finalizationService.expectedDigest(runId, coveredPrefix, minObservations) == digest
+            if (currentDigest != digest || !matchesExpected) {
                 throw CorpusArtifactConflict("Finalized projection $projectionId differs from its verified checkpoint-equivalent digest")
             }
         }
+    }
+
+    private fun executePurge(runId: UUID): Int {
         val purged = jdbcTemplate.update("DELETE FROM human_move_corpus_imported_game WHERE source_run_id = ?", runId)
         jdbcTemplate.update("UPDATE human_move_corpus_import SET raw_available = false WHERE source_run_id = ?", runId)
-        return HumanMoveCorpusPurgeResult(runId, contentDigest, purged)
+        return purged
     }
 }

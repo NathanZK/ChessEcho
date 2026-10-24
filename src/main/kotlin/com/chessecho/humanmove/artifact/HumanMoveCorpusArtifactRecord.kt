@@ -51,4 +51,7 @@ data class VerifiedCorpusArtifact(
 class CorpusArtifactConflict(message: String) : RuntimeException(message)
 
 /** The archive fails structural, size, or cross-record verification before any database mutation. */
-class CorpusArtifactInvalidException(message: String) : RuntimeException(message)
+class CorpusArtifactInvalidException(
+    message: String,
+    cause: Throwable? = null,
+) : RuntimeException(message, cause)

@@ -71,6 +71,42 @@ class HumanMoveCorpusArtifactService(
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     fun export(request: HumanMoveCorpusExportRequest): HumanMoveCorpusExportReceipt {
+        val run = validateExportPreconditions(request)
+        val root = Path.of(properties.archiveRoot)
+        Files.createDirectories(root)
+        val tempFiles = mutableListOf<Path>()
+        try {
+            val gamesPath = Files.createTempFile(root, "corpus-games-", ".ndjson").also(tempFiles::add)
+            val observationsPath = Files.createTempFile(root, "corpus-observations-", ".ndjson").also(tempFiles::add)
+            val manifestPath = Files.createTempFile(root, "corpus-manifest-", ".json").also(tempFiles::add)
+            val archivePath = Files.createTempFile(root, "corpus-export-", ".zip").also(tempFiles::add)
+
+            val games = exportGamesEntry(request.runId, request.prefixN, gamesPath)
+            val observations = exportObservationsEntry(request.runId, request.prefixN, observationsPath, games.entryFile.size)
+            val manifestEntry = exportManifestEntry(run, request, games, observations, manifestPath)
+
+            val entries = listOf(games.entryFile, observations.entryFile, manifestEntry)
+            val digest = HumanMoveCorpusArtifactCodec.digestFiles(entries)
+            HumanMoveCorpusArtifactCodec.writeZip(entries, archivePath, properties.maxArchiveBytes)
+            writeArchive(digest, archivePath)
+
+            return HumanMoveCorpusExportReceipt(
+                contentDigest = digest,
+                sourceRunId = request.runId,
+                coveredPrefix = request.prefixN,
+                formatVersion = HumanMoveCorpusArtifactVerifier.SUPPORTED_FORMAT_VERSION,
+            )
+        } finally {
+            tempFiles.forEach { Files.deleteIfExists(it) }
+        }
+    }
+
+    private data class ExportEntryResult(
+        val entryFile: HumanMoveCorpusArtifactCodec.EntryFile,
+        val count: Int,
+    )
+
+    private fun validateExportPreconditions(request: HumanMoveCorpusExportRequest): HumanMoveCorpusRun {
         require(request.prefixN >= 1) { "prefixN must be >= 1 (got ${request.prefixN})" }
         val runMetadataFits =
             jdbcTemplate.query(
@@ -101,150 +137,149 @@ class HumanMoveCorpusArtifactService(
         require(request.prefixN <= run.committedFrontier) {
             "prefixN (${request.prefixN}) exceeds committed frontier (${run.committedFrontier})"
         }
+        return run
+    }
 
-        val root = Path.of(properties.archiveRoot)
-        Files.createDirectories(root)
-        val tempFiles = mutableListOf<Path>()
+    private fun exportGamesEntry(
+        runId: UUID,
+        prefixN: Int,
+        gamesPath: Path,
+    ): ExportEntryResult {
+        val gameWriter =
+            HumanMoveCorpusArtifactCodec.EntryWriter(
+                "games.ndjson",
+                gamesPath,
+                properties.maxExpandedBytes,
+                properties.maxRecordBytes,
+            )
         try {
-            val gamesPath = Files.createTempFile(root, "corpus-games-", ".ndjson").also(tempFiles::add)
-            val observationsPath = Files.createTempFile(root, "corpus-observations-", ".ndjson").also(tempFiles::add)
-            val manifestPath = Files.createTempFile(root, "corpus-manifest-", ".json").also(tempFiles::add)
-            val archivePath = Files.createTempFile(root, "corpus-export-", ".zip").also(tempFiles::add)
-            val gameWriter =
-                HumanMoveCorpusArtifactCodec.EntryWriter(
-                    "games.ndjson",
-                    gamesPath,
-                    properties.maxExpandedBytes,
-                    properties.maxRecordBytes,
-                )
-            try {
-                jdbcTemplate.query(
-                    { connection ->
-                        connection.prepareStatement(
-                            """
-                            SELECT qualifying_ordinal, provider_game_id, traversed_player, opponent, opponent_side, opponent_rating,
-                                   CASE WHEN octet_length(pgn) <= ? THEN pgn ELSE NULL END AS pgn,
-                                   octet_length(pgn) AS pgn_bytes,
-                                   rules, time_class, bfs_depth, pgn_sha256, observation_total, distinct_move_count, committed_at
-                            FROM human_move_corpus_game
-                            WHERE run_id = ? AND qualifying_ordinal <= ?
-                            ORDER BY qualifying_ordinal
-                            """.trimIndent(),
-                            ResultSet.TYPE_FORWARD_ONLY,
-                            ResultSet.CONCUR_READ_ONLY,
-                        ).apply {
-                            fetchSize = 16
-                            setInt(1, properties.maxRecordBytes)
-                            setObject(2, request.runId)
-                            setInt(3, request.prefixN)
-                        }
-                    },
-                    ResultSetExtractor { rows ->
-                        writeGameRecords(rows, gameWriter)
-                        null
-                    },
-                )
-            } finally {
-                gameWriter.close()
-            }
-            val gamesEntry = gameWriter.entryFile()
-            val maxObservationBytes = properties.maxExpandedBytes - gamesEntry.size
-            if (maxObservationBytes < 0) {
-                throw CorpusArtifactInvalidException("Expanded artifact entries exceed the configured maximum")
-            }
-
-            val observationWriter =
-                HumanMoveCorpusArtifactCodec.EntryWriter(
-                    "observations.ndjson",
-                    observationsPath,
-                    maxObservationBytes,
-                    properties.maxRecordBytes,
-                )
-            try {
-                jdbcTemplate.query(
-                    { connection ->
-                        connection.prepareStatement(
-                            """
-                            SELECT g.qualifying_ordinal, o.position_hash,
-                                   CASE WHEN octet_length(p.fen) <= 512 THEN p.fen ELSE NULL END AS fen,
-                                   octet_length(p.fen) AS fen_bytes, o.move_played, o.observation_count
-                            FROM human_move_corpus_observation o
-                            JOIN human_move_corpus_game g ON g.id = o.game_id
-                            JOIN position p ON p.id = o.position_id
-                            WHERE g.run_id = ? AND g.qualifying_ordinal <= ?
-                            ORDER BY g.qualifying_ordinal, o.position_hash, o.move_played
-                            """.trimIndent(),
-                            ResultSet.TYPE_FORWARD_ONLY,
-                            ResultSet.CONCUR_READ_ONLY,
-                        ).apply {
-                            fetchSize = 512
-                            setObject(1, request.runId)
-                            setInt(2, request.prefixN)
-                        }
-                    },
-                    ResultSetExtractor { rows ->
-                        writeObservationRecords(rows, observationWriter)
-                        null
-                    },
-                )
-            } finally {
-                observationWriter.close()
-            }
-            val observationsEntry = observationWriter.entryFile()
-
-            // Re-check the committed frontier at the end of the repeatable-read snapshot.
-            val recheckedFrontier =
-                jdbcTemplate.queryForObject(
-                    "SELECT committed_frontier FROM human_move_corpus_run WHERE id = ?",
-                    Int::class.java,
-                    request.runId,
-                )!!
-            require(recheckedFrontier >= request.prefixN) {
-                "Corpus run ${request.runId} no longer covers prefixN (${request.prefixN}) within this snapshot"
-            }
-            require(gameWriter.count == request.prefixN) {
-                "Corpus run ${request.runId} does not contain the complete prefixN (${request.prefixN})"
-            }
-            require(gameWriter.count <= properties.maxGames && observationWriter.count <= properties.maxObservations) {
-                "Corpus snapshot exceeds the configured record count limit"
-            }
-
-            val terminalEligible = run.status == HumanMoveCorpusRunStatus.COMPLETED && request.prefixN == recheckedFrontier
-            val manifest =
-                buildManifest(
-                    run = run,
-                    coveredPrefix = request.prefixN,
-                    sourceFrontier = recheckedFrontier,
-                    gameCount = gameWriter.count,
-                    observationCount = observationWriter.count,
-                    gamesEntry = gamesEntry,
-                    observationsEntry = observationsEntry,
-                    terminalEligible = terminalEligible,
-                )
-            val entryBytesBeforeManifest = Math.addExact(gamesEntry.size, observationsEntry.size)
-            if (entryBytesBeforeManifest >= properties.maxExpandedBytes) {
-                throw CorpusArtifactInvalidException("Expanded artifact entries exceed the configured maximum")
-            }
-            HumanMoveCorpusArtifactCodec.writeJson(manifest, manifestPath, properties.maxRecordBytes.toLong())
-            val manifestEntry = HumanMoveCorpusArtifactCodec.entryFile("manifest.json", manifestPath)
-            if (manifestEntry.size > properties.maxExpandedBytes - entryBytesBeforeManifest
-            ) {
-                throw CorpusArtifactInvalidException("Expanded artifact entries exceed the configured maximum")
-            }
-            val entries = listOf(gamesEntry, observationsEntry, manifestEntry)
-            val digest = HumanMoveCorpusArtifactCodec.digestFiles(entries)
-            HumanMoveCorpusArtifactCodec.writeZip(entries, archivePath, properties.maxArchiveBytes)
-            writeArchive(digest, archivePath)
-
-            return HumanMoveCorpusExportReceipt(
-                contentDigest = digest,
-                sourceRunId = request.runId,
-                coveredPrefix = request.prefixN,
-                formatVersion = HumanMoveCorpusArtifactVerifier.SUPPORTED_FORMAT_VERSION,
+            jdbcTemplate.query(
+                { connection ->
+                    connection.prepareStatement(
+                        """
+                        SELECT qualifying_ordinal, provider_game_id, traversed_player, opponent, opponent_side, opponent_rating,
+                               CASE WHEN octet_length(pgn) <= ? THEN pgn ELSE NULL END AS pgn,
+                               octet_length(pgn) AS pgn_bytes,
+                               rules, time_class, bfs_depth, pgn_sha256, observation_total, distinct_move_count, committed_at
+                        FROM human_move_corpus_game
+                        WHERE run_id = ? AND qualifying_ordinal <= ?
+                        ORDER BY qualifying_ordinal
+                        """.trimIndent(),
+                        ResultSet.TYPE_FORWARD_ONLY,
+                        ResultSet.CONCUR_READ_ONLY,
+                    ).apply {
+                        fetchSize = 16
+                        setInt(1, properties.maxRecordBytes)
+                        setObject(2, runId)
+                        setInt(3, prefixN)
+                    }
+                },
+                ResultSetExtractor { rows ->
+                    writeGameRecords(rows, gameWriter)
+                    null
+                },
             )
         } finally {
-            tempFiles.forEach { Files.deleteIfExists(it) }
+            gameWriter.close()
         }
+        return ExportEntryResult(gameWriter.entryFile(), gameWriter.count)
+    }
+
+    private fun exportObservationsEntry(
+        runId: UUID,
+        prefixN: Int,
+        observationsPath: Path,
+        gamesSize: Long,
+    ): ExportEntryResult {
+        val maxObservationBytes = properties.maxExpandedBytes - gamesSize
+        if (maxObservationBytes < 0) {
+            throw CorpusArtifactInvalidException("Expanded artifact entries exceed the configured maximum")
+        }
+        val observationWriter =
+            HumanMoveCorpusArtifactCodec.EntryWriter(
+                "observations.ndjson",
+                observationsPath,
+                maxObservationBytes,
+                properties.maxRecordBytes,
+            )
+        try {
+            jdbcTemplate.query(
+                { connection ->
+                    connection.prepareStatement(
+                        """
+                        SELECT g.qualifying_ordinal, o.position_hash,
+                               CASE WHEN octet_length(p.fen) <= 512 THEN p.fen ELSE NULL END AS fen,
+                               octet_length(p.fen) AS fen_bytes, o.move_played, o.observation_count
+                        FROM human_move_corpus_observation o
+                        JOIN human_move_corpus_game g ON g.id = o.game_id
+                        JOIN position p ON p.id = o.position_id
+                        WHERE g.run_id = ? AND g.qualifying_ordinal <= ?
+                        ORDER BY g.qualifying_ordinal, o.position_hash, o.move_played
+                        """.trimIndent(),
+                        ResultSet.TYPE_FORWARD_ONLY,
+                        ResultSet.CONCUR_READ_ONLY,
+                    ).apply {
+                        fetchSize = 512
+                        setObject(1, runId)
+                        setInt(2, prefixN)
+                    }
+                },
+                ResultSetExtractor { rows ->
+                    writeObservationRecords(rows, observationWriter)
+                    null
+                },
+            )
+        } finally {
+            observationWriter.close()
+        }
+        return ExportEntryResult(observationWriter.entryFile(), observationWriter.count)
+    }
+
+    private fun exportManifestEntry(
+        run: HumanMoveCorpusRun,
+        request: HumanMoveCorpusExportRequest,
+        games: ExportEntryResult,
+        observations: ExportEntryResult,
+        manifestPath: Path,
+    ): HumanMoveCorpusArtifactCodec.EntryFile {
+        val recheckedFrontier =
+            jdbcTemplate.queryForObject(
+                "SELECT committed_frontier FROM human_move_corpus_run WHERE id = ?",
+                Int::class.java,
+                request.runId,
+            )!!
+        require(recheckedFrontier >= request.prefixN) {
+            "Corpus run ${request.runId} no longer covers prefixN (${request.prefixN}) within this snapshot"
+        }
+        require(games.count == request.prefixN) {
+            "Corpus run ${request.runId} does not contain the complete prefixN (${request.prefixN})"
+        }
+        require(games.count <= properties.maxGames && observations.count <= properties.maxObservations) {
+            "Corpus snapshot exceeds the configured record count limit"
+        }
+
+        val terminalEligible = run.status == HumanMoveCorpusRunStatus.COMPLETED && request.prefixN == recheckedFrontier
+        val manifest =
+            buildManifest(
+                run = run,
+                coveredPrefix = request.prefixN,
+                sourceFrontier = recheckedFrontier,
+                gameCount = games.count,
+                observationCount = observations.count,
+                gamesEntry = games.entryFile,
+                observationsEntry = observations.entryFile,
+                terminalEligible = terminalEligible,
+            )
+        val entryBytesBeforeManifest = Math.addExact(games.entryFile.size, observations.entryFile.size)
+        if (entryBytesBeforeManifest >= properties.maxExpandedBytes) {
+            throw CorpusArtifactInvalidException("Expanded artifact entries exceed the configured maximum")
+        }
+        HumanMoveCorpusArtifactCodec.writeJson(manifest, manifestPath, properties.maxRecordBytes.toLong())
+        val manifestEntry = HumanMoveCorpusArtifactCodec.entryFile("manifest.json", manifestPath)
+        if (manifestEntry.size > properties.maxExpandedBytes - entryBytesBeforeManifest) {
+            throw CorpusArtifactInvalidException("Expanded artifact entries exceed the configured maximum")
+        }
+        return manifestEntry
     }
 
     /** Fully verifies an uploaded artifact read-only; never writes to the database. */
@@ -369,7 +404,7 @@ class HumanMoveCorpusArtifactService(
         try {
             // Same-directory hard-link publication is atomic and fails if another writer published first.
             Files.createLink(target, source)
-        } catch (e: java.nio.file.FileAlreadyExistsException) {
+        } catch (expected: java.nio.file.FileAlreadyExistsException) {
             if (!Files.isRegularFile(target) || Files.mismatch(target, source) != -1L) {
                 throw CorpusArtifactConflict("Concurrent archive publication for $digest has different bytes")
             }
