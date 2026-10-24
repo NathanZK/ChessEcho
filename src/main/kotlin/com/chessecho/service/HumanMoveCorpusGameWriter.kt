@@ -169,70 +169,12 @@ class HumanMoveCorpusGameWriter(
         runId: UUID,
         candidate: HumanMoveCorpusCandidate,
     ): HumanMoveCorpusCommitResult {
-        val run =
-            jdbcTemplate.query(
-                "SELECT status, committed_frontier FROM human_move_corpus_run WHERE id = ? FOR UPDATE",
-                { rs, _ -> rs.getString("status") to rs.getInt("committed_frontier") },
-                runId,
-            ).singleOrNull() ?: throw NoSuchElementException("Corpus run $runId not found")
-        val (status, frontier) = run
+        val (status, frontier) = fetchRunForUpdate(runId)
         if (status != HumanMoveCorpusRunStatus.RUNNING.name) {
             throw HumanMoveCorpusRunNotRunningException("Corpus run $runId is $status, not RUNNING")
         }
 
-        val observations = candidate.observations.sortedWith(compareBy({ it.positionHash }, { it.movePlayed }))
-        val occurrences =
-            (
-                if (candidate.occurrences.isEmpty()) {
-                    val sourceObservations = candidate.observations
-                    val repeatedInitialLocation = sourceObservations.firstOrNull()?.observationCount == 2
-                    sourceObservations
-                        .flatMap { observation ->
-                            (1..observation.observationCount).map {
-                                HumanMoveCorpusOccurrence(0, observation.positionHash, observation.movePlayed)
-                            }
-                        }.mapIndexed { index, occurrence ->
-                            occurrence.copy(
-                                preMovePly =
-                                    when {
-                                        repeatedInitialLocation && index == 0 -> 1
-                                        repeatedInitialLocation && index == 1 -> 5
-                                        repeatedInitialLocation && index >= 5 -> index + 1
-                                        repeatedInitialLocation -> index
-                                        else -> index + 1
-                                    },
-                            )
-                        }
-                } else {
-                    candidate.occurrences
-                }
-            ).sortedBy { it.preMovePly }
-        require(observations.isNotEmpty()) { "Game ${candidate.providerGameId} has no observations" }
-        require(observations.all { it.observationCount >= 1 }) {
-            "Game ${candidate.providerGameId} has a non-positive observation count"
-        }
-        require(observations.map { it.positionHash to it.movePlayed }.toSet().size == observations.size) {
-            "Game ${candidate.providerGameId} repeats a (position, move) contribution"
-        }
-        if (occurrences.isNotEmpty()) {
-            require(
-                occurrences.all {
-                    it.preMovePly >= 1 && it.positionHash.isNotBlank() && it.movePlayed.isNotBlank()
-                },
-            ) {
-                "Game ${candidate.providerGameId} has an invalid move occurrence"
-            }
-            require(occurrences.map { it.preMovePly }.toSet().size == occurrences.size) {
-                "Game ${candidate.providerGameId} repeats a pre-move ply"
-            }
-            val aggregateFromOccurrences =
-                occurrences.groupingBy { it.positionHash to it.movePlayed }.eachCount()
-            val aggregateFromObservations =
-                observations.associate { (it.positionHash to it.movePlayed) to it.observationCount }
-            require(aggregateFromOccurrences == aggregateFromObservations) {
-                "Game ${candidate.providerGameId} aggregate observations do not match its move occurrences"
-            }
-        }
+        val (observations, occurrences) = normalizeAndValidateCandidate(candidate)
         val pgnSha256 = sha256(candidate.pgn)
         val observationTotal = observations.sumOf { it.observationCount }
 
@@ -251,8 +193,111 @@ class HumanMoveCorpusGameWriter(
         // The game row is inserted before any position row so a stalled game
         // transaction holds no locks that other runs' commits could wait on.
         val ordinal = frontier + 1
-        val gameId = UUID.randomUUID()
         val now = timestamp(Instant.now())
+        val gameId = insertCommittedGame(runId, ordinal, candidate, pgnSha256, observationTotal, observations.size, now)
+        insertObservationsAndOccurrences(runId, gameId, ordinal, candidate, observations, occurrences)
+
+        jdbcTemplate.update(
+            "UPDATE human_move_corpus_run SET committed_frontier = ?, updated_at = ? WHERE id = ?",
+            ordinal,
+            now,
+            runId,
+        )
+        return HumanMoveCorpusCommitResult(HumanMoveCorpusCommitOutcome.COMMITTED, ordinal)
+    }
+
+    private fun fetchRunForUpdate(runId: UUID): Pair<String, Int> =
+        jdbcTemplate.query(
+            "SELECT status, committed_frontier FROM human_move_corpus_run WHERE id = ? FOR UPDATE",
+            { rs, _ -> rs.getString("status") to rs.getInt("committed_frontier") },
+            runId,
+        ).singleOrNull() ?: throw NoSuchElementException("Corpus run $runId not found")
+
+    private fun normalizeAndValidateCandidate(
+        candidate: HumanMoveCorpusCandidate,
+    ): Pair<List<HumanMoveCorpusObservedMove>, List<HumanMoveCorpusOccurrence>> {
+        val observations = candidate.observations.sortedWith(compareBy({ it.positionHash }, { it.movePlayed }))
+        val occurrences = normalizeOccurrences(candidate.observations, candidate.occurrences)
+        validateObservations(candidate.providerGameId, observations)
+        validateOccurrences(candidate.providerGameId, observations, occurrences)
+        return observations to occurrences
+    }
+
+    private fun normalizeOccurrences(
+        sourceObservations: List<HumanMoveCorpusObservedMove>,
+        candidateOccurrences: List<HumanMoveCorpusOccurrence>,
+    ): List<HumanMoveCorpusOccurrence> {
+        if (candidateOccurrences.isNotEmpty()) {
+            return candidateOccurrences.sortedBy { it.preMovePly }
+        }
+        val repeatedInitialLocation = sourceObservations.firstOrNull()?.observationCount == 2
+        return sourceObservations
+            .flatMap { observation ->
+                (1..observation.observationCount).map {
+                    HumanMoveCorpusOccurrence(0, observation.positionHash, observation.movePlayed)
+                }
+            }.mapIndexed { index, occurrence ->
+                occurrence.copy(
+                    preMovePly =
+                        when {
+                            repeatedInitialLocation && index == 0 -> 1
+                            repeatedInitialLocation && index == 1 -> 5
+                            repeatedInitialLocation && index >= 5 -> index + 1
+                            repeatedInitialLocation -> index
+                            else -> index + 1
+                        },
+                )
+            }.sortedBy { it.preMovePly }
+    }
+
+    private fun validateObservations(
+        providerGameId: String,
+        observations: List<HumanMoveCorpusObservedMove>,
+    ) {
+        require(observations.isNotEmpty()) { "Game $providerGameId has no observations" }
+        require(observations.all { it.observationCount >= 1 }) {
+            "Game $providerGameId has a non-positive observation count"
+        }
+        require(observations.map { it.positionHash to it.movePlayed }.toSet().size == observations.size) {
+            "Game $providerGameId repeats a (position, move) contribution"
+        }
+    }
+
+    private fun validateOccurrences(
+        providerGameId: String,
+        observations: List<HumanMoveCorpusObservedMove>,
+        occurrences: List<HumanMoveCorpusOccurrence>,
+    ) {
+        if (occurrences.isEmpty()) return
+        require(
+            occurrences.all {
+                it.preMovePly >= 1 && it.positionHash.isNotBlank() && it.movePlayed.isNotBlank()
+            },
+        ) {
+            "Game $providerGameId has an invalid move occurrence"
+        }
+        require(occurrences.map { it.preMovePly }.toSet().size == occurrences.size) {
+            "Game $providerGameId repeats a pre-move ply"
+        }
+        val aggregateFromOccurrences =
+            occurrences.groupingBy { it.positionHash to it.movePlayed }.eachCount()
+        val aggregateFromObservations =
+            observations.associate { (it.positionHash to it.movePlayed) to it.observationCount }
+        require(aggregateFromOccurrences == aggregateFromObservations) {
+            "Game $providerGameId aggregate observations do not match its move occurrences"
+        }
+    }
+
+    private fun insertCommittedGame(
+        runId: UUID,
+        ordinal: Int,
+        candidate: HumanMoveCorpusCandidate,
+        pgnSha256: String,
+        observationTotal: Int,
+        distinctMoveCount: Int,
+        now: OffsetDateTime,
+    ): UUID {
+        val gameId = UUID.randomUUID()
         jdbcTemplate.update(
             """
             INSERT INTO human_move_corpus_game (
@@ -275,10 +320,20 @@ class HumanMoveCorpusGameWriter(
             candidate.pgn,
             pgnSha256,
             observationTotal,
-            observations.size,
+            distinctMoveCount,
             now,
         )
+        return gameId
+    }
 
+    private fun insertObservationsAndOccurrences(
+        runId: UUID,
+        gameId: UUID,
+        ordinal: Int,
+        candidate: HumanMoveCorpusCandidate,
+        observations: List<HumanMoveCorpusObservedMove>,
+        occurrences: List<HumanMoveCorpusOccurrence>,
+    ) {
         val positionIds = findOrCreatePositions(observations)
         jdbcTemplate.batchUpdate(
             """
@@ -319,14 +374,6 @@ class HumanMoveCorpusGameWriter(
                 },
             )
         }
-
-        jdbcTemplate.update(
-            "UPDATE human_move_corpus_run SET committed_frontier = ?, updated_at = ? WHERE id = ?",
-            ordinal,
-            now,
-            runId,
-        )
-        return HumanMoveCorpusCommitResult(HumanMoveCorpusCommitOutcome.COMMITTED, ordinal)
     }
 
     @Transactional
@@ -409,35 +456,9 @@ class HumanMoveCorpusGameWriter(
         observations: List<HumanMoveCorpusObservedMove>,
         occurrences: List<HumanMoveCorpusOccurrence>,
     ) {
-        val stored =
-            jdbcTemplate.query(
-                "SELECT position_hash, move_played, observation_count FROM human_move_corpus_observation WHERE game_id = ?",
-                { rs, _ -> Triple(rs.getString(1), rs.getString(2), rs.getInt(3)) },
-                existing.id,
-            ).toSet()
+        val stored = fetchStoredObservations(existing.id)
         val proposed = observations.map { Triple(it.positionHash, it.movePlayed, it.observationCount) }.toSet()
-        val storedOccurrences =
-            jdbcTemplate.query(
-                """
-                SELECT source_run_id, qualifying_ordinal, provider_game_id, pre_move_ply,
-                       position_hash, move_played, content_digest, covered_prefix
-                FROM human_move_corpus_occurrence WHERE source_run_id = ? AND qualifying_ordinal = ?
-                """.trimIndent(),
-                { rs, _ ->
-                    listOf(
-                        rs.getString("source_run_id"),
-                        rs.getInt("qualifying_ordinal"),
-                        rs.getString("provider_game_id"),
-                        rs.getInt("pre_move_ply"),
-                        rs.getString("position_hash"),
-                        rs.getString("move_played"),
-                        rs.getString("content_digest"),
-                        rs.getObject("covered_prefix"),
-                    )
-                },
-                existing.runId,
-                existing.ordinal,
-            ).toSet()
+        val storedOccurrences = fetchStoredOccurrences(existing.runId, existing.ordinal)
         val proposedOccurrences =
             occurrences.map {
                 listOf(
@@ -451,16 +472,7 @@ class HumanMoveCorpusGameWriter(
                     existing.ordinal,
                 )
             }.toSet()
-        val candidateProvenance =
-            listOf(
-                candidate.traversedPlayer,
-                candidate.opponent,
-                candidate.opponentSide.name,
-                candidate.opponentRating,
-                candidate.rules,
-                candidate.timeClass,
-                candidate.bfsDepth,
-            )
+        val candidateProvenance = buildCandidateProvenance(candidate)
         val identical =
             existing.pgnSha256 == pgnSha256 &&
                 existing.provenance == candidateProvenance &&
@@ -475,6 +487,50 @@ class HumanMoveCorpusGameWriter(
             )
         }
     }
+
+    private fun fetchStoredObservations(gameId: UUID): Set<Triple<String, String, Int>> =
+        jdbcTemplate.query(
+            "SELECT position_hash, move_played, observation_count FROM human_move_corpus_observation WHERE game_id = ?",
+            { rs, _ -> Triple(rs.getString(1), rs.getString(2), rs.getInt(3)) },
+            gameId,
+        ).toSet()
+
+    private fun fetchStoredOccurrences(
+        runId: UUID,
+        ordinal: Int,
+    ): Set<List<Any?>> =
+        jdbcTemplate.query(
+            """
+            SELECT source_run_id, qualifying_ordinal, provider_game_id, pre_move_ply,
+                   position_hash, move_played, content_digest, covered_prefix
+            FROM human_move_corpus_occurrence WHERE source_run_id = ? AND qualifying_ordinal = ?
+            """.trimIndent(),
+            { rs, _ ->
+                listOf(
+                    rs.getString("source_run_id"),
+                    rs.getInt("qualifying_ordinal"),
+                    rs.getString("provider_game_id"),
+                    rs.getInt("pre_move_ply"),
+                    rs.getString("position_hash"),
+                    rs.getString("move_played"),
+                    rs.getString("content_digest"),
+                    rs.getObject("covered_prefix"),
+                )
+            },
+            runId,
+            ordinal,
+        ).toSet()
+
+    private fun buildCandidateProvenance(candidate: HumanMoveCorpusCandidate): List<Any?> =
+        listOf(
+            candidate.traversedPlayer,
+            candidate.opponent,
+            candidate.opponentSide.name,
+            candidate.opponentRating,
+            candidate.rules,
+            candidate.timeClass,
+            candidate.bfsDepth,
+        )
 
     private fun findOrCreatePositions(observations: List<HumanMoveCorpusObservedMove>): Map<String, UUID> {
         // Sorted, conflict-safe inserts keep concurrent runs sharing positions deadlock-free.

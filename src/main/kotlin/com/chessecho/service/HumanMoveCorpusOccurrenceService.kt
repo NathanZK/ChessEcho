@@ -192,44 +192,70 @@ class HumanMoveCorpusOccurrenceService(
         sourceRunId: UUID,
         coveredPrefix: Int,
     ) {
-        val prefix =
-            jdbcTemplate.query(
-                """
-                SELECT r.committed_frontier,
-                       COUNT(g.id),
-                       COALESCE(MIN(g.qualifying_ordinal), 0),
-                       COALESCE(MAX(g.qualifying_ordinal), 0),
-                       COALESCE(SUM(g.observation_total), 0)
-                FROM human_move_corpus_run r
-                LEFT JOIN human_move_corpus_game g
-                  ON g.run_id = r.id AND g.qualifying_ordinal <= ?
-                WHERE r.id = ?
-                GROUP BY r.committed_frontier
-                """.trimIndent(),
-                { rs, _ ->
-                    SourcePrefix(
-                        frontier = rs.getInt(1),
-                        gameCount = rs.getLong(2),
-                        minimum = rs.getInt(3),
-                        maximum = rs.getInt(4),
-                        expectedOccurrences = rs.getLong(5),
-                    )
-                },
-                coveredPrefix,
-                sourceRunId,
-            ).singleOrNull()
-                ?: throw HumanMoveCorpusIntegrityException("Source corpus run $sourceRunId is missing")
-        val (frontier, gameCount, minimum, maximum, expectedOccurrences) = prefix
+        val prefix = fetchSourcePrefix(sourceRunId, coveredPrefix)
         val occurrenceCount = countOccurrences(sourceRunId, coveredPrefix)
-        if (coveredPrefix < 1 || coveredPrefix > frontier ||
-            gameCount != coveredPrefix.toLong() || minimum != 1 || maximum != coveredPrefix ||
-            occurrenceCount == 0L || occurrenceCount != expectedOccurrences
+        if (!isPrefixBoundaryValid(coveredPrefix, prefix.frontier, prefix.gameCount, prefix.minimum, prefix.maximum) ||
+            !isOccurrenceCountValid(occurrenceCount, prefix.expectedOccurrences)
         ) {
             throw HumanMoveCorpusIntegrityException(
                 "Run $sourceRunId does not have complete occurrence evidence for prefix $coveredPrefix",
             )
         }
+        assertSourceConsistency(sourceRunId, coveredPrefix)
+    }
 
+    private fun fetchSourcePrefix(
+        sourceRunId: UUID,
+        coveredPrefix: Int,
+    ): SourcePrefix =
+        jdbcTemplate.query(
+            """
+            SELECT r.committed_frontier,
+                   COUNT(g.id),
+                   COALESCE(MIN(g.qualifying_ordinal), 0),
+                   COALESCE(MAX(g.qualifying_ordinal), 0),
+                   COALESCE(SUM(g.observation_total), 0)
+            FROM human_move_corpus_run r
+            LEFT JOIN human_move_corpus_game g
+              ON g.run_id = r.id AND g.qualifying_ordinal <= ?
+            WHERE r.id = ?
+            GROUP BY r.committed_frontier
+            """.trimIndent(),
+            { rs, _ ->
+                SourcePrefix(
+                    frontier = rs.getInt(1),
+                    gameCount = rs.getLong(2),
+                    minimum = rs.getInt(3),
+                    maximum = rs.getInt(4),
+                    expectedOccurrences = rs.getLong(5),
+                )
+            },
+            coveredPrefix,
+            sourceRunId,
+        ).singleOrNull()
+            ?: throw HumanMoveCorpusIntegrityException("Source corpus run $sourceRunId is missing")
+
+    private fun isPrefixBoundaryValid(
+        coveredPrefix: Int,
+        frontier: Int,
+        gameCount: Long,
+        minimum: Int,
+        maximum: Int,
+    ): Boolean =
+        coveredPrefix in 1..frontier &&
+            gameCount == coveredPrefix.toLong() &&
+            minimum == 1 &&
+            maximum == coveredPrefix
+
+    private fun isOccurrenceCountValid(
+        occurrenceCount: Long,
+        expectedOccurrences: Long,
+    ): Boolean = occurrenceCount > 0L && occurrenceCount == expectedOccurrences
+
+    private fun assertSourceConsistency(
+        sourceRunId: UUID,
+        coveredPrefix: Int,
+    ) {
         val sourceDiverges =
             jdbcTemplate.queryForObject(
                 """
