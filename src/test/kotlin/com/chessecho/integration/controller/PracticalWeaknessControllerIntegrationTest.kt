@@ -295,6 +295,14 @@ class PracticalWeaknessControllerIntegrationTest {
         assertEquals(6.75, weaknesses[1]["recommendationPriority"].doubleValue(), 0.001)
         assertEquals("POOR", weaknesses[0]["practicalEvidence"]["practicalAssessment"].textValue())
         assertEquals("SUCCESSFUL", weaknesses[1]["practicalEvidence"]["practicalAssessment"].textValue())
+        assertWeaknessAndPuzzleParity(weaknesses, puzzles)
+        assertPagedReordering(account, poor, successful)
+    }
+
+    private fun assertWeaknessAndPuzzleParity(
+        weaknesses: List<JsonNode>,
+        puzzles: List<JsonNode>,
+    ) {
         weaknesses.zip(puzzles).forEach { (weakness, puzzle) ->
             assertEquals(weakness["playerColor"], puzzle["playerColor"])
             assertEquals(weakness["priority"], puzzle["priority"])
@@ -307,7 +315,13 @@ class PracticalWeaknessControllerIntegrationTest {
                 puzzle["movesPlayed"].map { it["practicalEvidence"] },
             )
         }
+    }
 
+    private fun assertPagedReordering(
+        account: ChessAccount,
+        poor: Position,
+        successful: Position,
+    ) {
         assertEquals(
             listOf(poor.id.toString()),
             weaknesses(account.username, "WHITE", "&page=0&size=1").map { it["positionId"].textValue() },
@@ -316,10 +330,7 @@ class PracticalWeaknessControllerIntegrationTest {
             listOf(successful.id.toString()),
             weaknesses(account.username, "WHITE", "&page=1&size=1").map { it["positionId"].textValue() },
         )
-        assertEquals(
-            listOf(poor.id.toString()),
-            puzzles(account.username, "WHITE", "&page=0&limit=1").map { it["puzzleId"].textValue() },
-        )
+        assertEquals(listOf(poor.id.toString()), puzzles(account.username, "WHITE", "&page=0&limit=1").map { it["puzzleId"].textValue() })
         assertEquals(
             listOf(successful.id.toString()),
             puzzles(account.username, "WHITE", "&page=1&limit=1").map { it["puzzleId"].textValue() },

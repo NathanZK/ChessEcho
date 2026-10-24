@@ -56,7 +56,7 @@ class TrainingAttemptServiceTest {
             )
         whenever(repository.existsById(attemptId)).thenReturn(false)
         whenever(repository.save(org.mockito.kotlin.any<TrainingAttempt>()))
-            .thenAnswer { it.arguments[0] as TrainingAttempt }
+            .thenAnswer { it.getArgument<TrainingAttempt>(0) }
 
         val response = service.submit(request, null)
         val attempt = argumentCaptor<TrainingAttempt>()
@@ -87,7 +87,7 @@ class TrainingAttemptServiceTest {
             )
         whenever(accountOwnershipService.resolveSharedAccount(accountId, principal)).thenReturn(account)
         whenever(appUserRepository.getReferenceById(appUser.id)).thenReturn(appUser)
-        whenever(repository.save(any<TrainingAttempt>())).thenAnswer { it.arguments[0] as TrainingAttempt }
+        whenever(repository.save(any<TrainingAttempt>())).thenAnswer { it.getArgument<TrainingAttempt>(0) }
 
         service.submit(request, principal)
 
@@ -147,7 +147,7 @@ class TrainingAttemptServiceTest {
                 allowedMs = null,
                 outcome = "SUBMITTED",
             )
-        whenever(repository.save(any<TrainingAttempt>())).thenAnswer { it.arguments[0] as TrainingAttempt }
+        whenever(repository.save(any<TrainingAttempt>())).thenAnswer { it.getArgument<TrainingAttempt>(0) }
 
         val response = service.submit(requestZero, null)
         assertEquals(0, response.elapsedMs)
@@ -162,7 +162,7 @@ class TrainingAttemptServiceTest {
 
     @Test
     fun `allowedMs allows null and non-negative, rejects negative`() {
-        whenever(repository.save(any<TrainingAttempt>())).thenAnswer { it.arguments[0] as TrainingAttempt }
+        whenever(repository.save(any<TrainingAttempt>())).thenAnswer { it.getArgument<TrainingAttempt>(0) }
 
         val baseRequest =
             TrainingAttemptRequest(

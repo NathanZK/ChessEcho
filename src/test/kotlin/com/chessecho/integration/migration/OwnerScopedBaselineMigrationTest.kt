@@ -10,6 +10,13 @@ class OwnerScopedBaselineMigrationTest : PostgresMigrationTestFixture() {
     fun `applies the single clean PostgreSQL baseline schema and rejects legacy V3 quarantine artifacts`() {
         applyCurrentMigrations()
 
+        assertBaselineCoreTables()
+        assertAuthAndAccountConnectionSchema()
+        assertOwnerScopedAndJobSchema()
+        assertBaselineConstraintsAndQuarantine()
+    }
+
+    private fun assertBaselineCoreTables() {
         val requiredTables =
             setOf(
                 "app_user",
@@ -47,7 +54,9 @@ class OwnerScopedBaselineMigrationTest : PostgresMigrationTestFixture() {
                 """.trimIndent(),
             ).map { it["table_name"].toString() }.toSet()
         assertEquals(requiredTables, tables)
+    }
 
+    private fun assertAuthAndAccountConnectionSchema() {
         val nullableUserId =
             query(
                 "SELECT is_nullable FROM information_schema.columns WHERE table_name = 'chess_account' AND column_name = 'user_id'",
@@ -77,7 +86,9 @@ class OwnerScopedBaselineMigrationTest : PostgresMigrationTestFixture() {
         assertConstraint(sessionConstraints, "idle_expires_at", "created_at")
         assertConstraint(sessionConstraints, "absolute_expires_at", "idle_expires_at")
         assertConstraint(sessionConstraints, "revoked_at", "created_at")
+    }
 
+    private fun assertOwnerScopedAndJobSchema() {
         val jobColumns =
             query(
                 """
@@ -122,7 +133,9 @@ class OwnerScopedBaselineMigrationTest : PostgresMigrationTestFixture() {
         assertColumnNullable("async_job", "chess_account_id", true)
         assertForeignKey("async_job", "chess_account_id", "chess_account", "id")
         assertIndex("async_job", "chess_account_id")
+    }
 
+    private fun assertBaselineConstraintsAndQuarantine() {
         listOf(
             "app_user" to "created_at",
             "auth_identity" to "created_at",
@@ -248,6 +261,10 @@ class OwnerScopedBaselineMigrationTest : PostgresMigrationTestFixture() {
         assertForeignKey("puzzle_scheduling_event", "position_id", "position", "id")
         assertIndex("puzzle_scheduling_event", "chess_account_id, position_id, player_color, occurred_at")
 
+        assertTrainingAttemptTelemetrySchema()
+    }
+
+    private fun assertTrainingAttemptTelemetrySchema() {
         val trainingColumns =
             query(
                 """
