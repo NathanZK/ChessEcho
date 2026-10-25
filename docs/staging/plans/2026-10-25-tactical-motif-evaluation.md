@@ -26,3 +26,27 @@ goal:       Execute complete backend validation, verify outputs, reproducibility
 files:      docs/experiments/tactical-motif-v1-results.json
 acceptance: ./gradlew ktlintCheck && ./gradlew test
 spec:       docs/staging/specs/2026-10-25-tactical-motif-evaluation.md#test
+
+- [x] T5: Specification completion and baseline preservation
+goal:       Complete durable algorithm specification under docs/experiments/, recording feature vocabularies, BM25 scoring, exact baseline results, reproducibility protocol, commit SHA reconciliation, and paper fidelity deviations.
+files:      docs/experiments/2026-10-25-bizjak-tactical-motif-v1-specification.md
+acceptance: git diff --exit-code docs/experiments/tactical-motif-frozen-pools.sha256 && python3 scripts/verify_tactical_motif_detectors.py
+spec:       docs/staging/specs/2026-10-25-tactical-motif-evaluation.md#contract
+
+- [ ] T6: Per-query ranking failure and success analysis
+goal:       Analyze query-level rankings across all 4 configurations to explain successes and failure modes (e.g., pawn structures in back_rank_mate, dynamic token concentration, static token dilution in combined fusion).
+files:      docs/experiments/tactical-motif-v1-per-query-analysis.md
+acceptance: test -f docs/experiments/tactical-motif-v1-per-query-analysis.md
+spec:       docs/staging/specs/2026-10-25-tactical-motif-evaluation.md#contract
+
+- [ ] T7: Independent evaluation pool construction and leakage verification
+goal:       Construct an independently frozen evaluation pool from unused Lichess puzzles with verified zero overlap in puzzle IDs, canonical FENs, and game URLs, and record its SHA-256 digest.
+files:      scripts/generate_independent_motif_fixtures.py, src/test/resources/tactical-motif-independent-pools.json, docs/experiments/tactical-motif-independent-pools.sha256, scripts/verify_tactical_motif_detectors.py
+acceptance: python3 scripts/verify_tactical_motif_detectors.py
+spec:       docs/staging/specs/2026-10-25-tactical-motif-evaluation.md#contract
+
+- [ ] T8: Assessment against ChessEcho's player-weakness goal and final validation
+goal:       Evaluate whether tactical-motif retrieval signals transfer to detecting recurring tactical weaknesses across user games versus puzzle retrieval; run all validation gates; commit and push to exp/tactical-motif-v1.
+files:      docs/experiments/tactical-motif-retrieval-goal-assessment.md
+acceptance: ./gradlew ktlintCheck && ./gradlew test && git push origin exp/tactical-motif-v1
+spec:       docs/staging/specs/2026-10-25-tactical-motif-evaluation.md#contract

@@ -17,6 +17,10 @@ contract:
     - `fun extractTerms(puzzle: TacticalPuzzleDocument): Map<String, Double>`
     - Explicit handling: throws `IllegalArgumentException` on malformed FEN, illegal move syntax, or empty candidate collections.
   - `com.chessecho.similarity.TacticalMotifBenchmarkRunner`: Kotlin benchmark harness executing the 4 evaluation configurations (`baseline_ganguly_static`, `bizjak_static_only`, `bizjak_dynamic_only`, `bizjak_combined`), verifying corpus SHA-256 before scoring, calculating per-query and macro metrics (Hit@1, Hit@5, Hit@10, MRR), and writing results to `docs/experiments/tactical-motif-v1-results.json`.
+  - `docs/experiments/tactical-motif-v1-per-query-analysis.md`: comprehensive analysis of query-level successes, failure modes, pawn structure impact, and rank inversions.
+  - `src/test/resources/tactical-motif-independent-pools.json`: independently frozen candidate pools constructed from unused Lichess puzzles with verified zero overlap in puzzle IDs, canonical FENs, and game URLs.
+  - `docs/experiments/tactical-motif-independent-pools.sha256`: SHA-256 digest of the independent candidate pool.
+  - `docs/experiments/tactical-motif-retrieval-goal-assessment.md`: evaluation of tactical motif retrieval signals for detecting recurring tactical weaknesses across user games versus puzzle retrieval.
 
 invariant:
   - `FenPositionSimilarity.kt` and its tests remain unmodified from commit `8793d58`.
@@ -24,14 +28,18 @@ invariant:
   - `fork_N` and `back_rank_mate` are external evaluation labels and are strictly never encoded as index features, query terms, or document tokens.
   - Candidate pools are frozen with recorded SHA-256 digest before any scoring run begins; `TacticalMotifBenchmarkRunner` enforces this hash programmatically.
   - Leakage controls: candidate pools exclude any puzzle from the same `GameUrl`, exclude canonical-FEN duplicates, and exclude the query puzzle.
+  - Independent evaluation pool has zero overlap with original queries or candidates in puzzle IDs, canonical FENs, and game URLs.
   - Scoring variants are evaluated on identical frozen candidate pools with deterministic ranking and ties broken by canonical FEN ascending.
   - No database schema changes, no HTTP API endpoints, no frontend edits, and no engine/Stockfish subprocess calls.
   - Prohibited claims: general position similarity, autonomous motif discovery, and solving arbitrary-FEN retrieval (#91) are explicitly prohibited from being claimed from these results alone.
 
 test:
-  - `python3 -m unittest scripts/tests/test_tactical_motif_detectors.py` and `python3 scripts/verify_tactical_motif_detectors.py` exit 0 with all positive and negative test cases passing.
+  - `python3 -m unittest scripts/tests/test_tactical_motif_detectors.py` and `python3 scripts/verify_tactical_motif_detectors.py` exit 0 with all positive and negative test cases passing and pool digests verified.
   - `./gradlew ktlintCheck` passes.
   - `./gradlew test --tests '*.FenPositionSimilarityTest'` passes cleanly.
+  - `./gradlew test --tests '*.BizjakFeatureScorerTest'` passes cleanly.
+  - `./gradlew test --tests '*.TacticalMotifBenchmarkRunnerTest'` passes cleanly.
+  - `./gradlew test` passes.
 
 convention:
   - Kotlin 2.0 with standard library, Jackson Kotlin module, and `com.github.bhlangonijr.chesslib:1.3.7`.
@@ -41,8 +49,6 @@ convention:
   - Pre-deployment repository state per `docs/engineering/repository-conventions.md`.
 
 deferred:
-  - Implementation of `BizjakFeatureScorer` and `TacticalMotifBenchmarkRunner` (deferred to subsequent implementation pass).
-  - Corpus candidate pool extraction and scoring runs (deferred to subsequent pass).
   - Stage 3: Broader structural & decision similarity (positional patterns, pawn structures across game datasets).
   - Stage 4: Player weakness analysis across groups (#523).
   - Production database or API integration (#91 arbitrary-FEN retrieval).

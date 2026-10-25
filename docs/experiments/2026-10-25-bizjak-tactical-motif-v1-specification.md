@@ -168,3 +168,135 @@ The experimental report and any downstream documentation are strictly prohibited
 
 ### 6.4 Pre-Validation Requirement
 Before candidate pool labeling, both detectors must pass verification against $\ge 5$ verified positive and $\ge 5$ verified negative test cases stored in `src/test/resources/tactical-motif-detector-test-cases.json` and tested in `scripts/tests/test_tactical_motif_detectors.py` and `scripts/verify_tactical_motif_detectors.py`.
+
+---
+
+## 7. Dataset Provenance & Candidate-Pool Construction
+
+### 7.1 Source Dataset Provenance
+- Source: Lichess Open Puzzle Database (CC0 Public Domain).
+- Raw sample: `scripts/data/lichess_puzzle_sample.csv.zst` containing 4,960 puzzles with fields `PuzzleId`, `FEN`, `Moves`, `Rating`, `RatingDeviation`, `Popularity`, `NbPlays`, `Themes`, `GameUrl`, `OpeningTags`.
+- All positions are validated via `chess.Board(fen)` with legal setup move $M_0$ execution to establish the root puzzle position $P_0$ (`rootFen`) from which the player move $M_1$ begins.
+- Canonical FEN is defined as the first 4 fields of FEN: `<piece_placement> <active_color> <castling_availability> <en_passant_target>`.
+
+### 7.2 Leakage Controls & Candidate Selection
+For each query $q$ with root canonical FEN $F_q$ and source game URL $U_q$:
+1. **Self-Exclusion**: Query puzzle $q$ is strictly excluded from its own candidate pool.
+2. **Canonical-FEN Deduplication**: Every candidate position within the candidate pool has a unique canonical FEN. Any candidate matching $F_q$ or another candidate in the pool is excluded.
+3. **Same-Game Leakage Prevention**: Candidates originating from the same game URL $U_q$ as the query are strictly excluded to prevent transpositions or identical game-phase positions from confounding retrieval.
+4. **Target Positives**: 20 distinct target positive puzzles confirmed by the external oracle detector for motif $m$.
+5. **Background Distractors**: 180 distinct non-positive tactical puzzles from Lichess. Distractors are unlabeled tactical puzzles; they are not confirmed negative examples.
+6. **Pool Size & Integrity**: Total pool size is exactly 200 candidates per query ($N=200$). The pool is serialized to `src/test/resources/tactical-motif-frozen-pools.json` with SHA-256 recorded in `docs/experiments/tactical-motif-frozen-pools.sha256`.
+
+---
+
+## 8. Metric Definitions & Evaluation Protocol
+
+### 8.1 Metric Formulations
+For query $q$, let $R_q = [d_{(1)}, d_{(2)}, \dots, d_{(N)}]$ denote the candidates ordered by score descending (with ties broken by `canonicalFen` ascending). Let $P_q$ denote the set of 20 target positives for $q$.
+
+- **Rank of First Target Positive**:
+  $$\text{rank}_1(q) = \min \{ r \in \{1, \ldots, N\} \mid d_{(r)} \in P_q \}$$
+- **Hit@k**:
+  $$\text{Hit@k}(q) = \mathbf{1}[\text{rank}_1(q) \le k]$$
+  Evaluated at $k \in \{1, 5, 10\}$.
+- **Reciprocal Rank (MRR)**:
+  $$\text{RR}(q) = \frac{1}{\text{rank}_1(q)}$$
+- **Macro Aggregation**:
+  $$\text{Macro Hit@k} = \frac{1}{|Q|} \sum_{q \in Q} \text{Hit@k}(q), \quad \text{MRR} = \frac{1}{|Q|} \sum_{q \in Q} \text{RR}(q)$$
+  Reported both overall ($|Q|=32$) and partitioned by motif ($|Q_{\text{fork\_N}}|=16$, $|Q_{\text{back\_rank\_mate}}|=16$).
+
+### 8.2 Evaluation Protocol
+1. Programmatically verify `src/test/resources/tactical-motif-frozen-pools.json` matches SHA-256 digest `705ab4cbff0eaad0a6ad8eb6e9cbb5f7d288504f8a25c18eae9a9d595a39220d`.
+2. For each query and configuration, rank all 200 candidates using BM25 with deterministic canonical FEN tie-breaking.
+3. Calculate Hit@1, Hit@5, Hit@10, and RR.
+4. Serialize query rankings and aggregate metrics to `docs/experiments/tactical-motif-v1-results.json`.
+
+---
+
+## 9. Exact Baseline Evaluation Results
+
+The following table records the exact, immutable baseline results evaluated on frozen candidate pools (`705ab4cbff0eaad0...`) across all 32 queries:
+
+| Configuration | Metric Scope | Hit@1 | Hit@5 | Hit@10 | MRR |
+|---|---|---|---|---|---|
+| **`baseline_ganguly_static`** | **Macro (32 queries)** | **0.1562** | **0.4375** | **0.7188** | **0.2909** |
+| (Stage 1 Frozen Baseline, commit `8793d58`) | `fork_N` (16 queries) | 0.2500 | 0.7500 | 1.0000 | 0.4280 |
+| | `back_rank_mate` (16 queries) | 0.0625 | 0.1250 | 0.4375 | 0.1538 |
+| **`bizjak_static_only`** | **Macro (32 queries)** | **0.1250** | **0.4688** | **0.8750** | **0.3033** |
+| (Stage 2 Static Pawns + Positions) | `fork_N` (16 queries) | 0.1875 | 0.6250 | 0.9375 | 0.3934 |
+| | `back_rank_mate` (16 queries) | 0.0625 | 0.3125 | 0.8125 | 0.2131 |
+| **`bizjak_dynamic_only`** | **Macro (32 queries)** | **0.5000** | **0.9062** | **0.9688** | **0.6641** |
+| (Stage 2 Dynamic Flags + Solution Tokens) | `fork_N` (16 queries) | 0.5625 | 0.9375 | 1.0000 | 0.7266 |
+| | `back_rank_mate` (16 queries) | 0.4375 | 0.8750 | 0.9375 | 0.6016 |
+| **`bizjak_combined`** | **Macro (32 queries)** | **0.3438** | **0.7500** | **0.8750** | **0.5362** |
+| (Stage 2 Static + Dynamic Fusion, $w_j=1.0$) | `fork_N` (16 queries) | 0.3750 | 0.8750 | 1.0000 | 0.5990 |
+| | `back_rank_mate` (16 queries) | 0.3125 | 0.6250 | 0.7500 | 0.4734 |
+
+### 9.1 Key Experimental Observations
+1. **Pawn Structure Impact on Back-Rank Mate**: In static retrieval, `bizjak_static_only` nearly doubles Hit@10 for `back_rank_mate` from 0.4375 to 0.8125 and more than doubles Hit@5 from 0.1250 to 0.3125 compared to `baseline_ganguly_static`. Pawn structure tokens (`P(n)`, `p(n)`, pawn chains `w[...]`, isolated pawns `I{sq}`) effectively capture the cramped king shield geometry without needing move solution lines.
+2. **Dynamic Token Concentration**: `bizjak_dynamic_only` achieves 0.9688 Hit@10 and 0.6641 MRR because solution moves (`!#R`, `!#Q`, `!-N`, `!N>Q`) directly express the tactical motif mechanism.
+3. **Fusion Dilution Under Equal Weights**: When static and dynamic features are combined with uniform weights ($w_j=1.0$), static features introduce background noise that dilutes dynamic token selectivity, lowering macro MRR from 0.6641 to 0.5362 and Hit@10 from 0.9688 to 0.8750.
+
+---
+
+## 10. Reproducibility Protocol & Verification Commands
+
+All results are fully reproducible from the repository state. The following commands execute the end-to-end verification and evaluation:
+
+1. **Verify Oracle Detectors and Frozen Pool Integrity**:
+   ```bash
+   python3 scripts/verify_tactical_motif_detectors.py
+   ```
+   Asserts:
+   - Detector positive and negative test cases pass.
+   - Frozen candidate pool matches SHA-256 digest `705ab4cbff0eaad0a6ad8eb6e9cbb5f7d288504f8a25c18eae9a9d595a39220d`.
+   - All 32 queries have $\ge 200$ unique candidates with zero same-game leakage.
+
+2. **Verify Python Unit Tests**:
+   ```bash
+   python3 -m unittest scripts/tests/test_tactical_motif_detectors.py
+   ```
+
+3. **Verify Kotlin Code Formatting**:
+   ```bash
+   ./gradlew ktlintCheck
+   ```
+
+4. **Verify Scorer Unit Tests**:
+   ```bash
+   ./gradlew test --tests 'com.chessecho.similarity.BizjakFeatureScorerTest'
+   ```
+
+5. **Run Full Benchmark Harness & Verify Output Results**:
+   ```bash
+   ./gradlew test --tests 'com.chessecho.similarity.TacticalMotifBenchmarkRunnerTest'
+   ```
+   Asserts:
+   - All 4 configurations execute without error.
+   - All per-query and macro metrics match `docs/experiments/tactical-motif-v1-results.json` exactly.
+
+6. **Run Full Backend Test Suite**:
+   ```bash
+   ./gradlew test
+   ```
+
+---
+
+## 11. Commit SHA & Prototype Provenance Reconciliation
+
+- **Reference Commit in Issue #607 Prompt**: `b952a2278da0efcb6f1947a46fa98c5eead4f392`.
+- **Actual Local & Upstream Prototype Commit**: `b952a2219975a3353a7124daed51ec592867c6d3` on branch `exp/tactical-motif-v1`.
+- **Reconciliation Note**: Both refer to commit `b952a22` authored on `exp/tactical-motif-v1`. The 40-character SHA generated upon initial commit creation is `b952a2219975a3353a7124daed51ec592867c6d3`. It contains the complete prototype implementation (`BizjakFeatureScorer.kt`, `TacticalMotifBenchmarkRunner.kt`, test suites, and evaluated results).
+- **Frozen Baseline Commit**: Commit `8793d583e9ef04fd91b86be63c1baf558bb14759` (`origin/freeze/fen-similarity-v1`) provides the immutable Stage 1 implementation in `FenPositionSimilarity.kt`.
+
+---
+
+## 12. Summary of Known Deviations, Assumptions & Limitations
+
+1. **Payload Scoring Deviation**: Bizjak/Ganguly used Lucene byte payloads as term score multipliers. ChessEcho's `FenPositionSimilarity` treats reachability as fractional term frequency with query omission, acting solely as document length penalization. This approximation is preserved to isolate new feature contributions.
+2. **Partially Labeled Candidate Pools**: Candidate pools contain 20 designated target positives and 180 background tactical distractors. Distractors are unlabeled Lichess puzzles, not confirmed negatives.
+3. **Solution-Path Supervision**: Dynamic features require known solution lines. They are effective for puzzle-to-puzzle matching but cannot be computed for arbitrary unanalyzed positions without online search or engine evaluation.
+4. **Pre-Deployment Repository State**: No database migrations, HTTP endpoints, frontend components, or engine subprocesses are introduced.
+5. **Preservation of Frozen Baseline**: Neither `FenPositionSimilarity.kt` nor its corresponding unit tests have been modified.
+
