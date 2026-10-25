@@ -1,0 +1,148 @@
+{
+  "description": "Pre-validated test cases for fork_N and back_rank_mate evaluation oracles",
+  "version": "1.0",
+  "fork_N": {
+    "positives": [
+      {
+        "id": "fork_N_pos_1",
+        "fen": "r3k2r/ppp1bppp/8/8/8/2N5/PPPP1PPP/R1BQK2R b KQkq - 0 1",
+        "moves": ["a7a6", "c3d5"],
+        "description": "White knight moves to d5, simultaneously attacking c7 (pawn) and e7 (bishop)"
+      },
+      {
+        "id": "fork_N_pos_2",
+        "fen": "r3k2r/1pp1bppp/8/1N6/8/8/PPPP1PPP/R1BQK2R b KQkq - 0 1",
+        "moves": ["h7h6", "b5c7"],
+        "description": "Royal fork: White knight moves to c7, checking Black king on e8 and attacking Black rook on a8"
+      },
+      {
+        "id": "fork_N_pos_3",
+        "fen": "r1bqk2r/pppp1ppp/8/8/1n6/8/PPPP1PPP/R3K2R w KQkq - 0 1",
+        "moves": ["h2h3", "b4c2"],
+        "description": "Black knight fork: Black knight moves to c2, checking White king on e1 and attacking rook on a1"
+      },
+      {
+        "id": "fork_N_pos_4",
+        "fen": "r4rk1/pp1q1ppp/8/8/4N3/8/PPPP1PPP/R1BQK2R b KQ - 0 1",
+        "moves": ["a7a6", "e4f6"],
+        "description": "Queen and Rook fork: White knight moves to f6, attacking Black queen on d7 and Black rook on f8"
+      },
+      {
+        "id": "fork_N_pos_5",
+        "fen": "r1b1k2r/pppp1ppp/8/8/4N3/8/PPPP1PPP/R1BQK2R b KQkq - 0 1",
+        "moves": ["h7h6", "e4d6"],
+        "description": "Multi-piece fork: White knight moves to d6, attacking e8 (K), c8 (B), c7 (p), and e7 (p)"
+      }
+    ],
+    "negatives": [
+      {
+        "id": "fork_N_neg_1",
+        "fen": "r3k2r/pppb1ppp/8/8/8/3B4/PPPP1PPP/RNBQK2R b KQkq - 0 1",
+        "moves": ["h7h6", "d3e4"],
+        "reason": "Moved piece is a Bishop, not a Knight"
+      },
+      {
+        "id": "fork_N_neg_2",
+        "fen": "r3k2r/pp2ppp1/8/8/8/2N5/PPPP1PPP/R1BQK2R b KQkq - 0 1",
+        "moves": ["h7h6", "c3d5"],
+        "reason": "Knight attacks only 1 opponent piece"
+      },
+      {
+        "id": "fork_N_neg_3",
+        "fen": "r3k2r/pppp1ppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1",
+        "moves": ["h7h6", "b1a3"],
+        "reason": "Knight attacks 0 opponent pieces"
+      },
+      {
+        "id": "fork_N_neg_4",
+        "fen": "r3k2r/1pp1bppp/8/1N6/8/8/PPPP1PPP/R1BQK2R b KQkq - 0 1",
+        "moves": ["h7h6", "d1e2", "a7a6", "b5c7"],
+        "reason": "Knight fork occurs at ply 3, not ply 1"
+      },
+      {
+        "id": "fork_N_neg_5",
+        "fen": "8/8/8/8/3N4/2P1P3/8/4K2k b - - 0 1",
+        "moves": ["h1g1", "d4e6"],
+        "reason": "Attacks only friendly pieces"
+      },
+      {
+        "id": "fork_N_neg_6",
+        "fen": "invalid-fen-string",
+        "moves": ["e2e4", "e7e5"],
+        "reason": "Malformed FEN"
+      },
+      {
+        "id": "fork_N_neg_7",
+        "fen": "r3k2r/ppp1bppp/8/8/8/2N5/PPPP1PPP/R1BQK2R b KQkq - 0 1",
+        "moves": ["a7a6"],
+        "reason": "Insufficient moves (< 2 plies)"
+      }
+    ]
+  },
+  "back_rank_mate": {
+    "positives": [
+      {
+        "id": "brm_pos_1",
+        "fen": "6k1/p4ppp/8/8/8/8/8/3R2K1 b - - 0 1",
+        "moves": ["a7a6", "d1d8"],
+        "description": "White rook delivers back-rank mate on d8 against Black king on g8"
+      },
+      {
+        "id": "brm_pos_2",
+        "fen": "6k1/p4ppp/8/8/8/8/8/4Q1K1 b - - 0 1",
+        "moves": ["a7a6", "e1e8"],
+        "description": "White queen delivers back-rank mate on e8 against Black king on g8"
+      },
+      {
+        "id": "brm_pos_3",
+        "fen": "3r2k1/8/8/8/8/8/P4PPP/6K1 w - - 0 1",
+        "moves": ["a2a3", "d8d1"],
+        "description": "Black rook delivers back-rank mate on d1 against White king on g1"
+      },
+      {
+        "id": "brm_pos_4",
+        "fen": "4q1k1/8/8/8/8/8/P4PPP/6K1 w - - 0 1",
+        "moves": ["a2a3", "e8e1"],
+        "description": "Black queen delivers back-rank mate on e1 against White king on g1"
+      },
+      {
+        "id": "brm_pos_5",
+        "fen": "2r3k1/p2R1ppp/8/8/8/8/8/3R2K1 b - - 0 1",
+        "moves": ["a7a6", "d7d8", "c8d8", "d1d8"],
+        "description": "Multi-ply back-rank mate sequence ending in d1xd8#"
+      }
+    ],
+    "negatives": [
+      {
+        "id": "brm_neg_1",
+        "fen": "6k1/5p1p/6p1/8/8/8/8/4Q1K1 w - - 0 1",
+        "moves": ["a7a6", "e1e7"],
+        "reason": "Checkmate not on back rank"
+      },
+      {
+        "id": "brm_neg_2",
+        "fen": "6k1/p4pp1/7p/8/8/8/8/3R2K1 b - - 0 1",
+        "moves": ["a7a6", "d1d8"],
+        "reason": "Check on rank 8 is not mate (king escapes to h7)"
+      },
+      {
+        "id": "brm_neg_3",
+        "fen": "k7/2B5/1K6/8/8/8/8/8 b - - 0 1",
+        "moves": ["a8a7", "c7b8"],
+        "reason": "Mate delivered by Bishop, not Rook or Queen"
+      },
+      {
+        "id": "brm_neg_4",
+        "fen": "invalid-fen-string",
+        "moves": ["a7a6", "d1d8"],
+        "reason": "Malformed FEN"
+      },
+      {
+        "id": "brm_neg_5",
+        "fen": "6k1/p4ppp/8/8/8/8/8/3R2K1 b - - 0 1",
+        "moves": ["a7a6", "e1e8"],
+        "reason": "Illegal move (no queen on e1)"
+      }
+    ]
+  }
+}
