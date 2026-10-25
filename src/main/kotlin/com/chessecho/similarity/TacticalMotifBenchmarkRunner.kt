@@ -271,4 +271,30 @@ class TacticalMotifBenchmarkRunner {
         }
         return actualDigest
     }
+
+    companion object {
+        @JvmStatic
+        fun main(args: Array<String>) {
+            val runner = TacticalMotifBenchmarkRunner()
+            val target = if (args.isNotEmpty()) args[0] else "independent"
+            when (target) {
+                "original" -> runner.runBenchmark()
+                "independent" ->
+                    runner.runBenchmark(
+                        frozenPoolsPath = Path.of("src/test/resources/tactical-motif-independent-pools.json"),
+                        digestPath = Path.of("docs/experiments/tactical-motif-independent-pools.sha256"),
+                        outputPath = Path.of("docs/experiments/tactical-motif-v1-independent-results.json"),
+                    )
+                "all" -> {
+                    runner.runBenchmark()
+                    runner.runBenchmark(
+                        frozenPoolsPath = Path.of("src/test/resources/tactical-motif-independent-pools.json"),
+                        digestPath = Path.of("docs/experiments/tactical-motif-independent-pools.sha256"),
+                        outputPath = Path.of("docs/experiments/tactical-motif-v1-independent-results.json"),
+                    )
+                }
+                else -> error("Unknown target '$target'. Expected 'original', 'independent', or 'all'.")
+            }
+        }
+    }
 }
