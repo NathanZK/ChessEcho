@@ -74,27 +74,19 @@ class RetainedEvaluationEvidenceTest {
         }
     }
 
-    private fun evidence(): RetainedEvaluationEvidence {
-        val projectionRows =
-            listOf(
-                RetainedReferenceProjectionRow("r1", "e4", 5),
-                RetainedReferenceProjectionRow("r2", "Nf3", 6),
-            )
-        val digest =
-            MessageDigest.getInstance("SHA-256")
-                .digest(projectionRows.joinToString("") { "${it.positionHash}\t${it.movePlayed}\t${it.observationCount}\n" }.toByteArray())
-                .joinToString("") { "%02x".format(it) }
-        val population =
-            EvaluationReferencePopulation(
-                contentDigest = "a".repeat(64),
-                sourceRunId = runId,
-                coveredPrefix = 10,
-                prefixN = 10,
-                ratingBand = "1000-1200",
-                minObservations = 5,
-                calculationVersion = "human-move-corpus-checkpoint-v1",
-                distributionSha256 = digest,
-            )
+    private fun defaultPopulation(digest: String) =
+        EvaluationReferencePopulation(
+            contentDigest = "a".repeat(64),
+            sourceRunId = runId,
+            coveredPrefix = 10,
+            prefixN = 10,
+            ratingBand = "1000-1200",
+            minObservations = 5,
+            calculationVersion = "human-move-corpus-checkpoint-v1",
+            distributionSha256 = digest,
+        )
+
+    private fun defaultSnapshot(population: EvaluationReferencePopulation): EvaluationEvidenceSnapshot {
         val row =
             EvaluationEvidenceRow(
                 playerId = playerId,
@@ -114,30 +106,43 @@ class RetainedEvaluationEvidenceTest {
                 practicalDraws = 0,
                 practicalLosses = 0,
             )
-        val snapshot =
-            EvaluationEvidenceSnapshot(
-                id = UUID.randomUUID(),
-                referencePopulation = population,
-                occurrenceEvidenceId = null,
-                players =
-                    setOf(
-                        EvaluationEvidencePlayer(playerId, "evaluation-player"),
-                        EvaluationEvidencePlayer(UUID.randomUUID(), "zero-row"),
-                    ),
-                configuration =
-                    EvaluationEvidenceConfiguration(
-                        EvaluationEvidenceSnapshotService.APPROVED_THRESHOLDS,
-                        3,
-                        5,
-                        "BOTH",
-                        "CHESS_COM",
-                        null,
-                    ),
-                sourceRevision = "source",
-                engineIdentity = "engine",
-                parserIdentity = "parser",
-                rows = listOf(row),
+        return EvaluationEvidenceSnapshot(
+            id = UUID.randomUUID(),
+            referencePopulation = population,
+            occurrenceEvidenceId = null,
+            players =
+                setOf(
+                    EvaluationEvidencePlayer(playerId, "evaluation-player"),
+                    EvaluationEvidencePlayer(UUID.randomUUID(), "zero-row"),
+                ),
+            configuration =
+                EvaluationEvidenceConfiguration(
+                    EvaluationEvidenceSnapshotService.APPROVED_THRESHOLDS,
+                    3,
+                    5,
+                    "BOTH",
+                    "CHESS_COM",
+                    null,
+                ),
+            sourceRevision = "source",
+            engineIdentity = "engine",
+            parserIdentity = "parser",
+            rows = listOf(row),
+        )
+    }
+
+    private fun evidence(): RetainedEvaluationEvidence {
+        val projectionRows =
+            listOf(
+                RetainedReferenceProjectionRow("r1", "e4", 5),
+                RetainedReferenceProjectionRow("r2", "Nf3", 6),
             )
+        val digest =
+            MessageDigest.getInstance("SHA-256")
+                .digest(projectionRows.joinToString("") { "${it.positionHash}\t${it.movePlayed}\t${it.observationCount}\n" }.toByteArray())
+                .joinToString("") { "%02x".format(it) }
+        val population = defaultPopulation(digest)
+        val snapshot = defaultSnapshot(population)
         return RetainedEvaluationEvidence(
             referencePopulation = population,
             projection = RetainedReferenceProjection(finalized = true, verified = true, distributionSha256 = digest, rows = projectionRows),

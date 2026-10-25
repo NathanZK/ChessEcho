@@ -26,14 +26,16 @@ class ReferenceCoverageAnalysisServiceTest {
 
         val result = service.analyze(ReferenceCoverageAnalysisInput(inReference, players("alice", "bob"), rows, "e6-v1"))
 
-        assertEquals(PositionCoverage(2, 1, 0.5), result.byPlayer["alice"]!!.at(0.30))
-        assertEquals(PositionCoverage(2, 1, 0.5), result.byPlayer["alice"]!!.at(0.50))
-        assertEquals(PositionCoverage(1, 1, 1.0), result.byPlayer["alice"]!!.at(0.80))
-        assertEquals(PositionCoverage(2, 1, 0.5), result.byPlayer["bob"]!!.at(0.30))
-        assertEquals(PositionCoverage(2, 1, 0.5), result.byPlayer["bob"]!!.at(0.50))
-        assertEquals(PositionCoverage(1, 0, 0.0), result.byPlayer["bob"]!!.at(0.80))
-        assertEquals(setOf("p1", "p3"), result.byPlayer["alice"]!!.weaknessPositions.at(0.50))
-        assertEquals(setOf("p1"), result.byPlayer["alice"]!!.sharedPositions.at(0.50))
+        val alice = result.byPlayer.getValue("alice")
+        val bob = result.byPlayer.getValue("bob")
+        assertEquals(PositionCoverage(2, 1, 0.5), alice.at(0.30))
+        assertEquals(PositionCoverage(2, 1, 0.5), alice.at(0.50))
+        assertEquals(PositionCoverage(1, 1, 1.0), alice.at(0.80))
+        assertEquals(PositionCoverage(2, 1, 0.5), bob.at(0.30))
+        assertEquals(PositionCoverage(2, 1, 0.5), bob.at(0.50))
+        assertEquals(PositionCoverage(1, 0, 0.0), bob.at(0.80))
+        assertEquals(setOf("p1", "p3"), alice.weaknessPositions.at(0.50))
+        assertEquals(setOf("p1"), alice.sharedPositions.at(0.50))
     }
 
     @Test
@@ -61,8 +63,8 @@ class ReferenceCoverageAnalysisServiceTest {
         assertEquals(0.75, result.summaries.at(0.50).median)
         assertEquals(0.5, result.summaries.at(0.50).minimum)
         assertEquals(1.0, result.summaries.at(0.50).maximum)
-        assertNull(result.byPlayer["undefined"]!!.at(0.50).coverage)
-        assertEquals(PositionCoverage(0, 0, null), result.byPlayer["zero-row"]!!.at(0.50))
+        assertNull(result.byPlayer.getValue("undefined").at(0.50).coverage)
+        assertEquals(PositionCoverage(0, 0, null), result.byPlayer.getValue("zero-row").at(0.50))
     }
 
     @Test
@@ -75,7 +77,7 @@ class ReferenceCoverageAnalysisServiceTest {
             )
 
         val result = service.analyze(ReferenceCoverageAnalysisInput(setOf("inside-r"), players("alice"), rows, "e6-v1"))
-        val locations = result.locations["alice"]!!.at(0.80)
+        val locations = result.locations.getValue("alice").at(0.80)
 
         assertEquals(3, locations.occurrenceCount)
         assertEquals(2, locations.distinctPositionCount)
@@ -86,7 +88,7 @@ class ReferenceCoverageAnalysisServiceTest {
         assertEquals(3, locations.denominator)
         assertEquals("preMovePly", locations.groupingKey)
         assertEquals(1, locations.groupsByPreMovePly.getValue(5).numerator)
-        assertEquals(PositionCoverage(2, 1, 0.5), result.byPlayer["alice"]!!.at(0.80))
+        assertEquals(PositionCoverage(2, 1, 0.5), result.byPlayer.getValue("alice").at(0.80))
     }
 
     @Test
@@ -124,13 +126,13 @@ class ReferenceCoverageAnalysisServiceTest {
         val result = service.analyze(ReferenceCoverageAnalysisInput(setOf("p1"), players("zero-row"), emptyList(), "e6-v1"))
 
         EvaluationEvidenceSnapshotService.APPROVED_THRESHOLDS.forEach { threshold ->
-            assertEquals(PositionCoverage(0, 0, null), result.byPlayer["zero-row"]!!.at(threshold))
+            assertEquals(PositionCoverage(0, 0, null), result.byPlayer.getValue("zero-row").at(threshold))
             assertEquals(PositionCoverage(0, 0, null), result.pooled.at(threshold))
             assertNull(result.summaries.at(threshold).mean)
             assertNull(result.summaries.at(threshold).median)
             assertNull(result.summaries.at(threshold).minimum)
             assertNull(result.summaries.at(threshold).maximum)
-            assertEquals(0, result.locations["zero-row"]!!.at(threshold).occurrenceCount)
+            assertEquals(0, result.locations.getValue("zero-row").at(threshold).occurrenceCount)
         }
     }
 
@@ -142,7 +144,7 @@ class ReferenceCoverageAnalysisServiceTest {
             service.analyze(ReferenceCoverageAnalysisInput(setOf("p1"), players("alice"), listOf(row), "e6-v1"))
             error("unverified occurrence should fail closed")
         } catch (error: ReferenceCoverageAnalysisIntegrityException) {
-            assertEquals(true, error.message!!.contains("verified occurrence"))
+            assertTrue(error.message?.contains("verified occurrence") == true)
         }
     }
 
@@ -198,7 +200,7 @@ class ReferenceCoverageAnalysisServiceTest {
             assertThrows<ReferenceCoverageAnalysisIntegrityException> {
                 service.analyze(input)
             }
-        assertTrue(exception.message!!.contains("declared players are invalid"))
+        assertTrue(exception.message?.contains("declared players are invalid") == true)
     }
 
     @Test
@@ -216,7 +218,7 @@ class ReferenceCoverageAnalysisServiceTest {
             assertThrows<ReferenceCoverageAnalysisIntegrityException> {
                 service.analyze(input)
             }
-        assertTrue(exception.message!!.contains("declared players are invalid"))
+        assertTrue(exception.message?.contains("declared players are invalid") == true)
     }
 
     private fun players(vararg names: String) =

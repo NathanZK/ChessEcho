@@ -11,6 +11,7 @@ import com.chessecho.repository.HumanMoveBfsSeenGameRepository
 import com.chessecho.repository.HumanMoveCorpusRunRepository
 import com.chessecho.repository.HumanMoveDistributionRepository
 import com.chessecho.repository.PositionRepository
+import com.chessecho.test.arg
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -76,31 +77,28 @@ class HumanMoveCorpusServiceTest {
 
         whenever(gameWriter.createRun(any())).thenReturn(runId)
         whenever(gameWriter.commitGame(any(), any())).thenAnswer {
-            val candidate = it.arguments[1] as HumanMoveCorpusCandidate
+            val candidate = it.arg<HumanMoveCorpusCandidate>(1)
             committedCandidates += candidate
             HumanMoveCorpusCommitResult(HumanMoveCorpusCommitOutcome.COMMITTED, committedCandidates.size)
         }
         whenever(gameWriter.finishRun(any(), any())).thenAnswer {
-            val outcome = it.arguments[1] as HumanMoveCorpusRunOutcome
+            val outcome = it.arg<HumanMoveCorpusRunOutcome>(1)
             finishOutcomes += outcome
             runResponse(outcome)
         }
 
         whenever(humanMoveBfsSeenGameRepository.findExistingGameUrls(any())).thenReturn(emptyList())
         doAnswer {
-            @Suppress("UNCHECKED_CAST")
-            legacyClaimedUrls += (it.arguments[0] as Collection<String>)
+            legacyClaimedUrls += it.arg<Collection<String>>(0)
             null
         }.whenever(humanMoveBfsSeenGameClaimer).claimGameUrls(any())
         whenever(positionRepository.saveAll(any<Iterable<Position>>())).thenAnswer {
-            @Suppress("UNCHECKED_CAST")
-            val saved = (it.arguments[0] as Iterable<Position>).toList()
+            val saved = it.arg<Iterable<Position>>(0).toList()
             saved.forEach { position -> legacyPositionHashById[position.id] = position.hash }
             saved
         }
         whenever(humanMoveDistributionRepository.saveAll(any<Iterable<HumanMoveDistribution>>())).thenAnswer {
-            @Suppress("UNCHECKED_CAST")
-            val saved = (it.arguments[0] as Iterable<HumanMoveDistribution>).toList()
+            val saved = it.arg<Iterable<HumanMoveDistribution>>(0).toList()
             legacyDistributionRows += saved
             saved
         }
@@ -436,7 +434,7 @@ class HumanMoveCorpusServiceTest {
         stubThreeQualifyingGames()
         val attemptsByUrl = mutableMapOf<String, Int>()
         whenever(gameWriter.commitGame(any(), any())).thenAnswer {
-            val candidate = it.arguments[1] as HumanMoveCorpusCandidate
+            val candidate = it.arg<HumanMoveCorpusCandidate>(1)
             val attempt = (attemptsByUrl[candidate.providerGameId] ?: 0) + 1
             attemptsByUrl[candidate.providerGameId] = attempt
             if (candidate.providerGameId == "http://b" && attempt <= 2) {
@@ -458,7 +456,7 @@ class HumanMoveCorpusServiceTest {
         stubThreeQualifyingGames()
         var bAttempts = 0
         whenever(gameWriter.commitGame(any(), any())).thenAnswer {
-            val candidate = it.arguments[1] as HumanMoveCorpusCandidate
+            val candidate = it.arg<HumanMoveCorpusCandidate>(1)
             if (candidate.providerGameId == "http://b") {
                 bAttempts++
                 if (bAttempts == 1) {
@@ -490,7 +488,7 @@ class HumanMoveCorpusServiceTest {
         stubThreeQualifyingGames()
         var bAttempts = 0
         whenever(gameWriter.commitGame(any(), any())).thenAnswer {
-            val candidate = it.arguments[1] as HumanMoveCorpusCandidate
+            val candidate = it.arg<HumanMoveCorpusCandidate>(1)
             if (candidate.providerGameId == "http://b") {
                 bAttempts++
                 throw TransientDataAccessResourceException("persistent transient failure")

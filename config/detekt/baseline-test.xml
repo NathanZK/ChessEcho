@@ -10,58 +10,5 @@
 <SmellBaseline>
   <ManuallySuppressedIssues></ManuallySuppressedIssues>
   <CurrentIssues>
-    <ID>CastNullableToNonNullableType:AccountDataBoundaryBaselineSchemaTest.kt$AccountDataBoundaryBaselineSchemaTest$as</ID>
-    <ID>CastNullableToNonNullableType:DerivedProcessingPostgresConcurrencyTest.kt$DerivedProcessingPostgresConcurrencyTest$as</ID>
-    <ID>CastNullableToNonNullableType:EngineMoveProviderTest.kt$EngineMoveProviderTest$as</ID>
-    <ID>CastNullableToNonNullableType:EvaluationEvidenceSnapshotPostgresIntegrationTest.kt$EvaluationEvidenceSnapshotPostgresIntegrationTest$as</ID>
-    <ID>CastNullableToNonNullableType:GameImportServiceTest.kt$GameImportServiceTest$as</ID>
-    <ID>CastNullableToNonNullableType:HumanMoveBfsServiceTest.kt$HumanMoveBfsServiceTest$as</ID>
-    <ID>CastNullableToNonNullableType:HumanMoveCorpusArtifactPostgresIntegrationTest.kt$HumanMoveCorpusArtifactPostgresIntegrationTest$as</ID>
-    <ID>CastNullableToNonNullableType:HumanMoveCorpusPostgresIntegrationTest.kt$HumanMoveCorpusPostgresIntegrationTest$as</ID>
-    <ID>CastNullableToNonNullableType:HumanMoveCorpusServiceTest.kt$HumanMoveCorpusServiceTest$as</ID>
-    <ID>CastNullableToNonNullableType:SelectedPopulationVerificationPostgresIntegrationTest.kt$SelectedPopulationVerificationPostgresIntegrationTest$as</ID>
-    <ID>CognitiveComplexMethod:HumanMoveBfsServiceTest.kt$HumanMoveBfsServiceTest$private fun makeRepositoryStateful(): StatefulStores</ID>
-    <ID>CognitiveComplexMethod:HumanMoveCorpusPostgresIntegrationTest.kt$HumanMoveCorpusPostgresIntegrationTest$@Test fun `concurrent same-run commits yield unique contiguous ordinals with complete contributions, and runs stay isolated`()</ID>
-    <ID>CyclomaticComplexMethod:HumanMoveCorpusPostgresIntegrationTest.kt$HumanMoveCorpusPostgresIntegrationTest$@Test fun `concurrent same-run commits yield unique contiguous ordinals with complete contributions, and runs stay isolated`()</ID>
-    <ID>LargeClass:EvaluationEvidenceProducerServiceTest.kt$EvaluationEvidenceProducerServiceTest</ID>
-    <ID>LargeClass:EvaluationEvidenceSnapshotPostgresIntegrationTest.kt$EvaluationEvidenceSnapshotPostgresIntegrationTest</ID>
-    <ID>LargeClass:EvaluationEvidenceSnapshotTest.kt$EvaluationEvidenceSnapshotTest</ID>
-    <ID>LargeClass:GameImportServiceIntegrationTest.kt$GameImportServiceIntegrationTest</ID>
-    <ID>LargeClass:HumanMoveBfsServiceTest.kt$HumanMoveBfsServiceTest</ID>
-    <ID>LargeClass:HumanMoveCorpusPostgresIntegrationTest.kt$HumanMoveCorpusPostgresIntegrationTest</ID>
-    <ID>LongMethod:EngineAnalysisServiceTest.kt$EngineAnalysisServiceTest$@Test fun `completeMissingMoveEvaluations with mate baseline evaluates candidates against mate and persists evalMate without 0_0 fallback`()</ID>
-    <ID>LongMethod:EvaluationEvidenceProducerServiceTest.kt$EvaluationEvidenceProducerServiceTest$@Test fun `produces every selected game occurrence link for all matching reference occurrences`()</ID>
-    <ID>LongMethod:EvaluationEvidenceProducerServiceTest.kt$EvaluationEvidenceProducerServiceTest$@Test fun `rejects selected decisions that have no exact in-population hash and ply match`()</ID>
-    <ID>LongMethod:EvaluationEvidenceProducerServiceTest.kt$EvaluationEvidenceProducerServiceTest$private fun singleDecisionHarness( bestMoveEvalCp: Int?, moveEvalCp: Int?, persistedLoss: Double?, outcome: PracticalOutcome? = PracticalOutcome.WIN, snapshotConfiguration: EvaluationEvidenceConfiguration = configuration(), verifiedPositionHash: String = "single-position-hash", verifiedPreMovePly: Int = 5, verifiedSourceRunId: UUID? = null, includeEngineAnalysis: Boolean = true, evaluatedMove: String = "e4", declareDifferentPlayer: Boolean = false, calculatedLoss: Double = 0.75, bestMoveEvalMate: Int? = null, moveEvalMate: Int? = null, ): SingleDecisionHarness</ID>
-    <ID>LongMethod:EvaluationEvidenceSnapshotPostgresIntegrationTest.kt$EvaluationEvidenceSnapshotPostgresIntegrationTest$@Test fun `producer preserves explicit operational links and remains admissible after source rows are unavailable`()</ID>
-    <ID>LongMethod:EvaluationEvidenceSnapshotPostgresIntegrationTest.kt$EvaluationEvidenceSnapshotPostgresIntegrationTest$private fun operationalProducerFixture( population: EvaluationReferencePopulation, selectedGameCount: Int = 2, unselectedGameCount: Int = 1, selectedOrder: List&lt;Int&gt; = (0 until selectedGameCount).toList(), ): OperationalProducerFixture</ID>
-    <ID>LongMethod:EvaluationEvidenceSnapshotTest.kt$EvaluationEvidenceSnapshotTest$@Test fun `accepts zero and unit boundary values for configuration population and rows`()</ID>
-    <ID>LongMethod:EvaluationEvidenceSnapshotTest.kt$EvaluationEvidenceSnapshotTest$@Test fun `rejects malformed digests duplicate player identities and unknown row players`()</ID>
-    <ID>LongMethod:GameImportServiceIntegrationTest.kt$GameImportServiceIntegrationTest$@Test @org.springframework.transaction.annotation.Transactional fun `updateUserPositionStats handles empty set, sub-1000 set, and multi-batch over 1000 positions correctly`()</ID>
-    <ID>LongMethod:GameImportServiceIntegrationTest.kt$GameImportServiceIntegrationTest$@Test fun `concurrent first derived claims create one processing record`()</ID>
-    <ID>LongMethod:GameImportServiceIntegrationTest.kt$GameImportServiceIntegrationTest$@Test fun `crash after occurrence commit retries through coordinator without duplicate stats or scheduling events`()</ID>
-    <ID>LongMethod:GameImportServiceIntegrationTest.kt$GameImportServiceIntegrationTest$@Test fun `executeImportJob logs and skips 404 archive URL and processes remaining archives`()</ID>
-    <ID>LongMethod:GameImportServiceIntegrationTest.kt$GameImportServiceIntegrationTest$@Test fun `executeImportJob skips chess960 variant games and imports standard games`()</ID>
-    <ID>LongMethod:GameImportServiceIntegrationTest.kt$GameImportServiceIntegrationTest$@Test fun `full-month scan continues past the cap boundary so skipped and processed counters reflect a full-month scan`()</ID>
-    <ID>LongMethod:GameImportServiceIntegrationTest.kt$GameImportServiceIntegrationTest$@Test fun `gamesProcessed checkpoints and aggregates every examined entry once across archives`()</ID>
-    <ID>LongMethod:GameImportServiceIntegrationTest.kt$GameImportServiceIntegrationTest$@Test fun `non matching games are ignored and do not increment gamesSkipped`()</ID>
-    <ID>LongMethod:GameParserServiceTest.kt$GameParserServiceConcurrencyTest$@Test fun `concurrent parsers resolve opposite overlapping position order`()</ID>
-    <ID>LongMethod:HumanMoveBfsServiceTest.kt$HumanMoveBfsServiceTest$@Test fun `every non-empty combination of BFS bounds is accepted`()</ID>
-    <ID>LongMethod:HumanMoveCorpusPostgresIntegrationTest.kt$HumanMoveCorpusPostgresIntegrationTest$@Test fun `post-binding occurrence rows reject tampering and rebinding`()</ID>
-    <ID>LongMethod:HumanMoveCorpusPostgresIntegrationTest.kt$HumanMoveCorpusPostgresIntegrationTest$@Test fun `post-purge recovery preserves canonical location analysis and rejects missing substituted or mismatched evidence`()</ID>
-    <ID>LongMethod:HumanMoveCorpusPostgresIntegrationTest.kt$HumanMoveCorpusPostgresIntegrationTest$private fun finalizedAndPurgedPopulation(label: String): FinalizedPopulation</ID>
-    <ID>LongMethod:RetainedEvaluationEvidenceTest.kt$RetainedEvaluationEvidenceTest$private fun evidence(): RetainedEvaluationEvidence</ID>
-    <ID>LongMethod:SelectedPopulationVerificationPostgresIntegrationTest.kt$SelectedPopulationVerificationPostgresIntegrationTest$private fun finalizedFixture(): Fixture</ID>
-    <ID>MapGetWithNotNullAssertionOperator:EvaluationEvidenceSnapshotPostgresIntegrationTest.kt$EvaluationEvidenceSnapshotPostgresIntegrationTest$result.byPlayer["evaluated"]!!</ID>
-    <ID>MapGetWithNotNullAssertionOperator:EvaluationEvidenceSnapshotPostgresIntegrationTest.kt$EvaluationEvidenceSnapshotPostgresIntegrationTest$result.byPlayer["zero-row"]!!</ID>
-    <ID>MapGetWithNotNullAssertionOperator:EvaluationEvidenceSnapshotPostgresIntegrationTest.kt$EvaluationEvidenceSnapshotPostgresIntegrationTest$result.locations["evaluated"]!!</ID>
-    <ID>MapGetWithNotNullAssertionOperator:ReferenceCoverageAnalysisServiceTest.kt$ReferenceCoverageAnalysisServiceTest$result.byPlayer["alice"]!!</ID>
-    <ID>MapGetWithNotNullAssertionOperator:ReferenceCoverageAnalysisServiceTest.kt$ReferenceCoverageAnalysisServiceTest$result.byPlayer["bob"]!!</ID>
-    <ID>MapGetWithNotNullAssertionOperator:ReferenceCoverageAnalysisServiceTest.kt$ReferenceCoverageAnalysisServiceTest$result.byPlayer["undefined"]!!</ID>
-    <ID>MapGetWithNotNullAssertionOperator:ReferenceCoverageAnalysisServiceTest.kt$ReferenceCoverageAnalysisServiceTest$result.byPlayer["zero-row"]!!</ID>
-    <ID>MapGetWithNotNullAssertionOperator:ReferenceCoverageAnalysisServiceTest.kt$ReferenceCoverageAnalysisServiceTest$result.locations["alice"]!!</ID>
-    <ID>MapGetWithNotNullAssertionOperator:ReferenceCoverageAnalysisServiceTest.kt$ReferenceCoverageAnalysisServiceTest$result.locations["zero-row"]!!</ID>
-    <ID>NestedBlockDepth:HumanMoveCorpusArtifactPostgresIntegrationTest.kt$HumanMoveCorpusArtifactPostgresIntegrationTest$private fun mutatedArtifact( source: Map&lt;String, ByteArray&gt;, modify: (MutableMap&lt;String, ByteArray&gt;) -&gt; Unit, ): Pair&lt;String, ByteArray&gt;</ID>
-    <ID>NestedBlockDepth:HumanMoveCorpusPostgresIntegrationTest.kt$HumanMoveCorpusPostgresIntegrationTest$@Test fun `concurrent same-run commits yield unique contiguous ordinals with complete contributions, and runs stay isolated`()</ID>
   </CurrentIssues>
 </SmellBaseline>

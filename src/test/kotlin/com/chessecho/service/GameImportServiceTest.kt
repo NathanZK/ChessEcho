@@ -27,8 +27,8 @@ import com.chessecho.repository.PositionRepository
 import com.chessecho.repository.PuzzleSchedulingEventRepository
 import com.chessecho.repository.UserPositionStatsRepository
 import com.chessecho.repository.UserPositionWeaknessRepository
+import com.chessecho.test.arg
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -323,16 +323,16 @@ class GameImportServiceTest {
         val job = AsyncJob(username = "tester", platform = "CHESS_COM")
 
         job.leaseExpiresAt = null
-        assertTrue(method.invoke(service, job, now) as Boolean, "null lease must be stale")
+        assertEquals(true, method.invoke(service, job, now), "null lease must be stale")
 
         job.leaseExpiresAt = now.minusSeconds(1)
-        assertTrue(method.invoke(service, job, now) as Boolean, "past lease must be stale")
+        assertEquals(true, method.invoke(service, job, now), "past lease must be stale")
 
         job.leaseExpiresAt = now
-        assertTrue(method.invoke(service, job, now) as Boolean, "boundary at now must be stale")
+        assertEquals(true, method.invoke(service, job, now), "boundary at now must be stale")
 
         job.leaseExpiresAt = now.plusSeconds(1)
-        assertFalse(method.invoke(service, job, now) as Boolean, "future lease must not be stale")
+        assertEquals(false, method.invoke(service, job, now), "future lease must not be stale")
     }
 
     @Test
@@ -381,7 +381,7 @@ class GameImportServiceTest {
                 leaseExpiresAt = Instant.now().minus(Duration.ofMinutes(10)),
             )
         whenever(asyncJobRepository.findByChessAccountIdAndStatusIn(account.id, listOf("QUEUED", "PROCESSING"))).thenReturn(staleJob)
-        whenever(asyncJobRepository.saveAndFlush(any<AsyncJob>())).thenAnswer { it.arguments[0] as AsyncJob }
+        whenever(asyncJobRepository.saveAndFlush(any<AsyncJob>())).thenAnswer { it.arg<AsyncJob>(0) }
 
         val createdJob = service.createImportJob(request)
         assertEquals("FAILED", staleJob.status)
@@ -412,8 +412,8 @@ class GameImportServiceTest {
 
         whenever(asyncJobRepository.findByIdForUpdate(jobId)).thenReturn(staleJob)
         whenever(asyncJobRepository.findAnyByIdForUpdate(jobId)).thenReturn(staleJob)
-        whenever(asyncJobRepository.saveAndFlush(any<AsyncJob>())).thenAnswer { it.arguments[0] as AsyncJob }
-        whenever(asyncJobRepository.save(any<AsyncJob>())).thenAnswer { it.arguments[0] as AsyncJob }
+        whenever(asyncJobRepository.saveAndFlush(any<AsyncJob>())).thenAnswer { it.arg<AsyncJob>(0) }
+        whenever(asyncJobRepository.save(any<AsyncJob>())).thenAnswer { it.arg<AsyncJob>(0) }
         whenever(importedArchiveRepository.findByChessAccount(account)).thenReturn(emptyList())
         whenever(chessComClient.fetchArchiveUrls("tester")).thenReturn(emptyList())
         whenever(engineAnalysisOrchestrator.analyzeAffectedPositions(any<Set<UUID>>())).thenReturn(AnalysisOutcome())
@@ -445,7 +445,7 @@ class GameImportServiceTest {
             )
 
         whenever(asyncJobRepository.findByIdForUpdate(jobId)).thenReturn(invalidJob)
-        whenever(asyncJobRepository.saveAndFlush(any<AsyncJob>())).thenAnswer { it.arguments[0] as AsyncJob }
+        whenever(asyncJobRepository.saveAndFlush(any<AsyncJob>())).thenAnswer { it.arg<AsyncJob>(0) }
 
         service.executeImportJob(jobId)
 
@@ -501,8 +501,8 @@ class GameImportServiceTest {
 
         whenever(asyncJobRepository.findByIdForUpdate(jobId)).thenReturn(job)
         whenever(asyncJobRepository.findAnyByIdForUpdate(jobId)).thenReturn(job)
-        whenever(asyncJobRepository.saveAndFlush(any<AsyncJob>())).thenAnswer { it.arguments[0] as AsyncJob }
-        whenever(asyncJobRepository.save(any<AsyncJob>())).thenAnswer { it.arguments[0] as AsyncJob }
+        whenever(asyncJobRepository.saveAndFlush(any<AsyncJob>())).thenAnswer { it.arg<AsyncJob>(0) }
+        whenever(asyncJobRepository.save(any<AsyncJob>())).thenAnswer { it.arg<AsyncJob>(0) }
         whenever(importedArchiveRepository.findByChessAccount(account)).thenReturn(emptyList())
 
         val archiveUrls =
