@@ -59,5 +59,37 @@ Issue #625 (Research & evaluation: position clusteri...) PASSED all product-issu
 3. **Exploration Integration with Source Attribution**: #91 requires opponent, date, played move, exact-ply Chess.com links, and opening Line Exploration while preserving back-navigation context.
 4. **Bizjak Baseline Fidelity**: #624 enforces reproduction of the exact Bizjak dynamic baseline on move sequences, evaluating acceptable-move extensions without invented centipawn-loss metrics.
 5. **Decoupled Quiescence Search**: #623 evaluates quiescence search as an engine capability. Bizjak dynamic similarity (#624) operates on known move sequences directly and does not block on quiescence search.
-6. **Separation of Clustering and Weakness Determination**: #625 establishes unsupervised position clustering evaluated by standard cluster validity metrics (silhouette, stability). #523 evaluates player weakness within those clusters compared against `WeaknessCalculationService.kt`.
+6. **Separation of Clustering and Weakness Determination**: #625 establishes unsupervised position clustering evaluated by standard cluster validity metrics (silhouette, stability) against explicit baselines (ECO opening / material balance), and delivers either evaluated clusters or an evidence-backed unsuitability finding. #523 evaluates player weakness within those clusters compared against `WeaknessCalculationService.kt`, with the dependency made explicitly conditional.
 7. **Prototype Limitation Preserved on #607 Closure**: Closing comment for #607 explicitly documents that the puzzle-probe evaluation demonstrates motif-token matching on puzzle pairs with known solution lines and does not validate unguided general-FEN retrieval.
+
+---
+
+## 5. Continuity with #607 Across Downstream Issues
+
+Each downstream issue explicitly cites #607, details what is reused from the prototype, points to inspectable evidence/artifacts, and articulates the limitations being addressed:
+
+- **#91 (`Find similar personal-game positions from an arbitrary FEN (full-stack)`)**:
+  - *Reuses*: `BizjakFeatureScorer.kt` static pawn structures (`static_pawns`), relational tokens (`piece`, `reach`, `attack`, `defense`, `ray`), and BM25 scoring semantics.
+  - *Artifacts to inspect*: `docs/experiments/2026-10-26-tactical-motif-evaluation.md`, `docs/experiments/2026-10-26-tactical-motif-handoff.md`, commit `7d11b3f`.
+  - *Limitations addressed*: #607 was an offline benchmark on 30 pre-selected puzzle queries against 200 candidates via exhaustive in-memory linear scans. #91 addresses this by adding inverted-index candidate generation on personal games and full-stack exploration UI.
+
+- **#622 (`Experiment: evaluate board symmetries on static FEN similarity`)**:
+  - *Reuses*: Static pawn structure feature extractors and Stage 1 relational tokens.
+  - *Artifacts to inspect*: #526 failure report (commit `c5fb9c0c`), `src/main/kotlin/com/chessecho/similarity/BizjakFeatureScorer.kt`.
+  - *Limitations addressed*: #607 used absolute board coordinates without testing transformation invariance. #622 isolates horizontal, vertical, and combined symmetries to determine if coordinate canonicalization is necessary.
+
+- **#624 (`Dynamic FEN similarity with Bizjak baseline and acceptable-move evaluation`)**:
+  - *Reuses*: `BizjakFeatureScorer.kt` dynamic general flags and dynamic solution sequence extractors; BM25 token scoring harness.
+  - *Artifacts to inspect*: `docs/experiments/2026-10-26-tactical-motif-evaluation.md` §3, `docs/experiments/2026-10-26-tactical-motif-ranking-analysis.md`.
+  - *Limitations addressed*: #607 evaluated dynamic tokens strictly on pre-computed canonical puzzle solution lines (`Moves[1..N]`). #624 evaluates dynamic similarity on practical game move sequences and tests an acceptable-move extension (weighting moves within $\Delta \le 20$ cp) against the unchanged baseline without inventing centipawn-loss metrics.
+
+- **#625 (`Position clustering representations and coherence on personal games`)**:
+  - *Reuses*: Static pawn structure extractors and relational tokens from #607.
+  - *Artifacts to inspect*: `docs/experiments/2026-10-26-retrieval-goal-assessment.md` §3.
+  - *Limitations addressed*: #607 was a supervised retrieval task on puzzle pairs. Crucially, **tactical-motif similarity alone cannot be assumed to be a suitable general-purpose clustering representation**. #625 investigates structural representations (pawn skeletons, piece activity) against naive opening/material baselines on personal games.
+
+- **#523 (`Measure chess weakness across related positions compared to exact-FEN recurrence`)**:
+  - *Reuses*: Evaluation methodology and statistical reporting standards from #607; mistake loss thresholds from `WeaknessCalculationService.kt`.
+  - *Artifacts to inspect*: `src/main/kotlin/com/chessecho/analysis/WeaknessCalculationService.kt`, `docs/experiments/2026-10-26-retrieval-goal-assessment.md`.
+  - *Limitations addressed*: #607 did not evaluate player blunder rates or decision quality. #523 evaluates whether grouping related positions improves weakness detection over exact recurrence, conditionally dependent on #625 delivering coherent clusters.
+
