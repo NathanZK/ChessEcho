@@ -82,7 +82,7 @@ export function createStore<T>(definition: StoreDefinition<T>): BrowserStore<T> 
   };
 }
 
-export type TabValue = 'puzzles' | 'weaknesses' | 'long-decisions' | 'import';
+export type TabValue = 'puzzles' | 'weaknesses' | 'long-decisions' | 'similar-positions' | 'import';
 
 const TAB_KEY = 'chessecho_active_tab';
 const USERNAME_KEY = 'chessecho_username';
@@ -91,7 +91,11 @@ const JOB_KEY = 'chessecho_active_job';
 const SESSION_USER_KEY = 'chessecho_session_user';
 
 const isTab = (value: string | null): value is TabValue =>
-  value === 'puzzles' || value === 'weaknesses' || value === 'long-decisions' || value === 'import';
+  value === 'puzzles' ||
+  value === 'weaknesses' ||
+  value === 'long-decisions' ||
+  value === 'similar-positions' ||
+  value === 'import';
 
 const readHashTab = (): TabValue | null => {
   const hash = window.location.hash.replace('#', '');

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { convertTo6chessUrl } from '../utils/urlUtils';
+import { convertTo6chessUrl, buildExactPlyChessComUrl } from '../utils/urlUtils';
 
 describe('convertTo6chessUrl', () => {
   it('converts a normal Chess.com live game URL correctly', () => {
@@ -137,5 +137,47 @@ describe('convertTo6chessUrl', () => {
       expect(convertTo6chessUrl('https://www.chess.com/game/live/123/extra/path', 'user')).toBeNull();
       expect(convertTo6chessUrl('https://www.chess.com/game/live/invalid@id', 'user')).toBeNull();
     });
+  });
+});
+
+describe('buildExactPlyChessComUrl', () => {
+  it('appends move parameter to live game URL', () => {
+    const result = buildExactPlyChessComUrl('https://www.chess.com/game/live/123456789', 15);
+    expect(result).toBe('https://www.chess.com/game/live/123456789?move=15');
+  });
+
+  it('replaces existing move parameter in URL', () => {
+    const result = buildExactPlyChessComUrl('https://www.chess.com/game/live/123456789?move=2', 20);
+    expect(result).toBe('https://www.chess.com/game/live/123456789?move=20');
+  });
+
+  it('formats raw numeric ID as live game by default', () => {
+    const result = buildExactPlyChessComUrl('987654321', 12, '600');
+    expect(result).toBe('https://www.chess.com/game/live/987654321?move=12');
+  });
+
+  it('formats raw numeric ID as daily game when timeControl indicates daily', () => {
+    const result = buildExactPlyChessComUrl('987654321', 8, 'daily');
+    expect(result).toBe('https://www.chess.com/game/daily/987654321?move=8');
+  });
+
+  it('clamps negative ply to zero', () => {
+    const result = buildExactPlyChessComUrl('https://www.chess.com/game/live/123456789', -5);
+    expect(result).toBe('https://www.chess.com/game/live/123456789?move=0');
+  });
+
+  it('returns null for non-Chess.com hostname', () => {
+    const result = buildExactPlyChessComUrl('https://www.lichess.org/game/live/12345', 10);
+    expect(result).toBeNull();
+  });
+
+  it('returns null for invalid/unsupported paths', () => {
+    const result = buildExactPlyChessComUrl('https://www.chess.com/member/magnus', 10);
+    expect(result).toBeNull();
+  });
+
+  it('returns null for empty or malformed identifier', () => {
+    expect(buildExactPlyChessComUrl('', 10)).toBeNull();
+    expect(buildExactPlyChessComUrl('invalid-uuid-abc', 10)).toBeNull();
   });
 });

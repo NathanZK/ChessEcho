@@ -637,6 +637,101 @@ Returned when the specified position FEN is invalid or the attempted move is ill
 ```
 ---
 
+## 10. Find Similar Personal Positions (Issue #91)
+
+Searches personal-game positions similar to an arbitrary orthodox FEN input using an in-memory inverted index and static relational BM25 scoring. Candidates are filtered to at most 200 positions before scoring, achieving $\ge 90\%$ recall of top-20 exhaustive candidates and p95 latency $< 500\text{ms}$. Exact query positions are excluded from results, and ties are broken deterministically by `canonicalFen` ascending.
+
+### `GET /api/positions/similar`
+
+#### Query Parameters
+- `fen` (string, required): Arbitrary FEN position to compare against personal games. Must be a valid orthodox loadable chess position.
+- `accountId` (UUID, optional): ID of the connected `ChessAccount`. Required for authenticated callers; forbidden for unauthenticated guest callers.
+- `username` (string, optional): Chess.com username. Required for unauthenticated guest callers; forbidden for authenticated callers.
+- `minScore` (double, optional, default `0.0`): Minimum BM25 similarity score required for inclusion. Must be $\ge 0.0$.
+- `limit` (integer, optional, default `20`): Maximum number of results to return. Coerced into range `1..100`.
+
+#### Authorization and Isolation
+- Authenticated callers must supply `accountId` matching their connected account (403 `FORBIDDEN` if accessing another user's account). Passing `username` returns 400 `ACCOUNT_SELECTION_REQUIRED` to prevent ownership bypass.
+- Unauthenticated guest callers must supply `username`. Supplying `accountId` returns 401 `UNAUTHENTICATED`.
+- If neither `accountId` nor `username` is provided, returns 400 `VALIDATION_ERROR`.
+- Non-existent accounts return 404 `ACCOUNT_NOT_FOUND`.
+
+#### `200 OK`
+```json
+{
+  "queryFen": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/2N5/PPPP1PPP/R1BQKBNR w KQkq - 2 3",
+  "candidatesEvaluated": 120,
+  "results": [
+    {
+      "rank": 1,
+      "score": 18.75,
+      "positionId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "fen": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",
+      "canonicalFen": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq -",
+      "occurrences": [
+        {
+          "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+          "platformGameId": "https://www.chess.com/game/live/123456789",
+          "playedMove": "Nf3",
+          "plyNumber": 4,
+          "playerColor": "WHITE",
+          "playedAt": "2026-02-15T10:00:00Z",
+          "opponentUsername": "rival_grandmaster",
+          "timeControl": "600",
+          "gameResult": "win",
+          "chessComUrl": "https://www.chess.com/game/live/123456789?move=4"
+        }
+      ]
+    }
+  ]
+}
+```
+
+#### `400 Bad Request`
+Returned when FEN is invalid, `minScore` is negative, neither account selector is provided, or an authenticated user supplies `username`.
+```json
+{
+  "error": "VALIDATION_ERROR",
+  "details": [
+    "Invalid FEN position: invalid-fen (expected at least 4 fields)"
+  ]
+}
+```
+
+#### `401 Unauthorized`
+Returned when an unauthenticated guest attempts to supply `accountId`.
+```json
+{
+  "error": "UNAUTHENTICATED",
+  "details": [
+    "Authentication required to access account by accountId"
+  ]
+}
+```
+
+#### `403 Forbidden`
+Returned when an authenticated caller accesses another user's connected `accountId`.
+```json
+{
+  "error": "FORBIDDEN",
+  "details": [
+    "The authenticated principal does not own this account"
+  ]
+}
+```
+
+#### `404 Not Found`
+Returned when the specified `accountId` or guest `username` does not exist.
+```json
+{
+  "error": "ACCOUNT_NOT_FOUND",
+  "details": [
+    "Account not found: 3fa85f64-5717-4562-b3fc-2c963f66afa6"
+  ]
+}
+```
+---
+
 ## Identity & Session (Issue #113)
 
 The identity/session foundation adds a provider-neutral authenticated boundary

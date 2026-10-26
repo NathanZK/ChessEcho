@@ -6,12 +6,14 @@ user:         Chess players analyzing imported games and practicing recurring po
 
 use-case:     Import games → analyze recurring positions with Stockfish → rank weaknesses → practice with interactive puzzles.
               Search imported games by broad time control and absolute decision-time threshold → inspect qualifying occurrences.
+              Search personal games by arbitrary FEN similarity using an inverted index and static relational BM25 → explore matching positions.
 
 architecture:
   - **Backend**: Kotlin/Spring Boot REST API; persistence, authentication, game import and analysis, puzzle/progress APIs, and internal corpus administration.
-  - **Frontend**: Next.js single-page application (`frontend/src/app/page.tsx`) with Import Games, Long Decisions, Weaknesses Library, and Practice Puzzles tabs; separate `login` and `register` routes.
+  - **Frontend**: Next.js single-page application (`frontend/src/app/page.tsx`) with Import Games, Long Decisions, Similar Positions, Weaknesses Library, and Practice Puzzles tabs; separate `login` and `register` routes.
   - **Frontend layers**: `app` routes, `components` UI, `services/api.ts` backend client, `utils` helpers; tests in `frontend/src/__tests__`. Current route, state, and API-to-UI traces: [frontend architecture](architecture/frontend.md).
   - **Persistence**: PostgreSQL stores users, accounts, games, positions, occurrences, analysis, jobs, training events, and human-move corpus data.
+  - **Similarity subsystem**: Pure domain indexing and static relational BM25 scoring (`com.chessecho.similarity`); generation-guarded in-memory cache lifecycle invalidated on successful game imports (`PositionSimilarityCache`).
   - **Analysis flow**: imported games are replayed; positions use four-field FEN identity; qualifying positions are evaluated by Stockfish; weakness ranking is calculated per account.
   - **Backend modules**: `controller` and `dto` expose HTTP boundaries; `service` implements application behavior; `domain` models persisted concepts; `repository` uses Spring Data JPA; `config` and `web` provide framework and request/security integration.
   - **Backend architecture and endpoint traces**: See `docs/architecture/backend-architecture.md`.
@@ -55,6 +57,7 @@ contract:
     - Forced-mate evaluations persist root-relative mate distances (`baselineEvalMate`, `bestMoveEvalMate`, `evalMate`); evaluation loss is calculated via an 8-case piecewise function in $[0.0, 20.0]$; losing-mate defense against negative centipawns returns null (horizon effect); occurrences with null loss are skipped from mistake counts and acceptable moves.
   - **Position Progress**: Dated actual-game encounters form a separate historical baseline and one aggregate observation per interval started by a persisted `SOLVED` puzzle event. Intervals use `Game.playedAt`, remain reconstructible after late imports, and reuse `GameOutcomeNormalizer`; see `docs/specs/position-progress.md`.
   - **Long Decisions**: Individual occurrences expose reliable account-player decision durations derived from PGN clocks; the account-scoped API filters by broad time control and an inclusive absolute threshold. See `docs/specs/long-decision-occurrences.md`.
+  - **Similar Positions**: `GET /api/positions/similar` retrieves personal positions similar to an arbitrary orthodox FEN input. Filtered to $\le 200$ candidates before static relational BM25 scoring. Guarantees $\ge 90\%$ recall of top-20 exhaustive candidates and warm p95 latency $< 500\text{ms}$. Exact query positions are excluded, and ties are broken deterministically by `canonicalFen` ascending. Exact-ply Chess.com URLs are derived from verified source metadata, returning `null` when unverifiable. Line Exploration transitions preserve Similar Positions query and results state on return.
   - **Puzzle attempt counts**: Authenticated user/account/position/color counts separate submitted SOLVED and FAILED initial answers, with replay-safe identities; see [puzzle attempt counts](specs/puzzle-attempt-count.md).
   - **Actual-game results display**:
     - The Weaknesses Library displays supplied W/D/L, score rate, and eligible-game count without confidence classifications or training comparisons.
@@ -86,6 +89,9 @@ invariant:
   - Guest username reads/imports ignore connection state; guest jobs remain pollable after connections change.
   - Position Progress uses the selected weakness threshold and requires an explicit currently connected account.
   - Decision-time results require complete usable account-player clock data for a game; an ineligible game contributes no decision durations, and move quality does not affect qualification.
+  - Inverted index candidate generation filters to $\le 200$ positions and guarantees $\ge 90\%$ recall of top-20 exhaustive candidates.
+  - Core similarity interfaces in `com.chessecho.similarity` have zero dependencies on Spring Data, JPA, or web annotations.
+  - Cache invalidation triggers on successful game-import completion with monotonic generation guards; concurrent rebuilds never commit partial or stale indexes.
   - `AsyncJob` rejects updates that change its persisted import configuration, including account, date range, time controls, and player color.
   - Centipawn and forced-mate evaluation columns are mutually exclusive and reject `mate = 0`.
   - Before deployment, schema evolution updates the V1 baseline rather than adding synthetic Flyway versions. See `docs/engineering/repository-conventions.md`.
