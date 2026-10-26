@@ -75,8 +75,8 @@ Each downstream issue explicitly cites #607, details what is reused from the pro
 
 - **#622 (`Experiment: evaluate board symmetries on static FEN similarity`)**:
   - *Reuses*: Static pawn structure feature extractors and Stage 1 relational tokens.
-  - *Artifacts to inspect*: #526 failure report (commit `c5fb9c0c`), `src/main/kotlin/com/chessecho/similarity/BizjakFeatureScorer.kt`.
-  - *Limitations addressed*: #607 used absolute board coordinates without testing transformation invariance. #622 isolates horizontal, vertical, and combined symmetries to determine if coordinate canonicalization is necessary.
+  - *Artifacts to inspect*: Issue #526 failure report and comment #6028562293, `src/main/kotlin/com/chessecho/similarity/BizjakFeatureScorer.kt`, `src/main/kotlin/com/chessecho/similarity/FenPositionSimilarity.kt`.
+  - *Limitations addressed*: #607 used absolute board coordinates without testing transformation sensitivity. #622 isolates horizontal, vertical, and combined symmetries in a strictly diagnostic evaluation (self-orbit recall and metamorphic equivariance on a frozen legal corpus) to measure coordinate sensitivity without proposing or presuming symmetry implementation.
 
 - **#624 (`Dynamic FEN similarity with Bizjak baseline and acceptable-move evaluation`)**:
   - *Reuses*: `BizjakFeatureScorer.kt` dynamic general flags and dynamic solution sequence extractors; BM25 token scoring harness.
