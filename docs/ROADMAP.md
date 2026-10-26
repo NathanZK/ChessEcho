@@ -3,3 +3,4 @@
 - [x] M3: Complete frontend flows, living documentation, and integration verification.
 - [x] M4: Display the authenticated user's submitted-attempt total for the current puzzle (#519).
 - [x] M5: Replace the combined puzzle attempt total with separate solved and failed counts (#519).
+- [ ] M6: Position similarity, candidate indexing, and clustering for personal games (#91, #78, #622, #623, #624, #625).
