@@ -858,3 +858,63 @@ export async function submitTrainingAttempt(payload: {
 
   return await response.json();
 }
+
+export interface SimilarPositionsResponse {
+  queryFen: string;
+  candidatesEvaluated: number;
+  results: SimilarPositionResult[];
+}
+
+export interface SimilarPositionResult {
+  rank: number;
+  score: number;
+  positionId: string;
+  fen: string;
+  canonicalFen: string;
+  occurrences: SimilarPositionOccurrenceDto[];
+}
+
+export interface SimilarPositionOccurrenceDto {
+  id: string;
+  platformGameId: string;
+  playedMove: string;
+  plyNumber: number;
+  playerColor: string;
+  playedAt: string | null;
+  opponentUsername: string | null;
+  timeControl: string | null;
+  gameResult: string | null;
+  chessComUrl: string | null;
+}
+
+export async function fetchSimilarPositions(params: {
+  fen: string;
+  accountId?: string;
+  username?: string;
+  minScore?: number;
+  limit?: number;
+}): Promise<SimilarPositionsResponse> {
+  const queryParams = new URLSearchParams();
+  queryParams.set('fen', params.fen);
+  if (params.accountId) queryParams.set('accountId', params.accountId);
+  if (params.username) queryParams.set('username', params.username);
+  if (params.minScore !== undefined) queryParams.set('minScore', params.minScore.toString());
+  if (params.limit !== undefined) queryParams.set('limit', params.limit.toString());
+
+  const response = await fetch(`${API_BASE_URL}/positions/similar?${queryParams.toString()}`, {
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    const errBody = await response.json().catch(() => ({}));
+    let message = `Status ${response.status}`;
+    if (Array.isArray(errBody.details) && errBody.details.length > 0) {
+      message = errBody.details.join('\n');
+    } else if (errBody.error) {
+      message = errBody.error;
+    }
+    throw new Error(message);
+  }
+
+  return await response.json();
+}

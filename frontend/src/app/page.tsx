@@ -13,6 +13,10 @@ import { usePuzzleAttemptCount } from '@/hooks/usePuzzleAttemptCount';
 import { PuzzleFeedbackPanel, type ChallengeSubmissionResult } from '@/components/PuzzleFeedbackPanel';
 import { WeaknessesList } from '@/components/WeaknessesList';
 import { LongDecisionsView } from '@/components/LongDecisionsView';
+import {
+  SimilarPositionsView,
+  type SimilarPositionsReturnSnapshot,
+} from '@/components/SimilarPositionsView';
 import { PositionProgressView } from '@/components/PositionProgressView';
 import { ImportGamesView } from '@/components/ImportGamesView';
 import { Puzzle } from '@/mock/mockData';
@@ -257,6 +261,10 @@ export default function Home() {
     if (typeof window !== 'undefined') {
       window.history.pushState(null, '', `#${tab}`);
     }
+    if (tab !== 'puzzles') {
+      setHasLongDecisionReturnContext(false);
+      setHasSimilarPositionsReturnContext(false);
+    }
   };
 
   const [weaknessCount, setWeaknessCount] = useState<number>(0);
@@ -276,6 +284,9 @@ export default function Home() {
   const boardHistorySnapshotRef = React.useRef<ChessBoardHistorySnapshot | null>(null);
   const longDecisionReturnSnapshotRef = React.useRef<LongDecisionReturnSnapshot | null>(null);
   const [hasLongDecisionReturnContext, setHasLongDecisionReturnContext] = useState(false);
+  const similarPositionsReturnSnapshotRef = React.useRef<SimilarPositionsReturnSnapshot | null>(null);
+  const [hasSimilarPositionsReturnContext, setHasSimilarPositionsReturnContext] = useState(false);
+  const [similarPositionsSnapshot, setSimilarPositionsSnapshot] = useState<SimilarPositionsReturnSnapshot | null>(null);
   const handleBoardHistoryChange = React.useCallback((snapshot: ChessBoardHistorySnapshot) => {
     boardHistorySnapshotRef.current = snapshot;
     setBoardHistorySnapshot(snapshot);
@@ -318,6 +329,9 @@ export default function Home() {
     clearLiveJobState();
     longDecisionReturnSnapshotRef.current = null;
     setHasLongDecisionReturnContext(false);
+    similarPositionsReturnSnapshotRef.current = null;
+    setHasSimilarPositionsReturnContext(false);
+    setSimilarPositionsSnapshot(null);
     boardHistorySnapshotRef.current = null;
     setBoardHistorySnapshot(null);
     activeJobStore.set(null);
@@ -461,7 +475,7 @@ export default function Home() {
   });
 
   React.useEffect(() => {
-    if (hasLongDecisionReturnContext) return;
+    if (hasLongDecisionReturnContext || hasSimilarPositionsReturnContext) return;
     if (!activePuzzle || !timerMode) {
       timerRef.current = null;
       timerAttemptRef.current = null;
@@ -516,7 +530,13 @@ export default function Home() {
       clearTimeout(initId);
       clearInterval(intervalId);
     };
-  }, [activePuzzle, timerMode, timerAllowedMs, hasLongDecisionReturnContext]);
+  }, [
+    activePuzzle,
+    timerMode,
+    timerAllowedMs,
+    hasLongDecisionReturnContext,
+    hasSimilarPositionsReturnContext,
+  ]);
 
   const requestBlindfoldChessEchoMove = React.useCallback(async (fen: string) => {
     const response = await fetchPuzzleContinuation(fen, 'ENGINE');
@@ -963,7 +983,7 @@ export default function Home() {
     }
     const sideToMove = position.fen.trim().split(/\s+/)[1];
     setActivePuzzle({
-      puzzleId: `supplied-position-${Date.now()}-${suppliedPositionCounterRef.current}`,
+      puzzleId: `supplied-position-${suppliedPositionCounterRef.current}`,
       source: 'supplied',
       fen: position.fen,
       playerColor: sideToMove === 'b' ? 'BLACK' : 'WHITE',
@@ -1044,6 +1064,72 @@ export default function Home() {
     return true;
   };
 
+  const handleSimilarPositionsExplorePosition = (position: PositionExplorationStart): boolean => {
+    try {
+      new Chess(position.fen);
+    } catch {
+      return false;
+    }
+
+    const timerAttempt = timerAttemptRef.current;
+    const timerWasRunning = timerAttempt?.timer.isRunning() ?? false;
+    let timerShouldResume = timerWasRunning;
+    let elapsedMs = timerElapsedMs;
+    if (timerWasRunning && timerAttempt) {
+      if (timerAttempt.timer instanceof StopwatchTimer) {
+        elapsedMs = timerAttempt.timer.pause();
+      } else {
+        const remainingMs = timerAttempt.timer.pause();
+        elapsedMs = timerAttempt.allowedMs - remainingMs;
+        if (remainingMs === 0 && !timerAttempt.hasExpired) {
+          timerAttempt.hasExpired = true;
+          timerShouldResume = false;
+          setTimerExpired(true);
+          soundService.playSound('completion');
+          void submitTimerAttempt('EXPIRED');
+        }
+      }
+      setTimerElapsedMs(elapsedMs);
+    }
+
+    longDecisionReturnSnapshotRef.current = {
+      activePuzzle,
+      currentPuzzleIndex,
+      initialMoveHistorySan,
+      initialMoveHistoryStartFen,
+      currentBoardFen,
+      boardHistory: boardHistorySnapshotRef.current ?? boardHistorySnapshot,
+      currentEvalCp,
+      isEvalUnknown,
+      evalHistory,
+      feedbackHistory,
+      historyIndex,
+      moveHistory,
+      hintSquare,
+      feedback,
+      showPuzzleSettings,
+      isBoardFlipped,
+      timerMode,
+      timerElapsedMs: elapsedMs,
+      timerAllowedMs,
+      timerExpired: timerExpired || (timerAttempt?.hasExpired ?? false),
+      timerSubmissionError,
+      timerAttempt,
+      timerWasRunning: timerShouldResume,
+    };
+    setHasSimilarPositionsReturnContext(true);
+    handleExplorePosition(position, true);
+    return true;
+  };
+
+  const handleSimilarPositionsSnapshotChange = React.useCallback(
+    (snapshot: SimilarPositionsReturnSnapshot | null) => {
+      similarPositionsReturnSnapshotRef.current = snapshot;
+      setSimilarPositionsSnapshot(snapshot);
+    },
+    []
+  );
+
   const handleExitExploration = () => {
     setIsExplorationActive(false);
     setExplorationPlayMode(undefined);
@@ -1056,6 +1142,42 @@ export default function Home() {
     setChallengeBranchesByFen({});
     setChallengeActiveCandidateByFen({});
     setExplorationDecisionMove(null);
+    if (hasSimilarPositionsReturnContext) {
+      const returnSnapshot = longDecisionReturnSnapshotRef.current;
+      if (returnSnapshot) {
+        setActivePuzzle(returnSnapshot.activePuzzle);
+        setCurrentPuzzleIndex(returnSnapshot.currentPuzzleIndex);
+        setInitialMoveHistorySan(returnSnapshot.initialMoveHistorySan);
+        setInitialMoveHistoryStartFen(returnSnapshot.initialMoveHistoryStartFen);
+        setCurrentBoardFen(returnSnapshot.currentBoardFen);
+        boardHistorySnapshotRef.current = returnSnapshot.boardHistory;
+        setBoardHistorySnapshot(returnSnapshot.boardHistory);
+        setCurrentEvalCp(returnSnapshot.currentEvalCp);
+        setIsEvalUnknown(returnSnapshot.isEvalUnknown);
+        setEvalHistory(returnSnapshot.evalHistory);
+        setFeedbackHistory(returnSnapshot.feedbackHistory);
+        setHistoryIndex(returnSnapshot.historyIndex);
+        setMoveHistory(returnSnapshot.moveHistory);
+        setHintSquare(returnSnapshot.hintSquare);
+        setFeedback(returnSnapshot.feedback);
+        setShowPuzzleSettings(returnSnapshot.showPuzzleSettings);
+        setIsBoardFlipped(returnSnapshot.isBoardFlipped);
+        setTimerMode(returnSnapshot.timerMode);
+        setTimerElapsedMs(returnSnapshot.timerElapsedMs);
+        setTimerAllowedMs(returnSnapshot.timerAllowedMs);
+        setTimerExpired(returnSnapshot.timerExpired);
+        setTimerSubmissionError(returnSnapshot.timerSubmissionError);
+        timerAttemptRef.current = returnSnapshot.timerAttempt;
+        timerRef.current = returnSnapshot.timerAttempt?.timer ?? null;
+        if (returnSnapshot.timerWasRunning) {
+          returnSnapshot.timerAttempt?.timer.resume();
+        }
+        longDecisionReturnSnapshotRef.current = null;
+      }
+      setHasSimilarPositionsReturnContext(false);
+      changeTab('similar-positions');
+      return;
+    }
     const returnSnapshot = longDecisionReturnSnapshotRef.current;
     if (returnSnapshot) {
       setActivePuzzle(returnSnapshot.activePuzzle);
@@ -2156,6 +2278,18 @@ export default function Home() {
               onRetryAccountLoad={retryAccountLoad}
               onNavigateImport={() => changeTab('import')}
               onExplorePosition={handleLongDecisionExplorePosition}
+            />
+          </div>
+        )}
+
+        {(activeTab === 'similar-positions' || hasSimilarPositionsReturnContext) && (
+          <div hidden={activeTab !== 'similar-positions'}>
+            <SimilarPositionsView
+              connectedAccount={connectedAccount}
+              guestUsername={!connectedAccount ? (displayedUsername || activeUsername) : undefined}
+              onExplorePosition={handleSimilarPositionsExplorePosition}
+              initialSnapshot={similarPositionsSnapshot}
+              onSnapshotChange={handleSimilarPositionsSnapshotChange}
             />
           </div>
         )}

@@ -131,6 +131,32 @@ interface PositionOccurrenceRepository : JpaRepository<PositionOccurrence, UUID>
 
     @Query(
         """
+        SELECT DISTINCT po FROM PositionOccurrence po
+        JOIN FETCH po.game
+        JOIN FETCH po.position
+        WHERE po.chessAccount.id = :chessAccountId
+          AND po.position.id IN :positionIds
+        ORDER BY po.game.playedAt DESC NULLS LAST, po.plyNumber ASC
+        """,
+    )
+    fun findAllByChessAccountIdAndPositionIdIn(
+        @Param("chessAccountId") chessAccountId: UUID,
+        @Param("positionIds") positionIds: Collection<UUID>,
+    ): List<PositionOccurrence>
+
+    @Query(
+        """
+        SELECT DISTINCT p FROM PositionOccurrence po
+        JOIN po.position p
+        WHERE po.chessAccount.id = :chessAccountId
+        """,
+    )
+    fun findDistinctPositionsByChessAccountId(
+        @Param("chessAccountId") chessAccountId: UUID,
+    ): List<com.chessecho.domain.Position>
+
+    @Query(
+        """
         SELECT po FROM PositionOccurrence po
         JOIN FETCH po.game
         JOIN FETCH po.position

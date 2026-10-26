@@ -53,3 +53,56 @@ export function convertTo6chessUrl(chessComUrl: string, username: string): strin
     return null;
   }
 }
+
+/**
+ * Constructs an exact-ply Chess.com game URL with ?move={plyNumber}.
+ * Returns null if the identifier/URL is unverified, malformed, or unsupported.
+ *
+ * @param platformGameId - Stored platform game ID (absolute URL or raw numeric ID)
+ * @param plyNumber - Exact ply number in the game
+ * @param timeControl - Optional time control string to distinguish daily from live games
+ */
+export function buildExactPlyChessComUrl(
+  platformGameId: string,
+  plyNumber: number,
+  timeControl?: string | null
+): string | null {
+  if (!platformGameId || typeof platformGameId !== 'string') {
+    return null;
+  }
+  const trimmed = platformGameId.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const ply = Math.max(0, plyNumber);
+
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    try {
+      const url = new URL(trimmed);
+      const host = url.hostname.toLowerCase();
+      if (host !== 'chess.com' && host !== 'www.chess.com') {
+        return null;
+      }
+      if (
+        !url.pathname.startsWith('/game/live/') &&
+        !url.pathname.startsWith('/game/daily/') &&
+        !url.pathname.startsWith('/game/computer/')
+      ) {
+        return null;
+      }
+      url.protocol = 'https:';
+      url.searchParams.set('move', ply.toString());
+      return url.toString();
+    } catch {
+      return null;
+    }
+  }
+
+  if (/^\d+$/.test(trimmed)) {
+    const isDaily = timeControl ? timeControl.toLowerCase().includes('daily') : false;
+    const type = isDaily ? 'daily' : 'live';
+    return `https://www.chess.com/game/${type}/${trimmed}?move=${ply}`;
+  }
+
+  return null;
+}

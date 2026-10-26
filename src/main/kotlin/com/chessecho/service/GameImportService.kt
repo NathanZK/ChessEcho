@@ -22,6 +22,7 @@ import com.chessecho.repository.PuzzleSchedulingEventRepository
 import com.chessecho.repository.UserPositionStatsRepository
 import com.chessecho.repository.UserPositionWeaknessRepository
 import com.chessecho.service.auth.AuthenticatedPrincipal
+import com.chessecho.service.similarity.PositionSimilarityCache
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.scheduling.annotation.Async
@@ -55,6 +56,8 @@ class GameImportService(
     private val userPositionWeaknessRepository: UserPositionWeaknessRepository,
     private val puzzleSchedulingEventRepository: PuzzleSchedulingEventRepository,
     private val dataSource: DataSource,
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private val positionSimilarityCache: PositionSimilarityCache? = null,
     @Value("\${chessecho.import.derived-game-batch-size:1000}")
     private val derivedGameBatchSize: Int = DerivedProcessingCoordinator.DEFAULT_DERIVED_GAME_BATCH_SIZE,
     userPositionStatsBatchService: UserPositionStatsBatchService? = null,
@@ -512,7 +515,13 @@ class GameImportService(
         initiatingUser: AppUser?,
         savedGames: List<Game>,
         archive: ImportedArchive?,
-    ): Set<UUID> = derivedProcessingCoordinator.processDerivedGames(account, initiatingUser, savedGames, archive)
+    ): Set<UUID> {
+        val affected = derivedProcessingCoordinator.processDerivedGames(account, initiatingUser, savedGames, archive)
+        if (affected.isNotEmpty()) {
+            positionSimilarityCache?.invalidate(account.id)
+        }
+        return affected
+    }
 
     private fun ensureDerivedProcessingRecord(archive: ImportedArchive) {
         derivedProcessingCoordinator.ensureDerivedProcessingRecord(archive)

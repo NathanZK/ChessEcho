@@ -25,6 +25,7 @@ This document serves as the durable evidence repository for opt-in PIT mutation 
 | `EngineMoveProvider` | `EngineMoveProviderTest` | Service Unit | 29 | 29 (100%) | 0 (0%) | 0 (0%) | 100% | 2026-10-18 |
 | `HumanMoveProvider` | `HumanMoveProviderTest` | Service Unit | 32 | 24 (75%) | 8 (25%) | 0 (0%) | 75% | 2026-10-18 |
 | `ReferenceCoverageAnalysisService` | `ReferenceCoverageAnalysisServiceTest` | Service Unit | 61 | 60 (98%) | 1 (2%) | 0 (0%) | 98% | 2026-10-18 |
+| `PositionSimilarityScorer` | `PositionSimilarityScorerTest` | Domain Unit (#91) | 38 | 26 (68%) | 11 (29%) | 1 (3%) | 70% | 2026-10-26 |
 
 ---
 
@@ -345,6 +346,26 @@ This document serves as the durable evidence repository for opt-in PIT mutation 
 - **Accepted Surviving Mutants**:
   - 1 synthetic Kotlin compiler bytecode iterator conditional on line 211 (Taxonomy Category 3).
 - **Uncovered Branches**: None (0 no coverage; line coverage 99%).
+
+### 2.17 `com.chessecho.similarity.PositionSimilarityScorer` (Issue [#91](https://github.com/NathanZK/ChessEcho/issues/91))
+
+- **Issue**: Issue [#91](https://github.com/NathanZK/ChessEcho/issues/91)
+- **Detailed Audit Report**: [2026-10-26-issue-91-mutation-audit.md](./2026-10-26-issue-91-mutation-audit.md)
+- **Test Suite**: `com.chessecho.similarity.PositionSimilarityScorerTest`
+- **Execution Command**:
+  ```bash
+  ./gradlew pitest \
+    -Ppitest.targetClasses="com.chessecho.similarity.PositionSimilarityScorer*" \
+    -Ppitest.targetTests="com.chessecho.similarity.PositionSimilarityScorerTest*"
+  ```
+- **Results**: 38 generated, 26 killed (68%), 11 survived (29%), 1 no coverage (3%); 70% test strength. Full-stack targeted audit evaluated 13 failure-mode mutants with 12 killed (92%) and 1 unresolved (8%).
+- **Meaningful Gaps Killed via Regression Tests**:
+  1. *Document length normalization ($b=0.75$)*: Removing length factor killed by adding regression test penalizing longer document length when matching tokens are identical.
+  2. *Deterministic tie-breaking*: Ascending canonical FEN tie-break inversion killed by unconditionally asserting canonical FEN ordering on identical scores.
+  3. *Illegal piece character FEN rejection*: Rejection of non-orthodox piece characters killed by asserting `IllegalArgumentException` on invalid pieces.
+  4. *Search button disabled state*: Empty FEN input disabled state verified via explicit `toBeDisabled()` assertion.
+- **Unresolved / Accepted Gaps**:
+  - `PositionSimilarityCache`: Rebuild commit generation check remains unresolved due to absence of internal cache map assertions.
 
 ---
 
