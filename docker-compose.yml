@@ -13,6 +13,7 @@ services:
 
   app:
     build: ./backend
+    image: chess-echo
     container_name: chessecho-app
     ports:
       - "8080:8080"

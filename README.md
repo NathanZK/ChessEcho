@@ -133,11 +133,11 @@ SPRING_DATASOURCE_PASSWORD=chessecho_pass \
 
 **Option B — Docker (container workflow)**
 
-Runs the backend inside Docker without requiring a local Java 21 JDK or Stockfish installation, useful for verifying container parity. Local image building is optional and not required for normal Gradle-based development.
+Builds and runs the backend inside Docker from local source without requiring a local Java 21 JDK or Stockfish installation on the host, useful for verifying container parity. `make app-build` compiles the backend in a multi-stage container build and tags the image as `chess-echo`, which Docker Compose (`make app-up` or `make up`) reuses directly.
 
 ```bash
-make app-build   # builds the Docker image
-make app-up      # starts the application container on port 8080
+make app-build   # builds the Docker image (chess-echo) from local source
+make app-up      # starts the application container on port 8080 reusing the built image
 ```
 
 Or start both database and application together:
@@ -162,7 +162,7 @@ make app-down
 
 **Option C — Run pre-built Docker image from Docker Hub (no local build)**
 
-Runs the published backend container alongside PostgreSQL without needing to clone the source repository or build the image locally.
+Runs the published backend container alongside PostgreSQL without needing to clone the source repository or build the image locally. This workflow pulls the pre-built `nathanzk/chessecho-backend:latest` image via standalone `docker run` commands; it does not compile or reflect local working-tree code changes.
 
 > **Note:** The pre-built Docker image (`nathanzk/chessecho-backend:latest`) is published natively for **`linux/arm64` (Apple Silicon)**. If you are on a different architecture, use Option A (local Gradle) or Option B (local Docker build).
 

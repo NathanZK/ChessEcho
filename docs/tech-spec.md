@@ -18,9 +18,10 @@ architecture:
   - **Backend modules**: `controller` and `dto` expose HTTP boundaries; `service` implements application behavior; `domain` models persisted concepts; `repository` uses Spring Data JPA; `config` and `web` provide framework and request/security integration.
   - **Backend architecture and endpoint traces**: See `docs/architecture/backend-architecture.md`.
   - **Human-move subsystem**: `humanmove` and related services build empirical human-move distributions by rating band; see `docs/architecture/human-move-provider.md` and `docs/engineering/human-move-corpus-portability.md`.
-  - **Reference-coverage analysis**: Retained-evidence admission and coverage calculations are documented in `docs/specs/reference-coverage-analysis.md`.
-  - **Chess account data boundary**: Shared imported data, per-user training history, disconnect behavior, and import-job authorization are documented in `docs/specs/account-data-boundary.md`.
-  - **Reference-evidence subsystem**: The explicit-input producer creates #430 snapshots; retained admission and coverage are documented in `docs/specs/evaluation-evidence-producer.md` and `docs/specs/reference-coverage-analysis.md`.
+  - **Puzzle continuation**: Candidate collection, multi-provider engine/human selection, and fallback orchestration; see [puzzle continuation architecture](architecture/puzzle-continuation.md).
+  - **Reference-coverage analysis**: Retained-evidence admission and coverage calculations are documented in `docs/engineering/human-move-corpus-portability.md`.
+  - **Chess account data boundary**: Shared imported data, per-user training history, disconnect behavior, and import-job authorization are documented in `docs/architecture/identity-and-session.md` and `docs/architecture/backend-architecture.md`.
+  - **Reference-evidence subsystem**: The explicit-input producer creates #430 snapshots; retained admission and coverage are documented in `docs/engineering/human-move-corpus-portability.md`.
 
 stack:
   - **Backend**: Kotlin 2.0, Spring Boot 3.3.2, Spring Data JPA, Flyway, PostgreSQL 16, kchesslib, Stockfish.
@@ -39,7 +40,7 @@ contract:
   - **Chess accounts**:
     - `ChessAccount` stores shared identity; `AccountConnection` links users.
     - Multiple users may connect one account; each user may have one active connection.
-    - See `API_CONTRACT.md` and `docs/specs/connected-account-state.md`.
+    - See `API_CONTRACT.md` and `docs/architecture/identity-and-session.md`.
   - **Authentication/session**: `POST /api/register`, `POST /api/login`, `GET /api/me`, and `POST /api/logout`; session cookie `CHESSECHO_SESSION`. See `docs/architecture/identity-and-session.md`.
   - **Header account state**: The Header distinguishes guests, signed-in users without a connected Chess.com account, and signed-in users with one.
   - **Development session**: `POST /api/dev/session` exists only under `dev`/`local` profiles with `chessecho.auth.dev-mode.enabled=true`; otherwise it returns 404 (`DevSessionController`).
@@ -56,15 +57,15 @@ contract:
     - `/api/puzzles`, `/api/puzzles/continuation`, `/api/puzzles/evaluate-move`, `/api/puzzles/attempt`, and `/api/puzzles/events` support practice.
     - Candidate tactical continuations: Each candidate move receives independent bounded Stockfish search and forcing-prefix PV replay.
     - Forced-mate evaluations persist root-relative mate distances (`baselineEvalMate`, `bestMoveEvalMate`, `evalMate`); evaluation loss is calculated via an 8-case piecewise function in $[0.0, 20.0]$; losing-mate defense against negative centipawns returns null (horizon effect); occurrences with null loss are skipped from mistake counts and acceptable moves.
-  - **Position Progress**: Dated actual-game encounters form a separate historical baseline and one aggregate observation per interval started by a persisted `SOLVED` puzzle event. Intervals use `Game.playedAt`, remain reconstructible after late imports, and reuse `GameOutcomeNormalizer`; see `docs/specs/position-progress.md`.
-  - **Long Decisions**: Individual occurrences expose reliable account-player decision durations derived from PGN clocks; the account-scoped API filters by broad time control and an inclusive absolute threshold. See `docs/specs/long-decision-occurrences.md`.
+  - **Position Progress**: Dated actual-game encounters form a separate historical baseline and one aggregate observation per interval started by a persisted `SOLVED` puzzle event. Intervals use `Game.playedAt`, remain reconstructible after late imports, and reuse `GameOutcomeNormalizer`; see `docs/architecture/backend-architecture.md`.
+  - **Long Decisions**: Individual occurrences expose reliable account-player decision durations derived from PGN clocks; the account-scoped API filters by broad time control and an inclusive absolute threshold. Line Exploration preserves query and timer state on return; see `docs/architecture/frontend.md`.
   - **Similar Positions**: `GET /api/positions/similar` retrieves personal positions similar to an arbitrary orthodox FEN input. Filtered to $\le 200$ candidates before static relational BM25 scoring. Guarantees $\ge 90\%$ recall of top-20 exhaustive candidates and warm p95 latency $< 500\text{ms}$. Exact query positions are excluded, and ties are broken deterministically by `canonicalFen` ascending. Exact-ply Chess.com URLs are derived from verified source metadata, returning `null` when unverifiable. Line Exploration transitions preserve Similar Positions query and results state on return.
-  - **Puzzle attempt counts**: Authenticated user/account/position/color counts separate submitted SOLVED and FAILED initial answers, with replay-safe identities; see [puzzle attempt counts](specs/puzzle-attempt-count.md).
+  - **Puzzle attempt counts**: Authenticated user/account/position/color counts separate submitted SOLVED and FAILED initial answers via a single outcome-grouped aggregate over qualifying scheduling events; absent groups return zero counts.
   - **Actual-game results display**:
     - The Weaknesses Library displays supplied W/D/L, score rate, and eligible-game count without confidence classifications or training comparisons.
     - Null scores or zero eligible games show neutral unavailable-score wording; absent practical evidence omits the block.
   - **Practical weakness priority**: Confidence-gated, account/position/color-scoped distinct-game score rates adjust recommendation priority using the enabled normal policy; objective priority is unchanged. See `README.md` and `docs/architecture/precomputed-weakness-analysis.md`.
-  - **Evaluation evidence**: Internal `EvaluationEvidenceProducerService.produce` creates #430 snapshots from explicit input and verifies #450 before persistence; see `docs/specs/evaluation-evidence-producer.md`.
+  - **Evaluation evidence**: Internal `EvaluationEvidenceProducerService.produce` creates #430 snapshots from explicit input and verifies #450 before persistence; see `docs/engineering/human-move-corpus-portability.md`.
   - **Human-move corpus administration**: `/api/admin/human-move-distribution/*` covers BFS acquisition, corpus runs/checkpoints, artifact export/verify/import/purge, projections, and cross-cohort comparison.
   - **Errors and security**: API errors use structured responses; state-changing requests require the session's double-submit CSRF token. See `API_CONTRACT.md`.
 
@@ -108,9 +109,9 @@ convention:
   - **Quality checks**: backend `./gradlew ktlintCheck`, `./gradlew detektMain detektTest`, and `./gradlew test` from `backend/`; frontend `npm run lint`, `npx tsc --noEmit`, `npm run test`, and `npm run build` from `frontend/`.
   - **Error handling**: exceptions map to structured JSON errors with codes in `GlobalExceptionHandler`; codes are listed in `API_CONTRACT.md`.
   - **Security**: server-side sessions, double-submit CSRF on state changes, and connection checks for authenticated imports and Progress.
-  - **Access control**: authenticated job status is initiator-only; personal state is scoped per user. See `docs/architecture/identity-and-session.md` and `docs/specs/account-data-boundary.md`.
+  - **Access control**: authenticated job status is initiator-only; personal state is scoped per user. See `docs/architecture/identity-and-session.md` and `docs/architecture/backend-architecture.md`.
   - **Tests**: backend tests under `src/test/kotlin/com/chessecho/{controller,service,repository,integration,...}`; integration tests use Testcontainers PostgreSQL.
   - **Mutation testing**: opt-in PIT audits per `docs/engineering/mutation-testing.md`; verified audit records indexed in `docs/engineering/audit/index.md`.
-  - **CI**: `.github/workflows/ci.yml` runs backend ktlint and tests (Java 21) and frontend lint, typecheck, Vitest, and build (Node 20).
+  - **CI**: `.github/workflows/ci.yml` runs backend ktlint, Detekt, and tests (Java 21) and frontend lint, typecheck, Vitest, and build (Node 20).
   - **Persistence**: follow the pre-deployment baseline-first migration convention in `docs/engineering/repository-conventions.md`.
   - **Workflow**: keep changes issue-focused and target pull requests at `main`; follow the repository conventions in `AGENTS.md`.

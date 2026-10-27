@@ -8,10 +8,9 @@ The [README architecture overview](../../README.md#architecture) links this
 guide; backend processing is covered by issue
 [#425](https://github.com/NathanZK/ChessEcho/issues/425).
 
-For server-side identity and cookie/CSRF behavior, see
-[Identity and Session](identity-and-session.md). For shared imported account
-data and user-scoped training history, see
-[Chess account data and personal training state](../specs/account-data-boundary.md).
+For server-side identity, session behavior, and shared imported account data
+vs. user-scoped training history, see
+[Identity and Session](identity-and-session.md).
 The [API contract](../../API_CONTRACT.md) defines request and response details.
 
 ## Route, session, and account boundary
@@ -240,7 +239,7 @@ summary rather than a duplicate banner. While this view is selected, the app
 shell fills the dynamic viewport and its shrinkable main area owns vertical
 scrolling. No baseline and no measured intervals have distinct empty states;
 request failure offers Retry, and a changed position/color or unmount makes an
-older response inert. See [Position Progress](../specs/position-progress.md).
+older response inert.
 
 Representative tests:
 [`WeaknessLoadStates.test.tsx`](../../frontend/src/__tests__/WeaknessLoadStates.test.tsx),
