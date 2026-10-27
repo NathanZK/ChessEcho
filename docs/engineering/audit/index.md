@@ -29,6 +29,7 @@ This document serves as the durable evidence repository for opt-in mutation test
 | [`Frontend: urlUtils.ts`](#218-frontend-mutation-testing-baseline-core-calculation-utilities-issue-635) | `urlUtils.test.ts` | Frontend Utility ([#635](https://github.com/NathanZK/ChessEcho/issues/635)) | 118 | 98 (83%) | 17 (14%) | 3 (3%) | 85% | 2026-10-27 |
 | [`Frontend: chessGame.ts`](#218-frontend-mutation-testing-baseline-core-calculation-utilities-issue-635) | `ChessGameHistory.test.ts` | Frontend Domain ([#635](https://github.com/NathanZK/ChessEcho/issues/635)) | 27 | 16 (59%) | 6 (22%) [4 TO] | 1 (4%) | 77% | 2026-10-27 |
 | [`Frontend: positionImport.ts`](#218-frontend-mutation-testing-baseline-core-calculation-utilities-issue-635) | `positionImport.test.ts` | Frontend Domain ([#635](https://github.com/NathanZK/ChessEcho/issues/635)) | 241 | 143 (59%) | 56 (23%) [15 TO] | 27 (11%) | 74% | 2026-10-27 |
+| [`Frontend: PuzzleFeedbackPanel.tsx`](#219-frontend-line-exploration-continuation-secrecy-issue-629) | `ContinuationIntegration.test.tsx` | Frontend Presentation ([#629](https://github.com/NathanZK/ChessEcho/issues/629)) | 63 | 58 (92%) | 5 (8%) | 0 (0%) | 92% | 2026-10-28 |
 
 ---
 
@@ -391,6 +392,38 @@ This document serves as the durable evidence repository for opt-in mutation test
   1. *`chessGame.ts`*: Fallback move application doesn't verify history preservation when moves succeed.
   2. *`urlUtils.ts`*: `buildExactPlyChessComUrl` trailing non-digit validation boundaries; `/game/computer/` path test coverage.
   3. *`positionImport.ts`*: PGN escaped header tags (`\"`), scan comment-state combinations, and exact character move text verification.
+
+### 2.19 `Frontend: PuzzleFeedbackPanel.tsx` (Line Exploration Continuation Secrecy)
+
+- **Issue**: Issue [#629](https://github.com/NathanZK/ChessEcho/issues/629)
+- **Operational Guide**: [frontend-mutation-testing.md](../frontend-mutation-testing.md)
+- **Framework**: StrykerJS 10.1.1 (`@stryker-mutator/core`, `@stryker-mutator/vitest-runner`), Vitest 4.1.12
+- **Scope**: `src/components/PuzzleFeedbackPanel.tsx` (Line Exploration continuation rendering block: lines 1000–1080)
+- **Test Suite**: `src/__tests__/ContinuationIntegration.test.tsx` (and full Vitest coverage across 220 tests during dry-run)
+- **Execution Command**:
+  ```bash
+  cd frontend && npm run test:mutation -- --mutate="src/components/PuzzleFeedbackPanel.tsx:1000:1-1080:1"
+  ```
+- **Targeted Scope Results (`lines 1000–1080`)**:
+  - **Mutants Instrumented**: 63
+  - **Killed**: 58 (92.06%)
+  - **Timed Out**: 0 (0.00%)
+  - **Survived**: 5 (7.94%)
+  - **No Coverage**: 0 (0.00% — 100% eliminated via Test 7b)
+  - **Compile / Runtime Errors**: 0 (0.00%)
+  - **Mutation Score**: **92.06%** (Covered: **92.06%**)
+  - **Execution Duration**: 32 seconds (9 parallel workers)
+- **Component-Wide Baseline Comparison**:
+  - Across the entire component (`PuzzleFeedbackPanel.tsx`, 1,152 lines): 739 mutants instrumented, 367 killed (49.7%), 27 timed out (3.7%), 316 survived (42.8%), 28 no coverage (3.8%), 1 error (53.39% score). The remaining 316 survivors reside outside the continuation rendering scope (in blindfold mode, timed training, hint panels, historical mistake banners) and remain tracked under persistent tracker [#550](https://github.com/NathanZK/ChessEcho/issues/550).
+- **Surviving Mutants Audit & Qualitative Disposition (5 Mutants)**:
+  1. *Mutant 15 (Line 1025:28, Category 5 Equivalent)*: `selected.pliesResolved != null` replaced with `true` in `(selected.pliesResolved != null && selected.pliesResolved > 0)`. Under ECMAScript relational comparison semantics, `null > 0 === false` and `undefined > 0 === false`. Therefore, `(x != null && x > 0)` and `(true && x > 0)` produce identical truth values for all JavaScript values.
+  2. *Mutant 49 (Line 1057:36, Category 5 Equivalent)*: `alt.pliesResolved != null` replaced with `true` in `(alt.pliesResolved != null && alt.pliesResolved > 0)`. Symmetrical redundant null guard before `alt.pliesResolved > 0`.
+  3. *Mutant 26 (Line 1027:82, Category 5 Equivalent)*: `selected.continuationSanMoves?.length` replaced with `.continuationSanMoves.length`. Line 1027 is enclosed by the ternary guard on line 1025, which on the fallback path requires `(selected.continuationSanMoves && selected.continuationSanMoves.length > 0)`. Control flow guarantees `continuationSanMoves` is non-null and defined whenever line 1027 evaluates.
+  4. *Mutant 60 (Line 1059:58, Category 5 Equivalent)*: `alt.continuationSanMoves?.length` replaced with `.continuationSanMoves.length`. Symmetrical control-flow guarantee for alternative candidate rows, dominated by line 1057 `(alt.continuationSanMoves && alt.continuationSanMoves.length > 0)`.
+  5. *Mutant 62 (Line 1069:46, Category 4 Defensive Safeguard)*: `onClick={() => onAlternativeSelected?.(alt)}` replaced with `onClick={() => onAlternativeSelected(alt)}`. In `PuzzleFeedbackPanelProps` (line 118), `onAlternativeSelected` is an optional prop callback. In interactive exploratory page flows (`app/page.tsx:2192`), `handleAlternativeSelected` is always supplied. The optional chaining `?.` is a defensive TypeScript safeguard against an unpassed optional prop when omitted.
+- **Secrecy and Replay Protection**:
+  - Trailing continuation move leakage eliminated from selected card and alternative response rows.
+  - Verified empirically in Vitest: Test 7 `not.toBeInTheDocument()` secrecy assertions fail if trailing continuation SAN tokens (`Nf6`, `O-O`, `dxc6`) are rendered, and Test 8 verifies that underlying continuation data continues to drive board replay upon selecting "Explore this line".
 
 ---
 

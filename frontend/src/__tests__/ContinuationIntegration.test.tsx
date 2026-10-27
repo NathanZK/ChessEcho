@@ -420,10 +420,10 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
       resultingFen: 'r1bqkbnr/1ppp1ppp/p1n5/4p3/B3P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 1 4',
       providerType: 'ENGINE',
       evalLoss: 0,
-      pliesResolved: 0,
-      continuationMoves: [],
-      continuationSanMoves: [],
-      terminalFen: 'r1bqkbnr/1ppp1ppp/p1n5/4p3/B3P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 1 4',
+      pliesResolved: 2,
+      continuationMoves: ['g8f6', 'e1g1'],
+      continuationSanMoves: ['Nf6', 'O-O'],
+      terminalFen: 'r1bqkb1r/1ppp1ppp/p1n2n2/4p3/B3P3/5N2/PPPP1PPP/RNBQ1RK1 b kq - 2 5',
       isTerminal: false,
       terminationReason: 'QUIET_STOP',
     };
@@ -445,7 +445,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
       move: 'Qxf7#',
       resultingFen: 'r1bqkbnr/1ppp1Qpp/p1n5/4p3/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 0 4',
       providerType: 'ENGINE',
-      evalLoss: 0,
+      evalLoss: null,
       pliesResolved: 0,
       continuationMoves: [],
       continuationSanMoves: [],
@@ -454,7 +454,20 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
       terminationReason: 'TERMINAL',
     };
 
-    render(
+    const altCandidateQuiet: api.ContinuationCandidate = {
+      move: 'd3',
+      resultingFen: 'r1bqkbnr/1ppp1ppp/p1n5/4p3/B3P3/3P1N2/PPP2PPP/RNBQK2R b KQkq - 0 4',
+      providerType: 'ENGINE',
+      evalLoss: 0.35,
+      pliesResolved: 0,
+      continuationMoves: [],
+      continuationSanMoves: [],
+      terminalFen: 'r1bqkbnr/1ppp1ppp/p1n5/4p3/B3P3/3P1N2/PPP2PPP/RNBQK2R b KQkq - 0 4',
+      isTerminal: false,
+      terminationReason: 'QUIET_STOP',
+    };
+
+    const { rerender } = render(
       <PuzzleFeedbackPanel
         puzzle={mockPuzzle}
         feedback={{ status: 'CORRECT', lastMove: 'Bb5' }}
@@ -471,30 +484,240 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
         lastContinuationCandidates={{
           parentFen: 'r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4',
           selected: selectedCandidate,
-          candidates: [selectedCandidate, altCandidateMultiPly, altCandidateTerminal],
+          candidates: [selectedCandidate, altCandidateMultiPly, altCandidateTerminal, altCandidateQuiet],
         }}
         onAlternativeSelected={handleAlternativeSelected}
       />
     );
 
-    // Selected candidate Ba4 is a quiet position (0 plies)
+    // Selected candidate Ba4 renders move, eval loss, and plies badge, but conceals continuation moves
     expect(screen.getByText(/Ba4/)).toBeInTheDocument();
-    expect(screen.getByText(/Quiet/i)).toBeInTheDocument();
+    expect(screen.getByText(/— 0\.00 pawns/)).toBeInTheDocument();
+    expect(screen.getByText(/\+2 plies/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Nf6/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/O-O/)).not.toBeInTheDocument();
 
-    // Multi-ply continuation renders SAN sequence and plies badge
+    // Multi-ply alternative continuation renders candidate move, eval loss, and plies badge, but conceals continuation moves
     expect(screen.getByText(/Bxc6/)).toBeInTheDocument();
-    expect(screen.getByText(/dxc6/)).toBeInTheDocument();
+    expect(screen.getByText(/— 0\.15 pawns/)).toBeInTheDocument();
     expect(screen.getByText(/\+1 plies/i)).toBeInTheDocument();
+    expect(screen.queryByText(/dxc6/)).not.toBeInTheDocument();
 
     // Terminal candidate renders terminal indicator
     expect(screen.getByText(/Qxf7#/)).toBeInTheDocument();
     expect(screen.getByText(/Terminal/i)).toBeInTheDocument();
 
+    // Quiet candidate renders Quiet badge and eval loss
+    expect(screen.getByText(/d3/)).toBeInTheDocument();
+    expect(screen.getByText(/— 0\.35 pawns/)).toBeInTheDocument();
+    expect(screen.getByText(/Quiet/i)).toBeInTheDocument();
+
     // User can select alternative line
     const exploreButtons = screen.getAllByRole('button', { name: /Explore this line/i });
-    expect(exploreButtons).toHaveLength(2);
+    expect(exploreButtons).toHaveLength(3);
     fireEvent.click(exploreButtons[0]);
     expect(handleAlternativeSelected).toHaveBeenCalledWith(altCandidateMultiPly);
+
+    // Alternative responses section hides when only 1 candidate exists
+    rerender(
+      <PuzzleFeedbackPanel
+        puzzle={mockPuzzle}
+        feedback={{ status: 'CORRECT', lastMove: 'Bb5' }}
+        onNextPuzzle={() => {}}
+        puzzleColorFilter="BOTH"
+        onColorFilterChange={() => {}}
+        showPuzzleSettings={false}
+        onTogglePuzzleSettings={() => {}}
+        minMistakeCount={3}
+        onMinMistakeCountChange={() => {}}
+        onApplySettings={() => {}}
+        isExplorationActive={true}
+        explorationPlayMode="CHESSECHO"
+        lastContinuationCandidates={{
+          parentFen: 'r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4',
+          selected: selectedCandidate,
+          candidates: [selectedCandidate],
+        }}
+        onAlternativeSelected={handleAlternativeSelected}
+      />
+    );
+    expect(screen.queryByText(/Alternative responses/i)).not.toBeInTheDocument();
+  });
+
+  it('7b. Candidate badge boundary conditions, null fallbacks, optional callbacks, and mode isolation', () => {
+    // 1. Non-CHESSECHO mode suppression: candidate cards must not render in BOTH_SIDES even when lastContinuationCandidates exists
+    const candidateA: api.ContinuationCandidate = {
+      move: 'Ba4',
+      resultingFen: 'r1bqkbnr/1ppp1ppp/p1n5/4p3/B3P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 1 4',
+      providerType: 'ENGINE',
+      evalLoss: null, // tests null evalLoss: no pawns text and no crash on .toFixed(2)
+      pliesResolved: undefined, // undefined pliesResolved tests fallback to continuationSanMoves.length
+      continuationMoves: ['g8f6', 'e1g1'],
+      continuationSanMoves: ['Nf6', 'O-O'],
+      terminalFen: 'r1bqkb1r/1ppp1ppp/p1n2n2/4p3/B3P3/5N2/PPPP1PPP/RNBQ1RK1 b kq - 2 5',
+      isTerminal: false,
+      terminationReason: 'QUIET_STOP',
+    };
+
+    const candidateQuiet: api.ContinuationCandidate = {
+      move: 'd3',
+      resultingFen: 'r1bqkbnr/1ppp1ppp/p1n5/4p3/B3P3/3P1N2/PPP2PPP/RNBQK2R b KQkq - 0 4',
+      providerType: 'ENGINE',
+      evalLoss: 0.25,
+      pliesResolved: 0,
+      continuationMoves: [],
+      continuationSanMoves: [],
+      terminalFen: 'r1bqkbnr/1ppp1ppp/p1n5/4p3/B3P3/3P1N2/PPP2PPP/RNBQK2R b KQkq - 0 4',
+      isTerminal: false,
+      terminationReason: 'QUIET_STOP',
+    };
+
+    const altCandidatePliesFallback: api.ContinuationCandidate = {
+      move: 'Bxc6',
+      resultingFen: 'r1bqkbnr/1ppp1ppp/p1B5/4p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 0 4',
+      providerType: 'ENGINE',
+      evalLoss: 0.15,
+      pliesResolved: undefined, // fallback to continuationSanMoves.length (3 plies)
+      continuationMoves: ['d7c6', 'd1d4', 'e5d4'],
+      continuationSanMoves: ['dxc6', 'Qxd4', 'exd4'],
+      terminalFen: 'r1bqkbnr/1pp2ppp/p1p5/8/3pP3/5N2/PPP2PPP/RNBQK2R w KQkq - 0 6',
+      isTerminal: false,
+      terminationReason: 'QUIET_STOP',
+    };
+
+    const altCandidatePliesWithoutSan: api.ContinuationCandidate = {
+      move: 'Nc3',
+      resultingFen: 'r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/2N2N2/PPPP1PPP/R1BQK2R b KQkq - 1 4',
+      providerType: 'ENGINE',
+      evalLoss: 0.2,
+      pliesResolved: 1, // pliesResolved > 0 but continuationSanMoves empty
+      continuationMoves: [],
+      continuationSanMoves: [],
+      terminalFen: 'r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/2N2N2/PPPP1PPP/R1BQK2R b KQkq - 1 4',
+      isTerminal: false,
+      terminationReason: 'QUIET_STOP',
+    };
+
+    // Mode isolation: BOTH_SIDES does not render ChessEcho played card
+    const { rerender } = render(
+      <PuzzleFeedbackPanel
+        puzzle={mockPuzzle}
+        feedback={{ status: 'CORRECT', lastMove: 'Bb5' }}
+        onNextPuzzle={() => {}}
+        puzzleColorFilter="BOTH"
+        onColorFilterChange={() => {}}
+        showPuzzleSettings={false}
+        onTogglePuzzleSettings={() => {}}
+        minMistakeCount={3}
+        onMinMistakeCountChange={() => {}}
+        onApplySettings={() => {}}
+        isExplorationActive={true}
+        explorationPlayMode="BOTH_SIDES"
+        lastContinuationCandidates={{
+          parentFen: 'r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4',
+          selected: candidateA,
+          candidates: [candidateA, altCandidatePliesFallback],
+        }}
+      />
+    );
+    expect(screen.queryByText(/ChessEcho played/i)).not.toBeInTheDocument();
+
+    // Rerender in CHESSECHO mode with null evalLoss, fallback plies, and omitted onAlternativeSelected prop
+    rerender(
+      <PuzzleFeedbackPanel
+        puzzle={mockPuzzle}
+        feedback={{ status: 'CORRECT', lastMove: 'Bb5' }}
+        onNextPuzzle={() => {}}
+        puzzleColorFilter="BOTH"
+        onColorFilterChange={() => {}}
+        showPuzzleSettings={false}
+        onTogglePuzzleSettings={() => {}}
+        minMistakeCount={3}
+        onMinMistakeCountChange={() => {}}
+        onApplySettings={() => {}}
+        isExplorationActive={true}
+        explorationPlayMode="CHESSECHO"
+        lastContinuationCandidates={{
+          parentFen: 'r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4',
+          selected: candidateA,
+          candidates: [candidateA, altCandidatePliesFallback, altCandidatePliesWithoutSan],
+        }}
+      />
+    );
+
+    // Selected Ba4 has null evalLoss -> no pawns text; plies fallback -> +2 plies from continuationSanMoves
+    expect(screen.getByText(/ChessEcho played/i)).toBeInTheDocument();
+    const selectedMoveElement = screen.getByText('Ba4');
+    expect(selectedMoveElement).toBeInTheDocument();
+    expect(selectedMoveElement.textContent).toBe('Ba4');
+    expect(screen.getByText(/\+2 plies/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Nf6/)).not.toBeInTheDocument();
+
+    // Alternative candidate with null pliesResolved falls back to continuationSanMoves -> +3 plies
+    expect(screen.getByText(/Bxc6/)).toBeInTheDocument();
+    expect(screen.getByText(/\+3 plies/i)).toBeInTheDocument();
+    expect(screen.queryByText(/dxc6/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Qxd4/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/exd4/)).not.toBeInTheDocument();
+
+    // Alternative candidate with pliesResolved > 0 but empty continuationSanMoves renders +1 plies
+    expect(screen.getByText(/Nc3/)).toBeInTheDocument();
+    expect(screen.getByText(/\+1 plies/i)).toBeInTheDocument();
+
+    // Rerender with quiet selected move and pliesResolved without SAN moves
+    const selectedPliesNoSan: api.ContinuationCandidate = {
+      ...candidateA,
+      pliesResolved: 2,
+      continuationSanMoves: [],
+      continuationMoves: [],
+    };
+    rerender(
+      <PuzzleFeedbackPanel
+        puzzle={mockPuzzle}
+        feedback={{ status: 'CORRECT', lastMove: 'Bb5' }}
+        onNextPuzzle={() => {}}
+        puzzleColorFilter="BOTH"
+        onColorFilterChange={() => {}}
+        showPuzzleSettings={false}
+        onTogglePuzzleSettings={() => {}}
+        minMistakeCount={3}
+        onMinMistakeCountChange={() => {}}
+        onApplySettings={() => {}}
+        isExplorationActive={true}
+        explorationPlayMode="CHESSECHO"
+        lastContinuationCandidates={{
+          parentFen: 'r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4',
+          selected: selectedPliesNoSan,
+          candidates: [selectedPliesNoSan],
+        }}
+      />
+    );
+    expect(screen.getByText(/\+2 plies/i)).toBeInTheDocument();
+
+    // Rerender with quiet selected candidate (0 plies, empty continuation) -> renders Quiet in selected card
+    rerender(
+      <PuzzleFeedbackPanel
+        puzzle={mockPuzzle}
+        feedback={{ status: 'CORRECT', lastMove: 'Bb5' }}
+        onNextPuzzle={() => {}}
+        puzzleColorFilter="BOTH"
+        onColorFilterChange={() => {}}
+        showPuzzleSettings={false}
+        onTogglePuzzleSettings={() => {}}
+        minMistakeCount={3}
+        onMinMistakeCountChange={() => {}}
+        onApplySettings={() => {}}
+        isExplorationActive={true}
+        explorationPlayMode="CHESSECHO"
+        lastContinuationCandidates={{
+          parentFen: 'r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4',
+          selected: candidateQuiet,
+          candidates: [candidateQuiet],
+        }}
+      />
+    );
+    expect(screen.getByText(/Quiet/i)).toBeInTheDocument();
+    expect(screen.queryByText(/\+0 plies/i)).not.toBeInTheDocument();
   });
 
   it('8. Board navigation along alternative candidate continuation: selecting candidate replays continuationSanMoves and falls back gracefully on invalid line', async () => {
