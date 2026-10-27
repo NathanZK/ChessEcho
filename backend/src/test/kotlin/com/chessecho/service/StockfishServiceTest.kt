@@ -463,7 +463,7 @@ class StockfishServiceTest {
         org.junit.jupiter.api.Assumptions.assumeTrue(isStockfishOnPath(), "Stockfish binary not installed on host PATH")
         val stockfishService = StockfishService()
         val opera = "3rkb1r/p2R1ppp/4qn2/1B2p1B1/4P3/1Q6/PPP2PPP/2K4R b k - 0 13"
-        val result = stockfishService.resolveForcingPvContinuation(opera)
+        val result = stockfishService.resolveForcingPvContinuation(opera, QuiescenceOptions(timeoutMs = 5000L))
         assertEquals(3, result.pliesResolved)
         assertEquals(listOf("d8d7", "b3e6", "f7e6"), result.moves)
         assertEquals(listOf("Rxd7", "Qxe6+", "fxe6"), result.sanMoves)

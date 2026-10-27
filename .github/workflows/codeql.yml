@@ -57,6 +57,7 @@ jobs:
 
       - name: Build Java/Kotlin
         if: matrix.build-mode == 'manual'
+        working-directory: backend
         env:
           GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx2g -Dkotlin.daemon.jvmargs=-Xmx2g
         run: |

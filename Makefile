@@ -9,7 +9,7 @@ db-down:
 
 # Application commands
 app-build:
-	docker build -t chess-echo .
+	docker build -t chess-echo ./backend
 
 app-up:
 	docker compose up app -d
@@ -22,13 +22,13 @@ app-restart: app-down app-up
 
 # Development commands
 app-lint:
-	./gradlew ktlintCheck
+	cd backend && ./gradlew ktlintCheck
 
 app-format:
-	./gradlew ktlintFormat
+	cd backend && ./gradlew ktlintFormat
 
 app-test:
-	./gradlew test
+	cd backend && ./gradlew test
 
 # Log commands
 app-logs:
