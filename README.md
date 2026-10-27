@@ -118,6 +118,7 @@ Running the backend requires the PostgreSQL database to be running first (`make 
 This is the standard inner loop for backend development, offering fast compilation, incremental builds, and IDE debugging. Requires Java 21 and Stockfish installed locally.
 
 ```bash
+cd backend
 CHESS_PUBAPI_USERNAME=your_chesscom_username \
 CHESS_PUBAPI_CONTACT=your_email@example.com \
 SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5432/chessecho \
@@ -444,6 +445,7 @@ history, decay, and pagination remain active.
 ### Backend
 
 ```bash
+cd backend
 ./gradlew test          # run all tests
 ./gradlew ktlintCheck   # lint
 ./gradlew ktlintFormat  # auto-format

@@ -30,9 +30,9 @@ stack:
   - **CI**: GitHub Actions workflow at `.github/workflows/ci.yml`.
 
 entry:
-  - Backend: `./gradlew bootRun`; containerized runtime: `docker compose up`. Swagger UI is available at `/swagger-ui.html`.
+  - Backend: `cd backend && ./gradlew bootRun`; containerized runtime: `docker compose up`. Swagger UI is available at `/swagger-ui.html`.
   - Frontend: `cd frontend && npm ci && npm run dev`; the default API base is `http://localhost:8080/api`.
-  - Database: `make db-up`; schema is defined in `src/main/resources/db/migration/V1__baseline.sql`.
+  - Database: `make db-up`; schema is defined in `backend/src/main/resources/db/migration/V1__baseline.sql`.
   - Backend outbound Chess.com requests use configured `CHESS_PUBAPI_USERNAME` and `CHESS_PUBAPI_CONTACT` for the required User-Agent. See `README.md`.
 
 contract:
@@ -105,7 +105,7 @@ constraint:
   - Import jobs accept only `CHESS_COM` (`AsyncJob` validation); Lichess is not implemented.
 
 convention:
-  - **Quality checks**: backend `./gradlew ktlintCheck` and `./gradlew test`; frontend `npm run lint`, `npx tsc --noEmit`, `npm run test`, and `npm run build` from `frontend/`.
+  - **Quality checks**: backend `./gradlew ktlintCheck`, `./gradlew detektMain detektTest`, and `./gradlew test` from `backend/`; frontend `npm run lint`, `npx tsc --noEmit`, `npm run test`, and `npm run build` from `frontend/`.
   - **Error handling**: exceptions map to structured JSON errors with codes in `GlobalExceptionHandler`; codes are listed in `API_CONTRACT.md`.
   - **Security**: server-side sessions, double-submit CSRF on state changes, and connection checks for authenticated imports and Progress.
   - **Access control**: authenticated job status is initiator-only; personal state is scoped per user. See `docs/architecture/identity-and-session.md` and `docs/specs/account-data-boundary.md`.

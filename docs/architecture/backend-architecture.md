@@ -13,7 +13,7 @@ the linked subsystem documents below retain deeper domain detail.
 | HTTP | Spring MVC controllers bind query/path/body/multipart inputs to domain values or request DTOs. Responses are DTOs, pages, empty status responses, or (for artifact download) a streamed resource. |
 | Request identity | `SessionAuthenticationFilter` resolves an opaque session cookie into an optional request principal and seeds the readable CSRF cookie. The principal argument resolver rejects only handlers that require a principal. The CSRF interceptor is registered for a finite set of paths. |
 | Application behavior | Services coordinate identity/session lifecycle, account association and ownership, imports, analysis, recommendation, training, progress, and human-move corpus operations. Some controllers intentionally call repositories directly; those cases are shown below. |
-| Persistence | Spring Data repositories persist users, identities, sessions, accounts, jobs, games, positions, occurrences, engine evaluations, training attempts/events, and human-move/corpus records in PostgreSQL. Flyway applies the pre-deployment baseline at `src/main/resources/db/migration/V1__baseline.sql`; database constraints and triggers enforce invariants in addition to service checks. |
+| Persistence | Spring Data repositories persist users, identities, sessions, accounts, jobs, games, positions, occurrences, engine evaluations, training attempts/events, and human-move/corpus records in PostgreSQL. Flyway applies the pre-deployment baseline at `backend/src/main/resources/db/migration/V1__baseline.sql`; database constraints and triggers enforce invariants in addition to service checks. |
 | External/process | `ChessComClient` calls the Chess.com PubAPI. `StockfishService` manages the Stockfish subprocess for analysis and move evaluation. Corpus artifacts cross a filesystem boundary under the configured archive root. |
 
 The endpoint diagrams and tables below cover 33 method mappings across the 16
@@ -355,7 +355,7 @@ only a URL prefix, not an access control.
 Springdoc's generated Swagger UI/OpenAPI endpoints, including `/swagger-ui.html`
 and `/v3/api-docs`, are framework-generated rather than controller mappings and
 are outside the endpoint tables. Exact configuration defaults are in
-[`application.yml`](../../src/main/resources/application.yml); operator setup
+[`application.yml`](../../backend/src/main/resources/application.yml); operator setup
 and required PubAPI User-Agent values are in the [README](../../README.md).
 The high-level product model and package responsibilities are in
 [`docs/tech-spec.md`](../tech-spec.md).

@@ -7,7 +7,7 @@ import java.io.File
 class ContainerConfigurationSanityTest {
     @Test
     fun `docker-compose configures local spring profile for plain HTTP execution`() {
-        val composeFile = File("docker-compose.yml")
+        val composeFile = File("../docker-compose.yml").takeIf { it.exists() } ?: File("docker-compose.yml")
         assertTrue(composeFile.exists(), "docker-compose.yml must exist")
         val content = composeFile.readText()
         assertTrue(
@@ -18,7 +18,7 @@ class ContainerConfigurationSanityTest {
 
     @Test
     fun `env example documents production secure cookie default`() {
-        val envExampleFile = File(".env.example")
+        val envExampleFile = File("../.env.example").takeIf { it.exists() } ?: File(".env.example")
         assertTrue(envExampleFile.exists(), ".env.example must exist")
         val content = envExampleFile.readText()
         assertTrue(

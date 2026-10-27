@@ -108,9 +108,9 @@ pitest {
 
 detekt {
     toolVersion = "1.23.7"
-    config.setFrom(files("$rootDir/config/detekt/detekt.yml"))
+    config.setFrom(files("$projectDir/config/detekt/detekt.yml"))
     buildUponDefaultConfig = false
-    baseline = file("$rootDir/config/detekt/baseline.xml")
+    baseline = file("$projectDir/config/detekt/baseline.xml")
 }
 
 // Spring Boot dependency-management plugin overrides Kotlin compiler dependencies in the

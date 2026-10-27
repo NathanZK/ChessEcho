@@ -25,7 +25,7 @@ infer a deployed state from unrelated context.
 ## Migration convention while pre-deployment
 
 While the pre-deployment default applies, schema evolution is folded into the
-baseline migration (`src/main/resources/db/migration/V1__baseline.sql`)
+baseline migration (`backend/src/main/resources/db/migration/V1__baseline.sql`)
 instead of being preserved as a synthetic, never-deployed version ladder
 (for example, an unreleased `V2`/`V3`). `#80` (timed training) established
 this pattern: schema changes needed for that feature were consolidated into
@@ -81,7 +81,7 @@ re-specifying evidence doctrine in every issue:
 Verification rigor should scale proportionately with the change's risk and failure modes:
 
 - **Routine changes:** Verified with standard unit/component tests, linting, and type checking:
-  - Backend validation: `./gradlew ktlintCheck`, `./gradlew detektMain detektTest`, and `./gradlew test`.
+  - Backend validation: `./gradlew ktlintCheck`, `./gradlew detektMain detektTest`, and `./gradlew test` from `backend/`.
   - Frontend validation: `npm run lint`, `npx tsc --noEmit`, `npm run test`, and `npm run build` from `frontend/`.
 - **Rendered UI state:** Verified with running-app visual proof plus flow interaction coverage.
 - **Concurrency & data integrity:** Multi-worker, database, or race-condition risks
@@ -97,7 +97,7 @@ Verification rigor should scale proportionately with the change's risk and failu
 
 Backend static analysis pairs ktlint (formatting and lexical style) with Detekt (type-resolved semantic defect detection, complexity metrics, and documentation alignment):
 
-- **Toolchain & execution:** Detekt 1.23.7 runs with type resolution via `./gradlew detektMain detektTest`. Detekt tasks are wired into `./gradlew check` and CI's `build` job.
+- **Toolchain & execution:** Detekt 1.23.7 runs with type resolution via `./gradlew detektMain detektTest` from `backend/`. Detekt tasks are wired into `./gradlew check` and CI's `build` job.
 - **Formatting authority:** Formatting is solely ktlint's domain. `detekt-formatting` is strictly prohibited to prevent rule duplication and competing auto-formatters.
 - **Enforced rule groups:**
   - *Group A (Correctness & Exceptions):* `AvoidReferentialEquality` (String referential equality), `CastNullableToNonNullableType`, `ElseCaseInsteadOfExhaustiveWhen`, `EqualsAlwaysReturnsTrueOrFalse`, `UnconditionalJumpStatementInLoop`, `MapGetWithNotNullAssertionOperator`, `SwallowedException` (narrow exception name regex `^(_|expected|ignored)$`), `ThrowingExceptionFromFinally`, `ExceptionRaisedInUnexpectedLocation`, `TooGenericExceptionThrown`.
@@ -105,7 +105,7 @@ Backend static analysis pairs ktlint (formatting and lexical style) with Detekt 
   - *Group C (KDoc):* `OutdatedDocumentation` (flags stale `@param` / `@property` tags against Kotlin signatures) and `DeprecatedBlockTag` (enforces `@Deprecated` annotations).
 - **Test-scoped accommodations:** Function naming in test source sets supports backtick-delimited descriptive test names; magic numbers in chess coordinate calculations and tests are permitted. Semantic correctness and exception handling rules remain fully active across test sources.
 - **Baseline and suppression policy:**
-  - Baselines (`config/detekt/baseline-main.xml` and `config/detekt/baseline-test.xml`) record pre-existing legacy issues and include provenance headers.
+  - Baselines (`backend/config/detekt/baseline-main.xml` and `backend/config/detekt/baseline-test.xml`) record pre-existing legacy issues and include provenance headers.
   - New code and modifications introduced in pull requests must satisfy all blocking rules; new baseline entries must not be introduced for new development.
   - In-source suppressions (`@Suppress("RuleName")`) must be narrowly scoped to the specific function or statement and must be accompanied by an explanatory comment justifying why immediate refactoring is unsuitable.
 

@@ -350,8 +350,8 @@ the personal counts without changing guest practice. See
 and [`PuzzleAttemptCount.test.tsx`](../../frontend/src/__tests__/PuzzleAttemptCount.test.tsx).
 The endpoint is described in
 [`API_CONTRACT.md`](../../API_CONTRACT.md), with implementation in the
-[controller route](../../src/main/kotlin/com/chessecho/controller/PuzzleEventController.kt)
-and [request DTO](../../src/main/kotlin/com/chessecho/dto/PuzzleEventRequest.kt).
+[controller route](../../backend/src/main/kotlin/com/chessecho/controller/PuzzleEventController.kt)
+and [request DTO](../../backend/src/main/kotlin/com/chessecho/dto/PuzzleEventRequest.kt).
 
 Timed practice uses local stopwatch/countdown state and submits
 `POST /api/puzzles/attempt` with attempt/puzzle IDs, mode, elapsed time,
@@ -360,8 +360,8 @@ with a receipt; the page does not render the receipt, only a separate failure
 notice when the request fails. Authenticated attempts include the selected
 account ID; guest attempts omit it. This route is also absent from
 `API_CONTRACT.md`; its current
-[route](../../src/main/kotlin/com/chessecho/controller/PuzzleController.kt)
-and [request/response DTO](../../src/main/kotlin/com/chessecho/dto/TrainingAttemptRequest.kt)
+[route](../../backend/src/main/kotlin/com/chessecho/controller/PuzzleController.kt)
+and [request/response DTO](../../backend/src/main/kotlin/com/chessecho/dto/TrainingAttemptRequest.kt)
 define the boundary.
 
 `StopwatchTimer` and `CountdownTimer` generate UUIDs with

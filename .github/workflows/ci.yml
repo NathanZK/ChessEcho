@@ -38,15 +38,7 @@ jobs:
         with:
           filters: |
             backend:
-              - 'src/**'
-              - 'gradle/**'
-              - 'config/detekt/**'
-              - 'build.gradle.kts'
-              - 'settings.gradle.kts'
-              - 'gradlew'
-              - 'gradlew.bat'
-              - 'Dockerfile'
-              - '.dockerignore'
+              - 'backend/**'
               - 'docker-compose.yml'
               - 'Makefile'
               - '.env.example'
@@ -57,19 +49,15 @@ jobs:
               - '.github/workflows/ci.yml'
               - 'API_CONTRACT.md'
             docker:
-              - 'Dockerfile'
-              - '.dockerignore'
-              - 'src/**'
-              - 'gradle/**'
-              - 'build.gradle.kts'
-              - 'settings.gradle.kts'
-              - 'gradlew'
-              - 'gradlew.bat'
+              - 'backend/**'
               - '.github/workflows/ci.yml'
   build:
     needs: changes
     if: ${{ needs.changes.outputs.backend == 'true' }}
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -114,7 +102,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build backend Docker image
-        run: docker build -t chessecho-backend:test .
+        run: docker build -t chessecho-backend:test backend
       - name: Smoke check container runtime and app.jar
         run: |
           docker run --rm --entrypoint java chessecho-backend:test -version

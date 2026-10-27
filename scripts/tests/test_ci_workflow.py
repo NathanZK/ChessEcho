@@ -52,6 +52,10 @@ class CiWorkflowStructureTest(unittest.TestCase):
         self.assertIn("needs.changes.outputs.backend == 'true' && needs.build.result == 'success'", docker_if)
         self.assertIn("needs.changes.outputs.backend == 'false' && needs.build.result == 'skipped'", docker_if)
 
+        docker_steps = docker_job.get("steps", [])
+        build_step = next(s for s in docker_steps if "docker build" in s.get("run", ""))
+        self.assertIn("docker build -t chessecho-backend:test backend", build_step.get("run", ""))
+
     def test_ci_gate_job_configuration(self):
         jobs = self.workflow.get("jobs", {})
         gate = jobs.get("ci-gate", {})
@@ -81,6 +85,8 @@ class CiWorkflowStructureTest(unittest.TestCase):
     def test_backend_build_detekt_step_and_path_filter(self):
         jobs = self.workflow.get("jobs", {})
         build_job = jobs.get("build", {})
+        defaults = build_job.get("defaults", {}).get("run", {})
+        self.assertEqual(defaults.get("working-directory"), "backend")
         steps = build_job.get("steps", [])
         runs = [s.get("run", "") for s in steps]
         self.assertIn("./gradlew detektMain detektTest", runs)
@@ -89,7 +95,7 @@ class CiWorkflowStructureTest(unittest.TestCase):
         steps = changes_job.get("steps", [])
         filter_step = next(s for s in steps if s.get("id") == "filter")
         filters_str = filter_step.get("with", {}).get("filters", "")
-        self.assertIn("config/detekt/**", filters_str)
+        self.assertIn("backend/**", filters_str)
 
 
 class DependencySubmissionWorkflowTest(unittest.TestCase):
@@ -117,7 +123,9 @@ class DependencySubmissionWorkflowTest(unittest.TestCase):
         uses = [s.get("uses", "") for s in steps]
         self.assertTrue(any("actions/checkout" in u for u in uses))
         self.assertTrue(any("actions/setup-java" in u for u in uses))
-        self.assertTrue(any("gradle/actions/dependency-submission" in u for u in uses))
+        sub_steps = [s for s in steps if "gradle/actions/dependency-submission" in s.get("uses", "")]
+        self.assertEqual(len(sub_steps), 1)
+        self.assertEqual(sub_steps[0].get("with", {}).get("build-root-directory"), "backend")
 
 
 class DependencyReviewWorkflowTest(unittest.TestCase):
@@ -208,6 +216,7 @@ class CodeqlWorkflowTest(unittest.TestCase):
         self.assertTrue(len(build_steps) >= 1, "Expected ./gradlew build step")
         build_step = build_steps[0]
         self.assertIn("matrix.build-mode == 'manual'", build_step.get("if", ""))
+        self.assertEqual(build_step.get("working-directory"), "backend")
 
 
 if __name__ == "__main__":
