@@ -1,12 +1,12 @@
-# Backend Mutation Testing Audit Index
+# Mutation Testing Audit Index
 
-This document serves as the durable evidence repository for opt-in PIT mutation testing audits across ChessEcho's backend services, in accordance with [mutation-testing.md](../mutation-testing.md), parent QA strategy issue [#547](https://github.com/NathanZK/ChessEcho/issues/547), and tracker issue [#550](https://github.com/NathanZK/ChessEcho/issues/550).
+This document serves as the durable evidence repository for opt-in mutation testing audits across ChessEcho's backend Kotlin services (via PIT, [mutation-testing.md](../mutation-testing.md)) and frontend TypeScript utilities (via StrykerJS, [frontend-mutation-testing.md](../frontend-mutation-testing.md)), in accordance with parent QA strategy issue [#547](https://github.com/NathanZK/ChessEcho/issues/547), backend tracker issue [#550](https://github.com/NathanZK/ChessEcho/issues/550), and frontend integration issue [#635](https://github.com/NathanZK/ChessEcho/issues/635).
 
 ---
 
 ## 1. Summary of Completed Audits
 
-| Target Class | Test Suite | Scope | Mutants Generated | Killed | Survived | No Cov | Test Strength | Audit Date |
+| Target Class / Module | Test Suite | Scope | Mutants Generated | Killed | Survived | No Cov | Test Strength | Audit Date |
 |---|---|---|---|---|---|---|---|---|
 | `AdaptivePuzzleSchedulingPolicy` | `AdaptivePuzzleSchedulingPolicyTest` | Unit | 41 | 25 (61%) | 13 (32%) | 3 (7%) | 66% | 2026-10-17 |
 | `GameImportController` | `GameImportControllerTest` | WebMvc Slice | 52 | 43 (83%) | 4 (8%) | 5 (9%) | 91% | 2026-10-17 |
@@ -26,6 +26,9 @@ This document serves as the durable evidence repository for opt-in PIT mutation 
 | `HumanMoveProvider` | `HumanMoveProviderTest` | Service Unit | 32 | 24 (75%) | 8 (25%) | 0 (0%) | 75% | 2026-10-18 |
 | `ReferenceCoverageAnalysisService` | `ReferenceCoverageAnalysisServiceTest` | Service Unit | 61 | 60 (98%) | 1 (2%) | 0 (0%) | 98% | 2026-10-18 |
 | `PositionSimilarityScorer` | `PositionSimilarityScorerTest` | Domain Unit (#91) | 38 | 26 (68%) | 11 (29%) | 1 (3%) | 70% | 2026-10-26 |
+| [`Frontend: urlUtils.ts`](#218-frontend-mutation-testing-baseline-core-calculation-utilities-issue-635) | `urlUtils.test.ts` | Frontend Utility ([#635](https://github.com/NathanZK/ChessEcho/issues/635)) | 118 | 98 (83%) | 17 (14%) | 3 (3%) | 85% | 2026-10-27 |
+| [`Frontend: chessGame.ts`](#218-frontend-mutation-testing-baseline-core-calculation-utilities-issue-635) | `ChessGameHistory.test.ts` | Frontend Domain ([#635](https://github.com/NathanZK/ChessEcho/issues/635)) | 27 | 16 (59%) | 6 (22%) [4 TO] | 1 (4%) | 77% | 2026-10-27 |
+| [`Frontend: positionImport.ts`](#218-frontend-mutation-testing-baseline-core-calculation-utilities-issue-635) | `positionImport.test.ts` | Frontend Domain ([#635](https://github.com/NathanZK/ChessEcho/issues/635)) | 241 | 143 (59%) | 56 (23%) [15 TO] | 27 (11%) | 74% | 2026-10-27 |
 
 ---
 
@@ -366,6 +369,28 @@ This document serves as the durable evidence repository for opt-in PIT mutation 
   4. *Search button disabled state*: Empty FEN input disabled state verified via explicit `toBeDisabled()` assertion.
 - **Unresolved / Accepted Gaps**:
   - `PositionSimilarityCache`: Rebuild commit generation check remains unresolved due to absence of internal cache map assertions.
+
+### 2.18 Frontend Mutation Testing Baseline: Core Calculation Utilities (Issue [#635](https://github.com/NathanZK/ChessEcho/issues/635))
+
+- **Issue**: Issue [#635](https://github.com/NathanZK/ChessEcho/issues/635)
+- **Detailed Audit Report**: [frontend-mutation-audit.md](./frontend-mutation-audit.md)
+- **Operational Guide**: [frontend-mutation-testing.md](../frontend-mutation-testing.md)
+- **Framework**: StrykerJS 10.1.1 (`@stryker-mutator/core`, `@stryker-mutator/vitest-runner`)
+- **Scope**: `src/utils/urlUtils.ts`, `src/utils/chessGame.ts`, `src/utils/positionImport.ts`
+- **Test Suites**: `src/__tests__/urlUtils.test.ts`, `src/__tests__/ChessGameHistory.test.ts`, `src/__tests__/positionImport.test.ts`
+- **Execution Command**:
+  ```bash
+  cd frontend && npm run test:mutation
+  ```
+- **Aggregate Results**: 386 mutants generated; 257 killed (66.6%), 19 timed out (4.9%), 79 survived (20.5%), 31 no coverage (8.0%); 71.50% mutation score (276/386), 77.75% test strength (276/355).
+- **Per-Target Breakdown**:
+  - `urlUtils.ts`: 118 generated; 98 killed, 0 timed out, 17 survived, 3 no coverage; 83.05% mutation score, 85.22% test strength.
+  - `chessGame.ts`: 27 generated; 16 killed, 4 timed out, 6 survived, 1 no coverage; 74.07% mutation score, 76.92% test strength.
+  - `positionImport.ts`: 241 generated; 143 killed, 15 timed out, 56 survived, 27 no coverage; 65.56% mutation score, 73.83% test strength.
+- **Actionable Findings Deferred to Remediation Issues**:
+  1. *`chessGame.ts`*: Fallback move application doesn't verify history preservation when moves succeed.
+  2. *`urlUtils.ts`*: `buildExactPlyChessComUrl` trailing non-digit validation boundaries; `/game/computer/` path test coverage.
+  3. *`positionImport.ts`*: PGN escaped header tags (`\"`), scan comment-state combinations, and exact character move text verification.
 
 ---
 
