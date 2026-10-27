@@ -39,7 +39,9 @@ migrations, and the existing baseline must not be rewritten.
 ## Minimal issue contract and information layering
 
 Product issues use the structure in
-[`.github/ISSUE_TEMPLATE/product-issue.md`](../../.github/ISSUE_TEMPLATE/product-issue.md):
+[`.github/ISSUE_TEMPLATE/product-issue.md`](../../.github/ISSUE_TEMPLATE/product-issue.md)
+(with concrete before-and-after patterns in
+[`issue-authoring-examples.md`](issue-authoring-examples.md)):
 problem, goal, relevant failure modes, repository constraints, and observable
 acceptance criteria.
 

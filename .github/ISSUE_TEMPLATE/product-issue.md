@@ -41,7 +41,9 @@ acceptance criteria, validation/testing, mitigations, or implementation steps.
 
 Include assumptions, non-scope, dependencies, reproduction details, or exact
 implementation paths only when materially relevant; do not prescribe a design
-or file ownership merely to fill out the issue.
+or file ownership merely to fill out the issue. See
+[issue authoring examples](../../docs/engineering/issue-authoring-examples.md)
+for concrete patterns across bug fixes, full-stack features, and research issues.
 
 ## Acceptance criteria
 
@@ -51,7 +53,7 @@ or file ownership merely to fill out the issue.
   UI inspection, concurrency integration tests, or targeted mutation testing
   for consequential business logic).
 - Follow the shared verification and evidence standards in
-  docs/engineering/repository-conventions.md.
+  [repository conventions](../../docs/engineering/repository-conventions.md).
 
 ## Validation
 
@@ -59,7 +61,7 @@ List applicable validation commands (or non-default/targeted checks). A passing
 lint, type-check, build, or test suite does not by itself establish that every
 criterion has been satisfied. Standard repository validation:
 
-- Backend: `./gradlew ktlintCheck` and `./gradlew test` (or narrower,
+- Backend: `./gradlew ktlintCheck`, `./gradlew detektMain detektTest`, and `./gradlew test` (or narrower,
   targeted commands if this issue does not touch the backend).
 - Frontend: `npm run lint`, `npx tsc --noEmit`, `npm run test`, and
   `npm run build` from `frontend/` (or narrower, targeted commands if this

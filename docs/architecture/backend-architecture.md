@@ -76,9 +76,8 @@ cross-cohort routes use an advice for invalid input (400), artifact conflicts
 (409), and persistence failures (500). Endpoint tables call out additional
 route-specific responses.
 
-See [identity and session](identity-and-session.md),
-[account data boundary](../specs/account-data-boundary.md), and
-[connected account state](../specs/connected-account-state.md) for lifecycle
+See [identity and session](identity-and-session.md) and
+[API contract](../../API_CONTRACT.md) for lifecycle
 and ownership invariants.
 
 ## Identity and connected accounts
@@ -149,7 +148,12 @@ overlapping active imports for one account.
 Analysis is global per position. The orchestrator selects qualifying affected
 positions; `EngineAnalysisService` evaluates missing candidates without holding
 a database transaction around Stockfish. Unique position/move constraints
-provide conflict-safe recovery.
+provide conflict-safe recovery. Evaluations persist root-relative centipawn
+and mate scores (`baselineEvalMate`, `bestMoveEvalMate`, `evalMate`), which are
+mutually exclusive and disallow zero mate. Evaluation loss uses an 8-case
+piecewise function bounded in [0.0, 20.0]; losing mate against negative centipawns
+returns null (horizon effect), causing downstream ranking and progress to skip
+null-loss occurrences.
 
 `GameParserService` replays PGN into account/game/color-scoped occurrences. Its
 position key hashes the first four FEN fields; `EngineAnalysis` and its move
@@ -217,8 +221,9 @@ Stockfish.
 | `GET /api/puzzles/continuation` | `PuzzleController`; required `fen`; optional `mode` (default `ENGINE`) and `ratingBand` → `ContinuationService` → engine/Stockfish or human distribution provider. | 200 `ContinuationResponse`, or 404 when no candidates exist. | No principal; GET is CSRF-exempt. |
 | `GET /api/puzzles/evaluate-move` | `PuzzleController`; required `fen` and `move` → `MoveEvaluationService` validates position/move and calls Stockfish. | 200 `MoveEvaluationResponse`; invalid FEN/move maps to 400. | No principal; GET is CSRF-exempt. |
 
-See [human-move provider architecture](human-move-provider.md) for the
-empirical provider, rating bands, and fallback behavior.
+See [human-move provider architecture](human-move-provider.md) and
+[puzzle continuation architecture](puzzle-continuation.md) for the
+empirical provider, rating bands, candidate collection, and fallback behavior.
 
 ## Training and progress
 
@@ -238,20 +243,19 @@ flowchart TB
 
 A training attempt is saved through `TrainingAttemptService`; a scheduling
 event is written directly by `PuzzleEventController` after resolving the
-account and matching occurrence. `ProgressService` computes baseline and
-intervals in memory from the explicitly selected current connection's
-occurrences, their `Game.playedAt` values, the authenticated user's SOLVED
-events for that account, and engine evaluations. It does not persist derived
-progress.
+account and matching occurrence (retaining only `SOLVED` and `FAILED` outcomes).
+`ProgressService` reconstructs baseline and SOLVED-gated intervals deterministically
+in memory on each read from the explicitly selected current connection's
+occurrences, their `Game.playedAt` timestamps, and the authenticated user's SOLVED
+events for that account. Checkpoint UUIDs serve as stable observation identities.
+Late-imported games integrate deterministically upon read without summary invalidation
+or persisted progress rows.
 
 | Method and path | Controller inputs and execution/data path | Response | Access boundary |
 |---|---|---|---|
 | `POST /api/puzzles/attempt` | `TrainingAttemptRequest` JSON and optional principal → `TrainingAttemptService` validates timing/outcome, optionally resolves `accountId`, then saves `TrainingAttemptRepository` and optional user reference. | 200 `TrainingAttemptResponse`. | Optional session; authenticated attempts must select an account, and account UUIDs require a session. No CSRF registration. |
 | `POST /api/puzzles/events` | `PuzzleEventRequest` JSON and required principal → direct `AccountOwnershipService.resolveSharedAccount`, `PositionOccurrenceRepository` lookup, `AppUserRepository` reference, then `PuzzleSchedulingEventRepository.save`. | 202 empty body; 404 if no matching occurrence. | Required session. No CSRF registration. |
 | `GET /api/positions/{positionId}/progress` | `ProgressController`; UUID path value, required `playerColor`, current connected `accountId`, positive finite `minEvalLoss`, and principal → `ProgressService` verifies the connection and reads that account's occurrences plus the user's SOLVED events and engine evaluation; classifies mistakes using the selected Weaknesses threshold and computes baseline/intervals in memory. | 200 `ProgressResponse`; 400 for missing selection or invalid threshold; 404 for unknown/unconnected account. | Required session and current connection. No derived progress row is written. |
-
-See [position progress](../specs/position-progress.md) for interval boundaries,
-late-import handling, and evidence rules.
 
 ## Human-move distribution and corpus operations
 
