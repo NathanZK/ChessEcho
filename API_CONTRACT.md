@@ -562,7 +562,13 @@ curl "http://localhost:8080/api/puzzles/continuation?fen=r1bqkbnr%2Fpppp1ppp%2F2
       "providerType": "ENGINE",
       "evalCp": 40,
       "evalLoss": 0.0,
-      "timesPlayed": null
+      "timesPlayed": null,
+      "continuationMoves": ["a7a6"],
+      "continuationSanMoves": ["a6"],
+      "terminalFen": "r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4",
+      "pliesResolved": 1,
+      "isTerminal": false,
+      "terminationReason": "QUIET_STOP"
     },
     {
       "move": "Bc4",
@@ -570,7 +576,13 @@ curl "http://localhost:8080/api/puzzles/continuation?fen=r1bqkbnr%2Fpppp1ppp%2F2
       "providerType": "ENGINE",
       "evalCp": 35,
       "evalLoss": 0.05,
-      "timesPlayed": null
+      "timesPlayed": null,
+      "continuationMoves": [],
+      "continuationSanMoves": [],
+      "terminalFen": "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3",
+      "pliesResolved": 0,
+      "isTerminal": false,
+      "terminationReason": "QUIET_STOP"
     }
   ]
 }

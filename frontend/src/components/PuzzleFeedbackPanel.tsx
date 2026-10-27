@@ -1009,14 +1009,34 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
                 <div className="flex flex-col space-y-2 bg-slate-950/50 p-2.5 rounded-xl border border-slate-800">
                   <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">ChessEcho played</div>
                   <div className="flex items-center justify-between bg-emerald-900/20 px-3 py-2 rounded-lg border border-emerald-500/30">
-                    <span className="font-mono text-emerald-300 font-bold text-sm">
-                      {lastContinuationCandidates.selected.move}
-                      {lastContinuationCandidates.selected.evalLoss != null && (
-                        <span className="ml-1.5 text-[11px] text-emerald-400/80 font-sans font-normal">
-                          — {lastContinuationCandidates.selected.evalLoss.toFixed(2)} pawns
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-mono text-emerald-300 font-bold text-sm">
+                        {lastContinuationCandidates.selected.move}
+                        {lastContinuationCandidates.selected.continuationSanMoves && lastContinuationCandidates.selected.continuationSanMoves.length > 0 && (
+                          <span className="text-emerald-400/80 font-normal text-xs">
+                            {' '}→ {lastContinuationCandidates.selected.continuationSanMoves.join(' ')}
+                          </span>
+                        )}
+                        {lastContinuationCandidates.selected.evalLoss != null && (
+                          <span className="ml-1.5 text-[11px] text-emerald-400/80 font-sans font-normal">
+                            — {lastContinuationCandidates.selected.evalLoss.toFixed(2)} pawns
+                          </span>
+                        )}
+                      </span>
+                      {lastContinuationCandidates.selected.isTerminal ? (
+                        <span className="text-[10px] text-rose-300 bg-rose-950/60 border border-rose-700/50 px-1.5 py-0.5 rounded font-sans font-semibold">
+                          Terminal
+                        </span>
+                      ) : (lastContinuationCandidates.selected.pliesResolved != null && lastContinuationCandidates.selected.pliesResolved > 0) || (lastContinuationCandidates.selected.continuationSanMoves && lastContinuationCandidates.selected.continuationSanMoves.length > 0) ? (
+                        <span className="text-[10px] text-emerald-300/80 bg-emerald-950/60 border border-emerald-700/50 px-1.5 py-0.5 rounded font-mono">
+                          +{lastContinuationCandidates.selected.pliesResolved ?? lastContinuationCandidates.selected.continuationSanMoves?.length} plies
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-slate-400 bg-slate-800/60 border border-slate-700 px-1.5 py-0.5 rounded font-sans">
+                          Quiet
                         </span>
                       )}
-                    </span>
+                    </div>
                     <span className="text-[10px] text-emerald-400/70 font-semibold bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">Selected</span>
                   </div>
 
@@ -1026,14 +1046,34 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
                       <div className="flex flex-col space-y-1.5">
                         {lastContinuationCandidates.candidates.filter(c => c.move !== lastContinuationCandidates.selected.move).map(alt => (
                           <div key={alt.move} className="flex items-center justify-between bg-slate-900 px-3 py-1.5 rounded-lg border border-slate-800 hover:border-slate-600 transition group">
-                            <span className="font-mono text-slate-300 text-xs font-semibold">
-                              {alt.move}
-                              {alt.evalLoss != null && (
-                                <span className="ml-1.5 text-[10px] text-slate-400 font-sans font-normal">
-                                  — {alt.evalLoss.toFixed(2)} pawns
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="font-mono text-slate-300 text-xs font-semibold">
+                                {alt.move}
+                                {alt.continuationSanMoves && alt.continuationSanMoves.length > 0 && (
+                                  <span className="text-slate-400 font-normal">
+                                    {' '}→ {alt.continuationSanMoves.join(' ')}
+                                  </span>
+                                )}
+                                {alt.evalLoss != null && (
+                                  <span className="ml-1.5 text-[10px] text-slate-400 font-sans font-normal">
+                                    — {alt.evalLoss.toFixed(2)} pawns
+                                  </span>
+                                )}
+                              </span>
+                              {alt.isTerminal ? (
+                                <span className="text-[9px] text-rose-300 bg-rose-950/60 border border-rose-700/50 px-1.5 py-0.5 rounded font-sans font-semibold">
+                                  Terminal
+                                </span>
+                              ) : (alt.pliesResolved != null && alt.pliesResolved > 0) || (alt.continuationSanMoves && alt.continuationSanMoves.length > 0) ? (
+                                <span className="text-[9px] text-indigo-300 bg-indigo-950/60 border border-indigo-700/50 px-1.5 py-0.5 rounded font-mono">
+                                  +{alt.pliesResolved ?? alt.continuationSanMoves?.length} plies
+                                </span>
+                              ) : (
+                                <span className="text-[9px] text-slate-400 bg-slate-800/60 border border-slate-700 px-1.5 py-0.5 rounded font-sans">
+                                  Quiet
                                 </span>
                               )}
-                            </span>
+                            </div>
                             <button
                               type="button"
                               onClick={() => onAlternativeSelected?.(alt)}

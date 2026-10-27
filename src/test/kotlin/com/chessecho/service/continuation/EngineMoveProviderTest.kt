@@ -3,8 +3,10 @@ package com.chessecho.service.continuation
 import com.chessecho.service.EngineCandidate
 import com.chessecho.service.EvalScore
 import com.chessecho.service.PositionAnalysis
+import com.chessecho.service.PvContinuationResult
 import com.chessecho.service.StockfishService
 import org.junit.jupiter.api.Test
+import org.mockito.kotlin.any
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.verify
@@ -265,5 +267,130 @@ class EngineMoveProviderTest {
         assertEquals("c5", fallback?.move)
         assertEquals(15, fallback?.evalCp)
         assertEquals(0.0, fallback?.evalLoss)
+    }
+
+    @Test
+    fun `getContinuationCandidates invokes independent continuation search per candidate move`() {
+        // Ruy Lopez root FEN: 1. e4 e5 2. Nf3 Nc6 3. Bb5 a6
+        val fen = "r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4"
+        val candidates =
+            listOf(
+                EngineCandidate("Ba4", EvalScore(cp = 30, mate = null)),
+                EngineCandidate("Bxc6", EvalScore(cp = 20, mate = null)),
+            )
+        whenever(stockfishService.analyzeMultiPv(eq(fen), eq(16), eq(5))).thenReturn(candidates)
+
+        val ba4Fen = "r1bqkbnr/1ppp1ppp/p1n5/4p3/B3P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 1 4"
+        val bxc6Fen = "r1bqkbnr/1ppp1ppp/p1B5/4p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 0 4"
+
+        val ba4Continuation =
+            PvContinuationResult(
+                originalFen = ba4Fen,
+                terminalFen = ba4Fen,
+                moves = emptyList(),
+                sanMoves = emptyList(),
+                score = EvalScore(cp = 30, mate = null),
+                pliesResolved = 0,
+                isTerminal = false,
+                terminationReason = TerminationReason.QUIET_STOP,
+            )
+        val bxc6Continuation =
+            PvContinuationResult(
+                originalFen = bxc6Fen,
+                terminalFen = "r1bqkbnr/1pp2ppp/p1p5/4p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 5",
+                moves = listOf("d7c6"),
+                sanMoves = listOf("dxc6"),
+                score = EvalScore(cp = 20, mate = null),
+                pliesResolved = 1,
+                isTerminal = false,
+                terminationReason = TerminationReason.QUIET_STOP,
+            )
+
+        whenever(stockfishService.resolveForcingPvContinuation(eq(ba4Fen), any())).thenReturn(ba4Continuation)
+        whenever(stockfishService.resolveForcingPvContinuation(eq(bxc6Fen), any())).thenReturn(bxc6Continuation)
+
+        val results = engineMoveProvider.getContinuationCandidates(fen)
+
+        assertEquals(2, results.size)
+
+        // Candidate 1: Ba4 (0 plies)
+        val cand1 = results[0]
+        assertEquals("Ba4", cand1.move)
+        assertEquals(ba4Fen, cand1.resultingFen)
+        assertEquals(0, cand1.pliesResolved)
+        assertTrue(cand1.continuationMoves.isEmpty())
+        assertTrue(cand1.continuationSanMoves.isEmpty())
+        assertEquals(ba4Fen, cand1.terminalFen)
+        assertEquals(TerminationReason.QUIET_STOP, cand1.terminationReason)
+
+        // Candidate 2: Bxc6 (1 ply recapture)
+        val cand2 = results[1]
+        assertEquals("Bxc6", cand2.move)
+        assertEquals(bxc6Fen, cand2.resultingFen)
+        assertEquals(1, cand2.pliesResolved)
+        assertEquals(listOf("d7c6"), cand2.continuationMoves)
+        assertEquals(listOf("dxc6"), cand2.continuationSanMoves)
+        assertEquals("r1bqkbnr/1pp2ppp/p1p5/4p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 5", cand2.terminalFen)
+        assertEquals(TerminationReason.QUIET_STOP, cand2.terminationReason)
+
+        // Verify independent search calls
+        verify(stockfishService).resolveForcingPvContinuation(eq(ba4Fen), any())
+        verify(stockfishService).resolveForcingPvContinuation(eq(bxc6Fen), any())
+    }
+
+    @Test
+    fun `getContinuationCandidates isolates exception in one candidate continuation and preserves others`() {
+        val fen = "r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4"
+        val candidates =
+            listOf(
+                EngineCandidate("Ba4", EvalScore(cp = 30, mate = null)),
+                EngineCandidate("Bxc6", EvalScore(cp = 20, mate = null)),
+            )
+        whenever(stockfishService.analyzeMultiPv(eq(fen), eq(16), eq(5))).thenReturn(candidates)
+
+        val ba4Fen = "r1bqkbnr/1ppp1ppp/p1n5/4p3/B3P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 1 4"
+        val bxc6Fen = "r1bqkbnr/1ppp1ppp/p1B5/4p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 0 4"
+
+        val bxc6Continuation =
+            PvContinuationResult(
+                originalFen = bxc6Fen,
+                terminalFen = "r1bqkbnr/1pp2ppp/p1p5/4p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 5",
+                moves = listOf("d7c6"),
+                sanMoves = listOf("dxc6"),
+                score = EvalScore(cp = 20, mate = null),
+                pliesResolved = 1,
+                isTerminal = false,
+                terminationReason = TerminationReason.QUIET_STOP,
+            )
+
+        // Ba4 continuation throws an exception (e.g. process crash or I/O failure)
+        whenever(stockfishService.resolveForcingPvContinuation(eq(ba4Fen), any()))
+            .thenThrow(RuntimeException("Engine subprocess crash"))
+        whenever(stockfishService.resolveForcingPvContinuation(eq(bxc6Fen), any()))
+            .thenReturn(bxc6Continuation)
+
+        val results = engineMoveProvider.getContinuationCandidates(fen)
+
+        assertEquals(2, results.size)
+
+        // Candidate 1: Ba4 falls back safely to its resulting FEN with 0 plies and null terminationReason
+        val cand1 = results[0]
+        assertEquals("Ba4", cand1.move)
+        assertEquals(ba4Fen, cand1.resultingFen)
+        assertEquals(0, cand1.pliesResolved)
+        assertTrue(cand1.continuationMoves.isEmpty())
+        assertTrue(cand1.continuationSanMoves.isEmpty())
+        assertEquals(ba4Fen, cand1.terminalFen)
+        assertNull(cand1.terminationReason)
+
+        // Candidate 2: Bxc6 is unaffected and retains its full continuation
+        val cand2 = results[1]
+        assertEquals("Bxc6", cand2.move)
+        assertEquals(bxc6Fen, cand2.resultingFen)
+        assertEquals(1, cand2.pliesResolved)
+        assertEquals(listOf("d7c6"), cand2.continuationMoves)
+        assertEquals(listOf("dxc6"), cand2.continuationSanMoves)
+        assertEquals("r1bqkbnr/1pp2ppp/p1p5/4p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 5", cand2.terminalFen)
+        assertEquals(TerminationReason.QUIET_STOP, cand2.terminationReason)
     }
 }

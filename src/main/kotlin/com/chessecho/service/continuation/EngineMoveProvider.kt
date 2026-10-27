@@ -76,12 +76,19 @@ class EngineMoveProvider(
         }
 
         val resultingFen = applyMove(fen, move) ?: return null
+        val continuation = runCatching { stockfishService.resolveForcingPvContinuation(resultingFen) }.getOrNull()
         return ContinuationCandidate(
             move = move,
             resultingFen = resultingFen,
             providerType = providerType,
             evalCp = candidateCp,
             evalLoss = evalLoss,
+            continuationMoves = continuation?.moves ?: emptyList(),
+            continuationSanMoves = continuation?.sanMoves ?: emptyList(),
+            terminalFen = continuation?.terminalFen ?: resultingFen,
+            pliesResolved = continuation?.pliesResolved ?: 0,
+            isTerminal = continuation?.isTerminal ?: false,
+            terminationReason = continuation?.terminationReason,
         )
     }
 
@@ -90,6 +97,7 @@ class EngineMoveProvider(
         val baseline = fallbackAnalysis["baseline"] ?: return null
         val bestMove = baseline.bestMove?.takeIf { isValidEngineMove(it) } ?: return null
         val resultingFen = applyMove(fen, bestMove) ?: return null
+        val continuation = runCatching { stockfishService.resolveForcingPvContinuation(resultingFen) }.getOrNull()
 
         return ContinuationCandidate(
             move = bestMove,
@@ -97,6 +105,12 @@ class EngineMoveProvider(
             providerType = providerType,
             evalCp = baseline.score.cp,
             evalLoss = 0.0,
+            continuationMoves = continuation?.moves ?: emptyList(),
+            continuationSanMoves = continuation?.sanMoves ?: emptyList(),
+            terminalFen = continuation?.terminalFen ?: resultingFen,
+            pliesResolved = continuation?.pliesResolved ?: 0,
+            isTerminal = continuation?.isTerminal ?: false,
+            terminationReason = continuation?.terminationReason,
         )
     }
 

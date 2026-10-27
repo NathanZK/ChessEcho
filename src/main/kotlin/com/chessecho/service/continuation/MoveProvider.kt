@@ -7,6 +7,12 @@ data class ContinuationCandidate(
     val evalCp: Int? = null,
     val evalLoss: Double? = null,
     val timesPlayed: Int? = null,
+    val continuationMoves: List<String> = emptyList(),
+    val continuationSanMoves: List<String> = emptyList(),
+    val terminalFen: String = resultingFen,
+    val pliesResolved: Int = 0,
+    val isTerminal: Boolean = false,
+    val terminationReason: TerminationReason? = null,
 )
 
 interface MoveProvider {
