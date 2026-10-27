@@ -35,3 +35,7 @@ out/
 ### Log files ###
 *.log
 .agent-workflow/
+
+### Stryker Mutation Testing ###
+.stryker-tmp/
+reports/
