@@ -1,13 +1,19 @@
 package com.chessecho.service
 
+import com.chessecho.service.continuation.TerminationReason
 import com.github.bhlangonijr.chesslib.Board
+import com.github.bhlangonijr.chesslib.Piece
+import com.github.bhlangonijr.chesslib.PieceType
+import com.github.bhlangonijr.chesslib.move.Move
 import com.github.bhlangonijr.chesslib.move.MoveList
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 data class EvalScore(val cp: Int?, val mate: Int?)
 
@@ -21,9 +27,34 @@ data class EngineCandidate(
     val score: EvalScore,
 )
 
+data class QuiescenceOptions(
+    val maxDepth: Int = 8,
+    val maxNodes: Long = 5000L,
+    val timeoutMs: Long = 250L,
+    val maxPlies: Int = 10,
+)
+
+data class PvContinuationResult(
+    val originalFen: String,
+    val terminalFen: String,
+    val moves: List<String>,
+    val sanMoves: List<String>,
+    val score: EvalScore?,
+    val pliesResolved: Int,
+    val isTerminal: Boolean,
+    val terminationReason: TerminationReason,
+)
+
 @Service
-class StockfishService {
+class StockfishService(
+    private val processStarter: (List<String>) -> Process = { ProcessBuilder(it).start() },
+) {
     private val logger = LoggerFactory.getLogger(StockfishService::class.java)
+
+    private val engineExecutor =
+        Executors.newCachedThreadPool { runnable ->
+            Thread(runnable).apply { isDaemon = true }
+        }
 
     /**
      * Executes engine MultiPV analysis for a given FEN position to determine the top-N engine candidate moves.
@@ -298,6 +329,324 @@ class StockfishService {
         val ml = MoveList(fen)
         ml.add(move)
         return ml.toSan().trim()
+    }
+
+    /**
+     * Resolves a tactical continuation from a position using bounded Stockfish search and forcing PV replay.
+     */
+    fun resolveForcingPvContinuation(
+        fen: String,
+        options: QuiescenceOptions = QuiescenceOptions(),
+    ): PvContinuationResult {
+        val board = validateAndLoadBoard(fen)
+        val terminalRoot = checkTerminalRoot(board, fen)
+        if (terminalRoot != null) {
+            return terminalRoot
+        }
+
+        val context = SubprocessContext(processStarter)
+        val task =
+            engineExecutor.submit<PvContinuationResult> {
+                try {
+                    context.start()
+                    val output = executeSearchWithOutput(context, fen, options)
+                    replayForcingPv(board, fen, output.pvMoves, output.score, options, output.nodeLimitReached)
+                } finally {
+                    context.close()
+                }
+            }
+
+        return try {
+            task.get(options.timeoutMs, TimeUnit.MILLISECONDS)
+        } catch (e: TimeoutException) {
+            task.cancel(true)
+            context.close()
+            logger.debug("Forcing PV search timed out after {}ms for FEN {}", options.timeoutMs, fen, e)
+            buildFallbackResult(fen, TerminationReason.TIMEOUT)
+        } catch (e: Exception) {
+            task.cancel(true)
+            context.close()
+            logger.warn("Forcing PV search failed for FEN {}", fen, e)
+            buildFallbackResult(fen, TerminationReason.ENGINE_ERROR)
+        }
+    }
+
+    /**
+     * Resolves a tactical continuation from a position with a provided reader and sendCommand,
+     * enabling deterministic unit testing of the search output parsing and move replay.
+     */
+    fun resolveForcingPvContinuation(
+        fen: String,
+        options: QuiescenceOptions = QuiescenceOptions(),
+        reader: BufferedReader,
+        sendCommand: (String) -> Unit = {},
+    ): PvContinuationResult {
+        val board = validateAndLoadBoard(fen)
+        val terminalRoot = checkTerminalRoot(board, fen)
+        if (terminalRoot != null) {
+            return terminalRoot
+        }
+        sendCommand("uci\nisready\nposition fen $fen\ngo depth ${options.maxDepth} nodes ${options.maxNodes}")
+        val output = readSearchOutput(reader, sendCommand, options)
+        return replayForcingPv(board, fen, output.pvMoves, output.score, options, output.nodeLimitReached)
+    }
+
+    private fun validateAndLoadBoard(fen: String): Board {
+        if (fen.isBlank() || fen.split(" ").size < 4) {
+            throw IllegalArgumentException("Invalid FEN: $fen")
+        }
+        val board = Board()
+        try {
+            board.loadFromFen(fen)
+        } catch (e: Exception) {
+            throw IllegalArgumentException("Invalid FEN: $fen", e)
+        }
+        return board
+    }
+
+    private fun checkTerminalRoot(
+        board: Board,
+        fen: String,
+    ): PvContinuationResult? {
+        if (!board.isMated && !board.isDraw && !board.isStaleMate) {
+            return null
+        }
+        return buildFallbackResult(fen, TerminationReason.TERMINAL).copy(isTerminal = true)
+    }
+
+    private class SubprocessContext(
+        private val processStarter: (List<String>) -> Process,
+    ) : AutoCloseable {
+        private val logger = LoggerFactory.getLogger(SubprocessContext::class.java)
+        private val lock = Any()
+
+        @Volatile
+        private var closed = false
+
+        var process: Process? = null
+        var reader: BufferedReader? = null
+        var writer: OutputStreamWriter? = null
+
+        fun start() {
+            synchronized(lock) {
+                if (closed) return
+                val proc = processStarter(listOf("stockfish"))
+                process = proc
+                reader = BufferedReader(InputStreamReader(proc.inputStream))
+                writer = OutputStreamWriter(proc.outputStream)
+            }
+        }
+
+        fun send(cmd: String) {
+            val w = writer ?: throw IllegalStateException("Writer unavailable")
+            w.write("$cmd\n")
+            w.flush()
+        }
+
+        fun isClosed(): Boolean = closed
+
+        override fun close() {
+            synchronized(lock) {
+                closed = true
+                try {
+                    reader?.close()
+                } catch (e: Exception) {
+                    logger.debug("Reader close exception", e)
+                }
+                try {
+                    writer?.close()
+                } catch (e: Exception) {
+                    logger.debug("Writer close exception", e)
+                }
+                val proc = process
+                if (proc != null) {
+                    proc.destroyForcibly()
+                    try {
+                        proc.waitFor()
+                    } catch (e: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        logger.debug("Interrupted during process wait", e)
+                    }
+                }
+            }
+        }
+    }
+
+    private data class SearchOutput(
+        val pvMoves: List<String>,
+        val score: EvalScore?,
+        val nodeLimitReached: Boolean,
+    )
+
+    private fun executeSearchWithOutput(
+        context: SubprocessContext,
+        fen: String,
+        options: QuiescenceOptions,
+    ): SearchOutput {
+        if (context.isClosed()) {
+            return SearchOutput(emptyList(), null, false)
+        }
+        context.send("uci\nisready\nposition fen $fen\ngo depth ${options.maxDepth} nodes ${options.maxNodes}")
+        val r = context.reader ?: throw IllegalStateException("Reader unavailable")
+        return readSearchOutput(r, context::send, options)
+    }
+
+    private fun readSearchOutput(
+        reader: BufferedReader,
+        sendCommand: (String) -> Unit,
+        options: QuiescenceOptions,
+    ): SearchOutput {
+        var state = SearchOutput(emptyList(), null, false)
+        while (true) {
+            val line = reader.readLine() ?: break
+            if (line.startsWith("info ")) {
+                state = parseSearchInfo(line, options.maxNodes, state)
+            } else if (line.startsWith("bestmove")) {
+                break
+            }
+        }
+        sendCommand("quit")
+        return state
+    }
+
+    private fun parseSearchInfo(
+        line: String,
+        maxNodes: Long,
+        current: SearchOutput,
+    ): SearchOutput {
+        val score = parseEngineScore(line, invert = true) ?: current.score
+        val nodeLimitReached = current.nodeLimitReached || isNodeLimitLine(line, maxNodes)
+        val extractedPv = extractPvMoves(line)
+        val pvMoves = if (extractedPv.isNotEmpty()) extractedPv else current.pvMoves
+        return SearchOutput(pvMoves, score, nodeLimitReached)
+    }
+
+    private fun isNodeLimitLine(
+        line: String,
+        maxNodes: Long,
+    ): Boolean {
+        if (!line.contains(" nodes ")) return false
+        val tokens = line.split("\\s+".toRegex())
+        val idx = tokens.indexOf("nodes")
+        if (idx == -1 || idx + 1 >= tokens.size) return false
+        val nodes = tokens[idx + 1].toLongOrNull() ?: return false
+        return nodes >= maxNodes
+    }
+
+    private fun extractPvMoves(line: String): List<String> {
+        if (!line.contains(" pv ")) return emptyList()
+        val tokens = line.split("\\s+".toRegex())
+        val idx = tokens.indexOf("pv")
+        if (idx == -1 || idx + 1 >= tokens.size) return emptyList()
+        return tokens.subList(idx + 1, tokens.size).filter { it.isNotBlank() }
+    }
+
+    private fun replayForcingPv(
+        board: Board,
+        originalFen: String,
+        pvMoves: List<String>,
+        score: EvalScore?,
+        options: QuiescenceOptions,
+        nodeLimitReached: Boolean,
+    ): PvContinuationResult {
+        if (pvMoves.isEmpty()) {
+            val reason = if (nodeLimitReached) TerminationReason.NODE_LIMIT else TerminationReason.QUIET_STOP
+            return buildFallbackResult(originalFen, reason).copy(score = score)
+        }
+
+        val appliedUci = mutableListOf<String>()
+        val appliedSan = mutableListOf<String>()
+        var terminationReason = TerminationReason.PV_EXHAUSTED
+        var isTerminal = false
+
+        for (uciMove in pvMoves) {
+            if (appliedUci.size >= options.maxPlies) {
+                terminationReason = TerminationReason.PLY_LIMIT
+                break
+            }
+            val outcome = applyNextForcingMove(board, uciMove, appliedUci, appliedSan)
+            if (outcome != null) {
+                terminationReason = outcome.first
+                isTerminal = outcome.second
+                break
+            }
+        }
+
+        return PvContinuationResult(
+            originalFen = originalFen,
+            terminalFen = board.fen,
+            moves = appliedUci,
+            sanMoves = appliedSan,
+            score = score,
+            pliesResolved = appliedUci.size,
+            isTerminal = isTerminal,
+            terminationReason = terminationReason,
+        )
+    }
+
+    private fun applyNextForcingMove(
+        board: Board,
+        uciMove: String,
+        appliedUci: MutableList<String>,
+        appliedSan: MutableList<String>,
+    ): Pair<TerminationReason, Boolean>? {
+        val move =
+            board.legalMoves().find { it.toString() == uciMove }
+                ?: return Pair(TerminationReason.PV_EXHAUSTED, false)
+
+        if (!isForcingMove(board, move)) {
+            return Pair(TerminationReason.QUIET_STOP, false)
+        }
+
+        val ml = MoveList(board.fen)
+        ml.add(move)
+        val san = ml.toSan().trim()
+
+        board.doMove(move)
+        appliedUci.add(uciMove)
+        appliedSan.add(san)
+
+        if (board.isMated || board.isDraw || board.isStaleMate) {
+            return Pair(TerminationReason.TERMINAL, true)
+        }
+        return null
+    }
+
+    private fun buildFallbackResult(
+        fen: String,
+        reason: TerminationReason,
+    ): PvContinuationResult =
+        PvContinuationResult(
+            originalFen = fen,
+            terminalFen = fen,
+            moves = emptyList(),
+            sanMoves = emptyList(),
+            score = null,
+            pliesResolved = 0,
+            isTerminal = false,
+            terminationReason = reason,
+        )
+
+    private fun isForcingMove(
+        board: Board,
+        move: Move,
+    ): Boolean {
+        if (board.isKingAttacked) {
+            return true
+        }
+        val isCapture =
+            board.getPiece(move.to) != Piece.NONE ||
+                (board.getPiece(move.from).pieceType == PieceType.PAWN && move.from.file != move.to.file)
+        if (isCapture) {
+            return true
+        }
+        if (move.promotion != Piece.NONE) {
+            return true
+        }
+        board.doMove(move)
+        val givesCheck = board.isKingAttacked
+        board.undoMove()
+        return givesCheck
     }
 
     companion object {

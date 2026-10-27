@@ -411,5 +411,209 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
       expect.stringContaining('That move is too inaccurate. It loses 1.10 pawns compared with the best move.')
     );
   });
+
+  it('7. Variable-length continuation rendering: 0-ply quiet position and multi-ply forcing lines render with distinct branches and badges', () => {
+    const handleAlternativeSelected = vi.fn();
+
+    const selectedCandidate: api.ContinuationCandidate = {
+      move: 'Ba4',
+      resultingFen: 'r1bqkbnr/1ppp1ppp/p1n5/4p3/B3P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 1 4',
+      providerType: 'ENGINE',
+      evalLoss: 0,
+      pliesResolved: 0,
+      continuationMoves: [],
+      continuationSanMoves: [],
+      terminalFen: 'r1bqkbnr/1ppp1ppp/p1n5/4p3/B3P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 1 4',
+      isTerminal: false,
+      terminationReason: 'QUIET_STOP',
+    };
+
+    const altCandidateMultiPly: api.ContinuationCandidate = {
+      move: 'Bxc6',
+      resultingFen: 'r1bqkbnr/1ppp1ppp/p1B5/4p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 0 4',
+      providerType: 'ENGINE',
+      evalLoss: 0.15,
+      pliesResolved: 1,
+      continuationMoves: ['d7c6'],
+      continuationSanMoves: ['dxc6'],
+      terminalFen: 'r1bqkbnr/1pp2ppp/p1p5/4p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 5',
+      isTerminal: false,
+      terminationReason: 'QUIET_STOP',
+    };
+
+    const altCandidateTerminal: api.ContinuationCandidate = {
+      move: 'Qxf7#',
+      resultingFen: 'r1bqkbnr/1ppp1Qpp/p1n5/4p3/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 0 4',
+      providerType: 'ENGINE',
+      evalLoss: 0,
+      pliesResolved: 0,
+      continuationMoves: [],
+      continuationSanMoves: [],
+      terminalFen: 'r1bqkbnr/1ppp1Qpp/p1n5/4p3/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 0 4',
+      isTerminal: true,
+      terminationReason: 'TERMINAL',
+    };
+
+    render(
+      <PuzzleFeedbackPanel
+        puzzle={mockPuzzle}
+        feedback={{ status: 'CORRECT', lastMove: 'Bb5' }}
+        onNextPuzzle={() => {}}
+        puzzleColorFilter="BOTH"
+        onColorFilterChange={() => {}}
+        showPuzzleSettings={false}
+        onTogglePuzzleSettings={() => {}}
+        minMistakeCount={3}
+        onMinMistakeCountChange={() => {}}
+        onApplySettings={() => {}}
+        isExplorationActive={true}
+        explorationPlayMode="CHESSECHO"
+        lastContinuationCandidates={{
+          parentFen: 'r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4',
+          selected: selectedCandidate,
+          candidates: [selectedCandidate, altCandidateMultiPly, altCandidateTerminal],
+        }}
+        onAlternativeSelected={handleAlternativeSelected}
+      />
+    );
+
+    // Selected candidate Ba4 is a quiet position (0 plies)
+    expect(screen.getByText(/Ba4/)).toBeInTheDocument();
+    expect(screen.getByText(/Quiet/i)).toBeInTheDocument();
+
+    // Multi-ply continuation renders SAN sequence and plies badge
+    expect(screen.getByText(/Bxc6/)).toBeInTheDocument();
+    expect(screen.getByText(/dxc6/)).toBeInTheDocument();
+    expect(screen.getByText(/\+1 plies/i)).toBeInTheDocument();
+
+    // Terminal candidate renders terminal indicator
+    expect(screen.getByText(/Qxf7#/)).toBeInTheDocument();
+    expect(screen.getByText(/Terminal/i)).toBeInTheDocument();
+
+    // User can select alternative line
+    const exploreButtons = screen.getAllByRole('button', { name: /Explore this line/i });
+    expect(exploreButtons).toHaveLength(2);
+    fireEvent.click(exploreButtons[0]);
+    expect(handleAlternativeSelected).toHaveBeenCalledWith(altCandidateMultiPly);
+  });
+
+  it('8. Board navigation along alternative candidate continuation: selecting candidate replays continuationSanMoves and falls back gracefully on invalid line', async () => {
+    const handleFenChange = vi.fn();
+    const handleAlternativeContinuationApplied = vi.fn();
+
+    const parentFen = 'r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4';
+    const intermediateFen = 'r1bqkbnr/1pp2ppp/p1p5/4p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 5';
+    const altCandidate: api.ContinuationCandidate = {
+      move: 'Bxc6',
+      resultingFen: 'r1bqkbnr/1ppp1ppp/p1B5/4p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 0 4',
+      providerType: 'ENGINE',
+      evalLoss: 0.15,
+      pliesResolved: 2,
+      continuationMoves: ['d7c6', 'd2d4'],
+      continuationSanMoves: ['dxc6', 'd4'],
+      terminalFen: 'r1bqkbnr/1pp2ppp/p1p5/4p3/3PP3/5N2/PPP2PPP/RNBQK2R b KQkq - 0 5',
+      isTerminal: false,
+      terminationReason: 'QUIET_STOP',
+    };
+
+    const { rerender } = render(
+      <ChessBoardArea
+        initialFen={parentFen}
+        playerColor="WHITE"
+        targetMove="Bb5"
+        acceptableMoves={mockPuzzle.acceptableMoves}
+        movesPlayed={[]}
+        onMoveAttempt={() => {}}
+        onNextPuzzle={() => {}}
+        onFenChange={handleFenChange}
+        isExplorationActive={true}
+        explorationPlayMode="CHESSECHO"
+      />
+    );
+
+    // Initial mount reports parent FEN
+    expect(handleFenChange).toHaveBeenCalledWith(parentFen);
+
+    // Apply alternative continuation candidate with replayed moves
+    rerender(
+      <ChessBoardArea
+        initialFen={parentFen}
+        playerColor="WHITE"
+        targetMove="Bb5"
+        acceptableMoves={mockPuzzle.acceptableMoves}
+        movesPlayed={[]}
+        onMoveAttempt={() => {}}
+        onNextPuzzle={() => {}}
+        onFenChange={handleFenChange}
+        isExplorationActive={true}
+        explorationPlayMode="CHESSECHO"
+        alternativeContinuationToApply={{
+          parentFen,
+          candidate: altCandidate,
+        }}
+        onAlternativeContinuationApplied={handleAlternativeContinuationApplied}
+      />
+    );
+
+    await waitFor(() => {
+      expect(handleAlternativeContinuationApplied).toHaveBeenCalledTimes(1);
+    });
+
+    // Board position advances sequentially along replayed continuation to terminal FEN
+    expect(handleFenChange).toHaveBeenCalledWith(altCandidate.terminalFen);
+
+    // Step back once in history: reaches intermediate position after dxc6 (before d4)
+    const prevButton = screen.getByTitle(/Previous Move/i);
+    expect(prevButton).not.toBeDisabled();
+    fireEvent.click(prevButton);
+    expect(handleFenChange).toHaveBeenCalledWith(intermediateFen);
+
+    // Step back second time: reaches candidate resultingFen (after Bxc6, before dxc6)
+    fireEvent.click(prevButton);
+    expect(handleFenChange).toHaveBeenCalledWith(altCandidate.resultingFen);
+
+    // Step back third time: reaches parentFen (before Bxc6)
+    fireEvent.click(prevButton);
+    expect(handleFenChange).toHaveBeenCalledWith(parentFen);
+
+    // Graceful fallback: alternative candidate with invalid continuationSanMoves falls back to resultingFen
+    const brokenCandidate: api.ContinuationCandidate = {
+      move: 'Bxc6',
+      resultingFen: 'r1bqkbnr/1ppp1ppp/p1B5/4p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 0 4',
+      providerType: 'ENGINE',
+      continuationSanMoves: ['invalidMove123'],
+      terminalFen: 'broken_fen',
+      pliesResolved: 1,
+      isTerminal: false,
+      terminationReason: 'QUIET_STOP',
+    };
+
+    rerender(
+      <ChessBoardArea
+        initialFen={parentFen}
+        playerColor="WHITE"
+        targetMove="Bb5"
+        acceptableMoves={mockPuzzle.acceptableMoves}
+        movesPlayed={[]}
+        onMoveAttempt={() => {}}
+        onNextPuzzle={() => {}}
+        onFenChange={handleFenChange}
+        isExplorationActive={true}
+        explorationPlayMode="CHESSECHO"
+        alternativeContinuationToApply={{
+          parentFen,
+          candidate: brokenCandidate,
+        }}
+        onAlternativeContinuationApplied={handleAlternativeContinuationApplied}
+      />
+    );
+
+    await waitFor(() => {
+      expect(handleAlternativeContinuationApplied).toHaveBeenCalledTimes(2);
+    });
+
+    // Falls back safely to candidate resultingFen as the final observable callback state
+    expect(handleFenChange).toHaveBeenLastCalledWith(brokenCandidate.resultingFen);
+  });
 });
 

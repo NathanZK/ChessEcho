@@ -23,11 +23,15 @@ import com.chessecho.service.EngineAnalysisService
 import com.chessecho.service.EngineCandidate
 import com.chessecho.service.EvalScore
 import com.chessecho.service.PositionAnalysis
+import com.chessecho.service.PvContinuationResult
 import com.chessecho.service.StockfishService
+import com.chessecho.service.continuation.TerminationReason
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito.verifyNoInteractions
+import org.mockito.kotlin.any
+import org.mockito.kotlin.eq
 import org.mockito.kotlin.whenever
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -619,6 +623,46 @@ class PuzzleControllerIntegrationTest {
         assertEquals(1, body.candidates.size)
         assertEquals("Bc4", body.candidates[0].move)
         assertEquals("ENGINE", body.candidates[0].providerType)
+    }
+
+    @Test
+    fun `getContinuation endpoint serializes candidate continuation fields to JSON camelCase`() {
+        val fen = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3"
+        val engineCandidates = listOf(EngineCandidate("Bb5", EvalScore(cp = 40, mate = null)))
+        whenever(stockfishService.analyzeMultiPv(fen, 16, 5)).thenReturn(engineCandidates)
+
+        val bb5Fen = "r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3"
+        val continuationResult =
+            PvContinuationResult(
+                originalFen = bb5Fen,
+                terminalFen = "r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4",
+                moves = listOf("a7a6"),
+                sanMoves = listOf("a6"),
+                score = EvalScore(cp = 40, mate = null),
+                pliesResolved = 1,
+                isTerminal = false,
+                terminationReason = TerminationReason.QUIET_STOP,
+            )
+        whenever(stockfishService.resolveForcingPvContinuation(eq(bb5Fen), any())).thenReturn(continuationResult)
+
+        val response =
+            restTemplate.exchange(
+                "/api/puzzles/continuation?fen={fen}&mode=ENGINE",
+                HttpMethod.GET,
+                null,
+                String::class.java,
+                fen,
+            )
+
+        assertEquals(HttpStatus.OK, response.statusCode)
+        val json = response.body
+        assertNotNull(json)
+        assertTrue(json.contains("\"continuationMoves\":[\"a7a6\"]"))
+        assertTrue(json.contains("\"continuationSanMoves\":[\"a6\"]"))
+        assertTrue(json.contains("\"terminalFen\":"))
+        assertTrue(json.contains("\"pliesResolved\":1"))
+        assertTrue(json.contains("\"isTerminal\":false"))
+        assertTrue(json.contains("\"terminationReason\":\"QUIET_STOP\""))
     }
 
     @Test

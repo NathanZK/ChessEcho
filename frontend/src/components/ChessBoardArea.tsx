@@ -138,6 +138,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   const [fenHistory, setFenHistory] = useState<string[]>(() => initialHistory.fens);
   const [historyIndex, setHistoryIndex] = useState<number>(() => initialHistory.index);
   const [customSquareStyles, setCustomSquareStyles] = useState<Record<string, React.CSSProperties>>({});
+  const [moveFromSquare, setMoveFromSquare] = useState<string | null>(null);
   const pendingEvaluationsRef = useRef(0);
 
   // Commit-phase mirror of the board position used by the stale-evaluation guard
@@ -257,26 +258,70 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
       const parentIndex = fenHistory.findIndex(f => f === parentFen);
       if (parentIndex !== -1) {
         try {
-          const nextFen = candidate.resultingFen;
           const parentGame = gameHistory[parentIndex] ?? game;
-          const nextGame = applyChessMoveOrUseFen(parentGame, candidate.move, nextFen);
-          setGame(nextGame);
+          const initialCandidateGame = applyChessMoveOrUseFen(parentGame, candidate.move, candidate.resultingFen);
+
+          let finalGame = initialCandidateGame;
+          let finalFen = candidate.resultingFen;
+          const replayedFens: string[] = [];
+          const replayedGames: Chess[] = [];
+
+          if (candidate.continuationSanMoves && candidate.continuationSanMoves.length > 0) {
+            let currentGame = initialCandidateGame;
+            let replayValid = true;
+
+            for (const san of candidate.continuationSanMoves) {
+              try {
+                const nextPly = cloneChessGameWithHistory(currentGame);
+                const moveResult = nextPly.move(san);
+                if (!moveResult) {
+                  replayValid = false;
+                  break;
+                }
+                currentGame = nextPly;
+                replayedFens.push(nextPly.fen());
+                replayedGames.push(nextPly);
+              } catch {
+                replayValid = false;
+                break;
+              }
+            }
+
+            if (replayValid && replayedFens.length > 0) {
+              finalGame = currentGame;
+              finalFen = replayedFens[replayedFens.length - 1];
+            } else {
+              // Graceful fallback to resultingFen
+              replayedFens.length = 0;
+              replayedGames.length = 0;
+            }
+          }
+
+          setGame(finalGame);
 
           setFenHistory((prev) => {
             const newHistory = prev.slice(0, parentIndex + 1);
-            newHistory.push(nextFen);
+            newHistory.push(candidate.resultingFen);
+            if (replayedFens.length > 0) {
+              newHistory.push(...replayedFens);
+            }
             return newHistory;
           });
+
           setGameHistory((prev) => {
             const newHistory = prev.slice(0, parentIndex + 1);
-            newHistory.push(nextGame);
+            newHistory.push(initialCandidateGame);
+            if (replayedGames.length > 0) {
+              newHistory.push(...replayedGames);
+            }
             return newHistory;
           });
-          setHistoryIndex(parentIndex + 1);
+
+          setHistoryIndex(parentIndex + 1 + replayedFens.length);
 
           setEffectuation({
             kind: 'applied',
-            fen: nextFen,
+            fen: finalFen,
             move: candidate.move,
             source: 'alternative',
           });
@@ -575,6 +620,35 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
 
   const orientation = boardOrientation ?? (playerColor === 'BLACK' ? 'black' : 'white');
 
+  const handleSquareClick = ({ piece, square }: { piece?: unknown; square: string }) => {
+    if (!moveFromSquare) {
+      if (piece) {
+        setMoveFromSquare(square);
+        setCustomSquareStyles({
+          [square]: { backgroundColor: 'rgba(245, 158, 11, 0.4)' },
+        });
+      }
+      return;
+    }
+
+    if (moveFromSquare === square) {
+      setMoveFromSquare(null);
+      setCustomSquareStyles({});
+      return;
+    }
+
+    const success = handlePieceDrop(moveFromSquare, square);
+    setMoveFromSquare(null);
+    if (!success && piece) {
+      setMoveFromSquare(square);
+      setCustomSquareStyles({
+        [square]: { backgroundColor: 'rgba(245, 158, 11, 0.4)' },
+      });
+    } else {
+      setCustomSquareStyles({});
+    }
+  };
+
   if (blindfoldMode) return null;
 
   return (
@@ -589,7 +663,9 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
             squareStyles: customSquareStyles,
             animationDurationInMs: 200,
             allowDragging: true,
+            onSquareClick: handleSquareClick,
             onPieceDrop: ({ sourceSquare, targetSquare }) => {
+              setMoveFromSquare(null);
               if (!targetSquare) return false;
               return handlePieceDrop(sourceSquare, targetSquare);
             },

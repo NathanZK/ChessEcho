@@ -54,6 +54,7 @@ contract:
   - **Analysis and practice**:
     - `/api/positions/weaknesses` exposes weakness reads (including time-control and phase partitioned stats); `/api/positions/{positionId}/progress` requires `playerColor`, a connected `accountId`, and the selected `minEvalLoss`.
     - `/api/puzzles`, `/api/puzzles/continuation`, `/api/puzzles/evaluate-move`, `/api/puzzles/attempt`, and `/api/puzzles/events` support practice.
+    - Candidate tactical continuations: Each candidate move receives independent bounded Stockfish search and forcing-prefix PV replay.
     - Forced-mate evaluations persist root-relative mate distances (`baselineEvalMate`, `bestMoveEvalMate`, `evalMate`); evaluation loss is calculated via an 8-case piecewise function in $[0.0, 20.0]$; losing-mate defense against negative centipawns returns null (horizon effect); occurrences with null loss are skipped from mistake counts and acceptable moves.
   - **Position Progress**: Dated actual-game encounters form a separate historical baseline and one aggregate observation per interval started by a persisted `SOLVED` puzzle event. Intervals use `Game.playedAt`, remain reconstructible after late imports, and reuse `GameOutcomeNormalizer`; see `docs/specs/position-progress.md`.
   - **Long Decisions**: Individual occurrences expose reliable account-player decision durations derived from PGN clocks; the account-scoped API filters by broad time control and an inclusive absolute threshold. See `docs/specs/long-decision-occurrences.md`.

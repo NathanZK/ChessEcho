@@ -470,6 +470,15 @@ export interface PositionProgressResponse {
 export type ContinuationMode = 'ENGINE' | 'HUMAN';
 export type ExplorationPlayMode = 'CHESSECHO' | 'BOTH_SIDES' | 'CHALLENGE';
 
+export type TerminationReason =
+  | 'QUIET_STOP'
+  | 'TERMINAL'
+  | 'PV_EXHAUSTED'
+  | 'PLY_LIMIT'
+  | 'NODE_LIMIT'
+  | 'TIMEOUT'
+  | 'ENGINE_ERROR';
+
 export interface ContinuationCandidate {
   move: string;
   resultingFen: string;
@@ -477,6 +486,12 @@ export interface ContinuationCandidate {
   evalCp?: number | null;
   evalLoss?: number | null;
   timesPlayed?: number | null;
+  continuationMoves?: string[];
+  continuationSanMoves?: string[];
+  terminalFen?: string;
+  pliesResolved?: number;
+  isTerminal?: boolean;
+  terminationReason?: TerminationReason;
 }
 
 export interface ContinuationResponse {
