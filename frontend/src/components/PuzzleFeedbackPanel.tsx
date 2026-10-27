@@ -1012,11 +1012,6 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="font-mono text-emerald-300 font-bold text-sm">
                         {lastContinuationCandidates.selected.move}
-                        {lastContinuationCandidates.selected.continuationSanMoves && lastContinuationCandidates.selected.continuationSanMoves.length > 0 && (
-                          <span className="text-emerald-400/80 font-normal text-xs">
-                            {' '}→ {lastContinuationCandidates.selected.continuationSanMoves.join(' ')}
-                          </span>
-                        )}
                         {lastContinuationCandidates.selected.evalLoss != null && (
                           <span className="ml-1.5 text-[11px] text-emerald-400/80 font-sans font-normal">
                             — {lastContinuationCandidates.selected.evalLoss.toFixed(2)} pawns
@@ -1049,11 +1044,6 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <span className="font-mono text-slate-300 text-xs font-semibold">
                                 {alt.move}
-                                {alt.continuationSanMoves && alt.continuationSanMoves.length > 0 && (
-                                  <span className="text-slate-400 font-normal">
-                                    {' '}→ {alt.continuationSanMoves.join(' ')}
-                                  </span>
-                                )}
                                 {alt.evalLoss != null && (
                                   <span className="ml-1.5 text-[10px] text-slate-400 font-sans font-normal">
                                     — {alt.evalLoss.toFixed(2)} pawns
