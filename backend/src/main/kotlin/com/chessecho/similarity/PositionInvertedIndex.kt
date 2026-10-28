@@ -18,16 +18,24 @@ class PositionInvertedIndex : PositionSimilarityCandidateGenerator {
 
     fun queryCandidates(
         queryTerms: Set<String>,
+        activeTurn: String,
+        maxCandidates: Int = PositionSimilarityCandidateGenerator.DEFAULT_MAX_CANDIDATES,
+    ): List<PositionDocument> = generateCandidates(queryTerms, activeTurn, maxCandidates)
+
+    fun queryCandidates(
+        queryTerms: Set<String>,
         maxCandidates: Int = PositionSimilarityCandidateGenerator.DEFAULT_MAX_CANDIDATES,
     ): List<PositionDocument> = generateCandidates(queryTerms, maxCandidates)
 
     override fun generateCandidates(
         queryTerms: Set<String>,
+        activeTurn: String,
         maxCandidates: Int,
     ): List<PositionDocument> {
         val totalDocs = documents.size
         if (queryTerms.isEmpty() || totalDocs == 0) return emptyList()
 
+        val normalizedActiveTurn = activeTurn.lowercase()
         val candidateScores = mutableMapOf<UUID, Double>()
         queryTerms.forEach { term ->
             val postingList = postings[term] ?: return@forEach
@@ -43,6 +51,7 @@ class PositionInvertedIndex : PositionSimilarityCandidateGenerator {
         return candidateScores.entries
             .asSequence()
             .mapNotNull { (id, score) -> documents[id]?.let { it to score } }
+            .filter { (doc, _) -> doc.sideToMove == normalizedActiveTurn }
             .sortedWith(
                 compareByDescending<Pair<PositionDocument, Double>> { it.second }
                     .thenBy { it.first.canonicalFen },

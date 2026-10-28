@@ -15,7 +15,7 @@ class PositionSimilarityScorer {
     ): List<RankedPositionMatch> {
         val eligibleCandidates =
             candidates
-                .filterNot { it.canonicalFen == query.canonicalFen }
+                .filter { it.sideToMove.equals(query.sideToMove, ignoreCase = true) && it.canonicalFen != query.canonicalFen }
                 .distinctBy { it.canonicalFen }
 
         val poolSize = eligibleCandidates.size

@@ -59,24 +59,45 @@ class PositionSimilarityService(
         val validFen = validator.validateOrthodoxFen(queryFen)
         val queryDoc = tokenExtractor.extractDocument(UUID.randomUUID(), validFen, includeReachability = false)
 
+        val activeTurn = queryDoc.sideToMove
+        require(activeTurn == "w" || activeTurn == "b") { "Invalid active turn: $activeTurn" }
+        val expectedColor = if (activeTurn == "w") "WHITE" else "BLACK"
+
         val index = getOrBuildIndex(account) ?: return SimilarPositionsResult(validFen, 0, emptyList())
 
-        val candidateDocs = index.queryCandidates(queryDoc.terms.keys, maxCandidates = MAX_CANDIDATES)
+        val candidateDocs = index.queryCandidates(queryDoc.terms.keys, activeTurn = activeTurn, maxCandidates = MAX_CANDIDATES)
+        if (candidateDocs.isEmpty()) {
+            return SimilarPositionsResult(validFen, 0, emptyList())
+        }
+
         val scoredMatches = scorer.score(queryDoc, candidateDocs)
         val filtered = scoredMatches.filter { it.score >= minScore }
-        val topMatches = filtered.take(limit.coerceIn(1, MAX_LIMIT))
-
-        if (topMatches.isEmpty()) {
+        if (filtered.isEmpty()) {
             return SimilarPositionsResult(validFen, candidateDocs.size, emptyList())
         }
 
-        val occurrencesByPos = loadOccurrencesForPositions(account.id, topMatches.map { it.document.positionId })
+        val occurrencesByPos = loadOccurrencesForPositions(account.id, filtered.map { it.document.positionId })
+
+        val qualifyingMatches =
+            filtered.mapNotNull { match ->
+                val occs = occurrencesByPos[match.document.positionId].orEmpty()
+                val qualifyingOccs =
+                    occs.filter { occ ->
+                        occ.playerColor.equals(expectedColor, ignoreCase = true) && occ.movePlayed.isNotBlank()
+                    }
+                if (qualifyingOccs.isEmpty()) {
+                    null
+                } else {
+                    match to qualifyingOccs
+                }
+            }
+
+        val topMatches = qualifyingMatches.take(limit.coerceIn(1, MAX_LIMIT))
 
         val results =
-            topMatches.map { match ->
-                val occs = occurrencesByPos[match.document.positionId].orEmpty()
+            topMatches.mapIndexed { index, (match, occs) ->
                 SimilarPositionMatch(
-                    rank = match.rank,
+                    rank = index + 1,
                     score = match.score,
                     positionId = match.document.positionId,
                     fen = match.document.fen,

@@ -78,4 +78,43 @@ class PositionTokenExtractorTest {
         assertEquals(doc.terms.values.sum(), doc.documentLength)
         assertTrue(doc.documentLength > 32.0, "Document length should sum all term frequencies")
     }
+
+    @Test
+    fun `PositionDocument parses sideToMove from canonicalFen with lowercase normalization and fallback`() {
+        val whiteDoc =
+            PositionDocument(
+                positionId = UUID.randomUUID(),
+                fen = startFen,
+                canonicalFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -",
+                terms = emptyMap(),
+            )
+        assertEquals("w", whiteDoc.sideToMove)
+
+        val blackDoc =
+            PositionDocument(
+                positionId = UUID.randomUUID(),
+                fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
+                canonicalFen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3",
+                terms = emptyMap(),
+            )
+        assertEquals("b", blackDoc.sideToMove)
+
+        val uppercaseDoc =
+            PositionDocument(
+                positionId = UUID.randomUUID(),
+                fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR W KQkq -",
+                canonicalFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR W KQkq -",
+                terms = emptyMap(),
+            )
+        assertEquals("w", uppercaseDoc.sideToMove)
+
+        val fallbackDoc =
+            PositionDocument(
+                positionId = UUID.randomUUID(),
+                fen = "8/8/8/8/8/8/8/8",
+                canonicalFen = "8/8/8/8/8/8/8/8",
+                terms = emptyMap(),
+            )
+        assertEquals("w", fallbackDoc.sideToMove)
+    }
 }

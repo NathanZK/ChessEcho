@@ -46,7 +46,8 @@ class IndexedVsExhaustiveRetrievalBenchmarkTest {
         for (i in 0 until 50) {
             val qFen = queryFens[i % queryFens.size]
             val queryDoc = extractor.extractDocument(UUID.randomUUID(), qFen, includeReachability = false)
-            val candidateDocs = index.queryCandidates(queryDoc.terms.keys, maxCandidates = 200)
+            val candidateDocs =
+                index.queryCandidates(queryDoc.terms.keys, activeTurn = queryDoc.sideToMove, maxCandidates = 200)
             scorer.score(queryDoc, candidateDocs)
         }
     }
@@ -69,7 +70,8 @@ class IndexedVsExhaustiveRetrievalBenchmarkTest {
                 var candidateDocs: List<PositionDocument>
                 val elapsedNs =
                     measureNanoTime {
-                        candidateDocs = index.queryCandidates(queryDoc.terms.keys, maxCandidates = 200)
+                        candidateDocs =
+                            index.queryCandidates(queryDoc.terms.keys, activeTurn = queryDoc.sideToMove, maxCandidates = 200)
                         scorer.score(queryDoc, candidateDocs)
                     }
                 latenciesMs.add(elapsedNs / 1_000_000.0)
