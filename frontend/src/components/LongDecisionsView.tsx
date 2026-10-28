@@ -1,7 +1,11 @@
 'use client';
 
 import React, { FormEvent, useRef, useState } from 'react';
-import { Chessboard } from 'react-chessboard';
+import { ChessBoardView } from './ChessBoardView';
+import { ExternalGameLink } from './ExternalGameLink';
+import { PositionCard } from './PositionCard';
+import { StatusBanner } from './StatusBanner';
+import { SectionHeader } from './SectionHeader';
 import { fetchLongDecisions, type LongDecisionOccurrence, type LongDecisionTimeControl } from '../services/api';
 import { buildExactPlyChessComUrl, isValidChessComUrl } from '../utils/urlUtils';
 
@@ -147,14 +151,12 @@ export const LongDecisionsView: React.FC<LongDecisionsViewProps> = ({
   };
 
   return (
-    <section className="mx-auto w-full max-w-6xl space-y-6 px-4 py-6 lg:px-8" aria-labelledby="long-decisions-title">
-      <header className="space-y-2">
-        <h2 id="long-decisions-title" className="text-2xl font-bold text-white">Long Decisions</h2>
-        <p className="max-w-3xl text-sm leading-6 text-slate-300">
-          Find individual positions where you spent at least the selected amount of time deciding.
-          A long decision is not a judgment about whether the move was correct.
-        </p>
-      </header>
+    <section className="mx-auto w-full max-w-[1536px] space-y-6 px-4 py-6 lg:px-8" aria-labelledby="long-decisions-title">
+      <SectionHeader
+        id="long-decisions-title"
+        title="Long Decisions"
+        description="Find individual positions where you spent at least the selected amount of time deciding. A long decision is not a judgment about whether the move was correct."
+      />
 
       <form
         className="grid gap-4 rounded-2xl border border-slate-800 bg-slate-900/70 p-5 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
@@ -233,20 +235,16 @@ export const LongDecisionsView: React.FC<LongDecisionsViewProps> = ({
           </button>
         </div>
       ) : isLoading && hasCurrentQuery ? (
-        <p className="rounded-xl border border-slate-800 bg-slate-900/50 p-5 text-sm text-slate-300" role="status">
-          Searching long-decision occurrences
-        </p>
+        <StatusBanner
+          variant="loading"
+          message="Searching long-decision occurrences"
+        />
       ) : error && hasCurrentQuery ? (
-        <div className="rounded-xl border border-rose-900/60 bg-rose-950/30 p-5 text-sm text-rose-200" role="alert">
-          <p>Could not load long-decision occurrences. {error}</p>
-          <button
-            className="mt-3 rounded-lg bg-slate-800 px-4 py-2 font-semibold text-white hover:bg-slate-700"
-            onClick={() => submittedQuery && void runSearch(submittedQuery)}
-            type="button"
-          >
-            Retry search
-          </button>
-        </div>
+        <StatusBanner
+          variant="error"
+          message={`Could not load long-decision occurrences. ${error}`}
+          action={submittedQuery ? { label: 'Retry search', onClick: () => void runSearch(submittedQuery) } : undefined}
+        />
       ) : !hasCurrentQuery ? (
         <p className="rounded-xl border border-slate-800 bg-slate-900/50 p-5 text-sm text-slate-400">
           Choose a time control and threshold, then search your imported games.
@@ -262,14 +260,14 @@ export const LongDecisionsView: React.FC<LongDecisionsViewProps> = ({
           </p>
           <div className="grid gap-4 lg:grid-cols-2">
             {occurrences.map((occurrence) => (
-              <article key={occurrence.id} className="grid gap-4 rounded-2xl border border-slate-800 bg-slate-900/70 p-4 sm:grid-cols-[180px_1fr]">
+              <PositionCard key={occurrence.id} className="grid gap-4 sm:grid-cols-[180px_1fr]">
                 <div className="aspect-square w-full max-w-[180px] overflow-hidden rounded-xl border border-slate-700">
-                  <Chessboard
-                    options={{
-                      position: occurrence.fen,
-                      boardOrientation: occurrence.playerColor === 'BLACK' ? 'black' : 'white',
-                      allowDragging: false,
-                    }}
+                  <ChessBoardView
+                    fen={occurrence.fen}
+                    boardOrientation={occurrence.playerColor}
+                    allowDragging={false}
+                    containerClassName="w-full h-full"
+                    frameClassName="w-full h-full"
                   />
                 </div>
                 <div className="flex min-w-0 flex-col gap-3">
@@ -301,14 +299,13 @@ export const LongDecisionsView: React.FC<LongDecisionsViewProps> = ({
                       return null;
                     }
                     return (
-                      <a
-                        className="mt-auto text-sm font-semibold text-emerald-300 underline decoration-emerald-700 underline-offset-4 hover:text-emerald-200"
-                        href={gameUrl}
-                        target="_blank"
+                      <ExternalGameLink
+                        url={gameUrl}
+                        label="Open game"
+                        platform="chesscom"
                         rel="noreferrer"
-                      >
-                        Open game
-                      </a>
+                        className="mt-auto"
+                      />
                     );
                   })()}
                   {onExplorePosition && (
@@ -331,7 +328,7 @@ export const LongDecisionsView: React.FC<LongDecisionsViewProps> = ({
                     </>
                   )}
                 </div>
-              </article>
+              </PositionCard>
             ))}
           </div>
           {loadMoreError && (

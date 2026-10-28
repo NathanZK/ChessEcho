@@ -2,7 +2,9 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Target, Flame, Swords, ExternalLink, Filter, AlertCircle, RefreshCw, TrendingUp } from 'lucide-react';
-import { Chessboard } from 'react-chessboard';
+import { ChessBoardView } from './ChessBoardView';
+import { PositionCard } from './PositionCard';
+import { StatusBanner } from './StatusBanner';
 import { fetchWeaknesses, WeaknessResponse } from '../services/api';
 import { Puzzle } from '../mock/mockData';
 import { HistoricalGamesModal } from './HistoricalGamesModal';
@@ -433,10 +435,10 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
 
       {/* Main Content Area: Loading / Disconnected / Error / Empty / Grid */}
       {isLoading ? (
-        <div className="flex flex-col items-center justify-center py-20 bg-slate-900/60 rounded-2xl border border-slate-800 shadow-lg space-y-3">
-          <div className="w-8 h-8 border-3 border-emerald-400 border-t-transparent rounded-full animate-spin" />
-          <span className="text-xs font-bold text-slate-300">Loading Recurring Weaknesses...</span>
-        </div>
+        <StatusBanner
+          variant="loading"
+          message="Loading Recurring Weaknesses..."
+        />
       ) : !selector ? (
         <div className="py-16 text-center space-y-4 max-w-lg mx-auto bg-slate-900/60 p-8 rounded-2xl border border-slate-800 shadow-xl">
           <div className="w-14 h-14 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-center mx-auto text-emerald-400">
@@ -497,23 +499,21 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
 
 
               return (
-                <div
+                <PositionCard
                   key={item.positionId}
-                  className="bg-slate-900 rounded-2xl p-5 border border-slate-800 hover:border-slate-700 shadow-xl transition flex flex-col justify-between space-y-4"
+                  className="p-5"
                 >
                   <div className="space-y-4">
                     {/* Top Header: Badge & FEN Board Visualization */}
                     <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4">
                       {/* Visual Board Display */}
                       <div className="w-[180px] h-[180px] shrink-0 rounded-xl overflow-hidden border border-slate-800 shadow-md">
-                        <Chessboard
-                          options={{
-                            position: item.fen,
-                            boardOrientation: playerColor === 'BLACK' ? 'black' : 'white',
-                            darkSquareStyle: { backgroundColor: '#769656' },
-                            lightSquareStyle: { backgroundColor: '#eeeed2' },
-                            allowDragging: false,
-                          }}
+                        <ChessBoardView
+                          fen={item.fen}
+                          boardOrientation={playerColor}
+                          allowDragging={false}
+                          containerClassName="w-full h-full"
+                          frameClassName="w-full h-full"
                         />
                       </div>
 
@@ -664,7 +664,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                       </button>
                     </div>
                   </div>
-                </div>
+                </PositionCard>
               );
             })}
           </div>

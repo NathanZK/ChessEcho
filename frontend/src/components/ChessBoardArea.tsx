@@ -2,13 +2,10 @@
 
 import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { Chess } from 'chess.js';
-import { Chessboard } from 'react-chessboard';
+import { ChessBoardView } from './ChessBoardView';
 import { BoardControls } from './BoardControls';
 import {
   BOARD_CONTAINER_CLASS,
-  BOARD_DARK_SQUARE_STYLE,
-  BOARD_FRAME_CLASS,
-  BOARD_LIGHT_SQUARE_STYLE,
 } from './boardPresentation';
 import { playSound } from '@/services/soundService';
 import { moveEvaluationService } from '@/services/continuationService';
@@ -654,25 +651,20 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
 
   return (
     <div className={BOARD_CONTAINER_CLASS}>
-      <div className={BOARD_FRAME_CLASS}>
-        <Chessboard
-          options={{
-            position: game.fen(),
-            boardOrientation: orientation,
-            darkSquareStyle: BOARD_DARK_SQUARE_STYLE,
-            lightSquareStyle: BOARD_LIGHT_SQUARE_STYLE,
-            squareStyles: customSquareStyles,
-            animationDurationInMs: 200,
-            allowDragging: explorationPlayMode !== 'CHALLENGE',
-            onSquareClick: handleSquareClick,
-            onPieceDrop: ({ sourceSquare, targetSquare }) => {
-              setMoveFromSquare(null);
-              if (!targetSquare) return false;
-              return handlePieceDrop(sourceSquare, targetSquare);
-            },
-          }}
-        />
-      </div>
+      <ChessBoardView
+        fen={game.fen()}
+        boardOrientation={orientation}
+        allowDragging={explorationPlayMode !== 'CHALLENGE'}
+        customSquareStyles={customSquareStyles}
+        animationDurationInMs={200}
+        onSquareClick={handleSquareClick}
+        onPieceDrop={({ sourceSquare, targetSquare }) => {
+          setMoveFromSquare(null);
+          if (!targetSquare) return false;
+          return handlePieceDrop(sourceSquare, targetSquare);
+        }}
+        containerClassName="w-full"
+      />
 
       {/* Board Navigation Controls */}
       <BoardControls

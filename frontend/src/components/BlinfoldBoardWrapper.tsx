@@ -1,12 +1,10 @@
 'use client';
 
 import React from 'react';
-import { Chessboard } from 'react-chessboard';
+import { ChessBoardView } from './ChessBoardView';
 import {
   BOARD_CONTAINER_CLASS,
-  BOARD_DARK_SQUARE_STYLE,
   BOARD_FRAME_CLASS,
-  BOARD_LIGHT_SQUARE_STYLE,
 } from './boardPresentation';
 
 interface BlinfoldBoardWrapperProps {
@@ -20,14 +18,12 @@ export const BlinfoldBoardWrapper: React.FC<BlinfoldBoardWrapperProps> = ({ fen,
   <div className={BOARD_CONTAINER_CLASS} data-testid="blindfold-board">
     <div className={BOARD_FRAME_CLASS}>
       {isVisible ? (
-        <Chessboard
-          options={{
-            position: fen,
-            boardOrientation,
-            darkSquareStyle: BOARD_DARK_SQUARE_STYLE,
-            lightSquareStyle: BOARD_LIGHT_SQUARE_STYLE,
-            allowDragging: false,
-          }}
+        <ChessBoardView
+          fen={fen}
+          boardOrientation={boardOrientation}
+          allowDragging={false}
+          containerClassName="w-full"
+          frameClassName=""
         />
       ) : (
         <div className="flex aspect-square w-full items-center justify-center p-8 text-center">
