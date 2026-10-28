@@ -6,6 +6,9 @@ import {
   applyChessEchoMove,
   resetBlinfoldGame,
   getAccumulatedPosition,
+  toggleBlinfoldVisibility,
+  setBlinfoldVisibility,
+  setPlayerMoveEvaluation,
 } from '../utils/blindfoldGameState';
 
 describe('BlinfoldContinuationMode', () => {
@@ -336,6 +339,89 @@ describe('BlinfoldContinuationMode', () => {
       const played = createBlinfoldGameState(initialFen, 'BLACK');
       expect(resetBlinfoldGame(played, initialFen, 'BLACK').currentTurn).toBe('CHESSECHO');
       expect(resetBlinfoldGame(played, initialFen, 'WHITE').currentTurn).toBe('PLAYER');
+    });
+  });
+
+  describe('Reversible visibility control', () => {
+    it('toggles visibility back and forth while preserving game state', () => {
+      const initial = createBlinfoldGameState(initialFen);
+      expect(initial.isVisible).toBe(false);
+
+      const revealed = toggleBlinfoldVisibility(initial);
+      expect(revealed.isVisible).toBe(true);
+      expect(revealed.currentFen).toBe(initial.currentFen);
+      expect(revealed.moveCount).toBe(0);
+
+      const hiddenAgain = toggleBlinfoldVisibility(revealed);
+      expect(hiddenAgain.isVisible).toBe(false);
+      expect(hiddenAgain.currentFen).toBe(initial.currentFen);
+
+      const explicitlyShown = setBlinfoldVisibility(hiddenAgain, true);
+      expect(explicitlyShown.isVisible).toBe(true);
+      const explicitlyHidden = setBlinfoldVisibility(explicitlyShown, false);
+      expect(explicitlyHidden.isVisible).toBe(false);
+    });
+  });
+
+  describe('Terminal state detection (checkmate, stalemate, draw)', () => {
+    it('detects checkmate when the player delivers checkmate', () => {
+      // Fool's mate setup: 1. f3 e5 2. g4 Qh4#
+      const foolsMateFen = 'rnbqkbnr/pppp1ppp/8/4p3/6P1/5P2/PPPPP2P/RNBQKBNR b KQkq - 0 2';
+      const state = createBlinfoldGameState(foolsMateFen, 'BLACK');
+      const result = applyPlayerMove(state, 'Qh4#', foolsMateFen) as BlinfoldGameState;
+
+      expect(result.isTerminal).toBe(true);
+      expect(result.terminalReason).toBe('CHECKMATE');
+      expect(result.winner).toBe('PLAYER');
+    });
+
+    it('detects checkmate when ChessEcho delivers checkmate', () => {
+      const foolsMateFen = 'rnbqkbnr/pppp1ppp/8/4p3/6P1/5P2/PPPPP2P/RNBQKBNR b KQkq - 0 2';
+      const state = createBlinfoldGameState(foolsMateFen, 'WHITE');
+      const result = applyChessEchoMove(state, 'Qh4#', foolsMateFen) as BlinfoldGameState;
+
+      expect(result.isTerminal).toBe(true);
+      expect(result.terminalReason).toBe('CHECKMATE');
+      expect(result.winner).toBe('CHESSECHO');
+    });
+
+    it('detects stalemate upon move application', () => {
+      // White to move: Ka8, Black: Kc8, Qc7. White is not in check, but has Ka8 trapped.
+      // Move Ka7 -> wait, let's create a stalemate position reached by a move:
+      // White: Kh1, Pg2. Black: Kf2. Black plays g3 -> wait.
+      // Standard: 7k/5Q2/6K1/8/8/8/8/8 b - - 0 1 -> stalemate already.
+      // Move that causes stalemate:
+      // FEN: 7k/8/5QK1/8/8/8/8/8 w - - 0 1. White plays Qf7 -> wait, Qf7 is not legal or check?
+      // FEN: 8/8/8/8/8/5k2/4q3/7K b - - 0 1 -> Black to move. If Black plays Qg2# that's mate. If Black plays Qf2:
+      // 8/8/8/8/8/5k2/5q2/7K w - - 1 2 -> White king on h1 has no legal moves, not in check -> Stalemate!
+      const beforeStalemate = '8/8/8/8/8/5k2/4q3/7K b - - 0 1';
+      const state = createBlinfoldGameState(beforeStalemate, 'BLACK');
+      const result = applyPlayerMove(state, 'Qf2', beforeStalemate) as BlinfoldGameState;
+
+      expect(result.isTerminal).toBe(true);
+      expect(result.terminalReason).toBe('STALEMATE');
+      expect(result.winner).toBe('DRAW');
+    });
+
+    it('prevents moves once terminal', () => {
+      const foolsMateFen = 'rnbqkbnr/pppp1ppp/8/4p3/6P1/5P2/PPPPP2P/RNBQKBNR b KQkq - 0 2';
+      const state = createBlinfoldGameState(foolsMateFen, 'BLACK');
+      const checkmated = applyPlayerMove(state, 'Qh4#', foolsMateFen) as BlinfoldGameState;
+
+      const subsequent = applyPlayerMove(checkmated, 'e4', checkmated.currentFen);
+      expect(subsequent).toHaveProperty('error');
+    });
+  });
+
+  describe('Move evaluation helper', () => {
+    it('sets move evaluation loss, acceptability, and feedbackText on lastPlayerMove', () => {
+      const initial = createBlinfoldGameState(initialFen, 'WHITE');
+      const moved = applyPlayerMove(initial, 'e4', initialFen) as BlinfoldGameState;
+
+      const evaluated = setPlayerMoveEvaluation(moved, 0.05, true, 'Good move! (+0.05 pawns)');
+      expect(evaluated.lastPlayerMove?.evalLoss).toBe(0.05);
+      expect(evaluated.lastPlayerMove?.acceptable).toBe(true);
+      expect(evaluated.lastPlayerMove?.feedbackText).toBe('Good move! (+0.05 pawns)');
     });
   });
 });

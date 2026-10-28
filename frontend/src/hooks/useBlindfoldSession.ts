@@ -6,9 +6,11 @@ import {
   applyPlayerMove,
   createBlinfoldGameState,
   resetBlinfoldGame,
+  setPlayerMoveEvaluation,
   type BlindfoldGameState,
   type BlindfoldPlayerColor,
 } from '@/utils/blindfoldGameState';
+import { moveEvaluationService } from '@/services/continuationService';
 
 export type RequestChessEchoMove = (fen: string) => Promise<string | null>;
 
@@ -18,6 +20,8 @@ export interface BlindfoldSession {
   start: (entryFen: string, playerColor: BlindfoldPlayerColor) => void;
   submitPlayerMove: (san: string) => void;
   reveal: () => void;
+  hide: () => void;
+  toggleVisibility: () => void;
   reset: () => void;
   exit: () => void;
 }
@@ -105,16 +109,55 @@ export function useBlindfoldSession(requestChessEchoMove: RequestChessEchoMove):
     commit(null);
   }, [commit]);
 
+  const evaluatePlayerMove = useCallback((fromFen: string, san: string, token: number) => {
+    try {
+      const evalPromise = moveEvaluationService.evaluateMove(fromFen, san);
+      if (!evalPromise || typeof evalPromise.then !== 'function') return;
+      evalPromise.then(
+        (res) => {
+          if (sessionTokenRef.current !== token || !stateRef.current) return;
+          let feedbackText = 'Good move!';
+          if (res) {
+            const loss = res.evalLoss ?? 0;
+            if (res.acceptable) {
+              feedbackText = loss === 0 ? 'Best move!' : `Good move! (+${loss.toFixed(2)} pawns)`;
+            } else {
+              feedbackText = `Inaccuracy (+${loss.toFixed(2)} pawns)`;
+            }
+            commit(setPlayerMoveEvaluation(stateRef.current, loss, res.acceptable, feedbackText));
+          } else {
+            commit(setPlayerMoveEvaluation(stateRef.current, undefined, undefined, 'Evaluation unavailable'));
+          }
+        },
+        () => {
+          if (sessionTokenRef.current !== token || !stateRef.current) return;
+          commit(setPlayerMoveEvaluation(stateRef.current, undefined, undefined, 'Evaluation unavailable'));
+        },
+      );
+    } catch {
+      if (sessionTokenRef.current !== token || !stateRef.current) return;
+      commit(setPlayerMoveEvaluation(stateRef.current, undefined, undefined, 'Evaluation unavailable'));
+    }
+  }, [commit]);
+
   const submitPlayerMove = useCallback((san: string) => {
     const current = stateRef.current;
-    if (!current || current.currentTurn !== 'PLAYER') return;
-    const result = applyPlayerMove(current, san, current.currentFen);
+    if (!current || current.currentTurn !== 'PLAYER' || current.isTerminal) return;
+    const fromFen = current.currentFen;
+    const result = applyPlayerMove(current, san, fromFen);
     if ('error' in result) {
       commit({ ...current, notationError: result.error });
       return;
     }
+    const token = sessionTokenRef.current;
+    if (result.isTerminal) {
+      commit(result);
+      evaluatePlayerMove(fromFen, san, token);
+      return;
+    }
     requestReply(result);
-  }, [commit, requestReply]);
+    evaluatePlayerMove(fromFen, san, token);
+  }, [commit, evaluatePlayerMove, requestReply]);
 
   const reveal = useCallback(() => {
     const current = stateRef.current;
@@ -122,5 +165,17 @@ export function useBlindfoldSession(requestChessEchoMove: RequestChessEchoMove):
     commit({ ...current, isVisible: true });
   }, [commit]);
 
-  return { state, entryFen: entry?.fen ?? null, start, submitPlayerMove, reveal, reset, exit };
+  const hide = useCallback(() => {
+    const current = stateRef.current;
+    if (!current) return;
+    commit({ ...current, isVisible: false });
+  }, [commit]);
+
+  const toggleVisibility = useCallback(() => {
+    const current = stateRef.current;
+    if (!current) return;
+    commit({ ...current, isVisible: !current.isVisible });
+  }, [commit]);
+
+  return { state, entryFen: entry?.fen ?? null, start, submitPlayerMove, reveal, hide, toggleVisibility, reset, exit };
 }
