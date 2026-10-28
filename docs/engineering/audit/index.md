@@ -30,6 +30,7 @@ This document serves as the durable evidence repository for opt-in mutation test
 | [`Frontend: chessGame.ts`](#218-frontend-mutation-testing-baseline-core-calculation-utilities-issue-635) | `ChessGameHistory.test.ts` | Frontend Domain ([#635](https://github.com/NathanZK/ChessEcho/issues/635)) | 27 | 16 (59%) | 6 (22%) [4 TO] | 1 (4%) | 77% | 2026-10-27 |
 | [`Frontend: positionImport.ts`](#218-frontend-mutation-testing-baseline-core-calculation-utilities-issue-635) | `positionImport.test.ts` | Frontend Domain ([#635](https://github.com/NathanZK/ChessEcho/issues/635)) | 241 | 143 (59%) | 56 (23%) [15 TO] | 27 (11%) | 74% | 2026-10-27 |
 | [`Frontend: PuzzleFeedbackPanel.tsx`](#219-frontend-line-exploration-continuation-secrecy-issue-629) | `ContinuationIntegration.test.tsx` | Frontend Presentation ([#629](https://github.com/NathanZK/ChessEcho/issues/629)) | 63 | 58 (92%) | 5 (8%) | 0 (0%) | 92% | 2026-10-28 |
+| [`Frontend: PuzzleFeedbackPanel.tsx (Post-#629 Baseline)`](#220-frontend-puzzlefeedbackpaneltsx-component-wide-remediation) | `ContinuationIntegration.test.tsx` + suite | Frontend Presentation ([#645](https://github.com/NathanZK/ChessEcho/issues/645)) | 739 | 394 (53%) | 253 (34%) [72 TO] | 20 (3%) | 65% | 2026-10-28 |
 
 ---
 
@@ -424,6 +425,84 @@ This document serves as the durable evidence repository for opt-in mutation test
 - **Secrecy and Replay Protection**:
   - Trailing continuation move leakage eliminated from selected card and alternative response rows.
   - Verified empirically in Vitest: Test 7 `not.toBeInTheDocument()` secrecy assertions fail if trailing continuation SAN tokens (`Nf6`, `O-O`, `dxc6`) are rendered, and Test 8 verifies that underlying continuation data continues to drive board replay upon selecting "Explore this line".
+
+### 2.20 `Frontend: PuzzleFeedbackPanel.tsx` (Component Baseline & Regression Hardening)
+
+- **Issue**: Issue [#645](https://github.com/NathanZK/ChessEcho/issues/645) (Parent QA Strategy [#547](https://github.com/NathanZK/ChessEcho/issues/547), Persistent Tracker [#550](https://github.com/NathanZK/ChessEcho/issues/550), Context [#629](https://github.com/NathanZK/ChessEcho/issues/629))
+- **Operational Guide**: [frontend-mutation-testing.md](../frontend-mutation-testing.md)
+- **Framework**: StrykerJS 10.1.1 (`@stryker-mutator/core`, `@stryker-mutator/vitest-runner`), Vitest 4.1.12
+- **Scope**: `src/components/PuzzleFeedbackPanel.tsx` (Full component: 1,152 lines)
+- **Baseline Test Suites**:
+  - `src/__tests__/ContinuationIntegration.test.tsx` (9 integration tests verifying line exploration & continuation secrecy)
+  - Full frontend suite: 56 test files, 650 tests passing
+- **Hardening Suite Added**:
+  - `src/__tests__/PuzzleFeedbackPanel.test.tsx` (25 dedicated component unit tests targeting actionable mutation sites)
+- **Execution Command (Baseline)**:
+  ```bash
+  cd frontend && npm run test:mutation -- --mutate="src/components/PuzzleFeedbackPanel.tsx"
+  ```
+- **Component-Wide Baseline Runs & Exact Reconciled Metrics**:
+  - **Pre-#629 Historical Baseline (`task-776.log`)**:
+    - Mutants Instrumented: 739
+    - Killed: 367 (49.66%)
+    - Timed Out: 27 (3.65%)
+    - Survived: 316 (42.76%)
+    - No Coverage: 28 (3.79%)
+    - Compile / Runtime Errors: 1 (0.14%)
+    - Stryker Total Score: **53.39%** $\left(\frac{367 + 27}{738} = \frac{394}{738}\right)$
+    - Stryker Covered Score ("Test Strength"): **55.49%** $\left(\frac{367 + 27}{367 + 27 + 316} = \frac{394}{710}\right)$
+  - **Live Post-#629 Merged Baseline (`task-1469` / `frontend/reports/mutation/mutation.json`)**:
+    - Mutants Instrumented: 739
+    - Killed: **394** (+27 killed, 53.32% of total)
+    - Timed Out: **72** (+45 timeouts, 9.74% of total)
+    - Survived: **253** (-63 survivors, 34.24% of total)
+    - No Coverage: **20** (-8 no-coverage, 2.71% of total)
+    - Compile / Runtime Errors: **0** (-1 error, 0.00%)
+    - Stryker Total Score: **63.06%** $\left(\frac{394 + 72}{739} = \frac{466}{739}\right)$
+    - Stryker Covered Score ("Test Strength"): **64.81%** $\left(\frac{394 + 72}{394 + 72 + 253} = \frac{466}{719}\right)$
+- **Reconciliation Between Historical (316) and Live (253) Survivors**:
+  - **251** of the 316 historical baseline survivors continued to survive in `task-1469`.
+  - **65** historical baseline survivors stopped surviving in `task-1469`:
+    - **30** in lines 1000–1080 were killed by #629's Test 7/7b in `ContinuationIntegration.test.tsx`.
+    - **7** outside lines 1000–1080 were killed by expanded test coverage across the repository suite.
+    - **28** transitioned from survived to timed out (with runner worker load identified as a possible explanation, not a proven cause).
+  - **2** former no-coverage mutants became covered by expanded tests but survived ($251 + 2 = \mathbf{253}$ live survivors).
+  - **Timeout Shift ($27 \rightarrow 72$, $+45$)**:
+    - 28 former survivors and 17 additional mutants (previously killed or no-coverage) timed out. Worker load under parallel Vitest runner concurrency is a possible explanation, not a proven cause.
+- **Traceable Disposition Inventory for All 253 Live Survivors in `mutation.json`**:
+  1. **Group 1: Audited Continuation Equivalents / Defensive Safeguards (5 mutants in lines 1000–1080)**:
+     - IDs 649 (L1025), 660 (L1027), 683 (L1057), 694 (L1059), 696 (L1069).
+     - Retained from issue #629: redundant ECMAScript relational comparison guards (`null > 0 === false`) and defensive optional chaining (`?.`) on optional callback prop `onAlternativeSelected`.
+  2. **Group 2: Targeted Actionable Sites (62 mutants across 25 unit tests — covered by new regression tests; mutation kills not verified)**:
+     - *Distinction*: These 62 sites are covered by new regression tests; mutation kills not verified. They remain classified as `Survived` in the existing `mutation.json` artifact because `task-1469` ran before `PuzzleFeedbackPanel.test.tsx` was created. They are NOT claimed as demonstrably killed in the Stryker report, but are now exercised by newly added assertions in `PuzzleFeedbackPanel.test.tsx`:
+       - Keyboard Navigation: ID 78 (L234:49 BlockStatement), ID 80 (L235:11 condition).
+       - Color Filter: ID 103-105 (L276 active style condition and equality).
+       - Timer Mode & Duration: ID 124-126 (L329 equality), ID 136 (L344 optional chaining), ID 139 (L355 error rendering).
+       - Historical Mistake Pluralization: ID 222 (L522 ternary condition).
+       - Exploration & Continuation Mode Selectors: ID 304-305 (L703), ID 313-315 (L712), ID 339-341 (L739), ID 345-350 (L747).
+       - Challenge Mode Prompt Clamping: ID 456 (L846 `Math.min` $\rightarrow$ `Math.max`).
+       - Challenge Submission Strong Indicator: ID 460-464 (L851 `some` $\rightarrow$ `every`).
+       - Candidate Whitespace Validation: ID 561-567 (L919 disabled conditions including `!challengeInput.trim()`).
+       - Calculation Input Validation: ID 623-626 (L978 disabled conditions including `!calculationInput.trim()`).
+       - Calculation Branch Line Navigation: ID 628-629 (L994 `currentBranchLine.length <= 1` $\rightarrow$ `< 1`).
+       - Attempt Count Status & Recording: ID 707-709 (L1097 `loading`), ID 711-713 (L1108 `recording`).
+       - Blindfold Entry Tooltip & Disabled State: ID 69-71 (L222-223 tooltip string conditions).
+  3. **Group 3: Provisionally Non-Actionable / Styling Equivalents (82 mutants)**:
+     - 74 `StringLiteral` mutants replacing Tailwind CSS utility classes with `""` outside test target lines (provisionally non-actionable: modifies styling rules without altering DOM elements or application logic, though individual equivalence is not individually demonstrated).
+     - 8 `OptionalChaining` mutants removing `?.` on optional callback props outside test target lines (provisionally non-actionable: defensive safeguards against unpassed callback props).
+  4. **Group 4: Unresolved Survivors (104 mutants)**:
+     - 104 mutants (63 ConditionalExpression, 23 EqualityOperator, 9 LogicalOperator, 4 BooleanLiteral, 2 ArrayDeclaration, 2 ArrowFunction, 1 ObjectLiteral) residing in secondary render branches, drawer helpers, or complex display ternaries whose exact runtime equivalence or defect potential has not been individually demonstrated.
+     - Explicitly marked as **Unresolved** pending future per-mutant execution data or isolated component decomposition.
+  - **Sum**: $5 + 62 + 82 + 104 = \mathbf{253}$ live survivors.
+- **Separate Accounting of Non-Survivor Baseline Findings**:
+  - **No-Coverage**: 20 mutants (historically 28; 6 killed, 2 became covered survivors in `task-1469`). Reside in unrendered modal drawers and unmounted fallback helpers.
+  - **Timeouts**: 72 mutants (historically 27; +45 increase, with runner worker load as a possible explanation, not a proven cause).
+  - **Errors**: 0 mutants (historically 1).
+- **Secrecy and Replay Invariant Verification**:
+  - Full regression validation confirmed via `src/__tests__/ContinuationIntegration.test.tsx` (9/9 passing).
+  - Trailing continuation tokens remain hidden during puzzle line exploration while underlying continuation moves drive exploration replay.
+- **Tracker Status**:
+  - Persistent mutation tracker [#550](https://github.com/NathanZK/ChessEcho/issues/550) remains open for ongoing whole-repo mutation testing and toolchain tuning.
 
 ---
 
