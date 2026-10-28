@@ -1,0 +1,1131 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+  <title>ChessProbe - Weakness Library (Consolidated Redesign Prototype)</title>
+  <!-- Material Symbols Outlined -->
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+  <!-- Google Fonts: Plus Jakarta Sans & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin=""/>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&amp;family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
+  <!-- Tailwind CSS v3 via CDN -->
+  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+  <script>
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "surface": "#101319",
+            "surface-dim": "#101319",
+            "surface-bright": "#363940",
+            "surface-container-lowest": "#0b0e14",
+            "surface-container-low": "#161b22",
+            "surface-container": "#1d2026",
+            "surface-container-high": "#272a31",
+            "surface-container-highest": "#32353c",
+            "on-surface": "#e1e2eb",
+            "on-surface-variant": "#b8c9c0",
+            "outline": "#7e998c",
+            "outline-variant": "#2d333b",
+            "primary": "#34d399",
+            "primary-container": "#10b981",
+            "on-primary-container": "#022c22",
+            "secondary": "#74db9d",
+            "secondary-container": "#00804c",
+            "error": "#ffb4ab",
+            "error-container": "#93000a",
+            "amber-accent": "#d99b26"
+          },
+          fontFamily: {
+            sans: ["Plus Jakarta Sans", "sans-serif"],
+            mono: ["JetBrains Mono", "monospace"]
+          }
+        }
+      }
+    };
+  </script>
+  <style>
+    body {
+      background-color: #101319;
+      color: #e1e2eb;
+      font-family: 'Plus Jakarta Sans', sans-serif;
+    }
+    .piece-container {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      user-select: none;
+    }
+    .piece-container svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    .piece-white svg {
+      filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.45));
+    }
+    .piece-black svg {
+      filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.55)) drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.6));
+    }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0b0e14; }
+    ::-webkit-scrollbar-thumb { background: #272a31; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #2e4337; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col antialiased selection:bg-primary-container selection:text-on-primary-container">
+
+  <!-- ========================================== -->
+  <!-- 0. CONTEXT BANNER (VISIBLY IDENTIFIED MOCK DATA) -->
+  <!-- ========================================== -->
+  <div class="w-full bg-surface-container-high border-b border-outline-variant px-4 py-2 text-xs flex flex-wrap items-center justify-between gap-3 sticky top-0 z-40 shadow-md">
+    <div class="flex items-center space-x-2">
+      <span class="inline-flex items-center px-2 py-0.5 rounded font-mono font-bold text-[10px] bg-primary/15 text-primary border border-primary/30">
+        REPRESENTATIVE MOCK DATA ONLY
+      </span>
+      <span class="text-on-surface text-[11px] font-medium">
+        Isolated Design Prototype · Preserves Stitch Visual Styling · Reconciled to Real ChessEcho Contracts
+      </span>
+    </div>
+    <div class="flex items-center space-x-3 text-[11px] font-mono text-outline">
+      <span class="text-secondary">Summary Panels &amp; Badges Removed</span>
+      <span>•</span>
+      <span>Engine Solutions Suppressed</span>
+      <span>•</span>
+      <a href="weakness_library_stitch_original.html" target="_blank" class="text-primary underline hover:text-white">View Original Stitch Export</a>
+    </div>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- 1. TOP APPLICATION NAVIGATION              -->
+  <!-- ========================================== -->
+  <header class="w-full h-[60px] px-6 md:px-10 flex items-center justify-between border-b border-outline-variant bg-surface-container-lowest">
+    <div class="flex items-center space-x-8">
+      <div class="flex items-center space-x-2.5 font-bold tracking-tight text-primary text-lg">
+        <span class="w-8 h-8 rounded bg-surface-container-high border border-outline-variant flex items-center justify-center text-primary shadow-inner">
+          <span class="material-symbols-outlined text-[20px]">chess</span>
+        </span>
+        <span class="font-sans font-extrabold tracking-wide">ChessProbe</span>
+      </div>
+      <!-- Primary Application Navigation -->
+      <nav class="hidden md:flex items-center space-x-6 text-xs font-mono">
+        <span class="border-b-2 border-primary text-primary font-semibold pb-1 cursor-default">
+          Weakness Library
+        </span>
+        <span class="text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer">Practice Puzzles</span>
+        <span class="text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer">Explore a Position</span>
+        <span class="text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer">Long Decisions</span>
+        <span class="text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer">Import &amp; Accounts</span>
+      </nav>
+    </div>
+
+    <div class="flex items-center space-x-4">
+      <div class="hidden sm:flex items-center space-x-2 px-3 py-1 bg-surface-container border border-outline-variant rounded text-xs font-mono text-on-surface-variant">
+        <span class="w-2 h-2 rounded-full bg-secondary"></span>
+        <span>Account: <strong class="text-on-surface">hikaru</strong> (Chess.com)</span>
+      </div>
+      <div class="flex items-center px-2.5 py-1 bg-surface-container-high border border-outline-variant rounded text-xs font-mono text-on-surface">
+        <span class="material-symbols-outlined text-[16px] mr-1 text-primary">verified_user</span>
+        <span>Authenticated</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ========================================== -->
+  <!-- MAIN WORKSPACE                             -->
+  <!-- ========================================== -->
+  <main class="flex-1 w-full max-w-[1536px] mx-auto px-4 md:px-8 py-5 space-y-4">
+
+    <!-- Active Engine Analysis Banner (Preserved from live application) -->
+    <div id="engineStatusBanner" class="p-3 bg-primary/10 border border-primary/30 rounded-xl flex items-center justify-between text-xs font-medium text-primary shadow-sm">
+      <div class="flex items-center space-x-2.5">
+        <div class="w-2 h-2 rounded-full bg-primary animate-ping shrink-0"></div>
+        <span>
+          <strong>Stockfish Engine Analysis Active:</strong> Evaluating positions for <strong>hikaru</strong>. Detected recurring weaknesses update automatically as analysis completes.
+        </span>
+      </div>
+      <button onclick="dismissBanner()" class="text-outline hover:text-on-surface text-[11px] font-mono underline ml-3 shrink-0">
+        Dismiss
+      </button>
+    </div>
+
+    <!-- Header & Section Description (Preserved existing verified information) -->
+    <section class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-outline-variant pb-4">
+      <div class="space-y-1">
+        <h1 class="text-xl md:text-2xl font-bold text-on-surface tracking-tight flex items-center gap-2">
+          <span class="material-symbols-outlined text-primary text-[24px]">flag</span>
+          <span>Recurring Opening Weaknesses Library</span>
+        </h1>
+        <p class="text-xs text-on-surface-variant max-w-2xl leading-relaxed">
+          Positions where you repeatedly make sub-optimal moves across games. Ordered by default training priority queue (fusing engine evaluation loss, habit recurrence, and recency).
+        </p>
+      </div>
+
+      <!-- View Switcher & Paging Scope Indicator -->
+      <div class="flex items-center space-x-3 shrink-0 self-end sm:self-center">
+        <div class="px-2.5 py-1 rounded bg-surface-container border border-outline-variant text-xs font-mono">
+          <span class="text-outline">Loaded Page: </span>
+          <strong class="text-primary" id="weaknessCountDisplay">6</strong>
+          <span class="text-outline text-[10px]"> positions</span>
+        </div>
+
+        <!-- View Mode Segment (Grid vs Dense List) -->
+        <div class="flex items-center bg-surface-container-lowest p-0.5 rounded border border-outline-variant">
+          <button onclick="setViewMode('grid')" id="btnViewGrid" class="flex items-center gap-1 px-2.5 py-1 rounded bg-surface-container text-primary text-xs font-mono font-semibold transition" title="Grid View">
+            <span class="material-symbols-outlined text-[15px]">grid_view</span>
+            <span class="hidden md:inline">Grid</span>
+          </button>
+          <button onclick="setViewMode('list')" id="btnViewList" class="flex items-center gap-1 px-2.5 py-1 rounded text-outline hover:text-on-surface text-xs font-mono transition" title="Dense List View">
+            <span class="material-symbols-outlined text-[15px]">view_list</span>
+            <span class="hidden md:inline">List</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Compact Multi-Dimensional Filters Bar -->
+    <section class="bg-surface-container-low border border-outline-variant rounded-xl p-3.5 space-y-2.5 shadow-sm">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        
+        <!-- Filter Controls Cluster -->
+        <div class="flex flex-wrap items-center gap-2.5">
+          <div class="flex items-center space-x-1.5 text-xs font-mono font-semibold text-outline mr-1">
+            <span class="material-symbols-outlined text-[16px]">filter_alt</span>
+            <span>Filters:</span>
+          </div>
+
+          <!-- Color Filter Segment (Backend playerColor parameter) -->
+          <div class="flex bg-surface-container-lowest p-0.5 rounded-lg border border-outline-variant text-xs font-mono">
+            <button onclick="setColorFilter('ALL')" id="filterColorALL" class="px-2.5 py-1 rounded-md font-semibold transition bg-surface-container text-primary border border-outline-variant">
+              Both Sides
+            </button>
+            <button onclick="setColorFilter('WHITE')" id="filterColorWHITE" class="px-2.5 py-1 rounded-md text-on-surface-variant hover:text-on-surface transition">
+              White
+            </button>
+            <button onclick="setColorFilter('BLACK')" id="filterColorBLACK" class="px-2.5 py-1 rounded-md text-on-surface-variant hover:text-on-surface transition">
+              Black
+            </button>
+          </div>
+
+          <!-- Phase Filter Dropdown (Supported by w.phaseStats on loaded slice) -->
+          <div class="relative">
+            <select id="selectPhase" onchange="applyFilters()" class="appearance-none bg-surface-container hover:bg-surface-container-high border border-outline-variant rounded-lg pl-2.5 pr-7 py-1 text-xs font-mono text-on-surface cursor-pointer outline-none">
+              <option value="ALL">Phase: All Phases</option>
+              <option value="OPENING">Opening</option>
+              <option value="MIDDLEGAME">Middlegame</option>
+              <option value="ENDGAME">Endgame</option>
+            </select>
+            <span class="material-symbols-outlined pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-outline text-[16px]">expand_more</span>
+          </div>
+
+          <!-- Time Control Filter Dropdown (Supported by w.timeControlStats on loaded slice) -->
+          <div class="relative">
+            <select id="selectSpeed" onchange="applyFilters()" class="appearance-none bg-surface-container hover:bg-surface-container-high border border-outline-variant rounded-lg pl-2.5 pr-7 py-1 text-xs font-mono text-on-surface cursor-pointer outline-none">
+              <option value="ALL">Speed: All Speeds</option>
+              <option value="BLITZ">Blitz</option>
+              <option value="RAPID">Rapid</option>
+              <option value="BULLET">Bullet</option>
+              <option value="CLASSICAL">Classical</option>
+            </select>
+            <span class="material-symbols-outlined pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-outline text-[16px]">expand_more</span>
+          </div>
+
+          <!-- Shared Mistake Threshold Filter (minEvalLoss backend parameter) -->
+          <div class="relative">
+            <select id="selectEvalLoss" onchange="applyFilters()" class="appearance-none bg-surface-container hover:bg-surface-container-high border border-outline-variant rounded-lg pl-2.5 pr-7 py-1 text-xs font-mono text-on-surface cursor-pointer outline-none">
+              <option value="0.3">Threshold: 0.3 pawns (Strict)</option>
+              <option value="0.5">Threshold: 0.5 pawns (Moderate)</option>
+              <option value="0.8" selected>Threshold: 0.8 pawns (Standard)</option>
+              <option value="1.2">Threshold: 1.2 pawns (Severe)</option>
+              <option value="2.0">Threshold: 2.0 pawns (Critical)</option>
+            </select>
+            <span class="material-symbols-outlined pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-outline text-[16px]">tune</span>
+          </div>
+
+          <!-- Min Mistakes Filter (minMistakeCount backend parameter) -->
+          <div class="relative">
+            <select id="selectMistakeCount" onchange="applyFilters()" class="appearance-none bg-surface-container hover:bg-surface-container-high border border-outline-variant rounded-lg pl-2.5 pr-7 py-1 text-xs font-mono text-on-surface cursor-pointer outline-none">
+              <option value="1">Min Mistakes: 1 (All)</option>
+              <option value="3" selected>Min Mistakes: 3 (Habits only)</option>
+              <option value="5">Min Mistakes: 5+ (Frequent)</option>
+            </select>
+            <span class="material-symbols-outlined pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-outline text-[16px]">repeat</span>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Main Content Area: Dynamic Grid / List of Weaknesses -->
+    <section id="weaknessDisplayArea" class="space-y-4">
+      <!-- Container populated via JavaScript -->
+    </section>
+
+  </main>
+
+  <!-- ========================================== -->
+  <!-- MODAL 1: HISTORICAL SOURCE GAMES (PRESERVED) -->
+  <!-- ========================================== -->
+  <div id="modalGames" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-surface-container border border-outline-variant rounded-2xl max-w-lg w-full p-5 space-y-4 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-outline-variant/60 pb-3">
+        <h3 class="font-sans font-bold text-sm text-on-surface flex items-center gap-2">
+          <span class="material-symbols-outlined text-primary text-[18px]">history</span>
+          <span>Source Games from Archive (<span id="modalGamesCount">0</span>)</span>
+        </h3>
+        <button onclick="closeGamesModal()" class="text-outline hover:text-on-surface p-1 rounded-lg">
+          <span class="material-symbols-outlined text-[18px]">close</span>
+        </button>
+      </div>
+      <p class="text-xs text-on-surface-variant">
+        The exact competitive encounters from your imported archive where this specific position occurred:
+      </p>
+      <div id="modalGamesUrlList" class="space-y-2 max-h-64 overflow-y-auto pr-1 text-xs font-mono">
+        <!-- Injected links -->
+      </div>
+      <div class="pt-2 flex justify-end">
+        <button onclick="closeGamesModal()" class="px-4 py-1.5 bg-surface-container-high hover:bg-surface-bright text-xs font-mono font-semibold rounded-lg text-on-surface transition">
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- MODAL 2: POSITION PROGRESS VIEW (EXPLORATORY REVIEW PATTERN ONLY) -->
+  <!-- ========================================== -->
+  <div id="modalProgress" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-surface-container border border-outline-variant rounded-2xl max-w-2xl w-full p-6 space-y-5 shadow-2xl">
+      
+      <!-- Explicit Exploratory Pattern Banner (Decision #11) -->
+      <div class="p-2.5 bg-surface-container-high border border-outline-variant rounded-xl text-xs text-on-surface-variant font-mono flex items-start gap-2">
+        <span class="material-symbols-outlined text-secondary text-[16px] shrink-0 mt-0.5">science</span>
+        <div>
+          <strong class="text-secondary">EXPLORATORY INTERACTION PATTERN ONLY:</strong> This modal illustrates an in-page drawer/modal concept to avoid page context switching. The chart layout, interval transitions, and measurements are illustrative mockups, not approved requirements.
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between border-b border-outline-variant/60 pb-3">
+        <div class="space-y-0.5">
+          <h3 class="font-sans font-bold text-base text-on-surface flex items-center gap-2">
+            <span class="material-symbols-outlined text-secondary text-[20px]">trending_up</span>
+            <span>Position Training Progress</span>
+          </h3>
+          <p class="text-xs text-outline font-mono" id="modalProgressPositionId">Position: ...</p>
+        </div>
+        <button onclick="closeProgressModal()" class="text-outline hover:text-on-surface p-1 rounded-lg">
+          <span class="material-symbols-outlined text-[18px]">close</span>
+        </button>
+      </div>
+
+      <!-- Historical Baseline vs Checkpoints -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <!-- Baseline Summary -->
+        <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-4 space-y-2">
+          <span class="text-[10px] font-mono uppercase tracking-wider text-outline font-bold">Historical Baseline</span>
+          <p class="text-xs text-on-surface-variant" id="modalProgressEncounters">7 dated encounters</p>
+          <div class="grid grid-cols-2 gap-3 pt-1">
+            <div>
+              <div class="text-[11px] text-outline font-mono">Mistake Rate</div>
+              <div class="text-lg font-bold font-mono text-error" id="modalProgressMistakeRate">71.4%</div>
+            </div>
+            <div>
+              <div class="text-[11px] text-outline font-mono">Win Rate</div>
+              <div class="text-lg font-bold font-mono text-secondary" id="modalProgressWinRate">0.0%</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Post-Solve Interval State -->
+        <div class="bg-surface-container-lowest border border-outline-variant rounded-xl p-4 space-y-2">
+          <span class="text-[10px] font-mono uppercase tracking-wider text-outline font-bold">Current Interval State</span>
+          <div class="flex items-center gap-2 pt-1">
+            <span class="w-2 h-2 rounded-full bg-secondary"></span>
+            <span class="text-xs font-mono font-semibold text-on-surface">MEASURED_OPEN</span>
+          </div>
+          <p class="text-xs text-on-surface-variant leading-relaxed">
+            Comparing post-solve encounters against the pre-training baseline.
+          </p>
+        </div>
+      </div>
+
+      <div class="p-3 bg-surface-container-high rounded-xl text-xs font-mono text-on-surface-variant flex items-center justify-between">
+        <span>Interval 1 (Post-solve): 2 encounters · Mistake Rate: <strong>0.0% (-71.4% change)</strong></span>
+        <span class="text-secondary font-bold">Progress Detected</span>
+      </div>
+
+      <div class="pt-2 flex justify-end">
+        <button onclick="closeProgressModal()" class="px-4 py-1.5 bg-surface-container-high hover:bg-surface-bright text-xs font-mono font-semibold rounded-lg text-on-surface transition">
+          Close
+        </button>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- ========================================== -->
+  <!-- MODAL 4: PRACTICE PUZZLE MODE (ILLUSTRATIVE ADAPTER) -->
+  <!-- ========================================== -->
+  <div id="modalPractice" class="fixed inset-0 bg-black/85 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-surface-container border border-outline-variant rounded-2xl max-w-xl w-full p-6 space-y-5 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-outline-variant/60 pb-3">
+        <div class="space-y-0.5">
+          <h3 class="font-sans font-bold text-base text-on-surface flex items-center gap-2">
+            <span class="material-symbols-outlined text-primary text-[20px]">swords</span>
+            <span>Practice Weakness Position</span>
+          </h3>
+          <p class="text-xs text-outline font-mono">Illustrative practice adapter active (Engine solution suppressed)</p>
+        </div>
+        <button onclick="closePracticeModal()" class="text-outline hover:text-on-surface p-1 rounded-lg">
+          <span class="material-symbols-outlined text-[18px]">close</span>
+        </button>
+      </div>
+
+      <!-- Practice Board Mock Container -->
+      <div class="flex flex-col items-center space-y-3">
+        <div class="w-64 h-64 border border-outline-variant rounded-xl overflow-hidden shadow-md" id="practiceBoardContainer">
+          <!-- Rendered board -->
+        </div>
+        <p class="text-xs text-on-surface-variant text-center max-w-md">
+          Find the best tactical decision for your color. This position is loaded from your live game encounters.
+        </p>
+      </div>
+
+      <div class="p-3 bg-surface-container-lowest border border-outline-variant rounded-xl text-xs font-mono text-outline flex items-center justify-between">
+        <span>Historical mistake on this turn: <strong class="text-error" id="practiceMistakeMove">--</strong></span>
+        <span>Solve to record checkpoint</span>
+      </div>
+
+      <div class="pt-2 flex justify-end space-x-2">
+        <button onclick="closePracticeModal()" class="px-4 py-1.5 bg-surface-container-high hover:bg-surface-bright text-xs font-mono font-semibold rounded-lg text-on-surface transition">
+          Exit Practice
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Global Footer Note -->
+  <footer class="mt-auto border-t border-outline-variant bg-surface-container-lowest py-3.5 px-6 md:px-10 text-xs font-mono text-outline">
+    <div class="max-w-[1536px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
+      <div class="flex items-center gap-2 flex-wrap">
+        <span>ChessProbe Analytical Terminal</span>
+        <span>•</span>
+        <span>Weakness Library Revised Design Prototype</span>
+        <span>•</span>
+        <span class="text-primary">Decision Record Phase 2</span>
+      </div>
+      <div class="text-[11px] text-on-surface-variant">
+        No modifications made to application codebase or database
+      </div>
+    </div>
+  </footer>
+
+  <!-- ========================================== -->
+  <!-- JAVASCRIPT: DATA & INTERACTIONS            -->
+  <!-- ========================================== -->
+  <script>
+    // Mock dataset reflecting verified backend DTOs (WeaknessResponse & PracticalEvidenceResponse)
+    const mockWeaknesses = [
+      {
+        positionId: "f4a8b2c1-9d10-4e22-81a2-45e9a319f202",
+        fen: "4r1k1/5ppp/8/3R4/8/5P2/6PP/6K1 b - - 0 34",
+        playerColor: "BLACK",
+        timesReached: 7,
+        mistakeCount: 5,
+        mistakeRate: 71.4,
+        averageLoss: 3.80,
+        priority: 9.15,
+        bestMove: "h6", // Exists in DTO, deliberately NOT shown on cards per Decision #4
+        acceptableMoves: [{ move: "h6", evalLoss: 0.0 }],
+        movesPlayed: [
+          { move: "Qe8??", timesPlayed: 3, averageLoss: 4.20 },
+          { move: "Kf8?", timesPlayed: 2, averageLoss: 3.20 }
+        ],
+        gameUrls: [
+          "https://www.chess.com/game/live/1078192341",
+          "https://www.chess.com/game/live/1081928341"
+        ],
+        openingContext: null,
+        evalCp: -20,
+        lastSeenAt: "2026-10-26T18:15:00Z",
+        phaseStats: {
+          ENDGAME: { timesReached: 7, mistakeCount: 5, mistakeRate: 0.714, averageLoss: 3.80 }
+        },
+        timeControlStats: {
+          BLITZ: { timesReached: 5, mistakeCount: 4, mistakeRate: 0.80, averageLoss: 4.10 },
+          BULLET: { timesReached: 2, mistakeCount: 1, mistakeRate: 0.50, averageLoss: 3.05 }
+        },
+        practicalEvidence: {
+          wins: 0,
+          draws: 1,
+          losses: 6,
+          scoreRate: 0.071, // (0 + 0.5*1)/7 = 7.1%
+          winRate: 0.000,   // 0/7 = 0.0%
+          eligibleGames: 7
+        }
+      },
+      {
+        positionId: "e7b0a1d4-8c29-4f31-89e1-34e8d249f101",
+        fen: "r1b1k2r/ppq2ppp/2n1p3/3p4/3P4/2PB1N2/PP1Q1PPP/R3K2R w KQkq - 1 12",
+        playerColor: "WHITE",
+        timesReached: 8,
+        mistakeCount: 5,
+        mistakeRate: 62.5,
+        averageLoss: 1.85,
+        priority: 7.24,
+        bestMove: "O-O",
+        acceptableMoves: [{ move: "O-O", evalLoss: 0.0 }],
+        movesPlayed: [
+          { move: "h4", timesPlayed: 3, averageLoss: 2.10 },
+          { move: "Ne5", timesPlayed: 2, averageLoss: 1.48 }
+        ],
+        gameUrls: [
+          "https://www.chess.com/game/live/1089234812",
+          "https://www.chess.com/game/live/1094829141",
+          "https://www.chess.com/game/live/1098192342"
+        ],
+        openingContext: {
+          eco: "B12",
+          ecoUrl: "https://www.chess.com/openings/Caro-Kann-Defense"
+        },
+        evalCp: 35,
+        lastSeenAt: "2026-10-27T14:30:00Z",
+        phaseStats: {
+          OPENING: { timesReached: 8, mistakeCount: 5, mistakeRate: 0.625, averageLoss: 1.85 }
+        },
+        timeControlStats: {
+          BLITZ: { timesReached: 6, mistakeCount: 4, mistakeRate: 0.667, averageLoss: 1.95 },
+          RAPID: { timesReached: 2, mistakeCount: 1, mistakeRate: 0.50, averageLoss: 1.55 }
+        },
+        practicalEvidence: {
+          wins: 1,
+          draws: 1,
+          losses: 6,
+          scoreRate: 0.187, // (1 + 0.5*1)/8 = 18.7%
+          winRate: 0.125,   // 1/8 = 12.5%
+          eligibleGames: 8
+        }
+      },
+      {
+        positionId: "b2c3d4e5-f6a7-4890-b123-456789abcdef",
+        fen: "2r3k1/5ppp/8/3r4/4K3/8/5PPP/8 w - - 0 48",
+        playerColor: "WHITE",
+        timesReached: 6,
+        mistakeCount: 4,
+        mistakeRate: 66.7,
+        averageLoss: 3.10,
+        priority: 8.50,
+        bestMove: "Kxd5",
+        acceptableMoves: [{ move: "Kxd5", evalLoss: 0.0 }],
+        movesPlayed: [
+          { move: "Ra1?", timesPlayed: 3, averageLoss: 3.60 },
+          { move: "f4?", timesPlayed: 1, averageLoss: 2.10 }
+        ],
+        gameUrls: [
+          "https://www.chess.com/game/live/1058291048"
+        ],
+        openingContext: null,
+        evalCp: -50,
+        lastSeenAt: "2026-10-20T19:40:00Z",
+        phaseStats: {
+          ENDGAME: { timesReached: 6, mistakeCount: 4, mistakeRate: 0.667, averageLoss: 3.10 }
+        },
+        timeControlStats: {
+          CLASSICAL: { timesReached: 4, mistakeCount: 3, mistakeRate: 0.75, averageLoss: 3.25 },
+          RAPID: { timesReached: 2, mistakeCount: 1, mistakeRate: 0.50, averageLoss: 2.80 }
+        },
+        practicalEvidence: {
+          wins: 0,
+          draws: 2,
+          losses: 4,
+          scoreRate: 0.166, // (0 + 0.5*2)/6 = 16.6%
+          winRate: 0.000,   // 0/6 = 0.0%
+          eligibleGames: 6
+        }
+      },
+      {
+        positionId: "a1b2c3d4-e5f6-4789-a012-3456789abc04",
+        fen: "r1bq1rk1/pp2ppbp/2np1np1/8/3NP3/2N1BP2/PPPQ2PP/R3KB1R w KQ - 3 9",
+        playerColor: "WHITE",
+        timesReached: 9,
+        mistakeCount: 5,
+        mistakeRate: 55.5,
+        averageLoss: 1.45,
+        priority: 7.80,
+        bestMove: "O-O-O",
+        acceptableMoves: [{ move: "O-O-O", evalLoss: 0.0 }],
+        movesPlayed: [
+          { move: "g4?", timesPlayed: 3, averageLoss: 1.70 },
+          { move: "Be2?", timesPlayed: 2, averageLoss: 1.10 }
+        ],
+        gameUrls: [
+          "https://www.chess.com/game/live/1069283741"
+        ],
+        openingContext: {
+          eco: "B72",
+          ecoUrl: "https://www.chess.com/openings/Sicilian-Defense-Dragon-Variation"
+        },
+        evalCp: 60,
+        lastSeenAt: "2026-10-22T12:00:00Z",
+        phaseStats: {
+          OPENING: { timesReached: 9, mistakeCount: 5, mistakeRate: 0.555, averageLoss: 1.45 }
+        },
+        timeControlStats: {
+          BLITZ: { timesReached: 9, mistakeCount: 5, mistakeRate: 0.555, averageLoss: 1.45 }
+        },
+        practicalEvidence: {
+          wins: 2,
+          draws: 1,
+          losses: 6,
+          scoreRate: 0.277, // (2 + 0.5*1)/9 = 27.7%
+          winRate: 0.222,   // 2/9 = 22.2%
+          eligibleGames: 9
+        }
+      },
+      {
+        positionId: "c3d9a7e1-2b44-4f11-9a33-67c8d928f303",
+        fen: "rnbqkb1r/pp2pppp/5n2/2pp4/3P4/2N2N2/PPP1PPPP/R1BQKB1R w KQkq - 2 4",
+        playerColor: "WHITE",
+        timesReached: 12,
+        mistakeCount: 6,
+        mistakeRate: 50.0,
+        averageLoss: 1.10,
+        priority: 6.40,
+        bestMove: "dxc5",
+        acceptableMoves: [{ move: "dxc5", evalLoss: 0.0 }],
+        movesPlayed: [
+          { move: "e4?", timesPlayed: 4, averageLoss: 1.35 },
+          { move: "Bg5?", timesPlayed: 2, averageLoss: 0.90 }
+        ],
+        gameUrls: [
+          "https://www.chess.com/game/live/1092384910",
+          "https://www.chess.com/game/live/1094812739"
+        ],
+        openingContext: {
+          eco: "D02",
+          ecoUrl: "https://www.chess.com/openings/Queens-Pawn-Opening"
+        },
+        evalCp: 40,
+        lastSeenAt: "2026-10-24T20:00:00Z",
+        phaseStats: {
+          OPENING: { timesReached: 12, mistakeCount: 6, mistakeRate: 0.50, averageLoss: 1.10 }
+        },
+        timeControlStats: {
+          RAPID: { timesReached: 7, mistakeCount: 3, mistakeRate: 0.428, averageLoss: 1.05 },
+          BLITZ: { timesReached: 5, mistakeCount: 3, mistakeRate: 0.60, averageLoss: 1.18 }
+        },
+        practicalEvidence: {
+          wins: 4,
+          draws: 2,
+          losses: 6,
+          scoreRate: 0.417, // (4 + 0.5*2)/12 = 41.7%
+          winRate: 0.333,   // 4/12 = 33.3%
+          eligibleGames: 12
+        }
+      },
+      {
+        positionId: "c4d5e6f7-a8b9-4012-c234-567890abcdef",
+        fen: "r1bqk2r/pp1n1ppp/2p1pn2/3p4/2PP4/2N2NP1/PP2PPBP/R1BQK2R w KQkq - 2 7",
+        playerColor: "WHITE",
+        timesReached: 10,
+        mistakeCount: 4,
+        mistakeRate: 40.0,
+        averageLoss: 0.95,
+        priority: 5.20,
+        bestMove: "O-O",
+        acceptableMoves: [{ move: "O-O", evalLoss: 0.0 }],
+        movesPlayed: [
+          { move: "Bg5", timesPlayed: 3, averageLoss: 1.10 },
+          { move: "e4", timesPlayed: 1, averageLoss: 0.80 }
+        ],
+        gameUrls: [
+          "https://www.chess.com/game/live/1049283741"
+        ],
+        openingContext: {
+          eco: "E01",
+          ecoUrl: "https://www.chess.com/openings/Catalan-Opening"
+        },
+        evalCp: 45,
+        lastSeenAt: "2026-10-18T16:20:00Z",
+        phaseStats: {
+          OPENING: { timesReached: 10, mistakeCount: 4, mistakeRate: 0.40, averageLoss: 0.95 }
+        },
+        timeControlStats: {
+          RAPID: { timesReached: 6, mistakeCount: 2, mistakeRate: 0.333, averageLoss: 0.90 },
+          BLITZ: { timesReached: 4, mistakeCount: 2, mistakeRate: 0.50, averageLoss: 1.00 }
+        },
+        practicalEvidence: {
+          wins: 5,
+          draws: 2,
+          losses: 3,
+          scoreRate: 0.60, // (5 + 0.5*2)/10 = 60.0%
+          winRate: 0.50,  // 5/10 = 50.0%
+          eligibleGames: 10
+        }
+      }
+    ];
+
+    let activeColorFilter = 'ALL';
+    let currentViewMode = 'grid';
+
+    function formatRelativeDate(isoString) {
+      if (!isoString) return 'Seen previously';
+      const date = new Date(isoString);
+      const diffDays = Math.round((new Date() - date) / (1000 * 60 * 60 * 24));
+      if (diffDays <= 0) return 'Last seen today';
+      if (diffDays === 1) return 'Last seen yesterday';
+      if (diffDays < 30) return `Last seen ${diffDays} days ago`;
+      return `Last seen ${Math.floor(diffDays / 30)} months ago`;
+    }
+
+    // High-quality Staunton SVG piece set (vector precision across all board scales)
+    const pieceSvgs = {
+      "P": `<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 45 45" width="100%" height="100%"><path d="m 22.5,9 c -2.21,0 -4,1.79 -4,4 0,0.89 0.29,1.71 0.78,2.38 C 17.33,16.5 16,18.59 16,21 c 0,2.03 0.94,3.84 2.41,5.03 C 15.41,27.09 11,31.58 11,39.5 H 34 C 34,31.58 29.59,27.09 26.59,26.03 28.06,24.84 29,23.03 29,21 29,18.59 27.67,16.5 25.72,15.38 26.21,14.71 26.5,13.89 26.5,13 c 0,-2.21 -1.79,-4 -4,-4 z" style="opacity:1;fill:#ffffff;fill-opacity:1;fill-rule:nonzero;stroke:#000000;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:miter;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"></path></svg>`,
+      "R": `<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 45 45" width="100%" height="100%"><g style="opacity:1;fill:#ffffff;fill-opacity:1;fill-rule:evenodd;stroke:#000000;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"><path d="M 9,39 L 36,39 L 36,36 L 9,36 L 9,39 z " style="stroke-linecap:butt"></path><path d="M 12,36 L 12,32 L 33,32 L 33,36 L 12,36 z " style="stroke-linecap:butt"></path><path d="M 11,14 L 11,9 L 15,9 L 15,11 L 20,11 L 20,9 L 25,9 L 25,11 L 30,11 L 30,9 L 34,9 L 34,14" style="stroke-linecap:butt"></path><path d="M 34,14 L 31,17 L 14,17 L 11,14"></path><path d="M 31,17 L 31,29.5 L 14,29.5 L 14,17" style="stroke-linecap:butt;stroke-linejoin:miter"></path><path d="M 31,29.5 L 32.5,32 L 12.5,32 L 14,29.5"></path><path d="M 11,14 L 34,14" style="fill:none;stroke:#000000;stroke-linejoin:miter"></path></g></svg>`,
+      "N": `<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 45 45" width="100%" height="100%"><g style="opacity:1;fill:none;fill-opacity:1;fill-rule:evenodd;stroke:#000000;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"><path d="M 22,10 C 32.5,11 38.5,18 38,39 L 15,39 C 15,30 25,32.5 23,18" style="fill:#ffffff;stroke:#000000"></path><path d="M 24,18 C 24.38,20.91 18.45,25.37 16,27 C 13,29 13.18,31.34 11,31 C 9.958,30.06 12.41,27.96 11,28 C 10,28 11.19,29.23 10,30 C 9,30 5.997,31 6,26 C 6,24 12,14 12,14 C 12,14 13.89,12.1 14,10.5 C 13.27,9.506 13.5,8.5 13.5,7.5 C 14.5,6.5 16.5,10 16.5,10 L 18.5,10 C 18.5,10 19.28,8.008 21,7 C 22,7 22,10 22,10" style="fill:#ffffff;stroke:#000000"></path><path d="M 9.5 25.5 A 0.5 0.5 0 1 1 8.5,25.5 A 0.5 0.5 0 1 1 9.5 25.5 z" style="fill:#000000;stroke:#000000"></path><path d="M 15 15.5 A 0.5 1.5 0 1 1  14,15.5 A 0.5 1.5 0 1 1  15 15.5 z" transform="matrix(0.866,0.5,-0.5,0.866,9.693,-5.173)" style="fill:#000000;stroke:#000000"></path></g></svg>`,
+      "B": `<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 45 45" width="100%" height="100%"><g style="opacity:1;fill:none;fill-rule:evenodd;fill-opacity:1;stroke:#000000;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"><g style="fill:#ffffff;stroke:#000000;stroke-linecap:butt"><path d="M 9,36 C 12.39,35.03 19.11,36.43 22.5,34 C 25.89,36.43 32.61,35.03 36,36 C 36,36 37.65,36.54 39,38 C 38.32,38.97 37.35,38.99 36,38.5 C 32.61,37.53 25.89,38.96 22.5,37.5 C 19.11,38.96 12.39,37.53 9,38.5 C 7.65,38.99 6.68,38.97 6,38 C 7.35,36.54 9,36 9,36 z"></path><path d="M 15,32 C 17.5,34.5 27.5,34.5 30,32 C 30.5,30.5 30,30 30,30 C 30,27.5 27.5,26 27.5,26 C 33,24.5 33.5,14.5 22.5,10.5 C 11.5,14.5 12,24.5 17.5,26 C 17.5,26 15,27.5 15,30 C 15,30 14.5,30.5 15,32 z"></path><path d="M 25 8 A 2.5 2.5 0 1 1  20,8 A 2.5 2.5 0 1 1  25 8 z"></path></g><path d="M 17.5,26 L 27.5,26 M 15,30 L 30,30 M 22.5,15.5 L 22.5,20.5 M 20,18 L 25,18" style="fill:none;stroke:#000000;stroke-linejoin:miter"></path></g></svg>`,
+      "Q": `<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 45 45" width="100%" height="100%"><g style="fill:#ffffff;stroke:#000000;stroke-width:1.5;stroke-linejoin:round"><path d="M 9,26 C 17.5,24.5 30,24.5 36,26 L 38.5,13.5 L 31,25 L 30.7,10.9 L 25.5,24.5 L 22.5,10 L 19.5,24.5 L 14.3,10.9 L 14,25 L 6.5,13.5 L 9,26 z"></path><path d="M 9,26 C 9,28 10.5,28 11.5,30 C 12.5,31.5 12.5,31 12,33.5 C 10.5,34.5 11,36 11,36 C 9.5,37.5 11,38.5 11,38.5 C 17.5,39.5 27.5,39.5 34,38.5 C 34,38.5 35.5,37.5 34,36 C 34,36 34.5,34.5 33,33.5 C 32.5,31 32.5,31.5 33.5,30 C 34.5,28 36,28 36,26 C 27.5,24.5 17.5,24.5 9,26 z"></path><path d="M 11.5,30 C 15,29 30,29 33.5,30" style="fill:none"></path><path d="M 12,33.5 C 18,32.5 27,32.5 33,33.5" style="fill:none"></path><circle cx="6" cy="12" r="2"></circle><circle cx="14" cy="9" r="2"></circle><circle cx="22.5" cy="8" r="2"></circle><circle cx="31" cy="9" r="2"></circle><circle cx="39" cy="12" r="2"></circle></g></svg>`,
+      "K": `<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 45 45" width="100%" height="100%"><g style="fill:none;fill-opacity:1;fill-rule:evenodd;stroke:#000000;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"><path d="M 22.5,11.63 L 22.5,6" style="fill:none;stroke:#000000;stroke-linejoin:miter"></path><path d="M 20,8 L 25,8" style="fill:none;stroke:#000000;stroke-linejoin:miter"></path><path d="M 22.5,25 C 22.5,25 27,17.5 25.5,14.5 C 25.5,14.5 24.5,12 22.5,12 C 20.5,12 19.5,14.5 19.5,14.5 C 18,17.5 22.5,25 22.5,25" style="fill:#ffffff;stroke:#000000;stroke-linecap:butt;stroke-linejoin:miter"></path><path d="M 12.5,37 C 18,40.5 27,40.5 32.5,37 L 32.5,30 C 32.5,30 41.5,25.5 38.5,19.5 C 34.5,13 25,16 22.5,23.5 L 22.5,27 L 22.5,23.5 C 20,16 10.5,13 6.5,19.5 C 3.5,25.5 12.5,30 12.5,30 L 12.5,37" style="fill:#ffffff;stroke:#000000"></path><path d="M 12.5,30 C 18,27 27,27 32.5,30" style="fill:none;stroke:#000000"></path><path d="M 12.5,33.5 C 18,30.5 27,30.5 32.5,33.5" style="fill:none;stroke:#000000"></path><path d="M 12.5,37 C 18,34 27,34 32.5,37" style="fill:none;stroke:#000000"></path></g></svg>`,
+      "p": `<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 45 45" width="100%" height="100%"><path d="m 22.5,9 c -2.21,0 -4,1.79 -4,4 0,0.89 0.29,1.71 0.78,2.38 C 17.33,16.5 16,18.59 16,21 c 0,2.03 0.94,3.84 2.41,5.03 C 15.41,27.09 11,31.58 11,39.5 H 34 C 34,31.58 29.59,27.09 26.59,26.03 28.06,24.84 29,23.03 29,21 29,18.59 27.67,16.5 25.72,15.38 26.21,14.71 26.5,13.89 26.5,13 c 0,-2.21 -1.79,-4 -4,-4 z" style="opacity:1;fill:#000000;fill-opacity:1;fill-rule:nonzero;stroke:#000000;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:miter;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"></path></svg>`,
+      "r": `<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 45 45" width="100%" height="100%"><g style="opacity:1;fill:#000000;fill-opacity:1;fill-rule:evenodd;stroke:#000000;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"><path d="M 9,39 L 36,39 L 36,36 L 9,36 L 9,39 z " style="stroke-linecap:butt"></path><path d="M 12.5,32 L 14,29.5 L 31,29.5 L 32.5,32 L 12.5,32 z " style="stroke-linecap:butt"></path><path d="M 12,36 L 12,32 L 33,32 L 33,36 L 12,36 z " style="stroke-linecap:butt"></path><path d="M 14,29.5 L 14,16.5 L 31,16.5 L 31,29.5 L 14,29.5 z " style="stroke-linecap:butt;stroke-linejoin:miter"></path><path d="M 14,16.5 L 11,14 L 34,14 L 31,16.5 L 14,16.5 z " style="stroke-linecap:butt"></path><path d="M 11,14 L 11,9 L 15,9 L 15,11 L 20,11 L 20,9 L 25,9 L 25,11 L 30,11 L 30,9 L 34,9 L 34,14 L 11,14 z " style="stroke-linecap:butt"></path><path d="M 12,35.5 L 33,35.5 L 33,35.5" style="fill:none;stroke:#ffffff;stroke-width:1;stroke-linejoin:miter"></path><path d="M 13,31.5 L 32,31.5" style="fill:none;stroke:#ffffff;stroke-width:1;stroke-linejoin:miter"></path><path d="M 14,29.5 L 31,29.5" style="fill:none;stroke:#ffffff;stroke-width:1;stroke-linejoin:miter"></path><path d="M 14,16.5 L 31,16.5" style="fill:none;stroke:#ffffff;stroke-width:1;stroke-linejoin:miter"></path><path d="M 11,14 L 34,14" style="fill:none;stroke:#ffffff;stroke-width:1;stroke-linejoin:miter"></path></g></svg>`,
+      "n": `<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 45 45" width="100%" height="100%"><g style="opacity:1;fill:none;fill-opacity:1;fill-rule:evenodd;stroke:#000000;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"><path d="M 22,10 C 32.5,11 38.5,18 38,39 L 15,39 C 15,30 25,32.5 23,18" style="fill:#000000;stroke:#000000"></path><path d="M 24,18 C 24.38,20.91 18.45,25.37 16,27 C 13,29 13.18,31.34 11,31 C 9.958,30.06 12.41,27.96 11,28 C 10,28 11.19,29.23 10,30 C 9,30 5.997,31 6,26 C 6,24 12,14 12,14 C 12,14 13.89,12.1 14,10.5 C 13.27,9.506 13.5,8.5 13.5,7.5 C 14.5,6.5 16.5,10 16.5,10 L 18.5,10 C 18.5,10 19.28,8.008 21,7 C 22,7 22,10 22,10" style="fill:#000000;stroke:#000000"></path><path d="M 9.5 25.5 A 0.5 0.5 0 1 1 8.5,25.5 A 0.5 0.5 0 1 1 9.5 25.5 z" style="fill:#ffffff;stroke:#ffffff"></path><path d="M 15 15.5 A 0.5 1.5 0 1 1  14,15.5 A 0.5 1.5 0 1 1  15 15.5 z" transform="matrix(0.866,0.5,-0.5,0.866,9.693,-5.173)" style="fill:#ffffff;stroke:#ffffff"></path><path d="M 24.55,10.4 L 24.1,11.85 L 24.6,12 C 27.75,13 30.25,14.49 32.5,18.75 C 34.75,23.01 35.75,29.06 35.25,39 L 35.2,39.5 L 37.45,39.5 L 37.5,39 C 38,28.94 36.62,22.15 34.25,17.66 C 31.88,13.17 28.46,11.02 25.06,10.5 L 24.55,10.4 z " style="fill:#ffffff;stroke:none"></path></g></svg>`,
+      "b": `<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 45 45" width="100%" height="100%"><g style="opacity:1;fill:none;fill-rule:evenodd;fill-opacity:1;stroke:#000000;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"><g style="fill:#000000;stroke:#000000;stroke-linecap:butt"><path d="M 9,36 C 12.39,35.03 19.11,36.43 22.5,34 C 25.89,36.43 32.61,35.03 36,36 C 36,36 37.65,36.54 39,38 C 38.32,38.97 37.35,38.99 36,38.5 C 32.61,37.53 25.89,38.96 22.5,37.5 C 19.11,38.96 12.39,37.53 9,38.5 C 7.65,38.99 6.68,38.97 6,38 C 7.35,36.54 9,36 9,36 z"></path><path d="M 15,32 C 17.5,34.5 27.5,34.5 30,32 C 30.5,30.5 30,30 30,30 C 30,27.5 27.5,26 27.5,26 C 33,24.5 33.5,14.5 22.5,10.5 C 11.5,14.5 12,24.5 17.5,26 C 17.5,26 15,27.5 15,30 C 15,30 14.5,30.5 15,32 z"></path><path d="M 25 8 A 2.5 2.5 0 1 1  20,8 A 2.5 2.5 0 1 1  25 8 z"></path></g><path d="M 17.5,26 L 27.5,26 M 15,30 L 30,30 M 22.5,15.5 L 22.5,20.5 M 20,18 L 25,18" style="fill:none;stroke:#ffffff;stroke-linejoin:miter"></path></g></svg>`,
+      "q": `<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 45 45" width="100%" height="100%"><g style="fill:#000000;stroke:#000000;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round"><path d="M 9,26 C 17.5,24.5 30,24.5 36,26 L 38.5,13.5 L 31,25 L 30.7,10.9 L 25.5,24.5 L 22.5,10 L 19.5,24.5 L 14.3,10.9 L 14,25 L 6.5,13.5 L 9,26 z" style="stroke-linecap:butt;fill:#000000"></path><path d="m 9,26 c 0,2 1.5,2 2.5,4 1,1.5 1,1 0.5,3.5 -1.5,1 -1,2.5 -1,2.5 -1.5,1.5 0,2.5 0,2.5 6.5,1 16.5,1 23,0 0,0 1.5,-1 0,-2.5 0,0 0.5,-1.5 -1,-2.5 -0.5,-2.5 -0.5,-2 0.5,-3.5 1,-2 2.5,-2 2.5,-4 -8.5,-1.5 -18.5,-1.5 -27,0 z"></path><path d="M 11.5,30 C 15,29 30,29 33.5,30"></path><path d="m 12,33.5 c 6,-1 15,-1 21,0"></path><circle cx="6" cy="12" r="2"></circle><circle cx="14" cy="9" r="2"></circle><circle cx="22.5" cy="8" r="2"></circle><circle cx="31" cy="9" r="2"></circle><circle cx="39" cy="12" r="2"></circle><path d="M 11,38.5 A 35,35 1 0 0 34,38.5" style="fill:none;stroke:#000000;stroke-linecap:butt"></path><g style="fill:none;stroke:#ffffff"><path d="M 11,29 A 35,35 1 0 1 34,29"></path><path d="M 12.5,31.5 L 32.5,31.5"></path><path d="M 11.5,34.5 A 35,35 1 0 0 33.5,34.5"></path><path d="M 10.5,37.5 A 35,35 1 0 0 34.5,37.5"></path></g></g></svg>`,
+      "k": `<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 45 45" width="100%" height="100%"><g style="fill:none;fill-opacity:1;fill-rule:evenodd;stroke:#000000;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;stroke-miterlimit:4;stroke-dasharray:none;stroke-opacity:1"><path d="M 22.5,11.63 L 22.5,6" style="fill:none;stroke:#000000;stroke-linejoin:miter" id="path6570"></path><path d="M 22.5,25 C 22.5,25 27,17.5 25.5,14.5 C 25.5,14.5 24.5,12 22.5,12 C 20.5,12 19.5,14.5 19.5,14.5 C 18,17.5 22.5,25 22.5,25" style="fill:#000000;fill-opacity:1;stroke-linecap:butt;stroke-linejoin:miter"></path><path d="M 12.5,37 C 18,40.5 27,40.5 32.5,37 L 32.5,30 C 32.5,30 41.5,25.5 38.5,19.5 C 34.5,13 25,16 22.5,23.5 L 22.5,27 L 22.5,23.5 C 20,16 10.5,13 6.5,19.5 C 3.5,25.5 12.5,30 12.5,30 L 12.5,37" style="fill:#000000;stroke:#000000"></path><path d="M 20,8 L 25,8" style="fill:none;stroke:#000000;stroke-linejoin:miter"></path><path d="M 32,29.5 C 32,29.5 40.5,25.5 38.03,19.85 C 34.15,14 25,18 22.5,24.5 L 22.5,26.6 L 22.5,24.5 C 20,18 10.85,14 6.97,19.85 C 4.5,25.5 13,29.5 13,29.5" style="fill:none;stroke:#ffffff"></path><path d="M 12.5,30 C 18,27 27,27 32.5,30 M 12.5,33.5 C 18,30.5 27,30.5 32.5,33.5 M 12.5,37 C 18,34 27,34 32.5,37" style="fill:none;stroke:#ffffff"></path></g></svg>`,
+    };
+
+    function renderBoardGrid(fen, playerColor, sizeClass = '') {
+      const parts = fen.split(' ')[0].split('/');
+      let rowsHtml = '';
+      const isBlackPerspective = (playerColor === 'BLACK');
+      const rows = isBlackPerspective ? [...parts].reverse() : parts;
+
+      for (let r = 0; r < 8; r++) {
+        const rowStr = rows[r];
+        const rowSquares = [];
+        for (let char of rowStr) {
+          if (!isNaN(char)) {
+            const emptyCount = parseInt(char, 10);
+            for (let e = 0; e < emptyCount; e++) rowSquares.push(null);
+          } else {
+            rowSquares.push(char);
+          }
+        }
+        if (isBlackPerspective) rowSquares.reverse();
+
+        for (let c = 0; c < 8; c++) {
+          const isLight = (r + c) % 2 === 0;
+          const bgCol = isLight ? 'bg-[#d1e7d8]' : 'bg-[#407657]';
+          const piece = rowSquares[c];
+          let pieceHtml = '';
+          if (piece && pieceSvgs[piece]) {
+            const isWhitePiece = piece === piece.toUpperCase();
+            pieceHtml = `<div class="piece-container ${isWhitePiece ? 'piece-white' : 'piece-black'}">${pieceSvgs[piece]}</div>`;
+          }
+          rowsHtml += `<div class="${bgCol} flex items-center justify-center aspect-square p-[7%] overflow-hidden">${pieceHtml}</div>`;
+        }
+      }
+
+      return `<div class="w-full h-full grid grid-cols-8 grid-rows-8 border border-outline-variant rounded-sm overflow-hidden select-none">${rowsHtml}</div>`;
+    }
+
+    function applyFilters() {
+      const phase = document.getElementById('selectPhase').value;
+      const tc = document.getElementById('selectSpeed').value;
+      const minLoss = parseFloat(document.getElementById('selectEvalLoss').value);
+      const minMistakes = parseInt(document.getElementById('selectMistakeCount').value, 10);
+
+      const filtered = mockWeaknesses.filter(item => {
+        // Color filter
+        if (activeColorFilter !== 'ALL' && item.playerColor !== activeColorFilter) return false;
+        
+        // Phase filter (applies to loaded slice)
+        if (phase !== 'ALL') {
+          if (!item.phaseStats || !item.phaseStats[phase] || item.phaseStats[phase].timesReached <= 0) return false;
+        }
+
+        // Time control filter (applies to loaded slice)
+        if (tc !== 'ALL') {
+          if (!item.timeControlStats || !item.timeControlStats[tc] || item.timeControlStats[tc].timesReached <= 0) return false;
+        }
+
+        // Min Mistake Loss filter
+        if (item.averageLoss < minLoss) return false;
+
+        // Min Mistake Count filter
+        if (item.mistakeCount < minMistakes) return false;
+
+        return true;
+      });
+
+      document.getElementById('weaknessCountDisplay').innerText = filtered.length;
+      renderWeaknesses(filtered);
+    }
+
+    function setColorFilter(color) {
+      activeColorFilter = color;
+      ['ALL', 'WHITE', 'BLACK'].forEach(c => {
+        const btn = document.getElementById(`filterColor${c}`);
+        if (c === color) {
+          btn.className = "px-2.5 py-1 rounded-md font-semibold transition bg-surface-container text-primary border border-outline-variant";
+        } else {
+          btn.className = "px-2.5 py-1 rounded-md text-on-surface-variant hover:text-on-surface transition";
+        }
+      });
+      applyFilters();
+    }
+
+    function setViewMode(mode) {
+      currentViewMode = mode;
+      const btnGrid = document.getElementById('btnViewGrid');
+      const btnList = document.getElementById('btnViewList');
+      if (mode === 'grid') {
+        btnGrid.className = "flex items-center gap-1 px-2.5 py-1 rounded bg-surface-container text-primary text-xs font-mono font-semibold transition";
+        btnList.className = "flex items-center gap-1 px-2.5 py-1 rounded text-outline hover:text-on-surface text-xs font-mono transition";
+      } else {
+        btnList.className = "flex items-center gap-1 px-2.5 py-1 rounded bg-surface-container text-primary text-xs font-mono font-semibold transition";
+        btnGrid.className = "flex items-center gap-1 px-2.5 py-1 rounded text-outline hover:text-on-surface text-xs font-mono transition";
+      }
+      applyFilters();
+    }
+
+    function dismissBanner() {
+      document.getElementById('engineStatusBanner').classList.add('hidden');
+    }
+
+    function renderWeaknesses(items) {
+      const container = document.getElementById('weaknessDisplayArea');
+      if (items.length === 0) {
+        container.innerHTML = `
+          <div class="py-16 text-center space-y-3 bg-surface-container-low border border-outline-variant rounded-2xl p-8 shadow-sm">
+            <span class="material-symbols-outlined text-4xl text-outline">search_off</span>
+            <h3 class="text-base font-bold text-on-surface">No Recurring Weaknesses Match Current Criteria</h3>
+            <p class="text-xs text-outline max-w-md mx-auto">
+              Try adjusting your mistake threshold or minimum repetitions filter.
+            </p>
+          </div>
+        `;
+        return;
+      }
+
+      if (currentViewMode === 'grid') {
+        renderGridView(items, container);
+      } else {
+        renderListView(items, container);
+      }
+    }
+
+    // Grid View: Preserves split-view, surfaces verified facts, suppresses unapproved badges & engine solutions
+    function renderGridView(items, container) {
+      let html = '<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">';
+      
+      items.forEach(item => {
+        const colorBadge = item.playerColor === 'WHITE'
+          ? `<span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-white text-slate-900">As WHITE</span>`
+          : `<span class="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-surface-container-highest text-on-surface border border-outline-variant">As BLACK</span>`;
+
+        const openingText = item.openingContext
+          ? `<a href="${item.openingContext.ecoUrl}" target="_blank" class="hover:text-primary underline text-primary font-mono text-xs font-semibold">Opening Context: ${item.openingContext.eco}</a>`
+          : `<span class="text-outline font-mono text-xs">Weakness Position</span>`;
+
+        const prac = item.practicalEvidence;
+
+        html += `
+          <article class="bg-surface-container-low border border-outline-variant hover:border-outline rounded-2xl overflow-hidden flex flex-col justify-between transition shadow-sm hover:shadow-md">
+            <div>
+              <!-- Card Header -->
+              <div class="p-4 border-b border-outline-variant/60 flex items-start justify-between gap-2">
+                <div class="space-y-1">
+                  <div class="flex items-center gap-2">
+                    ${colorBadge}
+                    ${openingText}
+                  </div>
+                  <div class="text-[11px] font-mono text-outline pt-0.5">
+                    ${formatRelativeDate(item.lastSeenAt)}
+                  </div>
+                </div>
+              </div>
+
+              <!-- Main Split Body: Mini Board on Left, 3-Col Stats on Right -->
+              <div class="p-4 grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
+                
+                <!-- 1:1 Mini Chessboard (Engine move NOT drawn on board) -->
+                <div class="relative bg-surface-container-lowest border border-outline-variant rounded-xl p-1.5 aspect-square flex flex-col justify-between shadow-inner">
+                  ${renderBoardGrid(item.fen, item.playerColor, 'text-[15px]')}
+                  <div class="flex items-center justify-between text-[10px] font-mono text-outline px-1 pt-1">
+                    <span>Turn: ${item.playerColor}</span>
+                    <span class="text-on-surface-variant">${item.timesReached} Encounters</span>
+                  </div>
+                </div>
+
+                <!-- 3-Column Evidence Stats (Preserved verified facts) -->
+                <div class="space-y-2.5">
+                  <div class="grid grid-cols-3 gap-1.5 text-center font-mono">
+                    
+                    <!-- Mistake Rate -->
+                    <div class="bg-surface-container-lowest p-2 rounded-lg border border-outline-variant">
+                      <div class="text-[9px] text-outline font-sans uppercase">Mistake Rate</div>
+                      <div class="text-xs font-bold text-amber-accent mt-0.5 flex items-center justify-center gap-0.5">
+                        <span class="material-symbols-outlined text-[13px] text-amber-accent">local_fire_department</span>
+                        <span>${item.mistakeRate.toFixed(1)}%</span>
+                      </div>
+                      <div class="text-[9px] text-outline">(${item.mistakeCount}x)</div>
+                    </div>
+
+                    <!-- Times Reached -->
+                    <div class="bg-surface-container-lowest p-2 rounded-lg border border-outline-variant">
+                      <div class="text-[9px] text-outline font-sans uppercase">Reached</div>
+                      <div class="text-xs font-bold text-on-surface mt-0.5">${item.timesReached}</div>
+                      <div class="text-[9px] text-outline">games</div>
+                    </div>
+
+                    <!-- Avg Mistake Loss -->
+                    <div class="bg-surface-container-lowest p-2 rounded-lg border border-outline-variant">
+                      <div class="text-[9px] text-outline font-sans uppercase">Avg Loss</div>
+                      <div class="text-xs font-bold text-error mt-0.5">-${item.averageLoss.toFixed(2)}</div>
+                      <div class="text-[9px] text-outline">pawns</div>
+                    </div>
+
+                  </div>
+
+                  <!-- Historical Decisions in Source Games -->
+                  ${item.movesPlayed && item.movesPlayed.length > 0 ? `
+                    <div class="p-2.5 bg-surface-container-lowest rounded-lg border border-outline-variant space-y-1">
+                      <div class="text-[10px] font-sans font-semibold text-outline">
+                        Your Decisions in Source Games:
+                      </div>
+                      <div class="flex flex-wrap gap-1">
+                        ${item.movesPlayed.map(m => `
+                          <span class="px-1.5 py-0.5 bg-error-container/20 border border-error/30 text-error rounded text-[11px] font-mono font-semibold">
+                            ${m.move} (${m.timesPlayed}x, -${m.averageLoss.toFixed(2)}p)
+                          </span>
+                        `).join('')}
+                      </div>
+                    </div>
+                  ` : ''}
+
+                </div>
+              </div>
+
+              <!-- Practical Evidence Block (Distinct Win Rate vs Score Rate, no internal labels) -->
+              ${prac ? `
+                <div class="mx-4 mb-4 p-3 bg-secondary-container/10 border border-secondary/20 rounded-xl space-y-1.5 text-xs font-mono">
+                  <div class="flex items-center justify-between">
+                    <span class="text-[11px] font-sans font-semibold text-secondary flex items-center gap-1">
+                      <span class="material-symbols-outlined text-[14px]">sports_score</span>
+                      <span>Actual-Game Practical Evidence</span>
+                    </span>
+                    <span class="text-[10px] text-outline">${prac.eligibleGames} Eligible Games</span>
+                  </div>
+                  
+                  <div class="flex flex-wrap items-center justify-between gap-2 pt-0.5 text-[11px]">
+                    <div class="text-on-surface">
+                      <span>Wins: <strong class="text-secondary">${prac.wins}</strong></span>
+                      <span class="mx-1 text-outline">·</span>
+                      <span>Draws: <strong class="text-on-surface-variant">${prac.draws}</strong></span>
+                      <span class="mx-1 text-outline">·</span>
+                      <span>Losses: <strong class="text-error">${prac.losses}</strong></span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <span class="text-outline">Score Rate: <strong class="${prac.scoreRate < 0.35 ? 'text-error' : 'text-secondary'}">${(prac.scoreRate * 100).toFixed(1)}%</strong></span>
+                      <span class="text-outline">Win Rate: <strong class="text-on-surface">${(prac.winRate * 100).toFixed(1)}%</strong></span>
+                    </div>
+                  </div>
+                </div>
+              ` : ''}
+
+            </div>
+
+            <!-- Bottom Action Bar -->
+            <div class="p-3 bg-surface-container-lowest border-t border-outline-variant/60 flex flex-wrap items-center justify-between gap-2">
+              
+              <div class="flex items-center space-x-2">
+                <!-- View Games Modal Trigger -->
+                <button 
+                  onclick="openGamesModal('${item.positionId}')" 
+                  class="px-2.5 py-1.5 text-xs font-mono text-outline hover:text-primary flex items-center gap-1 transition"
+                  title="View actual games where this occurred"
+                >
+                  <span class="material-symbols-outlined text-[15px]">history</span>
+                  <span>Games (${item.gameUrls?.length || 0})</span>
+                </button>
+              </div>
+
+              <div class="flex items-center space-x-2">
+                <!-- View Progress (Exploratory simulation) -->
+                <button 
+                  onclick="openProgressModal('${item.positionId}', '${item.playerColor}', ${item.timesReached}, ${item.mistakeRate}, ${(prac.winRate * 100).toFixed(1)})" 
+                  class="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-outline-variant hover:border-secondary/40 text-xs font-mono text-on-surface-variant hover:text-secondary transition"
+                  title="View post-solve progress intervals"
+                >
+                  <span class="material-symbols-outlined text-[15px]">trending_up</span>
+                  <span>Progress</span>
+                </button>
+
+                <!-- Practice Position Button -->
+                <button 
+                  onclick="openPracticeModal('${item.positionId}', '${item.fen}', '${item.playerColor}', '${item.movesPlayed?.[0]?.move || 'Mistake'}')" 
+                  class="flex items-center space-x-1 px-3 py-1.5 bg-primary-container hover:bg-primary text-on-primary-container rounded-lg font-mono text-xs font-bold transition shadow-sm active:scale-95"
+                >
+                  <span class="material-symbols-outlined text-[16px]">swords</span>
+                  <span>Practice</span>
+                </button>
+              </div>
+
+            </div>
+          </article>
+        `;
+      });
+
+      html += '</div>';
+      container.innerHTML = html;
+    }
+
+    // Dense List View: Highly information-dense horizontal row format with compact 88px boards
+    function renderListView(items, container) {
+      let html = '<div class="space-y-3">';
+      
+      items.forEach(item => {
+        const colorBadge = item.playerColor === 'WHITE'
+          ? `<span class="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-white text-slate-900">WHITE</span>`
+          : `<span class="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-surface-container-highest text-on-surface border border-outline-variant">BLACK</span>`;
+
+        const openingText = item.openingContext
+          ? `<a href="${item.openingContext.ecoUrl}" target="_blank" class="font-mono text-xs font-semibold text-primary underline">${item.openingContext.eco}</a>`
+          : `<span class="text-outline font-mono text-xs">Position</span>`;
+
+        const prac = item.practicalEvidence;
+
+        html += `
+          <div class="bg-surface-container-low border border-outline-variant hover:border-outline rounded-xl p-3 flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4 transition shadow-sm">
+            
+            <!-- Column 1: Board Thumbnail (88x88) + Orientation + Opening -->
+            <div class="flex items-center space-x-3 shrink-0">
+              <div class="w-[88px] h-[88px] bg-surface-container-lowest border border-outline-variant rounded-lg p-1 shrink-0">
+                ${renderBoardGrid(item.fen, item.playerColor, 'text-[11px]')}
+              </div>
+              <div class="space-y-1">
+                <div class="flex items-center gap-1.5">
+                  ${colorBadge}
+                  ${openingText}
+                </div>
+                <div class="text-[11px] font-mono text-outline">
+                  ${formatRelativeDate(item.lastSeenAt)}
+                </div>
+                <div class="text-[10px] font-mono text-outline">
+                  ${item.timesReached} encounters
+                </div>
+              </div>
+            </div>
+
+            <!-- Column 2: Historical Blunder Metrics -->
+            <div class="grid grid-cols-2 gap-3 text-xs font-mono py-1 px-3 bg-surface-container-lowest/60 rounded-lg border border-outline-variant/60">
+              <div>
+                <span class="text-[10px] text-outline font-sans block">Mistake Rate</span>
+                <span class="font-bold text-amber-accent">${item.mistakeRate.toFixed(1)}% (${item.mistakeCount}x)</span>
+              </div>
+              <div>
+                <span class="text-[10px] text-outline font-sans block">Avg Loss</span>
+                <span class="font-bold text-error">-${item.averageLoss.toFixed(2)} pawns</span>
+              </div>
+            </div>
+
+            <!-- Column 3: Practical Game Outcomes (W/D/L & Score vs Win Rate) -->
+            <div class="grid grid-cols-2 gap-3 text-xs font-mono py-1 px-3 bg-surface-container-lowest/60 rounded-lg border border-outline-variant/60 flex-1">
+              <div>
+                <span class="text-[10px] text-outline font-sans block">W / D / L (${prac.eligibleGames} games)</span>
+                <span class="text-on-surface">${prac.wins} / ${prac.draws} / ${prac.losses}</span>
+              </div>
+              <div>
+                <span class="text-[10px] text-outline font-sans block">Score Rate / Win Rate</span>
+                <span class="text-secondary">${(prac.scoreRate * 100).toFixed(1)}% / ${(prac.winRate * 100).toFixed(1)}%</span>
+              </div>
+            </div>
+
+            <!-- Column 4: Contextual Actions -->
+            <div class="flex items-center space-x-2 shrink-0 self-end lg:self-center">
+              <button 
+                onclick="openGamesModal('${item.positionId}')" 
+                class="px-2.5 py-1.5 text-xs font-mono text-outline hover:text-on-surface rounded-lg border border-outline-variant transition"
+                title="View actual games"
+              >
+                Games (${item.gameUrls?.length || 0})
+              </button>
+
+              <button 
+                onclick="openProgressModal('${item.positionId}', '${item.playerColor}', ${item.timesReached}, ${item.mistakeRate}, ${(prac.winRate * 100).toFixed(1)})" 
+                class="px-2.5 py-1.5 text-xs font-mono text-on-surface-variant hover:text-secondary rounded-lg border border-outline-variant transition"
+                title="View progress"
+              >
+                Progress
+              </button>
+
+              <button 
+                onclick="openPracticeModal('${item.positionId}', '${item.fen}', '${item.playerColor}', '${item.movesPlayed?.[0]?.move || 'Mistake'}')" 
+                class="px-3 py-1.5 bg-primary-container hover:bg-primary text-on-primary-container rounded-lg font-mono text-xs font-bold transition shadow-sm"
+              >
+                Practice
+              </button>
+            </div>
+
+          </div>
+        `;
+      });
+
+      html += '</div>';
+      container.innerHTML = html;
+    }
+
+    // Modal Control Functions (No alert boxes)
+    function openGamesModal(positionId) {
+      const item = mockWeaknesses.find(w => w.positionId === positionId);
+      if (!item || !item.gameUrls) return;
+      document.getElementById('modalGamesCount').innerText = item.gameUrls.length;
+      document.getElementById('modalGamesUrlList').innerHTML = item.gameUrls.map((url, i) => `
+        <a href="${url}" target="_blank" rel="noopener noreferrer" class="p-2.5 bg-surface-container-lowest hover:bg-surface-container-high border border-outline-variant rounded-lg flex items-center justify-between text-primary transition group">
+          <div class="flex items-center space-x-2">
+            <span class="material-symbols-outlined text-[16px] text-outline group-hover:text-primary">open_in_new</span>
+            <span>Game Encounter #${i + 1}</span>
+          </div>
+          <span class="text-[10px] text-outline">Open Game Archive</span>
+        </a>
+      `).join('');
+      document.getElementById('modalGames').classList.remove('hidden');
+    }
+
+    function closeGamesModal() {
+      document.getElementById('modalGames').classList.add('hidden');
+    }
+
+    function openProgressModal(positionId, playerColor, encounters, mistakeRate, winRate) {
+      document.getElementById('modalProgressPositionId').innerText = `ID: ${positionId} (${playerColor})`;
+      document.getElementById('modalProgressEncounters').innerText = `${encounters} dated encounters`;
+      document.getElementById('modalProgressMistakeRate').innerText = `${mistakeRate.toFixed(1)}%`;
+      document.getElementById('modalProgressWinRate').innerText = `${winRate}%`;
+      document.getElementById('modalProgress').classList.remove('hidden');
+    }
+
+    function closeProgressModal() {
+      document.getElementById('modalProgress').classList.add('hidden');
+    }
+
+    function openPracticeModal(positionId, fen, playerColor, mistakeMove) {
+      document.getElementById('practiceMistakeMove').innerText = mistakeMove;
+      document.getElementById('practiceBoardContainer').innerHTML = renderBoardGrid(fen, playerColor, 'text-[18px]');
+      document.getElementById('modalPractice').classList.remove('hidden');
+    }
+
+    function closePracticeModal() {
+      document.getElementById('modalPractice').classList.add('hidden');
+    }
+
+    // Initial render
+    applyFilters();
+  </script>
+</body>
+</html>
