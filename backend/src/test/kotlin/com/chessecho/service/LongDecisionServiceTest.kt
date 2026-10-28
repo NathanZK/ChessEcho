@@ -7,9 +7,11 @@ import com.chessecho.domain.PositionOccurrence
 import com.chessecho.domain.TimeControl
 import com.chessecho.repository.PositionOccurrenceRepository
 import com.chessecho.service.auth.AuthenticatedPrincipal
+import com.chessecho.service.similarity.ChessComUrlBuilder
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
+import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
@@ -29,7 +31,8 @@ import kotlin.test.assertTrue
 class LongDecisionServiceTest {
     private val accountOwnershipService = mock<AccountOwnershipService>()
     private val positionOccurrenceRepository = mock<PositionOccurrenceRepository>()
-    private val service = LongDecisionService(accountOwnershipService, positionOccurrenceRepository)
+    private val chessComUrlBuilder = mock<ChessComUrlBuilder>()
+    private val service = LongDecisionService(accountOwnershipService, positionOccurrenceRepository, chessComUrlBuilder)
 
     private val accountId = UUID.randomUUID()
     private val principal = AuthenticatedPrincipal(UUID.randomUUID(), devPrincipal = false)
@@ -38,6 +41,8 @@ class LongDecisionServiceTest {
     @BeforeEach
     fun setUp() {
         whenever(accountOwnershipService.resolveSharedAccount(accountId, principal)).thenReturn(account)
+        whenever(chessComUrlBuilder.buildExactPlyUrl(anyOrNull(), any(), anyOrNull()))
+            .thenReturn("https://www.chess.com/game/live/default?move=1")
     }
 
     @Test
@@ -331,6 +336,9 @@ class LongDecisionServiceTest {
                 any(),
             ),
         ).thenReturn(page)
+        whenever(
+            chessComUrlBuilder.buildExactPlyUrl(eq("game-white-1"), eq(1), anyOrNull()),
+        ).thenReturn("https://www.chess.com/game/live/game-white-1?move=1")
 
         val response =
             service.findLongDecisions(
@@ -466,5 +474,66 @@ class LongDecisionServiceTest {
         assertEquals(0, response.totalElements)
         assertEquals(0, response.totalPages)
         assertFalse(response.hasNext)
+    }
+
+    @Test
+    fun `maps chessComUrl delegating game timeControl for daily games`() {
+        val dailyGame =
+            Game(
+                chessAccount = account,
+                platformGameId = "https://chess.com/game/daily/987654",
+                pgn = "*",
+                timeControl = "daily",
+                whiteUsername = "tester",
+                blackUsername = "opponent",
+            )
+        val occ =
+            PositionOccurrence(
+                game = dailyGame,
+                position = Position(hash = "hash-daily", fen = "8/8/8/8/8/8/8/8 w - -"),
+                chessAccount = account,
+                plyNumber = 12,
+                movePlayed = "d4",
+                playerColor = "WHITE",
+                decisionTimeMs = 60_000L,
+            )
+        whenever(positionOccurrenceRepository.findLongDecisionOccurrences(any(), any(), any(), any()))
+            .thenReturn(PageImpl(listOf(occ)))
+        whenever(chessComUrlBuilder.buildExactPlyUrl("https://chess.com/game/daily/987654", 12, "daily"))
+            .thenReturn("https://www.chess.com/game/daily/987654?move=12")
+
+        val response = service.findLongDecisions(accountId, TimeControl.RAPID, 30, 0, 10, principal)
+        assertEquals("https://www.chess.com/game/daily/987654?move=12", response.content[0].chessComUrl)
+        verify(chessComUrlBuilder).buildExactPlyUrl("https://chess.com/game/daily/987654", 12, "daily")
+    }
+
+    @Test
+    fun `maps chessComUrl to null when builder returns null`() {
+        val malformedGame =
+            Game(
+                chessAccount = account,
+                platformGameId = "invalid-url",
+                pgn = "*",
+                timeControl = "blitz",
+                whiteUsername = "tester",
+                blackUsername = "opponent",
+            )
+        val occ =
+            PositionOccurrence(
+                game = malformedGame,
+                position = Position(hash = "hash-inv", fen = "8/8/8/8/8/8/8/8 w - -"),
+                chessAccount = account,
+                plyNumber = 3,
+                movePlayed = "c4",
+                playerColor = "WHITE",
+                decisionTimeMs = 45_000L,
+            )
+        whenever(positionOccurrenceRepository.findLongDecisionOccurrences(any(), any(), any(), any()))
+            .thenReturn(PageImpl(listOf(occ)))
+        whenever(chessComUrlBuilder.buildExactPlyUrl("invalid-url", 3, "blitz"))
+            .thenReturn(null)
+
+        val response = service.findLongDecisions(accountId, TimeControl.BLITZ, 30, 0, 10, principal)
+        assertNull(response.content[0].chessComUrl)
     }
 }

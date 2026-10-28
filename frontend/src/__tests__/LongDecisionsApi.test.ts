@@ -15,6 +15,7 @@ const response: LongDecisionPageResponse = {
       platformGameId: 'game-1',
       playedAt: '2026-02-03T12:00:00Z',
       opponentUsername: 'opponent',
+      chessComUrl: 'https://www.chess.com/game/live/12345?move=1',
     },
   ],
   page: 1,
@@ -66,6 +67,24 @@ describe('fetchLongDecisions', () => {
       }),
     );
     await expect(fetchLongDecisions('account', 'BLITZ', 30, 0, 20)).rejects.toThrow(
+      'unexpected response body',
+    );
+  });
+
+  it('accepts null or missing chessComUrl and rejects invalid non-string types', async () => {
+    const validWithNullUrl = {
+      ...response,
+      content: [{ ...response.content[0], chessComUrl: null }],
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => validWithNullUrl }));
+    await expect(fetchLongDecisions('account', 'BULLET', 30, 1, 20)).resolves.toEqual(validWithNullUrl);
+
+    const invalidTypeUrl = {
+      ...response,
+      content: [{ ...response.content[0], chessComUrl: 12345 }],
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => invalidTypeUrl }));
+    await expect(fetchLongDecisions('account', 'BULLET', 30, 1, 20)).rejects.toThrow(
       'unexpected response body',
     );
   });

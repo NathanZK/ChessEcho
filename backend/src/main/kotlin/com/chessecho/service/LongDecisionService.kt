@@ -5,6 +5,7 @@ import com.chessecho.dto.LongDecisionOccurrenceResponse
 import com.chessecho.dto.LongDecisionPageResponse
 import com.chessecho.repository.PositionOccurrenceRepository
 import com.chessecho.service.auth.AuthenticatedPrincipal
+import com.chessecho.service.similarity.ChessComUrlBuilder
 import org.springframework.data.domain.PageRequest
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -14,6 +15,7 @@ import java.util.UUID
 class LongDecisionService(
     private val accountOwnershipService: AccountOwnershipService,
     private val positionOccurrenceRepository: PositionOccurrenceRepository,
+    private val chessComUrlBuilder: ChessComUrlBuilder,
 ) {
     @Transactional(readOnly = true)
     fun findLongDecisions(
@@ -57,6 +59,12 @@ class LongDecisionService(
                                 "BLACK" -> game.whiteUsername
                                 else -> null
                             },
+                        chessComUrl =
+                            chessComUrlBuilder.buildExactPlyUrl(
+                                platformGameId = game.platformGameId,
+                                plyNumber = occurrence.plyNumber,
+                                timeControl = game.timeControl,
+                            ),
                     )
                 },
             page = results.number,

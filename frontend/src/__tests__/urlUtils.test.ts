@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { convertTo6chessUrl, buildExactPlyChessComUrl } from '../utils/urlUtils';
+import { convertTo6chessUrl, buildExactPlyChessComUrl, isValidChessComUrl } from '../utils/urlUtils';
 
 describe('convertTo6chessUrl', () => {
   it('converts a normal Chess.com live game URL correctly', () => {
@@ -179,5 +179,40 @@ describe('buildExactPlyChessComUrl', () => {
   it('returns null for empty or malformed identifier', () => {
     expect(buildExactPlyChessComUrl('', 10)).toBeNull();
     expect(buildExactPlyChessComUrl('invalid-uuid-abc', 10)).toBeNull();
+  });
+});
+
+describe('isValidChessComUrl', () => {
+  it('returns true for valid https and http chess.com game URLs', () => {
+    expect(isValidChessComUrl('https://www.chess.com/game/live/123')).toBe(true);
+    expect(isValidChessComUrl('http://www.chess.com/game/live/123')).toBe(true);
+    expect(isValidChessComUrl('https://chess.com/game/daily/456')).toBe(true);
+    expect(isValidChessComUrl('https://www.chess.com/game/computer/789')).toBe(true);
+    expect(isValidChessComUrl('  https://www.chess.com/game/live/123?move=5  ')).toBe(true);
+  });
+
+  it('returns false for null, undefined, empty, or non-string input', () => {
+    expect(isValidChessComUrl(null)).toBe(false);
+    expect(isValidChessComUrl(undefined)).toBe(false);
+    expect(isValidChessComUrl('')).toBe(false);
+    expect(isValidChessComUrl('   ')).toBe(false);
+    expect(isValidChessComUrl(12345)).toBe(false);
+  });
+
+  it('returns false for non-chess.com hostnames and lookalikes', () => {
+    expect(isValidChessComUrl('https://lichess.org/game/live/123')).toBe(false);
+    expect(isValidChessComUrl('https://evil-chess.com/game/live/123')).toBe(false);
+    expect(isValidChessComUrl('https://chess.com.attacker.com/game/live/123')).toBe(false);
+  });
+
+  it('returns false for non-http/https protocols', () => {
+    expect(isValidChessComUrl('ftp://www.chess.com/game/live/123')).toBe(false);
+    expect(isValidChessComUrl('javascript:alert(1)')).toBe(false);
+  });
+
+  it('returns false for unsupported paths or malformed URLs', () => {
+    expect(isValidChessComUrl('https://www.chess.com/member/testuser')).toBe(false);
+    expect(isValidChessComUrl('https://www.chess.com/news/123')).toBe(false);
+    expect(isValidChessComUrl('not a url')).toBe(false);
   });
 });
