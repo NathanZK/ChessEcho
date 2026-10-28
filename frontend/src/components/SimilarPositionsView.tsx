@@ -1,8 +1,12 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Chessboard } from 'react-chessboard';
-import { Search, ExternalLink, Compass, AlertCircle, RefreshCw } from 'lucide-react';
+import { ChessBoardView } from './ChessBoardView';
+import { ExternalGameLink } from './ExternalGameLink';
+import { PositionCard } from './PositionCard';
+import { StatusBanner } from './StatusBanner';
+import { SectionHeader } from './SectionHeader';
+import { Search, AlertCircle, RefreshCw } from 'lucide-react';
 import {
   type AccountSummary,
   type SimilarPositionResult,
@@ -175,36 +179,30 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
   const isAccountAvailable = Boolean(connectedAccount || guestUsername);
 
   return (
-    <div className="mx-auto max-w-6xl p-4 sm:p-6 lg:p-8 space-y-6">
+    <div className="mx-auto w-full max-w-[1536px] p-4 sm:p-6 lg:p-8 space-y-6">
       {/* Header & Overview */}
-      <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 backdrop-blur">
-        <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
-          <Compass className="h-6 w-6 text-emerald-400" />
-          Find Similar Personal Positions
-        </h1>
-        <p className="mt-2 text-sm text-slate-300">
-          Enter an arbitrary FEN to retrieve positions from your personal games matching static pawn
-          structures and piece relationship patterns.
-        </p>
-
-        {/* Account context indicator */}
-        <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
-          <span className="text-slate-400">Target account:</span>
-          {connectedAccount ? (
-            <span className="rounded-md bg-emerald-950/60 border border-emerald-800/60 px-2.5 py-1 text-emerald-300 font-medium">
-              Connected: {connectedAccount.username} ({connectedAccount.platform})
-            </span>
-          ) : guestUsername ? (
-            <span className="rounded-md bg-sky-950/60 border border-sky-800/60 px-2.5 py-1 text-sky-300 font-medium">
-              Guest: {guestUsername} (Chess.com)
-            </span>
-          ) : (
-            <span className="rounded-md bg-amber-950/60 border border-amber-800/60 px-2.5 py-1 text-amber-300 font-medium">
-              No account selected
-            </span>
-          )}
-        </div>
-      </div>
+      <SectionHeader
+        title="Find Similar Personal Positions"
+        description="Enter an arbitrary FEN to retrieve positions from your personal games matching static pawn structures and piece relationship patterns."
+        actions={
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-slate-400">Target account:</span>
+            {connectedAccount ? (
+              <span className="rounded-md bg-emerald-950/60 border border-emerald-800/60 px-2.5 py-1 text-emerald-300 font-medium">
+                Connected: {connectedAccount.username} ({connectedAccount.platform})
+              </span>
+            ) : guestUsername ? (
+              <span className="rounded-md bg-sky-950/60 border border-sky-800/60 px-2.5 py-1 text-sky-300 font-medium">
+                Guest: {guestUsername} (Chess.com)
+              </span>
+            ) : (
+              <span className="rounded-md bg-amber-950/60 border border-amber-800/60 px-2.5 py-1 text-amber-300 font-medium">
+                No account selected
+              </span>
+            )}
+          </div>
+        }
+      />
 
       {/* Search Controls */}
       <form
@@ -341,13 +339,11 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
           )}
 
           {hasSearched && results.length === 0 && !isLoading && (
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-8 text-center space-y-2">
-              <p className="text-base font-semibold text-slate-200">No Similar Positions Found</p>
-              <p className="text-sm text-slate-400 max-w-md mx-auto">
-                No personal game positions met the similarity criteria for this FEN. Try lowering the
-                minimum score threshold or searching a different position.
-              </p>
-            </div>
+            <StatusBanner
+              variant="empty"
+              title="No Similar Positions Found"
+              message="No personal game positions met the similarity criteria for this FEN. Try lowering the minimum score threshold or searching a different position."
+            />
           )}
 
           {results.length > 0 && (
@@ -355,9 +351,9 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
               {results.map((result) => {
                 const primaryOccurrence = result.occurrences[0];
                 return (
-                  <article
+                  <PositionCard
                     key={result.positionId}
-                    className="flex flex-col rounded-2xl border border-slate-800 bg-slate-900/70 p-4 gap-4"
+                    className="flex flex-col gap-4"
                   >
                     <div className="flex items-start justify-between border-b border-slate-800/80 pb-3">
                       <div>
@@ -379,11 +375,12 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
 
                     <div className="grid gap-4 sm:grid-cols-[160px_1fr]">
                       <div className="aspect-square w-full max-w-[160px] overflow-hidden rounded-xl border border-slate-700 mx-auto">
-                        <Chessboard
-                          options={{
-                            position: result.fen,
-                            allowDragging: false,
-                          }}
+                        <ChessBoardView
+                          fen={result.fen}
+                          boardOrientation={primaryOccurrence?.playerColor ?? 'white'}
+                          allowDragging={false}
+                          containerClassName="w-full h-full"
+                          frameClassName="w-full h-full"
                         />
                       </div>
 
@@ -437,15 +434,11 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
 
                         <div className="pt-2 border-t border-slate-800/80">
                           {primaryOccurrence?.chessComUrl ? (
-                            <a
-                              href={primaryOccurrence.chessComUrl}
-                              target="_blank"
-                              rel="noreferrer noopener"
-                              className="text-emerald-400 hover:text-emerald-300 hover:underline inline-flex items-center gap-1 font-medium"
-                            >
-                              View move on Chess.com
-                              <ExternalLink className="h-3.5 w-3.5" />
-                            </a>
+                            <ExternalGameLink
+                              url={primaryOccurrence.chessComUrl}
+                              label="View move on Chess.com"
+                              platform="chesscom"
+                            />
                           ) : (
                             <span className="text-slate-500 italic">
                               Chess.com link unavailable
@@ -454,7 +447,7 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
                         </div>
                       </div>
                     </div>
-                  </article>
+                  </PositionCard>
                 );
               })}
             </div>
