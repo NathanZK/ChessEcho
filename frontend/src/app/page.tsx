@@ -2140,6 +2140,8 @@ export default function Home() {
                       fen={blindfold.state.currentFen}
                       isVisible={blindfold.state.isVisible}
                       onReveal={blindfold.reveal}
+                      onHide={blindfold.hide}
+                      onToggleVisibility={blindfold.toggleVisibility}
                       boardOrientation={puzzleBoardOrientation}
                     />
                   )}
@@ -2152,6 +2154,8 @@ export default function Home() {
                       state={blindfold.state}
                       onPlayerMove={blindfold.submitPlayerMove}
                       onReveal={blindfold.reveal}
+                      onHide={blindfold.hide}
+                      onToggleVisibility={blindfold.toggleVisibility}
                       onReset={blindfold.reset}
                       onExit={blindfold.exit}
                     />

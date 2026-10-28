@@ -142,6 +142,11 @@ const revealBoard = () => {
   return board();
 };
 
+const hideBoard = () => {
+  const hideButtons = screen.getAllByRole('button', { name: 'Hide board' });
+  fireEvent.click(hideButtons[0]);
+};
+
 const exploreBothSides = async () => {
   fireEvent.click(screen.getByRole('button', { name: /continue exploration/i }));
   fireEvent.click(await screen.findByText('Play Both Sides'));
@@ -377,5 +382,63 @@ describe('Blindfold continuation flow', () => {
     await waitFor(() => expect(board().dataset.position).toBe(whitePuzzle.fen));
     expect(screen.queryByText('Blindfold continuation')).toBeNull();
     expect(screen.queryByText('Board hidden')).toBeNull();
+  });
+
+  it('toggles board visibility reversibly without resetting session or moves', async () => {
+    await loadPuzzles();
+    await solve();
+    await enterBlindfold();
+    await screen.findByText('Your turn — enter SAN notation');
+
+    fireEvent.change(notationInput(), { target: { value: 'Nc6' } });
+    fireEvent.submit(notationInput().closest('form')!);
+    await screen.findByText('Nc6');
+
+    expect(revealBoard().dataset.position).toBe(after(SOLVED_FEN, 'Nf3', 'Nc6'));
+    hideBoard();
+    expect(await screen.findByText('Board hidden')).toBeInTheDocument();
+    expect(screen.getByText('Nc6')).toBeInTheDocument();
+
+    expect(revealBoard().dataset.position).toBe(after(SOLVED_FEN, 'Nf3', 'Nc6'));
+  });
+
+  it('displays move quality feedback in the notation panel while the board remains hidden', async () => {
+    await loadPuzzles();
+    await solve();
+    await enterBlindfold();
+    await screen.findByText('Your turn — enter SAN notation');
+
+    fireEvent.change(notationInput(), { target: { value: 'Nc6' } });
+    fireEvent.submit(notationInput().closest('form')!);
+
+    expect(await screen.findByText('Best move!')).toBeInTheDocument();
+    expect(screen.getByText('Board hidden')).toBeInTheDocument();
+  });
+
+  it('detects checkmate, announces completion in notation panel, and disables further input', async () => {
+    vi.mocked(api.fetchPuzzleContinuation).mockImplementation(async (fen) => {
+      if (fen === SOLVED_FEN) return continuationReply(fen, 'a3');
+      if (fen.includes('q/P7/1PPP1PPP')) return continuationReply(fen, 'Ke2');
+      return continuationReply(fen, 'Nf3');
+    });
+
+    await loadPuzzles();
+    await solve();
+    await enterBlindfold();
+    await screen.findByText('Your turn — enter SAN notation');
+
+    fireEvent.change(notationInput(), { target: { value: 'Qh4' } });
+    fireEvent.submit(notationInput().closest('form')!);
+    await screen.findByText('Qh4');
+
+    // Wait for ChessEcho reply 'Ke2'
+    await screen.findByText('Ke2');
+
+    fireEvent.change(notationInput(), { target: { value: 'Qxe4#' } });
+    fireEvent.submit(notationInput().closest('form')!);
+
+    expect(await screen.findByText('Checkmate! You won.')).toBeInTheDocument();
+    expect(notationInput()).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
   });
 });

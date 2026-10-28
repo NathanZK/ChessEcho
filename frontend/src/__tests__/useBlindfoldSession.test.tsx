@@ -1,6 +1,14 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { useBlindfoldSession } from '../hooks/useBlindfoldSession';
+import { moveEvaluationService } from '../services/continuationService';
+
+vi.mock('../services/continuationService', () => ({
+  moveEvaluationService: {
+    evaluateMove: vi.fn().mockResolvedValue(null),
+    clear: vi.fn(),
+  },
+}));
 
 const WHITE_TO_MOVE = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const AFTER_E4 = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1';
@@ -144,5 +152,88 @@ describe('useBlindfoldSession', () => {
 
     expect(result.current.state).toEqual(before);
     expect(result.current.state?.lastChessEchoMove ?? null).toBeNull();
+  });
+
+  describe('Reversible visibility & hide/toggle controls', () => {
+    it('allows hiding the board and toggling visibility without resetting state', () => {
+      const { result } = renderHook(() => useBlindfoldSession(vi.fn()));
+      act(() => result.current.start(WHITE_TO_MOVE, 'WHITE'));
+      expect(result.current.state?.isVisible).toBe(false);
+
+      act(() => result.current.reveal());
+      expect(result.current.state?.isVisible).toBe(true);
+
+      act(() => result.current.hide());
+      expect(result.current.state?.isVisible).toBe(false);
+
+      act(() => result.current.toggleVisibility());
+      expect(result.current.state?.isVisible).toBe(true);
+
+      act(() => result.current.toggleVisibility());
+      expect(result.current.state?.isVisible).toBe(false);
+    });
+  });
+
+  describe('Terminal state handling', () => {
+    it('suppresses ChessEcho continuation request when player delivers checkmate', () => {
+      const request = vi.fn();
+      const foolsMateFen = 'rnbqkbnr/pppp1ppp/8/4p3/6P1/5P2/PPPPP2P/RNBQKBNR b KQkq - 0 2';
+      const { result } = renderHook(() => useBlindfoldSession(request));
+
+      act(() => result.current.start(foolsMateFen, 'BLACK'));
+      act(() => result.current.submitPlayerMove('Qh4#'));
+
+      expect(request).not.toHaveBeenCalled();
+      expect(result.current.state?.isTerminal).toBe(true);
+      expect(result.current.state?.terminalReason).toBe('CHECKMATE');
+      expect(result.current.state?.winner).toBe('PLAYER');
+    });
+  });
+
+  describe('Move quality evaluation integration', () => {
+    beforeEach(() => {
+      vi.mocked(moveEvaluationService.evaluateMove).mockReset();
+    });
+
+    it('asynchronously attaches move evaluation feedback while keeping board hidden', async () => {
+      vi.mocked(moveEvaluationService.evaluateMove).mockResolvedValue({
+        fen: WHITE_TO_MOVE,
+        move: 'e4',
+        bestMove: 'e4',
+        bestEvalCp: 20,
+        evalCp: 20,
+        evalLoss: 0,
+        maxEvalLoss: 0.5,
+        threshold: 0.5,
+        acceptable: true,
+      });
+
+      const request = vi.fn().mockResolvedValue('e5');
+      const { result } = renderHook(() => useBlindfoldSession(request));
+      act(() => result.current.start(WHITE_TO_MOVE, 'WHITE'));
+
+      act(() => result.current.submitPlayerMove('e4'));
+      expect(result.current.state?.isVisible).toBe(false);
+
+      await waitFor(() => {
+        expect(result.current.state?.lastPlayerMove?.feedbackText).toBe('Best move!');
+      });
+      expect(result.current.state?.isVisible).toBe(false);
+    });
+
+    it('gracefully degrades to Evaluation unavailable if evaluation fails', async () => {
+      vi.mocked(moveEvaluationService.evaluateMove).mockRejectedValue(new Error('Network offline'));
+
+      const request = vi.fn().mockResolvedValue('e5');
+      const { result } = renderHook(() => useBlindfoldSession(request));
+      act(() => result.current.start(WHITE_TO_MOVE, 'WHITE'));
+
+      act(() => result.current.submitPlayerMove('e4'));
+
+      await waitFor(() => {
+        expect(result.current.state?.lastPlayerMove?.feedbackText).toBe('Evaluation unavailable');
+      });
+      expect(result.current.state?.isFailed).toBe(false);
+    });
   });
 });

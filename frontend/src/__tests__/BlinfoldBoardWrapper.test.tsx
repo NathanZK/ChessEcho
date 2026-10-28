@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { BlinfoldBoardWrapper } from '../components/BlinfoldBoardWrapper';
 import {
   BOARD_CONTAINER_CLASS,
@@ -46,5 +46,25 @@ describe('BlinfoldBoardWrapper', () => {
       darkSquareStyle: BOARD_DARK_SQUARE_STYLE,
       lightSquareStyle: BOARD_LIGHT_SQUARE_STYLE,
     });
+  });
+
+  it('renders "Hide board" button when visible and triggers onHide', () => {
+    const onHide = vi.fn();
+    render(<BlinfoldBoardWrapper fen={FEN} isVisible onReveal={() => {}} onHide={onHide} boardOrientation="white" />);
+
+    const hideButton = screen.getByRole('button', { name: 'Hide board' });
+    expect(hideButton).toBeInTheDocument();
+    fireEvent.click(hideButton);
+    expect(onHide).toHaveBeenCalled();
+  });
+
+  it('renders reveal button when hidden and triggers onReveal', () => {
+    const onReveal = vi.fn();
+    render(<BlinfoldBoardWrapper fen={FEN} isVisible={false} onReveal={onReveal} boardOrientation="white" />);
+
+    const revealButton = screen.getByRole('button', { name: /reveal/i });
+    expect(revealButton).toBeInTheDocument();
+    fireEvent.click(revealButton);
+    expect(onReveal).toHaveBeenCalled();
   });
 });
