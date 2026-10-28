@@ -31,6 +31,7 @@ This document serves as the durable evidence repository for opt-in mutation test
 | [`Frontend: positionImport.ts`](#218-frontend-mutation-testing-baseline-core-calculation-utilities-issue-635) | `positionImport.test.ts` | Frontend Domain ([#635](https://github.com/NathanZK/ChessEcho/issues/635)) | 241 | 143 (59%) | 56 (23%) [15 TO] | 27 (11%) | 74% | 2026-10-27 |
 | [`Frontend: PuzzleFeedbackPanel.tsx`](#219-frontend-line-exploration-continuation-secrecy-issue-629) | `ContinuationIntegration.test.tsx` | Frontend Presentation ([#629](https://github.com/NathanZK/ChessEcho/issues/629)) | 63 | 58 (92%) | 5 (8%) | 0 (0%) | 92% | 2026-10-28 |
 | [`Frontend: PuzzleFeedbackPanel.tsx (Post-#629 Baseline)`](#220-frontend-puzzlefeedbackpaneltsx-component-wide-remediation) | `ContinuationIntegration.test.tsx` + suite | Frontend Presentation ([#645](https://github.com/NathanZK/ChessEcho/issues/645)) | 739 | 394 (53%) | 253 (34%) [72 TO] | 20 (3%) | 65% | 2026-10-28 |
+| [`Frontend: ChessBoardArea.tsx`](#221-frontend-chessboardareatsx-expanded-scope-lines-380675-issue-630) | `BoardStateDerivation.test.tsx`, `ExplorationEvaluation.test.tsx` | Frontend Interaction ([#630](https://github.com/NathanZK/ChessEcho/issues/630)) | 319 | 305 (96%) [4 TO] | 2 (1%) | 0 (0%) | 99.36% | 2026-10-28 |
 
 ---
 
@@ -503,6 +504,64 @@ This document serves as the durable evidence repository for opt-in mutation test
   - Trailing continuation tokens remain hidden during puzzle line exploration while underlying continuation moves drive exploration replay.
 - **Tracker Status**:
   - Persistent mutation tracker [#550](https://github.com/NathanZK/ChessEcho/issues/550) remains open for ongoing whole-repo mutation testing and toolchain tuning.
+
+### 2.21 `Frontend: ChessBoardArea.tsx` (Expanded Scope lines 380–675, Issue [#630](https://github.com/NathanZK/ChessEcho/issues/630))
+
+- **Issue**: Issue [#630](https://github.com/NathanZK/ChessEcho/issues/630)
+- **Operational Guide**: [frontend-mutation-testing.md](../frontend-mutation-testing.md)
+- **Framework**: StrykerJS 10.1.1 (`@stryker-mutator/core`, `@stryker-mutator/vitest-runner`), Vitest 4.1.12
+- **Scope**: `src/components/ChessBoardArea.tsx` (Targeted lines 380:1 to 675:1, covering Challenge Mode boundaries, exploration move evaluation, network fallback recovery, navigation, and board square interactions)
+- **Test Suites**: `src/__tests__/ExplorationEvaluation.test.tsx`, `src/__tests__/BoardStateDerivation.test.tsx` (and full Vitest coverage across 642 tests)
+- **Execution Command**:
+  ```bash
+  cd frontend && npm run test:mutation -- --mutate="src/components/ChessBoardArea.tsx:380:1-675:1"
+  ```
+- **Audit Evolution & Results**:
+  1. *Baseline Audit (pre-expansion)*: 319 generated, 199 killed (64.4%), 6 timeout, 78 survived (24.5%), 25 no coverage, 11 compile/runtime errors (score: 65.25%).
+  2. *Scope Expansion Directive*: In accordance with user instruction, the scope of issue [#630](https://github.com/NathanZK/ChessEcho/issues/630) was expanded to eliminate the 78 pre-existing mutation survivors across the targeted component range lines 380–675.
+  3. *Intermediate Audit*: Added tests T24–T39 in `BoardStateDerivation.test.tsx` covering click selection/deselection, piece drop reset, boundary undo/redo, arrow key listener guards, hint styling, player orientation, initial puzzle move history truncation, strict threshold evaluation, sound effects, and network fallback error handling. Result: 283 killed, 26 survived, 0 no coverage, 3 timeout, 7 errors (score: 91.67%).
+  4. *Final Comprehensive Audit*: Enhanced assertions for strict threshold opponent-turn boundaries, gameHistory preservation during rollback and redo, async stale evaluation rejection, and undefined optional callback resilience.
+     - **Mutants Generated / Instrumented**: 319
+     - **Killed**: 305 (95.6%)
+     - **Timed Out**: 4 (1.3%)
+     - **Survived**: 2 (0.6%)
+     - **No Coverage**: 0 (0%)
+     - **Compile / Runtime Errors**: 8
+     - **Final Mutation Score**: **99.36%** (305 killed + 4 timed out / 311 valid mutants)
+- **Surviving Mutants Analysis & Equivalence Proof**:
+  Only two mutants survived in the entire targeted range (`lines 380:1–675:1`), both mathematically and structurally proven to be equivalent:
+  1. *Mutant 68 (Line 428:19, `ConditionalExpression: if (!acceptable) -> if (true)`)*:
+     - *Code Context*:
+       ```typescript
+       } else {
+         if (!acceptable) {
+           errorMessage = `That move is too inaccurate. It loses ${lossCp.toFixed(2)} pawns compared with the best move.`;
+         }
+       }
+       ```
+     - *Equivalence Proof*: When `shouldUseStrictThreshold` is false and `acceptable` is true, replacing `if (!acceptable)` with `if (true)` assigns a non-null string to local variable `errorMessage`. However, line 433 immediately guards `if (!acceptable)`. Because `acceptable` is true, execution branches to the `else` block (lines 437–452). In this block, line 445 explicitly calls `onUnacceptableMove?.(null)` and `errorMessage` is never read before falling out of scope. Therefore, this mutant produces identical external observable behavior and state for all possible inputs.
+  2. *Mutant 283 (Line 607:11, `ConditionalExpression: if (targetMoveVerbose) -> if (true)`)*:
+     - *Code Context*:
+       ```typescript
+       try {
+         const tempGame = new Chess(initialFen);
+         const moves = tempGame.moves({ verbose: true });
+         const targetMoveVerbose = moves.find((m) => m.san === targetMove);
+         if (targetMoveVerbose) {
+           setCustomSquareStyles({
+             [targetMoveVerbose.from]: { ... },
+           });
+         }
+       } catch {
+         // Fallback
+       }
+       ```
+     - *Equivalence Proof*: If `targetMoveVerbose` is undefined (targetMove not found in legal moves), changing `if (targetMoveVerbose)` to `if (true)` causes `targetMoveVerbose.from` to throw a `TypeError: Cannot read properties of undefined (reading 'from')`. Because this statement is wrapped in `try { ... } catch { }`, the exception is caught and swallowed by the fallback block, leaving `customSquareStyles` unmodified `{}`—identically to the original `if (targetMoveVerbose)` check.
+- **Coverage of Killed Categories**:
+  - *Challenge Mode Boundaries*: Disabling dragging (`allowDragging: explorationPlayMode !== 'CHALLENGE'`), blocking piece drops (`handlePieceDrop` early return `false`), and blocking square clicks (`handleSquareClick` early return) in both incomplete and completed challenge phases, while preserving candidate selection, calculation input, and non-challenge modes (`CHESSECHO` and `BOTH_SIDES`).
+  - *Evaluation Logic & Strict Thresholds*: User own-turn tolerance vs opponent strict threshold (`0.20` pawns), exact boundary acceptance, standard inaccuracy messages, and `evalCp` perspective conversion.
+  - *Fallback & Recovery Lifecycle*: Rollback to preserved `gameHistory` instance on null evaluation, automatic move acceptance on network rejection, complete undo/redo navigation across network-accepted moves, branch overwriting after undo, and stale evaluation rejection guard.
+  - *Board Interaction & Event Filtering*: Click-to-move piece selection and deselection, empty square click styling invariance, drop reset on empty target, and arrow key event isolation from input/textarea controls.
 
 ---
 
