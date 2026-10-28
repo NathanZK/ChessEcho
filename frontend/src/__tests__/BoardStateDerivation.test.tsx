@@ -1576,4 +1576,23 @@ describe('Issue 98 — board state derivation', () => {
     expect(vi.mocked(playSound)).not.toHaveBeenCalled();
     expect(onUnacceptableMove).not.toHaveBeenCalled();
   });
+
+  it('T40 — canHint enables Hint button during Line Exploration when exploration candidate exists and disables when absent', async () => {
+    const propsWithCandidate = boardProps({
+      isExplorationActive: true,
+      pendingContinuationCandidate: {
+        move: 'Nf3',
+        resultingFen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2',
+        providerType: 'ENGINE',
+        evalLoss: 0,
+      },
+      canHint: true,
+    });
+    const { rerender } = render(<ChessBoardArea {...propsWithCandidate} />);
+    expect(screen.getByRole('button', { name: /Hint/i })).toBeEnabled();
+
+    // When candidate is absent and canHint evaluates to false, Hint button is disabled
+    rerender(<ChessBoardArea {...propsWithCandidate} pendingContinuationCandidate={null} canHint={false} />);
+    expect(screen.getByRole('button', { name: /Hint/i })).toBeDisabled();
+  });
 });

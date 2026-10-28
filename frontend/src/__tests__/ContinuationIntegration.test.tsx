@@ -518,6 +518,32 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
     fireEvent.click(exploreButtons[0]);
     expect(handleAlternativeSelected).toHaveBeenCalledWith(altCandidateMultiPly);
 
+    // Dynamically updates plies-remaining when alternative candidate is selected
+    rerender(
+      <PuzzleFeedbackPanel
+        puzzle={mockPuzzle}
+        feedback={{ status: 'CORRECT', lastMove: 'Bb5' }}
+        onNextPuzzle={() => {}}
+        puzzleColorFilter="BOTH"
+        onColorFilterChange={() => {}}
+        showPuzzleSettings={false}
+        onTogglePuzzleSettings={() => {}}
+        minMistakeCount={3}
+        onMinMistakeCountChange={() => {}}
+        onApplySettings={() => {}}
+        isExplorationActive={true}
+        explorationPlayMode="CHESSECHO"
+        lastContinuationCandidates={{
+          parentFen: 'r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4',
+          selected: altCandidateMultiPly,
+          candidates: [selectedCandidate, altCandidateMultiPly, altCandidateTerminal, altCandidateQuiet],
+        }}
+        onAlternativeSelected={handleAlternativeSelected}
+      />
+    );
+    expect(screen.getByText('Bxc6')).toBeInTheDocument();
+    expect(screen.getByText('+1 plies')).toBeInTheDocument();
+
     // Alternative responses section hides when only 1 candidate exists
     rerender(
       <PuzzleFeedbackPanel
@@ -694,7 +720,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
     );
     expect(screen.getByText(/\+2 plies/i)).toBeInTheDocument();
 
-    // Rerender with quiet selected candidate (0 plies, empty continuation) -> renders Quiet in selected card
+    // Rerender with quiet selected candidate (0 plies, empty continuation) -> renders evaluative move quality badge instead of Quiet
     rerender(
       <PuzzleFeedbackPanel
         puzzle={mockPuzzle}
@@ -716,7 +742,8 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
         }}
       />
     );
-    expect(screen.getByText(/Quiet/i)).toBeInTheDocument();
+    expect(screen.getByText(/Inaccuracy/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Quiet/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/\+0 plies/i)).not.toBeInTheDocument();
   });
 

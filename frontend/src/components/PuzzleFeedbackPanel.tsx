@@ -170,10 +170,6 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
   onExitExploration,
   onEnterBlindfold,
   isBlindfoldEntryDisabled = false,
-  continuationMode = 'ENGINE',
-  onContinuationModeChange,
-  opponentRatingBand,
-  onOpponentRatingBandChange,
   explorationPlayMode,
   onExplorationPlayModeChange,
   sideToMove,
@@ -405,7 +401,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
       )}
 
       {/* Dynamic Feedback / Success Card */}
-      {!isSuppliedPosition && (feedback.status === 'CORRECT' ? (
+      {feedback.status === 'CORRECT' ? (
         <div className="p-3.5 bg-gradient-to-br from-emerald-950/80 to-slate-900 border-2 border-emerald-500/50 rounded-2xl space-y-2.5 shadow-lg shadow-emerald-950/40 animate-in fade-in duration-200">
           <div className="flex items-center space-x-3">
             <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0">
@@ -487,27 +483,43 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
               )}
             </div>
           )}
-          <div className="flex items-center space-x-2">
-            {onPreviousPuzzle && (
+          {!isSuppliedPosition ? (
+            <div className="flex items-center space-x-2">
+              {onPreviousPuzzle && (
+                <button
+                  onClick={onPreviousPuzzle}
+                  className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl transition border border-slate-700/60 flex items-center justify-center space-x-1.5 cursor-pointer"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                  <span>Prev Puzzle</span>
+                </button>
+              )}
               <button
-                onClick={onPreviousPuzzle}
-                className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl transition border border-slate-700/60 flex items-center justify-center space-x-1.5 cursor-pointer"
+                onClick={onNextPuzzle}
+                className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition shadow-lg shadow-emerald-900/50 flex items-center justify-center space-x-1.5 group cursor-pointer"
               >
-                <ChevronLeft className="w-4 h-4" />
-                <span>Prev Puzzle</span>
+                <span>Next Puzzle</span>
+                <span className="text-[10px] font-normal text-emerald-200 bg-emerald-700/60 px-1.5 py-0.5 rounded">
+                  Enter ↵
+                </span>
+                <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition" />
               </button>
-            )}
-            <button
-              onClick={onNextPuzzle}
-              className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition shadow-lg shadow-emerald-900/50 flex items-center justify-center space-x-1.5 group cursor-pointer"
-            >
-              <span>Next Puzzle</span>
-              <span className="text-[10px] font-normal text-emerald-200 bg-emerald-700/60 px-1.5 py-0.5 rounded">
-                Enter ↵
-              </span>
-              <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition" />
-            </button>
-          </div>
+            </div>
+          ) : (
+            onExitExploration && (
+              <div className="flex items-center space-x-2">
+                <button
+                  type="button"
+                  onClick={onExitExploration}
+                  title="Exit Exploration"
+                  className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl transition border border-slate-700/60 flex items-center justify-center space-x-1.5 cursor-pointer"
+                >
+                  <LogOut className="w-3.5 h-3.5 text-slate-400" />
+                  <span>Exit</span>
+                </button>
+              </div>
+            )
+          )}
         </div>
       ) : feedback.status === 'HISTORICAL_MISTAKE' ? (
         <>
@@ -560,7 +572,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
               </p>
             </div>
           </div>
-          {!isExplorationActive && ((onEnterExploration && feedback.lastMove) || onEnterBlindfold) && (
+          {!isExplorationActive && ((onEnterExploration && feedback.lastMove) || onEnterBlindfold || (isSuppliedPosition && onExitExploration)) && (
             <div data-testid="exploration-actions" className="flex items-center space-x-2 mt-2">
               {onEnterExploration && feedback.lastMove && (
                 <button
@@ -569,7 +581,18 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
                   className="flex-1 py-2 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 font-bold text-xs rounded-xl transition border border-rose-500/30 flex items-center justify-center space-x-1.5 cursor-pointer"
                 >
                   <Sparkles className="w-3.5 h-3.5 text-rose-400" />
-                  <span>Explore this decision</span>
+                  <span>{isSuppliedPosition ? 'Continue Exploration →' : 'Explore this decision'}</span>
+                </button>
+              )}
+              {isSuppliedPosition && onExitExploration && (
+                <button
+                  type="button"
+                  onClick={onExitExploration}
+                  title="Exit Exploration"
+                  className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl transition border border-slate-700/60 flex items-center justify-center space-x-1.5 cursor-pointer"
+                >
+                  <LogOut className="w-3.5 h-3.5 text-slate-400" />
+                  <span>Exit</span>
                 </button>
               )}
               {renderBlindfoldEntry(
@@ -580,13 +603,40 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
           )}
         </>
       ) : (
-        <div className="flex items-center space-x-3 p-3 bg-slate-950/60 border border-slate-800/80 rounded-xl text-slate-400">
-          <HelpCircle className="w-4 h-4 text-slate-400 shrink-0" />
-          <p className="text-xs">
-            Find {puzzle.playerColor === 'BLACK' ? "Black's" : "White's"} best move or an acceptable alternative to fix your opening habit.
-          </p>
-        </div>
-      ))}
+        <>
+          <div className="flex items-center space-x-3 p-3 bg-slate-950/60 border border-slate-800/80 rounded-xl text-slate-400">
+            <HelpCircle className="w-4 h-4 text-slate-400 shrink-0" />
+            <p className="text-xs">
+              {isSuppliedPosition
+                ? 'Test candidate moves or proceed to Line Exploration.'
+                : `Find ${puzzle.playerColor === 'BLACK' ? "Black's" : "White's"} best move or an acceptable alternative to fix your opening habit.`}
+            </p>
+          </div>
+          {!isExplorationActive && onEnterExploration && isSuppliedPosition && (
+            <div data-testid="exploration-actions" className="flex items-center space-x-2 mt-2">
+              <button
+                type="button"
+                onClick={() => onEnterExploration()}
+                className="flex-1 py-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 font-bold text-xs rounded-xl transition border border-emerald-500/30 flex items-center justify-center space-x-1.5 cursor-pointer"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Continue Exploration →</span>
+              </button>
+              {isSuppliedPosition && onExitExploration && (
+                <button
+                  type="button"
+                  onClick={onExitExploration}
+                  title="Exit Exploration"
+                  className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl transition border border-slate-700/60 flex items-center justify-center space-x-1.5 cursor-pointer"
+                >
+                  <LogOut className="w-3.5 h-3.5 text-slate-400" />
+                  <span>Exit</span>
+                </button>
+              )}
+            </div>
+          )}
+        </>
+      )}
 
       {/* Active Line Exploration Card (Renders ONLY when isExplorationActive is true) */}
       {isExplorationActive && (
@@ -723,45 +773,6 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
                       >
                         Challenge Mode
                       </button>
-                    </div>
-                  )}
-
-                  {/* Continuation Mode Selector (ENGINE / HUMAN) only visible in CHESSECHO mode */}
-                  {explorationPlayMode === 'CHESSECHO' && onContinuationModeChange && (
-                    <div className="flex gap-2">
-                      <div className="flex bg-slate-900 p-0.5 rounded-lg border border-slate-800">
-                        {(['ENGINE', 'HUMAN'] as const).map((m) => (
-                          <button
-                            key={m}
-                            type="button"
-                            onClick={() => onContinuationModeChange(m)}
-                            className={`px-2 py-0.5 text-[10px] font-bold rounded transition cursor-pointer ${
-                              continuationMode === m ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
-                            }`}
-                          >
-                            {m}
-                          </button>
-                        ))}
-                      </div>
-                      
-                      {continuationMode === 'HUMAN' && onOpponentRatingBandChange && (
-                        <select 
-                          className="bg-slate-900 text-slate-200 text-[10px] font-bold px-2 py-0.5 rounded-lg border border-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                          value={opponentRatingBand}
-                          onChange={(e) => onOpponentRatingBandChange(e.target.value)}
-                        >
-                          <option value="400-600">400-600</option>
-                          <option value="600-800">600-800</option>
-                          <option value="800-1000">800-1000</option>
-                          <option value="1000-1200">1000-1200</option>
-                          <option value="1200-1400">1200-1400</option>
-                          <option value="1400-1600">1400-1600</option>
-                          <option value="1600-1800">1600-1800</option>
-                          <option value="1800-2000">1800-2000</option>
-                          <option value="2000-2200">2000-2200</option>
-                          <option value="2200+">2200+</option>
-                        </select>
-                      )}
                     </div>
                   )}
                 </div>
@@ -1026,11 +1037,28 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
                         <span className="text-[10px] text-emerald-300/80 bg-emerald-950/60 border border-emerald-700/50 px-1.5 py-0.5 rounded font-mono">
                           +{lastContinuationCandidates.selected.pliesResolved ?? lastContinuationCandidates.selected.continuationSanMoves?.length} plies
                         </span>
-                      ) : (
-                        <span className="text-[10px] text-slate-400 bg-slate-800/60 border border-slate-700 px-1.5 py-0.5 rounded font-sans">
-                          Quiet
-                        </span>
-                      )}
+                      ) : (() => {
+                        const loss = lastContinuationCandidates.selected.evalLoss ?? 0;
+                        if (loss === 0) {
+                          return (
+                            <span className="text-[10px] text-emerald-300 bg-emerald-950/60 border border-emerald-700/50 px-1.5 py-0.5 rounded font-sans font-semibold">
+                              Best move
+                            </span>
+                          );
+                        } else if (loss <= 0.20) {
+                          return (
+                            <span className="text-[10px] text-emerald-400/80 bg-emerald-950/60 border border-emerald-700/50 px-1.5 py-0.5 rounded font-sans">
+                              Acceptable move (+{loss.toFixed(2)} pawns)
+                            </span>
+                          );
+                        } else {
+                          return (
+                            <span className="text-[10px] text-amber-300 bg-amber-950/60 border border-amber-700/50 px-1.5 py-0.5 rounded font-sans font-semibold">
+                              Inaccuracy
+                            </span>
+                          );
+                        }
+                      })()}
                     </div>
                     <span className="text-[10px] text-emerald-400/70 font-semibold bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">Selected</span>
                   </div>

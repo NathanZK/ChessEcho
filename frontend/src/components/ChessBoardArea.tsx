@@ -489,7 +489,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
 
       if (isInitialDecision) {
         // Check if move matches best move or acceptable moves
-        const isBest = moveSan === targetMove;
+        const isBest = targetMove ? moveSan === targetMove : false;
         const isAcceptable = acceptableMoves.some((m) => m.move === moveSan);
         const isCorrect = isBest || isAcceptable;
 
@@ -497,7 +497,9 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
         const historicalMistake = movesPlayed.find((m) => m.move === moveSan);
 
         // Sound feedback for initial puzzle decision
-        if (isBest) {
+        if (!targetMove) {
+          playSound('move');
+        } else if (isBest) {
           playSound('completion');
         } else if (isAcceptable) {
           playSound('correct');
@@ -598,9 +600,16 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   const handleHint = () => {
     // Highlight square of piece that should make the best move
     try {
-      const tempGame = new Chess(initialFen);
+      const currentFen = fenHistory[historyIndex] ?? game.fen();
+      const moveCandidate = (isExplorationActive && pendingContinuationCandidate?.move)
+        ? pendingContinuationCandidate.move
+        : targetMove;
+
+      if (!moveCandidate) return;
+
+      const tempGame = new Chess(isExplorationActive ? currentFen : initialFen);
       const moves = tempGame.moves({ verbose: true });
-      const targetMoveVerbose = moves.find((m) => m.san === targetMove);
+      const targetMoveVerbose = moves.find((m) => m.san === moveCandidate);
       if (targetMoveVerbose) {
         setCustomSquareStyles({
           [targetMoveVerbose.from]: {

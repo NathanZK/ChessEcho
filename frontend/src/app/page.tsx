@@ -35,6 +35,7 @@ import {
   DisconnectAccountError,
   logout as apiLogout,
   submitTrainingAttempt,
+  evaluateMove,
   type AccountSummary,
   type SessionState,
 } from '@/services/api';
@@ -45,7 +46,6 @@ import { StopwatchTimer, CountdownTimer } from '@/utils/timedTraining';
 import { activeTabStore, activeUsernameStore, activeAccountStore, activeJobStore, clearAuthenticatedAccountState, puzzleSettingsStore, reconcileSessionStorageOwner } from '@/utils/browserStores';
 import type { AccountConnectionStatus } from '@/components/ImportGamesView';
 
-export const EXPLORATION_STEP_DELAY_MS = 800;
 const chessEchoSelectionPolicy = createStochasticSelectionPolicy();
 const deterministicSelectionPolicy = createDeterministicSelectionPolicy();
 
@@ -64,6 +64,7 @@ type TimerAttempt = {
 };
 
 type LongDecisionReturnSnapshot = {
+  originatingTab?: TabType;
   activePuzzle: Puzzle | null;
   currentPuzzleIndex: number;
   initialMoveHistorySan: string[];
@@ -841,6 +842,10 @@ export default function Home() {
     if (!lastContinuationCandidates) return;
     const parentFen = lastContinuationCandidates.parentFen;
 
+    setLastContinuationCandidates((prev) =>
+      prev ? { ...prev, selected: candidate } : null
+    );
+
     if (candidate.evalCp != null) {
       const whiteEval = toWhitePerspective(candidate.evalCp, parentFen);
       setCurrentEvalCp(whiteEval);
@@ -969,10 +974,93 @@ export default function Home() {
     setChallengeActiveCandidateByFen({});
   };
 
+  const captureExplorationReturnSnapshot = (tab?: TabType): LongDecisionReturnSnapshot => {
+    const timerAttempt = timerAttemptRef.current;
+    const timerWasRunning = timerAttempt?.timer.isRunning() ?? false;
+    let timerShouldResume = timerWasRunning;
+    let elapsedMs = timerElapsedMs;
+    if (timerWasRunning && timerAttempt) {
+      if (timerAttempt.timer instanceof StopwatchTimer) {
+        elapsedMs = timerAttempt.timer.pause();
+      } else {
+        const remainingMs = timerAttempt.timer.pause();
+        elapsedMs = timerAttempt.allowedMs - remainingMs;
+        if (remainingMs === 0 && !timerAttempt.hasExpired) {
+          timerAttempt.hasExpired = true;
+          timerShouldResume = false;
+          setTimerExpired(true);
+          soundService.playSound('completion');
+          void submitTimerAttempt('EXPIRED');
+        }
+      }
+      setTimerElapsedMs(elapsedMs);
+    }
+
+    return {
+      originatingTab: tab,
+      activePuzzle,
+      currentPuzzleIndex,
+      initialMoveHistorySan,
+      initialMoveHistoryStartFen,
+      currentBoardFen,
+      boardHistory: boardHistorySnapshotRef.current ?? boardHistorySnapshot,
+      currentEvalCp,
+      isEvalUnknown,
+      evalHistory,
+      feedbackHistory,
+      historyIndex,
+      moveHistory,
+      hintSquare,
+      feedback,
+      showPuzzleSettings,
+      isBoardFlipped,
+      timerMode,
+      timerElapsedMs: elapsedMs,
+      timerAllowedMs,
+      timerExpired: timerExpired || (timerAttempt?.hasExpired ?? false),
+      timerSubmissionError,
+      timerAttempt,
+      timerWasRunning: timerShouldResume,
+    };
+  };
+
+  const restoreExplorationReturnSnapshot = (returnSnapshot: LongDecisionReturnSnapshot) => {
+    setActivePuzzle(returnSnapshot.activePuzzle);
+    setCurrentPuzzleIndex(returnSnapshot.currentPuzzleIndex);
+    setInitialMoveHistorySan(returnSnapshot.initialMoveHistorySan);
+    setInitialMoveHistoryStartFen(returnSnapshot.initialMoveHistoryStartFen);
+    setCurrentBoardFen(returnSnapshot.currentBoardFen);
+    boardHistorySnapshotRef.current = returnSnapshot.boardHistory;
+    setBoardHistorySnapshot(returnSnapshot.boardHistory);
+    setCurrentEvalCp(returnSnapshot.currentEvalCp);
+    setIsEvalUnknown(returnSnapshot.isEvalUnknown);
+    setEvalHistory(returnSnapshot.evalHistory);
+    setFeedbackHistory(returnSnapshot.feedbackHistory);
+    setHistoryIndex(returnSnapshot.historyIndex);
+    setMoveHistory(returnSnapshot.moveHistory);
+    setHintSquare(returnSnapshot.hintSquare);
+    setFeedback(returnSnapshot.feedback);
+    setShowPuzzleSettings(returnSnapshot.showPuzzleSettings);
+    setIsBoardFlipped(returnSnapshot.isBoardFlipped);
+    setTimerMode(returnSnapshot.timerMode);
+    setTimerElapsedMs(returnSnapshot.timerElapsedMs);
+    setTimerAllowedMs(returnSnapshot.timerAllowedMs);
+    setTimerExpired(returnSnapshot.timerExpired);
+    setTimerSubmissionError(returnSnapshot.timerSubmissionError);
+    timerAttemptRef.current = returnSnapshot.timerAttempt;
+    timerRef.current = returnSnapshot.timerAttempt?.timer ?? null;
+    if (returnSnapshot.timerWasRunning) {
+      returnSnapshot.timerAttempt?.timer.resume();
+    }
+  };
+
   const handleExplorePosition = (
     position: PositionExplorationStart,
     preserveReturnState = false,
   ) => {
+    if (!preserveReturnState && !hasLongDecisionReturnContext && !hasSimilarPositionsReturnContext) {
+      longDecisionReturnSnapshotRef.current = captureExplorationReturnSnapshot(activeTab);
+    }
     suppliedPositionCounterRef.current += 1;
     blindfold.exit();
     if (!preserveReturnState) {
@@ -999,11 +1087,13 @@ export default function Home() {
     setInitialMoveHistorySan(position.sanHistory);
     setInitialMoveHistoryStartFen(position.historyStartFen);
     setCurrentBoardFen(position.fen);
+    boardHistorySnapshotRef.current = null;
+    setBoardHistorySnapshot(null);
     setCurrentEvalCp(35);
+    setFeedback({ status: 'IDLE' });
     setIsEvalUnknown(true);
     setHintSquare(undefined);
     changeTab('puzzles');
-    handleEnterExploration(undefined, undefined, position.fen, 35, true);
   };
 
   const handleLongDecisionExplorePosition = (fen: string): boolean => {
@@ -1013,52 +1103,7 @@ export default function Home() {
       return false;
     }
 
-    const timerAttempt = timerAttemptRef.current;
-    const timerWasRunning = timerAttempt?.timer.isRunning() ?? false;
-    let timerShouldResume = timerWasRunning;
-    let elapsedMs = timerElapsedMs;
-    if (timerWasRunning && timerAttempt) {
-      if (timerAttempt.timer instanceof StopwatchTimer) {
-        elapsedMs = timerAttempt.timer.pause();
-      } else {
-        const remainingMs = timerAttempt.timer.pause();
-        elapsedMs = timerAttempt.allowedMs - remainingMs;
-        if (remainingMs === 0 && !timerAttempt.hasExpired) {
-          timerAttempt.hasExpired = true;
-          timerShouldResume = false;
-          setTimerExpired(true);
-          soundService.playSound('completion');
-          void submitTimerAttempt('EXPIRED');
-        }
-      }
-      setTimerElapsedMs(elapsedMs);
-    }
-
-    longDecisionReturnSnapshotRef.current = {
-      activePuzzle,
-      currentPuzzleIndex,
-      initialMoveHistorySan,
-      initialMoveHistoryStartFen,
-      currentBoardFen,
-      boardHistory: boardHistorySnapshotRef.current ?? boardHistorySnapshot,
-      currentEvalCp,
-      isEvalUnknown,
-      evalHistory,
-      feedbackHistory,
-      historyIndex,
-      moveHistory,
-      hintSquare,
-      feedback,
-      showPuzzleSettings,
-      isBoardFlipped,
-      timerMode,
-      timerElapsedMs: elapsedMs,
-      timerAllowedMs,
-      timerExpired: timerExpired || (timerAttempt?.hasExpired ?? false),
-      timerSubmissionError,
-      timerAttempt,
-      timerWasRunning: timerShouldResume,
-    };
+    longDecisionReturnSnapshotRef.current = captureExplorationReturnSnapshot('long-decisions');
     setHasLongDecisionReturnContext(true);
     handleExplorePosition({ fen, sanHistory: [] }, true);
     return true;
@@ -1071,52 +1116,7 @@ export default function Home() {
       return false;
     }
 
-    const timerAttempt = timerAttemptRef.current;
-    const timerWasRunning = timerAttempt?.timer.isRunning() ?? false;
-    let timerShouldResume = timerWasRunning;
-    let elapsedMs = timerElapsedMs;
-    if (timerWasRunning && timerAttempt) {
-      if (timerAttempt.timer instanceof StopwatchTimer) {
-        elapsedMs = timerAttempt.timer.pause();
-      } else {
-        const remainingMs = timerAttempt.timer.pause();
-        elapsedMs = timerAttempt.allowedMs - remainingMs;
-        if (remainingMs === 0 && !timerAttempt.hasExpired) {
-          timerAttempt.hasExpired = true;
-          timerShouldResume = false;
-          setTimerExpired(true);
-          soundService.playSound('completion');
-          void submitTimerAttempt('EXPIRED');
-        }
-      }
-      setTimerElapsedMs(elapsedMs);
-    }
-
-    longDecisionReturnSnapshotRef.current = {
-      activePuzzle,
-      currentPuzzleIndex,
-      initialMoveHistorySan,
-      initialMoveHistoryStartFen,
-      currentBoardFen,
-      boardHistory: boardHistorySnapshotRef.current ?? boardHistorySnapshot,
-      currentEvalCp,
-      isEvalUnknown,
-      evalHistory,
-      feedbackHistory,
-      historyIndex,
-      moveHistory,
-      hintSquare,
-      feedback,
-      showPuzzleSettings,
-      isBoardFlipped,
-      timerMode,
-      timerElapsedMs: elapsedMs,
-      timerAllowedMs,
-      timerExpired: timerExpired || (timerAttempt?.hasExpired ?? false),
-      timerSubmissionError,
-      timerAttempt,
-      timerWasRunning: timerShouldResume,
-    };
+    longDecisionReturnSnapshotRef.current = captureExplorationReturnSnapshot('similar-positions');
     setHasSimilarPositionsReturnContext(true);
     handleExplorePosition(position, true);
     return true;
@@ -1145,71 +1145,30 @@ export default function Home() {
     if (hasSimilarPositionsReturnContext) {
       const returnSnapshot = longDecisionReturnSnapshotRef.current;
       if (returnSnapshot) {
-        setActivePuzzle(returnSnapshot.activePuzzle);
-        setCurrentPuzzleIndex(returnSnapshot.currentPuzzleIndex);
-        setInitialMoveHistorySan(returnSnapshot.initialMoveHistorySan);
-        setInitialMoveHistoryStartFen(returnSnapshot.initialMoveHistoryStartFen);
-        setCurrentBoardFen(returnSnapshot.currentBoardFen);
-        boardHistorySnapshotRef.current = returnSnapshot.boardHistory;
-        setBoardHistorySnapshot(returnSnapshot.boardHistory);
-        setCurrentEvalCp(returnSnapshot.currentEvalCp);
-        setIsEvalUnknown(returnSnapshot.isEvalUnknown);
-        setEvalHistory(returnSnapshot.evalHistory);
-        setFeedbackHistory(returnSnapshot.feedbackHistory);
-        setHistoryIndex(returnSnapshot.historyIndex);
-        setMoveHistory(returnSnapshot.moveHistory);
-        setHintSquare(returnSnapshot.hintSquare);
-        setFeedback(returnSnapshot.feedback);
-        setShowPuzzleSettings(returnSnapshot.showPuzzleSettings);
-        setIsBoardFlipped(returnSnapshot.isBoardFlipped);
-        setTimerMode(returnSnapshot.timerMode);
-        setTimerElapsedMs(returnSnapshot.timerElapsedMs);
-        setTimerAllowedMs(returnSnapshot.timerAllowedMs);
-        setTimerExpired(returnSnapshot.timerExpired);
-        setTimerSubmissionError(returnSnapshot.timerSubmissionError);
-        timerAttemptRef.current = returnSnapshot.timerAttempt;
-        timerRef.current = returnSnapshot.timerAttempt?.timer ?? null;
-        if (returnSnapshot.timerWasRunning) {
-          returnSnapshot.timerAttempt?.timer.resume();
-        }
+        restoreExplorationReturnSnapshot(returnSnapshot);
         longDecisionReturnSnapshotRef.current = null;
       }
       setHasSimilarPositionsReturnContext(false);
       changeTab('similar-positions');
       return;
     }
-    const returnSnapshot = longDecisionReturnSnapshotRef.current;
-    if (returnSnapshot) {
-      setActivePuzzle(returnSnapshot.activePuzzle);
-      setCurrentPuzzleIndex(returnSnapshot.currentPuzzleIndex);
-      setInitialMoveHistorySan(returnSnapshot.initialMoveHistorySan);
-      setInitialMoveHistoryStartFen(returnSnapshot.initialMoveHistoryStartFen);
-      setCurrentBoardFen(returnSnapshot.currentBoardFen);
-      boardHistorySnapshotRef.current = returnSnapshot.boardHistory;
-      setBoardHistorySnapshot(returnSnapshot.boardHistory);
-      setCurrentEvalCp(returnSnapshot.currentEvalCp);
-      setIsEvalUnknown(returnSnapshot.isEvalUnknown);
-      setEvalHistory(returnSnapshot.evalHistory);
-      setFeedbackHistory(returnSnapshot.feedbackHistory);
-      setHistoryIndex(returnSnapshot.historyIndex);
-      setMoveHistory(returnSnapshot.moveHistory);
-      setHintSquare(returnSnapshot.hintSquare);
-      setFeedback(returnSnapshot.feedback);
-      setShowPuzzleSettings(returnSnapshot.showPuzzleSettings);
-      setIsBoardFlipped(returnSnapshot.isBoardFlipped);
-      setTimerMode(returnSnapshot.timerMode);
-      setTimerElapsedMs(returnSnapshot.timerElapsedMs);
-      setTimerAllowedMs(returnSnapshot.timerAllowedMs);
-      setTimerExpired(returnSnapshot.timerExpired);
-      setTimerSubmissionError(returnSnapshot.timerSubmissionError);
-      timerAttemptRef.current = returnSnapshot.timerAttempt;
-      timerRef.current = returnSnapshot.timerAttempt?.timer ?? null;
-      if (returnSnapshot.timerWasRunning) {
-        returnSnapshot.timerAttempt?.timer.resume();
+    if (hasLongDecisionReturnContext) {
+      const returnSnapshot = longDecisionReturnSnapshotRef.current;
+      if (returnSnapshot) {
+        restoreExplorationReturnSnapshot(returnSnapshot);
+        longDecisionReturnSnapshotRef.current = null;
       }
-      longDecisionReturnSnapshotRef.current = null;
       setHasLongDecisionReturnContext(false);
       changeTab('long-decisions');
+      return;
+    }
+    const genericSnapshot = longDecisionReturnSnapshotRef.current;
+    if (genericSnapshot) {
+      restoreExplorationReturnSnapshot(genericSnapshot);
+      longDecisionReturnSnapshotRef.current = null;
+      if (genericSnapshot.originatingTab) {
+        changeTab(genericSnapshot.originatingTab);
+      }
       return;
     }
     if (activePuzzle?.source === 'supplied') {
@@ -1669,7 +1628,7 @@ export default function Home() {
     isInitialDecision: boolean = true
   ) => {
     if (!activePuzzle) return;
-    if (isInitialDecision) {
+    if (isInitialDecision && activePuzzle.source !== 'supplied') {
       if (!puzzleContextReady) return;
       void puzzleAttempts.submit(moveSan, isCorrect);
     }
@@ -1679,6 +1638,31 @@ export default function Home() {
     const startCp = activePuzzle.evalCp ?? 35;
 
     if (isInitialDecision) {
+      if (activePuzzle.source === 'supplied' || !activePuzzle.targetMove) {
+        // Dynamic evaluation for supplied and unanalyzed positions without static target move
+        void evaluateMove(activePuzzle.fen, moveSan).then((evalResult) => {
+          if (!evalResult) return;
+          const acceptable = evalResult.acceptable;
+          const evalCp = evalResult.evalCp ?? startCp;
+          const nextFeedback: PuzzleFeedbackState = {
+            status: acceptable ? 'CORRECT' : 'INCORRECT',
+            lastMove: moveSan,
+          };
+          setFeedback(nextFeedback);
+          setCurrentEvalCp(evalCp);
+          setIsEvalUnknown(false);
+          setEvalHistory((prev) => [...prev.slice(0, historyIndex + 1), evalCp]);
+          setFeedbackHistory((prev) => [...prev.slice(0, historyIndex + 1), nextFeedback]);
+          setHistoryIndex((prev) => prev + 1);
+          if (acceptable) {
+            soundService.playSound('completion');
+          } else {
+            soundService.playSound('incorrect');
+          }
+        });
+        return;
+      }
+
       // Calculate evaluation update based on move played for initial decision
       let calculatedEval = startCp;
       let moveHasEngineData = true;
@@ -2117,7 +2101,10 @@ export default function Home() {
                     onRedo={handleBoardRedo}
                     onReset={handleBoardReset}
                     hintSquare={hintSquare}
-                    canHint={!(feedback.status === 'CORRECT' || feedback.status === 'EXPLORING')}
+                    canHint={
+                      feedback.status !== 'CORRECT' &&
+                      (!isExplorationActive || !!pendingContinuationCandidate?.move)
+                    }
                     onFlipBoard={() => setIsBoardFlipped((prev) => !prev)}
                     soundEnabled={soundEnabled}
                     onToggleSound={handleToggleSound}

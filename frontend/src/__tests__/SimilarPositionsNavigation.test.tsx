@@ -127,8 +127,14 @@ describe('SimilarPositions navigation and exploration bridge', () => {
     const exploreBtn = screen.getByRole('button', { name: /Explore this position/i });
     fireEvent.click(exploreBtn);
 
-    // 4. Verify transition to Line Exploration
+    // 4. Verify opening in the shared puzzle shell in idle state
     expect(activeTabStore.getSnapshot()).toBe('puzzles');
+    expect(screen.getByRole('button', { name: 'Practice Puzzles' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Continue Exploration/i })).toBeInTheDocument();
+
+    // Transition into Line Exploration
+    fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
+    expect(screen.getByRole('button', { name: 'Line Exploration' })).toBeInTheDocument();
     const exitBtn = await screen.findByTitle(/Exit Exploration/i);
     expect(exitBtn).toBeInTheDocument();
 

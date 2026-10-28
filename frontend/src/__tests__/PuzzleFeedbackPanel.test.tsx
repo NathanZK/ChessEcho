@@ -209,26 +209,96 @@ describe('PuzzleFeedbackPanel Unit Tests', () => {
       expect(onExplorationPlayModeChange).toHaveBeenCalledWith('CHESSECHO');
     });
 
-    it('handles continuation mode toggle active classes and click handlers', () => {
-      const onContinuationModeChange = vi.fn();
-      const onExplorationPlayModeChange = vi.fn();
-
+    it('does not render continuation mode toggle (ENGINE / HUMAN) and defaults to ENGINE', () => {
       renderPanel({
         isExplorationActive: true,
         explorationPlayMode: 'CHESSECHO',
-        continuationMode: 'ENGINE',
-        onExplorationPlayModeChange,
-        onContinuationModeChange,
       });
 
-      const engineBtn = screen.getByRole('button', { name: 'ENGINE' });
-      const humanBtn = screen.getByRole('button', { name: 'HUMAN' });
+      expect(screen.queryByRole('button', { name: 'ENGINE' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'HUMAN' })).not.toBeInTheDocument();
+    });
 
-      expect(engineBtn.className).toContain('bg-blue-600 text-white shadow-sm');
-      expect(humanBtn.className).toContain('text-slate-400');
+    it('renders evaluative move quality badge on played move card instead of Quiet badge when plies is 0', () => {
+      const bestMoveCandidate = {
+        ...makeCandidate('e4'),
+        evalLoss: 0,
+        pliesResolved: 0,
+        continuationSanMoves: [],
+      };
+      const acceptableCandidate = {
+        ...makeCandidate('d4'),
+        evalLoss: 0.15,
+        pliesResolved: 0,
+        continuationSanMoves: [],
+      };
+      const inaccuracyCandidate = {
+        ...makeCandidate('c4'),
+        evalLoss: 0.45,
+        pliesResolved: 0,
+        continuationSanMoves: [],
+      };
 
-      fireEvent.click(humanBtn);
-      expect(onContinuationModeChange).toHaveBeenCalledWith('HUMAN');
+      const { rerender } = renderPanel({
+        isExplorationActive: true,
+        explorationPlayMode: 'CHESSECHO',
+        lastContinuationCandidates: {
+          parentFen: 'some_fen',
+          selected: bestMoveCandidate,
+          candidates: [bestMoveCandidate],
+        },
+      });
+
+      expect(screen.getByText('Best move')).toBeInTheDocument();
+      expect(screen.queryByText('Quiet')).not.toBeInTheDocument();
+
+      rerender(
+        <PuzzleFeedbackPanel
+          puzzle={basePuzzle}
+          feedback={{ status: 'CORRECT', lastMove: 'e4' }}
+          onNextPuzzle={() => {}}
+          puzzleColorFilter="BOTH"
+          onColorFilterChange={() => {}}
+          showPuzzleSettings={false}
+          onTogglePuzzleSettings={() => {}}
+          minMistakeCount={1}
+          onMinMistakeCountChange={() => {}}
+          onApplySettings={() => {}}
+          isExplorationActive={true}
+          explorationPlayMode="CHESSECHO"
+          lastContinuationCandidates={{
+            parentFen: 'some_fen',
+            selected: acceptableCandidate,
+            candidates: [acceptableCandidate],
+          }}
+        />
+      );
+      expect(screen.getByText('Acceptable move (+0.15 pawns)')).toBeInTheDocument();
+      expect(screen.queryByText('Quiet')).not.toBeInTheDocument();
+
+      rerender(
+        <PuzzleFeedbackPanel
+          puzzle={basePuzzle}
+          feedback={{ status: 'CORRECT', lastMove: 'e4' }}
+          onNextPuzzle={() => {}}
+          puzzleColorFilter="BOTH"
+          onColorFilterChange={() => {}}
+          showPuzzleSettings={false}
+          onTogglePuzzleSettings={() => {}}
+          minMistakeCount={1}
+          onMinMistakeCountChange={() => {}}
+          onApplySettings={() => {}}
+          isExplorationActive={true}
+          explorationPlayMode="CHESSECHO"
+          lastContinuationCandidates={{
+            parentFen: 'some_fen',
+            selected: inaccuracyCandidate,
+            candidates: [inaccuracyCandidate],
+          }}
+        />
+      );
+      expect(screen.getByText('Inaccuracy')).toBeInTheDocument();
+      expect(screen.queryByText('Quiet')).not.toBeInTheDocument();
     });
   });
 
