@@ -29,6 +29,15 @@ vi.mock('react-chessboard', () => ({
   },
 }));
 
+vi.mock('../services/soundService', () => ({
+  playSound: vi.fn(),
+  soundService: {
+    playSound: vi.fn(),
+    playMoveSound: vi.fn(),
+    isSoundEnabled: vi.fn().mockReturnValue(true),
+  },
+}));
+
 describe('Task 2 — Hint Highlight State Regression Test', () => {
   beforeEach(() => {
     capturedOptions = emptyMockOptions;
@@ -85,6 +94,44 @@ describe('Task 2 — Hint Highlight State Regression Test', () => {
     });
 
     expect(mockOnUndo).toHaveBeenCalled();
+    expect(capturedOptions.squareStyles).toEqual({});
+  });
+
+  it('highlights the source square for current board FEN during Line Exploration and clears on move', async () => {
+    // Current exploration branch position where White is to move: 1. e4 e5
+    const explorationFen = 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2';
+
+    await act(async () => {
+      render(
+        <ChessBoardArea
+          initialFen={explorationFen}
+          playerColor="WHITE"
+          targetMove="Nf3"
+          acceptableMoves={[]}
+          movesPlayed={[]}
+          isExplorationActive={true}
+          onMoveAttempt={() => {}}
+          onNextPuzzle={() => {}}
+        />
+      );
+    });
+
+    // In exploration at this position, click Hint
+    const hintButton = screen.getByRole('button', { name: /Hint/i });
+    await act(async () => {
+      fireEvent.click(hintButton);
+    });
+
+    // In exploration, candidate move Nf3 originates from g1
+    expect(capturedOptions.squareStyles).toBeDefined();
+    expect(Object.keys(capturedOptions.squareStyles)).toContain('g1');
+    expect(capturedOptions.squareStyles['g1'].backgroundColor).toBeDefined();
+
+    // After playing legal move g1 -> f3, highlight is cleared
+    await act(async () => {
+      const dropSuccess = capturedOptions.onPieceDrop({ sourceSquare: 'g1', targetSquare: 'f3' });
+      expect(dropSuccess).toBe(true);
+    });
     expect(capturedOptions.squareStyles).toEqual({});
   });
 });

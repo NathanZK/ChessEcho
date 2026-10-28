@@ -92,6 +92,8 @@ vi.mock('../services/api', async () => {
     fetchPuzzles: vi.fn(),
     fetchPuzzleContinuation: vi.fn(),
     evaluateMove: vi.fn(),
+    fetchCurrentSession: vi.fn().mockResolvedValue({ status: 'unauthenticated' }),
+    fetchAccounts: vi.fn().mockResolvedValue([]),
   };
 });
 
@@ -724,9 +726,10 @@ describe('Play Both Sides Mode in Line Exploration', () => {
     // Now select vs ChessEcho and verify it transitions
     fireEvent.click(vsEngineBtn);
 
-    // After selection, ENGINE/HUMAN controls should appear and it should wait for ChessEcho or user
+    // After selection, mode selector remains removed and it transitions into vs ChessEcho exploration
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'ENGINE' })).toBeInTheDocument();
+      expect(screen.getByText('Your turn — explore a move.')).toBeInTheDocument();
     });
+    expect(screen.queryByRole('button', { name: 'ENGINE' })).not.toBeInTheDocument();
   });
 });

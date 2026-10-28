@@ -104,11 +104,18 @@ describe('user-supplied position exploration', () => {
       fen: AFTER_E4_FEN,
       requestedMode: 'ENGINE',
       effectiveProvider: 'ENGINE',
-      candidates: [],
+      candidates: [
+        {
+          move: 'Nf3',
+          resultingFen: AFTER_E4_FEN,
+          providerType: 'ENGINE',
+          evalLoss: 0,
+        },
+      ],
     });
   });
 
-  it('starts Line Exploration from a supplied FEN when no puzzle exists', async () => {
+  it('opens Header Explore Position in Practice Puzzles shell in IDLE, evaluates moves dynamically, and enters Line Exploration', async () => {
     render(<Home />);
     await waitFor(() => expect(screen.getByText('No Practice Puzzles Available')).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: 'Explore a position' }));
@@ -117,22 +124,21 @@ describe('user-supplied position exploration', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Continue from FEN' }));
 
     expect(getVisibleBoard()).toHaveAttribute('data-position', START_FEN);
-    expect(screen.getByRole('button', { name: 'Line Exploration' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Practice Puzzles' })).not.toBeInTheDocument();
-    expect(screen.getByText(/Choose how you want to explore/i)).toBeInTheDocument();
-    expect(screen.getByText('? N/A')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Practice Puzzles' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Line Exploration' })).not.toBeInTheDocument();
+    expect(screen.getByText('Test candidate moves or proceed to Line Exploration.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Continue Exploration/i })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /vs ChessEcho/i }));
-    fireEvent.click(screen.getByTestId('play-e4'));
+    fireEvent.click(within(getVisibleBoard()).getByTestId('play-e4'));
     await waitFor(
       () => expect(api.evaluateMove).toHaveBeenCalledWith(START_FEN, 'e4'),
       { timeout: 1500 },
     );
-    await waitFor(
-      () => expect(api.fetchPuzzleContinuation).toHaveBeenCalledWith(AFTER_E4_FEN, 'ENGINE', '1200-1400'),
-      { timeout: 1500 },
-    );
     expect(api.recordPuzzleEvent).not.toHaveBeenCalled();
+    expect(api.submitTrainingAttempt).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
+    expect(screen.getByRole('button', { name: 'Line Exploration' })).toBeInTheDocument();
   });
 
   it('launches exploration from the exact black-to-move Long Decisions FEN without requiring its historical move', async () => {
@@ -181,12 +187,19 @@ describe('user-supplied position exploration', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Explore this position' }));
 
     expect(getVisibleBoard()).toHaveAttribute('data-position', BLACK_TO_MOVE_FEN);
-    expect(screen.getByRole('button', { name: 'Line Exploration' })).toBeInTheDocument();
+    // Opened in the main puzzle experience, not raw Line Exploration
+    expect(screen.getByRole('button', { name: 'Practice Puzzles' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Continue Exploration/i })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /Play Both Sides/ }));
+    // User can attempt a move from the position with dynamic evaluation
     fireEvent.click(within(getVisibleBoard()).getByTestId('play-black-c5'));
     await waitFor(() => expect(api.evaluateMove).toHaveBeenCalledWith(BLACK_TO_MOVE_FEN, 'c5'));
     expect(api.recordPuzzleEvent).not.toHaveBeenCalled();
+    expect(api.submitTrainingAttempt).not.toHaveBeenCalled();
+
+    // User can transition into Line Exploration
+    fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
+    expect(screen.getByRole('button', { name: 'Line Exploration' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByTitle('Exit Exploration'));
     expect(screen.getByRole('region', { name: 'Long Decisions' })).toBeInTheDocument();
@@ -260,6 +273,8 @@ describe('user-supplied position exploration', () => {
     await screen.findByText('e5');
     fireEvent.click(screen.getByRole('button', { name: 'Explore this position' }));
     expect(pauseStopwatch).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Practice Puzzles' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
     expect(screen.getByRole('button', { name: 'Line Exploration' })).toBeInTheDocument();
     fireEvent.click(screen.getByTitle('Exit Exploration'));
     expect(resumeStopwatch).toHaveBeenCalledTimes(1);
@@ -349,7 +364,7 @@ describe('user-supplied position exploration', () => {
     expect(screen.getByText(/0:\d{2}/)).toBeInTheDocument();
   });
 
-  it('starts from the selected PGN ply', async () => {
+  it('starts from the selected PGN ply into the Practice Puzzles shell and allows Line Exploration', async () => {
     render(<Home />);
     await waitFor(() => expect(screen.getByText('No Practice Puzzles Available')).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: 'Explore a position' }));
@@ -364,33 +379,55 @@ describe('user-supplied position exploration', () => {
 
     const selectedFen = 'rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2';
     expect(getVisibleBoard()).toHaveAttribute('data-position', selectedFen);
+    expect(screen.getByRole('button', { name: 'Practice Puzzles' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Continue Exploration/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
     expect(screen.getByRole('button', { name: 'Line Exploration' })).toBeInTheDocument();
   });
 
-  it('does not frame a supplied position as a puzzle and exits without a solved result', async () => {
+  it('preserves ordinary Practice Puzzles context when opening a supplied position and restores previous puzzle on exit', async () => {
+    const puzzle = {
+      puzzleId: 'active-practice-puzzle',
+      fen: START_FEN,
+      playerColor: 'WHITE' as const,
+      targetMove: 'e4',
+      acceptableMoves: [],
+      movesPlayed: [],
+      openingTitle: 'King\'s Pawn Opening',
+      priority: 1,
+      timesReached: 10,
+      mistakeCount: 2,
+      mistakeRate: 20,
+    };
+    vi.mocked(api.fetchCurrentSession).mockResolvedValue({ status: 'authenticated', userId: 'alice' });
+    vi.mocked(api.fetchAccounts).mockResolvedValue([
+      { id: 'account-a', username: 'fixture', platform: 'CHESS_COM' },
+    ]);
+    vi.mocked(api.fetchPuzzles).mockResolvedValue([puzzle]);
+    vi.mocked(api.fetchPuzzleAttemptCount).mockResolvedValue({ solvedCount: 5, failedCount: 2 });
+
     render(<Home />);
-    await waitFor(() => expect(screen.getByText('No Practice Puzzles Available')).toBeInTheDocument());
+    await screen.findByText('King\'s Pawn Opening');
+    expect(getVisibleBoard()).toHaveAttribute('data-position', START_FEN);
+
+    // Open Header Explore Position
     fireEvent.click(screen.getByRole('button', { name: 'Explore a position' }));
     const dialog = screen.getByRole('dialog');
-    fireEvent.change(within(dialog).getByLabelText('FEN'), { target: { value: START_FEN } });
+    fireEvent.change(within(dialog).getByLabelText('FEN'), { target: { value: AFTER_D4_FEN } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Continue from FEN' }));
 
-    expect(screen.getByRole('button', { name: 'Line Exploration' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Practice Puzzles' })).not.toBeInTheDocument();
-    expect(screen.queryByText('Puzzle Settings')).not.toBeInTheDocument();
-    expect(screen.queryByText('Target Opening Weakness')).not.toBeInTheDocument();
-    expect(screen.queryByText('Find White\'s best move or an acceptable alternative to fix your opening habit.')).not.toBeInTheDocument();
-    expect(screen.queryByText('Mistake Rate')).not.toBeInTheDocument();
-    expect(screen.queryByText('Times Reached')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Hint' })).not.toBeInTheDocument();
-    expect(screen.queryByTitle('Previous Puzzle')).not.toBeInTheDocument();
-    expect(screen.queryByTitle('Next Puzzle')).not.toBeInTheDocument();
-    expect(screen.queryByText('Train Blindfold')).not.toBeInTheDocument();
-    expect(api.recordPuzzleEvent).not.toHaveBeenCalled();
+    // Verify supplied position in Practice Puzzles shell
+    expect(getVisibleBoard()).toHaveAttribute('data-position', AFTER_D4_FEN);
+    expect(screen.queryByText('King\'s Pawn Opening')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Continue Exploration/i })).toBeInTheDocument();
 
+    // Exit supplied position
     fireEvent.click(screen.getByTitle('Exit Exploration'));
-    expect(screen.getByText('No Practice Puzzles Available')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Practice Puzzles' })).toBeInTheDocument();
-    expect(screen.queryByText('Puzzle Solved! 🎉')).not.toBeInTheDocument();
+
+    // Verify previous ordinary puzzle context is restored cleanly without empty state
+    expect(screen.queryByText('No Practice Puzzles Available')).not.toBeInTheDocument();
+    expect(screen.getByText('King\'s Pawn Opening')).toBeInTheDocument();
+    expect(getVisibleBoard()).toHaveAttribute('data-position', START_FEN);
   });
 });
