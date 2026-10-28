@@ -15,6 +15,7 @@ data class LongDecisionOccurrenceResponse(
     val platformGameId: String,
     val playedAt: Instant?,
     val opponentUsername: String?,
+    val chessComUrl: String?,
 )
 
 data class LongDecisionPageResponse(

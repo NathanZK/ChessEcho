@@ -3,6 +3,7 @@
 import React, { FormEvent, useRef, useState } from 'react';
 import { Chessboard } from 'react-chessboard';
 import { fetchLongDecisions, type LongDecisionOccurrence, type LongDecisionTimeControl } from '../services/api';
+import { buildExactPlyChessComUrl, isValidChessComUrl } from '../utils/urlUtils';
 
 type SessionStatus = 'loading' | 'authenticated' | 'unauthenticated' | 'error';
 type AccountStatus = 'loading' | 'connected' | 'unconnected' | 'error';
@@ -288,14 +289,28 @@ export const LongDecisionsView: React.FC<LongDecisionsViewProps> = ({
                     <div><dt className="inline">Date: </dt><dd className="inline">{formatPlayedAt(occurrence.playedAt)}</dd></div>
                     <div><dt className="inline">Ply: </dt><dd className="inline">{occurrence.plyNumber}</dd></div>
                   </dl>
-                  <a
-                    className="mt-auto text-sm font-semibold text-emerald-300 underline decoration-emerald-700 underline-offset-4 hover:text-emerald-200"
-                    href={`https://www.chess.com/game/live/${encodeURIComponent(occurrence.platformGameId)}`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Open game
-                  </a>
+                  {(() => {
+                    const gameUrl = isValidChessComUrl(occurrence.chessComUrl)
+                      ? occurrence.chessComUrl.trim()
+                      : buildExactPlyChessComUrl(
+                          occurrence.platformGameId,
+                          occurrence.plyNumber,
+                          occurrence.timeControl,
+                        );
+                    if (!gameUrl) {
+                      return null;
+                    }
+                    return (
+                      <a
+                        className="mt-auto text-sm font-semibold text-emerald-300 underline decoration-emerald-700 underline-offset-4 hover:text-emerald-200"
+                        href={gameUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open game
+                      </a>
+                    );
+                  })()}
                   {onExplorePosition && (
                     <>
                       <button

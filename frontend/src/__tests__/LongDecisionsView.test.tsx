@@ -32,7 +32,8 @@ function occurrence(id: string, overrides: Partial<LongDecisionOccurrence> = {})
     movePlayed: 'Nf3',
     decisionTimeMs: 120_000,
     timeControl: 'RAPID',
-    platformGameId: `game-${id}`,
+    platformGameId: 'https://www.chess.com/game/live/172923974924',
+    chessComUrl: 'https://www.chess.com/game/live/172923974924?move=1',
     playedAt: '2026-02-03T12:00:00Z',
     opponentUsername: 'opponent',
     ...overrides,
@@ -96,7 +97,7 @@ describe('LongDecisionsView', () => {
     expect(screen.getByText('opponent')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open game' })).toHaveAttribute(
       'href',
-      'https://www.chess.com/game/live/game-occurrence-1',
+      'https://www.chess.com/game/live/172923974924?move=1',
     );
     expect(screen.getByText(/This result describes decision time, not move quality/i)).toBeInTheDocument();
     expect(screen.queryByText(/mistake|incorrect/i)).not.toBeInTheDocument();
@@ -141,7 +142,7 @@ describe('LongDecisionsView', () => {
     await user.click(screen.getByRole('button', { name: 'Retry search' }));
     expect(await screen.findByRole('link', { name: 'Open game' })).toHaveAttribute(
       'href',
-      'https://www.chess.com/game/live/game-retried',
+      'https://www.chess.com/game/live/172923974924?move=1',
     );
   });
 
@@ -155,22 +156,34 @@ describe('LongDecisionsView', () => {
             resolveFirst = resolve;
           }),
       )
-      .mockResolvedValueOnce(page([occurrence('current')], { hasNext: true, totalElements: 2, totalPages: 2 }))
-      .mockResolvedValueOnce(page([occurrence('next')], { page: 1, totalElements: 2 }));
+      .mockResolvedValueOnce(
+        page([occurrence('current', { chessComUrl: 'https://www.chess.com/game/live/111?move=1' })], {
+          hasNext: true,
+          totalElements: 2,
+          totalPages: 2,
+        }),
+      )
+      .mockResolvedValueOnce(
+        page([occurrence('next', { chessComUrl: 'https://www.chess.com/game/live/222?move=2' })], {
+          page: 1,
+          totalElements: 2,
+        }),
+      );
     render(<LongDecisionsView {...connectedProps} />);
     await user.click(screen.getByRole('button', { name: 'Search' }));
     await user.selectOptions(screen.getByLabelText('Time control'), 'BLITZ');
     await user.click(screen.getByRole('button', { name: 'Search' }));
     expect(await screen.findByRole('link', { name: 'Open game' })).toHaveAttribute(
       'href',
-      'https://www.chess.com/game/live/game-current',
+      'https://www.chess.com/game/live/111?move=1',
     );
     resolveFirst(page([occurrence('stale')]));
 
     await user.click(screen.getByRole('button', { name: 'Load more' }));
     await waitFor(() => expect(screen.getAllByRole('link', { name: 'Open game' })).toHaveLength(2));
     expect(screen.getAllByRole('link', { name: 'Open game' })[1]).toHaveAttribute(
-      'href', 'https://www.chess.com/game/live/game-next',
+      'href',
+      'https://www.chess.com/game/live/222?move=2',
     );
     expect(screen.getAllByTestId('long-decision-board')).toHaveLength(2);
     expect(screen.queryByText('game-stale')).not.toBeInTheDocument();
@@ -212,5 +225,92 @@ describe('LongDecisionsView', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Go to Import Games' }));
     expect(onNavigateImport).toHaveBeenCalledOnce();
     expect(api.fetchLongDecisions).not.toHaveBeenCalled();
+  });
+
+  it('adopts valid backend chessComUrl with target="_blank" and rel="noreferrer"', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.fetchLongDecisions).mockResolvedValue(
+      page([
+        occurrence('valid-backend', {
+          chessComUrl: 'https://www.chess.com/game/live/999?move=7',
+          platformGameId: '12345',
+        }),
+      ]),
+    );
+    render(<LongDecisionsView {...connectedProps} />);
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    const link = await screen.findByRole('link', { name: 'Open game' });
+    expect(link).toHaveAttribute('href', 'https://www.chess.com/game/live/999?move=7');
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link).toHaveAttribute('rel', 'noreferrer');
+  });
+
+  it('falls back to buildExactPlyChessComUrl when chessComUrl is null or undefined', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.fetchLongDecisions).mockResolvedValue(
+      page([
+        occurrence('null-backend', {
+          chessComUrl: null,
+          platformGameId: 'https://www.chess.com/game/live/123456789',
+          plyNumber: 4,
+          timeControl: 'BLITZ',
+        }),
+      ]),
+    );
+    render(<LongDecisionsView {...connectedProps} />);
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    const link = await screen.findByRole('link', { name: 'Open game' });
+    expect(link).toHaveAttribute('href', 'https://www.chess.com/game/live/123456789?move=4');
+  });
+
+  it('falls back to buildExactPlyChessComUrl when chessComUrl is empty or whitespace', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.fetchLongDecisions).mockResolvedValue(
+      page([
+        occurrence('empty-backend', {
+          chessComUrl: '   ',
+          platformGameId: 'https://www.chess.com/game/daily/987654',
+          plyNumber: 15,
+          timeControl: 'RAPID',
+        }),
+      ]),
+    );
+    render(<LongDecisionsView {...connectedProps} />);
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    const link = await screen.findByRole('link', { name: 'Open game' });
+    expect(link).toHaveAttribute('href', 'https://www.chess.com/game/daily/987654?move=15');
+  });
+
+  it('falls back to buildExactPlyChessComUrl when chessComUrl is malformed', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.fetchLongDecisions).mockResolvedValue(
+      page([
+        occurrence('malformed-backend', {
+          chessComUrl: 'https://untrusted-phishing.com/game/live/123',
+          platformGameId: 'https://www.chess.com/game/live/123',
+          plyNumber: 2,
+        }),
+      ]),
+    );
+    render(<LongDecisionsView {...connectedProps} />);
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    const link = await screen.findByRole('link', { name: 'Open game' });
+    expect(link).toHaveAttribute('href', 'https://www.chess.com/game/live/123?move=2');
+  });
+
+  it('omits Open game link when both chessComUrl and fallback resolution are unresolvable', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.fetchLongDecisions).mockResolvedValue(
+      page([
+        occurrence('unresolvable', {
+          chessComUrl: null,
+          platformGameId: 'not-a-valid-id-or-url',
+        }),
+      ]),
+    );
+    render(<LongDecisionsView {...connectedProps} />);
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+    expect(await screen.findByText('120 seconds')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Open game' })).not.toBeInTheDocument();
   });
 });

@@ -55,6 +55,38 @@ export function convertTo6chessUrl(chessComUrl: string, username: string): strin
 }
 
 /**
+ * Validates whether a candidate string is a supported, well-formed Chess.com game URL.
+ * Returns true if the URL uses http/https, has chess.com or www.chess.com hostname,
+ * and points to a supported game path (/game/live/, /game/daily/, /game/computer/).
+ */
+export function isValidChessComUrl(candidate: unknown): candidate is string {
+  if (typeof candidate !== 'string') {
+    return false;
+  }
+  const trimmed = candidate.trim();
+  if (!trimmed) {
+    return false;
+  }
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+      return false;
+    }
+    const host = url.hostname.toLowerCase();
+    if (host !== 'chess.com' && host !== 'www.chess.com') {
+      return false;
+    }
+    return (
+      url.pathname.startsWith('/game/live/') ||
+      url.pathname.startsWith('/game/daily/') ||
+      url.pathname.startsWith('/game/computer/')
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Constructs an exact-ply Chess.com game URL with ?move={plyNumber}.
  * Returns null if the identifier/URL is unverified, malformed, or unsupported.
  *
@@ -77,19 +109,11 @@ export function buildExactPlyChessComUrl(
   const ply = Math.max(0, plyNumber);
 
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    if (!isValidChessComUrl(trimmed)) {
+      return null;
+    }
     try {
       const url = new URL(trimmed);
-      const host = url.hostname.toLowerCase();
-      if (host !== 'chess.com' && host !== 'www.chess.com') {
-        return null;
-      }
-      if (
-        !url.pathname.startsWith('/game/live/') &&
-        !url.pathname.startsWith('/game/daily/') &&
-        !url.pathname.startsWith('/game/computer/')
-      ) {
-        return null;
-      }
       url.protocol = 'https:';
       url.searchParams.set('move', ply.toString());
       return url.toString();

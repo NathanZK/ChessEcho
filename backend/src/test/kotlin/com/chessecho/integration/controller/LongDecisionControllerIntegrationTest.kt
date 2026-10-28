@@ -129,6 +129,65 @@ class LongDecisionControllerIntegrationTest {
         assertEquals(HttpStatus.BAD_REQUEST, get(account.id, "BULLET", 30, session.rawSecret, page = -1).statusCode)
     }
 
+    @Test
+    fun `orders deterministically by decision duration descending then game playedAt descending nulls last`() {
+        val session = session()
+        val account = account("ordering-test")
+
+        val game1 = saveGame(account, "https://www.chess.com/game/live/111222333", "2026-02-10T15:00:00Z")
+        val occ40k = addOccurrence(account, "RAPID", 40_000L, "2026-02-10T15:00:00Z", "g1-40k", 2, existingGame = game1)
+        val occ60kNew = addOccurrence(account, "RAPID", 60_000L, "2026-02-10T15:00:00Z", "g1-60k", 10, existingGame = game1)
+        val occ60kOld =
+            addOccurrence(account, "RAPID", 60_000L, "2026-02-08T10:00:00Z", "g2-60k-old", 5, "https://www.chess.com/game/live/444555666")
+        val occ60kNull =
+            addOccurrence(account, "RAPID", 60_000L, null, "g3-60k-null", 8, "https://chess.com/game/daily/777888999")
+        val occ120k =
+            addOccurrence(account, "RAPID", 120_000L, "2026-02-01T12:00:00Z", "g4-120k", 12, "https://www.chess.com/game/live/999888777")
+
+        val response = get(account.id, "RAPID", 30, session.rawSecret, page = 0, size = 10)
+        assertEquals(HttpStatus.OK, response.statusCode)
+        val content = objectMapper.readTree(response.body)["content"]
+        assertEquals(5, content.size())
+
+        // 1. Longest decision duration first (120k) even if older date
+        assertEquals(occ120k.id.toString(), content[0]["id"].textValue())
+        assertEquals(120_000L, content[0]["decisionTimeMs"].longValue())
+
+        // 2. 60k decision duration with newer date (2026-02-10)
+        assertEquals(occ60kNew.id.toString(), content[1]["id"].textValue())
+        assertEquals(60_000L, content[1]["decisionTimeMs"].longValue())
+
+        // 3. 60k decision duration with older date (2026-02-08)
+        assertEquals(occ60kOld.id.toString(), content[2]["id"].textValue())
+        assertEquals(60_000L, content[2]["decisionTimeMs"].longValue())
+
+        // 4. 60k decision duration with null date (nulls last among equal duration)
+        assertEquals(occ60kNull.id.toString(), content[3]["id"].textValue())
+        assertEquals(60_000L, content[3]["decisionTimeMs"].longValue())
+
+        // 5. Shortest decision duration last (40k)
+        assertEquals(occ40k.id.toString(), content[4]["id"].textValue())
+        assertEquals(40_000L, content[4]["decisionTimeMs"].longValue())
+    }
+
+    private fun saveGame(
+        account: ChessAccount,
+        platformGameId: String,
+        playedAt: String?,
+        timeControl: String = "rapid",
+    ): Game =
+        gameRepository.save(
+            Game(
+                chessAccount = account,
+                platformGameId = platformGameId,
+                pgn = "[Result \"*\"]",
+                timeControl = timeControl,
+                playedAt = playedAt?.let { Instant.parse(it) },
+                whiteUsername = account.username,
+                blackUsername = "opponent-test",
+            ),
+        ).also { gameIds.add(it.id) }
+
     private fun session() =
         identitySessionService.establishSession(
             VerifiedIdentityClaims(
@@ -152,17 +211,20 @@ class LongDecisionControllerIntegrationTest {
         account: ChessAccount,
         timeControl: String,
         decisionTimeMs: Long?,
-        playedAt: String,
+        playedAt: String?,
         suffix: String,
+        plyNumber: Int = 1,
+        platformGameId: String? = null,
+        existingGame: Game? = null,
     ): PositionOccurrence {
         val game =
-            gameRepository.save(
+            existingGame ?: gameRepository.save(
                 Game(
                     chessAccount = account,
-                    platformGameId = "$suffix-${UUID.randomUUID()}",
+                    platformGameId = platformGameId ?: "$suffix-${UUID.randomUUID()}",
                     pgn = "[Result \"*\"]",
                     timeControl = timeControl.lowercase(),
-                    playedAt = Instant.parse(playedAt),
+                    playedAt = playedAt?.let { Instant.parse(it) },
                     whiteUsername = account.username,
                     blackUsername = "opponent-$suffix",
                 ),
@@ -179,7 +241,7 @@ class LongDecisionControllerIntegrationTest {
                 game = game,
                 position = position,
                 chessAccount = account,
-                plyNumber = 1,
+                plyNumber = plyNumber,
                 movePlayed = "Nf3",
                 playerColor = "WHITE",
                 decisionTimeMs = decisionTimeMs,

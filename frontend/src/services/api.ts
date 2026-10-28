@@ -356,6 +356,7 @@ export interface LongDecisionOccurrence {
   platformGameId: string;
   playedAt: string | null;
   opponentUsername: string | null;
+  chessComUrl?: string | null;
 }
 
 export interface LongDecisionPageResponse {
@@ -386,7 +387,10 @@ function isLongDecisionOccurrence(value: unknown): value is LongDecisionOccurren
       occurrence.timeControl === 'CLASSICAL') &&
     typeof occurrence.platformGameId === 'string' &&
     (occurrence.playedAt === null || isProgressTimestamp(occurrence.playedAt)) &&
-    (occurrence.opponentUsername === null || typeof occurrence.opponentUsername === 'string')
+    (occurrence.opponentUsername === null || typeof occurrence.opponentUsername === 'string') &&
+    (occurrence.chessComUrl === undefined ||
+      occurrence.chessComUrl === null ||
+      typeof occurrence.chessComUrl === 'string')
   );
 }
 
