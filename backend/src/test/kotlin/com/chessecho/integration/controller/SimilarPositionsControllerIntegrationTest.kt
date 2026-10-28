@@ -195,6 +195,25 @@ class SimilarPositionsControllerIntegrationTest {
         assertEquals(HttpStatus.OK, response.statusCode)
     }
 
+    @Test
+    fun `controller excludes candidate positions where user played opposite color`() {
+        val userSession = createSession("owner-${UUID.randomUUID()}")
+        val account = createAccount("owner-user-${UUID.randomUUID()}")
+        connectAccount(userSession.principal.appUserId, account)
+
+        val game = createGame(account, "https://www.chess.com/game/live/999888777")
+        val posFen = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3"
+        val position = createPosition(posFen)
+        createOccurrence(game, position, 4, "Nf3", playerColor = "BLACK")
+
+        val queryFen = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/2N5/PPPP1PPP/R1BQKBNR w KQkq - 2 3"
+        val response = get(buildUrl(queryFen, accountId = account.id), userSession.rawSecret)
+        assertEquals(HttpStatus.OK, response.statusCode)
+
+        val body = objectMapper.readValue(response.body, SimilarPositionsResponse::class.java)
+        assertTrue(body.results.isEmpty(), "Candidates where user was opposite color must be excluded")
+    }
+
     private fun buildUrl(
         fen: String,
         accountId: UUID? = null,
@@ -295,6 +314,7 @@ class SimilarPositionsControllerIntegrationTest {
         position: Position,
         ply: Int,
         playedMove: String,
+        playerColor: String = "WHITE",
     ): PositionOccurrence {
         val occurrence =
             occurrenceRepository.save(
@@ -304,7 +324,7 @@ class SimilarPositionsControllerIntegrationTest {
                     chessAccount = game.chessAccount,
                     plyNumber = ply,
                     movePlayed = playedMove,
-                    playerColor = "WHITE",
+                    playerColor = playerColor,
                 ),
             )
         occurrenceIds.add(occurrence.id)
