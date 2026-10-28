@@ -110,7 +110,6 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   alternativeContinuationToApply,
   onAlternativeContinuationApplied,
   explorationPlayMode = 'CHESSECHO',
-  isChallengeComplete = false,
   onMoveEvaluationPendingChange,
 }) => {
   const createInitialHistory = (snapshot?: ChessBoardHistorySnapshot | null) => {
@@ -382,7 +381,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
 
       // Active Exploration User Move Evaluation
       if (isExplorationActive) {
-        if (explorationPlayMode === 'CHALLENGE' && !isChallengeComplete) {
+        if (explorationPlayMode === 'CHALLENGE') {
           return false;
         }
 
@@ -621,6 +620,8 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   const orientation = boardOrientation ?? (playerColor === 'BLACK' ? 'black' : 'white');
 
   const handleSquareClick = ({ piece, square }: { piece?: unknown; square: string }) => {
+    if (explorationPlayMode === 'CHALLENGE') return;
+
     if (!moveFromSquare) {
       if (piece) {
         setMoveFromSquare(square);
@@ -662,7 +663,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
             lightSquareStyle: BOARD_LIGHT_SQUARE_STYLE,
             squareStyles: customSquareStyles,
             animationDurationInMs: 200,
-            allowDragging: true,
+            allowDragging: explorationPlayMode !== 'CHALLENGE',
             onSquareClick: handleSquareClick,
             onPieceDrop: ({ sourceSquare, targetSquare }) => {
               setMoveFromSquare(null);

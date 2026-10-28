@@ -7,32 +7,85 @@ import * as api from '../services/api';
 import { continuationService, moveEvaluationService } from '../services/continuationService';
 import { Puzzle } from '../mock/mockData';
 
+let lastDropResult: boolean | null = null;
+
 vi.mock('react-chessboard', () => ({
-  Chessboard: ({ options }: { options: { onPieceDrop: (args: { sourceSquare: string; targetSquare: string }) => boolean } }) => (
-    <div data-testid="mock-chessboard">
+  Chessboard: ({
+    options,
+  }: {
+    options?: {
+      position?: string;
+      allowDragging?: boolean;
+      squareStyles?: Record<string, unknown>;
+      onSquareClick?: (args: { piece?: unknown; square: string }) => void;
+      onPieceDrop?: (args: { sourceSquare: string; targetSquare: string }) => boolean;
+    };
+  }) => (
+    <div
+      data-testid="mock-chessboard"
+      data-position={options?.position}
+      data-allow-dragging={String(options?.allowDragging ?? true)}
+      data-has-square-styles={String(Object.keys(options?.squareStyles ?? {}).length > 0)}
+      data-last-drop-result={lastDropResult === null ? undefined : String(lastDropResult)}
+    >
       <button
         data-testid="simulate-puzzle-move-white"
-        onClick={() => {
-          options?.onPieceDrop({ sourceSquare: 'f1', targetSquare: 'b5' }); // Bb5
+        onClick={(e) => {
+          lastDropResult = options?.onPieceDrop?.({ sourceSquare: 'f1', targetSquare: 'b5' }) ?? null; // Bb5
+          e.currentTarget.closest('[data-testid="mock-chessboard"]')?.setAttribute('data-last-drop-result', String(lastDropResult));
         }}
       >
         Play Bb5 (White)
       </button>
       <button
         data-testid="simulate-expl-move-white"
-        onClick={() => {
-          options?.onPieceDrop({ sourceSquare: 'b5', targetSquare: 'a4' }); // Ba4
+        onClick={(e) => {
+          lastDropResult = options?.onPieceDrop?.({ sourceSquare: 'b5', targetSquare: 'a4' }) ?? null; // Ba4
+          e.currentTarget.closest('[data-testid="mock-chessboard"]')?.setAttribute('data-last-drop-result', String(lastDropResult));
         }}
       >
         Play Ba4 (White)
       </button>
       <button
         data-testid="simulate-expl-move-black"
-        onClick={() => {
-          options?.onPieceDrop({ sourceSquare: 'a7', targetSquare: 'a6' }); // a6
+        onClick={(e) => {
+          lastDropResult = options?.onPieceDrop?.({ sourceSquare: 'a7', targetSquare: 'a6' }) ?? null; // a6
+          e.currentTarget.closest('[data-testid="mock-chessboard"]')?.setAttribute('data-last-drop-result', String(lastDropResult));
         }}
       >
         Play a6 (Black)
+      </button>
+      <button
+        data-testid="simulate-click-square-f1"
+        onClick={() => {
+          options?.onSquareClick?.({ piece: { type: 'b', color: 'w' }, square: 'f1' });
+        }}
+      >
+        Click f1
+      </button>
+      <button
+        data-testid="simulate-click-square-b5"
+        onClick={() => {
+          options?.onSquareClick?.({ square: 'b5' });
+        }}
+      >
+        Click b5
+      </button>
+      <button
+        data-testid="simulate-click-square-a7"
+        onClick={() => {
+          options?.onSquareClick?.({ piece: { type: 'p', color: 'b' }, square: 'a7' });
+        }}
+      >
+        Click a7
+      </button>
+      <button
+        data-testid="simulate-click-square-a6"
+        onClick={() => {
+          options?.onSquareClick?.({ square: 'a6' });
+        }}
+      >
+        Click a6
       </button>
     </div>
   ),
@@ -74,6 +127,7 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    lastDropResult = null;
     continuationService.clear();
     moveEvaluationService.clear();
     localStorage.clear();
@@ -751,5 +805,149 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
     await waitFor(() => {
       expect(screen.queryByText(/Candidate:/i)).not.toBeInTheDocument();
     });
+  });
+
+  it('14. Enforces Challenge Mode boundaries: disables dragging, ignores square clicks, and blocks physical board moves in all phases while preserving legitimate calculation and non-challenge modes', async () => {
+    vi.mocked(api.fetchPuzzleContinuation).mockResolvedValue({
+      fen: 'r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3',
+      requestedMode: 'ENGINE',
+      effectiveProvider: 'ENGINE',
+      candidates: [
+        { move: 'a6', resultingFen: 'r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4', providerType: 'ENGINE', evalLoss: 0.15 },
+        { move: 'Nf6', resultingFen: 'r1bqkb1r/pppp1ppp/2n2n2/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4', providerType: 'ENGINE', evalLoss: 0.18 },
+      ],
+    });
+
+    render(<Home />);
+    await waitFor(() => screen.getByText('+0.30'));
+
+    // Play initial puzzle move Bb5
+    fireEvent.click(screen.getByTestId('simulate-puzzle-move-white'));
+    await waitFor(() => screen.getByRole('button', { name: /Continue Exploration/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
+
+    // Switch to Challenge Mode
+    fireEvent.click(screen.getByRole('button', { name: /Challenge Mode/i }));
+    await waitFor(() => screen.getByText(/Find up to/i));
+
+    const board = screen.getByTestId('mock-chessboard');
+
+    // === PHASE 1: Candidate Discovery Phase (isChallengeComplete = false) ===
+    // 1. Verify allowDragging is disabled
+    expect(board).toHaveAttribute('data-allow-dragging', 'false');
+
+    const baselineFen = board.getAttribute('data-position');
+    expect(baselineFen).toBeTruthy();
+
+    // 2. Attempt square-click move: click a7, then a6
+    fireEvent.click(screen.getByTestId('simulate-click-square-a7'));
+    expect(board).toHaveAttribute('data-has-square-styles', 'false');
+    fireEvent.click(screen.getByTestId('simulate-click-square-a6'));
+    expect(board).toHaveAttribute('data-position', baselineFen);
+    expect(api.evaluateMove).not.toHaveBeenCalled();
+
+    // 3. Attempt drag-and-drop piece drop
+    fireEvent.click(screen.getByTestId('simulate-expl-move-black'));
+    expect(board).toHaveAttribute('data-position', baselineFen);
+    expect(board).toHaveAttribute('data-last-drop-result', 'false');
+    expect(api.evaluateMove).not.toHaveBeenCalled();
+
+    // === PHASE 2: Calculation Phase (isChallengeComplete = true) ===
+    vi.mocked(api.evaluateMove).mockImplementation(async (fen, moveSan) => {
+      if (moveSan === 'a6') {
+        return { fen, move: 'a6', bestMove: 'a6', bestEvalCp: 80, evalCp: 80, evalLoss: 0.15, maxEvalLoss: 0.8, threshold: 0.8, acceptable: true, color: 'b' } as api.MoveEvaluationResponse;
+      }
+      if (moveSan === 'Nf6') {
+        return { fen, move: 'Nf6', bestMove: 'a6', bestEvalCp: 80, evalCp: 80, evalLoss: 0.18, maxEvalLoss: 0.8, threshold: 0.8, acceptable: true, color: 'b' } as api.MoveEvaluationResponse;
+      }
+      if (moveSan === 'Ba4') {
+        return { fen, move: 'Ba4', bestMove: 'Ba4', bestEvalCp: 120, evalCp: 120, evalLoss: 0.0, maxEvalLoss: 0.8, threshold: 0.8, acceptable: true, color: 'w' } as api.MoveEvaluationResponse;
+      }
+      return null;
+    });
+
+    // Submit candidate moves to find strong candidates and complete discovery phase
+    const candidateInput = screen.getByPlaceholderText(/Enter candidate moves/i);
+    fireEvent.change(candidateInput, { target: { value: 'a6, Nf6' } });
+    fireEvent.click(screen.getByRole('button', { name: /Submit Candidates/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Choose a candidate to calculate/i)).toBeInTheDocument();
+    });
+
+    // Select candidate a6 to enter calculation phase
+    const a6Button = screen.getAllByRole('button').find((b) => b.textContent?.includes('a6') && b.textContent?.includes('not explored'));
+    expect(a6Button).toBeDefined();
+    fireEvent.click(a6Button!);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Candidate: a6/i)).toBeInTheDocument();
+      expect(screen.getByText(/What is White's best continuation/i)).toBeInTheDocument();
+    });
+
+    // 4. Verify allowDragging remains disabled in calculation phase
+    expect(board).toHaveAttribute('data-allow-dragging', 'false');
+
+    const calcFen = board.getAttribute('data-position');
+    expect(calcFen).toBeTruthy();
+    const evaluateCallsBeforeBoardAttempts = vi.mocked(api.evaluateMove).mock.calls.length;
+
+    // 5. Attempt physical board drop during calculation phase (MUST be blocked)
+    fireEvent.click(screen.getByTestId('simulate-expl-move-black'));
+    expect(board).toHaveAttribute('data-position', calcFen);
+    expect(board).toHaveAttribute('data-last-drop-result', 'false');
+    expect(vi.mocked(api.evaluateMove).mock.calls.length).toBe(evaluateCallsBeforeBoardAttempts);
+
+    // 6. Attempt square-click move during calculation phase (MUST be blocked)
+    fireEvent.click(screen.getByTestId('simulate-click-square-f1'));
+    expect(board).toHaveAttribute('data-has-square-styles', 'false');
+    fireEvent.click(screen.getByTestId('simulate-click-square-b5'));
+    expect(board).toHaveAttribute('data-position', calcFen);
+    expect(vi.mocked(api.evaluateMove).mock.calls.length).toBe(evaluateCallsBeforeBoardAttempts);
+
+    // 7. Legitimate calculation input via SAN text box works
+    const calcInput = screen.getByPlaceholderText(/SAN input/i);
+    fireEvent.change(calcInput, { target: { value: 'Ba4' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/1\.\.\. a6 2\. Ba4/)).toBeInTheDocument();
+    });
+
+    // 8. Board navigation controls continue to work without re-enabling manual board play
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    await waitFor(() => {
+      expect(screen.getByText(/1\.\.\. a6/)).toBeInTheDocument();
+    });
+    expect(board).toHaveAttribute('data-allow-dragging', 'false');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back to candidates' }));
+    await waitFor(() => {
+      expect(screen.getByText(/Choose a candidate to calculate/i)).toBeInTheDocument();
+    });
+    expect(board).toHaveAttribute('data-allow-dragging', 'false');
+
+    // === PHASE 3: Negative Controls (Non-Challenge Modes) ===
+    // 9. Switch to Play Both Sides mode: dragging and square clicks must be enabled
+    fireEvent.click(screen.getByRole('button', { name: /Play Both Sides/i }));
+    await waitFor(() => {
+      expect(board).toHaveAttribute('data-allow-dragging', 'true');
+    });
+
+    // Verify square-click move input works outside Challenge Mode
+    fireEvent.click(screen.getByTestId('simulate-click-square-a7'));
+    expect(board).toHaveAttribute('data-has-square-styles', 'true');
+    fireEvent.click(screen.getByTestId('simulate-click-square-a6'));
+    expect(board).toHaveAttribute('data-has-square-styles', 'false');
+    expect(api.evaluateMove).toHaveBeenCalledWith(expect.anything(), 'a6');
+
+    // 10. Switch to vs ChessEcho mode: dragging must be enabled
+    fireEvent.click(screen.getByRole('button', { name: /vs ChessEcho/i }));
+    await waitFor(() => {
+      expect(board).toHaveAttribute('data-allow-dragging', 'true');
+    });
+
+    fireEvent.click(screen.getByTestId('simulate-expl-move-white'));
+    expect(board).toHaveAttribute('data-last-drop-result', 'true');
   });
 });
