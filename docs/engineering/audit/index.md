@@ -32,6 +32,8 @@ This document serves as the durable evidence repository for opt-in mutation test
 | [`Frontend: PuzzleFeedbackPanel.tsx`](#219-frontend-line-exploration-continuation-secrecy-issue-629) | `ContinuationIntegration.test.tsx` | Frontend Presentation ([#629](https://github.com/NathanZK/ChessEcho/issues/629)) | 63 | 58 (92%) | 5 (8%) | 0 (0%) | 92% | 2026-10-28 |
 | [`Frontend: PuzzleFeedbackPanel.tsx (Post-#629 Baseline)`](#220-frontend-puzzlefeedbackpaneltsx-component-wide-remediation) | `ContinuationIntegration.test.tsx` + suite | Frontend Presentation ([#645](https://github.com/NathanZK/ChessEcho/issues/645)) | 739 | 394 (53%) | 253 (34%) [72 TO] | 20 (3%) | 65% | 2026-10-28 |
 | [`Frontend: ChessBoardArea.tsx`](#221-frontend-chessboardareatsx-expanded-scope-lines-380675-issue-630) | `BoardStateDerivation.test.tsx`, `ExplorationEvaluation.test.tsx` | Frontend Interaction ([#630](https://github.com/NathanZK/ChessEcho/issues/630)) | 319 | 305 (96%) [4 TO] | 2 (1%) | 0 (0%) | 99.36% | 2026-10-28 |
+| [`DecisionTimingPolicy` & `LongDecisionService`](#222-comchessechoservicedecisiontimingpolicy-and-longdecisionservice-issue-636) | `DecisionTimingPolicyTest`, `DecisionTimingFilterIntersectionTest`, `LongDecisionServiceTest`, `LongDecisionServiceMappingTest` | Service Unit ([#636](https://github.com/NathanZK/ChessEcho/issues/636)) | 39 | 36 (92%) | 3 (8%) | 0 (0%) | 92% | 2026-10-29 |
+| [`Frontend: LongDecisionsView.tsx`](#223-frontend-longdecisionsviewtsx-issue-636) | `LongDecisionsView.test.tsx` + suite | Frontend Presentation ([#636](https://github.com/NathanZK/ChessEcho/issues/636)) | 312 | 221 (71%) | 90 (29%) | 1 (0%) | 71.06% | 2026-10-29 |
 
 ---
 
@@ -562,6 +564,43 @@ This document serves as the durable evidence repository for opt-in mutation test
   - *Evaluation Logic & Strict Thresholds*: User own-turn tolerance vs opponent strict threshold (`0.20` pawns), exact boundary acceptance, standard inaccuracy messages, and `evalCp` perspective conversion.
   - *Fallback & Recovery Lifecycle*: Rollback to preserved `gameHistory` instance on null evaluation, automatic move acceptance on network rejection, complete undo/redo navigation across network-accepted moves, branch overwriting after undo, and stale evaluation rejection guard.
   - *Board Interaction & Event Filtering*: Click-to-move piece selection and deselection, empty square click styling invariance, drop reset on empty target, and arrow key event isolation from input/textarea controls.
+
+### 2.22 `com.chessecho.service.DecisionTimingPolicy` and `LongDecisionService` (Issue #636)
+
+- **Test Suite**: `DecisionTimingPolicyTest`, `DecisionTimingFilterIntersectionTest`, `LongDecisionServiceTest`, `LongDecisionServiceMappingTest`
+- **Execution Command**:
+  ```bash
+  cd backend && ./gradlew pitest \
+    -Ppitest.targetClasses="com.chessecho.service.DecisionTimingPolicy*,com.chessecho.service.LongDecisionService*" \
+    -Ppitest.targetTests="com.chessecho.service.DecisionTimingPolicyTest*,com.chessecho.service.DecisionTimingFilterIntersectionTest*,com.chessecho.service.LongDecisionServiceTest*,com.chessecho.service.LongDecisionServiceMappingTest*"
+  ```
+- **Results**: 39 generated, 36 killed (92%), 3 survived (8%), 0 no coverage; 92% test strength (100% of actionable mutants killed).
+- **Meaningful Gaps Killed**:
+  1. *Threshold Matrix Boundaries*: Conditionals boundary and math mutators across Bullet (`<5s`, `5s`–`<10s`, `10s`–`<20s`, `>=20s`), Blitz (`<15s`, `15s`–`<30s`, `30s`–`<60s`, `>=60s`), Rapid (`<30s`, `30s`–`<60s`, `60s`–`<120s`, `>=120s`), and Classical (`<60s`, `60s`–`<180s`, `180s`–`<300s`, `>=300s`) were killed by dedicated boundary assertions.
+  2. *Filter Intersection Bound Logic & Empty Short-Circuit*: Verified lower bound `max(userMinMs, severityMinMs)` and upper bound `severityMaxMs`. Killed conditional inversion and void mutators ensuring empty ranges when `effectiveMinMs >= effectiveMaxMs` return an empty page response directly without querying the underlying PostgreSQL repository.
+  3. *Validation Boundaries*: `minDurationSeconds >= 0` boundary mutant killed by asserting that `0` seconds is accepted and negative values are rejected.
+- **Accepted Surviving Mutants**:
+  - 3 surviving mutants across lines 84 and 88 of `LongDecisionService.kt` are synthetic Kotlin compiler bytecode null checks (`Intrinsics.checkNotNullExpressionValue` / `checkNotNull`) on Spring Data's `PageRequest.of(page, pageSize)` and `results.content` platform return values verified non-null at runtime (Taxonomy Category 3).
+
+### 2.23 Frontend: `src/components/LongDecisionsView.tsx` (Issue #636)
+
+- **Test Suite**: `LongDecisionsView.test.tsx`, `LongDecisionsApi.test.ts`
+- **Execution Command**:
+  ```bash
+  cd frontend && npm run test:mutation -- --mutate="src/components/LongDecisionsView.tsx"
+  ```
+- **Results**: 312 instrumented, 221 killed (70.83% mutation score / 71.06% test strength), 90 survived, 1 no coverage, 0 timed out, 0 errors.
+- **Meaningful Gaps Killed**:
+  1. *Severity and Duration Filter Parameters*: Verified that `minDurationSeconds` and `severity` are properly mapped and dispatched to `fetchLongDecisions`.
+  2. *View Mode & Count Indicator*: Mutants toggling grid vs list view buttons and rendered count badge values killed by component layout assertions.
+  3. *Pill Styling & Severity Labels*: Verified that all 5 severity states (`NO_CONCERN`, `MINOR`, `SIGNIFICANT`, `CRITICAL`, `UNKNOWN`) map to the exact designated labels and color tokens.
+  4. *Singular/Plural Duration Formatting*: Mutated singular `1 second` vs `seconds` condition killed by asserting on exact millisecond inputs.
+  5. *Pagination & Error Recovery*: Mutants disabling `loadMore` error state display or retry button handler killed by simulating network failure on subsequent pages and executing retries.
+  6. *Date Fallback*: Verified that `null` or unparseable timestamps safely render "Date unavailable".
+- **Accepted Surviving Mutants**:
+  - 90 surviving mutants consist of JSX presentation class strings, text literals ("Loading more…", "Positions"), and non-functional Tailwind style variants.
+
+---
 
 ---
 

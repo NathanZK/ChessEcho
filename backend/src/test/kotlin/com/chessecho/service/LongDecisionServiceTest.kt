@@ -1,6 +1,7 @@
 package com.chessecho.service
 
 import com.chessecho.domain.ChessAccount
+import com.chessecho.domain.DecisionSeverity
 import com.chessecho.domain.Game
 import com.chessecho.domain.Position
 import com.chessecho.domain.PositionOccurrence
@@ -15,6 +16,7 @@ import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import org.springframework.data.domain.PageImpl
@@ -25,18 +27,40 @@ import java.util.UUID
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class LongDecisionServiceTest {
     private val accountOwnershipService = mock<AccountOwnershipService>()
     private val positionOccurrenceRepository = mock<PositionOccurrenceRepository>()
     private val chessComUrlBuilder = mock<ChessComUrlBuilder>()
-    private val service = LongDecisionService(accountOwnershipService, positionOccurrenceRepository, chessComUrlBuilder)
+    private val decisionTimingPolicy = DecisionTimingPolicy()
+    private val service =
+        LongDecisionService(
+            accountOwnershipService,
+            positionOccurrenceRepository,
+            chessComUrlBuilder,
+            decisionTimingPolicy,
+        )
 
     private val accountId = UUID.randomUUID()
     private val principal = AuthenticatedPrincipal(UUID.randomUUID(), devPrincipal = false)
     private val account = ChessAccount(id = accountId, platform = "CHESS_COM", username = "tester")
+
+    private fun createGame(
+        platformGameId: String = "game-1",
+        whiteUsername: String? = "tester",
+        blackUsername: String? = "opponent",
+        playedAt: Instant? = null,
+        timeControl: String? = null,
+    ) = Game(
+        chessAccount = account,
+        platformGameId = platformGameId,
+        pgn = "1. e4 e5 *",
+        playedAt = playedAt,
+        timeControl = timeControl,
+        whiteUsername = whiteUsername,
+        blackUsername = blackUsername,
+    )
 
     @BeforeEach
     fun setUp() {
@@ -71,6 +95,54 @@ class LongDecisionServiceTest {
     }
 
     @Test
+    fun `rejects negative minDurationSeconds`() {
+        assertFailsWith<IllegalArgumentException> {
+            service.findLongDecisions(
+                accountId = accountId,
+                timeControl = TimeControl.BLITZ,
+                minDurationSeconds = -1,
+                thresholdSeconds = null,
+                severity = null,
+                page = 0,
+                size = 20,
+                principal = principal,
+            )
+        }
+    }
+
+    @Test
+    fun `accepts zero minDurationSeconds`() {
+        whenever(
+            positionOccurrenceRepository.findLongDecisionOccurrences(
+                any(),
+                any(),
+                any(),
+                anyOrNull(),
+                any(),
+            ),
+        ).thenReturn(PageImpl(emptyList()))
+
+        service.findLongDecisions(
+            accountId = accountId,
+            timeControl = TimeControl.BLITZ,
+            minDurationSeconds = 0,
+            thresholdSeconds = null,
+            severity = null,
+            page = 0,
+            size = 20,
+            principal = principal,
+        )
+
+        verify(positionOccurrenceRepository).findLongDecisionOccurrences(
+            eq(accountId),
+            eq("BLITZ"),
+            eq(0L),
+            eq(null),
+            eq(PageRequest.of(0, 20)),
+        )
+    }
+
+    @Test
     fun `rejects negative page`() {
         assertFailsWith<IllegalArgumentException> {
             service.findLongDecisions(
@@ -91,6 +163,7 @@ class LongDecisionServiceTest {
                 any(),
                 any(),
                 any(),
+                anyOrNull(),
                 any(),
             ),
         ).thenReturn(PageImpl(emptyList()))
@@ -109,6 +182,7 @@ class LongDecisionServiceTest {
             eq(accountId),
             eq("BLITZ"),
             eq(10_000L),
+            eq(null),
             captor.capture(),
         )
         assertEquals(1, captor.firstValue.pageSize)
@@ -121,6 +195,7 @@ class LongDecisionServiceTest {
                 any(),
                 any(),
                 any(),
+                anyOrNull(),
                 any(),
             ),
         ).thenReturn(PageImpl(emptyList()))
@@ -139,6 +214,7 @@ class LongDecisionServiceTest {
             eq(accountId),
             eq("BLITZ"),
             eq(10_000L),
+            eq(null),
             captor.capture(),
         )
         assertEquals(1, captor.firstValue.pageSize)
@@ -152,6 +228,7 @@ class LongDecisionServiceTest {
                 any(),
                 any(),
                 any(),
+                anyOrNull(),
                 any(),
             ),
         ).thenReturn(PageImpl(emptyList()))
@@ -170,6 +247,7 @@ class LongDecisionServiceTest {
             eq(accountId),
             eq("RAPID"),
             eq(20_000L),
+            eq(null),
             captor.capture(),
         )
         assertEquals(100, captor.firstValue.pageSize)
@@ -183,6 +261,7 @@ class LongDecisionServiceTest {
                 any(),
                 any(),
                 any(),
+                anyOrNull(),
                 any(),
             ),
         ).thenReturn(PageImpl(emptyList()))
@@ -201,6 +280,7 @@ class LongDecisionServiceTest {
             eq(accountId),
             eq("BULLET"),
             eq(5_000L),
+            eq(null),
             captor.capture(),
         )
         assertEquals(25, captor.firstValue.pageSize)
@@ -216,6 +296,7 @@ class LongDecisionServiceTest {
                 any(),
                 any(),
                 any(),
+                anyOrNull(),
                 any(),
             ),
         ).thenReturn(PageImpl(emptyList()))
@@ -234,21 +315,86 @@ class LongDecisionServiceTest {
             eq(targetAccountId),
             eq("CLASSICAL"),
             eq(45_000L),
+            eq(null),
             eq(PageRequest.of(3, 50)),
         )
     }
 
     @Test
-    fun `maps WHITE player occurrences resolving blackUsername as opponent`() {
+    fun `applies independent minDurationSeconds and severity range to query bounds`() {
+        whenever(
+            positionOccurrenceRepository.findLongDecisionOccurrences(
+                any(),
+                any(),
+                any(),
+                anyOrNull(),
+                any(),
+            ),
+        ).thenReturn(PageImpl(emptyList()))
+
+        // Rapid MINOR is [30_000ms, 60_000ms). User specifies 40 seconds.
+        // effectiveMinMs should be 40_000L, effectiveMaxMs should be 60_000L.
+        service.findLongDecisions(
+            accountId = accountId,
+            timeControl = TimeControl.RAPID,
+            minDurationSeconds = 40,
+            thresholdSeconds = null,
+            severity = DecisionSeverity.MINOR,
+            page = 0,
+            size = 20,
+            principal = principal,
+        )
+
+        verify(positionOccurrenceRepository).findLongDecisionOccurrences(
+            eq(accountId),
+            eq("RAPID"),
+            eq(40_000L),
+            eq(60_000L),
+            eq(PageRequest.of(0, 20)),
+        )
+    }
+
+    @Test
+    fun `minDurationSeconds takes precedence over thresholdSeconds`() {
+        whenever(
+            positionOccurrenceRepository.findLongDecisionOccurrences(
+                any(),
+                any(),
+                any(),
+                anyOrNull(),
+                any(),
+            ),
+        ).thenReturn(PageImpl(emptyList()))
+
+        service.findLongDecisions(
+            accountId = accountId,
+            timeControl = TimeControl.BLITZ,
+            minDurationSeconds = 25,
+            thresholdSeconds = 10,
+            severity = null,
+            page = 0,
+            size = 20,
+            principal = principal,
+        )
+
+        verify(positionOccurrenceRepository).findLongDecisionOccurrences(
+            eq(accountId),
+            eq("BLITZ"),
+            eq(25_000L),
+            eq(null),
+            eq(PageRequest.of(0, 20)),
+        )
+    }
+
+    @Test
+    fun `maps WHITE player occurrences resolving blackUsername as opponent and calculates severity`() {
         val playedAt = Instant.parse("2026-10-15T14:30:00Z")
         val game =
-            Game(
-                chessAccount = account,
+            createGame(
                 platformGameId = "game-white-1",
-                pgn = "1. e4 e5 *",
-                playedAt = playedAt,
                 whiteUsername = "tester",
                 blackUsername = "black_opponent",
+                playedAt = playedAt,
             )
         val position = Position(hash = "hash-1", fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1")
         val occurrence =
@@ -259,7 +405,7 @@ class LongDecisionServiceTest {
                 plyNumber = 1,
                 movePlayed = "e4",
                 playerColor = "WHITE",
-                decisionTimeMs = 12_500L,
+                decisionTimeMs = 16_000L,
             )
 
         val page = PageImpl(listOf(occurrence), PageRequest.of(0, 20), 1)
@@ -268,6 +414,7 @@ class LongDecisionServiceTest {
                 any(),
                 any(),
                 any(),
+                anyOrNull(),
                 any(),
             ),
         ).thenReturn(page)
@@ -290,11 +437,12 @@ class LongDecisionServiceTest {
         assertEquals("WHITE", item.playerColor)
         assertEquals(1, item.plyNumber)
         assertEquals("e4", item.movePlayed)
-        assertEquals(12_500L, item.decisionTimeMs)
+        assertEquals(16_000L, item.decisionTimeMs)
         assertEquals("BLITZ", item.timeControl)
         assertEquals("game-white-1", item.platformGameId)
         assertEquals(playedAt, item.playedAt)
         assertEquals("black_opponent", item.opponentUsername)
+        assertEquals(DecisionSeverity.MINOR, item.severity)
 
         assertEquals(0, response.page)
         assertEquals(20, response.size)
@@ -304,236 +452,24 @@ class LongDecisionServiceTest {
     }
 
     @Test
-    fun `maps BLACK player occurrences resolving whiteUsername as opponent`() {
-        val playedAt = Instant.parse("2026-10-16T16:00:00Z")
-        val game =
-            Game(
-                chessAccount = account,
-                platformGameId = "game-black-1",
-                pgn = "1. e4 e5 2. Nf3 Nc6 *",
-                playedAt = playedAt,
-                whiteUsername = "white_opponent",
-                blackUsername = "tester",
-            )
-        val position = Position(hash = "hash-2", fen = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3")
-        val occurrence =
-            PositionOccurrence(
-                game = game,
-                position = position,
-                chessAccount = account,
-                plyNumber = 4,
-                movePlayed = "Nc6",
-                playerColor = "BLACK",
-                decisionTimeMs = 25_000L,
-            )
-
-        val page = PageImpl(listOf(occurrence), PageRequest.of(0, 20), 1)
-        whenever(
-            positionOccurrenceRepository.findLongDecisionOccurrences(
-                any(),
-                any(),
-                any(),
-                any(),
-            ),
-        ).thenReturn(page)
-        whenever(
-            chessComUrlBuilder.buildExactPlyUrl(eq("game-white-1"), eq(1), anyOrNull()),
-        ).thenReturn("https://www.chess.com/game/live/game-white-1?move=1")
-
-        val response =
-            service.findLongDecisions(
-                accountId = accountId,
-                timeControl = TimeControl.RAPID,
-                thresholdSeconds = 15,
-                page = 0,
-                size = 20,
-                principal = principal,
-            )
-
-        val item = response.content.single()
-        assertEquals("BLACK", item.playerColor)
-        assertEquals("white_opponent", item.opponentUsername)
-    }
-
-    @Test
-    fun `maps unexpected player color to null opponentUsername`() {
-        val game =
-            Game(
-                chessAccount = account,
-                platformGameId = "game-other-1",
-                pgn = "*",
-                whiteUsername = "white_user",
-                blackUsername = "black_user",
-            )
-        val position = Position(hash = "hash-3", fen = "8/8/8/8/8/8/8/8 w - -")
-        val occurrence =
-            PositionOccurrence(
-                game = game,
-                position = position,
-                chessAccount = account,
-                plyNumber = 1,
-                movePlayed = "e4",
-                playerColor = "SPECTATOR",
-                decisionTimeMs = 5_000L,
-            )
-
-        val page = PageImpl(listOf(occurrence), PageRequest.of(0, 10), 1)
-        whenever(
-            positionOccurrenceRepository.findLongDecisionOccurrences(
-                any(),
-                any(),
-                any(),
-                any(),
-            ),
-        ).thenReturn(page)
-
+    fun `when filter intersection is empty, returns empty response without querying repository`() {
         val response =
             service.findLongDecisions(
                 accountId = accountId,
                 timeControl = TimeControl.BLITZ,
-                thresholdSeconds = 5,
+                minDurationSeconds = 35,
+                thresholdSeconds = null,
+                severity = DecisionSeverity.MINOR,
                 page = 0,
-                size = 10,
-                principal = principal,
-            )
-
-        val item = response.content.single()
-        assertEquals("SPECTATOR", item.playerColor)
-        assertNull(item.opponentUsername)
-    }
-
-    @Test
-    fun `throws IllegalArgumentException when occurrence decisionTimeMs is null`() {
-        val game =
-            Game(
-                chessAccount = account,
-                platformGameId = "game-null-time",
-                pgn = "*",
-                whiteUsername = "white_user",
-                blackUsername = "black_user",
-            )
-        val position = Position(hash = "hash-4", fen = "8/8/8/8/8/8/8/8 w - -")
-        val occurrence =
-            PositionOccurrence(
-                game = game,
-                position = position,
-                chessAccount = account,
-                plyNumber = 1,
-                movePlayed = "e4",
-                playerColor = "WHITE",
-                decisionTimeMs = null,
-            )
-
-        val page = PageImpl(listOf(occurrence), PageRequest.of(0, 10), 1)
-        whenever(
-            positionOccurrenceRepository.findLongDecisionOccurrences(
-                any(),
-                any(),
-                any(),
-                any(),
-            ),
-        ).thenReturn(page)
-
-        assertFailsWith<IllegalArgumentException> {
-            service.findLongDecisions(
-                accountId = accountId,
-                timeControl = TimeControl.BLITZ,
-                thresholdSeconds = 5,
-                page = 0,
-                size = 10,
-                principal = principal,
-            )
-        }
-    }
-
-    @Test
-    fun `maps empty repository page to response with empty content and accurate pagination`() {
-        val page = PageImpl(emptyList<PositionOccurrence>(), PageRequest.of(2, 20), 0)
-        whenever(
-            positionOccurrenceRepository.findLongDecisionOccurrences(
-                any(),
-                any(),
-                any(),
-                any(),
-            ),
-        ).thenReturn(page)
-
-        val response =
-            service.findLongDecisions(
-                accountId = accountId,
-                timeControl = TimeControl.BLITZ,
-                thresholdSeconds = 10,
-                page = 2,
                 size = 20,
                 principal = principal,
             )
 
         assertTrue(response.content.isEmpty())
-        assertEquals(2, response.page)
-        assertEquals(20, response.size)
         assertEquals(0, response.totalElements)
         assertEquals(0, response.totalPages)
         assertFalse(response.hasNext)
-    }
-
-    @Test
-    fun `maps chessComUrl delegating game timeControl for daily games`() {
-        val dailyGame =
-            Game(
-                chessAccount = account,
-                platformGameId = "https://chess.com/game/daily/987654",
-                pgn = "*",
-                timeControl = "daily",
-                whiteUsername = "tester",
-                blackUsername = "opponent",
-            )
-        val occ =
-            PositionOccurrence(
-                game = dailyGame,
-                position = Position(hash = "hash-daily", fen = "8/8/8/8/8/8/8/8 w - -"),
-                chessAccount = account,
-                plyNumber = 12,
-                movePlayed = "d4",
-                playerColor = "WHITE",
-                decisionTimeMs = 60_000L,
-            )
-        whenever(positionOccurrenceRepository.findLongDecisionOccurrences(any(), any(), any(), any()))
-            .thenReturn(PageImpl(listOf(occ)))
-        whenever(chessComUrlBuilder.buildExactPlyUrl("https://chess.com/game/daily/987654", 12, "daily"))
-            .thenReturn("https://www.chess.com/game/daily/987654?move=12")
-
-        val response = service.findLongDecisions(accountId, TimeControl.RAPID, 30, 0, 10, principal)
-        assertEquals("https://www.chess.com/game/daily/987654?move=12", response.content[0].chessComUrl)
-        verify(chessComUrlBuilder).buildExactPlyUrl("https://chess.com/game/daily/987654", 12, "daily")
-    }
-
-    @Test
-    fun `maps chessComUrl to null when builder returns null`() {
-        val malformedGame =
-            Game(
-                chessAccount = account,
-                platformGameId = "invalid-url",
-                pgn = "*",
-                timeControl = "blitz",
-                whiteUsername = "tester",
-                blackUsername = "opponent",
-            )
-        val occ =
-            PositionOccurrence(
-                game = malformedGame,
-                position = Position(hash = "hash-inv", fen = "8/8/8/8/8/8/8/8 w - -"),
-                chessAccount = account,
-                plyNumber = 3,
-                movePlayed = "c4",
-                playerColor = "WHITE",
-                decisionTimeMs = 45_000L,
-            )
-        whenever(positionOccurrenceRepository.findLongDecisionOccurrences(any(), any(), any(), any()))
-            .thenReturn(PageImpl(listOf(occ)))
-        whenever(chessComUrlBuilder.buildExactPlyUrl("invalid-url", 3, "blitz"))
-            .thenReturn(null)
-
-        val response = service.findLongDecisions(accountId, TimeControl.BLITZ, 30, 0, 10, principal)
-        assertNull(response.content[0].chessComUrl)
+        verify(positionOccurrenceRepository, never())
+            .findLongDecisionOccurrences(any(), any(), any(), anyOrNull(), any())
     }
 }

@@ -36,6 +36,7 @@ function occurrence(id: string, overrides: Partial<LongDecisionOccurrence> = {})
     chessComUrl: 'https://www.chess.com/game/live/172923974924?move=1',
     playedAt: '2026-02-03T12:00:00Z',
     opponentUsername: 'opponent',
+    severity: 'CRITICAL',
     ...overrides,
   };
 }
@@ -87,7 +88,7 @@ describe('LongDecisionsView', () => {
     await user.click(screen.getByRole('button', { name: 'Search' }));
 
     await waitFor(() =>
-      expect(api.fetchLongDecisions).toHaveBeenCalledWith(accountId, 'RAPID', 120, 0, 20),
+      expect(api.fetchLongDecisions).toHaveBeenCalledWith(accountId, 'RAPID', 120, 0, 20, 120, undefined),
     );
     expect(await screen.findByTestId('long-decision-board')).toHaveTextContent(
       '8/8/8/8/8/8/8/8 w - -',
@@ -327,5 +328,143 @@ describe('LongDecisionsView', () => {
     await user.click(screen.getByRole('button', { name: 'Search' }));
     expect(await screen.findByText('120 seconds')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Open game' })).not.toBeInTheDocument();
+  });
+
+  it('filters by selected severity and passes it to fetchLongDecisions', async () => {
+    const user = userEvent.setup();
+    render(<LongDecisionsView {...connectedProps} />);
+
+    expect(screen.getByLabelText('Severity')).toBeInTheDocument();
+    expect(screen.getByLabelText('Severity')).toHaveValue('ALL');
+
+    await user.selectOptions(screen.getByLabelText('Severity'), 'SIGNIFICANT');
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+
+    await waitFor(() =>
+      expect(api.fetchLongDecisions).toHaveBeenCalledWith(
+        accountId,
+        'BULLET',
+        30,
+        0,
+        20,
+        30,
+        'SIGNIFICANT',
+      ),
+    );
+  });
+
+  it('renders loaded count badge and toggles between grid and list views', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.fetchLongDecisions).mockResolvedValue(
+      page([occurrence('occ-1'), occurrence('occ-2')]),
+    );
+    render(<LongDecisionsView {...connectedProps} />);
+
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+
+    const badge = await screen.findByTestId('decision-timing-count-indicator');
+    expect(badge).toHaveTextContent('2');
+
+    // Default view mode is grid
+    const gridButton = screen.getByRole('button', { name: 'Grid' });
+    const listButton = screen.getByRole('button', { name: 'List' });
+    expect(gridButton).toBeInTheDocument();
+    expect(listButton).toBeInTheDocument();
+
+    // Toggle to list view
+    await user.click(listButton);
+    expect(listButton).toHaveClass('font-semibold');
+
+    // Toggle back to grid view
+    await user.click(gridButton);
+    expect(gridButton).toHaveClass('font-semibold');
+  });
+
+  it('renders severity pills with appropriate labels and color styling for each severity level', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.fetchLongDecisions).mockResolvedValue(
+      page([
+        occurrence('crit', { severity: 'CRITICAL' }),
+        occurrence('sig', { severity: 'SIGNIFICANT' }),
+        occurrence('min', { severity: 'MINOR' }),
+        occurrence('none', { severity: 'NO_CONCERN' }),
+        occurrence('unk', { severity: 'UNKNOWN' }),
+      ]),
+    );
+    render(<LongDecisionsView {...connectedProps} />);
+
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+
+    const critPill = await screen.findByTestId('severity-pill-crit');
+    expect(critPill).toHaveTextContent('Critical');
+    expect(critPill).toHaveClass('text-rose-400');
+
+    const sigPill = screen.getByTestId('severity-pill-sig');
+    expect(sigPill).toHaveTextContent('Significant');
+    expect(sigPill).toHaveClass('text-amber-400');
+
+    const minPill = screen.getByTestId('severity-pill-min');
+    expect(minPill).toHaveTextContent('Minor');
+    expect(minPill).toHaveClass('text-blue-400');
+
+    const nonePill = screen.getByTestId('severity-pill-none');
+    expect(nonePill).toHaveTextContent('No concern');
+    expect(nonePill).toHaveClass('text-slate-300');
+
+    const unkPill = screen.getByTestId('severity-pill-unk');
+    expect(unkPill).toHaveTextContent('Unclassified');
+  });
+
+  it('formats duration correctly for singular second and displays date unavailable for missing/invalid dates', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.fetchLongDecisions).mockResolvedValue(
+      page([
+        occurrence('one-sec', { decisionTimeMs: 1_000, playedAt: null }),
+        occurrence('bad-date', { decisionTimeMs: 1_500, playedAt: 'not-a-date' }),
+      ]),
+    );
+    render(<LongDecisionsView {...connectedProps} />);
+
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+
+    expect(await screen.findByText('1 second')).toBeInTheDocument();
+    expect(screen.getByText('1.5 seconds')).toBeInTheDocument();
+    expect(screen.getAllByText('Date unavailable')).toHaveLength(2);
+  });
+
+  it('renders loadMore failure error and successfully retries loading more', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.fetchLongDecisions)
+      .mockResolvedValueOnce(
+        page([occurrence('first')], { hasNext: true, totalElements: 2, totalPages: 2 }),
+      )
+      .mockRejectedValueOnce(new Error('pagination error'))
+      .mockResolvedValueOnce(
+        page([occurrence('second')], { page: 1, hasNext: false, totalElements: 2, totalPages: 2 }),
+      );
+
+    render(<LongDecisionsView {...connectedProps} />);
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+
+    expect(await screen.findByRole('button', { name: 'Load more' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Load more' }));
+
+    expect(await screen.findByText(/Could not load more occurrences. pagination error/i)).toBeInTheDocument();
+    const retryBtn = screen.getByRole('button', { name: 'Retry loading more' });
+    expect(retryBtn).toBeInTheDocument();
+
+    await user.click(retryBtn);
+    await waitFor(() => expect(screen.getAllByRole('link', { name: 'Open game' })).toHaveLength(2));
+    expect(screen.queryByText(/pagination error/i)).not.toBeInTheDocument();
+  });
+
+  it('falls back to default message when error thrown is not an Error instance', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.fetchLongDecisions).mockRejectedValue('string error');
+    render(<LongDecisionsView {...connectedProps} />);
+
+    await user.click(screen.getByRole('button', { name: 'Search' }));
+
+    expect(await screen.findByText(/Please try again./i)).toBeInTheDocument();
   });
 });

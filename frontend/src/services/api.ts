@@ -345,6 +345,8 @@ export interface TimeControlStats {
 
 export type LongDecisionTimeControl = 'BULLET' | 'BLITZ' | 'RAPID' | 'CLASSICAL';
 
+export type DecisionSeverity = 'NO_CONCERN' | 'MINOR' | 'SIGNIFICANT' | 'CRITICAL' | 'UNKNOWN';
+
 export interface LongDecisionOccurrence {
   id: string;
   positionId: string;
@@ -358,6 +360,7 @@ export interface LongDecisionOccurrence {
   playedAt: string | null;
   opponentUsername: string | null;
   chessComUrl?: string | null;
+  severity: DecisionSeverity;
 }
 
 export interface LongDecisionPageResponse {
@@ -391,7 +394,12 @@ function isLongDecisionOccurrence(value: unknown): value is LongDecisionOccurren
     (occurrence.opponentUsername === null || typeof occurrence.opponentUsername === 'string') &&
     (occurrence.chessComUrl === undefined ||
       occurrence.chessComUrl === null ||
-      typeof occurrence.chessComUrl === 'string')
+      typeof occurrence.chessComUrl === 'string') &&
+    (occurrence.severity === 'NO_CONCERN' ||
+      occurrence.severity === 'MINOR' ||
+      occurrence.severity === 'SIGNIFICANT' ||
+      occurrence.severity === 'CRITICAL' ||
+      occurrence.severity === 'UNKNOWN')
   );
 }
 
@@ -419,7 +427,9 @@ export async function fetchLongDecisions(
   timeControl: LongDecisionTimeControl,
   thresholdSeconds: number,
   page: number,
-  size: number
+  size: number,
+  minDurationSeconds?: number,
+  severity?: DecisionSeverity
 ): Promise<LongDecisionPageResponse> {
   const params = new URLSearchParams({
     accountId,
@@ -428,6 +438,12 @@ export async function fetchLongDecisions(
     page: String(page),
     size: String(size),
   });
+  if (minDurationSeconds !== undefined) {
+    params.set('minDurationSeconds', String(minDurationSeconds));
+  }
+  if (severity) {
+    params.set('severity', severity);
+  }
   const response = await fetch(`${API_BASE_URL}/positions/long-decisions?${params}`, {
     credentials: 'include',
   });

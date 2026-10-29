@@ -46,7 +46,8 @@ interface PositionOccurrenceRepository : JpaRepository<PositionOccurrence, UUID>
             WHERE po.chessAccount.id = :chessAccountId
               AND UPPER(g.timeControl) = :timeControl
               AND po.decisionTimeMs IS NOT NULL
-              AND po.decisionTimeMs >= :thresholdMs
+              AND po.decisionTimeMs >= :effectiveMinMs
+              AND (:effectiveMaxMs IS NULL OR po.decisionTimeMs < :effectiveMaxMs)
             ORDER BY po.decisionTimeMs DESC,
                      CASE WHEN g.playedAt IS NULL THEN 1 ELSE 0 END ASC,
                      g.playedAt DESC,
@@ -58,13 +59,15 @@ interface PositionOccurrenceRepository : JpaRepository<PositionOccurrence, UUID>
             WHERE po.chessAccount.id = :chessAccountId
               AND UPPER(g.timeControl) = :timeControl
               AND po.decisionTimeMs IS NOT NULL
-              AND po.decisionTimeMs >= :thresholdMs
+              AND po.decisionTimeMs >= :effectiveMinMs
+              AND (:effectiveMaxMs IS NULL OR po.decisionTimeMs < :effectiveMaxMs)
         """,
     )
     fun findLongDecisionOccurrences(
         @Param("chessAccountId") chessAccountId: UUID,
         @Param("timeControl") timeControl: String,
-        @Param("thresholdMs") thresholdMs: Long,
+        @Param("effectiveMinMs") effectiveMinMs: Long,
+        @Param("effectiveMaxMs") effectiveMaxMs: Long?,
         pageable: Pageable,
     ): Page<PositionOccurrence>
 
