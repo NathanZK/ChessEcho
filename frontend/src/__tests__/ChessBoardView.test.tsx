@@ -34,6 +34,11 @@ describe('ChessBoardView', () => {
   });
 
   describe('rendering and props forwarding', () => {
+    it('uses tournament emerald palette by default with #407657 dark and #d1e7d8 light squares', () => {
+      expect(BOARD_DARK_SQUARE_STYLE.backgroundColor).toBe('#407657');
+      expect(BOARD_LIGHT_SQUARE_STYLE.backgroundColor).toBe('#d1e7d8');
+    });
+
     it('renders with standard green-and-cream palette by default', () => {
       render(<ChessBoardView fen={sampleFen} />);
       const boardElement = screen.getByTestId('mock-react-chessboard');

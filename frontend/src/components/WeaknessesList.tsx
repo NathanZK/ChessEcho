@@ -1,7 +1,21 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Target, Flame, Swords, ExternalLink, Filter, AlertCircle, RefreshCw, TrendingUp } from 'lucide-react';
+import {
+  Target,
+  Swords,
+  ExternalLink,
+  Filter,
+  AlertCircle,
+  RefreshCw,
+  TrendingUp,
+  LayoutGrid,
+  List,
+  ChevronDown,
+  SlidersHorizontal,
+  Repeat,
+  Flag,
+} from 'lucide-react';
 import { ChessBoardView } from './ChessBoardView';
 import { PositionCard } from './PositionCard';
 import { StatusBanner } from './StatusBanner';
@@ -91,6 +105,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
   refreshKey,
 }) => {
   const selector = accountId ?? username;
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [colorFilter, setColorFilter] = useState<'ALL' | 'WHITE' | 'BLACK'>(
     activeColorFilter || 'ALL'
   );
@@ -125,10 +140,6 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
   const [activeGameModalUrls, setActiveGameModalUrls] = useState<string[] | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const isFetchingRef = useRef<boolean>(false);
-  // Monotonic request generation. A completion only owns the current generation
-  // when its captured seq still equals loadSeqRef.current; otherwise every one of
-  // its effects (data/error setters, loading flags, and the fetch lock release) is
-  // skipped, so a stale/superseded request can never mutate the current UI.
   const loadSeqRef = useRef<number>(0);
 
   const invalidateWeaknessRequests = () => {
@@ -139,68 +150,118 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
   const handleColorChange = (newColor: 'ALL' | 'WHITE' | 'BLACK') => {
     invalidateWeaknessRequests();
     setColorFilter(newColor);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('chessecho_weakness_color_filter', newColor);
-    }
     onColorFilterChange?.(newColor);
   };
 
-  const handleMinEvalLossChange = (value: number) => {
+  const handleMinEvalLossChange = (newThreshold: number) => {
     invalidateWeaknessRequests();
-    onMinEvalLossChange?.(value);
+    onMinEvalLossChange?.(newThreshold);
   };
 
-  const handleMinMistakeCountChange = (value: number) => {
+  const handleMinMistakeCountChange = (newCount: number) => {
     invalidateWeaknessRequests();
-    onMinMistakeCountChange?.(value);
+    onMinMistakeCountChange?.(newCount);
   };
 
   const handleRetryInitialLoad = () => {
     invalidateWeaknessRequests();
-    setReloadToken((token) => token + 1);
+    setReloadToken((prev) => prev + 1);
   };
 
-  // Notify parent of total weakness count in a side-effect safe useEffect
+  const loadNextPage = useCallback(
+    async (isRetry = false) => {
+      if (!selector || isFetchingRef.current || (!hasMore && !isRetry) || (loadMoreError && !isRetry)) return;
+      const seq = ++loadSeqRef.current;
+      const nextPage = isRetry ? page : page + 1;
+      const requestMinEvalLoss = minEvalLoss;
+
+      setIsLoadingMore(true);
+      setLoadMoreError(false);
+      isFetchingRef.current = true;
+
+      try {
+        const backendColor = colorFilter === 'ALL' ? 'BOTH' : colorFilter;
+        const newRows = await fetchWeaknesses(
+          selector,
+          'CHESS_COM',
+          backendColor,
+          requestMinEvalLoss,
+          minMistakeCount,
+          nextPage,
+          PAGE_SIZE
+        );
+        if (seq !== loadSeqRef.current) return;
+
+        const safeNewRows = Array.isArray(newRows) ? newRows : [];
+        setWeaknessResult((prev) => {
+          const existingIds = new Set(prev.rows.map((r) => r.positionId));
+          const filtered = safeNewRows.filter((r) => !existingIds.has(r.positionId));
+          return { rows: [...prev.rows, ...filtered], minEvalLoss: requestMinEvalLoss };
+        });
+        setPage(nextPage);
+        setHasMore(safeNewRows.length === PAGE_SIZE);
+      } catch (err) {
+        if (seq !== loadSeqRef.current) return;
+        console.error('Failed to load more weaknesses:', err);
+        setLoadMoreError(true);
+      } finally {
+        if (seq === loadSeqRef.current) {
+          setIsLoadingMore(false);
+          isFetchingRef.current = false;
+        }
+      }
+    },
+    [selector, hasMore, page, minEvalLoss, minMistakeCount, colorFilter, loadMoreError]
+  );
+
   useEffect(() => {
     onWeaknessCountChange?.(weaknesses.length);
   }, [weaknesses.length, onWeaknessCountChange]);
 
-  // Initial load or filter change reset
-  const [trackedWeaknessQuery, setTrackedWeaknessQuery] = useState<{
-    selector?: string;
-    colorFilter: 'ALL' | 'WHITE' | 'BLACK';
-    minMistakeCount: number;
-    minEvalLoss: number;
-    refreshKey?: number;
-  } | null>(null);
-
-  if (
-    !trackedWeaknessQuery ||
-    trackedWeaknessQuery.selector !== selector ||
-    trackedWeaknessQuery.colorFilter !== colorFilter ||
-    trackedWeaknessQuery.minMistakeCount !== minMistakeCount ||
-    trackedWeaknessQuery.minEvalLoss !== minEvalLoss ||
-    trackedWeaknessQuery.refreshKey !== refreshKey
-  ) {
-    setTrackedWeaknessQuery({ selector, colorFilter, minMistakeCount, minEvalLoss, refreshKey });
-    if (!selector) {
-      setWeaknessResult({ rows: [], minEvalLoss });
-      setIsLoading(false);
-      setIsLoadingMore(false);
-      setError(null);
-      setLoadMoreError(false);
-      setPage(0);
-      setHasMore(false);
-    }
-  }
+  useEffect(() => {
+    invalidateWeaknessRequests();
+  }, [selector, minEvalLoss, minMistakeCount, colorFilter, refreshKey]);
 
   useEffect(() => {
+    const target = sentinelRef.current;
+    if (!target || !hasMore || isLoading || isLoadingMore || loadMoreError) return;
+    if (typeof window === 'undefined' || !('IntersectionObserver' in window)) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && hasMore && !isLoading && !isLoadingMore && !loadMoreError && !isFetchingRef.current) {
+          loadNextPage();
+        }
+      },
+      { threshold: 0.1 }
+    );
+
+    observer.observe(target);
+    return () => {
+      observer.disconnect();
+    };
+  }, [sentinelRef, hasMore, isLoading, isLoadingMore, loadMoreError, loadNextPage]);
+
+  useEffect(() => {
+    let active = true;
     const requestSelector = selector ?? '';
     if (!requestSelector) {
-      return;
+      loadSeqRef.current++;
+      isFetchingRef.current = false;
+      queueMicrotask(() => {
+        if (!active) return;
+        setWeaknessResult({ rows: [], minEvalLoss });
+        setIsLoading(false);
+        setIsLoadingMore(false);
+        setError(null);
+        setLoadMoreError(false);
+        setPage(0);
+        setHasMore(false);
+      });
+      return () => {
+        active = false;
+      };
     }
-    const requestSequence = loadSeqRef;
-    const fetchLock = isFetchingRef;
 
     async function loadInitialWeaknesses() {
       const seq = ++loadSeqRef.current;
@@ -240,274 +301,481 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
     }
 
     loadInitialWeaknesses();
+
     return () => {
-      requestSequence.current++;
-      fetchLock.current = false;
+      invalidateWeaknessRequests();
     };
-  }, [selector, colorFilter, minMistakeCount, minEvalLoss, refreshKey, reloadToken]);
-
-  // Load next page function
-  const loadNextPage = useCallback(async (isRetry: boolean = false) => {
-    if (!selector || isLoading || isLoadingMore || !hasMore || isFetchingRef.current) return;
-    // While a pagination error is unresolved, only an explicit Retry may proceed;
-    // this suppresses the auto-loader so the error stays a stable manual state.
-    if (loadMoreError && !isRetry) return;
-
-    const seq = ++loadSeqRef.current;
-    const requestMinEvalLoss = minEvalLoss;
-    isFetchingRef.current = true;
-    setIsLoadingMore(true);
-    if (loadMoreError) setLoadMoreError(false);
-    const nextPage = page + 1;
-    try {
-      const backendColor = colorFilter === 'ALL' ? 'BOTH' : colorFilter;
-      const data = await fetchWeaknesses(
-        selector,
-        'CHESS_COM',
-        backendColor,
-        requestMinEvalLoss,
-        minMistakeCount,
-        nextPage,
-        PAGE_SIZE
-      );
-
-      if (seq !== loadSeqRef.current) return;
-
-      if (data && data.length > 0) {
-        setWeaknessResult((prev) => {
-          const existingIds = new Set(prev.rows.map((w) => w.positionId));
-          const newItems = data.filter((w) => !existingIds.has(w.positionId));
-          return { rows: [...prev.rows, ...newItems], minEvalLoss: requestMinEvalLoss };
-        });
-        setPage(nextPage);
-        setHasMore(data.length === PAGE_SIZE);
-      } else {
-        setHasMore(false);
-      }
-    } catch (err) {
-      if (seq !== loadSeqRef.current) return;
-      console.error('Failed to load more weaknesses:', err);
-      // A pagination failure is surfaced as a retryable inline error. It must NOT
-      // collapse to a terminal "no more data" state, so hasMore is preserved.
-      setLoadMoreError(true);
-    } finally {
-      if (seq === loadSeqRef.current) {
-        setIsLoadingMore(false);
-        isFetchingRef.current = false;
-      }
-    }
-  }, [selector, isLoading, isLoadingMore, hasMore, page, colorFilter, minMistakeCount, minEvalLoss, loadMoreError]);
-
-  // IntersectionObserver for infinite scroll sentinel
-  useEffect(() => {
-    const target = sentinelRef.current;
-    if (!target || !hasMore || isLoading || isLoadingMore || loadMoreError) return;
-    if (typeof window === 'undefined' || !('IntersectionObserver' in window)) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting && hasMore && !isLoading && !isLoadingMore && !loadMoreError && !isFetchingRef.current) {
-          loadNextPage();
-        }
-      },
-      { threshold: 0.1 }
-    );
-
-    observer.observe(target);
-    return () => {
-      observer.disconnect();
-    };
-  }, [sentinelRef, hasMore, isLoading, isLoadingMore, loadMoreError, loadNextPage]);
+  }, [selector, minEvalLoss, minMistakeCount, colorFilter, reloadToken, refreshKey]);
 
   return (
-    <div className="max-w-[1536px] w-full mx-auto px-4 lg:px-8 space-y-4 py-2 text-slate-200">
-      {/* Engine Analysis Status Banner */}
+    <div className="space-y-4 max-w-[1536px] mx-auto">
+      {/* Active Engine Analysis Status Banner */}
       {isAnalysisActive && username && (
-        <div className="p-3.5 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex items-center space-x-3 text-xs font-semibold text-amber-300 shadow-md animate-in fade-in duration-200">
-          <div className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping shrink-0" />
-          <span>
-            Stockfish Engine Analysis Active: Evaluating positions for <strong>{username}</strong>. Detected weaknesses will update automatically as analysis completes.
-          </span>
+        <div className="p-3 bg-primary/10 border border-primary/30 rounded-xl flex items-center justify-between text-xs font-medium text-primary shadow-sm">
+          <div className="flex items-center space-x-2.5">
+            <div className="w-2 h-2 rounded-full bg-primary animate-ping shrink-0" />
+            <span>Stockfish Engine Analysis Active: Evaluating positions for <strong>{username}</strong>. Detected recurring weaknesses update automatically as analysis completes.</span>
+          </div>
         </div>
       )}
 
-      {/* Header & Filter Controls */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-900 p-4 rounded-2xl border border-slate-800 shadow-lg">
-        <div>
-          <h2 className="text-xl font-bold text-white flex items-center gap-2">
-            <Target className="w-5 h-5 text-emerald-400" />
-            Recurring Opening Weaknesses Library
-          </h2>
-          <p className="text-xs text-slate-400 mt-0.5">
-            Positions where you repeatedly make sub-optimal moves across games.
+      {/* Section Header */}
+      <section className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-outline-variant pb-4">
+        <div className="space-y-1">
+          <h1 className="text-xl md:text-2xl font-bold text-on-surface tracking-tight flex items-center gap-2">
+            <Flag className="w-6 h-6 text-primary" />
+            <span>Recurring Weakness Library</span>
+          </h1>
+          <p className="text-xs text-on-surface-variant max-w-2xl leading-relaxed">
+            Positions where you repeatedly make sub-optimal moves across games. Ordered by default training priority queue (fusing engine evaluation loss, habit recurrence, and recency).
           </p>
         </div>
 
-        {/* Filters */}
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex items-center space-x-2 text-xs font-semibold text-slate-400">
-            <Filter className="w-3.5 h-3.5" />
-            <span>Filters:</span>
+        {/* View Switcher & Paging Scope Indicator */}
+        <div className="flex items-center space-x-3 shrink-0 self-end sm:self-center">
+          <div className="px-2.5 py-1 rounded bg-surface-container border border-outline-variant text-xs font-mono">
+            <span className="text-outline">Loaded Page: </span>
+            <strong data-testid="weakness-count-indicator" className="text-primary">{weaknesses.length}</strong>
+            <span className="text-outline text-[10px]"> positions</span>
           </div>
 
-          {/* Color Filter */}
-          <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
-            {(['ALL', 'WHITE', 'BLACK'] as const).map((color) => (
-              <button
-                key={color}
-                onClick={() => handleColorChange(color)}
-                className={`px-3 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
-                  colorFilter === color
-                    ? 'bg-emerald-600 text-white shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                {color}
-              </button>
-            ))}
-          </div>
-
-          {/* Time Control Filter */}
-          <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
-            {(['ALL', 'BULLET', 'BLITZ', 'RAPID', 'CLASSICAL'] as const).map((tc) => (
-              <button
-                key={tc}
-                onClick={() => setTimeControlFilter(tc)}
-                className={`px-3 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
-                  timeControlFilter === tc
-                    ? 'bg-emerald-600 text-white shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                {tc}
-              </button>
-            ))}
-          </div>
-
-          {/* Phase Filter */}
-          <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800">
-            {(['ALL', 'OPENING', 'MIDDLEGAME', 'ENDGAME'] as const).map((ph) => (
-              <button
-                key={ph}
-                onClick={() => setPhaseFilter(ph)}
-                className={`px-3 py-1 text-xs font-bold rounded-lg transition cursor-pointer ${
-                  phaseFilter === ph
-                    ? 'bg-emerald-600 text-white shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                {ph}
-              </button>
-            ))}
-          </div>
-
-          {/* Shared Mistake Threshold Filter */}
-          <div className="flex items-center space-x-2 bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800 text-xs font-semibold">
-            <span className="text-slate-400">Mistake Threshold:</span>
-            <select
-              value={minEvalLoss}
-              onChange={(e) => handleMinEvalLossChange(Number(e.target.value))}
-              className="bg-slate-900 text-emerald-400 font-bold border border-slate-800 rounded px-2 py-0.5 outline-none cursor-pointer text-xs"
+          {/* View Mode Segment */}
+          <div className="flex items-center bg-surface-container-lowest p-0.5 rounded border border-outline-variant">
+            <button
+              type="button"
+              onClick={() => setViewMode('grid')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-mono transition cursor-pointer ${
+                viewMode === 'grid'
+                  ? 'bg-surface-container text-primary font-semibold'
+                  : 'text-outline hover:text-on-surface'
+              }`}
             >
-              <option value={0.3}>0.3 pawns (Strict)</option>
-              <option value={0.5}>0.5 pawns (Moderate)</option>
-              <option value={0.8}>0.8 pawns (Standard)</option>
-              <option value={1.2}>1.2 pawns (Severe)</option>
-              <option value={2.0}>2.0 pawns (Critical)</option>
-            </select>
-          </div>
-
-          {/* Min Mistake Count Filter */}
-          <div className="flex items-center space-x-2 bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800 text-xs font-semibold">
-            <span className="text-slate-400">Min Mistakes:</span>
-            <select
-              value={minMistakeCount}
-              onChange={(e) => handleMinMistakeCountChange(Number(e.target.value))}
-              className="bg-slate-900 text-emerald-400 font-bold border border-slate-800 rounded px-2 py-0.5 outline-none cursor-pointer text-xs"
+              <LayoutGrid className="w-3.5 h-3.5" />
+              <span>Grid</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('list')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-mono transition cursor-pointer ${
+                viewMode === 'list'
+                  ? 'bg-surface-container text-primary font-semibold'
+                  : 'text-outline hover:text-on-surface'
+              }`}
             >
-              <option value={1}>1 (All)</option>
-              <option value={3}>3 (Habits only)</option>
-              <option value={5}>5+ (High frequency)</option>
-            </select>
+              <List className="w-3.5 h-3.5" />
+              <span>List</span>
+            </button>
           </div>
         </div>
-      </div>
+      </section>
 
-      {/* Main Content Area: Loading / Disconnected / Error / Empty / Grid */}
+      {/* Filters Bar */}
+      <section className="bg-surface-container-low border border-outline-variant rounded-xl p-3.5 space-y-2.5 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="flex items-center space-x-1.5 text-xs font-mono font-semibold text-outline mr-1">
+              <Filter className="w-3.5 h-3.5" />
+              <span>Filters:</span>
+            </div>
+
+            {/* Color Filter Segment */}
+            <div className="flex bg-surface-container-lowest p-0.5 rounded-lg border border-outline-variant text-xs font-mono">
+              <button
+                type="button"
+                onClick={() => handleColorChange('ALL')}
+                className={`px-2.5 py-1 rounded-md font-semibold transition cursor-pointer ${
+                  colorFilter === 'ALL'
+                    ? 'bg-surface-container text-primary border border-outline-variant'
+                    : 'text-on-surface-variant hover:text-on-surface'
+                }`}
+              >
+                Both Sides
+              </button>
+              <button
+                type="button"
+                onClick={() => handleColorChange('WHITE')}
+                className={`px-2.5 py-1 rounded-md font-semibold transition cursor-pointer ${
+                  colorFilter === 'WHITE'
+                    ? 'bg-surface-container text-primary border border-outline-variant'
+                    : 'text-on-surface-variant hover:text-on-surface'
+                }`}
+              >
+                White
+              </button>
+              <button
+                type="button"
+                onClick={() => handleColorChange('BLACK')}
+                className={`px-2.5 py-1 rounded-md font-semibold transition cursor-pointer ${
+                  colorFilter === 'BLACK'
+                    ? 'bg-surface-container text-primary border border-outline-variant'
+                    : 'text-on-surface-variant hover:text-on-surface'
+                }`}
+              >
+                Black
+              </button>
+            </div>
+
+            {/* Phase Filter Dropdown */}
+            <div className="relative">
+              <select
+                aria-label="Filter by Phase"
+                value={phaseFilter}
+                onChange={(e) =>
+                  setPhaseFilter(e.target.value as 'ALL' | 'OPENING' | 'MIDDLEGAME' | 'ENDGAME')
+                }
+                className="appearance-none bg-surface-container hover:bg-surface-container-high border border-outline-variant rounded-lg pl-2.5 pr-7 py-1 text-xs font-mono text-on-surface cursor-pointer outline-none"
+              >
+                <option value="ALL">Phase: All Phases</option>
+                <option value="OPENING">Opening</option>
+                <option value="MIDDLEGAME">Middlegame</option>
+                <option value="ENDGAME">Endgame</option>
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-outline w-3.5 h-3.5" />
+            </div>
+
+            {/* Time Control / Speed Filter Dropdown */}
+            <div className="relative">
+              <select
+                aria-label="Filter by Speed"
+                value={timeControlFilter}
+                onChange={(e) =>
+                  setTimeControlFilter(
+                    e.target.value as 'ALL' | 'BULLET' | 'BLITZ' | 'RAPID' | 'CLASSICAL'
+                  )
+                }
+                className="appearance-none bg-surface-container hover:bg-surface-container-high border border-outline-variant rounded-lg pl-2.5 pr-7 py-1 text-xs font-mono text-on-surface cursor-pointer outline-none"
+              >
+                <option value="ALL">Speed: All Speeds</option>
+                <option value="BLITZ">Blitz</option>
+                <option value="RAPID">Rapid</option>
+                <option value="BULLET">Bullet</option>
+                <option value="CLASSICAL">Classical</option>
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-outline w-3.5 h-3.5" />
+            </div>
+
+            {/* Shared Mistake Threshold Filter */}
+            <div className="relative">
+              <select
+                aria-label="Filter by Threshold"
+                value={minEvalLoss}
+                onChange={(e) => handleMinEvalLossChange(Number(e.target.value))}
+                className="appearance-none bg-surface-container hover:bg-surface-container-high border border-outline-variant rounded-lg pl-2.5 pr-7 py-1 text-xs font-mono text-on-surface cursor-pointer outline-none"
+              >
+                <option value={0.3}>Threshold: 0.3 pawns (Strict)</option>
+                <option value={0.5}>Threshold: 0.5 pawns (Moderate)</option>
+                <option value={0.8}>Threshold: 0.8 pawns (Standard)</option>
+                <option value={1.2}>Threshold: 1.2 pawns (Severe)</option>
+                <option value={2.0}>Threshold: 2.0 pawns (Critical)</option>
+              </select>
+              <SlidersHorizontal className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-outline w-3.5 h-3.5" />
+            </div>
+
+            {/* Min Mistakes Filter */}
+            <div className="relative">
+              <select
+                aria-label="Filter by Min Mistakes"
+                value={minMistakeCount}
+                onChange={(e) => handleMinMistakeCountChange(Number(e.target.value))}
+                className="appearance-none bg-surface-container hover:bg-surface-container-high border border-outline-variant rounded-lg pl-2.5 pr-7 py-1 text-xs font-mono text-on-surface cursor-pointer outline-none"
+              >
+                <option value={1}>Min Mistakes: 1 (All)</option>
+                <option value={3}>Min Mistakes: 3 (Habits only)</option>
+                <option value={5}>Min Mistakes: 5+ (Frequent)</option>
+              </select>
+              <Repeat className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-outline w-3.5 h-3.5" />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Main Content Area */}
       {isLoading ? (
         <StatusBanner
           variant="loading"
           message="Loading Recurring Weaknesses..."
         />
       ) : !selector ? (
-        <div className="py-16 text-center space-y-4 max-w-lg mx-auto bg-slate-900/60 p-8 rounded-2xl border border-slate-800 shadow-xl">
-          <div className="w-14 h-14 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-center mx-auto text-emerald-400">
+        <div className="py-16 text-center space-y-4 max-w-lg mx-auto bg-surface-container-low p-8 rounded-2xl border border-outline-variant shadow-xl">
+          <div className="w-14 h-14 rounded-2xl bg-surface-container-lowest border border-outline-variant flex items-center justify-center mx-auto text-primary">
             <Target className="w-7 h-7" />
           </div>
           <div>
-            <h3 className="text-lg font-bold text-white">No Connected Account</h3>
-            <p className="text-xs text-slate-400 mt-1">
+            <h3 className="text-lg font-bold text-on-surface">No Connected Account</h3>
+            <p className="text-xs text-on-surface-variant mt-1">
               Connect your Chess.com account in the Import Games tab to analyze your recurring opening weaknesses.
             </p>
           </div>
         </div>
       ) : error ? (
-        <div className="py-16 text-center space-y-4 max-w-lg mx-auto bg-slate-900/60 p-8 rounded-2xl border border-rose-900/50 shadow-xl">
-          <div className="w-14 h-14 rounded-2xl bg-rose-950/60 border border-rose-800 flex items-center justify-center mx-auto text-rose-400">
+        <div className="py-16 text-center space-y-4 max-w-lg mx-auto bg-surface-container-low p-8 rounded-2xl border border-error-container shadow-xl">
+          <div className="w-14 h-14 rounded-2xl bg-error-container/20 border border-error-container flex items-center justify-center mx-auto text-error">
             <AlertCircle className="w-7 h-7" />
           </div>
           <div>
-            <h3 className="text-lg font-bold text-white">Failed to Load Weaknesses</h3>
-            <p className="text-xs text-rose-300 mt-1">{error}</p>
+            <h3 className="text-lg font-bold text-on-surface">Failed to Load Weaknesses</h3>
+            <p className="text-xs text-error mt-1">{error}</p>
           </div>
           <button
+            type="button"
             onClick={handleRetryInitialLoad}
-            className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded-xl transition inline-flex items-center gap-1.5 cursor-pointer"
+            className="px-4 py-2 bg-surface-container-high hover:bg-surface-bright text-on-surface text-xs font-mono font-bold rounded-xl border border-outline-variant transition inline-flex items-center gap-1.5 cursor-pointer"
           >
             <RefreshCw className="w-3.5 h-3.5" />
             <span>Retry</span>
           </button>
         </div>
       ) : weaknesses.length === 0 ? (
-        <div className="py-16 text-center space-y-4 max-w-lg mx-auto bg-slate-900/60 p-8 rounded-2xl border border-slate-800 shadow-xl">
-          <div className="w-14 h-14 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-center mx-auto text-emerald-400">
-            <Target className="w-7 h-7 text-slate-500" />
+        <div className="py-16 text-center space-y-4 max-w-lg mx-auto bg-surface-container-low p-8 rounded-2xl border border-outline-variant shadow-xl">
+          <div className="w-14 h-14 rounded-2xl bg-surface-container-lowest border border-outline-variant flex items-center justify-center mx-auto text-outline">
+            <Target className="w-7 h-7 text-outline" />
           </div>
           <div>
-            <h3 className="text-lg font-bold text-white">No Recurring Weaknesses Found</h3>
-            <p className="text-xs text-slate-400 mt-1">
-              No positions met your weakness filter criteria{username && <> for <span className="text-emerald-400 font-semibold">{username}</span></>}. Try lowering the minimum mistakes filter or importing more games.
+            <h3 className="text-lg font-bold text-on-surface">No Recurring Weaknesses Found</h3>
+            <p className="text-xs text-on-surface-variant mt-1">
+              No positions met your weakness filter criteria{username && <> for <span className="text-primary font-semibold">{username}</span></>}. Try lowering the minimum mistakes filter or importing more games.
             </p>
           </div>
         </div>
       ) : (
-        /* Weakness Cards Grid */
         <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {weaknesses.map((item) => {
-              const activeColorInFen = item.fen ? item.fen.split(' ')[1] : 'w';
-              const playerColor: 'WHITE' | 'BLACK' =
-                activeColorInFen === 'b' ? 'BLACK' : activeColorInFen === 'w' ? 'WHITE' : 'WHITE';
+          {viewMode === 'grid' ? (
+            <div data-testid="weakness-grid-container" className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
+              {weaknesses.map((item) => {
+                const activeColorInFen = item.fen ? item.fen.split(' ')[1] : 'w';
+                const playerColor: 'WHITE' | 'BLACK' =
+                  activeColorInFen === 'b' ? 'BLACK' : activeColorInFen === 'w' ? 'WHITE' : 'WHITE';
+                  
+                const tcStats = timeControlFilter !== 'ALL' && item.timeControlStats ? item.timeControlStats[timeControlFilter] : null;
+                const phStats = phaseFilter !== 'ALL' && item.phaseStats ? item.phaseStats[phaseFilter] : null;
                 
-              const tcStats = timeControlFilter !== 'ALL' && item.timeControlStats ? item.timeControlStats[timeControlFilter] : null;
-              const phStats = phaseFilter !== 'ALL' && item.phaseStats ? item.phaseStats[phaseFilter] : null;
-              
-              const displayMistakeRate = phStats ? phStats.mistakeRate * 100 : tcStats ? tcStats.mistakeRate * 100 : item.mistakeRate;
-              const displayMistakeCount = phStats ? phStats.mistakeCount : tcStats ? tcStats.mistakeCount : item.mistakeCount;
-              const displayTimesReached = phStats ? phStats.timesReached : tcStats ? tcStats.timesReached : item.timesReached;
-              const displayAverageLoss = phStats ? phStats.averageLoss : tcStats ? tcStats.averageLoss : item.averageLoss;
+                const displayMistakeRate = phStats ? phStats.mistakeRate * 100 : tcStats ? tcStats.mistakeRate * 100 : item.mistakeRate;
+                const displayMistakeCount = phStats ? phStats.mistakeCount : tcStats ? tcStats.mistakeCount : item.mistakeCount;
+                const displayTimesReached = phStats ? phStats.timesReached : tcStats ? tcStats.timesReached : item.timesReached;
+                const displayAverageLoss = phStats ? phStats.averageLoss : tcStats ? tcStats.averageLoss : item.averageLoss;
+
+                const colorBadge = playerColor === 'WHITE'
+                  ? <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-white text-slate-900">As WHITE</span>
+                  : <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-surface-container-highest text-on-surface border border-outline-variant">As BLACK</span>;
+
+                const openingText = item.openingContext ? (
+                  <a
+                    href={item.openingContext.ecoUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hover:text-primary underline text-primary font-mono text-xs font-semibold"
+                  >
+                    Opening Context: {item.openingContext.eco}
+                  </a>
+                ) : (
+                  <span className="text-outline font-mono text-xs">Weakness Position</span>
+                );
+
+                const prac = item.practicalEvidence;
+
+                return (
+                  <PositionCard
+                    key={item.positionId}
+                    className="bg-surface-container-low border border-outline-variant hover:border-outline rounded-2xl overflow-hidden flex flex-col justify-between transition shadow-sm hover:shadow-md"
+                  >
+                    <div>
+                      {/* Card Header */}
+                      <div className="p-4 border-b border-outline-variant/60 flex items-start justify-between gap-2">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            {colorBadge}
+                            {openingText}
+                          </div>
+                          {item.lastSeenAt && formatLastSeen(item.lastSeenAt) && (
+                            <div className="text-[11px] font-mono text-outline pt-0.5">
+                              {formatLastSeen(item.lastSeenAt)}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Main Split Body */}
+                      <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-4 items-start">
+                        {/* 1:1 Mini Chessboard */}
+                        <div className="relative bg-surface-container-lowest border border-outline-variant rounded-xl p-1.5 aspect-square flex flex-col justify-between shadow-inner">
+                          <div className="w-full h-full">
+                            <ChessBoardView
+                              fen={item.fen}
+                              boardOrientation={playerColor}
+                              allowDragging={false}
+                              containerClassName="w-full h-full"
+                              frameClassName="w-full h-full"
+                            />
+                          </div>
+                          <div className="flex items-center justify-between text-[10px] font-mono text-outline px-1 pt-1">
+                            <span>Turn: {playerColor}</span>
+                            <span className="text-on-surface-variant">{displayTimesReached} Encounters</span>
+                          </div>
+                        </div>
+
+                        {/* 3-Column Evidence Stats */}
+                        <div className="space-y-2.5">
+                          <div className="grid grid-cols-3 gap-1.5 text-center font-mono">
+                            <div className="bg-surface-container-lowest p-2 rounded-lg border border-outline-variant">
+                              <div className="text-[9px] text-outline font-sans uppercase">Mistake Rate</div>
+                              <div className="text-xs font-bold text-amber-accent mt-0.5">
+                                <span>{displayMistakeRate.toFixed(1)}% ({displayMistakeCount}x)</span>
+                              </div>
+                            </div>
+
+                            <div className="bg-surface-container-lowest p-2 rounded-lg border border-outline-variant">
+                              <div className="text-[9px] text-outline font-sans uppercase">Reached</div>
+                              <div className="text-xs font-bold text-on-surface mt-0.5">{displayTimesReached}</div>
+                              <div className="text-[9px] text-outline">games</div>
+                            </div>
+
+                            <div className="bg-surface-container-lowest p-2 rounded-lg border border-outline-variant">
+                              <div className="text-[9px] text-outline font-sans uppercase">Avg Mistake Loss</div>
+                              <div className="text-xs font-bold text-error mt-0.5">-{displayAverageLoss.toFixed(2)} pawns</div>
+                            </div>
+                          </div>
+
+                          {/* Historical Decisions in Source Games */}
+                          {item.movesPlayed && item.movesPlayed.length > 0 && (
+                            <div className="p-2.5 bg-surface-container-lowest rounded-lg border border-outline-variant space-y-1">
+                              <div className="text-[10px] font-sans font-semibold text-outline">
+                                Your Decisions in Source Games:
+                              </div>
+                              <div className="flex flex-wrap gap-1">
+                                {item.movesPlayed.map((m, idx) => (
+                                  <span
+                                    key={idx}
+                                    className="px-1.5 py-0.5 bg-error-container/20 border border-error/30 text-error rounded text-[11px] font-mono font-semibold"
+                                  >
+                                    {m.move} ({m.timesPlayed}x, -{m.averageLoss.toFixed(2)} pawns)
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
 
 
-              return (
-                <PositionCard
-                  key={item.positionId}
-                  className="p-5"
-                >
-                  <div className="space-y-4">
-                    {/* Top Header: Badge & FEN Board Visualization */}
-                    <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4">
-                      {/* Visual Board Display */}
-                      <div className="w-[180px] h-[180px] shrink-0 rounded-xl overflow-hidden border border-slate-800 shadow-md">
+                      {/* Practical Evidence Block */}
+                      {prac && (
+                        <div className="mx-4 mb-4 p-3 bg-secondary-container/10 border border-secondary/20 rounded-xl space-y-1.5 text-xs font-mono">
+                          <div className="text-[11px] font-sans font-semibold text-secondary flex items-center gap-1">
+                            <Target className="w-3.5 h-3.5" />
+                            Actual-game results at this exact position
+                          </div>
+
+                          {prac.eligibleGames > 0 && prac.scoreRate !== null ? (
+                            <div className="space-y-0.5 text-[11px]">
+                              <div className="text-on-surface">
+                                {`Wins ${prac.wins} · Draws ${prac.draws} · Losses ${prac.losses}`}
+                              </div>
+                              <div className="text-outline">
+                                <span>{`${(prac.scoreRate * 100).toFixed(1)}% score rate`}</span>
+                                <span className="mx-1">·</span>
+                                <span>{`${prac.eligibleGames} eligible games`}</span>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="text-[11px] text-outline">
+                              {`No score available from actual games (${prac.eligibleGames} eligible games)`}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Bottom Action Bar */}
+                    <div className="p-3 bg-surface-container-lowest border-t border-outline-variant/60 flex items-center justify-between gap-2">
+                      <div>
+                        {item.gameUrls && item.gameUrls.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setActiveGameModalUrls(item.gameUrls)}
+                            className="px-2.5 py-1.5 text-xs font-mono text-outline hover:text-primary flex items-center gap-1 transition cursor-pointer"
+                            title="View actual games where this occurred"
+                          >
+                            <ExternalLink className="w-3.5 h-3.5" />
+                            <span>View Games ({item.gameUrls.length})</span>
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="flex items-center space-x-2">
+                        {onViewProgress && (
+                          <button
+                            type="button"
+                            onClick={() => onViewProgress(item.positionId, playerColor, weaknessResult.minEvalLoss)}
+                            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-outline-variant hover:border-secondary/40 text-xs font-mono text-on-surface-variant hover:text-secondary transition cursor-pointer"
+                            title="View progress"
+                          >
+                            <TrendingUp className="w-3.5 h-3.5" />
+                            <span>View Progress</span>
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const fullConvertedList = weaknesses.map((w) => {
+                              const col: 'WHITE' | 'BLACK' = w.fen && w.fen.split(' ')[1] === 'b' ? 'BLACK' : 'WHITE';
+                              return adaptWeaknessToPuzzle(w, col);
+                            });
+                            onSelectPractice(adaptWeaknessToPuzzle(item, playerColor), fullConvertedList);
+                          }}
+                          className="flex items-center space-x-1 px-3 py-1.5 bg-primary-container hover:bg-primary text-on-primary-container rounded-lg font-mono text-xs font-bold transition shadow-sm cursor-pointer"
+                        >
+                          <Swords className="w-3.5 h-3.5" />
+                          <span>Practice Position</span>
+                        </button>
+                      </div>
+                    </div>
+                  </PositionCard>
+                );
+              })}
+            </div>
+          ) : (
+            <div data-testid="weakness-list-container" className="space-y-3">
+              {weaknesses.map((item) => {
+                const activeColorInFen = item.fen ? item.fen.split(' ')[1] : 'w';
+                const playerColor: 'WHITE' | 'BLACK' =
+                  activeColorInFen === 'b' ? 'BLACK' : activeColorInFen === 'w' ? 'WHITE' : 'WHITE';
+
+                const tcStats = timeControlFilter !== 'ALL' && item.timeControlStats ? item.timeControlStats[timeControlFilter] : null;
+                const phStats = phaseFilter !== 'ALL' && item.phaseStats ? item.phaseStats[phaseFilter] : null;
+
+                const displayMistakeRate = phStats ? phStats.mistakeRate * 100 : tcStats ? tcStats.mistakeRate * 100 : item.mistakeRate;
+                const displayMistakeCount = phStats ? phStats.mistakeCount : tcStats ? tcStats.mistakeCount : item.mistakeCount;
+                const displayTimesReached = phStats ? phStats.timesReached : tcStats ? tcStats.timesReached : item.timesReached;
+                const displayAverageLoss = phStats ? phStats.averageLoss : tcStats ? tcStats.averageLoss : item.averageLoss;
+
+                const colorBadge = playerColor === 'WHITE'
+                  ? <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-white text-slate-900">WHITE</span>
+                  : <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-surface-container-highest text-on-surface border border-outline-variant">BLACK</span>;
+
+                const openingText = item.openingContext ? (
+                  <a
+                    href={item.openingContext.ecoUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-mono text-xs font-semibold text-primary underline"
+                  >
+                    {item.openingContext.eco}
+                  </a>
+                ) : (
+                  <span className="text-outline font-mono text-xs">Position</span>
+                );
+
+                const prac = item.practicalEvidence;
+
+                return (
+                  <div
+                    key={item.positionId}
+                    className="bg-surface-container-low border border-outline-variant hover:border-outline rounded-xl p-3 flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-4 transition shadow-sm"
+                  >
+                    {/* Column 1: Board Thumbnail (88x88) + Orientation + Opening */}
+                    <div className="flex items-center space-x-3 shrink-0">
+                      <div className="w-[88px] h-[88px] bg-surface-container-lowest border border-outline-variant rounded-lg p-1 shrink-0 overflow-hidden">
                         <ChessBoardView
                           fen={item.fen}
                           boardOrientation={playerColor}
@@ -516,138 +784,88 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                           frameClassName="w-full h-full"
                         />
                       </div>
-
-                      {/* Stats & Metadata */}
-                      <div className="flex-1 space-y-3 w-full">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                              Weakness Position
-                            </span>
-                            {item.lastSeenAt && formatLastSeen(item.lastSeenAt) && (
-                              <span className="text-[11px] font-medium text-slate-400">
-                                • {formatLastSeen(item.lastSeenAt)}
-                              </span>
-                            )}
-                          </div>
-                          <span
-                            className={`text-xs font-bold px-2 py-0.5 rounded-md ${
-                              playerColor === 'WHITE'
-                                ? 'bg-slate-200 text-slate-900'
-                                : 'bg-slate-800 text-slate-200 border border-slate-700'
-                            }`}
-                          >
-                            As {playerColor}
-                          </span>
+                      <div className="space-y-1 min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {colorBadge}
+                          {openingText}
                         </div>
-
-                        {item.openingContext && (
-                          <div className="flex items-center gap-2 text-[11px] text-slate-400">
-                            <span>Opening context: {item.openingContext.eco}</span>
-                            <a
-                              href={item.openingContext.ecoUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-emerald-400 hover:text-emerald-300 underline"
-                            >
-                              View Chess.com opening
-                            </a>
+                        {item.lastSeenAt && formatLastSeen(item.lastSeenAt) && (
+                          <div className="text-[11px] font-mono text-outline">
+                            {formatLastSeen(item.lastSeenAt)}
                           </div>
                         )}
-
-                        {/* Stats Grid: Evidence Metrics Only */}
-                        <div className="grid grid-cols-3 gap-2 text-center">
-                          <div className="bg-slate-950/80 p-2 rounded-xl border border-slate-800">
-                            <div className="text-[10px] text-slate-400 font-medium">Mistake Rate</div>
-                            <div className="text-xs font-bold text-amber-400 mt-0.5 flex items-center justify-center gap-1">
-                              <Flame className="w-3.5 h-3.5 text-amber-500" />
-                              {displayMistakeRate.toFixed(1)}% ({displayMistakeCount}x)
-                            </div>
-                          </div>
-
-                          <div className="bg-slate-950/80 p-2 rounded-xl border border-slate-800">
-                            <div className="text-[10px] text-slate-400 font-medium">Times Reached</div>
-                            <div className="text-xs font-bold text-slate-200 mt-0.5">
-                              {displayTimesReached}
-                            </div>
-                          </div>
-
-                          <div className="bg-slate-950/80 p-2 rounded-xl border border-slate-800">
-                            <div className="text-[10px] text-slate-400 font-medium">Avg Mistake Loss</div>
-                            <div className="text-xs font-bold text-rose-400 mt-0.5">
-                              -{displayAverageLoss.toFixed(2)} pawns
-                            </div>
-                          </div>
+                        <div className="text-[10px] font-mono text-outline">
+                          {displayTimesReached} encounters
                         </div>
                       </div>
                     </div>
 
-                    {/* Historical Moves Played */}
-                    {item.movesPlayed && item.movesPlayed.length > 0 && (
-                      <div className="bg-slate-950/50 p-3 rounded-xl border border-slate-800/80">
-                        <div className="text-[11px] font-semibold text-slate-400 mb-1.5">
-                          Your Decisions in Source Games:
+                    {/* Column 2: Historical Blunder Metrics */}
+                    <div className="grid grid-cols-2 gap-3 text-xs font-mono py-1 px-3 bg-surface-container-lowest/60 rounded-lg border border-outline-variant/60">
+                      <div>
+                        <span className="text-[10px] text-outline font-sans block">Mistake Rate</span>
+                        <span className="font-bold text-amber-accent">
+                          {displayMistakeRate.toFixed(1)}% ({displayMistakeCount}x)
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-outline font-sans block">Avg Mistake Loss</span>
+                        <span className="font-bold text-error">
+                          -{displayAverageLoss.toFixed(2)} pawns
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Column 3: Practical Game Outcomes */}
+                    {prac && prac.eligibleGames > 0 && prac.scoreRate !== null ? (
+                      <div className="grid grid-cols-2 gap-3 text-xs font-mono py-1 px-3 bg-surface-container-lowest/60 rounded-lg border border-outline-variant/60 flex-1">
+                        <div>
+                          <span className="text-[10px] text-outline font-sans block">
+                            W / D / L ({prac.eligibleGames} games)
+                          </span>
+                          <span className="text-on-surface">
+                            {prac.wins} / {prac.draws} / {prac.losses}
+                          </span>
                         </div>
-                        <div className="flex flex-wrap gap-1.5">
-                          {item.movesPlayed.map((m, idx) => (
-                            <span
-                              key={idx}
-                              className="px-2 py-1 bg-rose-500/10 border border-rose-500/20 text-rose-300 rounded-lg text-xs font-mono font-semibold"
-                            >
-                              {m.move} ({m.timesPlayed}x, -{m.averageLoss.toFixed(2)} pawns)
-                            </span>
-                          ))}
+                        <div>
+                          <span className="text-[10px] text-outline font-sans block">
+                            Score Rate / Win Rate
+                          </span>
+                          <span className="text-secondary">
+                            {(prac.scoreRate * 100).toFixed(1)}% / {typeof prac.winRate === 'number' && !isNaN(prac.winRate)
+                              ? `${(prac.winRate * 100).toFixed(1)}%`
+                              : `${((prac.wins / prac.eligibleGames) * 100).toFixed(1)}%`}
+                          </span>
                         </div>
                       </div>
-                    )}
-
-                    {item.practicalEvidence && (
-                      <div className="bg-emerald-500/5 p-3 rounded-xl border border-emerald-500/20">
-                        <div className="text-[11px] font-semibold text-emerald-300">
-                          Actual-game results at this exact position
-                        </div>
-                        {item.practicalEvidence.scoreRate !== null &&
-                        item.practicalEvidence.eligibleGames > 0 ? (
-                          <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-slate-200">
-                            <span>Wins {item.practicalEvidence.wins} · Draws {item.practicalEvidence.draws} · Losses {item.practicalEvidence.losses}</span>
-                            <span>{(item.practicalEvidence.scoreRate * 100).toFixed(1)}% score rate</span>
-                            <span>{item.practicalEvidence.eligibleGames} eligible games</span>
-                          </div>
-                        ) : (
-                          <div className="text-xs text-slate-400 mt-2">
-                            No score available from actual games ({item.practicalEvidence.eligibleGames} eligible games)
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Bottom Action Bar */}
-                  <div className="pt-3 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2">
-                    {item.gameUrls && item.gameUrls.length > 0 ? (
-                      <button
-                        type="button"
-                        onClick={() => setActiveGameModalUrls(item.gameUrls)}
-                        className="text-xs font-semibold text-slate-400 hover:text-emerald-400 flex items-center gap-1.5 transition cursor-pointer"
-                      >
-                        <span>View Games ({item.gameUrls.length})</span>
-                        <ExternalLink className="w-3.5 h-3.5" />
-                      </button>
                     ) : (
-                      <div />
+                      <div className="flex-1" />
                     )}
 
-                    <div className="flex flex-wrap items-center gap-2">
+                    {/* Column 4: Contextual Actions */}
+                    <div className="flex items-center space-x-2 shrink-0 self-end lg:self-center">
+                      {item.gameUrls && item.gameUrls.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setActiveGameModalUrls(item.gameUrls)}
+                          className="px-2.5 py-1.5 text-xs font-mono text-outline hover:text-on-surface rounded-lg border border-outline-variant transition cursor-pointer"
+                          title="View actual games"
+                        >
+                          View Games ({item.gameUrls.length})
+                        </button>
+                      )}
+
                       {onViewProgress && (
                         <button
                           type="button"
                           onClick={() => onViewProgress(item.positionId, playerColor, weaknessResult.minEvalLoss)}
-                          className="flex items-center gap-1.5 rounded-xl border border-slate-700 px-3 py-2 text-xs font-bold text-slate-200 transition hover:border-emerald-500/50 hover:text-emerald-300"
+                          className="px-2.5 py-1.5 text-xs font-mono text-on-surface-variant hover:text-secondary rounded-lg border border-outline-variant transition cursor-pointer"
+                          title="View progress"
                         >
-                          <TrendingUp className="h-3.5 w-3.5" />
-                          <span>View Progress</span>
+                          View Progress
                         </button>
                       )}
+
                       <button
                         type="button"
                         onClick={() => {
@@ -657,17 +875,16 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                           });
                           onSelectPractice(adaptWeaknessToPuzzle(item, playerColor), fullConvertedList);
                         }}
-                        className="flex items-center space-x-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition shadow-md shadow-emerald-900/30 cursor-pointer"
+                        className="px-3 py-1.5 bg-primary-container hover:bg-primary text-on-primary-container rounded-lg font-mono text-xs font-bold transition shadow-sm cursor-pointer"
                       >
-                        <Swords className="w-3.5 h-3.5" />
-                        <span>Practice Position</span>
+                        Practice Position
                       </button>
                     </div>
                   </div>
-                </PositionCard>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
 
           {/* Permanently Mounted Sentinel & Infinite Scroll Loading Indicator */}
           <div
@@ -676,24 +893,24 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
             className="py-4 flex justify-center items-center min-h-[50px]"
           >
             {isLoadingMore && (
-              <div className="flex items-center space-x-2 text-xs font-bold text-slate-400 bg-slate-900 px-4 py-2 rounded-xl border border-slate-800">
-                <div className="w-4 h-4 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
+              <div className="flex items-center space-x-2 text-xs font-bold text-outline bg-surface-container-low px-4 py-2 rounded-xl border border-outline-variant">
+                <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
                 <span>Loading more weaknesses...</span>
               </div>
             )}
             {!isLoadingMore && loadMoreError && (
               <div
                 data-testid="weaknesses-load-more-error"
-                className="flex flex-col sm:flex-row items-center gap-3 bg-slate-900 px-4 py-3 rounded-xl border border-rose-900/50 text-xs"
+                className="flex flex-col sm:flex-row items-center gap-3 bg-surface-container-low px-4 py-3 rounded-xl border border-error-container text-xs"
               >
-                <div className="flex items-center gap-2 text-rose-300 font-semibold">
-                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                <div className="flex items-center gap-2 text-error font-semibold">
+                  <AlertCircle className="w-4 h-4 text-error shrink-0" />
                   <span>We couldn&apos;t load more weaknesses. Please try again.</span>
                 </div>
                 <button
                   type="button"
                   onClick={() => loadNextPage(true)}
-                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl transition inline-flex items-center gap-1.5 cursor-pointer"
+                  className="px-4 py-2 bg-surface-container-high hover:bg-surface-bright text-on-surface font-bold rounded-xl border border-outline-variant transition inline-flex items-center gap-1.5 cursor-pointer"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
                   <span>Retry</span>
@@ -704,7 +921,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
               <button
                 type="button"
                 onClick={() => loadNextPage()}
-                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-bold rounded-xl border border-slate-800 transition cursor-pointer"
+                className="px-4 py-2 bg-surface-container-low hover:bg-surface-container text-on-surface-variant hover:text-on-surface text-xs font-bold rounded-xl border border-outline-variant transition cursor-pointer"
               >
                 Load More Weaknesses
               </button>

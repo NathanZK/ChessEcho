@@ -213,8 +213,7 @@ describe('Weaknesses Tab MVP', () => {
       vi.clearAllMocks();
 
       // Change Mistake Threshold selector
-      const selects = screen.getAllByRole('combobox');
-      const thresholdSelect = selects[0];
+      const thresholdSelect = screen.getByLabelText('Filter by Threshold');
       fireEvent.change(thresholdSelect, { target: { value: '0.5' } });
 
       expect(onMinEvalLossChange).toHaveBeenCalledWith(0.5);
@@ -409,7 +408,7 @@ describe('Weaknesses Tab MVP', () => {
 
     it('renders with expanded responsive container max-width max-w-[1536px]', () => {
       render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
-      const container = screen.getByText(/Recurring Opening Weaknesses Library/i).closest('.max-w-\\[1536px\\]');
+      const container = screen.getByText(/Recurring Weakness Library/i).closest('.max-w-\\[1536px\\]');
       expect(container).toBeInTheDocument();
     });
   });
@@ -462,8 +461,8 @@ describe('Weaknesses Tab MVP', () => {
       });
 
       // Change Time Control to BLITZ
-      const blitzFilterBtn = screen.getByRole('button', { name: /^BLITZ$/i });
-      fireEvent.click(blitzFilterBtn);
+      const blitzSelect = screen.getByLabelText('Filter by Speed');
+      fireEvent.change(blitzSelect, { target: { value: 'BLITZ' } });
 
       await waitFor(() => {
         // Should only show one card now (emptyBlitzItem should be filtered out)

@@ -646,7 +646,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
         }}
       />
     );
-    expect(screen.queryByText(/ChessEcho played/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/ChessProbe played/i)).not.toBeInTheDocument();
 
     // Rerender in CHESSECHO mode with null evalLoss, fallback plies, and omitted onAlternativeSelected prop
     rerender(
@@ -672,7 +672,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
     );
 
     // Selected Ba4 has null evalLoss -> no pawns text; plies fallback -> +2 plies from continuationSanMoves
-    expect(screen.getByText(/ChessEcho played/i)).toBeInTheDocument();
+    expect(screen.getByText(/ChessProbe played/i)).toBeInTheDocument();
     const selectedMoveElement = screen.getByText('Ba4');
     expect(selectedMoveElement).toBeInTheDocument();
     expect(selectedMoveElement.textContent).toBe('Ba4');

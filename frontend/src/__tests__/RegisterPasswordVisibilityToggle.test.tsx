@@ -41,6 +41,8 @@ describe('registration password visibility toggle', () => {
   it('masks the password and exposes a show control by default', () => {
     render(<RegisterPage />);
 
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Create your ChessProbe account');
+
     expect(getPasswordInput()).toHaveAttribute('type', 'password');
 
     const toggle = screen.getByRole('button', { name: /show password/i });

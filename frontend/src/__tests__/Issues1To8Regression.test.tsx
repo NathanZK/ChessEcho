@@ -58,7 +58,7 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
 
     // Wait for weaknesses to render
     await waitFor(() => {
-      expect(screen.getByText('Recurring Opening Weaknesses Library')).toBeInTheDocument();
+      expect(screen.getByText('Recurring Weakness Library')).toBeInTheDocument();
     });
 
     // Click Practice Position on the first weakness card
@@ -137,10 +137,10 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
     const { unmount: unmount1 } = render(<Home />);
 
     await waitFor(() => {
-      expect(screen.getByText('Recurring Opening Weaknesses Library')).toBeInTheDocument();
+      expect(screen.getByText('Recurring Weakness Library')).toBeInTheDocument();
     });
 
-    const selectEl1 = screen.getAllByRole('combobox')[0] as HTMLSelectElement;
+    const selectEl1 = screen.getByLabelText('Filter by Threshold') as HTMLSelectElement;
     expect(Number(selectEl1.value)).toBe(0.8);
 
     // 2. Change UI select to 0.5 -> localStorage updates
@@ -169,7 +169,7 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
       );
     });
 
-    const selectEl2 = screen.getAllByRole('combobox')[0] as HTMLSelectElement;
+    const selectEl2 = screen.getByLabelText('Filter by Threshold') as HTMLSelectElement;
     expect(Number(selectEl2.value)).toBe(0.5);
 
     unmount2();
@@ -224,11 +224,11 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText('Recurring Opening Weaknesses Library')).toBeInTheDocument();
+      expect(screen.getByText('Recurring Weakness Library')).toBeInTheDocument();
     });
 
     // Click BLACK filter
-    const blackFilterBtn = screen.getByRole('button', { name: 'BLACK' });
+    const blackFilterBtn = screen.getByRole('button', { name: 'Black' });
     await act(async () => {
       fireEvent.click(blackFilterBtn);
     });
@@ -246,7 +246,7 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
       fireEvent.click(weaknessesTabBtn);
     });
 
-    expect(screen.getByRole('button', { name: 'BLACK' })).toHaveClass('bg-emerald-600');
+    expect(screen.getByRole('button', { name: 'Black' })).toHaveClass('text-primary');
   });
 
   it('ISSUE 7 — Next puzzle maintains Black player-color filter', async () => {
@@ -394,11 +394,11 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
     const { unmount } = render(<Home />);
 
     await waitFor(() => {
-      expect(screen.getByText('Recurring Opening Weaknesses Library')).toBeInTheDocument();
+      expect(screen.getByText('Recurring Weakness Library')).toBeInTheDocument();
     });
 
     // 1. Change threshold from 0.8 to 0.5 in Weaknesses tab
-    const selectEl = screen.getAllByRole('combobox')[0] as HTMLSelectElement;
+    const selectEl = screen.getByLabelText('Filter by Threshold') as HTMLSelectElement;
     await act(async () => {
       fireEvent.change(selectEl, { target: { value: '0.5' } });
     });
@@ -417,7 +417,7 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
     });
 
     // Verify threshold is STILL 0.5 after tab navigation
-    const selectElAfterNav = screen.getAllByRole('combobox')[0] as HTMLSelectElement;
+    const selectElAfterNav = screen.getByLabelText('Filter by Threshold') as HTMLSelectElement;
     expect(Number(selectElAfterNav.value)).toBe(0.5);
 
     unmount();
@@ -425,10 +425,10 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
     // 3. Flow B: Refresh simulation (remount) -> threshold is STILL 0.5
     render(<Home />);
     await waitFor(() => {
-      expect(screen.getByText('Recurring Opening Weaknesses Library')).toBeInTheDocument();
+      expect(screen.getByText('Recurring Weakness Library')).toBeInTheDocument();
     });
 
-    const selectElAfterRefresh = screen.getAllByRole('combobox')[0] as HTMLSelectElement;
+    const selectElAfterRefresh = screen.getByLabelText('Filter by Threshold') as HTMLSelectElement;
     expect(Number(selectElAfterRefresh.value)).toBe(0.5);
   });
 
@@ -496,13 +496,12 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
     const { unmount: unmount1 } = render(<Home />);
 
     await waitFor(() => {
-      expect(screen.getByText('Recurring Opening Weaknesses Library')).toBeInTheDocument();
+      expect(screen.getByText('Recurring Weakness Library')).toBeInTheDocument();
     });
 
     // 1. Change Min Eval Loss to 0.5 and Min Mistakes to 5 in Weaknesses tab
-    const selects = screen.getAllByRole('combobox') as HTMLSelectElement[];
-    const evalLossSelect = selects[0];
-    const minMistakesSelect = selects[1];
+    const evalLossSelect = screen.getByLabelText('Filter by Threshold') as HTMLSelectElement;
+    const minMistakesSelect = screen.getByLabelText('Filter by Min Mistakes') as HTMLSelectElement;
 
     await act(async () => {
       fireEvent.change(evalLossSelect, { target: { value: '0.5' } });
@@ -523,9 +522,10 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
       fireEvent.click(weaknessesTabBtn);
     });
 
-    const selectsAfterNav = screen.getAllByRole('combobox') as HTMLSelectElement[];
-    expect(Number(selectsAfterNav[0].value)).toBe(0.5);
-    expect(Number(selectsAfterNav[1].value)).toBe(5);
+    const evalLossSelectAfterNav = screen.getByLabelText('Filter by Threshold') as HTMLSelectElement;
+    const minMistakesSelectAfterNav = screen.getByLabelText('Filter by Min Mistakes') as HTMLSelectElement;
+    expect(Number(evalLossSelectAfterNav.value)).toBe(0.5);
+    expect(Number(minMistakesSelectAfterNav.value)).toBe(5);
 
     unmount1();
 
@@ -550,9 +550,10 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
     );
     expect(hasDefaultCalls).toBe(false);
 
-    const selectsAfterRefresh = screen.getAllByRole('combobox') as HTMLSelectElement[];
-    expect(Number(selectsAfterRefresh[0].value)).toBe(0.5);
-    expect(Number(selectsAfterRefresh[1].value)).toBe(5);
+    const evalLossSelectAfterRefresh = screen.getByLabelText('Filter by Threshold') as HTMLSelectElement;
+    const minMistakesSelectAfterRefresh = screen.getByLabelText('Filter by Min Mistakes') as HTMLSelectElement;
+    expect(Number(evalLossSelectAfterRefresh.value)).toBe(0.5);
+    expect(Number(minMistakesSelectAfterRefresh.value)).toBe(5);
 
     unmount2();
 

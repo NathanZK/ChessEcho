@@ -132,7 +132,7 @@ describe('Play Both Sides Mode in Line Exploration', () => {
     fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
 
     // By default, starts in vs ChessEcho
-    expect(screen.getByRole('button', { name: /vs ChessEcho/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /vs ChessProbe/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Play Both Sides/i })).toBeInTheDocument();
 
     // Click Play Both Sides
@@ -237,7 +237,7 @@ describe('Play Both Sides Mode in Line Exploration', () => {
     expect(screen.getByText(/Black to move/i)).toBeInTheDocument();
     expect(screen.getByText(/Opponent's turn — think like Black\. Find their strongest move\./i)).toBeInTheDocument();
     // Candidate card should NOT be shown automatically
-    expect(screen.queryByText(/ChessEcho played/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/ChessProbe played/i)).not.toBeInTheDocument();
   });
 
   it('4. Handles good-but-inferior move and inaccurate move in Play Both Sides', async () => {
@@ -474,7 +474,7 @@ describe('Play Both Sides Mode in Line Exploration', () => {
 
     // Mode-selection screen appears, choose vs ChessEcho
     expect(screen.getByText(/Choose how you want to explore/i)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /vs ChessEcho/i }));
+    fireEvent.click(screen.getByRole('button', { name: /vs ChessProbe/i }));
 
     // In vs ChessEcho mode, ChessEcho will play a6
     await waitFor(() => expect(screen.getByText('Your turn — explore a move.')).toBeInTheDocument());
@@ -486,7 +486,7 @@ describe('Play Both Sides Mode in Line Exploration', () => {
     expect(screen.getByText(/Your turn — find the best move for White\./i)).toBeInTheDocument();
 
     // Switch back to vs ChessEcho
-    fireEvent.click(screen.getByRole('button', { name: /vs ChessEcho/i }));
+    fireEvent.click(screen.getByRole('button', { name: /vs ChessProbe/i }));
     expect(screen.queryByTestId('play-both-sides-badge')).not.toBeInTheDocument();
     expect(screen.getByText('Your turn — explore a move.')).toBeInTheDocument();
   });
@@ -714,13 +714,13 @@ describe('Play Both Sides Mode in Line Exploration', () => {
     expect(screen.queryByRole('button', { name: 'HUMAN' })).not.toBeInTheDocument();
 
     // Both options are equally available
-    const vsEngineBtn = screen.getByRole('button', { name: /vs ChessEcho/i });
+    const vsEngineBtn = screen.getByRole('button', { name: /vs ChessProbe/i });
     const bothSidesBtn = screen.getByRole('button', { name: /Play Both Sides/i });
     expect(vsEngineBtn).toBeInTheDocument();
     expect(bothSidesBtn).toBeInTheDocument();
 
     // No continuation move has been played yet
-    expect(screen.queryByText(/ChessEcho played/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/ChessProbe played/i)).not.toBeInTheDocument();
     expect(screen.queryByText('Your turn — explore a move.')).not.toBeInTheDocument();
 
     // Now select vs ChessEcho and verify it transitions

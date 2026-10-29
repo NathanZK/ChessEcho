@@ -213,7 +213,7 @@ export const LongDecisionsView: React.FC<LongDecisionsViewProps> = ({
         </p>
       ) : sessionStatus === 'error' ? (
         <p className="rounded-xl border border-rose-900/60 bg-rose-950/30 p-5 text-sm text-rose-200" role="alert">
-          Unable to check your ChessEcho session. Refresh the page to try again.
+          Unable to check your ChessProbe session. Refresh the page to try again.
         </p>
       ) : sessionStatus === 'authenticated' && accountStatus === 'error' ? (
         <div className="rounded-xl border border-rose-900/60 bg-rose-950/30 p-5 text-sm text-rose-200" role="alert">

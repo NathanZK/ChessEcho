@@ -189,6 +189,21 @@ describe('LongDecisionsView', () => {
     expect(screen.queryByText('game-stale')).not.toBeInTheDocument();
   });
 
+  it('renders ChessProbe session error alert when session check fails', () => {
+    render(
+      <LongDecisionsView
+        {...connectedProps}
+        accountId={undefined}
+        sessionStatus="error"
+        accountStatus="unconnected"
+      />
+    );
+
+    expect(
+      screen.getByText('Unable to check your ChessProbe session. Refresh the page to try again.')
+    ).toBeInTheDocument();
+  });
+
   it('offers account loading, retry, and no-account states without querying', () => {
     const onRetry = vi.fn();
     const onNavigateImport = vi.fn();

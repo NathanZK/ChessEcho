@@ -92,6 +92,68 @@ describe('Weaknesses Tab MVP', () => {
     vi.restoreAllMocks();
   });
 
+  describe('Weakness Library Redesign & View Modes', () => {
+    it('supports switching between Grid and List views with loaded position count display', async () => {
+      render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/33.3% \(5x\)/i)).toBeInTheDocument();
+      });
+
+      // Position count indicator
+      expect(screen.getByTestId('weakness-count-indicator')).toHaveTextContent('1');
+
+      // Grid view button is active by default
+      const btnGrid = screen.getByRole('button', { name: /^Grid$/i });
+      const btnList = screen.getByRole('button', { name: /^List$/i });
+      expect(btnGrid).toBeInTheDocument();
+      expect(btnList).toBeInTheDocument();
+
+      // Switch to List view
+      fireEvent.click(btnList);
+      expect(screen.getByTestId('weakness-list-container')).toBeInTheDocument();
+
+      // Switch back to Grid view
+      fireEvent.click(btnGrid);
+      expect(screen.getByTestId('weakness-grid-container')).toBeInTheDocument();
+    });
+
+    it('renders dense list row with opening ECO link and metrics and suppresses bestMove', async () => {
+      const weaknessWithEco: WeaknessResponse = {
+        ...mockWeaknessItem,
+        bestMove: 'Nc6',
+        openingContext: {
+          eco: 'B12',
+          ecoUrl: 'https://www.chess.com/openings/Caro-Kann-Defense',
+        },
+      };
+      vi.mocked(api.fetchWeaknesses).mockResolvedValue([weaknessWithEco]);
+
+      render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /^List$/i })).toBeInTheDocument();
+      });
+
+      // Switch to list view
+      fireEvent.click(screen.getByRole('button', { name: /^List$/i }));
+
+      // List row elements
+      expect(screen.getByRole('link', { name: 'B12' })).toHaveAttribute(
+        'href',
+        'https://www.chess.com/openings/Caro-Kann-Defense'
+      );
+      expect(screen.getByText(/W \/ D \/ L/i)).toBeInTheDocument();
+      expect(screen.getByText(/Score Rate \/ Win Rate/i)).toBeInTheDocument();
+
+      // Suppresses optimal move (Nc6)
+      expect(screen.queryByText('Nc6')).not.toBeInTheDocument();
+      expect(screen.queryByText(/^Optimal Move/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Best Move|Engine Solution/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Critical Leak/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Queue Rank Score/i)).not.toBeInTheDocument();
+    });
+  });
+
   describe('1. API Service Serialization', () => {
     it('serializes fetchWeaknesses params with uppercase platform, playerColor, page, and size', async () => {
       const actualApi = await vi.importActual<typeof import('../services/api')>('../services/api');
@@ -368,8 +430,7 @@ describe('Weaknesses Tab MVP', () => {
       vi.clearAllMocks();
 
       // Change Mistake Threshold selector
-      const selects = screen.getAllByRole('combobox');
-      const thresholdSelect = selects[0];
+      const thresholdSelect = screen.getByLabelText('Filter by Threshold');
       fireEvent.change(thresholdSelect, { target: { value: '0.5' } });
 
       expect(onMinEvalLossChange).toHaveBeenCalledWith(0.5);
@@ -599,7 +660,7 @@ describe('Weaknesses Tab MVP', () => {
 
     it('renders with expanded responsive container max-width max-w-[1536px]', () => {
       render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
-      const container = screen.getByText(/Recurring Opening Weaknesses Library/i).closest('.max-w-\\[1536px\\]');
+      const container = screen.getByText(/Recurring Weakness Library/i).closest('.max-w-\\[1536px\\]');
       expect(container).toBeInTheDocument();
     });
   });
@@ -617,8 +678,8 @@ describe('Weaknesses Tab MVP', () => {
 
       render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
 
-      const openingBtn = await screen.findByRole('button', { name: /^OPENING$/i });
-      fireEvent.click(openingBtn);
+      const phaseSelect = await screen.findByLabelText('Filter by Phase');
+      fireEvent.change(phaseSelect, { target: { value: 'OPENING' } });
 
       await waitFor(() => {
         expect(screen.getByText('25.0% (5x)')).toBeInTheDocument();

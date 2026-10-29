@@ -202,7 +202,7 @@ describe('PuzzleFeedbackPanel Unit Tests', () => {
       const challengeTab = screen.getByRole('button', { name: 'Challenge Mode' });
       expect(challengeTab.className).toContain('bg-purple-600 text-white shadow-sm');
 
-      const chessechoTab = screen.getByRole('button', { name: 'vs ChessEcho' });
+      const chessechoTab = screen.getByRole('button', { name: 'vs ChessProbe' });
       expect(chessechoTab.className).toContain('text-slate-400');
 
       fireEvent.click(chessechoTab);

@@ -98,15 +98,20 @@ describe('useBlindfoldSession', () => {
   });
 
   it.each([
-    ['no move', () => Promise.resolve(null), /could not provide a move/],
-    ['a rejected request', () => Promise.reject(new Error('network down')), /network down/],
+    ['no move', () => Promise.resolve(null), 'ChessProbe could not provide a move.'],
+    ['a rejected request without Error object', () => Promise.reject('non-error'), 'ChessProbe request failed.'],
+    ['a rejected request with Error', () => Promise.reject(new Error('network down')), 'network down'],
     ['an illegal move', () => Promise.resolve('Ke4'), /Illegal move/],
   ])('fails the opening ChessEcho turn on %s', async (_label, impl, message) => {
     const request = vi.fn().mockImplementation(impl);
     const { result } = renderHook(() => useBlindfoldSession(request));
     act(() => result.current.start(AFTER_E4, 'WHITE'));
     await waitFor(() => expect(result.current.state?.isFailed).toBe(true));
-    expect(result.current.state?.notationError).toMatch(message);
+    if (typeof message === 'string') {
+      expect(result.current.state?.notationError).toBe(message);
+    } else {
+      expect(result.current.state?.notationError).toMatch(message);
+    }
     expect(result.current.state?.isLoading).toBe(false);
     expect(result.current.state?.currentFen).toBe(AFTER_E4);
   });

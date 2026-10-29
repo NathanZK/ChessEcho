@@ -51,7 +51,7 @@ describe('Task 3 — Puzzle Back Navigation Regression Test', () => {
 
     // Wait for weakness card to render
     await waitFor(() => {
-      expect(screen.getByText('Recurring Opening Weaknesses Library')).toBeInTheDocument();
+      expect(screen.getByText('Recurring Weakness Library')).toBeInTheDocument();
     });
 
     // 2. Click Practice Position on weakness card
@@ -73,7 +73,7 @@ describe('Task 3 — Puzzle Back Navigation Regression Test', () => {
 
     // Verify app navigated back to Weaknesses tab, not Import tab
     await waitFor(() => {
-      expect(screen.getByText('Recurring Opening Weaknesses Library')).toBeInTheDocument();
+      expect(screen.getByText('Recurring Weakness Library')).toBeInTheDocument();
     });
   });
 });

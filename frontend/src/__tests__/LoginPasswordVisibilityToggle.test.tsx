@@ -34,6 +34,9 @@ describe('sign-in password visibility toggle', () => {
   it('starts masked and exposes an accessible, non-submitting toggle', () => {
     render(<LoginPage />);
 
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Sign in to ChessProbe');
+    expect(screen.getByText(/New to ChessProbe\?/i)).toBeInTheDocument();
+
     expect(getPasswordInput()).toHaveAttribute('type', 'password');
     expect(getPasswordInput()).toHaveAttribute('autoComplete', 'current-password');
     expect(getPasswordInput()).toBeRequired();
