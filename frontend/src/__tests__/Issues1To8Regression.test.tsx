@@ -200,7 +200,7 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
       render(<Home />);
     });
 
-    const weaknessesTabBtn = screen.getByRole('button', { name: /Weaknesses Library/i });
+    const weaknessesTabBtn = screen.getByRole('button', { name: /Position Weaknesses|Weaknesses Library/i });
 
     await act(async () => {
       fireEvent.click(weaknessesTabBtn);
@@ -241,7 +241,7 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
       fireEvent.click(puzzlesTabBtn);
     });
 
-    const weaknessesTabBtn = screen.getByRole('button', { name: /Weaknesses Library/i });
+    const weaknessesTabBtn = screen.getByRole('button', { name: /Position Weaknesses|Weaknesses Library/i });
     await act(async () => {
       fireEvent.click(weaknessesTabBtn);
     });
@@ -411,7 +411,7 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
       fireEvent.click(puzzlesTabBtn);
     });
 
-    const weaknessesTabBtn = screen.getByRole('button', { name: /Weaknesses Library/i });
+    const weaknessesTabBtn = screen.getByRole('button', { name: /Position Weaknesses|Weaknesses Library/i });
     await act(async () => {
       fireEvent.click(weaknessesTabBtn);
     });
@@ -517,7 +517,7 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
       fireEvent.click(puzzlesTabBtn);
     });
 
-    const weaknessesTabBtn = screen.getByRole('button', { name: /Weaknesses Library/i });
+    const weaknessesTabBtn = screen.getByRole('button', { name: /Position Weaknesses|Weaknesses Library/i });
     await act(async () => {
       fireEvent.click(weaknessesTabBtn);
     });

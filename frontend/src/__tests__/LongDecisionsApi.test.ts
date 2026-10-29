@@ -16,6 +16,7 @@ const response: LongDecisionPageResponse = {
       playedAt: '2026-02-03T12:00:00Z',
       opponentUsername: 'opponent',
       chessComUrl: 'https://www.chess.com/game/live/12345?move=1',
+      severity: 'CRITICAL',
     },
   ],
   page: 1,
@@ -53,6 +54,25 @@ describe('fetchLongDecisions', () => {
     expect(options.credentials).toBe('include');
   });
 
+  it('serializes minDurationSeconds and severity when provided', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => response,
+      }),
+    );
+
+    await expect(
+      fetchLongDecisions('550e8400-e29b-41d4-a716-446655440010', 'RAPID', 30, 0, 10, 45, 'SIGNIFICANT'),
+    ).resolves.toEqual(response);
+
+    const [url] = vi.mocked(global.fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('minDurationSeconds=45');
+    expect(url).toContain('severity=SIGNIFICANT');
+    expect(url).toContain('thresholdSeconds=30');
+  });
+
   it('rejects failed requests and malformed page payloads', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }));
     await expect(fetchLongDecisions('account', 'BLITZ', 30, 0, 20)).rejects.toThrow(
@@ -87,5 +107,26 @@ describe('fetchLongDecisions', () => {
     await expect(fetchLongDecisions('account', 'BULLET', 30, 1, 20)).rejects.toThrow(
       'unexpected response body',
     );
+  });
+
+  it('validates severity enum and rejects unknown severity values', async () => {
+    const invalidSeverity = {
+      ...response,
+      content: [{ ...response.content[0], severity: 'INVALID_LEVEL' }],
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => invalidSeverity }));
+    await expect(fetchLongDecisions('account', 'BULLET', 30, 1, 20)).rejects.toThrow(
+      'unexpected response body',
+    );
+
+    const validSeverities = ['NO_CONCERN', 'MINOR', 'SIGNIFICANT', 'CRITICAL', 'UNKNOWN'] as const;
+    for (const sev of validSeverities) {
+      const validPayload = {
+        ...response,
+        content: [{ ...response.content[0], severity: sev }],
+      };
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => validPayload }));
+      await expect(fetchLongDecisions('account', 'BULLET', 30, 1, 20)).resolves.toEqual(validPayload);
+    }
   });
 });

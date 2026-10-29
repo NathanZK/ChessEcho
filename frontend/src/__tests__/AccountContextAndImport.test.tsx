@@ -601,14 +601,14 @@ describe('Account Context and Import Games MVP Behavior', () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(2000);
       });
-      fireEvent.click(screen.getByRole('button', { name: /^weaknesses library$/i }));
+      fireEvent.click(screen.getByRole('button', { name: /^(Position Weaknesses|weaknesses library)/i }));
       expect(screen.queryByText(/Stockfish Engine Analysis Active/i)).not.toBeInTheDocument();
 
       fireEvent.click(screen.getByRole('button', { name: /^import games$/i }));
       await act(async () => {
         await vi.advanceTimersByTimeAsync(2000);
       });
-      fireEvent.click(screen.getByRole('button', { name: /^weaknesses library$/i }));
+      fireEvent.click(screen.getByRole('button', { name: /^(Position Weaknesses|weaknesses library)/i }));
       expect(screen.getByText(/Stockfish Engine Analysis Active/i)).toBeInTheDocument();
       expect(screen.getByText(/Stockfish Engine Analysis Active/i)).toHaveTextContent('bannerplayer');
     });
@@ -656,7 +656,7 @@ describe('Account Context and Import Games MVP Behavior', () => {
         await vi.advanceTimersByTimeAsync(2000);
       });
 
-      fireEvent.click(screen.getByRole('button', { name: /^weaknesses library$/i }));
+      fireEvent.click(screen.getByRole('button', { name: /^(Position Weaknesses|weaknesses library)/i }));
       expect(screen.getByTestId('weakness-refresh-key')).toHaveTextContent('2');
     });
 
@@ -722,7 +722,7 @@ describe('Account Context and Import Games MVP Behavior', () => {
 
       render(<Home />);
 
-      const weaknessesTabBtn = screen.getByRole('button', { name: /^weaknesses library$/i });
+      const weaknessesTabBtn = screen.getByRole('button', { name: /^(Position Weaknesses|weaknesses library)/i });
       fireEvent.click(weaknessesTabBtn);
 
       expect(screen.getByText(/Recurring Opening Weaknesses Library/i)).toBeInTheDocument();

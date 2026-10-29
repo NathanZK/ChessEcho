@@ -156,6 +156,7 @@ describe('user-supplied position exploration', () => {
         movePlayed: 'e5',
         decisionTimeMs: 45_000,
         timeControl: 'RAPID',
+        severity: 'SIGNIFICANT',
         platformGameId: 'game-a',
         playedAt: '2026-02-03T12:00:00Z',
         opponentUsername: 'opponent',
@@ -182,6 +183,8 @@ describe('user-supplied position exploration', () => {
       45,
       0,
       20,
+      45,
+      undefined,
     ));
     expect(await screen.findByText('e5')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Explore this position' }));
@@ -202,7 +205,7 @@ describe('user-supplied position exploration', () => {
     expect(screen.getByRole('button', { name: 'Line Exploration' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByTitle('Exit Exploration'));
-    expect(screen.getByRole('region', { name: 'Long Decisions' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: /Decision Timing|Long Decisions/ })).toBeInTheDocument();
     expect(screen.getByLabelText('Time control')).toHaveValue('RAPID');
     expect(screen.getByLabelText('Decision-time threshold (seconds)')).toHaveValue(45);
     expect(screen.getByText('e5')).toBeInTheDocument();
@@ -244,6 +247,7 @@ describe('user-supplied position exploration', () => {
         movePlayed: 'e5',
         decisionTimeMs: 45_000,
         timeControl: 'RAPID',
+        severity: 'SIGNIFICANT',
         platformGameId: 'game-a',
         playedAt: '2026-02-03T12:00:00Z',
         opponentUsername: 'opponent',
@@ -267,7 +271,7 @@ describe('user-supplied position exploration', () => {
     await waitFor(() => expect(api.recordPuzzleEvent).toHaveBeenCalledTimes(1));
     const recordedPuzzleAttempts = vi.mocked(api.recordPuzzleEvent).mock.calls.length;
 
-    fireEvent.click(screen.getByRole('button', { name: 'Long Decisions' }));
+    fireEvent.click(screen.getByRole('button', { name: /Decision Timing|Long Decisions/ }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Search' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     await screen.findByText('e5');
@@ -279,7 +283,7 @@ describe('user-supplied position exploration', () => {
     fireEvent.click(screen.getByTitle('Exit Exploration'));
     expect(resumeStopwatch).toHaveBeenCalledTimes(1);
 
-    expect(screen.getByRole('region', { name: 'Long Decisions' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: /Decision Timing|Long Decisions/ })).toBeInTheDocument();
     expect(screen.getByText('e5')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Practice Puzzles' }));
     expect(screen.getByText('Restorable puzzle')).toBeInTheDocument();
@@ -327,6 +331,7 @@ describe('user-supplied position exploration', () => {
         movePlayed: 'e5',
         decisionTimeMs: 45_000,
         timeControl: 'RAPID',
+        severity: 'SIGNIFICANT',
         platformGameId: 'game-a',
         playedAt: '2026-02-03T12:00:00Z',
         opponentUsername: 'opponent',
@@ -346,14 +351,14 @@ describe('user-supplied position exploration', () => {
     fireEvent.click(screen.getByTestId('play-d4'));
     await screen.findByText('Not the Recommended Move');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Long Decisions' }));
+    fireEvent.click(screen.getByRole('button', { name: /Decision Timing|Long Decisions/ }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Search' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     await screen.findByText('e5');
     fireEvent.click(screen.getByRole('button', { name: 'Explore this position' }));
 
     expect(screen.getByRole('alert')).toHaveTextContent('Could not start exploration');
-    expect(screen.getByRole('region', { name: 'Long Decisions' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: /Decision Timing|Long Decisions/ })).toBeInTheDocument();
     expect(screen.getByText('e5')).toBeInTheDocument();
     expect(api.submitTrainingAttempt).not.toHaveBeenCalled();
 

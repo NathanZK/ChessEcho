@@ -1,5 +1,6 @@
 package com.chessecho.dto
 
+import com.chessecho.domain.DecisionSeverity
 import java.time.Instant
 import java.util.UUID
 
@@ -16,6 +17,7 @@ data class LongDecisionOccurrenceResponse(
     val playedAt: Instant?,
     val opponentUsername: String?,
     val chessComUrl: String?,
+    val severity: DecisionSeverity,
 )
 
 data class LongDecisionPageResponse(

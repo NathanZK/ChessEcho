@@ -111,7 +111,7 @@ export const Header: React.FC<HeaderProps> = ({
 
             <button
               type="button"
-              aria-label="Weaknesses Library"
+              aria-label="Position Weaknesses (Weaknesses Library)"
               onClick={() => setActiveTab('weaknesses')}
               className={`transition cursor-pointer whitespace-nowrap flex items-center gap-2 ${
                 isPuzzlesLayout
@@ -124,7 +124,7 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             >
               <Target className="w-3.5 h-3.5 shrink-0" />
-              <span>Weakness Library</span>
+              <span>Position Weaknesses</span>
               {weaknessCount > 0 && (
                 <span
                   className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
@@ -140,6 +140,7 @@ export const Header: React.FC<HeaderProps> = ({
 
             <button
               type="button"
+              aria-label="Decision Timing (Long Decisions)"
               onClick={() => setActiveTab('long-decisions')}
               className={`transition cursor-pointer whitespace-nowrap flex items-center gap-2 ${
                 isPuzzlesLayout
@@ -152,7 +153,7 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             >
               <Clock3 className="w-3.5 h-3.5 shrink-0" />
-              <span>Long Decisions</span>
+              <span>Decision Timing</span>
             </button>
 
             <button
