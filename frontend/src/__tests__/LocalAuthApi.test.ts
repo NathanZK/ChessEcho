@@ -84,4 +84,13 @@ describe('Local email/password API contract (Issue #276)', () => {
     expect(localStorageSpy).not.toHaveBeenCalled();
     expect(sessionStorageSpy).not.toHaveBeenCalled();
   });
+
+  it('returns ChessProbe network error fallback when request throws', async () => {
+    vi.mocked(global.fetch).mockRejectedValueOnce(new Error('Network failure'));
+
+    await expect(login('player@example.com', 'password123')).resolves.toEqual({
+      status: 'error',
+      error: 'Unable to reach ChessProbe. Please try again.',
+    });
+  });
 });

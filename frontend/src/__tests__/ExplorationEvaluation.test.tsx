@@ -164,7 +164,7 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
 
     // Enter exploration
     fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
-    fireEvent.click(screen.getByRole('button', { name: /vs ChessEcho/i }));
+    fireEvent.click(screen.getByRole('button', { name: /vs ChessProbe/i }));
 
     // EvalBar should maintain the current position evaluation (+0.30) and NOT be locked
     expect(screen.getByText('+0.30')).toBeInTheDocument();
@@ -212,7 +212,7 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
     fireEvent.click(screen.getByTestId('simulate-puzzle-move-white'));
     await waitFor(() => screen.getByRole('button', { name: /Continue Exploration/i }));
     fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
-    fireEvent.click(screen.getByRole('button', { name: /vs ChessEcho/i }));
+    fireEvent.click(screen.getByRole('button', { name: /vs ChessProbe/i }));
 
     // ChessEcho makes move a6 (board is now White to move)
     await waitFor(() => expect(screen.getByText('Your turn — explore a move.')).toBeInTheDocument());
@@ -246,7 +246,7 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
     fireEvent.click(screen.getByTestId('simulate-puzzle-move-white'));
     await waitFor(() => screen.getByRole('button', { name: /Continue Exploration/i }));
     fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
-    fireEvent.click(screen.getByRole('button', { name: /vs ChessEcho/i }));
+    fireEvent.click(screen.getByRole('button', { name: /vs ChessProbe/i }));
 
     // Play Black move a6 in exploration
     fireEvent.click(screen.getByTestId('simulate-expl-move-black'));
@@ -279,7 +279,7 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
     fireEvent.click(screen.getByTestId('simulate-puzzle-move-white'));
     await waitFor(() => screen.getByRole('button', { name: /Continue Exploration/i }));
     fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
-    fireEvent.click(screen.getByRole('button', { name: /vs ChessEcho/i }));
+    fireEvent.click(screen.getByRole('button', { name: /vs ChessProbe/i }));
 
     await waitFor(() => {
       expect(screen.getByText('+0.50')).toBeInTheDocument();
@@ -315,7 +315,7 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
     fireEvent.click(screen.getByTestId('simulate-puzzle-move-white'));
     await waitFor(() => screen.getByRole('button', { name: /Continue Exploration/i }));
     fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
-    fireEvent.click(screen.getByRole('button', { name: /vs ChessEcho/i }));
+    fireEvent.click(screen.getByRole('button', { name: /vs ChessProbe/i }));
 
     // Initially ChessEcho plays selected candidate a6 (+0.50)
     await waitFor(() => {
@@ -354,7 +354,7 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
     fireEvent.click(screen.getByTestId('simulate-puzzle-move-white'));
     await waitFor(() => screen.getByRole('button', { name: /Continue Exploration/i }));
     fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
-    fireEvent.click(screen.getByRole('button', { name: /vs ChessEcho/i }));
+    fireEvent.click(screen.getByRole('button', { name: /vs ChessProbe/i }));
 
     // EvalBar should show unknown '?' state and NOT be locked
     await waitFor(() => {
@@ -400,7 +400,7 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
     fireEvent.click(screen.getByTestId('simulate-puzzle-move-white'));
     await waitFor(() => screen.getByRole('button', { name: /Continue Exploration/i }));
     fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
-    fireEvent.click(screen.getByRole('button', { name: /vs ChessEcho/i }));
+    fireEvent.click(screen.getByRole('button', { name: /vs ChessProbe/i }));
 
     // ChessEcho plays a6 -> +0.50
     await waitFor(() => {
@@ -454,7 +454,7 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
     fireEvent.click(screen.getByTestId('simulate-puzzle-move-white'));
     await waitFor(() => screen.getByRole('button', { name: /Continue Exploration/i }));
     fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
-    fireEvent.click(screen.getByRole('button', { name: /vs ChessEcho/i }));
+    fireEvent.click(screen.getByRole('button', { name: /vs ChessProbe/i }));
 
     // Selected candidate a6 (+0.50)
     await waitFor(() => {
@@ -489,7 +489,7 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
     fireEvent.click(screen.getByTestId('simulate-puzzle-move-white'));
     await waitFor(() => screen.getByRole('button', { name: /Continue Exploration/i }));
     fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
-    fireEvent.click(screen.getByRole('button', { name: /vs ChessEcho/i }));
+    fireEvent.click(screen.getByRole('button', { name: /vs ChessProbe/i }));
 
     // User plays move with in-flight evaluation
     fireEvent.click(screen.getByTestId('simulate-expl-move-black'));
@@ -942,7 +942,7 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
     expect(api.evaluateMove).toHaveBeenCalledWith(expect.anything(), 'a6');
 
     // 10. Switch to vs ChessEcho mode: dragging must be enabled
-    fireEvent.click(screen.getByRole('button', { name: /vs ChessEcho/i }));
+    fireEvent.click(screen.getByRole('button', { name: /vs ChessProbe/i }));
     await waitFor(() => {
       expect(board).toHaveAttribute('data-allow-dragging', 'true');
     });

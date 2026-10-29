@@ -58,7 +58,7 @@ export function useBlindfoldSession(requestChessEchoMove: RequestChessEchoMove):
       (reply) => {
         if (!isCurrent()) return;
         if (!reply) {
-          fail('ChessEcho could not provide a move.');
+          fail('ChessProbe could not provide a move.');
           return;
         }
         const result = applyChessEchoMove(from, reply, from.currentFen);
@@ -68,7 +68,7 @@ export function useBlindfoldSession(requestChessEchoMove: RequestChessEchoMove):
         }
         commit({ ...result, isLoading: false, isVisible: stateRef.current!.isVisible });
       },
-      (error: unknown) => fail(error instanceof Error ? error.message : 'ChessEcho request failed.'),
+      (error: unknown) => fail(error instanceof Error ? error.message : 'ChessProbe request failed.'),
     );
   }, [commit]);
 

@@ -108,7 +108,7 @@ describe('Weakness progress navigation', () => {
     localStorage.setItem('chessecho_min_eval_loss', '0.3');
     render(<Home />);
 
-    await screen.findByText('Recurring Opening Weaknesses Library');
+    await screen.findByText('Recurring Weakness Library');
     fireEvent.click(await screen.findByRole('button', { name: /view progress/i }));
 
     expect(await screen.findByRole('heading', { name: 'Position Progress' })).toBeInTheDocument();
@@ -118,13 +118,13 @@ describe('Weakness progress navigation', () => {
     expect(screen.getByText(progress.assessment)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /back to weaknesses/i }));
-    expect(await screen.findByText('Recurring Opening Weaknesses Library')).toBeInTheDocument();
+    expect(await screen.findByText('Recurring Weakness Library')).toBeInTheDocument();
   });
 
   it('uses the dynamic viewport and a shrinkable scroll region while progress is selected', async () => {
     render(<Home />);
 
-    await screen.findByText('Recurring Opening Weaknesses Library');
+    await screen.findByText('Recurring Weakness Library');
     fireEvent.click(await screen.findByRole('button', { name: /view progress/i }));
     await screen.findByRole('heading', { name: 'Position Progress' });
 
@@ -156,7 +156,7 @@ describe('Weakness progress navigation', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /back to weaknesses/i }));
     await screen.findByRole('button', { name: /view progress/i });
-    fireEvent.change(screen.getAllByRole('combobox')[0], { target: { value: '0.5' } });
+    fireEvent.change(screen.getByLabelText('Filter by Threshold'), { target: { value: '0.5' } });
     await waitFor(() => {
       expect(mocks.fetchWeaknesses).toHaveBeenLastCalledWith(account.id, 'CHESS_COM', 'BOTH', 0.5, 3, 0, 20);
     });

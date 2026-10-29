@@ -5,8 +5,30 @@ import { PositionCard } from '../components/PositionCard';
 import { ExternalGameLink } from '../components/ExternalGameLink';
 import { StatusBanner } from '../components/StatusBanner';
 import { SectionHeader } from '../components/SectionHeader';
+import { Header } from '../components/Header';
+import { metadata } from '../app/layout';
 
 describe('Presentation Components', () => {
+  describe('Header and Layout Branding', () => {
+    it('exports metadata with ChessProbe title and product description', () => {
+      expect(metadata.title).toBe('ChessProbe');
+      expect(metadata.description).toBe('Recurring chess weaknesses analysis and practice');
+    });
+
+    it('renders ChessProbe branding in Header logo and authenticated status', () => {
+      render(
+        <Header
+          activeTab="weaknesses"
+          setActiveTab={vi.fn()}
+          sessionStatus="authenticated"
+          accountStatus="unconnected"
+        />
+      );
+
+      expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('ChessProbe');
+      expect(screen.getByText('Signed in to ChessProbe')).toBeInTheDocument();
+    });
+  });
   describe('PositionCard', () => {
     it('renders board, title, metadata, and actions', () => {
       render(

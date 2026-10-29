@@ -48,7 +48,7 @@ export const NotationExchangeUI: React.FC<NotationExchangeUIProps> = ({
     if (state.winner === 'PLAYER') {
       terminalMessage = 'Checkmate! You won.';
     } else if (state.winner === 'CHESSECHO') {
-      terminalMessage = 'Checkmate! ChessEcho won.';
+      terminalMessage = 'Checkmate! ChessProbe won.';
     } else if (state.terminalReason === 'STALEMATE') {
       terminalMessage = 'Draw by stalemate.';
     } else if (state.terminalReason === 'DRAW') {
@@ -68,7 +68,7 @@ export const NotationExchangeUI: React.FC<NotationExchangeUIProps> = ({
               ? 'Game finished'
               : state.currentTurn === 'PLAYER'
                 ? 'Your turn — enter SAN notation'
-                : 'ChessEcho is responding…'}
+                : 'ChessProbe is responding…'}
           </p>
         </div>
         <span className="rounded-full bg-slate-800 px-2 py-1 text-[10px] font-bold text-slate-300">

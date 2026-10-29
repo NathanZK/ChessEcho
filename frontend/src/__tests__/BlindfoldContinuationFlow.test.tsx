@@ -297,7 +297,7 @@ describe('Blindfold continuation flow', () => {
     await loadPuzzles();
     await solve();
     fireEvent.click(screen.getByRole('button', { name: /continue exploration/i }));
-    fireEvent.click(await screen.findByText('vs ChessEcho'));
+    fireEvent.click(await screen.findByText('vs ChessProbe'));
     await waitFor(() => expect(blindfoldEntry()).toBeDisabled());
   });
 

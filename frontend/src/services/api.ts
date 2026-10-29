@@ -70,6 +70,7 @@ export interface PracticalEvidenceResponse {
   losses: number;
   sideCorroborationConflictGames: number;
   scoreRate: number | null;
+  winRate?: number | null;
   comparatorMethod: string;
   comparatorScoreRate: number | null;
   confidenceMethod: string;
@@ -110,7 +111,7 @@ async function authenticate(path: '/register' | '/login', email: string, passwor
     }
     return { status: 'error', error: body?.details?.join?.('\n') || body?.error || `Request failed: ${response.status}` };
   } catch {
-    return { status: 'error', error: 'Unable to reach ChessEcho. Please try again.' };
+    return { status: 'error', error: 'Unable to reach ChessProbe. Please try again.' };
   }
 }
 

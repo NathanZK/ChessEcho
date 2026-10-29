@@ -691,14 +691,14 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
                   >
                     <div className="flex items-center justify-between w-full">
                       <span className="font-bold text-xs text-slate-100 group-hover:text-emerald-400 transition flex items-center gap-1.5">
-                        <span>🤖</span> vs ChessEcho
+                        <span>🤖</span> vs ChessProbe
                       </span>
                       <span className="text-[10px] font-bold px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-md group-hover:bg-emerald-500/20 transition">
                         Select →
                       </span>
                     </div>
                     <p className="text-[11px] text-slate-400 leading-normal">
-                      ChessEcho responds to your moves.
+                      ChessProbe responds to your moves.
                     </p>
                   </button>
 
@@ -734,7 +734,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
                       </span>
                     </div>
                     <p className="text-[11px] text-slate-400 leading-normal">
-                      Find a strong candidate move. ChessEcho won&apos;t respond.
+                      Find a strong candidate move. ChessProbe won&apos;t respond.
                     </p>
                   </button>
                 </div>
@@ -753,7 +753,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
                           explorationPlayMode === 'CHESSECHO' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
                         }`}
                       >
-                        vs ChessEcho
+                        vs ChessProbe
                       </button>
                       <button
                         type="button"
@@ -810,7 +810,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
               )}
               <div className="flex items-center space-x-2 text-slate-400 py-2 justify-center bg-slate-900/60 rounded-xl border border-slate-800">
                 <div className="w-4 h-4 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
-                <span className="font-medium text-xs">ChessEcho is choosing a response...</span>
+                <span className="font-medium text-xs">ChessProbe is choosing a response...</span>
               </div>
             </div>
           ) : (
@@ -1018,7 +1018,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
 
               {explorationPlayMode === 'CHESSECHO' && lastContinuationCandidates && (
                 <div className="flex flex-col space-y-2 bg-slate-950/50 p-2.5 rounded-xl border border-slate-800">
-                  <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">ChessEcho played</div>
+                  <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">ChessProbe played</div>
                   <div className="flex items-center justify-between bg-emerald-900/20 px-3 py-2 rounded-lg border border-emerald-500/30">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="font-mono text-emerald-300 font-bold text-sm">

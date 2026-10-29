@@ -504,7 +504,7 @@ describe('connected Chess.com account flow', () => {
       expect(localStorage.getItem('chessecho_username')).toBeNull();
     });
     expect(screen.queryByText('Chess.com Connected')).not.toBeInTheDocument();
-    expect(screen.getByText('Signed in to ChessEcho')).toBeInTheDocument();
+    expect(screen.getByText('Signed in to ChessProbe')).toBeInTheDocument();
     expect(screen.getByText('No Chess.com account connected')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Sign out' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Sign In' })).not.toBeInTheDocument();

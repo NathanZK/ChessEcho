@@ -1985,7 +1985,7 @@ export default function Home() {
 
   return (
     <div
-      className={`${showingPositionProgress ? 'h-dvh' : 'h-screen'} bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-emerald-500 selection:text-white overflow-hidden ${
+      className={`${showingPositionProgress ? 'h-dvh' : 'h-screen'} bg-surface text-on-surface flex flex-col font-sans selection:bg-primary-container selection:text-on-primary-container overflow-hidden ${
         activeTab === 'puzzles' ? '2xl:flex-row' : ''
       }`}
     >
@@ -2014,37 +2014,37 @@ export default function Home() {
             <div className="flex-1 flex flex-col justify-center min-h-0">
               {isLoadingPuzzles ? (
                 <div className="flex-1 flex items-center justify-center py-16">
-                  <div className="flex items-center space-x-3 text-emerald-400 bg-slate-900/80 px-5 py-3 rounded-2xl border border-slate-800 shadow-lg">
-                    <div className="w-5 h-5 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
-                    <span className="text-xs font-bold text-slate-300">Loading Practice Puzzles...</span>
+                  <div className="flex items-center space-x-3 text-primary bg-surface-container-low px-5 py-3 rounded-2xl border border-outline-variant shadow-lg">
+                    <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                    <span className="text-xs font-bold text-on-surface-variant font-mono">Loading Practice Puzzles...</span>
                   </div>
                 </div>
               ) : puzzleLoadError ? (
-                <div className="py-16 text-center space-y-4 max-w-lg mx-auto bg-slate-900/60 p-8 rounded-2xl border border-rose-900/50 shadow-xl">
-                  <div className="w-14 h-14 rounded-2xl bg-rose-950/60 border border-rose-800 flex items-center justify-center mx-auto text-rose-400">
-                    <span className="text-3xl font-bold">!</span>
+                <div className="py-16 text-center space-y-4 max-w-lg mx-auto bg-surface-container-low p-8 rounded-2xl border border-error/30 shadow-xl">
+                  <div className="w-14 h-14 rounded-2xl bg-error-container/20 border border-error/40 flex items-center justify-center mx-auto text-error">
+                    <span className="text-3xl font-bold font-mono">!</span>
                   </div>
                   <div>
-                    <h3 className="text-lg font-bold text-white">Couldn&apos;t Load Puzzles</h3>
-                    <p className="text-xs text-rose-300 mt-1">
+                    <h3 className="text-lg font-bold text-on-surface">Couldn&apos;t Load Puzzles</h3>
+                    <p className="text-xs text-error mt-1 font-mono">
                       We couldn&apos;t load your puzzles. Please try again.
                     </p>
                   </div>
                   <button
                     onClick={handleRetryPuzzleLoad}
-                    className="px-5 py-2.5 bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs rounded-xl transition inline-flex items-center gap-1.5 cursor-pointer"
+                    className="px-5 py-2.5 bg-surface-container-high hover:bg-surface-bright text-on-surface font-bold text-xs font-mono rounded-xl border border-outline-variant transition inline-flex items-center gap-1.5 cursor-pointer"
                   >
                     <span>Retry</span>
                   </button>
                 </div>
               ) : !activePuzzle ? (
-                <div className="py-16 text-center space-y-4 max-w-lg mx-auto bg-slate-900/60 p-8 rounded-2xl border border-slate-800 shadow-xl">
-                  <div className="w-14 h-14 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-center mx-auto text-emerald-400">
+                <div className="py-16 text-center space-y-4 max-w-lg mx-auto bg-surface-container-low p-8 rounded-2xl border border-outline-variant shadow-xl">
+                  <div className="w-14 h-14 rounded-2xl bg-surface-container-lowest border border-outline-variant flex items-center justify-center mx-auto text-primary">
                     <span className="text-3xl font-bold">♟</span>
                   </div>
                   <div>
-                    <h3 className="text-lg font-bold text-white">No Practice Puzzles Available</h3>
-                    <p className="text-xs text-slate-400 mt-1">
+                    <h3 className="text-lg font-bold text-on-surface">No Practice Puzzles Available</h3>
+                    <p className="text-xs text-on-surface-variant mt-1">
                       {!activeUsername
                         ? 'Import your games using the Import Games tab to detect your opening habits and build your custom puzzle set.'
                         : `No weakness positions detected yet for ${activeUsername}. Import more games or adjust search criteria.`}
@@ -2052,7 +2052,7 @@ export default function Home() {
                   </div>
                   <button
                     onClick={() => changeTab('import')}
-                    className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition shadow-lg shadow-emerald-900/30 cursor-pointer"
+                    className="px-5 py-2.5 bg-primary-container hover:bg-primary text-on-primary-container font-bold text-xs font-mono rounded-xl transition shadow-lg cursor-pointer"
                   >
                     Import Your Games Now
                   </button>

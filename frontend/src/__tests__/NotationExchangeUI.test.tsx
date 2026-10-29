@@ -77,6 +77,42 @@ describe('NotationExchangeUI', () => {
     expect(screen.getByText(/e4:/)).toBeInTheDocument();
   });
 
+  it('renders ChessProbe responding and checkmate terminal messages', () => {
+    const respondingState = {
+      ...createBlinfoldGameState(START_FEN, 'WHITE'),
+      currentTurn: 'CHESSECHO' as const,
+    };
+
+    const { rerender } = render(
+      <NotationExchangeUI
+        state={respondingState}
+        onPlayerMove={vi.fn()}
+        onReveal={vi.fn()}
+        onReset={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('ChessProbe is responding…')).toBeInTheDocument();
+
+    const wonState = {
+      ...createBlinfoldGameState(START_FEN, 'WHITE'),
+      isTerminal: true,
+      winner: 'CHESSECHO' as const,
+      terminalReason: 'CHECKMATE' as const,
+    };
+
+    rerender(
+      <NotationExchangeUI
+        state={wonState}
+        onPlayerMove={vi.fn()}
+        onReveal={vi.fn()}
+        onReset={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Checkmate! ChessProbe won.')).toBeInTheDocument();
+  });
+
   it('renders terminal banner and disables input when game is terminal', () => {
     const state = {
       ...createBlinfoldGameState(START_FEN, 'WHITE'),
