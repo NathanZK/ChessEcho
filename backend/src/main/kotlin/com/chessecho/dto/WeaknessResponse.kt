@@ -38,6 +38,11 @@ data class TimeControlStats(
     val mistakeCount: Int,
     val mistakeRate: Double,
     val averageLoss: Double,
+    val eligibleGames: Int? = null,
+    val wins: Int? = null,
+    val draws: Int? = null,
+    val losses: Int? = null,
+    val scoreRate: Double? = null,
 )
 
 data class PhaseStats(

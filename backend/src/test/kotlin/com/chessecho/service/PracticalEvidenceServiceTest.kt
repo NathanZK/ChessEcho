@@ -361,6 +361,166 @@ class PracticalEvidenceServiceTest {
         assertNull(summary.scoreRate)
     }
 
+    @Test
+    fun `summarizeByTimeControl partitions by time control with deduplication and perspective inversion`() {
+        val account = account("alice")
+        val position = position("tc-summary")
+
+        // Bullet game: White win
+        val bulletGame = game(account, "bullet-1", "win", header(result = "1-0"), timeControl = "bullet")
+
+        // Blitz game 1: White win with 2 occurrences at different plies (same game)
+        val blitzGame1 = game(account, "blitz-1", "win", header(result = "1-0"), timeControl = "blitz")
+
+        // Blitz game 2: White draw
+        val blitzGame2 = game(account, "blitz-2", "agreed", header(result = "1/2-1/2"), timeControl = "blitz")
+
+        // Daily game: Should be excluded from standard partitions
+        val dailyGame = game(account, "daily-1", "win", header(result = "1-0"), timeControl = "daily")
+
+        val occurrences =
+            listOf(
+                occurrence(account, position, bulletGame, "WHITE", "e4", ply = 1),
+                occurrence(account, position, blitzGame1, "WHITE", "e4", ply = 3),
+                // Duplicate game:
+                occurrence(account, position, blitzGame1, "WHITE", "Nf3", ply = 7),
+                occurrence(account, position, blitzGame2, "WHITE", "e4", ply = 5),
+                occurrence(account, position, dailyGame, "WHITE", "e4", ply = 1),
+            )
+
+        val summaries =
+            service().summarizeByTimeControl(
+                chessAccountId = account.id,
+                accountUsername = account.username,
+                occurrences = occurrences,
+                playerColor = "WHITE",
+                asOf = asOf,
+            )
+
+        // Bullet: 1 game, 1 win, score rate 1.0
+        val bullet = summaries["BULLET"]
+        assertEquals(1, bullet?.eligibleGames)
+        assertEquals(1, bullet?.wins)
+        assertEquals(0, bullet?.draws)
+        assertEquals(0, bullet?.losses)
+        assertEquals(1.0, bullet?.scoreRate)
+
+        // Blitz: 2 distinct games (blitzGame1 deduplicated, blitzGame2 draw)
+        val blitz = summaries["BLITZ"]
+        assertEquals(2, blitz?.eligibleGames)
+        assertEquals(1, blitz?.wins)
+        assertEquals(1, blitz?.draws)
+        assertEquals(0, blitz?.losses)
+        assertEquals(0.75, blitz?.scoreRate)
+
+        // Daily: excluded from partitions
+        assertNull(summaries["DAILY"])
+    }
+
+    @Test
+    fun `summarizeByTimeControl inverts perspective for black player`() {
+        val account = account("bob")
+        val position = position("tc-black")
+
+        // Game 1: 1-0 result (White win -> Black loss)
+        val game1 =
+            game(
+                account,
+                "rapid-1",
+                "lose",
+                header(white = "opponent", black = "bob", result = "1-0"),
+                timeControl = "rapid",
+                whiteUsername = "opponent",
+                blackUsername = "bob",
+            )
+
+        // Game 2: 0-1 result (Black win -> Black win)
+        val game2 =
+            game(
+                account,
+                "rapid-2",
+                "win",
+                header(white = "opponent", black = "bob", result = "0-1"),
+                timeControl = "rapid",
+                whiteUsername = "opponent",
+                blackUsername = "bob",
+            )
+
+        // Game 3: 1/2-1/2 result (Draw)
+        val game3 =
+            game(
+                account,
+                "rapid-3",
+                "agreed",
+                header(white = "opponent", black = "bob", result = "1/2-1/2"),
+                timeControl = "rapid",
+                whiteUsername = "opponent",
+                blackUsername = "bob",
+            )
+
+        val occurrences =
+            listOf(
+                occurrence(account, position, game1, "BLACK", "e5"),
+                occurrence(account, position, game2, "BLACK", "e5"),
+                occurrence(account, position, game3, "BLACK", "e5"),
+            )
+
+        val summaries =
+            service().summarizeByTimeControl(
+                chessAccountId = account.id,
+                accountUsername = account.username,
+                occurrences = occurrences,
+                playerColor = "BLACK",
+                asOf = asOf,
+            )
+
+        val rapid = summaries["RAPID"]
+        assertEquals(3, rapid?.eligibleGames)
+        assertEquals(1, rapid?.wins)
+        assertEquals(1, rapid?.draws)
+        assertEquals(1, rapid?.losses)
+        assertEquals(0.5, rapid?.scoreRate)
+    }
+
+    @Test
+    fun `summarizeByTimeControl filters by account, playerColor, positionId, and observation window`() {
+        val account = account("alice")
+        val otherAccount = account("bob")
+        val position = position("filter-tc")
+        val otherPosition = position("other-tc")
+
+        val validGame = game(account, "blitz-valid", "win", timeControl = "blitz", playedAt = asOf.minusSeconds(86_400))
+        val otherAccountGame = game(otherAccount, "blitz-other-acc", "win", timeControl = "blitz", playedAt = asOf.minusSeconds(86_400))
+        val otherColorGame = game(account, "blitz-black", "win", timeControl = "blitz", playedAt = asOf.minusSeconds(86_400))
+        val otherPosGame = game(account, "blitz-other-pos", "win", timeControl = "blitz", playedAt = asOf.minusSeconds(86_400))
+        val oldGame = game(account, "blitz-old", "win", timeControl = "blitz", playedAt = asOf.minusSeconds(40 * 86_400L))
+
+        val occurrences =
+            listOf(
+                occurrence(account, position, validGame, "WHITE", "e4"),
+                occurrence(otherAccount, position, otherAccountGame, "WHITE", "e4"),
+                occurrence(account, position, otherColorGame, "BLACK", "e4"),
+                occurrence(account, otherPosition, otherPosGame, "WHITE", "e4"),
+                occurrence(account, position, oldGame, "WHITE", "e4"),
+            )
+
+        val summaries =
+            service(observationWindowDays = 30).summarizeByTimeControl(
+                chessAccountId = account.id,
+                accountUsername = account.username,
+                occurrences = occurrences,
+                playerColor = "WHITE",
+                asOf = asOf,
+                positionId = position.id,
+            )
+
+        val blitz = summaries["BLITZ"]
+        assertEquals(1, blitz?.eligibleGames)
+        assertEquals(1, blitz?.wins)
+        assertEquals(0, blitz?.draws)
+        assertEquals(0, blitz?.losses)
+    }
+
     private fun service(observationWindowDays: Long? = null): PracticalEvidenceService =
         PracticalEvidenceService(
             GameOutcomeNormalizer(PgnHeaderTagReader()),

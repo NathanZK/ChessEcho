@@ -65,6 +65,10 @@ class WeaknessCalculationTimeControlTest {
             practicalEvidenceService.summarize(any(), any(), any(), any(), any()),
         ).thenReturn(emptyMap())
 
+        lenient().`when`(
+            practicalEvidenceService.summarizeByTimeControl(any(), any(), any(), any(), any(), anyOrNull()),
+        ).thenReturn(emptyMap())
+
         val fallbackPolicy = WeaknessPriorityPolicy(PracticalEvidenceProperties())
         lenient().`when`(
             weaknessPriorityPolicy.evaluate(any(), any(), anyOrNull()),
@@ -286,6 +290,108 @@ class WeaknessCalculationTimeControlTest {
         assertEquals(10, w.timesReached)
         assertEquals(30.0, w.mistakeRate, 0.001)
         assertRegressionStats(w.timeControlStats)
+    }
+
+    @Test
+    fun `test timeControlStats includes practical evidence breakdown from practicalEvidenceService`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "nathan")
+        val position = Position(hash = "hash_practical_tc", fen = "fen_practical_tc")
+        setupPracticalTcMocks(account, position)
+
+        `when`(
+            practicalEvidenceService.summarizeByTimeControl(
+                eq(account.id),
+                eq(account.username),
+                any(),
+                eq("WHITE"),
+                any(),
+                eq(position.id),
+            ),
+        ).thenReturn(
+            mapOf(
+                "BLITZ" to
+                    TimeControlPracticalTally(
+                        eligibleGames = 5,
+                        wins = 2,
+                        draws = 1,
+                        losses = 2,
+                        scoreRate = 0.5,
+                    ),
+                "RAPID" to
+                    TimeControlPracticalTally(
+                        eligibleGames = 1,
+                        wins = 1,
+                        draws = 0,
+                        losses = 0,
+                        scoreRate = 1.0,
+                    ),
+            ),
+        )
+
+        val weaknesses =
+            weaknessCalculationService.getWeaknesses(
+                Platform.CHESS_COM,
+                "nathan",
+                PlayerColor.WHITE,
+                minEvalLoss = 0.8,
+                minMistakeCount = 3,
+            )
+
+        assertEquals(1, weaknesses.size)
+        assertPracticalTcStats(weaknesses[0].timeControlStats)
+    }
+
+    private fun setupPracticalTcMocks(
+        account: ChessAccount,
+        position: Position,
+    ) {
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "nathan")).thenReturn(account)
+        val analysis = createPartitionAnalysis(position)
+        val occurrences = createPartitionOccurrences(account, position)
+
+        `when`(
+            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(
+                eq(account.id),
+                eq("WHITE"),
+                any(),
+            ),
+        ).thenReturn(occurrences)
+        `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(any())).thenReturn(listOf(analysis))
+
+        val aggregation =
+            WeaknessAggregation(
+                positionId = position.id, fen = position.fen, playerColor = "WHITE",
+                timesReached = 6, bestMove = "best", baselineEvalCp = 100,
+                mistakeCount = 4, averageLoss = 0.8, rawTotalLoss = 3.2,
+            )
+        `when`(
+            positionOccurrenceRepository.findWeaknessAggregations(
+                chessAccountId = eq(account.id),
+                playerColor = eq("WHITE"),
+                minEvalLoss = eq(0.8),
+                minTimesReached = eq(5),
+                minMistakeCount = eq(3L),
+            ),
+        ).thenReturn(listOf(aggregation))
+    }
+
+    private fun assertPracticalTcStats(tcStats: Map<String, TimeControlStats>?) {
+        assertTrue(tcStats != null)
+        val blitz = tcStats!!["BLITZ"]
+        assertTrue(blitz != null)
+        assertEquals(5, blitz?.eligibleGames)
+        assertEquals(2, blitz?.wins)
+        assertEquals(1, blitz?.draws)
+        assertEquals(2, blitz?.losses)
+        assertEquals(0.5, blitz?.scoreRate)
+
+        val rapid = tcStats["RAPID"]
+        assertTrue(rapid != null)
+        assertEquals(1, rapid?.eligibleGames)
+        assertEquals(1, rapid?.wins)
+        assertEquals(0, rapid?.draws)
+        assertEquals(0, rapid?.losses)
+        assertEquals(1.0, rapid?.scoreRate)
     }
 
     private fun createRegressionAnalysis(position: Position): EngineAnalysis {

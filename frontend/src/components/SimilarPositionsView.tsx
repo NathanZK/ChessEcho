@@ -60,16 +60,15 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
   const [fenInput, setFenInput] = useState<string>(initialSnapshot?.fenInput ?? '');
   const [queryFen, setQueryFen] = useState<string>(initialSnapshot?.queryFen ?? '');
   const [results, setResults] = useState<SimilarPositionResult[]>(initialSnapshot?.results ?? []);
-  const [candidatesEvaluated, setCandidatesEvaluated] = useState<number>(0);
   const [selectedOccurrenceId, setSelectedOccurrenceId] = useState<string | null>(
     initialSnapshot?.selectedOccurrenceId ?? null
   );
-  const [minScore, setMinScore] = useState<string>('');
-  const [limit, setLimit] = useState<number>(20);
   const [inputError, setInputError] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [hasSearched, setHasSearched] = useState<boolean>(Boolean(initialSnapshot?.results?.length));
+  const [hasSearched, setHasSearched] = useState<boolean>(
+    Boolean(initialSnapshot?.queryFen || initialSnapshot?.results?.length)
+  );
 
   const activeAccountIdentifier = connectedAccount?.id ?? guestUsername ?? null;
 
@@ -127,17 +126,13 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
     setIsLoading(true);
 
     try {
-      const parsedMinScore = minScore ? parseFloat(minScore) : undefined;
       const data = await fetchSimilarPositions({
         fen: parseResult.fen,
         accountId: connectedAccount?.id,
         username: !connectedAccount ? guestUsername : undefined,
-        minScore: parsedMinScore !== undefined && !isNaN(parsedMinScore) ? parsedMinScore : undefined,
-        limit,
       });
 
       setQueryFen(data.queryFen);
-      setCandidatesEvaluated(data.candidatesEvaluated);
       setResults(data.results);
       setHasSearched(true);
       const selectedId =
@@ -268,37 +263,6 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
             ))}
           </div>
         </div>
-
-        {/* Additional Filters */}
-        <div className="flex flex-wrap gap-4 pt-2 border-t border-slate-800/80 text-xs text-slate-300">
-          <div className="flex items-center gap-2">
-            <label htmlFor="min-score">Min BM25 Score:</label>
-            <input
-              id="min-score"
-              type="number"
-              min="0"
-              step="0.5"
-              value={minScore}
-              onChange={(e) => setMinScore(e.target.value)}
-              placeholder="0.0"
-              className="w-20 rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <label htmlFor="limit-select">Results limit:</label>
-            <select
-              id="limit-select"
-              value={limit}
-              onChange={(e) => setLimit(parseInt(e.target.value, 10))}
-              className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-slate-100 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-            >
-              <option value="10">10</option>
-              <option value="20">20</option>
-              <option value="50">50</option>
-              <option value="100">100</option>
-            </select>
-          </div>
-        </div>
       </form>
 
       {/* Global Search Error */}
@@ -327,14 +291,11 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
       {isAccountAvailable && (
         <div className="space-y-4">
           {hasSearched && (
-            <div className="flex items-center justify-between text-xs text-slate-400 px-1">
+            <div className="text-xs text-slate-400 px-1">
               <span>
                 Found <strong className="text-slate-200">{results.length}</strong> matching position
                 {results.length === 1 ? '' : 's'}
               </span>
-              {candidatesEvaluated > 0 && (
-                <span>Evaluated {candidatesEvaluated} candidate positions</span>
-              )}
             </div>
           )}
 
@@ -342,27 +303,24 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
             <StatusBanner
               variant="empty"
               title="No Similar Positions Found"
-              message="No personal game positions met the similarity criteria for this FEN. Try lowering the minimum score threshold or searching a different position."
+              message="No personal game positions met the similarity criteria for this FEN. Try searching a different position or opening line."
             />
           )}
 
           {results.length > 0 && (
             <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2">
               {results.map((result) => {
-                const primaryOccurrence = result.occurrences[0];
+                const primaryOccurrence = result.occurrences?.[0];
                 return (
                   <PositionCard
                     key={result.positionId}
                     className="flex flex-col gap-4"
                   >
-                    <div className="flex items-start justify-between border-b border-slate-800/80 pb-3">
+                    <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
                       <div>
                         <span className="text-xs font-semibold uppercase tracking-wider text-emerald-400">
-                          Rank #{result.rank}
+                          Similar Position
                         </span>
-                        <h2 className="text-sm font-semibold text-white">
-                          Score: {result.score.toFixed(2)}
-                        </h2>
                       </div>
                       <button
                         type="button"

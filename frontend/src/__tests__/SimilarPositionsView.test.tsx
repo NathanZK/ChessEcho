@@ -98,6 +98,8 @@ describe('SimilarPositionsView', () => {
     expect(screen.getByRole('button', { name: /Search/i })).toBeDisabled();
     expect(screen.getByText('Italian Game')).toBeInTheDocument();
     expect(screen.getByText('Sicilian Defense')).toBeInTheDocument();
+    expect(screen.queryByLabelText(/Min BM25 Score/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Results limit/i)).not.toBeInTheDocument();
   });
 
   it('populates FEN input when clicking a sample position', async () => {
@@ -154,13 +156,14 @@ describe('SimilarPositionsView', () => {
         accountId: mockConnectedAccount.id,
         username: undefined,
         minScore: undefined,
-        limit: 20,
+        limit: undefined,
       });
     });
 
-    expect(await screen.findByText(/Rank #1/i)).toBeInTheDocument();
-    expect(screen.getByText(/Score: 18.75/i)).toBeInTheDocument();
-    expect(screen.getByText(/Score: 15.20/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Evaluated 120 candidate positions/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Rank #1/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Score: 18.75/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Score: 15.20/i)).not.toBeInTheDocument();
 
     const boards = screen.getAllByTestId('mock-chessboard');
     expect(boards).toHaveLength(2);
@@ -207,6 +210,8 @@ describe('SimilarPositionsView', () => {
     await user.click(screen.getByRole('button', { name: /Search/i }));
 
     expect(await screen.findByText(/No Similar Positions Found/i)).toBeInTheDocument();
+    expect(screen.getByText(/Try searching a different position or opening line/i)).toBeInTheDocument();
+    expect(screen.queryByText(/lowering the minimum score threshold/i)).not.toBeInTheDocument();
   });
 
   it('navigates to Line Exploration on "Explore this position" click', async () => {
@@ -253,7 +258,7 @@ describe('SimilarPositionsView', () => {
 
     const input = screen.getByLabelText(/FEN Position/i) as HTMLInputElement;
     expect(input.value).toBe(validFen);
-    expect(screen.getByText(/Rank #1/i)).toBeInTheDocument();
-    expect(screen.getByText(/Score: 18.75/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Rank #1/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Score: 18.75/i)).not.toBeInTheDocument();
   });
 });
