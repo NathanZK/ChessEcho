@@ -120,11 +120,11 @@ describe('SimilarPositions navigation and exploration bridge', () => {
     fireEvent.change(fenInput, { target: { value: validFen } });
     fireEvent.click(screen.getByRole('button', { name: /Search/i }));
 
-    expect(await screen.findByText(/Rank #1/i)).toBeInTheDocument();
-    expect(screen.getByText(/Score: 19.50/i)).toBeInTheDocument();
+    const exploreBtn = await screen.findByRole('button', { name: /Explore this position/i });
+    expect(exploreBtn).toBeInTheDocument();
+    expect(screen.getAllByText('Similar Position')[0]).toBeInTheDocument();
 
     // 3. Click "Explore this position"
-    const exploreBtn = screen.getByRole('button', { name: /Explore this position/i });
     fireEvent.click(exploreBtn);
 
     // 4. Verify opening in the shared puzzle shell in idle state
@@ -146,8 +146,9 @@ describe('SimilarPositions navigation and exploration bridge', () => {
     });
 
     expect(await screen.findByRole('heading', { name: /Find Similar Personal Positions/i })).toBeInTheDocument();
-    expect(screen.getByText(/Rank #1/i)).toBeInTheDocument();
-    expect(screen.getByText(/Score: 19.50/i)).toBeInTheDocument();
+    expect(screen.getAllByText('Similar Position')[0]).toBeInTheDocument();
+    expect(screen.queryByText(/Rank #/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Score:/i)).not.toBeInTheDocument();
     // Verify no redundant API re-fetch was triggered upon returning
     expect(api.fetchSimilarPositions).toHaveBeenCalledTimes(1);
   });

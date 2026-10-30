@@ -686,4 +686,98 @@ describe('Weaknesses Tab MVP', () => {
       });
     });
   });
+
+  describe('6. Per-Time-Control Practical Breakdown', () => {
+    it('renders separate Bullet, Blitz, and Rapid performance in card view and omits zero-game categories', async () => {
+      const itemWithTcStats: api.WeaknessResponse = {
+        ...mockWeaknessItem,
+        positionId: 'w-pos-tc-breakdown',
+        timeControlStats: {
+          BULLET: {
+            timesReached: 5,
+            mistakeCount: 2,
+            mistakeRate: 0.4,
+            averageLoss: 1.1,
+            eligibleGames: 3,
+            wins: 2,
+            draws: 0,
+            losses: 1,
+            scoreRate: 0.667,
+          },
+          BLITZ: {
+            timesReached: 10,
+            mistakeCount: 3,
+            mistakeRate: 0.3,
+            averageLoss: 0.9,
+            eligibleGames: 6,
+            wins: 3,
+            draws: 2,
+            losses: 1,
+            scoreRate: 0.667,
+          },
+          RAPID: {
+            timesReached: 2,
+            mistakeCount: 0,
+            mistakeRate: 0.0,
+            averageLoss: 0.0,
+            eligibleGames: 0,
+            wins: 0,
+            draws: 0,
+            losses: 0,
+            scoreRate: null,
+          },
+        },
+      };
+
+      vi.mocked(api.fetchWeaknesses).mockResolvedValue([itemWithTcStats]);
+
+      render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
+
+      // Bullet and Blitz breakdowns rendered, Rapid omitted
+      const breakdown = await screen.findByTestId('time-control-breakdown');
+      expect(within(breakdown).getByText('Bullet')).toBeInTheDocument();
+      expect(within(breakdown).getByText('2W · 0D · 1L')).toBeInTheDocument();
+      expect(within(breakdown).getByText('66.7% score rate (3 games)')).toBeInTheDocument();
+
+      expect(within(breakdown).getByText('Blitz')).toBeInTheDocument();
+      expect(within(breakdown).getByText('3W · 2D · 1L')).toBeInTheDocument();
+      expect(within(breakdown).getByText('66.7% score rate (6 games)')).toBeInTheDocument();
+
+      // Rapid has 0 eligible games, so it must be omitted
+      expect(within(breakdown).queryByText('Rapid')).not.toBeInTheDocument();
+    });
+
+    it('renders per-time-control breakdown in list view', async () => {
+      const itemWithTcStats: api.WeaknessResponse = {
+        ...mockWeaknessItem,
+        positionId: 'w-pos-tc-list',
+        timeControlStats: {
+          BLITZ: {
+            timesReached: 10,
+            mistakeCount: 3,
+            mistakeRate: 0.3,
+            averageLoss: 0.9,
+            eligibleGames: 4,
+            wins: 2,
+            draws: 1,
+            losses: 1,
+            scoreRate: 0.625,
+          },
+        },
+      };
+
+      vi.mocked(api.fetchWeaknesses).mockResolvedValue([itemWithTcStats]);
+
+      render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
+
+      // Switch to list view
+      const listViewBtn = await screen.findByRole('button', { name: /^list$/i });
+      fireEvent.click(listViewBtn);
+
+      const listBreakdown = await screen.findByTestId('time-control-breakdown-list');
+      expect(within(listBreakdown).getByText(/Blitz:/i)).toBeInTheDocument();
+      expect(within(listBreakdown).getByText(/2W·1D·1L/i)).toBeInTheDocument();
+      expect(within(listBreakdown).getByText('62.5%')).toBeInTheDocument();
+    });
+  });
 });

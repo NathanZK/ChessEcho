@@ -341,6 +341,11 @@ export interface TimeControlStats {
   mistakeCount: number;
   mistakeRate: number;
   averageLoss: number;
+  eligibleGames?: number | null;
+  wins?: number | null;
+  draws?: number | null;
+  losses?: number | null;
+  scoreRate?: number | null;
 }
 
 export type LongDecisionTimeControl = 'BULLET' | 'BLITZ' | 'RAPID' | 'CLASSICAL';

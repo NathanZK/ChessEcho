@@ -2,6 +2,7 @@ package com.chessecho.service
 
 import com.chessecho.config.PracticalEvidenceProperties
 import com.chessecho.domain.PositionOccurrence
+import com.chessecho.domain.TimeControl
 import org.springframework.stereotype.Service
 import java.time.Instant
 import java.time.temporal.ChronoUnit
@@ -24,6 +25,14 @@ data class PracticalEvidenceSummary(
     val draws: Int,
     val losses: Int,
     val sideCorroborationConflictGames: Int,
+    val scoreRate: Double?,
+)
+
+data class TimeControlPracticalTally(
+    val eligibleGames: Int,
+    val wins: Int,
+    val draws: Int,
+    val losses: Int,
     val scoreRate: Double?,
 )
 
@@ -98,6 +107,104 @@ class PracticalEvidenceService(
                 )
             tally.toSummary(scope, candidateOccurrences.size)
         }
+    }
+
+    fun summarizeByTimeControl(
+        chessAccountId: UUID,
+        accountUsername: String,
+        occurrences: List<PositionOccurrence>,
+        playerColor: String,
+        asOf: Instant,
+        positionId: UUID? = null,
+    ): Map<String, TimeControlPracticalTally> {
+        val windowStart =
+            properties.observationWindowDays?.let {
+                asOf.minus(it, ChronoUnit.DAYS)
+            }
+
+        val filteredOccurrences =
+            filterTimeControlOccurrences(
+                occurrences = occurrences,
+                chessAccountId = chessAccountId,
+                playerColor = playerColor,
+                positionId = positionId,
+            )
+
+        return filteredOccurrences
+            .groupBy { TimeControl.fromExternal(it.game.timeControl) }
+            .mapNotNull { (tcEnum, occs) ->
+                tcEnum?.let {
+                    it.name to tallyTimeControlOccurrences(occs, playerColor, accountUsername, windowStart)
+                }
+            }
+            .toMap()
+    }
+
+    private fun filterTimeControlOccurrences(
+        occurrences: List<PositionOccurrence>,
+        chessAccountId: UUID,
+        playerColor: String,
+        positionId: UUID?,
+    ): List<PositionOccurrence> =
+        occurrences
+            .asSequence()
+            .filter { it.chessAccount.id == chessAccountId }
+            .filter { it.playerColor == playerColor }
+            .filter { positionId == null || it.position.id == positionId }
+            .distinctBy { it.game.id }
+            .toList()
+
+    private fun tallyTimeControlOccurrences(
+        occurrences: List<PositionOccurrence>,
+        playerColor: String,
+        accountUsername: String,
+        windowStart: Instant?,
+    ): TimeControlPracticalTally {
+        var wins = 0
+        var draws = 0
+        var losses = 0
+
+        for (occurrence in occurrences) {
+            val game = occurrence.game
+            val observationTime = game.playedAt ?: game.createdAt
+            if (windowStart != null && observationTime.isBefore(windowStart)) {
+                continue
+            }
+
+            val normalized =
+                gameOutcomeNormalizer.normalize(
+                    game,
+                    playerColor,
+                    accountUsername,
+                )
+
+            if (normalized.ineligibilityReason != null || normalized.exclusionReason != null) {
+                continue
+            }
+
+            when (normalized.outcome) {
+                PracticalOutcome.WIN -> wins++
+                PracticalOutcome.DRAW -> draws++
+                PracticalOutcome.LOSS -> losses++
+                null -> {}
+            }
+        }
+
+        val eligibleGames = wins + draws + losses
+        val scoreRate =
+            if (eligibleGames == 0) {
+                null
+            } else {
+                (wins + 0.5 * draws) / eligibleGames
+            }
+
+        return TimeControlPracticalTally(
+            eligibleGames = eligibleGames,
+            wins = wins,
+            draws = draws,
+            losses = losses,
+            scoreRate = scoreRate,
+        )
     }
 
     internal fun filterCandidateOccurrences(

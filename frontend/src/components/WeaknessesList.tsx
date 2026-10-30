@@ -19,9 +19,33 @@ import {
 import { ChessBoardView } from './ChessBoardView';
 import { PositionCard } from './PositionCard';
 import { StatusBanner } from './StatusBanner';
-import { fetchWeaknesses, WeaknessResponse } from '../services/api';
+import { fetchWeaknesses, WeaknessResponse, TimeControlStats } from '../services/api';
 import { Puzzle } from '../mock/mockData';
 import { HistoricalGamesModal } from './HistoricalGamesModal';
+
+const PRACTICAL_TIME_CONTROLS = [
+  { key: 'BULLET', label: 'Bullet' },
+  { key: 'BLITZ', label: 'Blitz' },
+  { key: 'RAPID', label: 'Rapid' },
+] as const;
+
+interface PracticalTcBreakdown {
+  key: string;
+  label: string;
+  stats: TimeControlStats;
+}
+
+function getPracticalTcBreakdown(timeControlStats?: Record<string, TimeControlStats>): PracticalTcBreakdown[] {
+  if (!timeControlStats) return [];
+  const result: PracticalTcBreakdown[] = [];
+  for (const { key, label } of PRACTICAL_TIME_CONTROLS) {
+    const stats = timeControlStats[key];
+    if (stats && stats.eligibleGames != null && stats.eligibleGames > 0) {
+      result.push({ key, label, stats });
+    }
+  }
+  return result;
+}
 
 export function adaptWeaknessToPuzzle(
   weakness: WeaknessResponse,
@@ -572,6 +596,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                 );
 
                 const prac = item.practicalEvidence;
+                const tcBreakdown = getPracticalTcBreakdown(item.timeControlStats);
 
                 return (
                   <PositionCard
@@ -681,6 +706,29 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                               {`No score available from actual games (${prac.eligibleGames} eligible games)`}
                             </div>
                           )}
+
+                          {tcBreakdown.length > 0 && (
+                            <div data-testid="time-control-breakdown" className="pt-2 mt-2 border-t border-secondary/20 space-y-1">
+                              <div className="text-[10px] font-sans font-medium text-secondary/80">
+                                Time Control Breakdown
+                              </div>
+                              <div className="space-y-1">
+                                {tcBreakdown.map(({ key, label, stats }) => (
+                                  <div key={key} className="flex flex-wrap items-center justify-between text-[11px] gap-1">
+                                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-surface-container-highest text-on-surface border border-outline-variant">
+                                      {label}
+                                    </span>
+                                    <span className="text-on-surface">
+                                      {`${stats.wins ?? 0}W · ${stats.draws ?? 0}D · ${stats.losses ?? 0}L`}
+                                    </span>
+                                    <span className="text-outline">
+                                      {`${stats.scoreRate != null ? (stats.scoreRate * 100).toFixed(1) : '0.0'}% score rate (${stats.eligibleGames} games)`}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -767,6 +815,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                 );
 
                 const prac = item.practicalEvidence;
+                const tcBreakdown = getPracticalTcBreakdown(item.timeControlStats);
 
                 return (
                   <div
@@ -837,6 +886,17 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                               : `${((prac.wins / prac.eligibleGames) * 100).toFixed(1)}%`}
                           </span>
                         </div>
+                        {tcBreakdown.length > 0 && (
+                          <div data-testid="time-control-breakdown-list" className="col-span-2 pt-1 border-t border-outline-variant/40 flex flex-wrap gap-2 text-[10px]">
+                            {tcBreakdown.map(({ key, label, stats }) => (
+                              <span key={key} className="inline-flex items-center gap-1 text-outline">
+                                <span className="font-semibold text-on-surface">{label}:</span>
+                                <span>{`${stats.wins ?? 0}W·${stats.draws ?? 0}D·${stats.losses ?? 0}L`}</span>
+                                <span className="text-secondary">{stats.scoreRate != null ? `${(stats.scoreRate * 100).toFixed(1)}%` : '—'}</span>
+                              </span>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div className="flex-1" />

@@ -7,6 +7,7 @@ import com.chessecho.domain.PositionOccurrence
 import com.chessecho.dto.PracticalEvidenceCohort
 import com.chessecho.dto.PracticalEvidenceResponse
 import com.chessecho.dto.PracticalEvidenceScopeType
+import com.chessecho.dto.TimeControlStats
 import com.chessecho.dto.WeaknessResponse
 import com.chessecho.repository.ChessAccountRepository
 import com.chessecho.repository.EngineAnalysisRepository
@@ -213,8 +214,24 @@ class WeaknessCalculationService(
                 )
             }
 
+        val occurrencesByScopedKey =
+            occurrences.groupBy {
+                ScopedPositionKey(it.position.id, it.playerColor)
+            }
+
         return drafts.map { draft ->
-            enrichSingleDraft(draft, account.id, evidenceByScope)
+            val scopedOccurrences =
+                occurrencesByScopedKey[ScopedPositionKey(draft.positionId, draft.playerColor)].orEmpty()
+            val timeControlSummaries =
+                practicalEvidenceService.summarizeByTimeControl(
+                    chessAccountId = account.id,
+                    accountUsername = account.username,
+                    occurrences = scopedOccurrences,
+                    playerColor = draft.playerColor,
+                    asOf = Instant.now(),
+                    positionId = draft.positionId,
+                )
+            enrichSingleDraft(draft, account.id, evidenceByScope, timeControlSummaries)
         }
     }
 
@@ -222,6 +239,7 @@ class WeaknessCalculationService(
         draft: ObjectiveWeaknessDraft,
         accountId: UUID,
         evidenceByScope: Map<PracticalEvidenceScope, PracticalEvidenceSummary>,
+        timeControlSummaries: Map<String, TimeControlPracticalTally> = emptyMap(),
     ): WeaknessResponse {
         val positionScope = draft.positionScope(accountId)
         val positionSummary = evidenceByScope[positionScope]
@@ -256,6 +274,8 @@ class WeaknessCalculationService(
                 )
             }
 
+        val enrichedTimeControlStats = buildEnrichedTimeControlStats(draft.timeControlStats, timeControlSummaries)
+
         return WeaknessResponse(
             positionId = draft.positionId,
             fen = draft.fen,
@@ -276,9 +296,38 @@ class WeaknessCalculationService(
             objectiveEvidenceState = ObjectiveEvidenceState.INACCURATE,
             evidenceCombination = priorityDecision.evidenceCombination,
             practicalEvidence = positionEvidence,
-            timeControlStats = draft.timeControlStats,
+            timeControlStats = enrichedTimeControlStats,
             phaseStats = draft.phaseStats,
         )
+    }
+
+    private fun buildEnrichedTimeControlStats(
+        existingStats: Map<String, TimeControlStats>?,
+        timeControlSummaries: Map<String, TimeControlPracticalTally>,
+    ): Map<String, TimeControlStats>? {
+        if (existingStats == null && timeControlSummaries.isEmpty()) {
+            return null
+        }
+        val stats = existingStats.orEmpty().toMutableMap()
+        for ((tc, tcSummary) in timeControlSummaries) {
+            val existing = stats[tc]
+            stats[tc] =
+                (
+                    existing ?: TimeControlStats(
+                        timesReached = tcSummary.eligibleGames,
+                        mistakeCount = 0,
+                        mistakeRate = 0.0,
+                        averageLoss = 0.0,
+                    )
+                ).copy(
+                    eligibleGames = tcSummary.eligibleGames,
+                    wins = tcSummary.wins,
+                    draws = tcSummary.draws,
+                    losses = tcSummary.losses,
+                    scoreRate = tcSummary.scoreRate,
+                )
+        }
+        return stats.takeIf { it.isNotEmpty() }
     }
 
     private fun sortWeaknesses(
