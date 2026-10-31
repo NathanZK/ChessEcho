@@ -73,6 +73,30 @@ describe('fetchLongDecisions', () => {
     expect(url).toContain('thresholdSeconds=30');
   });
 
+  it('omits thresholdSeconds and minDurationSeconds when undefined or null, querying purely by severity', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => response,
+      }),
+    );
+
+    await expect(
+      fetchLongDecisions('550e8400-e29b-41d4-a716-446655440010', 'RAPID', undefined, 0, 20, undefined, 'CRITICAL'),
+    ).resolves.toEqual(response);
+
+    const [url] = vi.mocked(global.fetch).mock.calls[0] as [string, RequestInit];
+    expect(url).toContain('/positions/long-decisions?');
+    expect(url).toContain('accountId=550e8400-e29b-41d4-a716-446655440010');
+    expect(url).toContain('timeControl=RAPID');
+    expect(url).toContain('severity=CRITICAL');
+    expect(url).toContain('page=0');
+    expect(url).toContain('size=20');
+    expect(url).not.toContain('thresholdSeconds');
+    expect(url).not.toContain('minDurationSeconds');
+  });
+
   it('rejects failed requests and malformed page payloads', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }));
     await expect(fetchLongDecisions('account', 'BLITZ', 30, 0, 20)).rejects.toThrow(

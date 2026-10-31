@@ -472,4 +472,74 @@ class LongDecisionServiceTest {
         verify(positionOccurrenceRepository, never())
             .findLongDecisionOccurrences(any(), any(), any(), anyOrNull(), any())
     }
+
+    @Test
+    fun `queries occurrences with exact bounds when only severity is provided`() {
+        val page = PageImpl(emptyList<PositionOccurrence>(), PageRequest.of(0, 20), 0)
+        whenever(
+            positionOccurrenceRepository.findLongDecisionOccurrences(
+                any(),
+                any(),
+                any(),
+                anyOrNull(),
+                any(),
+            ),
+        ).thenReturn(page)
+
+        service.findLongDecisions(
+            accountId = accountId,
+            timeControl = TimeControl.RAPID,
+            minDurationSeconds = null,
+            thresholdSeconds = null,
+            severity = DecisionSeverity.CRITICAL,
+            page = 0,
+            size = 20,
+            principal = principal,
+        )
+
+        verify(positionOccurrenceRepository).findLongDecisionOccurrences(
+            chessAccountId = eq(account.id),
+            timeControl = eq("RAPID"),
+            effectiveMinMs = eq(120_000L),
+            effectiveMaxMs = eq(null),
+            pageable = eq(PageRequest.of(0, 20)),
+        )
+
+        service.findLongDecisions(
+            accountId = accountId,
+            timeControl = TimeControl.RAPID,
+            minDurationSeconds = null,
+            thresholdSeconds = null,
+            severity = DecisionSeverity.SIGNIFICANT,
+            page = 0,
+            size = 20,
+            principal = principal,
+        )
+
+        verify(positionOccurrenceRepository).findLongDecisionOccurrences(
+            chessAccountId = eq(account.id),
+            timeControl = eq("RAPID"),
+            effectiveMinMs = eq(60_000L),
+            effectiveMaxMs = eq(120_000L),
+            pageable = eq(PageRequest.of(0, 20)),
+        )
+    }
+
+    @Test
+    fun `throws IllegalArgumentException when severity minDurationSeconds and thresholdSeconds are all null`() {
+        val ex =
+            assertFailsWith<IllegalArgumentException> {
+                service.findLongDecisions(
+                    accountId = accountId,
+                    timeControl = TimeControl.RAPID,
+                    minDurationSeconds = null,
+                    thresholdSeconds = null,
+                    severity = null,
+                    page = 0,
+                    size = 20,
+                    principal = principal,
+                )
+            }
+        assertEquals("At least one of severity, minDurationSeconds, or thresholdSeconds is required", ex.message)
+    }
 }

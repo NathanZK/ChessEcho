@@ -1,6 +1,6 @@
 'use client';
 
-import React, { FormEvent, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { LayoutGrid, List } from 'lucide-react';
 import { ChessBoardView } from './ChessBoardView';
 import { ExternalGameLink } from './ExternalGameLink';
@@ -29,8 +29,7 @@ interface LongDecisionsViewProps {
 
 interface SubmittedQuery {
   timeControl: LongDecisionTimeControl;
-  thresholdSeconds: number;
-  severity?: DecisionSeverity;
+  severity: 'CRITICAL' | 'SIGNIFICANT' | 'MINOR';
 }
 
 const PAGE_SIZE = 20;
@@ -90,13 +89,10 @@ export const LongDecisionsView: React.FC<LongDecisionsViewProps> = ({
   onNavigateImport,
   onExplorePosition,
 }) => {
+  const [reloadToken, setReloadToken] = useState(0);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
-  const [timeControl, setTimeControl] = useState<LongDecisionTimeControl>('BULLET');
-  const [severityFilter, setSeverityFilter] = useState<
-    'ALL' | 'NO_CONCERN' | 'MINOR' | 'SIGNIFICANT' | 'CRITICAL'
-  >('ALL');
-  const [thresholdInput, setThresholdInput] = useState('30');
-  const [thresholdError, setThresholdError] = useState<string | null>(null);
+  const [timeControl, setTimeControl] = useState<LongDecisionTimeControl>('RAPID');
+  const [severityFilter, setSeverityFilter] = useState<'CRITICAL' | 'SIGNIFICANT' | 'MINOR'>('CRITICAL');
   const [submittedQuery, setSubmittedQuery] = useState<SubmittedQuery | null>(null);
   const [occurrences, setOccurrences] = useState<LongDecisionOccurrence[]>([]);
   const [currentPage, setCurrentPage] = useState(0);
@@ -114,58 +110,79 @@ export const LongDecisionsView: React.FC<LongDecisionsViewProps> = ({
     sessionStatus === 'authenticated' && accountStatus === 'connected' && !!accountId;
   const hasCurrentQuery = submittedQuery !== null && submittedAccountId === accountId;
 
-  const runSearch = async (query: SubmittedQuery) => {
-    if (!accountId || !hasConnectedAccount) return;
+  useEffect(() => {
+    let active = true;
+    if (!accountId || !hasConnectedAccount) {
+      requestVersion.current++;
+      loadingMore.current = false;
+      queueMicrotask(() => {
+        if (!active) return;
+        setSubmittedAccountId(null);
+        setSubmittedQuery(null);
+        setOccurrences([]);
+        setCurrentPage(0);
+        setHasNext(false);
+        setIsLoading(false);
+        setIsLoadingMore(false);
+        setError(null);
+        setLoadMoreError(null);
+        setExplorationErrorId(null);
+      });
+      return () => {
+        active = false;
+      };
+    }
+
+    const currentAccountId = accountId;
     const version = ++requestVersion.current;
+    const query: SubmittedQuery = { timeControl, severity: severityFilter };
     loadingMore.current = false;
-    setSubmittedAccountId(accountId);
-    setSubmittedQuery(query);
-    setOccurrences([]);
-    setCurrentPage(0);
-    setHasNext(false);
-    setIsLoading(true);
-    setIsLoadingMore(false);
-    setError(null);
-    setLoadMoreError(null);
-    setExplorationErrorId(null);
 
-    try {
-      const result = await fetchLongDecisions(
-        accountId,
-        query.timeControl,
-        query.thresholdSeconds,
-        0,
-        PAGE_SIZE,
-        query.thresholdSeconds,
-        query.severity,
-      );
-      if (requestVersion.current !== version) return;
-      setOccurrences(result.content);
-      setCurrentPage(result.page);
-      setHasNext(result.hasNext);
-    } catch (requestError: unknown) {
-      if (requestVersion.current === version) setError(errorMessage(requestError));
-    } finally {
-      if (requestVersion.current === version) setIsLoading(false);
+    async function executeSearch() {
+      setIsLoading(true);
+      setError(null);
+      setLoadMoreError(null);
+      setExplorationErrorId(null);
+      setSubmittedAccountId(currentAccountId);
+      setSubmittedQuery(query);
+      setOccurrences([]);
+      setCurrentPage(0);
+      setHasNext(false);
+      setIsLoadingMore(false);
+
+      try {
+        const result = await fetchLongDecisions(
+          currentAccountId,
+          query.timeControl,
+          undefined,
+          0,
+          PAGE_SIZE,
+          undefined,
+          query.severity,
+        );
+        if (!active || requestVersion.current !== version) return;
+        setOccurrences(result.content);
+        setCurrentPage(result.page);
+        setHasNext(result.hasNext);
+      } catch (requestError: unknown) {
+        if (!active || requestVersion.current !== version) return;
+        setError(errorMessage(requestError));
+      } finally {
+        if (active && requestVersion.current === version) {
+          setIsLoading(false);
+        }
+      }
     }
-  };
 
-  const handleSearch = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const seconds = Number(thresholdInput);
-    if (!Number.isSafeInteger(seconds) || seconds <= 0 || seconds > 2_147_483_647) {
-      setThresholdError('Enter a positive whole number of seconds.');
-      return;
-    }
-    if (!hasConnectedAccount) return;
+    void executeSearch();
 
-    setThresholdError(null);
-    const selectedSeverity = severityFilter === 'ALL' ? undefined : severityFilter;
-    void runSearch({
-      timeControl,
-      thresholdSeconds: seconds,
-      severity: selectedSeverity,
-    });
+    return () => {
+      active = false;
+    };
+  }, [accountId, hasConnectedAccount, timeControl, severityFilter, reloadToken]);
+
+  const retrySearch = () => {
+    setReloadToken((prev) => prev + 1);
   };
 
   const loadMore = async () => {
@@ -180,10 +197,10 @@ export const LongDecisionsView: React.FC<LongDecisionsViewProps> = ({
       const result = await fetchLongDecisions(
         accountId,
         submittedQuery.timeControl,
-        submittedQuery.thresholdSeconds,
+        undefined,
         nextPage,
         PAGE_SIZE,
-        submittedQuery.thresholdSeconds,
+        undefined,
         submittedQuery.severity,
       );
       if (requestVersion.current !== version) return;
@@ -249,10 +266,10 @@ export const LongDecisionsView: React.FC<LongDecisionsViewProps> = ({
         }
       />
 
-      <form
-        className="grid gap-4 rounded-xl border border-outline-variant bg-surface-container-low p-5 sm:grid-cols-4 sm:items-end"
-        noValidate
-        onSubmit={handleSearch}
+      <div
+        className="grid gap-4 rounded-xl border border-outline-variant bg-surface-container-low p-5 sm:grid-cols-2"
+        role="region"
+        aria-label="Filter decisions"
       >
         <label className="block space-y-2 text-sm font-semibold text-slate-200">
           <span>Time control</span>
@@ -277,59 +294,19 @@ export const LongDecisionsView: React.FC<LongDecisionsViewProps> = ({
             className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-white"
             value={severityFilter}
             onChange={(event) =>
-              setSeverityFilter(
-                event.target.value as
-                  | 'ALL'
-                  | 'NO_CONCERN'
-                  | 'MINOR'
-                  | 'SIGNIFICANT'
-                  | 'CRITICAL',
-              )
+              setSeverityFilter(event.target.value as 'CRITICAL' | 'SIGNIFICANT' | 'MINOR')
             }
           >
-            <option value="ALL">All Severities</option>
-            <option value="NO_CONCERN">No concern</option>
-            <option value="MINOR">Minor</option>
-            <option value="SIGNIFICANT">Significant</option>
             <option value="CRITICAL">Critical</option>
+            <option value="SIGNIFICANT">Significant</option>
+            <option value="MINOR">Minor</option>
           </select>
         </label>
 
-        <label className="block space-y-2 text-sm font-semibold text-slate-200">
-          <span>Decision-time threshold (seconds)</span>
-          <input
-            aria-label="Decision-time threshold (seconds)"
-            className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-white"
-            type="number"
-            min="1"
-            max="2147483647"
-            step="1"
-            inputMode="numeric"
-            value={thresholdInput}
-            aria-invalid={thresholdError !== null}
-            onChange={(event) => {
-              setThresholdInput(event.target.value);
-              setThresholdError(null);
-            }}
-          />
-        </label>
-
-        <button
-          className="rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
-          type="submit"
-          disabled={!hasConnectedAccount}
-        >
-          Search
-        </button>
-        <p className="text-xs leading-5 text-slate-400 sm:col-span-4">
-          Time control chooses which games to search. The threshold and severity filter occurrences within those games.
+        <p className="text-xs leading-5 text-slate-400 sm:col-span-2">
+          Time control chooses which games to search. Severity filters occurrences by analytical thinking time.
         </p>
-        {thresholdError && (
-          <p className="text-sm text-rose-300 sm:col-span-4" role="alert">
-            {thresholdError}
-          </p>
-        )}
-      </form>
+      </div>
 
       {sessionStatus === 'loading' ||
       (sessionStatus === 'authenticated' && accountStatus === 'loading') ? (
@@ -363,18 +340,14 @@ export const LongDecisionsView: React.FC<LongDecisionsViewProps> = ({
             Go to Import Games
           </button>
         </div>
-      ) : isLoading && hasCurrentQuery ? (
+      ) : isLoading || !hasCurrentQuery ? (
         <StatusBanner variant="loading" message="Searching long-decision occurrences" />
-      ) : error && hasCurrentQuery ? (
+      ) : error ? (
         <StatusBanner
           variant="error"
           message={`Could not load long-decision occurrences. ${error}`}
-          action={submittedQuery ? { label: 'Retry search', onClick: () => void runSearch(submittedQuery) } : undefined}
+          action={{ label: 'Retry search', onClick: retrySearch }}
         />
-      ) : !hasCurrentQuery ? (
-        <p className="rounded-xl border border-slate-800 bg-slate-900/50 p-5 text-sm text-slate-400">
-          Choose a time control and threshold, then search your imported games.
-        </p>
       ) : occurrences.length === 0 ? (
         <p className="rounded-xl border border-slate-800 bg-slate-900/50 p-5 text-sm text-slate-300">
           No occurrences met this threshold or filter criteria in the selected time control.

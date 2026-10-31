@@ -430,20 +430,22 @@ function isLongDecisionPageResponse(value: unknown): value is LongDecisionPageRe
 export async function fetchLongDecisions(
   accountId: string,
   timeControl: LongDecisionTimeControl,
-  thresholdSeconds: number,
-  page: number,
-  size: number,
-  minDurationSeconds?: number,
+  thresholdSeconds?: number | null,
+  page: number = 0,
+  size: number = 20,
+  minDurationSeconds?: number | null,
   severity?: DecisionSeverity
 ): Promise<LongDecisionPageResponse> {
   const params = new URLSearchParams({
     accountId,
     timeControl,
-    thresholdSeconds: String(thresholdSeconds),
     page: String(page),
     size: String(size),
   });
-  if (minDurationSeconds !== undefined) {
+  if (thresholdSeconds !== undefined && thresholdSeconds !== null) {
+    params.set('thresholdSeconds', String(thresholdSeconds));
+  }
+  if (minDurationSeconds !== undefined && minDurationSeconds !== null) {
     params.set('minDurationSeconds', String(minDurationSeconds));
   }
   if (severity) {

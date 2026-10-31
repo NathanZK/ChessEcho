@@ -322,13 +322,17 @@ duration is independent of move quality.
   imported-data reads, `accountId` identifies an existing account; a current
   connection is not required for the server-side read.
 - **Query parameters:** `accountId` (UUID), `timeControl` (`BULLET`,
-  `BLITZ`, `RAPID`, or `CLASSICAL`), `thresholdSeconds` (positive integer),
-  `page` (zero-indexed, default `0`), and `size` (default `20`, bounded to
-  `1`–`100`).
+  `BLITZ`, `RAPID`, or `CLASSICAL`), `thresholdSeconds` (optional positive integer),
+  `minDurationSeconds` (optional positive integer), `severity` (optional `CRITICAL`,
+  `SIGNIFICANT`, or `MINOR`), `page` (zero-indexed, default `0`), and `size` (default `20`,
+  bounded to `1`–`100`). At least one of `severity`, `minDurationSeconds`, or
+  `thresholdSeconds` is required.
 - **Filtering:** Selects games by the broad `Game.timeControl` value and
-  occurrences with `decisionTimeMs >= thresholdSeconds * 1000`. Only games
-  with reliable clock data have decision durations; unusable games retain
-  ordinary occurrences but contribute no values to this query.
+  qualifying decision times. When `severity` is provided without explicit numeric thresholds,
+  duration bounds are resolved via `DecisionTimingPolicy.severityRangeMs` for the selected
+  time control. If numeric thresholds are provided alongside `severity`, the stricter lower
+  bound and optional upper bound are enforced. Only games with reliable clock data have
+  decision durations; unusable games retain ordinary occurrences but contribute no values to this query.
 - **Response:** A page object with `content`, `page`, `size`, `totalElements`,
   `totalPages`, and `hasNext`. Each occurrence includes its ID and position ID,
   FEN, player color, ply, played move, decision duration in milliseconds,

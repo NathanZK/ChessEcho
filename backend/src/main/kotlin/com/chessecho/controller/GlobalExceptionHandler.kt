@@ -20,6 +20,7 @@ import org.springframework.web.bind.MissingServletRequestParameterException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException
+import org.springframework.web.server.ResponseStatusException
 
 @RestControllerAdvice
 class GlobalExceptionHandler {
@@ -99,6 +100,12 @@ class GlobalExceptionHandler {
         ResponseEntity
             .badRequest()
             .body(ErrorResponse(error = "ACCOUNT_SELECTION_MISMATCH", details = listOf(ex.message ?: "Account selection mismatch")))
+
+    @ExceptionHandler(ResponseStatusException::class)
+    fun handleResponseStatusException(ex: ResponseStatusException): ResponseEntity<ErrorResponse> =
+        ResponseEntity
+            .status(ex.statusCode)
+            .body(ErrorResponse(error = "VALIDATION_ERROR", details = listOf(ex.reason ?: "Invalid request")))
 
     @ExceptionHandler(IllegalArgumentException::class)
     fun handleBadRequest(ex: IllegalArgumentException): ResponseEntity<ErrorResponse> =
