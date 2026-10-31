@@ -111,6 +111,21 @@ Backend static analysis pairs ktlint (formatting and lexical style) with Detekt 
   - New code and modifications introduced in pull requests must satisfy all blocking rules; new baseline entries must not be introduced for new development.
   - In-source suppressions (`@Suppress("RuleName")`) must be narrowly scoped to the specific function or statement and must be accompanied by an explanatory comment justifying why immediate refactoring is unsuitable.
 
+## Frontend static analysis (ESLint & Knip)
+
+Frontend static analysis pairs Next.js core vital checks with TypeScript ESLint maintainability and defect-prevention rules and Knip codebase analysis:
+
+- **Toolchain & execution:** ESLint 9 (flat config via `frontend/eslint.config.mjs`) runs via `npm run lint` (`eslint --max-warnings 0`) from `frontend/`. Lint tasks are wired into CI's `frontend` job and enforced at the `CI Gate`. Knip runs as an on-demand audit command via `npm run knip` from `frontend/`.
+- **Enforced rule groups:**
+  - *Group A (Correctness & Null Safety):* `@typescript-eslint/no-non-null-assertion` (prohibits `!` force-unwraps in production code), `no-empty` (`allowEmptyCatch: false`), and `@typescript-eslint/no-unused-vars` (enforces caught error handling or explicit regex naming `^(_|expected|ignored)$`).
+  - *Group B (Complexity & Maintainability):* `max-depth` (threshold 4), `complexity` (cyclomatic threshold 15), `no-mixed-operators` (enforces explicit parentheses across binary expressions), `max-lines` (module threshold 500 lines, skipping blank/comment lines), and `max-lines-per-function` (60 lines for utilities/hooks/services; 120 lines for React components and App Router views, skipping blank/comment lines).
+  - *Group C (Codebase Hygiene & Dead Code):* Knip (`frontend/knip.json`) audits unused files, unused exports, unused types, and unreferenced dependencies without automated deletion.
+- **Test-scoped accommodations:** Test suites under `frontend/src/__tests__/` are exempted from function length, file length, cyclomatic complexity, nesting depth, mixed operators, and non-null assertion checks to accommodate fixture tables and testing-library DOM query assertions.
+- **Legacy exemption and suppression policy:**
+  - Pre-existing legacy debt is recorded as explicit, file-specific overrides in `frontend/eslint.config.mjs`, with each exemption annotated with its tracking issue (e.g. #678 for `page.tsx`, #685 for composite views).
+  - New code and modifications introduced in pull requests must satisfy all blocking rules; new files or un-exempted modules must not be added to the legacy exemption block.
+  - In-source suppressions (`// eslint-disable-next-line <rule> -- <justification>`) must be narrowly scoped to the specific statement and must include a mandatory explanatory comment justifying why immediate refactoring is unsuitable.
+
 ## Out-of-scope and workflow conventions
 
 Repository conventions and approved task scope take precedence over workflow defaults. Do not create repository conventions or artifacts, including documentation or changelogs, solely to satisfy a workflow unless the approved scope or an existing repository convention calls for them.
