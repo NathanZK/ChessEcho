@@ -19,6 +19,23 @@ version = "0.0.1-SNAPSHOT"
 // version declared below, instead of only the directly-declared artifacts.
 extra["testcontainers.version"] = "1.21.4"
 
+// Targeted Spring Boot BOM property overrides to remediate Dependabot alerts
+// without altering the Spring Boot 3.3.2 baseline (Issue #616).
+extra["tomcat.version"] = "10.1.61"
+extra["jackson-bom.version"] = "2.18.12"
+// Note: Logback upgrades (>1.5.6) require Spring Boot 3.3.6+ / 3.5+ due to binary
+// incompatibility in LoggerContext.getConfigurationLock(); tracked in framework migration Issue #617.
+extra["postgresql.version"] = "42.7.14"
+extra["commons-lang3.version"] = "3.21.0"
+extra["httpclient5.version"] = "5.4.3"
+extra["httpcore5.version"] = "5.3.3"
+extra["assertj.version"] = "3.27.7"
+extra["json-smart.version"] = "2.5.2"
+extra["xmlunit2.version"] = "2.10.0"
+extra["log4j2.version"] = "2.25.5"
+extra["artemis.version"] = "2.40.0"
+extra["commons-compress.version"] = "1.28.0"
+
 java {
     toolchain {
         languageVersion.set(JavaLanguageVersion.of(21))
