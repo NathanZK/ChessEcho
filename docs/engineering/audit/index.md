@@ -36,6 +36,8 @@ This document serves as the durable evidence repository for opt-in mutation test
 | [`Frontend: LongDecisionsView.tsx`](#223-frontend-longdecisionsviewtsx-issue-636) | `LongDecisionsView.test.tsx` + suite | Frontend Presentation ([#636](https://github.com/NathanZK/ChessEcho/issues/636)) | 312 | 221 (71%) | 90 (29%) | 1 (0%) | 71.06% | 2026-10-29 |
 | [`PracticalEvidenceService` & `WeaknessCalculationService` (Issue #637 Extension)](#224-practicalevidenceservice-and-weaknesscalculationservice-issue-637) | `PracticalEvidenceServiceTest`, `WeaknessCalculationServiceTest` | Service Unit ([#637](https://github.com/NathanZK/ChessEcho/issues/637)) | 163 | 96 (59%) | 41 (25%) | 26 (16%) | 70% | 2026-10-30 |
 | [`Frontend: SimilarPositionsView.tsx` & `WeaknessesList.tsx` (Issue #637)](#225-frontend-similarpositionsviewtsx-and-weaknesseslisttsx-issue-637) | `SimilarPositionsView.test.tsx`, `WeaknessesList.test.tsx` + suite | Frontend Presentation ([#637](https://github.com/NathanZK/ChessEcho/issues/637)) | 848 | 461 (54%) [35 TO] | 314 (37%) | 71 (8%) | 59.48% | 2026-10-30 |
+| [`DecisionTimingPolicy` & `LongDecisionService` (Issue #660 Extension)](#226-decisiontimingpolicy--longdecisionservice-issue-660-extension) | `LongDecisionServiceTest`, `LongDecisionServiceMappingTest`, `DecisionTimingPolicyTest` | Service Unit ([#660](https://github.com/NathanZK/ChessEcho/issues/660)) | 43 | 40 (93%) | 3 (7%) | 0 (0%) | 93% | 2026-10-31 |
+| [`Frontend: LongDecisionsView.tsx` (Issue #660)](#227-frontend-longdecisionsviewtsx-issue-660-simplified-filters--auto-search) | `LongDecisionsView.test.tsx` + suite | Frontend Presentation ([#660](https://github.com/NathanZK/ChessEcho/issues/660)) | 310 | 201 (65%) | 108 (35%) | 1 (0%) | 65.05% | 2026-10-31 |
 
 ---
 
@@ -640,6 +642,41 @@ This document serves as the durable evidence repository for opt-in mutation test
   4. *Navigation & Drill-down*: Preserved Line Exploration navigation, move inspection, and practice position transitions.
 - **Accepted Surviving Mutants**:
   - Non-functional Tailwind CSS utility class mutations, border color variants, and presentation text templates.
+
+### 2.26 `DecisionTimingPolicy` & `LongDecisionService` (Issue #660 Extension)
+
+- **Test Suite**: `LongDecisionServiceTest`, `LongDecisionServiceMappingTest`, `DecisionTimingPolicyTest`
+- **Execution Command**:
+  ```bash
+  cd backend && ./gradlew pitest \
+    -Ppitest.targetClasses="com.chessecho.service.LongDecisionService*,com.chessecho.service.DecisionTimingPolicy*" \
+    -Ppitest.targetTests="com.chessecho.service.LongDecisionServiceTest*,com.chessecho.service.LongDecisionServiceMappingTest*,com.chessecho.service.DecisionTimingPolicyTest*"
+  ```
+- **Results**: 43 generated, 40 killed (93%), 3 survived (7%), 0 no coverage; 93% test strength (100% of actionable mutants killed).
+- **Meaningful Gaps Killed**:
+  1. *Input Validation Integrity*: Mutants negating `minDurationSeconds != null || thresholdSeconds != null || severity != null` killed by asserting `IllegalArgumentException` thrown when all 3 parameters are null.
+  2. *Threshold-Free Severity Bounds Resolution*: Mutants in `calculateEffectiveBounds` replacing `severityRangeMs` min/max bounds with `0` or `null` killed by verifying exact bounds across Rapid Critical (`120s, null`), Significant (`60s, 120s`), and Minor (`30s, 60s`).
+  3. *Mutator Coverage*: 100% (7/7) `ConditionalsBoundaryMutator` killed, 100% (30/30) `NegateConditionalsMutator` killed, 100% (1/1) `NullReturnValsMutator` killed, 100% (1/1) `MathMutator` killed.
+- **Accepted Surviving Mutants**:
+  - 3 surviving mutants at lines 84 and 88 of `LongDecisionService.kt`: synthetic Kotlin compiler bytecode null-checks (`Intrinsics.checkNotNullExpressionValue` / `checkNotNull`) on Spring Data's `PageRequest.of(page, pageSize)` and `results.content` platform return values (Taxonomy Category 3).
+
+### 2.27 Frontend: `src/components/LongDecisionsView.tsx` (Issue #660 Simplified Filters & Auto-Search)
+
+- **Test Suite**: `LongDecisionsView.test.tsx` + suite
+- **Execution Command**:
+  ```bash
+  cd frontend && npm run test:mutation -- --mutate="src/components/LongDecisionsView.tsx"
+  ```
+- **Results**: 310 instrumented, 201 killed (64.84% mutation score / 65.05% covered mutation score), 108 survived, 1 no coverage, 0 timed out, 0 errors.
+- **Meaningful Gaps Killed**:
+  1. *Default State*: Mutants altering initial `timeControl` (`'RAPID'`) or `severityFilter` (`'CRITICAL'`) killed by initial load assertions.
+  2. *Account Readiness Guards*: Mutants modifying `hasConnectedAccount` (`sessionStatus === 'authenticated' && accountStatus === 'connected' && !!accountId`) killed by verifying that unauthenticated, loading, or unconnected states never dispatch search queries.
+  3. *Automatic Query Triggering*: Mutants disabling search dispatch on mount or dropdown `onChange` for `timeControl` and `severityFilter` killed by verifying `fetchLongDecisions` invocation.
+  4. *Request Versioning & Stale Response Discard*: Mutants disabling `requestVersion.current !== version` protection checks killed by race condition tests asserting superseded responses are discarded.
+  5. *Severity Dropdown Restrictions*: Mutants altering allowed options (`'CRITICAL'`, `'SIGNIFICANT'`, `'MINOR'`) or restoring `'ALL'` / `'NO_CONCERN'` killed by dropdown options test.
+  6. *Pagination & Error States*: Mutants altering `loadMore` request parameters or error banner display killed by pagination and retry tests.
+- **Accepted Surviving Mutants**:
+  - 108 surviving mutants consist of JSX presentation class strings, text literals, and non-functional Tailwind style variants.
 
 ---
 

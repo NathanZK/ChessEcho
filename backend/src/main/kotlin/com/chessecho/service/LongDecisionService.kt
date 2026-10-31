@@ -51,7 +51,7 @@ class LongDecisionService(
         size: Int,
         principal: AuthenticatedPrincipal,
     ): LongDecisionPageResponse {
-        validateInputs(minDurationSeconds, thresholdSeconds, page)
+        validateInputs(minDurationSeconds, thresholdSeconds, severity, page)
 
         val effectiveSeconds = minDurationSeconds ?: thresholdSeconds ?: 0
         val pageSize = size.coerceIn(MIN_PAGE_SIZE, MAX_PAGE_SIZE)
@@ -97,8 +97,12 @@ class LongDecisionService(
     private fun validateInputs(
         minDurationSeconds: Int?,
         thresholdSeconds: Int?,
+        severity: DecisionSeverity?,
         page: Int,
     ) {
+        require(minDurationSeconds != null || thresholdSeconds != null || severity != null) {
+            "At least one of severity, minDurationSeconds, or thresholdSeconds is required"
+        }
         minDurationSeconds?.let {
             require(it >= 0) { "minDurationSeconds must be non-negative" }
         }

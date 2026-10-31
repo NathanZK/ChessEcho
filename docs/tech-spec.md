@@ -5,7 +5,7 @@ purpose:      Identify recurring chess weaknesses and individual decisions that 
 user:         Chess players analyzing imported games and practicing recurring positions.
 
 use-case:     Import games → analyze recurring positions with Stockfish → rank weaknesses → practice with interactive puzzles.
-              Search imported games by broad time control and absolute decision-time threshold → inspect qualifying occurrences.
+              Search imported games by broad time control and analytical severity or absolute decision-time threshold → inspect qualifying occurrences.
               Search personal games by arbitrary FEN similarity using an inverted index and static relational BM25 → explore matching positions.
 
 architecture:
@@ -58,7 +58,7 @@ contract:
     - Candidate tactical continuations: Each candidate move receives independent bounded Stockfish search and forcing-prefix PV replay.
     - Forced-mate evaluations persist root-relative mate distances (`baselineEvalMate`, `bestMoveEvalMate`, `evalMate`); evaluation loss is calculated via an 8-case piecewise function in $[0.0, 20.0]$; losing-mate defense against negative centipawns returns null (horizon effect); occurrences with null loss are skipped from mistake counts and acceptable moves.
   - **Position Progress**: Dated actual-game encounters form a separate historical baseline and one aggregate observation per interval started by a persisted `SOLVED` puzzle event. Intervals use `Game.playedAt`, remain reconstructible after late imports, and reuse `GameOutcomeNormalizer`; see `docs/architecture/backend-architecture.md`.
-  - **Long Decisions**: Individual occurrences expose reliable account-player decision durations derived from PGN clocks; the account-scoped API filters by broad time control and an inclusive absolute threshold. Line Exploration preserves query and timer state on return; see `docs/architecture/frontend.md`.
+  - **Long Decisions**: Individual occurrences expose reliable account-player decision durations derived from PGN clocks; the account-scoped API filters by broad time control and analytical severity (Critical, Significant, Minor) or an inclusive absolute threshold. Defaults to Rapid and Critical with automatic query execution on connected accounts. Line Exploration preserves query and timer state on return; see `docs/architecture/frontend.md`.
   - **Similar Positions**: `GET /api/positions/similar` retrieves personal positions similar to an arbitrary orthodox FEN input. Filtered to $\le 200$ candidates before static relational BM25 scoring. Guarantees $\ge 90\%$ recall of top-20 exhaustive candidates and warm p95 latency $< 500\text{ms}$. Exact query positions are excluded, and ties are broken deterministically by `canonicalFen` ascending. Exact-ply Chess.com URLs are derived from verified source metadata, returning `null` when unverifiable. Line Exploration transitions preserve Similar Positions query and results state on return.
   - **Puzzle attempt counts**: Authenticated user/account/position/color counts separate submitted SOLVED and FAILED initial answers via a single outcome-grouped aggregate over qualifying scheduling events; absent groups return zero counts.
   - **Actual-game results display**:
@@ -74,7 +74,7 @@ flow:
   - analysis: import ingestion completes → positions reached ≥5 times (`EngineAnalysisOrchestrator`) → Stockfish depth 16 (`EngineAnalysisService`) → stored position and move evaluations.
   - weakness: weakness/puzzle request → account-derived aggregation plus the caller's account-scoped training history → paginated weaknesses or puzzles.
   - practice: puzzle move → evaluate/continue/attempt/event endpoints → feedback and recorded training events.
-  - long decisions: authenticated account, broad time control, and absolute seconds threshold → query eligible occurrences → display each position, move, duration, and game context.
+  - long decisions: authenticated account, broad time control, and analytical severity or absolute seconds threshold → query eligible occurrences → display each position, move, duration, and game context.
   - Import and ingestion details: `README.md` and `API_CONTRACT.md`.
 
 invariant:

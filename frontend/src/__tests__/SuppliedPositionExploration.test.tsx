@@ -170,21 +170,16 @@ describe('user-supplied position exploration', () => {
     activeTabStore.set('long-decisions');
     render(<Home />);
 
-    fireEvent.change(screen.getByLabelText('Time control'), { target: { value: 'RAPID' } });
-    fireEvent.change(screen.getByLabelText('Decision-time threshold (seconds)'), {
-      target: { value: '45' },
-    });
+    fireEvent.change(screen.getByLabelText('Severity'), { target: { value: 'SIGNIFICANT' } });
     await waitFor(() => expect(api.fetchAccounts).toHaveBeenCalled());
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Search' })).toBeEnabled());
-    fireEvent.click(await screen.findByRole('button', { name: 'Search' }));
     await waitFor(() => expect(api.fetchLongDecisions).toHaveBeenCalledWith(
       'account-a',
       'RAPID',
-      45,
+      undefined,
       0,
       20,
-      45,
       undefined,
+      'SIGNIFICANT',
     ));
     expect(await screen.findByText('e5')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Explore this position' }));
@@ -207,7 +202,7 @@ describe('user-supplied position exploration', () => {
     fireEvent.click(screen.getByTitle('Exit Exploration'));
     expect(screen.getByRole('region', { name: /Decision Timing|Long Decisions/ })).toBeInTheDocument();
     expect(screen.getByLabelText('Time control')).toHaveValue('RAPID');
-    expect(screen.getByLabelText('Decision-time threshold (seconds)')).toHaveValue(45);
+    expect(screen.getByLabelText('Severity')).toHaveValue('SIGNIFICANT');
     expect(screen.getByText('e5')).toBeInTheDocument();
     expect(api.submitTrainingAttempt).not.toHaveBeenCalled();
   });
@@ -272,8 +267,6 @@ describe('user-supplied position exploration', () => {
     const recordedPuzzleAttempts = vi.mocked(api.recordPuzzleEvent).mock.calls.length;
 
     fireEvent.click(screen.getByRole('button', { name: /Decision Timing|Long Decisions/ }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Search' })).toBeEnabled());
-    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     await screen.findByText('e5');
     fireEvent.click(screen.getByRole('button', { name: 'Explore this position' }));
     expect(pauseStopwatch).toHaveBeenCalledTimes(1);
@@ -352,8 +345,6 @@ describe('user-supplied position exploration', () => {
     await screen.findByText('Not the Recommended Move');
 
     fireEvent.click(screen.getByRole('button', { name: /Decision Timing|Long Decisions/ }));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Search' })).toBeEnabled());
-    fireEvent.click(screen.getByRole('button', { name: 'Search' }));
     await screen.findByText('e5');
     fireEvent.click(screen.getByRole('button', { name: 'Explore this position' }));
 

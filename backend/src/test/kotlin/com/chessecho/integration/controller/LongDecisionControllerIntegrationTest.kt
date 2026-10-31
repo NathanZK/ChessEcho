@@ -250,6 +250,47 @@ class LongDecisionControllerIntegrationTest {
         assertEquals(match.id.toString(), body["content"][0]["id"].textValue())
     }
 
+    @Test
+    fun `returns 200 and applies exact severity bounds when query provides severity without numeric thresholds`() {
+        val session = session()
+        val account = account("severity-only-test")
+        val critical = addOccurrence(account, "RAPID", 125_000L, "2026-02-01T10:00:00Z", "critical")
+        addOccurrence(account, "RAPID", 90_000L, "2026-02-01T11:00:00Z", "significant")
+        addOccurrence(account, "RAPID", 40_000L, "2026-02-01T12:00:00Z", "minor")
+
+        val response =
+            get(
+                accountId = account.id,
+                timeControl = "RAPID",
+                severity = "CRITICAL",
+                secret = session.rawSecret,
+            )
+        assertEquals(HttpStatus.OK, response.statusCode)
+        val body = objectMapper.readTree(response.body)
+        assertEquals(1, body["totalElements"].intValue())
+        assertEquals(critical.id.toString(), body["content"][0]["id"].textValue())
+        assertEquals("CRITICAL", body["content"][0]["severity"].textValue())
+    }
+
+    @Test
+    fun `returns 400 when minDurationSeconds thresholdSeconds and severity are all absent`() {
+        val session = session()
+        val account = account("missing-all-thresholds")
+
+        val response =
+            get(
+                accountId = account.id,
+                timeControl = "RAPID",
+                secret = session.rawSecret,
+            )
+        assertEquals(HttpStatus.BAD_REQUEST, response.statusCode)
+        val bodyText = response.body.orEmpty()
+        assertTrue(
+            bodyText.contains("At least one of severity, minDurationSeconds, or thresholdSeconds is required"),
+            "Expected bad request message to mention severity or thresholds, got: $response",
+        )
+    }
+
     private fun saveGame(
         account: ChessAccount,
         platformGameId: String,

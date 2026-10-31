@@ -29,10 +29,10 @@ class LongDecisionController(
         @RequestParam(defaultValue = "20") size: Int,
         principal: AuthenticatedPrincipal,
     ): LongDecisionPageResponse {
-        if (minDurationSeconds == null && thresholdSeconds == null) {
+        if (minDurationSeconds == null && thresholdSeconds == null && severity == null) {
             throw ResponseStatusException(
                 HttpStatus.BAD_REQUEST,
-                "Either minDurationSeconds or thresholdSeconds is required",
+                "At least one of severity, minDurationSeconds, or thresholdSeconds is required",
             )
         }
         return longDecisionService.findLongDecisions(

@@ -163,11 +163,14 @@ for restored job context.
 ## Long Decisions
 
 `LongDecisionsView` is available to authenticated users with a connected
-Chess.com account. The time-control selector chooses the games to search;
-the positive whole-number threshold is an absolute number of seconds. Search
-calls `GET /api/positions/long-decisions` with those independent values and
+Chess.com account. Filters default to Rapid time control and Critical severity,
+automatically loading matching occurrences upon connection readiness and on
+dropdown changes without requiring a manual Search button or numeric threshold
+input. The time-control selector chooses the games to search; the severity selector
+restricts occurrences by analytical duration band (Critical, Significant, Minor).
+Search calls `GET /api/positions/long-decisions` with those independent values and
 the selected account UUID. A result is an individual position occurrence whose
-derived decision duration meets the inclusive threshold. The UI displays the
+derived decision duration falls within the selected severity band. The UI displays the
 duration, board/position, move, color, opponent, date, ply, and game link.
 Occurrences remain individually pageable and are not grouped. Long decision
 time is not presented as move quality; no engine evaluation or training action

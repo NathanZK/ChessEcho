@@ -74,22 +74,33 @@ describe('LongDecisionsView', () => {
     vi.restoreAllMocks();
   });
 
-  it('keeps time-control selection separate from an absolute threshold and shows an individual result neutrally', async () => {
-    const user = userEvent.setup();
+  it('defaults to RAPID and CRITICAL and loads occurrences automatically for connected accounts', async () => {
     render(<LongDecisionsView {...connectedProps} />);
 
-    expect(screen.getByLabelText('Time control')).toBeInTheDocument();
-    expect(screen.getByLabelText('Decision-time threshold (seconds)')).toHaveValue(30);
-    expect(screen.getByText(/Time control chooses which games to search/i)).toBeInTheDocument();
+    expect(screen.getByLabelText('Time control')).toHaveValue('RAPID');
+    expect(screen.getByLabelText('Severity')).toHaveValue('CRITICAL');
 
-    await user.selectOptions(screen.getByLabelText('Time control'), 'RAPID');
-    await user.clear(screen.getByLabelText('Decision-time threshold (seconds)'));
-    await user.type(screen.getByLabelText('Decision-time threshold (seconds)'), '120');
-    await user.click(screen.getByRole('button', { name: 'Search' }));
+    // Threshold input and Search button are removed
+    expect(screen.queryByLabelText(/Decision-time threshold/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Search' })).not.toBeInTheDocument();
+
+    // Helper text reflects simplified filters
+    expect(
+      screen.getByText('Time control chooses which games to search. Severity filters occurrences by analytical thinking time.'),
+    ).toBeInTheDocument();
 
     await waitFor(() =>
-      expect(api.fetchLongDecisions).toHaveBeenCalledWith(accountId, 'RAPID', 120, 0, 20, 120, undefined),
+      expect(api.fetchLongDecisions).toHaveBeenCalledWith(
+        accountId,
+        'RAPID',
+        undefined,
+        0,
+        20,
+        undefined,
+        'CRITICAL',
+      ),
     );
+
     expect(await screen.findByTestId('long-decision-board')).toHaveTextContent(
       '8/8/8/8/8/8/8/8 w - -',
     );
@@ -101,24 +112,62 @@ describe('LongDecisionsView', () => {
       'https://www.chess.com/game/live/172923974924?move=1',
     );
     expect(screen.getByText(/This result describes decision time, not move quality/i)).toBeInTheDocument();
-    expect(screen.queryByText(/mistake|incorrect/i)).not.toBeInTheDocument();
   });
 
-  it('validates positive whole seconds and displays an empty result state', async () => {
+  it('restricts severity dropdown options strictly to Critical, Significant, and Minor', async () => {
+    render(<LongDecisionsView {...connectedProps} />);
+
+    const severitySelect = screen.getByLabelText('Severity');
+    const options = Array.from(severitySelect.querySelectorAll('option')).map((o) => o.value);
+    expect(options).toEqual(['CRITICAL', 'SIGNIFICANT', 'MINOR']);
+    expect(options).not.toContain('ALL');
+    expect(options).not.toContain('NO_CONCERN');
+
+    await waitFor(() => expect(api.fetchLongDecisions).toHaveBeenCalled());
+  });
+
+  it('triggers automatic search when timeControl or severity changes', async () => {
     const user = userEvent.setup();
+    render(<LongDecisionsView {...connectedProps} />);
+
+    await waitFor(() => expect(api.fetchLongDecisions).toHaveBeenCalledTimes(1));
+
+    // Change time control to BLITZ
+    await user.selectOptions(screen.getByLabelText('Time control'), 'BLITZ');
+    await waitFor(() =>
+      expect(api.fetchLongDecisions).toHaveBeenCalledWith(
+        accountId,
+        'BLITZ',
+        undefined,
+        0,
+        20,
+        undefined,
+        'CRITICAL',
+      ),
+    );
+
+    // Change severity to SIGNIFICANT
+    await user.selectOptions(screen.getByLabelText('Severity'), 'SIGNIFICANT');
+    await waitFor(() =>
+      expect(api.fetchLongDecisions).toHaveBeenCalledWith(
+        accountId,
+        'BLITZ',
+        undefined,
+        0,
+        20,
+        undefined,
+        'SIGNIFICANT',
+      ),
+    );
+  });
+
+  it('displays empty results state when query returns no occurrences', async () => {
     vi.mocked(api.fetchLongDecisions).mockResolvedValue(page([]));
     render(<LongDecisionsView {...connectedProps} />);
 
-    await user.clear(screen.getByLabelText('Decision-time threshold (seconds)'));
-    await user.type(screen.getByLabelText('Decision-time threshold (seconds)'), '0');
-    await user.click(screen.getByRole('button', { name: 'Search' }));
-    expect(screen.getByText('Enter a positive whole number of seconds.')).toBeInTheDocument();
-    expect(api.fetchLongDecisions).not.toHaveBeenCalled();
-
-    await user.clear(screen.getByLabelText('Decision-time threshold (seconds)'));
-    await user.type(screen.getByLabelText('Decision-time threshold (seconds)'), '30');
-    await user.click(screen.getByRole('button', { name: 'Search' }));
-    expect(await screen.findByText(/No occurrences met this threshold/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText('No occurrences met this threshold or filter criteria in the selected time control.'),
+    ).toBeInTheDocument();
   });
 
   it('renders loading, request error, and retry states', async () => {
@@ -130,7 +179,6 @@ describe('LongDecisionsView', () => {
       }),
     );
     render(<LongDecisionsView {...connectedProps} />);
-    await user.click(screen.getByRole('button', { name: 'Search' }));
     expect(await screen.findByRole('status')).toHaveTextContent('Searching long-decision occurrences');
     resolvePage(page([occurrence('loaded')]));
     expect(await screen.findByText('Open game')).toBeInTheDocument();
@@ -138,7 +186,9 @@ describe('LongDecisionsView', () => {
     vi.mocked(api.fetchLongDecisions)
       .mockRejectedValueOnce(new Error('service unavailable'))
       .mockResolvedValueOnce(page([occurrence('retried')]));
-    await user.click(screen.getByRole('button', { name: 'Search' }));
+
+    // Change filter to trigger retry
+    await user.selectOptions(screen.getByLabelText('Time control'), 'BLITZ');
     expect(await screen.findByText(/service unavailable/i)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Retry search' }));
     expect(await screen.findByRole('link', { name: 'Open game' })).toHaveAttribute(
@@ -170,14 +220,17 @@ describe('LongDecisionsView', () => {
           totalElements: 2,
         }),
       );
+
     render(<LongDecisionsView {...connectedProps} />);
-    await user.click(screen.getByRole('button', { name: 'Search' }));
+
+    // Trigger second query by changing time control
     await user.selectOptions(screen.getByLabelText('Time control'), 'BLITZ');
-    await user.click(screen.getByRole('button', { name: 'Search' }));
     expect(await screen.findByRole('link', { name: 'Open game' })).toHaveAttribute(
       'href',
       'https://www.chess.com/game/live/111?move=1',
     );
+
+    // Resolve first query (stale)
     resolveFirst(page([occurrence('stale')]));
 
     await user.click(screen.getByRole('button', { name: 'Load more' }));
@@ -197,12 +250,13 @@ describe('LongDecisionsView', () => {
         accountId={undefined}
         sessionStatus="error"
         accountStatus="unconnected"
-      />
+      />,
     );
 
     expect(
-      screen.getByText('Unable to check your ChessProbe session. Refresh the page to try again.')
+      screen.getByText('Unable to check your ChessProbe session. Refresh the page to try again.'),
     ).toBeInTheDocument();
+    expect(api.fetchLongDecisions).not.toHaveBeenCalled();
   });
 
   it('offers account loading, retry, and no-account states without querying', () => {
@@ -217,6 +271,7 @@ describe('LongDecisionsView', () => {
       />,
     );
     expect(screen.getByText('Checking your Chess.com account')).toBeInTheDocument();
+    expect(api.fetchLongDecisions).not.toHaveBeenCalled();
 
     rerender(
       <LongDecisionsView
@@ -229,6 +284,7 @@ describe('LongDecisionsView', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Retry account loading' }));
     expect(onRetry).toHaveBeenCalledOnce();
+    expect(api.fetchLongDecisions).not.toHaveBeenCalled();
 
     rerender(
       <LongDecisionsView
@@ -243,8 +299,19 @@ describe('LongDecisionsView', () => {
     expect(api.fetchLongDecisions).not.toHaveBeenCalled();
   });
 
+  it('does not dispatch search requests for unauthenticated sessions', () => {
+    render(
+      <LongDecisionsView
+        {...connectedProps}
+        accountId={undefined}
+        sessionStatus="unauthenticated"
+        accountStatus="unconnected"
+      />,
+    );
+    expect(api.fetchLongDecisions).not.toHaveBeenCalled();
+  });
+
   it('adopts valid backend chessComUrl with target="_blank" and rel="noreferrer"', async () => {
-    const user = userEvent.setup();
     vi.mocked(api.fetchLongDecisions).mockResolvedValue(
       page([
         occurrence('valid-backend', {
@@ -254,7 +321,6 @@ describe('LongDecisionsView', () => {
       ]),
     );
     render(<LongDecisionsView {...connectedProps} />);
-    await user.click(screen.getByRole('button', { name: 'Search' }));
     const link = await screen.findByRole('link', { name: 'Open game' });
     expect(link).toHaveAttribute('href', 'https://www.chess.com/game/live/999?move=7');
     expect(link).toHaveAttribute('target', '_blank');
@@ -262,7 +328,6 @@ describe('LongDecisionsView', () => {
   });
 
   it('falls back to buildExactPlyChessComUrl when chessComUrl is null or undefined', async () => {
-    const user = userEvent.setup();
     vi.mocked(api.fetchLongDecisions).mockResolvedValue(
       page([
         occurrence('null-backend', {
@@ -274,13 +339,11 @@ describe('LongDecisionsView', () => {
       ]),
     );
     render(<LongDecisionsView {...connectedProps} />);
-    await user.click(screen.getByRole('button', { name: 'Search' }));
     const link = await screen.findByRole('link', { name: 'Open game' });
     expect(link).toHaveAttribute('href', 'https://www.chess.com/game/live/123456789?move=4');
   });
 
   it('falls back to buildExactPlyChessComUrl when chessComUrl is empty or whitespace', async () => {
-    const user = userEvent.setup();
     vi.mocked(api.fetchLongDecisions).mockResolvedValue(
       page([
         occurrence('empty-backend', {
@@ -292,13 +355,11 @@ describe('LongDecisionsView', () => {
       ]),
     );
     render(<LongDecisionsView {...connectedProps} />);
-    await user.click(screen.getByRole('button', { name: 'Search' }));
     const link = await screen.findByRole('link', { name: 'Open game' });
     expect(link).toHaveAttribute('href', 'https://www.chess.com/game/daily/987654?move=15');
   });
 
   it('falls back to buildExactPlyChessComUrl when chessComUrl is malformed', async () => {
-    const user = userEvent.setup();
     vi.mocked(api.fetchLongDecisions).mockResolvedValue(
       page([
         occurrence('malformed-backend', {
@@ -309,13 +370,11 @@ describe('LongDecisionsView', () => {
       ]),
     );
     render(<LongDecisionsView {...connectedProps} />);
-    await user.click(screen.getByRole('button', { name: 'Search' }));
     const link = await screen.findByRole('link', { name: 'Open game' });
     expect(link).toHaveAttribute('href', 'https://www.chess.com/game/live/123?move=2');
   });
 
   it('omits Open game link when both chessComUrl and fallback resolution are unresolvable', async () => {
-    const user = userEvent.setup();
     vi.mocked(api.fetchLongDecisions).mockResolvedValue(
       page([
         occurrence('unresolvable', {
@@ -325,32 +384,8 @@ describe('LongDecisionsView', () => {
       ]),
     );
     render(<LongDecisionsView {...connectedProps} />);
-    await user.click(screen.getByRole('button', { name: 'Search' }));
     expect(await screen.findByText('120 seconds')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Open game' })).not.toBeInTheDocument();
-  });
-
-  it('filters by selected severity and passes it to fetchLongDecisions', async () => {
-    const user = userEvent.setup();
-    render(<LongDecisionsView {...connectedProps} />);
-
-    expect(screen.getByLabelText('Severity')).toBeInTheDocument();
-    expect(screen.getByLabelText('Severity')).toHaveValue('ALL');
-
-    await user.selectOptions(screen.getByLabelText('Severity'), 'SIGNIFICANT');
-    await user.click(screen.getByRole('button', { name: 'Search' }));
-
-    await waitFor(() =>
-      expect(api.fetchLongDecisions).toHaveBeenCalledWith(
-        accountId,
-        'BULLET',
-        30,
-        0,
-        20,
-        30,
-        'SIGNIFICANT',
-      ),
-    );
   });
 
   it('renders loaded count badge and toggles between grid and list views', async () => {
@@ -359,8 +394,6 @@ describe('LongDecisionsView', () => {
       page([occurrence('occ-1'), occurrence('occ-2')]),
     );
     render(<LongDecisionsView {...connectedProps} />);
-
-    await user.click(screen.getByRole('button', { name: 'Search' }));
 
     const badge = await screen.findByTestId('decision-timing-count-indicator');
     expect(badge).toHaveTextContent('2');
@@ -381,7 +414,6 @@ describe('LongDecisionsView', () => {
   });
 
   it('renders severity pills with appropriate labels and color styling for each severity level', async () => {
-    const user = userEvent.setup();
     vi.mocked(api.fetchLongDecisions).mockResolvedValue(
       page([
         occurrence('crit', { severity: 'CRITICAL' }),
@@ -392,8 +424,6 @@ describe('LongDecisionsView', () => {
       ]),
     );
     render(<LongDecisionsView {...connectedProps} />);
-
-    await user.click(screen.getByRole('button', { name: 'Search' }));
 
     const critPill = await screen.findByTestId('severity-pill-crit');
     expect(critPill).toHaveTextContent('Critical');
@@ -416,7 +446,6 @@ describe('LongDecisionsView', () => {
   });
 
   it('formats duration correctly for singular second and displays date unavailable for missing/invalid dates', async () => {
-    const user = userEvent.setup();
     vi.mocked(api.fetchLongDecisions).mockResolvedValue(
       page([
         occurrence('one-sec', { decisionTimeMs: 1_000, playedAt: null }),
@@ -424,8 +453,6 @@ describe('LongDecisionsView', () => {
       ]),
     );
     render(<LongDecisionsView {...connectedProps} />);
-
-    await user.click(screen.getByRole('button', { name: 'Search' }));
 
     expect(await screen.findByText('1 second')).toBeInTheDocument();
     expect(screen.getByText('1.5 seconds')).toBeInTheDocument();
@@ -444,7 +471,6 @@ describe('LongDecisionsView', () => {
       );
 
     render(<LongDecisionsView {...connectedProps} />);
-    await user.click(screen.getByRole('button', { name: 'Search' }));
 
     expect(await screen.findByRole('button', { name: 'Load more' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Load more' }));
@@ -460,10 +486,12 @@ describe('LongDecisionsView', () => {
 
   it('falls back to default message when error thrown is not an Error instance', async () => {
     const user = userEvent.setup();
-    vi.mocked(api.fetchLongDecisions).mockRejectedValue('string error');
+    vi.mocked(api.fetchLongDecisions).mockResolvedValue(page([occurrence('initial')]));
     render(<LongDecisionsView {...connectedProps} />);
+    expect(await screen.findByTestId('long-decision-board')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'Search' }));
+    vi.mocked(api.fetchLongDecisions).mockRejectedValue('string error');
+    await user.selectOptions(screen.getByLabelText('Time control'), 'BLITZ');
 
     expect(await screen.findByText(/Please try again./i)).toBeInTheDocument();
   });
