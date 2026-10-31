@@ -36,6 +36,30 @@ class WeaknessEvaluationLossTest {
     }
 
     @Test
+    fun `produces zero loss when bestMoveEvalCp equals evalCp`() {
+        val moveEval =
+            MoveEvaluation(
+                engineAnalysis = analysis,
+                move = "e4",
+                evalCp = 80,
+                evalLossFromBest = null,
+            )
+        assertEquals(0.0, moveEval.weaknessEvaluationLoss(bestMoveEvalCp = 80, bestMoveEvalMate = null))
+    }
+
+    @Test
+    fun `clamps loss to 0_0 when move eval exceeds best move eval`() {
+        val moveEval =
+            MoveEvaluation(
+                engineAnalysis = analysis,
+                move = "e4",
+                evalCp = 120,
+                evalLossFromBest = null,
+            )
+        assertEquals(0.0, moveEval.weaknessEvaluationLoss(bestMoveEvalCp = 50, bestMoveEvalMate = null))
+    }
+
+    @Test
     fun `falls back to calculateEvalLoss with mate scores when evalLossFromBest is null`() {
         // Winning mate vs losing mate blunder
         val blunderEval =
@@ -80,5 +104,14 @@ class WeaknessEvaluationLossTest {
             )
         assertNull(emptyEval.weaknessEvaluationLoss(bestMoveEvalCp = null, bestMoveEvalMate = null))
         assertNull(emptyEval.weaknessEvaluationLoss(bestMoveEvalCp = 100, bestMoveEvalMate = null))
+
+        val withEvalCp =
+            MoveEvaluation(
+                engineAnalysis = analysis,
+                move = "e4",
+                evalCp = 50,
+                evalLossFromBest = null,
+            )
+        assertNull(withEvalCp.weaknessEvaluationLoss(bestMoveEvalCp = null, bestMoveEvalMate = null))
     }
 }

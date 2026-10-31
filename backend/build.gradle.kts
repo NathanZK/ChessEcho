@@ -110,7 +110,22 @@ detekt {
     toolVersion = "1.23.7"
     config.setFrom(files("$projectDir/config/detekt/detekt.yml"))
     buildUponDefaultConfig = false
-    baseline = file("$projectDir/config/detekt/baseline.xml")
+}
+
+tasks.named<io.gitlab.arturbosch.detekt.Detekt>("detektMain") {
+    baseline.set(file("$projectDir/config/detekt/baseline-main.xml"))
+}
+
+tasks.named<io.gitlab.arturbosch.detekt.DetektCreateBaselineTask>("detektBaselineMain") {
+    baseline.set(file("$projectDir/config/detekt/baseline-main.xml"))
+}
+
+tasks.named<io.gitlab.arturbosch.detekt.Detekt>("detektTest") {
+    baseline.set(file("$projectDir/config/detekt/baseline-test.xml"))
+}
+
+tasks.named<io.gitlab.arturbosch.detekt.DetektCreateBaselineTask>("detektBaselineTest") {
+    baseline.set(file("$projectDir/config/detekt/baseline-test.xml"))
 }
 
 // Spring Boot dependency-management plugin overrides Kotlin compiler dependencies in the
