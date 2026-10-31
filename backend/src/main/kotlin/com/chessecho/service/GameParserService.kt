@@ -12,7 +12,6 @@ import org.slf4j.LoggerFactory
 import org.springframework.jdbc.datasource.DataSourceUtils
 import org.springframework.stereotype.Service
 import org.springframework.transaction.support.TransactionTemplate
-import java.io.File
 import java.util.UUID
 import javax.sql.DataSource
 import com.github.bhlangonijr.chesslib.game.Game as ParsedGame
@@ -67,20 +66,15 @@ class GameParserService(
         allPositions: MutableMap<String, Position>,
         occurrences: MutableList<PositionOccurrence>,
     ) {
-        val file = File.createTempFile("game_parse", ".pgn")
         try {
-            file.writeText(dbGame.pgn)
-            val pgnHolder = PgnHolder(file.absolutePath)
-            pgnHolder.loadPgn()
+            val pgnHolder = PgnHolder().apply { loadPgn(dbGame.pgn) }
 
-            if (pgnHolder.game.isNotEmpty()) {
-                processParsedGame(dbGame, pgnHolder.game.first(), allPositions, occurrences)
+            if (pgnHolder.games.isNotEmpty()) {
+                processParsedGame(dbGame, pgnHolder.games.first(), allPositions, occurrences)
             }
         } catch (e: Exception) {
             log.error("Failed to parse game ${dbGame.id}", e)
             throw IllegalStateException("Failed to derive positions for game ${dbGame.id}", e)
-        } finally {
-            file.delete()
         }
     }
 

@@ -6,7 +6,6 @@ import com.github.bhlangonijr.chesslib.Board
 import com.github.bhlangonijr.chesslib.move.MoveList
 import com.github.bhlangonijr.chesslib.pgn.PgnHolder
 import org.slf4j.Logger
-import java.io.File
 
 /** Traversal bounds shared by the legacy `/bfs` path and the Issue #423 corpus path. */
 internal data class HumanMoveBfsBounds(
@@ -377,15 +376,12 @@ internal class HumanMoveBfsTraversal(
         fenByHash: MutableMap<String, String>,
         occurrences: MutableList<HumanMoveCorpusOccurrence>? = null,
     ): HumanMoveBfsPgnOutcome {
-        val file = File.createTempFile("bfs_game", ".pgn")
         try {
-            file.writeText(pgn)
-            val pgnHolder = PgnHolder(file.absolutePath)
-            pgnHolder.loadPgn()
+            val pgnHolder = PgnHolder().apply { loadPgn(pgn) }
 
-            if (pgnHolder.game.isEmpty()) return HumanMoveBfsPgnOutcome.PARSED
+            if (pgnHolder.games.isEmpty()) return HumanMoveBfsPgnOutcome.PARSED
 
-            val chesslibGame = pgnHolder.game.first()
+            val chesslibGame = pgnHolder.games.first()
             val initialFen = chesslibGame.fen
             if (initialFen != null && initialFen.isNotBlank() && !GameParserService.isStandardStartFen(initialFen)) {
                 return HumanMoveBfsPgnOutcome.NON_STANDARD_START
@@ -397,8 +393,6 @@ internal class HumanMoveBfsTraversal(
         } catch (e: Exception) {
             log.debug("Failed to parse game: ${e.message}")
             return HumanMoveBfsPgnOutcome.PARSE_FAILED
-        } finally {
-            file.delete()
         }
     }
 

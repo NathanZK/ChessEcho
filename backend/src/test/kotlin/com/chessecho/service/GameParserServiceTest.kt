@@ -62,6 +62,67 @@ class GameParserServiceTest {
     }
 
     @Test
+    fun `parseAndSavePositions throws IllegalStateException on malformed PGN`() {
+        val chessAccount = ChessAccount(platform = "CHESS_COM", username = "tester")
+        val game =
+            Game(
+                chessAccount = chessAccount,
+                platformGameId = "corrupt-game",
+                whiteUsername = "tester",
+                blackUsername = "opponent",
+                pgn =
+                    """
+                    [Event "Corrupt"]
+                    [White "tester"]
+                    [Black "opponent"]
+
+                    1. e9 1-0
+                    """.trimIndent(),
+                timeControl = "600",
+                playedAt = Instant.now(),
+            )
+
+        val exception =
+            org.junit.jupiter.api.assertThrows<IllegalStateException> {
+                gameParserService.parseAndSavePositions(listOf(game))
+            }
+        assertTrue(exception.message?.contains("Failed to derive positions for game ${game.id}") == true)
+    }
+
+    @Test
+    fun `parseAndSavePositions parses PGN without creating temporary files on disk`() {
+        whenever(positionRepository.findByHashIn(any())).thenReturn(emptyList())
+        whenever(positionRepository.saveAll(any<List<Position>>())).thenAnswer { it.getArgument<List<Position>>(0) }
+
+        val chessAccount = ChessAccount(platform = "CHESS_COM", username = "tester")
+        val game =
+            Game(
+                chessAccount = chessAccount,
+                platformGameId = "no-temp-file-game",
+                whiteUsername = "tester",
+                blackUsername = "opponent",
+                pgn =
+                    """
+                    [Event "In Memory Test"]
+                    [White "tester"]
+                    [Black "opponent"]
+
+                    1. e4 e5 2. Nf3 Nc6 1-0
+                    """.trimIndent(),
+                timeControl = "600",
+                playedAt = Instant.now(),
+            )
+
+        org.mockito.Mockito.mockStatic(java.io.File::class.java).use { fileMock ->
+            fileMock.`when`<java.io.File> { java.io.File.createTempFile(any(), any()) }
+                .thenThrow(AssertionError("File.createTempFile must not be called during game parsing"))
+
+            val affectedPositionIds = gameParserService.parseAndSavePositions(listOf(game))
+            assertEquals(2, affectedPositionIds.size)
+        }
+    }
+
+    @Test
     fun `parseAndSavePositions extracts positions correctly`() {
         // Mock DB dependencies
         whenever(positionRepository.findByHashIn(any())).thenReturn(emptyList())
