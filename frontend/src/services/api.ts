@@ -1,4 +1,4 @@
-import { Puzzle } from '../mock/mockData';
+import { Puzzle } from '@/types/puzzle';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api';
 

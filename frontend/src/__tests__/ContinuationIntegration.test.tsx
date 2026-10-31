@@ -5,7 +5,7 @@ import { PuzzleFeedbackPanel } from '../components/PuzzleFeedbackPanel';
 import { ChessBoardArea } from '../components/ChessBoardArea';
 import { continuationService, moveEvaluationService } from '../services/continuationService';
 import * as api from '../services/api';
-import { Puzzle } from '../mock/mockData';
+import { Puzzle } from '@/types/puzzle';
 
 vi.mock('react-chessboard', () => ({
   Chessboard: ({ options }: { options: { onPieceDrop: (args: { sourceSquare: string, targetSquare: string }) => boolean } }) => (

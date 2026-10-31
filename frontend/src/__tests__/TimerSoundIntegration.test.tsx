@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Home from '../app/page';
 import * as api from '../services/api';
 import { soundService } from '../services/soundService';
-import type { Puzzle } from '../mock/mockData';
+import type { Puzzle } from '@/types/puzzle';
 import { activeAccountStore } from '../utils/browserStores';
 
 vi.mock('../services/api', async () => ({

@@ -3,7 +3,7 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Home from '../app/page';
 import * as api from '../services/api';
-import { Puzzle } from '../mock/mockData';
+import { Puzzle } from '@/types/puzzle';
 
 /**
  * Issue #86 – puzzle loading must distinguish loading / success-with-data /

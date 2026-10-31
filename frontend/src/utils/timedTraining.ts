@@ -133,32 +133,3 @@ export class CountdownTimer {
     return !this.expired;
   }
 }
-
-export async function submitTrainingAttempt(payload: {
-  attemptId: string;
-  puzzleId: string;
-  mode: string;
-  elapsedMs: number;
-  allowedMs?: number;
-  outcome: string;
-}): Promise<{
-  attemptId: string;
-  puzzleId: string;
-  mode: string;
-  elapsedMs: number;
-  allowedMs?: number;
-  outcome: string;
-  recordedAt: string;
-}> {
-  const response = await fetch('/api/puzzles/attempt', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Failed to submit training attempt: ${response.statusText}`);
-  }
-
-  return response.json();
-}

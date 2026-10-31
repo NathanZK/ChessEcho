@@ -5,7 +5,7 @@ import Home from '../app/page';
 import { PuzzleFeedbackPanel } from '../components/PuzzleFeedbackPanel';
 import * as api from '../services/api';
 import { continuationService, moveEvaluationService } from '../services/continuationService';
-import { Puzzle } from '../mock/mockData';
+import { Puzzle } from '@/types/puzzle';
 
 vi.mock('react-chessboard', () => ({
   Chessboard: ({

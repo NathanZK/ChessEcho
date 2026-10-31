@@ -418,12 +418,11 @@ calculation-input branch, a null result currently falls through to the
 "Not strong enough (loses 0.00)" message rather than a distinct request-failure
 message.
 
-Two service helpers are not part of a routed user flow: `devLogin` exposes the
-development-only `POST /api/dev/session`, but no route invokes it; and
-`utils/timedTraining.ts` exports a standalone relative-path attempt submitter
-that is tested directly, while `Home` uses `services/api.ts` for its active
-`POST /api/puzzles/attempt` flow. The home route does not fetch historical games
-from ChessEcho; weakness cards use returned game URLs for external links.
+A development-only service helper is not part of a routed user flow: `devLogin`
+exposes `POST /api/dev/session`, but no route invokes it. All training attempts
+use `services/api.ts` for the active `POST /api/puzzles/attempt` flow. The home
+route does not fetch historical games from ChessEcho; weakness cards use
+returned game URLs for external links.
 
 Representative tests:
 [`SessionBootstrap.test.tsx`](../../frontend/src/__tests__/SessionBootstrap.test.tsx),
