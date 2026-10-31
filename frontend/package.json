@@ -37,5 +37,8 @@
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^4.1.12"
+  },
+  "overrides": {
+    "qs": "^6.17.1"
   }
 }
