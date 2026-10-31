@@ -39,9 +39,6 @@ export interface BlindfoldGameState {
   winner?: BlindfoldWinner;
 }
 
-/** @deprecated Preserve the feature's original public name for existing callers. */
-export type BlinfoldGameState = BlindfoldGameState;
-
 export type BlindfoldMoveResult = BlindfoldGameState | { error: string };
 
 const illegalMove = (error: unknown): { error: string } => ({

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { continuationService, createStochasticSelectionPolicy, moveEvaluationService } from '../services/continuationService';
-import { usePuzzleContinuation } from '../utils/usePuzzleContinuation';
+import { usePuzzleContinuation } from '../hooks/usePuzzleContinuation';
 import * as api from '../services/api';
 
 vi.mock('../services/api', async () => {

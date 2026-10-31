@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  BlinfoldGameState,
+  BlindfoldGameState,
   createBlinfoldGameState,
   applyPlayerMove,
   applyChessEchoMove,
@@ -13,7 +13,7 @@ import {
 
 describe('BlinfoldContinuationMode', () => {
   let initialFen: string;
-  let state: BlinfoldGameState;
+  let state: BlindfoldGameState;
 
   beforeEach(() => {
     initialFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
@@ -43,14 +43,14 @@ describe('BlinfoldContinuationMode', () => {
     it('should accept valid SAN move (e.g., e4)', () => {
       const result = applyPlayerMove(state, 'e4', state.currentFen);
       expect(result).not.toHaveProperty('error');
-      expect((result as BlinfoldGameState).moveCount).toBe(1);
-      expect((result as BlinfoldGameState).currentTurn).toBe('CHESSECHO');
+      expect((result as BlindfoldGameState).moveCount).toBe(1);
+      expect((result as BlindfoldGameState).currentTurn).toBe('CHESSECHO');
     });
 
     it('should accept valid SAN move (e.g., Nf3)', () => {
       const result = applyPlayerMove(state, 'Nf3', state.currentFen);
       expect(result).not.toHaveProperty('error');
-      expect((result as BlinfoldGameState).moveCount).toBe(1);
+      expect((result as BlindfoldGameState).moveCount).toBe(1);
     });
 
     it('should reject invalid SAN notation (Zz1)', () => {
@@ -66,35 +66,35 @@ describe('BlinfoldContinuationMode', () => {
 
     it('should update move history on valid move', () => {
       const result = applyPlayerMove(state, 'e4', state.currentFen);
-      expect((result as BlinfoldGameState).moveHistory).toHaveLength(1);
-      expect((result as BlinfoldGameState).moveHistory[0].san).toBe('e4');
+      expect((result as BlindfoldGameState).moveHistory).toHaveLength(1);
+      expect((result as BlindfoldGameState).moveHistory[0].san).toBe('e4');
     });
 
     it('should clear notation input after valid move', () => {
       state.notationInput = 'e4';
       const result = applyPlayerMove(state, 'e4', state.currentFen);
-      expect((result as BlinfoldGameState).notationInput).toBe('');
+      expect((result as BlindfoldGameState).notationInput).toBe('');
     });
 
     it('should clear notation error on valid move', () => {
       state.notationError = 'Previous error';
       const result = applyPlayerMove(state, 'e4', state.currentFen);
-      expect((result as BlinfoldGameState).notationError).toBeNull();
+      expect((result as BlindfoldGameState).notationError).toBeNull();
     });
   });
 
   describe('Alternating turn logic', () => {
     it('should switch to CHESSECHO turn after player move', () => {
       const result = applyPlayerMove(state, 'e4', state.currentFen);
-      expect((result as BlinfoldGameState).currentTurn).toBe('CHESSECHO');
+      expect((result as BlindfoldGameState).currentTurn).toBe('CHESSECHO');
     });
 
     it('should switch to PLAYER turn after ChessEcho move', () => {
-      let result = applyPlayerMove(state, 'e4', state.currentFen) as BlinfoldGameState;
-      const fen1 = (result as BlinfoldGameState).currentFen;
+      let result = applyPlayerMove(state, 'e4', state.currentFen) as BlindfoldGameState;
+      const fen1 = (result as BlindfoldGameState).currentFen;
       
-      result = applyChessEchoMove(result, 'c5', fen1) as BlinfoldGameState;
-      expect((result as BlinfoldGameState).currentTurn).toBe('PLAYER');
+      result = applyChessEchoMove(result, 'c5', fen1) as BlindfoldGameState;
+      expect((result as BlindfoldGameState).currentTurn).toBe('PLAYER');
     });
 
     it('should maintain correct turn sequence over multiple moves', () => {
@@ -107,12 +107,12 @@ describe('BlinfoldContinuationMode', () => {
       ];
 
       for (const { player, chessecho } of moves) {
-        let result = applyPlayerMove(currentState, player, currentState.currentFen) as BlinfoldGameState;
-        expect((result as BlinfoldGameState).currentTurn).toBe('CHESSECHO');
+        let result = applyPlayerMove(currentState, player, currentState.currentFen) as BlindfoldGameState;
+        expect((result as BlindfoldGameState).currentTurn).toBe('CHESSECHO');
         currentState = result;
 
-        result = applyChessEchoMove(currentState, chessecho, currentState.currentFen) as BlinfoldGameState;
-        expect((result as BlinfoldGameState).currentTurn).toBe('PLAYER');
+        result = applyChessEchoMove(currentState, chessecho, currentState.currentFen) as BlindfoldGameState;
+        expect((result as BlindfoldGameState).currentTurn).toBe('PLAYER');
         currentState = result;
       }
     });
@@ -121,34 +121,34 @@ describe('BlinfoldContinuationMode', () => {
   describe('State synchronization', () => {
     it('should update FEN after each move', () => {
       const result = applyPlayerMove(state, 'e4', state.currentFen);
-      expect((result as BlinfoldGameState).currentFen).not.toBe(initialFen);
+      expect((result as BlindfoldGameState).currentFen).not.toBe(initialFen);
     });
 
     it('should increment move count correctly', () => {
-      let result = applyPlayerMove(state, 'e4', state.currentFen) as BlinfoldGameState;
-      expect((result as BlinfoldGameState).moveCount).toBe(1);
+      let result = applyPlayerMove(state, 'e4', state.currentFen) as BlindfoldGameState;
+      expect((result as BlindfoldGameState).moveCount).toBe(1);
 
-      result = applyChessEchoMove(result, 'c5', (result as BlinfoldGameState).currentFen) as BlinfoldGameState;
-      expect((result as BlinfoldGameState).moveCount).toBe(2);
+      result = applyChessEchoMove(result, 'c5', (result as BlindfoldGameState).currentFen) as BlindfoldGameState;
+      expect((result as BlindfoldGameState).moveCount).toBe(2);
     });
 
     it('should maintain complete move history', () => {
-      let result = applyPlayerMove(state, 'e4', state.currentFen) as BlinfoldGameState;
-      result = applyChessEchoMove(result, 'c5', (result as BlinfoldGameState).currentFen) as BlinfoldGameState;
-      result = applyPlayerMove(result, 'd4', (result as BlinfoldGameState).currentFen) as BlinfoldGameState;
+      let result = applyPlayerMove(state, 'e4', state.currentFen) as BlindfoldGameState;
+      result = applyChessEchoMove(result, 'c5', (result as BlindfoldGameState).currentFen) as BlindfoldGameState;
+      result = applyPlayerMove(result, 'd4', (result as BlindfoldGameState).currentFen) as BlindfoldGameState;
 
-      expect((result as BlinfoldGameState).moveHistory).toHaveLength(3);
-      expect((result as BlinfoldGameState).moveHistory.map((m) => m.san)).toEqual(['e4', 'c5', 'd4']);
+      expect((result as BlindfoldGameState).moveHistory).toHaveLength(3);
+      expect((result as BlindfoldGameState).moveHistory.map((m) => m.san)).toEqual(['e4', 'c5', 'd4']);
     });
 
     it('should record FEN for each move in history', () => {
-      let result = applyPlayerMove(state, 'e4', state.currentFen) as BlinfoldGameState;
-      const fen1 = (result as BlinfoldGameState).currentFen;
-      expect((result as BlinfoldGameState).moveHistory[0].fen).toBe(fen1);
+      let result = applyPlayerMove(state, 'e4', state.currentFen) as BlindfoldGameState;
+      const fen1 = (result as BlindfoldGameState).currentFen;
+      expect((result as BlindfoldGameState).moveHistory[0].fen).toBe(fen1);
 
-      result = applyChessEchoMove(result, 'c5', fen1) as BlinfoldGameState;
-      const fen2 = (result as BlinfoldGameState).currentFen;
-      expect((result as BlinfoldGameState).moveHistory[1].fen).toBe(fen2);
+      result = applyChessEchoMove(result, 'c5', fen1) as BlindfoldGameState;
+      const fen2 = (result as BlindfoldGameState).currentFen;
+      expect((result as BlindfoldGameState).moveHistory[1].fen).toBe(fen2);
     });
   });
 
@@ -160,10 +160,10 @@ describe('BlinfoldContinuationMode', () => {
     });
 
     it('should return accumulated position with correct FEN', () => {
-      let result = applyPlayerMove(state, 'e4', state.currentFen) as BlinfoldGameState;
-      result = applyChessEchoMove(result, 'c5', (result as BlinfoldGameState).currentFen) as BlinfoldGameState;
+      let result = applyPlayerMove(state, 'e4', state.currentFen) as BlindfoldGameState;
+      result = applyChessEchoMove(result, 'c5', (result as BlindfoldGameState).currentFen) as BlindfoldGameState;
 
-      const position = getAccumulatedPosition(result as BlinfoldGameState);
+      const position = getAccumulatedPosition(result as BlindfoldGameState);
       expect(position.moveCount).toBe(2);
     });
 
@@ -174,21 +174,21 @@ describe('BlinfoldContinuationMode', () => {
       for (let i = 0; i < movesToPlay.length; i++) {
         const move = movesToPlay[i];
         if (result.currentTurn === 'PLAYER') {
-          result = applyPlayerMove(result, move, result.currentFen) as BlinfoldGameState;
+          result = applyPlayerMove(result, move, result.currentFen) as BlindfoldGameState;
         } else {
-          result = applyChessEchoMove(result, move, result.currentFen) as BlinfoldGameState;
+          result = applyChessEchoMove(result, move, result.currentFen) as BlindfoldGameState;
         }
       }
 
-      const position = getAccumulatedPosition(result as BlinfoldGameState);
+      const position = getAccumulatedPosition(result as BlindfoldGameState);
       expect(position.moveCount).toBe(5);
     });
   });
 
   describe('Reset functionality', () => {
     it('should clear state and return to initial FEN', () => {
-      let result = applyPlayerMove(state, 'e4', state.currentFen) as BlinfoldGameState;
-      result = applyChessEchoMove(result, 'c5', (result as BlinfoldGameState).currentFen) as BlinfoldGameState;
+      let result = applyPlayerMove(state, 'e4', state.currentFen) as BlindfoldGameState;
+      result = applyChessEchoMove(result, 'c5', (result as BlindfoldGameState).currentFen) as BlindfoldGameState;
 
       const reset = resetBlinfoldGame(result, initialFen);
       expect(reset.currentFen).toBe(initialFen);
@@ -197,13 +197,13 @@ describe('BlinfoldContinuationMode', () => {
     });
 
     it('should reset turn to PLAYER', () => {
-      const result = applyPlayerMove(state, 'e4', state.currentFen) as BlinfoldGameState;
+      const result = applyPlayerMove(state, 'e4', state.currentFen) as BlindfoldGameState;
       const reset = resetBlinfoldGame(result, initialFen);
       expect(reset.currentTurn).toBe('PLAYER');
     });
 
     it('should clear last moves and errors', () => {
-      const result = applyPlayerMove(state, 'e4', state.currentFen) as BlinfoldGameState;
+      const result = applyPlayerMove(state, 'e4', state.currentFen) as BlindfoldGameState;
       result.lastPlayerMove = { san: 'e4' };
       result.notationError = 'Some error';
 
@@ -235,14 +235,14 @@ describe('BlinfoldContinuationMode', () => {
   describe('Move quality preservation', () => {
     it('should store eval loss with player move', () => {
       const result = applyPlayerMove(state, 'e4', state.currentFen);
-      const newState = result as BlinfoldGameState;
+      const newState = result as BlindfoldGameState;
       expect(newState.lastPlayerMove).not.toBeNull();
       expect(newState.lastPlayerMove?.san).toBe('e4');
     });
 
     it('should allow eval loss to be populated from feedback', () => {
       const result = applyPlayerMove(state, 'e4', state.currentFen);
-      const newState = result as BlinfoldGameState;
+      const newState = result as BlindfoldGameState;
       newState.lastPlayerMove = { san: 'e4', evalLoss: 0.25 };
       expect(newState.lastPlayerMove?.evalLoss).toBe(0.25);
     });
@@ -263,21 +263,21 @@ describe('BlinfoldContinuationMode', () => {
 
       let moveCount = 0;
       for (const [playerMove, chessechoMove] of movePairs) {
-        result = applyPlayerMove(result, playerMove, result.currentFen) as BlinfoldGameState;
-        expect((result as BlinfoldGameState).moveCount).toBe(++moveCount);
+        result = applyPlayerMove(result, playerMove, result.currentFen) as BlindfoldGameState;
+        expect((result as BlindfoldGameState).moveCount).toBe(++moveCount);
 
-        result = applyChessEchoMove(result, chessechoMove, result.currentFen) as BlinfoldGameState;
-        expect((result as BlinfoldGameState).moveCount).toBe(++moveCount);
+        result = applyChessEchoMove(result, chessechoMove, result.currentFen) as BlindfoldGameState;
+        expect((result as BlindfoldGameState).moveCount).toBe(++moveCount);
       }
 
-      expect((result as BlinfoldGameState).moveCount).toBe(12);
-      expect((result as BlinfoldGameState).moveHistory).toHaveLength(12);
+      expect((result as BlindfoldGameState).moveCount).toBe(12);
+      expect((result as BlindfoldGameState).moveHistory).toHaveLength(12);
     });
   });
 
   describe('Provider failure handling', () => {
     it('should handle null ChessEcho response', () => {
-      let result = applyPlayerMove(state, 'e4', state.currentFen) as BlinfoldGameState;
+      let result = applyPlayerMove(state, 'e4', state.currentFen) as BlindfoldGameState;
 
       result = {
         ...result,
@@ -286,12 +286,12 @@ describe('BlinfoldContinuationMode', () => {
         lastChessEchoMove: null,
       };
 
-      expect((result as BlinfoldGameState).isFailed).toBe(true);
-      expect((result as BlinfoldGameState).currentTurn).toBe('CHESSECHO');
+      expect((result as BlindfoldGameState).isFailed).toBe(true);
+      expect((result as BlindfoldGameState).currentTurn).toBe('CHESSECHO');
     });
 
     it('should allow reset after provider failure', () => {
-      const result = applyPlayerMove(state, 'e4', state.currentFen) as BlinfoldGameState;
+      const result = applyPlayerMove(state, 'e4', state.currentFen) as BlindfoldGameState;
       result.isFailed = true;
 
       const reset = resetBlinfoldGame(result, initialFen);
@@ -302,8 +302,8 @@ describe('BlinfoldContinuationMode', () => {
 
   describe('Exit/cancel consistency', () => {
     it('should preserve state during exit', () => {
-      let result = applyPlayerMove(state, 'e4', state.currentFen) as BlinfoldGameState;
-      result = applyChessEchoMove(result, 'c5', (result as BlinfoldGameState).currentFen) as BlinfoldGameState;
+      let result = applyPlayerMove(state, 'e4', state.currentFen) as BlindfoldGameState;
+      result = applyChessEchoMove(result, 'c5', (result as BlindfoldGameState).currentFen) as BlindfoldGameState;
 
       const exitState = { ...result };
       expect(exitState.moveHistory).toHaveLength(2);
@@ -311,7 +311,7 @@ describe('BlinfoldContinuationMode', () => {
     });
 
     it('should allow clean exit via reset', () => {
-      const result = applyPlayerMove(state, 'e4', state.currentFen) as BlinfoldGameState;
+      const result = applyPlayerMove(state, 'e4', state.currentFen) as BlindfoldGameState;
       const reset = resetBlinfoldGame(result, initialFen);
 
       expect(reset.currentFen).toBe(initialFen);
@@ -368,7 +368,7 @@ describe('BlinfoldContinuationMode', () => {
       // Fool's mate setup: 1. f3 e5 2. g4 Qh4#
       const foolsMateFen = 'rnbqkbnr/pppp1ppp/8/4p3/6P1/5P2/PPPPP2P/RNBQKBNR b KQkq - 0 2';
       const state = createBlinfoldGameState(foolsMateFen, 'BLACK');
-      const result = applyPlayerMove(state, 'Qh4#', foolsMateFen) as BlinfoldGameState;
+      const result = applyPlayerMove(state, 'Qh4#', foolsMateFen) as BlindfoldGameState;
 
       expect(result.isTerminal).toBe(true);
       expect(result.terminalReason).toBe('CHECKMATE');
@@ -378,7 +378,7 @@ describe('BlinfoldContinuationMode', () => {
     it('detects checkmate when ChessEcho delivers checkmate', () => {
       const foolsMateFen = 'rnbqkbnr/pppp1ppp/8/4p3/6P1/5P2/PPPPP2P/RNBQKBNR b KQkq - 0 2';
       const state = createBlinfoldGameState(foolsMateFen, 'WHITE');
-      const result = applyChessEchoMove(state, 'Qh4#', foolsMateFen) as BlinfoldGameState;
+      const result = applyChessEchoMove(state, 'Qh4#', foolsMateFen) as BlindfoldGameState;
 
       expect(result.isTerminal).toBe(true);
       expect(result.terminalReason).toBe('CHECKMATE');
@@ -396,7 +396,7 @@ describe('BlinfoldContinuationMode', () => {
       // 8/8/8/8/8/5k2/5q2/7K w - - 1 2 -> White king on h1 has no legal moves, not in check -> Stalemate!
       const beforeStalemate = '8/8/8/8/8/5k2/4q3/7K b - - 0 1';
       const state = createBlinfoldGameState(beforeStalemate, 'BLACK');
-      const result = applyPlayerMove(state, 'Qf2', beforeStalemate) as BlinfoldGameState;
+      const result = applyPlayerMove(state, 'Qf2', beforeStalemate) as BlindfoldGameState;
 
       expect(result.isTerminal).toBe(true);
       expect(result.terminalReason).toBe('STALEMATE');
@@ -406,7 +406,7 @@ describe('BlinfoldContinuationMode', () => {
     it('prevents moves once terminal', () => {
       const foolsMateFen = 'rnbqkbnr/pppp1ppp/8/4p3/6P1/5P2/PPPPP2P/RNBQKBNR b KQkq - 0 2';
       const state = createBlinfoldGameState(foolsMateFen, 'BLACK');
-      const checkmated = applyPlayerMove(state, 'Qh4#', foolsMateFen) as BlinfoldGameState;
+      const checkmated = applyPlayerMove(state, 'Qh4#', foolsMateFen) as BlindfoldGameState;
 
       const subsequent = applyPlayerMove(checkmated, 'e4', checkmated.currentFen);
       expect(subsequent).toHaveProperty('error');
@@ -416,7 +416,7 @@ describe('BlinfoldContinuationMode', () => {
   describe('Move evaluation helper', () => {
     it('sets move evaluation loss, acceptability, and feedbackText on lastPlayerMove', () => {
       const initial = createBlinfoldGameState(initialFen, 'WHITE');
-      const moved = applyPlayerMove(initial, 'e4', initialFen) as BlinfoldGameState;
+      const moved = applyPlayerMove(initial, 'e4', initialFen) as BlindfoldGameState;
 
       const evaluated = setPlayerMoveEvaluation(moved, 0.05, true, 'Good move! (+0.05 pawns)');
       expect(evaluated.lastPlayerMove?.evalLoss).toBe(0.05);

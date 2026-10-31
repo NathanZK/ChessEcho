@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { Chess } from 'chess.js';
 import {
-  BlinfoldGameState,
+  BlindfoldGameState,
   createBlinfoldGameState,
   applyPlayerMove,
   applyChessEchoMove,
@@ -22,33 +22,33 @@ describe('BlinfoldVisualizationIntegration', () => {
       let state = createBlinfoldGameState(initialFen);
 
       // Iteration 1
-      let result = applyPlayerMove(state, 'e4', state.currentFen) as BlinfoldGameState;
+      let result = applyPlayerMove(state, 'e4', state.currentFen) as BlindfoldGameState;
       expect(result).not.toHaveProperty('error');
-      expect((result as BlinfoldGameState).currentTurn).toBe('CHESSECHO');
-      state = result as BlinfoldGameState;
+      expect((result as BlindfoldGameState).currentTurn).toBe('CHESSECHO');
+      state = result as BlindfoldGameState;
 
-      result = applyChessEchoMove(state, 'c5', state.currentFen) as BlinfoldGameState;
+      result = applyChessEchoMove(state, 'c5', state.currentFen) as BlindfoldGameState;
       expect(result).not.toHaveProperty('error');
-      expect((result as BlinfoldGameState).currentTurn).toBe('PLAYER');
-      state = result as BlinfoldGameState;
+      expect((result as BlindfoldGameState).currentTurn).toBe('PLAYER');
+      state = result as BlindfoldGameState;
 
       // Iteration 2
-      result = applyPlayerMove(state, 'd4', state.currentFen) as BlinfoldGameState;
+      result = applyPlayerMove(state, 'd4', state.currentFen) as BlindfoldGameState;
       expect(result).not.toHaveProperty('error');
-      state = result as BlinfoldGameState;
+      state = result as BlindfoldGameState;
 
-      result = applyChessEchoMove(state, 'cxd4', state.currentFen) as BlinfoldGameState;
+      result = applyChessEchoMove(state, 'cxd4', state.currentFen) as BlindfoldGameState;
       expect(result).not.toHaveProperty('error');
-      state = result as BlinfoldGameState;
+      state = result as BlindfoldGameState;
 
       // Iteration 3
-      result = applyPlayerMove(state, 'Nf3', state.currentFen) as BlinfoldGameState;
+      result = applyPlayerMove(state, 'Nf3', state.currentFen) as BlindfoldGameState;
       expect(result).not.toHaveProperty('error');
-      state = result as BlinfoldGameState;
+      state = result as BlindfoldGameState;
 
-      result = applyChessEchoMove(state, 'Nf6', state.currentFen) as BlinfoldGameState;
+      result = applyChessEchoMove(state, 'Nf6', state.currentFen) as BlindfoldGameState;
       expect(result).not.toHaveProperty('error');
-      state = result as BlinfoldGameState;
+      state = result as BlindfoldGameState;
 
       expect(state.moveCount).toBe(6);
       expect(state.moveHistory).toHaveLength(6);
@@ -60,13 +60,13 @@ describe('BlinfoldVisualizationIntegration', () => {
     it('should display player and ChessEcho moves correctly', () => {
       let state = createBlinfoldGameState(initialFen);
 
-      let result = applyPlayerMove(state, 'e4', state.currentFen) as BlinfoldGameState;
-      state = result as BlinfoldGameState;
+      let result = applyPlayerMove(state, 'e4', state.currentFen) as BlindfoldGameState;
+      state = result as BlindfoldGameState;
       expect(state.lastPlayerMove?.san).toBe('e4');
       expect(state.moveHistory[0].san).toBe('e4');
 
-      result = applyChessEchoMove(state, 'c5', state.currentFen) as BlinfoldGameState;
-      state = result as BlinfoldGameState;
+      result = applyChessEchoMove(state, 'c5', state.currentFen) as BlindfoldGameState;
+      state = result as BlindfoldGameState;
       expect(state.lastChessEchoMove?.san).toBe('c5');
       expect(state.moveHistory.map((m) => m.san)).toEqual(['e4', 'c5']);
     });
@@ -74,14 +74,14 @@ describe('BlinfoldVisualizationIntegration', () => {
     it('should maintain separate tracking of moves', () => {
       let state = createBlinfoldGameState(initialFen);
 
-      let result = applyPlayerMove(state, 'e4', state.currentFen) as BlinfoldGameState;
-      state = result as BlinfoldGameState;
+      let result = applyPlayerMove(state, 'e4', state.currentFen) as BlindfoldGameState;
+      state = result as BlindfoldGameState;
 
-      result = applyChessEchoMove(state, 'c5', state.currentFen) as BlinfoldGameState;
-      state = result as BlinfoldGameState;
+      result = applyChessEchoMove(state, 'c5', state.currentFen) as BlindfoldGameState;
+      state = result as BlindfoldGameState;
 
-      result = applyPlayerMove(state, 'd4', state.currentFen) as BlinfoldGameState;
-      state = result as BlinfoldGameState;
+      result = applyPlayerMove(state, 'd4', state.currentFen) as BlindfoldGameState;
+      state = result as BlindfoldGameState;
 
       expect(state.lastPlayerMove?.san).toBe('d4');
       expect(state.lastChessEchoMove?.san).toBe('c5');
@@ -97,11 +97,11 @@ describe('BlinfoldVisualizationIntegration', () => {
       ];
 
       for (const { player, chessecho } of moves) {
-        let result = applyPlayerMove(state, player, state.currentFen) as BlinfoldGameState;
-        state = result as BlinfoldGameState;
+        let result = applyPlayerMove(state, player, state.currentFen) as BlindfoldGameState;
+        state = result as BlindfoldGameState;
 
-        result = applyChessEchoMove(state, chessecho, state.currentFen) as BlinfoldGameState;
-        state = result as BlinfoldGameState;
+        result = applyChessEchoMove(state, chessecho, state.currentFen) as BlindfoldGameState;
+        state = result as BlindfoldGameState;
       }
 
       const expected = ['e4', 'c5', 'd4', 'cxd4', 'Nf3', 'Nf6'];
@@ -115,13 +115,13 @@ describe('BlinfoldVisualizationIntegration', () => {
       const moves = ['e4', 'c5', 'd4', 'cxd4', 'Nf3', 'Nf6'];
 
       for (const move of moves) {
-        let result: BlinfoldGameState | { error: string };
+        let result: BlindfoldGameState | { error: string };
         if (state.currentTurn === 'PLAYER') {
-          result = applyPlayerMove(state, move, state.currentFen) as BlinfoldGameState;
+          result = applyPlayerMove(state, move, state.currentFen) as BlindfoldGameState;
         } else {
-          result = applyChessEchoMove(state, move, state.currentFen) as BlinfoldGameState;
+          result = applyChessEchoMove(state, move, state.currentFen) as BlindfoldGameState;
         }
-        state = result as BlinfoldGameState;
+        state = result as BlindfoldGameState;
       }
 
       const revealed = { ...state, isVisible: true };
@@ -134,13 +134,13 @@ describe('BlinfoldVisualizationIntegration', () => {
       const moves = ['e4', 'c5', 'd4', 'cxd4', 'Nf3', 'Nf6', 'Nc3', 'Nc6'];
 
       for (const move of moves) {
-        let result: BlinfoldGameState | { error: string };
+        let result: BlindfoldGameState | { error: string };
         if (state.currentTurn === 'PLAYER') {
-          result = applyPlayerMove(state, move, state.currentFen) as BlinfoldGameState;
+          result = applyPlayerMove(state, move, state.currentFen) as BlindfoldGameState;
         } else {
-          result = applyChessEchoMove(state, move, state.currentFen) as BlinfoldGameState;
+          result = applyChessEchoMove(state, move, state.currentFen) as BlindfoldGameState;
         }
-        state = result as BlinfoldGameState;
+        state = result as BlindfoldGameState;
       }
 
       const reconstructed = rebuildPositionFromHistory(initialFen, state.moveHistory);
@@ -152,13 +152,13 @@ describe('BlinfoldVisualizationIntegration', () => {
       const moves = ['e4', 'c5', 'd4', 'cxd4'];
 
       for (const move of moves) {
-        let result: BlinfoldGameState | { error: string };
+        let result: BlindfoldGameState | { error: string };
         if (state.currentTurn === 'PLAYER') {
-          result = applyPlayerMove(state, move, state.currentFen) as BlinfoldGameState;
+          result = applyPlayerMove(state, move, state.currentFen) as BlindfoldGameState;
         } else {
-          result = applyChessEchoMove(state, move, state.currentFen) as BlinfoldGameState;
+          result = applyChessEchoMove(state, move, state.currentFen) as BlindfoldGameState;
         }
-        state = result as BlinfoldGameState;
+        state = result as BlindfoldGameState;
       }
 
       const position = getAccumulatedPosition(state);
@@ -172,13 +172,13 @@ describe('BlinfoldVisualizationIntegration', () => {
       const moves = ['e4', 'c5', 'd4', 'cxd4', 'Nf3', 'Nf6'];
 
       for (const move of moves) {
-        let result: BlinfoldGameState | { error: string };
+        let result: BlindfoldGameState | { error: string };
         if (state.currentTurn === 'PLAYER') {
-          result = applyPlayerMove(state, move, state.currentFen) as BlinfoldGameState;
+          result = applyPlayerMove(state, move, state.currentFen) as BlindfoldGameState;
         } else {
-          result = applyChessEchoMove(state, move, state.currentFen) as BlinfoldGameState;
+          result = applyChessEchoMove(state, move, state.currentFen) as BlindfoldGameState;
         }
-        state = result as BlinfoldGameState;
+        state = result as BlindfoldGameState;
       }
 
       expect(state.moveCount).toBe(6);
@@ -194,13 +194,13 @@ describe('BlinfoldVisualizationIntegration', () => {
       const moves = ['e4', 'c5', 'd4'];
 
       for (const move of moves) {
-        let result: BlinfoldGameState | { error: string };
+        let result: BlindfoldGameState | { error: string };
         if (state.currentTurn === 'PLAYER') {
-          result = applyPlayerMove(state, move, state.currentFen) as BlinfoldGameState;
+          result = applyPlayerMove(state, move, state.currentFen) as BlindfoldGameState;
         } else {
-          result = applyChessEchoMove(state, move, state.currentFen) as BlinfoldGameState;
+          result = applyChessEchoMove(state, move, state.currentFen) as BlindfoldGameState;
         }
-        state = result as BlinfoldGameState;
+        state = result as BlindfoldGameState;
       }
 
       const reset = resetBlinfoldGame(state, initialFen);
@@ -213,8 +213,8 @@ describe('BlinfoldVisualizationIntegration', () => {
     it('should handle null ChessEcho response', () => {
       let state = createBlinfoldGameState(initialFen);
 
-      const result: BlinfoldGameState | { error: string } = applyPlayerMove(state, 'e4', state.currentFen);
-      state = result as BlinfoldGameState;
+      const result: BlindfoldGameState | { error: string } = applyPlayerMove(state, 'e4', state.currentFen);
+      state = result as BlindfoldGameState;
 
       state = { ...state, isLoading: false, isFailed: true, lastChessEchoMove: null };
       expect(state.isFailed).toBe(true);
@@ -227,14 +227,14 @@ describe('BlinfoldVisualizationIntegration', () => {
     it('should preserve history before failure', () => {
       let state = createBlinfoldGameState(initialFen);
 
-      let result = applyPlayerMove(state, 'e4', state.currentFen) as BlinfoldGameState;
-      state = result as BlinfoldGameState;
+      let result = applyPlayerMove(state, 'e4', state.currentFen) as BlindfoldGameState;
+      state = result as BlindfoldGameState;
 
-      result = applyChessEchoMove(state, 'c5', state.currentFen) as BlinfoldGameState;
-      state = result as BlinfoldGameState;
+      result = applyChessEchoMove(state, 'c5', state.currentFen) as BlindfoldGameState;
+      state = result as BlindfoldGameState;
 
-      result = applyPlayerMove(state, 'd4', state.currentFen) as BlinfoldGameState;
-      state = result as BlinfoldGameState;
+      result = applyPlayerMove(state, 'd4', state.currentFen) as BlindfoldGameState;
+      state = result as BlindfoldGameState;
 
       state = { ...state, isFailed: true };
       expect(state.moveHistory).toHaveLength(3);
@@ -248,13 +248,13 @@ describe('BlinfoldVisualizationIntegration', () => {
       const moves = ['e4', 'c5', 'd4', 'cxd4'];
 
       for (const move of moves) {
-        let result: BlinfoldGameState | { error: string };
+        let result: BlindfoldGameState | { error: string };
         if (state.currentTurn === 'PLAYER') {
-          result = applyPlayerMove(state, move, state.currentFen) as BlinfoldGameState;
+          result = applyPlayerMove(state, move, state.currentFen) as BlindfoldGameState;
         } else {
-          result = applyChessEchoMove(state, move, state.currentFen) as BlinfoldGameState;
+          result = applyChessEchoMove(state, move, state.currentFen) as BlindfoldGameState;
         }
-        state = result as BlinfoldGameState;
+        state = result as BlindfoldGameState;
       }
 
       const exitState = { ...state };
@@ -266,8 +266,8 @@ describe('BlinfoldVisualizationIntegration', () => {
     it('should allow clean reset after cancel', () => {
       let state = createBlinfoldGameState(initialFen);
 
-      const result: BlinfoldGameState | { error: string } = applyPlayerMove(state, 'e4', state.currentFen);
-      state = result as BlinfoldGameState;
+      const result: BlindfoldGameState | { error: string } = applyPlayerMove(state, 'e4', state.currentFen);
+      state = result as BlindfoldGameState;
 
       const reset = resetBlinfoldGame(state, initialFen);
       expect(reset.currentFen).toBe(initialFen);
@@ -281,13 +281,13 @@ describe('BlinfoldVisualizationIntegration', () => {
       const moves = ['e4', 'c5', 'd4', 'cxd4', 'Nf3', 'Nf6', 'Nc3', 'Nc6', 'Nxd4', 'a6'];
 
       for (const move of moves) {
-        let result: BlinfoldGameState | { error: string };
+        let result: BlindfoldGameState | { error: string };
         if (state.currentTurn === 'PLAYER') {
-          result = applyPlayerMove(state, move, state.currentFen) as BlinfoldGameState;
+          result = applyPlayerMove(state, move, state.currentFen) as BlindfoldGameState;
         } else {
-          result = applyChessEchoMove(state, move, state.currentFen) as BlinfoldGameState;
+          result = applyChessEchoMove(state, move, state.currentFen) as BlindfoldGameState;
         }
-        state = result as BlinfoldGameState;
+        state = result as BlindfoldGameState;
       }
 
       // Verify FENs match at each step
@@ -302,13 +302,13 @@ describe('BlinfoldVisualizationIntegration', () => {
       const expectedMoves = ['e4', 'c5', 'd4', 'cxd4', 'Nf3'];
 
       for (const move of expectedMoves) {
-        let result: BlinfoldGameState | { error: string };
+        let result: BlindfoldGameState | { error: string };
         if (state.currentTurn === 'PLAYER') {
-          result = applyPlayerMove(state, move, state.currentFen) as BlinfoldGameState;
+          result = applyPlayerMove(state, move, state.currentFen) as BlindfoldGameState;
         } else {
-          result = applyChessEchoMove(state, move, state.currentFen) as BlinfoldGameState;
+          result = applyChessEchoMove(state, move, state.currentFen) as BlindfoldGameState;
         }
-        state = result as BlinfoldGameState;
+        state = result as BlindfoldGameState;
       }
 
       expect(state.moveHistory.map((m) => m.san)).toEqual(expectedMoves);
@@ -328,15 +328,15 @@ describe('BlinfoldVisualizationIntegration', () => {
         const legalMoves = chess.moves();
         const move = legalMoves[0];
 
-        let result: BlinfoldGameState | { error: string };
+        let result: BlindfoldGameState | { error: string };
         if (state.currentTurn === 'PLAYER') {
-          result = applyPlayerMove(state, move, state.currentFen) as BlinfoldGameState;
+          result = applyPlayerMove(state, move, state.currentFen) as BlindfoldGameState;
         } else {
-          result = applyChessEchoMove(state, move, state.currentFen) as BlinfoldGameState;
+          result = applyChessEchoMove(state, move, state.currentFen) as BlindfoldGameState;
         }
 
         if (result && !('error' in result)) {
-          state = result as BlinfoldGameState;
+          state = result as BlindfoldGameState;
           moveCount++;
         }
       }

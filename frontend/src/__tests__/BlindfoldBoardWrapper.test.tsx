@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
-import { BlinfoldBoardWrapper } from '../components/BlinfoldBoardWrapper';
+import { BlindfoldBoardWrapper } from '../components/BlindfoldBoardWrapper';
 import {
   BOARD_CONTAINER_CLASS,
   BOARD_DARK_SQUARE_STYLE,
@@ -20,13 +20,13 @@ vi.mock('react-chessboard', () => ({
 
 const FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
-describe('BlinfoldBoardWrapper', () => {
+describe('BlindfoldBoardWrapper', () => {
   beforeEach(() => {
     captured.options = null;
   });
 
   it('renders the hidden placeholder inside the shared board container and frame', () => {
-    render(<BlinfoldBoardWrapper fen={FEN} isVisible={false} onReveal={() => {}} boardOrientation="white" />);
+    render(<BlindfoldBoardWrapper fen={FEN} isVisible={false} onReveal={() => {}} boardOrientation="white" />);
     const container = screen.getByTestId('blindfold-board');
     expect(container.className).toBe(BOARD_CONTAINER_CLASS);
     expect((container.firstElementChild as HTMLElement).className).toBe(BOARD_FRAME_CLASS);
@@ -35,7 +35,7 @@ describe('BlinfoldBoardWrapper', () => {
   });
 
   it('renders the revealed board with shared styles, frame, and the given orientation', () => {
-    render(<BlinfoldBoardWrapper fen={FEN} isVisible onReveal={() => {}} boardOrientation="black" />);
+    render(<BlindfoldBoardWrapper fen={FEN} isVisible onReveal={() => {}} boardOrientation="black" />);
     const container = screen.getByTestId('blindfold-board');
     expect(container.className).toBe(BOARD_CONTAINER_CLASS);
     expect((container.firstElementChild as HTMLElement).className).toBe(BOARD_FRAME_CLASS);
@@ -50,7 +50,7 @@ describe('BlinfoldBoardWrapper', () => {
 
   it('renders "Hide board" button when visible and triggers onHide', () => {
     const onHide = vi.fn();
-    render(<BlinfoldBoardWrapper fen={FEN} isVisible onReveal={() => {}} onHide={onHide} boardOrientation="white" />);
+    render(<BlindfoldBoardWrapper fen={FEN} isVisible onReveal={() => {}} onHide={onHide} boardOrientation="white" />);
 
     const hideButton = screen.getByRole('button', { name: 'Hide board' });
     expect(hideButton).toBeInTheDocument();
@@ -60,7 +60,7 @@ describe('BlinfoldBoardWrapper', () => {
 
   it('renders reveal button when hidden and triggers onReveal', () => {
     const onReveal = vi.fn();
-    render(<BlinfoldBoardWrapper fen={FEN} isVisible={false} onReveal={onReveal} boardOrientation="white" />);
+    render(<BlindfoldBoardWrapper fen={FEN} isVisible={false} onReveal={onReveal} boardOrientation="white" />);
 
     const revealButton = screen.getByRole('button', { name: /reveal/i });
     expect(revealButton).toBeInTheDocument();
