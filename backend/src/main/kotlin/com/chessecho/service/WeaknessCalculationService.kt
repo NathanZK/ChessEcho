@@ -16,7 +16,6 @@ import com.chessecho.repository.PuzzleSchedulingEventRepository
 import com.chessecho.repository.WeaknessAggregation
 import com.chessecho.service.auth.AuthenticatedPrincipal
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.context.request.RequestContextHolder
@@ -30,16 +29,10 @@ class WeaknessCalculationService(
     private val engineAnalysisRepository: EngineAnalysisRepository,
     private val practicalEvidenceService: PracticalEvidenceService,
     private val weaknessPriorityPolicy: WeaknessPriorityPolicy,
+    private val accountOwnershipService: AccountOwnershipService,
+    private val puzzleSchedulingEventRepository: PuzzleSchedulingEventRepository,
+    private val adaptivePuzzleSchedulingPolicy: AdaptivePuzzleSchedulingPolicy,
 ) {
-    @Autowired(required = false)
-    private var accountOwnershipService: AccountOwnershipService? = null
-
-    @Autowired(required = false)
-    private var puzzleSchedulingEventRepository: PuzzleSchedulingEventRepository? = null
-
-    @Autowired(required = false)
-    private var adaptivePuzzleSchedulingPolicy: AdaptivePuzzleSchedulingPolicy? = null
-
     private val log = LoggerFactory.getLogger(javaClass)
     private val objectiveWeaknessAnalyzer: ObjectiveWeaknessAnalyzer = ObjectiveWeaknessAnalyzer()
 
@@ -65,9 +58,6 @@ class WeaknessCalculationService(
 
         val account = resolveAccount(platform, username, playerColor, minEvalLoss, principal, accountId)
         val color = playerColor.name
-        val totalOccurrences = positionOccurrenceRepository.countByChessAccountId(account.id)
-        val colorFilteredOccurrences =
-            positionOccurrenceRepository.countByChessAccountIdAndPlayerColorOrBoth(account.id, color)
         val aggregations =
             positionOccurrenceRepository.findWeaknessAggregations(
                 chessAccountId = account.id,
@@ -86,8 +76,8 @@ class WeaknessCalculationService(
                 minEvalLoss = minEvalLoss,
                 minTimesReached = minTimesReached,
                 minMistakeCount = minMistakeCount,
-                totalOccurrences = totalOccurrences,
-                colorFilteredOccurrences = colorFilteredOccurrences,
+                candidateAggregations = 0,
+                candidateOccurrences = 0,
                 qualifyingPositions = 0,
                 result = emptyList(),
             )
@@ -113,8 +103,8 @@ class WeaknessCalculationService(
             minEvalLoss = minEvalLoss,
             minTimesReached = minTimesReached,
             minMistakeCount = minMistakeCount,
-            totalOccurrences = totalOccurrences,
-            colorFilteredOccurrences = colorFilteredOccurrences,
+            candidateAggregations = aggregations.size,
+            candidateOccurrences = occurrences.size,
             qualifyingPositions = aggregations.size,
             result = result,
         )
@@ -130,11 +120,10 @@ class WeaknessCalculationService(
         accountId: UUID?,
     ): ChessAccount {
         val requestAttributes = RequestContextHolder.getRequestAttributes()
-        val ownership = accountOwnershipService
-        return if (ownership != null && accountId != null) {
-            ownership.resolveSharedAccount(accountId, principal)
-        } else if (ownership != null && (requestAttributes != null || principal != null)) {
-            ownership.resolvePrivateRead(platform, username, principal)
+        return if (accountId != null) {
+            accountOwnershipService.resolveSharedAccount(accountId, principal)
+        } else if (requestAttributes != null || principal != null) {
+            accountOwnershipService.resolvePrivateRead(platform, username, principal)
         } else {
             chessAccountRepository.findByPlatformAndUsernameIgnoreCase(platform.name, username)
                 ?: run {
@@ -338,9 +327,7 @@ class WeaknessCalculationService(
         color: String,
         now: Instant,
     ): List<WeaknessResponse> {
-        val eventRepository = puzzleSchedulingEventRepository
-        val schedulingPolicy = adaptivePuzzleSchedulingPolicy
-        if (principal == null || eventRepository == null || schedulingPolicy == null) {
+        if (principal == null) {
             return baselineResult.sortedWith(
                 compareByDescending<WeaknessResponse> { it.recommendationPriority }
                     .thenByDescending { it.priority }
@@ -350,7 +337,7 @@ class WeaknessCalculationService(
         }
 
         val schedulingHistory =
-            eventRepository
+            puzzleSchedulingEventRepository
                 .findHistory(principal.appUserId, account.id, positionIds, color)
                 .groupBy { it.position.id to it.playerColor }
 
@@ -367,7 +354,7 @@ class WeaknessCalculationService(
                             )
                         }
                 weakness to
-                    schedulingPolicy.schedule(
+                    adaptivePuzzleSchedulingPolicy.schedule(
                         weakness.recommendationPriority,
                         weakness.positionId,
                         events,
@@ -458,8 +445,8 @@ class WeaknessCalculationService(
         minEvalLoss: Double,
         minTimesReached: Int,
         minMistakeCount: Int,
-        totalOccurrences: Long,
-        colorFilteredOccurrences: Long,
+        candidateAggregations: Int,
+        candidateOccurrences: Int,
         qualifyingPositions: Int,
         result: List<WeaknessResponse>,
     ) {
@@ -469,7 +456,7 @@ class WeaknessCalculationService(
                 ?: weaknessPriorityPolicy.policyVersion
         log.info(
             "Weakness calculation pipeline: accountId={} platform={} playerColor={} minEvalLoss={} " +
-                "minTimesReached={} minMistakeCount={} totalOccurrences={} colorFilteredOccurrences={} " +
+                "minTimesReached={} minMistakeCount={} candidateAggregations={} candidateOccurrences={} " +
                 "qualifyingPositions={} finalResultCount={} practicalEligibleGames={} practicalIneligibleGames={} " +
                 "practicalExcludedGames={} sideCorroborationConflictGames={} rankingEligibleCandidates={} " +
                 "rankingAppliedCandidates={} rankingEnabled={} policyVersion={} durationMs={}",
@@ -479,8 +466,8 @@ class WeaknessCalculationService(
             minEvalLoss,
             minTimesReached,
             minMistakeCount,
-            totalOccurrences,
-            colorFilteredOccurrences,
+            candidateAggregations,
+            candidateOccurrences,
             qualifyingPositions,
             result.size,
             evidence.sumOf { it.eligibleGames },

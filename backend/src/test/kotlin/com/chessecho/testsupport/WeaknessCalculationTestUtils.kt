@@ -21,7 +21,6 @@ import org.mockito.Mockito.lenient
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.eq
-import org.springframework.test.util.ReflectionTestUtils
 import java.time.Instant
 import java.util.UUID
 
@@ -303,17 +302,6 @@ object WeaknessCalculationTestUtils {
         lenient().`when`(
             adaptivePuzzleSchedulingPolicy.schedule(any(), any(), any(), any()),
         ).thenAnswer { invocation -> invocation.getArgument<Double>(0) }
-
-        ReflectionTestUtils.setField(
-            service,
-            "puzzleSchedulingEventRepository",
-            puzzleSchedulingEventRepository,
-        )
-        ReflectionTestUtils.setField(
-            service,
-            "adaptivePuzzleSchedulingPolicy",
-            adaptivePuzzleSchedulingPolicy,
-        )
     }
 
     fun setupPracticalRanking(
