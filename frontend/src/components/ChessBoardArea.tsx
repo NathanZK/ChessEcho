@@ -15,8 +15,8 @@ import {
   cloneChessGameWithHistory,
   createChessGameAtPosition,
 } from '@/utils/chessGame';
-
-export const CHALLENGE_MAX_EVAL_LOSS = 0.20;
+import { STRICT_OPPONENT_EVAL_LOSS_THRESHOLD } from '@/utils/practiceConstants';
+import { formatPawnLoss } from '@/utils/formatters';
 
 export interface ChessBoardHistorySnapshot {
   fens: string[];
@@ -410,20 +410,19 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
             let errorMessage: string | null = null;
 
             if (shouldUseStrictThreshold) {
-              const OPPONENT_MOVE_MAX_EVAL_LOSS = 0.20;
-              if (lossCp <= OPPONENT_MOVE_MAX_EVAL_LOSS) {
+              if (lossCp <= STRICT_OPPONENT_EVAL_LOSS_THRESHOLD) {
                 acceptable = true;
               } else {
                 acceptable = false;
                 if (res.acceptable) {
-                  errorMessage = `Good response, but there's a stronger move. This move loses ${lossCp.toFixed(2)} pawns. Keep looking.`;
+                  errorMessage = `Good response, but there's a stronger move. This move loses ${formatPawnLoss(lossCp)} pawns. Keep looking.`;
                 } else {
-                  errorMessage = `That move is too inaccurate. It loses ${lossCp.toFixed(2)} pawns compared with the best move.`;
+                  errorMessage = `That move is too inaccurate. It loses ${formatPawnLoss(lossCp)} pawns compared with the best move.`;
                 }
               }
             } else {
               if (!acceptable) {
-                errorMessage = `That move is too inaccurate. It loses ${lossCp.toFixed(2)} pawns compared with the best move.`;
+                errorMessage = `That move is too inaccurate. It loses ${formatPawnLoss(lossCp)} pawns compared with the best move.`;
               }
             }
 

@@ -44,6 +44,8 @@ import { createDeterministicSelectionPolicy, createStochasticSelectionPolicy } f
 import { usePuzzleContinuation } from '@/hooks/usePuzzleContinuation';
 import { StopwatchTimer, CountdownTimer } from '@/utils/timedTraining';
 import { activeTabStore, activeUsernameStore, activeAccountStore, activeJobStore, clearAuthenticatedAccountState, puzzleSettingsStore, reconcileSessionStorageOwner } from '@/utils/browserStores';
+import { STRICT_OPPONENT_EVAL_LOSS_THRESHOLD } from '@/utils/practiceConstants';
+import { formatPawnLoss } from '@/utils/formatters';
 import type { AccountConnectionStatus } from '@/components/ImportGamesView';
 
 const chessEchoSelectionPolicy = createStochasticSelectionPolicy();
@@ -1800,7 +1802,7 @@ export default function Home() {
       try {
         const result = await fetchPuzzleContinuation(currentBoardFen, 'ENGINE');
         if (isMounted && result && result.fen === currentBoardFen) {
-          const strongCandidates = result.candidates.filter(c => (c.evalLoss ?? 0) <= 0.20);
+          const strongCandidates = result.candidates.filter(c => (c.evalLoss ?? 0) <= STRICT_OPPONENT_EVAL_LOSS_THRESHOLD);
           setChallengeCandidatesByFen(prev => ({ ...prev, [currentBoardFen]: strongCandidates }));
         }
       } catch {
@@ -1863,7 +1865,7 @@ export default function Home() {
       try {
         const res = await api.evaluateMove(currentBoardFen, canonicalSan);
         if (res && res.evalLoss !== undefined && res.evalLoss !== null) {
-          if (res.evalLoss <= 0.20) {
+          if (res.evalLoss <= STRICT_OPPONENT_EVAL_LOSS_THRESHOLD) {
             strongCount++;
             moveResults.push({ san: canonicalSan, status: 'strong' });
           } else {
@@ -1924,7 +1926,7 @@ export default function Home() {
     const api = await import('@/services/api');
     try {
       const res = await api.evaluateMove(challengeActiveFen, moveObj.san);
-      if (res && res.evalLoss !== undefined && res.evalLoss !== null && res.evalLoss <= 0.20) {
+      if (res && res.evalLoss !== undefined && res.evalLoss !== null && res.evalLoss <= STRICT_OPPONENT_EVAL_LOSS_THRESHOLD) {
         setCalculationFeedback({ type: 'success', message: `Good calculation. ${moveObj.san} is a strong continuation.` });
         setChallengeBranchesByFen(prev => {
           const activeCandidate = challengeActiveCandidateByFen[currentBoardFen];
@@ -1945,7 +1947,7 @@ export default function Home() {
         });
         setCalculationInput('');
       } else {
-        setCalculationFeedback({ type: 'error', message: `Not strong enough (loses ${(res?.evalLoss || 0).toFixed(2)}). Try again.` });
+        setCalculationFeedback({ type: 'error', message: `Not strong enough (loses ${formatPawnLoss(res?.evalLoss)}). Try again.` });
       }
     } catch (err: unknown) {
       setCalculationFeedback({ type: 'error', message: errorMessageOf(err) || 'Evaluation failed.' });
