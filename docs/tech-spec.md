@@ -10,8 +10,8 @@ use-case:     Import games → analyze recurring positions with Stockfish → ra
 
 architecture:
   - **Backend**: Kotlin/Spring Boot REST API; persistence, authentication, game import and analysis, puzzle/progress APIs, and internal corpus administration.
-  - **Frontend**: Next.js single-page application (`frontend/src/app/page.tsx`) with Import Games, Long Decisions, Similar Positions, Weaknesses Library, and Practice Puzzles tabs; separate `login` and `register` routes.
-  - **Frontend layers**: `app` routes, `components` UI, `services/api.ts` backend client, `utils` helpers; tests in `frontend/src/__tests__`. Current route, state, and API-to-UI traces: [frontend architecture](architecture/frontend.md).
+  - **Frontend**: Next.js single-page application (`frontend/src/app/page.tsx`) composing `PracticePuzzlesView`, `WeaknessesList`, `LongDecisionsView`, `SimilarPositionsView`, and `ImportGamesView`; separate `login` and `register` routes.
+  - **Frontend layers**: `app` routes, `components` UI (`PracticePuzzlesView`), `hooks` state (`useAccountSession`, `useLineExploration`), `services/api.ts` backend client, `utils` helpers; tests in `frontend/src/__tests__`. Current route, state, and API-to-UI traces: [frontend architecture](architecture/frontend.md).
   - **Persistence**: PostgreSQL stores users, accounts, games, positions, occurrences, analysis, jobs, training events, and human-move corpus data.
   - **Similarity subsystem**: Pure domain indexing and static relational BM25 scoring (`com.chessecho.similarity`); generation-guarded in-memory cache lifecycle invalidated on successful game imports (`PositionSimilarityCache`).
   - **Analysis flow**: imported games are replayed; positions use four-field FEN identity; qualifying positions are evaluated by Stockfish; weakness ranking is calculated per account.

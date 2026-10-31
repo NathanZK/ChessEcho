@@ -1,16 +1,12 @@
 'use client';
 
 import React, { useState, useSyncExternalStore } from 'react';
-import { Chess } from 'chess.js';
 import { Header, TabType } from '@/components/Header';
 import type { PositionExplorationStart } from '@/components/ExplorePositionModal';
-import { EvalBar } from '@/components/EvalBar';
-import { ChessBoardArea, type ChessBoardHistorySnapshot } from '@/components/ChessBoardArea';
-import { BlindfoldBoardWrapper } from '@/components/BlindfoldBoardWrapper';
-import { NotationExchangeUI } from '@/components/NotationExchangeUI';
-import { useBlindfoldSession } from '@/hooks/useBlindfoldSession';
-import { usePuzzleAttemptCount } from '@/hooks/usePuzzleAttemptCount';
-import { PuzzleFeedbackPanel, type ChallengeSubmissionResult } from '@/components/PuzzleFeedbackPanel';
+import {
+  PracticePuzzlesView,
+  type PracticePuzzlesViewHandle,
+} from '@/components/PracticePuzzlesView';
 import { WeaknessesList } from '@/components/WeaknessesList';
 import { LongDecisionsView } from '@/components/LongDecisionsView';
 import {
@@ -20,86 +16,13 @@ import {
 import { PositionProgressView } from '@/components/PositionProgressView';
 import { ImportGamesView } from '@/components/ImportGamesView';
 import { Puzzle } from '@/types/puzzle';
+import { JobStatusResponse } from '@/services/api';
+import { useAccountSession } from '@/hooks/useAccountSession';
 import {
-  associateAccount,
-  fetchPuzzles,
-  JobStatusResponse,
-  ContinuationMode,
-  ContinuationCandidate,
-  ExplorationPlayMode,
-  toWhitePerspective,
-  fetchPuzzleContinuation,
-  fetchCurrentSession,
-  fetchAccounts,
-  disconnectAccount,
-  DisconnectAccountError,
-  logout as apiLogout,
-  submitTrainingAttempt,
-  evaluateMove,
-  type AccountSummary,
-  type SessionState,
-} from '@/services/api';
-import { soundService } from '@/services/soundService';
-import { createDeterministicSelectionPolicy, createStochasticSelectionPolicy } from '@/services/continuationService';
-import { usePuzzleContinuation } from '@/hooks/usePuzzleContinuation';
-import { StopwatchTimer, CountdownTimer } from '@/utils/timedTraining';
-import { activeTabStore, activeUsernameStore, activeAccountStore, activeJobStore, clearAuthenticatedAccountState, puzzleSettingsStore, reconcileSessionStorageOwner } from '@/utils/browserStores';
-import { STRICT_OPPONENT_EVAL_LOSS_THRESHOLD } from '@/utils/practiceConstants';
-import { formatPawnLoss } from '@/utils/formatters';
-import type { AccountConnectionStatus } from '@/components/ImportGamesView';
-
-const chessEchoSelectionPolicy = createStochasticSelectionPolicy();
-const deterministicSelectionPolicy = createDeterministicSelectionPolicy();
-
-type PuzzleFeedbackState = {
-  status: 'IDLE' | 'CORRECT' | 'HISTORICAL_MISTAKE' | 'INCORRECT' | 'EXPLORING';
-  lastMove?: string;
-  historicalInfo?: { timesPlayed: number; averageLoss: number };
-};
-
-type TimerAttempt = {
-  puzzle: Puzzle;
-  mode: 'STOPWATCH' | 'COUNTDOWN';
-  allowedMs: number;
-  timer: StopwatchTimer | CountdownTimer;
-  hasExpired: boolean;
-};
-
-type LongDecisionReturnSnapshot = {
-  originatingTab?: TabType;
-  activePuzzle: Puzzle | null;
-  currentPuzzleIndex: number;
-  initialMoveHistorySan: string[];
-  initialMoveHistoryStartFen: string | undefined;
-  currentBoardFen: string;
-  boardHistory: ChessBoardHistorySnapshot | null;
-  currentEvalCp: number;
-  isEvalUnknown: boolean;
-  evalHistory: number[];
-  feedbackHistory: PuzzleFeedbackState[];
-  historyIndex: number;
-  moveHistory: string[];
-  hintSquare: string | undefined;
-  feedback: PuzzleFeedbackState;
-  showPuzzleSettings: boolean;
-  isBoardFlipped: boolean;
-  timerMode: 'STOPWATCH' | 'COUNTDOWN' | null;
-  timerElapsedMs: number;
-  timerAllowedMs: number;
-  timerExpired: boolean;
-  timerSubmissionError: string | null;
-  timerAttempt: TimerAttempt | null;
-  timerWasRunning: boolean;
-};
-
-function errorMessageOf(e: unknown): string | undefined {
-  if (e instanceof Error) return e.message;
-  if (typeof e === 'object' && e !== null && 'message' in e) {
-    const message = (e as { message?: unknown }).message;
-    return typeof message === 'string' ? message : undefined;
-  }
-  return undefined;
-}
+  activeTabStore,
+  activeJobStore,
+  puzzleSettingsStore,
+} from '@/utils/browserStores';
 
 export default function Home() {
   const activeTab = useSyncExternalStore(
@@ -107,55 +30,56 @@ export default function Home() {
     activeTabStore.getSnapshot,
     activeTabStore.getServerSnapshot
   );
-  const activeUsername = useSyncExternalStore(
-    activeUsernameStore.subscribe,
-    activeUsernameStore.getSnapshot,
-    activeUsernameStore.getServerSnapshot
-  );
-  const activeAccount = useSyncExternalStore(
-    activeAccountStore.subscribe,
-    activeAccountStore.getSnapshot,
-    activeAccountStore.getServerSnapshot
-  );
-  const activeAccountId = activeAccount?.id;
-  const previousAccountIdRef = React.useRef<string | undefined>(activeAccount?.id);
-  React.useEffect(() => {
-    if (
-      previousAccountIdRef.current &&
-      activeAccount?.id &&
-      previousAccountIdRef.current !== activeAccount.id
-    ) {
-      activeJobStore.set(null);
-    }
-    previousAccountIdRef.current = activeAccount?.id;
-  }, [activeAccount?.id]);
+
+  const practiceActionsRef = React.useRef<PracticePuzzlesViewHandle | null>(null);
+
   const [activeJobStatus, setActiveJobStatus] = useState<JobStatusResponse | null>(null);
   const [weaknessRefreshKey, setWeaknessRefreshKey] = useState<number>(0);
   const prevJobRef = React.useRef<JobStatusResponse | null>(null);
 
-  // Non-persistent session state, bootstrapped from /api/me. The auth indicator is
-  // derived from this — never from a stored Chess.com username (#113 AC7/AC13).
-  const [sessionStatus, setSessionStatus] = useState<SessionState['status']>('loading');
-  const [sessionUserId, setSessionUserId] = useState<string | undefined>();
-  const [accountStatus, setAccountStatus] = useState<AccountConnectionStatus>('loading');
-  const [accountError, setAccountError] = useState<string | undefined>(undefined);
-  const [disconnectError, setDisconnectError] = useState<string | undefined>(undefined);
-  const [isDisconnecting, setIsDisconnecting] = useState(false);
-  const accountOwnerIdRef = React.useRef<string | undefined>(undefined);
-  const accountRequestVersionRef = React.useRef(0);
-  const accountContextMountedRef = React.useRef(true);
-  // Guest-eligible fetches are gated only until the session resolves. The gate is
-  // a shared one-shot promise so the puzzle load cannot race bootstrap, while an
-  // unauthenticated result still permits username-driven guest analysis.
-  const sessionGateRef = React.useRef<{ promise: Promise<boolean>; resolve: (open: boolean) => void } | null>(null);
-  if (sessionGateRef.current === null) {
-    let resolveGate!: (open: boolean) => void;
-    const promise = new Promise<boolean>((res) => {
-      resolveGate = res;
-    });
-    sessionGateRef.current = { promise, resolve: resolveGate };
-  }
-  const sessionGateOpen = sessionStatus !== 'loading';
+  const clearLiveJobState = React.useCallback(() => {
+    prevJobRef.current = null;
+    setActiveJobStatus(null);
+  }, []);
+
+  const [weaknessCount, setWeaknessCount] = useState<number>(0);
+  const [selectedProgress, setSelectedProgress] = useState<{
+    positionId: string;
+    playerColor: 'WHITE' | 'BLACK';
+    minEvalLoss: number;
+    accountId?: string;
+  } | null>(null);
+
+  const [hasLongDecisionReturnContext, setHasLongDecisionReturnContext] = useState(false);
+  const [hasSimilarPositionsReturnContext, setHasSimilarPositionsReturnContext] = useState(false);
+  const [similarPositionsSnapshot, setSimilarPositionsSnapshot] = useState<SimilarPositionsReturnSnapshot | null>(null);
+  const [isSourceNeutralExploration, setIsSourceNeutralExploration] = useState(false);
+
+  const onClearAccountState = React.useCallback(() => {
+    clearLiveJobState();
+    practiceActionsRef.current?.clearAccountUiState();
+    activeJobStore.set(null);
+    setWeaknessCount(0);
+    setSelectedProgress(null);
+    setHasLongDecisionReturnContext(false);
+    setHasSimilarPositionsReturnContext(false);
+    setSimilarPositionsSnapshot(null);
+    setWeaknessRefreshKey((key) => key + 1);
+  }, [clearLiveJobState]);
+
+  const session = useAccountSession({ onClearAccountState });
+
+  const previousAccountIdRef = React.useRef<string | undefined>(session.activeAccount?.id);
+  React.useEffect(() => {
+    if (
+      previousAccountIdRef.current &&
+      session.activeAccount?.id &&
+      previousAccountIdRef.current !== session.activeAccount.id
+    ) {
+      activeJobStore.set(null);
+    }
+    previousAccountIdRef.current = session.activeAccount?.id;
+  }, [session.activeAccount?.id]);
 
   const handleJobStatusUpdate = (job: JobStatusResponse | null) => {
     const previousJob = prevJobRef.current;
@@ -171,95 +95,7 @@ export default function Home() {
     setActiveJobStatus(job);
   };
 
-  const clearLiveJobState = React.useCallback(() => {
-    prevJobRef.current = null;
-    setActiveJobStatus(null);
-  }, []);
-
-  const loadOwnedAccounts = React.useCallback(
-    async (
-      userId: string,
-      isCurrent: () => boolean = () => true,
-      preferredAccountId?: string
-    ) => {
-      const requestVersion = ++accountRequestVersionRef.current;
-      accountOwnerIdRef.current = userId;
-      setAccountStatus('loading');
-      setAccountError(undefined);
-      const requestIsCurrent = () =>
-        isCurrent() &&
-        accountRequestVersionRef.current === requestVersion &&
-        accountOwnerIdRef.current === userId;
-      try {
-        const accounts = await fetchAccounts();
-        if (!requestIsCurrent()) return;
-        if (accounts.length === 0) {
-          clearAuthenticatedAccountState();
-          clearLiveJobState();
-          setAccountStatus('unconnected');
-          return;
-        }
-        const current = activeAccountStore.getSnapshot();
-        const selected = current && accounts.some((account) => account.id === current.id)
-          ? current
-          : accounts.find((account) => account.id === preferredAccountId) ?? accounts[0];
-        activeAccountStore.set(selected);
-        activeUsernameStore.set(selected.username);
-        setAccountStatus('connected');
-      } catch (error: unknown) {
-        if (!requestIsCurrent()) return;
-        clearAuthenticatedAccountState();
-        clearLiveJobState();
-        setAccountStatus('error');
-        setAccountError(errorMessageOf(error) || 'Please retry account loading.');
-      } finally {
-        if (requestIsCurrent()) sessionGateRef.current!.resolve(true);
-      }
-    },
-    [clearLiveJobState]
-  );
-
-  const retryAccountLoad = React.useCallback(() => {
-    const userId = accountOwnerIdRef.current;
-    if (userId) void loadOwnedAccounts(userId);
-  }, [loadOwnedAccounts]);
-
-  const connectChessAccount = React.useCallback(async (username: string): Promise<AccountSummary> => {
-    const userId = accountOwnerIdRef.current;
-    if (!accountContextMountedRef.current || !userId || accountStatus === 'loading' || accountStatus === 'error') {
-      throw new Error('Your authenticated account is not ready. Retry account loading.');
-    }
-    const requestVersion = accountRequestVersionRef.current;
-    const account = await associateAccount('CHESS_COM', username);
-    if (
-      !accountContextMountedRef.current ||
-      accountRequestVersionRef.current !== requestVersion ||
-      accountOwnerIdRef.current !== userId
-    ) {
-      throw new Error('Your session changed before the account could be selected. Please try again.');
-    }
-    activeAccountStore.set(account);
-    activeUsernameStore.set(account.username);
-    setAccountStatus('connected');
-    setAccountError(undefined);
-    clearLiveJobState();
-    return account;
-  }, [accountStatus, clearLiveJobState]);
-
-  const reconcileSessionIdentity = React.useCallback(
-    (userId: string | undefined) => {
-      const hadAuthenticatedIdentity =
-        typeof window !== 'undefined' && localStorage.getItem('chessecho_session_user') !== null;
-      const reconciled = reconcileSessionStorageOwner(userId);
-      if (userId !== undefined || hadAuthenticatedIdentity) {
-        clearLiveJobState();
-      }
-      return reconciled;
-    },
-    [clearLiveJobState]
-  );
-
-  const changeTab = (tab: TabType) => {
+  const changeTab = React.useCallback((tab: TabType) => {
     activeTabStore.set(tab);
     if (typeof window !== 'undefined') {
       window.history.pushState(null, '', `#${tab}`);
@@ -268,325 +104,35 @@ export default function Home() {
       setHasLongDecisionReturnContext(false);
       setHasSimilarPositionsReturnContext(false);
     }
-  };
-
-  const [weaknessCount, setWeaknessCount] = useState<number>(0);
-  const [selectedProgress, setSelectedProgress] = useState<{
-    positionId: string;
-    playerColor: 'WHITE' | 'BLACK';
-    minEvalLoss: number;
-    accountId?: string;
-  } | null>(null);
-
-  const [puzzlesList, setPuzzlesList] = useState<Puzzle[]>([]);
-  const [currentPuzzleIndex, setCurrentPuzzleIndex] = useState<number>(0);
-  const [activePuzzle, setActivePuzzle] = useState<Puzzle | null>(null);
-  const [initialMoveHistorySan, setInitialMoveHistorySan] = useState<string[]>([]);
-  const [initialMoveHistoryStartFen, setInitialMoveHistoryStartFen] = useState<string | undefined>();
-  const [boardHistorySnapshot, setBoardHistorySnapshot] = useState<ChessBoardHistorySnapshot | null>(null);
-  const boardHistorySnapshotRef = React.useRef<ChessBoardHistorySnapshot | null>(null);
-  const longDecisionReturnSnapshotRef = React.useRef<LongDecisionReturnSnapshot | null>(null);
-  const [hasLongDecisionReturnContext, setHasLongDecisionReturnContext] = useState(false);
-  const similarPositionsReturnSnapshotRef = React.useRef<SimilarPositionsReturnSnapshot | null>(null);
-  const [hasSimilarPositionsReturnContext, setHasSimilarPositionsReturnContext] = useState(false);
-  const [similarPositionsSnapshot, setSimilarPositionsSnapshot] = useState<SimilarPositionsReturnSnapshot | null>(null);
-  const handleBoardHistoryChange = React.useCallback((snapshot: ChessBoardHistorySnapshot) => {
-    boardHistorySnapshotRef.current = snapshot;
-    setBoardHistorySnapshot(snapshot);
   }, []);
-  const suppliedPositionCounterRef = React.useRef(0);
-  const [loadedPuzzleContext, setLoadedPuzzleContext] = useState('');
-  const [isLoadingPuzzles, setIsLoadingPuzzles] = useState<boolean>(true);
-  const [puzzleLoadError, setPuzzleLoadError] = useState<boolean>(false);
-  const [puzzleReloadToken, setPuzzleReloadToken] = useState<number>(0);
-  // Monotonic puzzle-load generation. A completion applies its effects (data/error
-  // setters, the loading flag, and the prefetch lock) only while it still owns the
-  // current generation, so a stale/superseded load can never mutate the live UI.
-  const puzzleLoadSeqRef = React.useRef<number>(0);
-  const puzzleContextKey = JSON.stringify([sessionUserId, activeAccountId, activeUsername]);
-  const puzzleContextReady = loadedPuzzleContext === puzzleContextKey && !isLoadingPuzzles &&
-    (sessionStatus === 'unauthenticated' || sessionStatus === 'error' ||
-      (sessionStatus === 'authenticated' && accountStatus === 'connected'));
-  const attemptContext = React.useMemo(() => (
-    puzzleContextReady && sessionStatus === 'authenticated' && sessionUserId && activeAccountId && activePuzzle && activePuzzle.source !== 'supplied'
-      ? { userId: sessionUserId, accountId: activeAccountId, puzzleId: activePuzzle.puzzleId, playerColor: activePuzzle.playerColor }
-      : null
-  ), [puzzleContextReady, sessionStatus, sessionUserId, activeAccountId, activePuzzle]);
-  const puzzleAttempts = usePuzzleAttemptCount(attemptContext, sessionUserId);
-
-  const invalidatePuzzleRequests = () => {
-    puzzleLoadSeqRef.current++;
-    setIsFetchingMorePuzzles(false);
-  };
 
   const handleSetUsername = (user: string | undefined) => {
-    if (user !== activeUsername) {
-      invalidatePuzzleRequests();
+    if (user !== session.activeUsername) {
+      practiceActionsRef.current?.invalidatePuzzleRequests();
     }
-    activeUsernameStore.set(user);
+    session.handleSetUsername(user);
   };
 
-  const clearAccountUiState = () => {
-    handleSetUsername(undefined);
-    activeAccountStore.set(undefined);
-    clearLiveJobState();
-    longDecisionReturnSnapshotRef.current = null;
-    setHasLongDecisionReturnContext(false);
-    similarPositionsReturnSnapshotRef.current = null;
-    setHasSimilarPositionsReturnContext(false);
-    setSimilarPositionsSnapshot(null);
-    boardHistorySnapshotRef.current = null;
-    setBoardHistorySnapshot(null);
-    activeJobStore.set(null);
-    setAccountStatus('unconnected');
-    setPuzzlesList([]);
-    setCurrentPuzzleIndex(0);
-    setActivePuzzle(null);
-    setPuzzleLoadError(false);
-    setIsLoadingPuzzles(false);
-    setPuzzlePage(0);
-    setHasMorePuzzles(false);
-    setIsFetchingMorePuzzles(false);
-    setWeaknessCount(0);
-    setSelectedProgress(null);
-    setWeaknessRefreshKey((key) => key + 1);
-  };
-
-  const handleDisconnect = async () => {
-    const accountId = activeAccountStore.getSnapshot()?.id;
-    if (!accountId) {
-      setDisconnectError('No connected Chess.com account is selected.');
-      return;
-    }
-    const requestVersion = accountRequestVersionRef.current;
-    const ownerId = accountOwnerIdRef.current;
-    setDisconnectError(undefined);
-    setIsDisconnecting(true);
-    try {
-      await disconnectAccount(accountId);
-    } catch (error: unknown) {
-      const requestIsCurrent =
-        accountRequestVersionRef.current === requestVersion &&
-        accountOwnerIdRef.current === ownerId &&
-        activeAccountStore.getSnapshot()?.id === accountId;
-      if (!requestIsCurrent) return;
-
-      setDisconnectError(errorMessageOf(error) || 'Failed to disconnect Chess.com account.');
-      if (error instanceof DisconnectAccountError && error.status === 404 && ownerId) {
-        clearAccountUiState();
-        await loadOwnedAccounts(ownerId, () => accountContextMountedRef.current, accountId);
-      }
-      return;
-    } finally {
-      setIsDisconnecting(false);
-    }
-
-    if (
-      accountRequestVersionRef.current !== requestVersion ||
-      accountOwnerIdRef.current !== ownerId ||
-      activeAccountStore.getSnapshot()?.id !== accountId
-    ) {
-      return;
-    }
-    setDisconnectError(undefined);
-    clearAccountUiState();
-  };
-
-  // Logout/expiry: clear private state, invalidate in-flight generations, drop the
-  // persisted active job, and mark the session unauthenticated so a late response
-  // cannot restore the prior user's data (#113 AC8). Generations are bumped first.
-  const clearSessionState = () => {
-    setSessionUserId(undefined);
-    accountRequestVersionRef.current++;
-    accountOwnerIdRef.current = undefined;
-    setAccountStatus('unconnected');
-    setAccountError(undefined);
-    invalidatePuzzleRequests();
-    reconcileSessionIdentity(undefined);
-    clearAccountUiState();
-    setDisconnectError(undefined);
-  };
-
-  const handleLogout = () => {
-    clearSessionState();
-    setSessionStatus('unauthenticated');
-    void apiLogout();
-  };
-
-  // Explicit client initialization gate to prevent hydration mismatch and double-fetch
-  const [isSettingsInitialized, setIsSettingsInitialized] = useState<boolean>(false);
-  const [minEvalLoss, setMinEvalLoss] = useState<number>(0.8);
-  const [minMistakeCount, setMinMistakeCount] = useState<number>(3);
-  const [puzzleColorFilter, setPuzzleColorFilter] = useState<'BOTH' | 'WHITE' | 'BLACK'>('BOTH');
-  const [showPuzzleSettings, setShowPuzzleSettings] = useState<boolean>(false);
-  const [isBoardFlipped, setIsBoardFlipped] = useState<boolean>(false);
-  const [soundEnabled, setSoundEnabled] = useState<boolean>(true);
-
-  // Timed training state
-  const timerRef = React.useRef<StopwatchTimer | CountdownTimer | null>(null);
-  const timerAttemptRef = React.useRef<TimerAttempt | null>(null);
-  const [timerMode, setTimerMode] = useState<'STOPWATCH' | 'COUNTDOWN' | null>(null);
-  const [timerElapsedMs, setTimerElapsedMs] = useState<number>(0);
-  const [timerAllowedMs, setTimerAllowedMs] = useState<number>(30000);
-  const [timerExpired, setTimerExpired] = useState<boolean>(false);
-  const [timerSubmissionError, setTimerSubmissionError] = useState<string | null>(null);
-
-  // Submits the active attempt's timing telemetry. Fire-and-forget from
-  // event handlers / timer callbacks; surfaces failures via timerSubmissionError
-  // rather than silently discarding them.
-  const submitTimerAttempt = React.useCallback(
-    async (outcome: 'SUBMITTED' | 'EXPIRED') => {
-      const timer = timerRef.current;
-      const mode = timerMode;
-      if (!timer || !mode || !activePuzzle) return;
-      const attemptId = timer.getCurrentAttemptId();
-      if (!attemptId) return;
-      if (sessionStatus === 'authenticated' && !activeAccountId) {
-        setTimerSubmissionError('Select a connected Chess.com account before recording this attempt.');
-        return;
-      }
-
-      let elapsedMs: number;
-      let allowedMs: number | undefined;
-      if (timer instanceof StopwatchTimer) {
-        elapsedMs = timer.stop();
-      } else {
-        allowedMs = timerAllowedMs;
-        elapsedMs = timerAllowedMs - timer.getRemaining();
-      }
-
-      try {
-        await submitTrainingAttempt({
-          attemptId,
-          puzzleId: activePuzzle.puzzleId,
-          mode,
-          elapsedMs,
-          allowedMs,
-          outcome,
-          ...(sessionStatus === 'authenticated' ? { accountId: activeAccountId } : {}),
-        });
-        setTimerSubmissionError(null);
-      } catch {
-        setTimerSubmissionError('Failed to record timing for this attempt.');
-      }
-    },
-    [timerMode, timerAllowedMs, activePuzzle, activeAccountId, sessionStatus]
-  );
-
-  const submitExpiredTimerAttempt = React.useEffectEvent(() => {
-    void submitTimerAttempt('EXPIRED');
-  });
-
-  React.useEffect(() => {
-    if (hasLongDecisionReturnContext || hasSimilarPositionsReturnContext) return;
-    if (!activePuzzle || !timerMode) {
-      timerRef.current = null;
-      timerAttemptRef.current = null;
-      return;
-    }
-
-    let attempt = timerAttemptRef.current;
-    if (attempt?.puzzle !== activePuzzle || attempt.mode !== timerMode || attempt.allowedMs !== timerAllowedMs) {
-      attempt = null;
-      timerRef.current = null;
-    }
-
-    // Update timer display; also detects countdown expiry as a terminal
-    // outcome and submits telemetry automatically.
-    const tick = () => {
-      if (!attempt) return;
-      const current = attempt.timer;
-      if (timerMode === 'STOPWATCH' && current instanceof StopwatchTimer) {
-        setTimerElapsedMs(current.getElapsed());
-      } else if (timerMode === 'COUNTDOWN' && current instanceof CountdownTimer) {
-        const remaining = current.getRemaining();
-        setTimerElapsedMs(timerAllowedMs - remaining);
-        if (remaining === 0 && !attempt.hasExpired) {
-          attempt.hasExpired = true;
-          setTimerExpired(true);
-          soundService.playSound('completion');
-          submitExpiredTimerAttempt();
-        }
-      }
-    };
-
-    // Canceled effect setups must not start attempts or emit sound.
-    const initId = setTimeout(() => {
-      if (!attempt) {
-        const timer = timerMode === 'STOPWATCH' ? new StopwatchTimer() : new CountdownTimer(timerAllowedMs);
-        timer.startNewAttempt();
-        timer.start();
-        attempt = { puzzle: activePuzzle, mode: timerMode, allowedMs: timerAllowedMs, timer, hasExpired: false };
-        timerAttemptRef.current = attempt;
-        timerRef.current = timer;
-        setTimerElapsedMs(0);
-        setTimerExpired(false);
-        setTimerSubmissionError(null);
-        soundService.playSound('move');
-      }
-      timerRef.current = attempt.timer;
-      tick();
-    }, 0);
-    const intervalId = setInterval(tick, 100);
-
-    return () => {
-      clearTimeout(initId);
-      clearInterval(intervalId);
-    };
-  }, [
-    activePuzzle,
-    timerMode,
-    timerAllowedMs,
-    hasLongDecisionReturnContext,
-    hasSimilarPositionsReturnContext,
-  ]);
-
-  const requestBlindfoldChessEchoMove = React.useCallback(async (fen: string) => {
-    const response = await fetchPuzzleContinuation(fen, 'ENGINE');
-    return response?.candidates[0]?.move ?? null;
-  }, []);
-  const blindfold = useBlindfoldSession(requestBlindfoldChessEchoMove);
-  const isBlindfoldActive = blindfold.state !== null;
-  const isBlindfoldActiveRef = React.useRef(isBlindfoldActive);
-  const exitBlindfoldRef = React.useRef(blindfold.exit);
-  React.useLayoutEffect(() => {
-    isBlindfoldActiveRef.current = isBlindfoldActive;
-    exitBlindfoldRef.current = blindfold.exit;
-  });
-
-  // Flip board keyboard shortcut (x / X)
-  React.useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (e.target as HTMLElement)?.isContentEditable) return;
-      if (isBlindfoldActiveRef.current) return;
-      if (e.key === 'x' || e.key === 'X') {
-        setIsBoardFlipped((prev) => !prev);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
-
-  // Restore puzzle filter settings from the browser store during render (no mount effect)
+  // Browser filter settings restore
   const settings = useSyncExternalStore(
     puzzleSettingsStore.subscribe,
     puzzleSettingsStore.getSnapshot,
     puzzleSettingsStore.getServerSnapshot
   );
   const [appliedSettings, setAppliedSettings] = useState(puzzleSettingsStore.getServerSnapshot);
+  const [minEvalLoss, setMinEvalLoss] = useState<number>(0.8);
+  const [minMistakeCount, setMinMistakeCount] = useState<number>(3);
+  const [puzzleColorFilter, setPuzzleColorFilter] = useState<'BOTH' | 'WHITE' | 'BLACK'>('BOTH');
 
   if (appliedSettings !== settings) {
     setAppliedSettings(settings);
     setPuzzleColorFilter(settings.colorFilter);
     setMinEvalLoss(settings.minEvalLoss);
     setMinMistakeCount(settings.minMistakeCount);
-    setSoundEnabled(settings.soundEnabled);
-    setIsSettingsInitialized(true);
   }
 
   const handleMinEvalLossChange = (val: number) => {
-    invalidatePuzzleRequests();
+    practiceActionsRef.current?.invalidatePuzzleRequests();
     setMinEvalLoss(val);
     if (typeof window !== 'undefined') {
       localStorage.setItem('chessecho_min_eval_loss', String(val));
@@ -594,7 +140,7 @@ export default function Home() {
   };
 
   const handleMinMistakeCountChange = (val: number) => {
-    invalidatePuzzleRequests();
+    practiceActionsRef.current?.invalidatePuzzleRequests();
     setMinMistakeCount(val);
     if (typeof window !== 'undefined') {
       localStorage.setItem('chessecho_min_mistake_count', String(val));
@@ -602,7 +148,7 @@ export default function Home() {
   };
 
   const handleColorFilterChange = (color: 'BOTH' | 'WHITE' | 'BLACK') => {
-    invalidatePuzzleRequests();
+    practiceActionsRef.current?.invalidatePuzzleRequests();
     setPuzzleColorFilter(color);
     if (typeof window !== 'undefined') {
       localStorage.setItem('chessecho_puzzle_color_filter', color);
@@ -611,1379 +157,42 @@ export default function Home() {
     }
   };
 
-  const handleToggleSound = () => {
-    const next = soundService.toggleSound();
-    setSoundEnabled(next);
-  };
-
-  // History stacks for EvalBar and feedback state matching board undo/redo index
-  const [evalHistory, setEvalHistory] = useState<number[]>([35]);
-  const [feedbackHistory, setFeedbackHistory] = useState<PuzzleFeedbackState[]>([{ status: 'IDLE' }]);
-  const [historyIndex, setHistoryIndex] = useState<number>(0);
-
-  const [currentEvalCp, setCurrentEvalCp] = useState<number>(35);
-  const [isEvalUnknown, setIsEvalUnknown] = useState<boolean>(false);
-  const [moveHistory, setMoveHistory] = useState<string[]>([]);
-  const [hintSquare, setHintSquare] = useState<string | undefined>(undefined);
-
-  const [feedback, setFeedback] = useState<{
-    status: 'IDLE' | 'CORRECT' | 'HISTORICAL_MISTAKE' | 'INCORRECT' | 'EXPLORING';
-    lastMove?: string;
-    historicalInfo?: { timesPlayed: number; averageLoss: number };
-  }>({ status: 'IDLE' });
-
-  // Continuation & Line Exploration turn-based state machine
-  const [isExplorationActive, setIsExplorationActive] = useState<boolean>(false);
-  const [isMoveEvaluationPending, setIsMoveEvaluationPending] = useState<boolean>(false);
-  const [explorationPlayMode, setExplorationPlayMode] = useState<ExplorationPlayMode | undefined>(undefined);
-  const [explorationDecisionMove, setExplorationDecisionMove] = useState<string | null>(null);
-  const [unacceptableMoveMessage, setUnacceptableMoveMessage] = useState<string | null>(null);
-  const [currentBoardFen, setCurrentBoardFen] = useState<string>('');
-
-  // Challenge Mode State
-  const [challengeCandidatesByFen, setChallengeCandidatesByFen] = useState<Record<string, ContinuationCandidate[]>>({});
-  const [challengeSubmissionByFen, setChallengeSubmissionByFen] = useState<Record<string, ChallengeSubmissionResult>>({});
-  const [challengeInputByFen, setChallengeInputByFen] = useState<Record<string, string>>({});
-  const [challengeFeedbackByFen, setChallengeFeedbackByFen] = useState<Record<string, { message: string, type: 'success' | 'error' | 'info' } | null>>({});
-  const [isChallengeLoading, setIsChallengeLoading] = useState<boolean>(false);
-  const [continuationMode, setContinuationMode] = useState<ContinuationMode>('ENGINE');
-  const [opponentRatingBand, setOpponentRatingBand] = useState<string>('1200-1400');
-  const [pendingContinuationCandidate, setPendingContinuationCandidate] = useState<ContinuationCandidate | null>(null);
-  const [requestedContinuationFen, setRequestedContinuationFen] = useState<string | undefined>(undefined);
-
-  const [explorationFeedbackByFen, setExplorationFeedbackByFen] = useState<Record<string, { message: string, type: 'best' | 'good' } | null>>({});
-  const [lastContinuationCandidates, setLastContinuationCandidates] = useState<{
-    parentFen: string;
-    candidates: ContinuationCandidate[];
-    selected: ContinuationCandidate;
-  } | null>(null);
-  const [alternativeContinuationToApply, setAlternativeContinuationToApply] = useState<{ parentFen: string, candidate: ContinuationCandidate } | null>(null);
-  const [explorationEvalMap, setExplorationEvalMap] = useState<Record<string, { evalCp: number; isUnknown: boolean }>>({});
-
-  // Challenge Calculation State
-  const [challengeBranchesByFen, setChallengeBranchesByFen] = useState<Record<string, Record<string, { san: string, fenAfter: string, isWhite: boolean }[]>>>({});
-  const [challengeActiveCandidateByFen, setChallengeActiveCandidateByFen] = useState<Record<string, string | null>>({});
-  const [calculationInput, setCalculationInput] = useState<string>('');
-  const [calculationFeedback, setCalculationFeedback] = useState<{ type: 'success' | 'error', message: string } | null>(null);
-  const [isCalculationLoading, setIsCalculationLoading] = useState<boolean>(false);
-
-  const challengeActiveFen = React.useMemo(() => {
-    if (explorationPlayMode !== 'CHALLENGE') return currentBoardFen;
-    const activeCandidate = challengeActiveCandidateByFen[currentBoardFen];
-    if (activeCandidate) {
-      const branchLine = challengeBranchesByFen[currentBoardFen]?.[activeCandidate];
-      if (branchLine && branchLine.length > 0) {
-        return branchLine[branchLine.length - 1].fenAfter;
-      }
-    }
-    return currentBoardFen;
-  }, [explorationPlayMode, challengeBranchesByFen, challengeActiveCandidateByFen, currentBoardFen]);
-
-  const sideToMove: 'White' | 'Black' = React.useMemo(() => {
-    if (!currentBoardFen) {
-      return activePuzzle?.playerColor === 'BLACK' ? 'Black' : 'White';
-    }
-    return currentBoardFen.split(' ')[1] === 'w' ? 'White' : 'Black';
-  }, [currentBoardFen, activePuzzle]);
-
-  const continuationSelectionPolicy = explorationPlayMode === 'CHESSECHO'
-    ? chessEchoSelectionPolicy
-    : deterministicSelectionPolicy;
-  const continuation = usePuzzleContinuation(
-    requestedContinuationFen,
-    continuationMode,
-    continuationSelectionPolicy,
-    opponentRatingBand
-  );
-
-  // When ChessEcho turn is active and a candidate is selected, stage it for the board (only in CHESSECHO mode)
-  const [trackedStaging, setTrackedStaging] = useState({
-    isExplorationActive,
-    explorationPlayMode,
-    selectedCandidate: continuation.selectedCandidate,
-    loading: continuation.loading,
-    response: continuation.response,
-    requestedContinuationFen,
-    currentBoardFen,
-    currentEvalCp,
-  });
-
-  if (
-    trackedStaging.isExplorationActive !== isExplorationActive ||
-    trackedStaging.explorationPlayMode !== explorationPlayMode ||
-    trackedStaging.selectedCandidate !== continuation.selectedCandidate ||
-    trackedStaging.loading !== continuation.loading ||
-    trackedStaging.response !== continuation.response ||
-    trackedStaging.requestedContinuationFen !== requestedContinuationFen ||
-    trackedStaging.currentBoardFen !== currentBoardFen ||
-    trackedStaging.currentEvalCp !== currentEvalCp
-  ) {
-    setTrackedStaging({
-      isExplorationActive,
-      explorationPlayMode,
-      selectedCandidate: continuation.selectedCandidate,
-      loading: continuation.loading,
-      response: continuation.response,
-      requestedContinuationFen,
-      currentBoardFen,
-      currentEvalCp,
-    });
-
-    if (isExplorationActive && explorationPlayMode === 'CHESSECHO' && !continuation.loading) {
-      if (
-        continuation.response?.fen === requestedContinuationFen &&
-        currentBoardFen === requestedContinuationFen &&
-        continuation.selectedCandidate
-      ) {
-        const candidate = continuation.selectedCandidate;
-        setPendingContinuationCandidate(candidate);
-        setLastContinuationCandidates({
-          parentFen: requestedContinuationFen,
-          candidates: continuation.candidates,
-          selected: candidate
-        });
-
-        if (candidate.evalCp != null) {
-          const whiteEval = toWhitePerspective(candidate.evalCp, requestedContinuationFen);
-          setCurrentEvalCp(whiteEval);
-          setIsEvalUnknown(false);
-          setExplorationEvalMap((prev) => ({
-            ...prev,
-            [candidate.resultingFen]: { evalCp: whiteEval, isUnknown: false },
-          }));
-        } else {
-          setIsEvalUnknown(true);
-          setExplorationEvalMap((prev) => ({
-            ...prev,
-            [candidate.resultingFen]: { evalCp: currentEvalCp, isUnknown: true },
-          }));
-        }
-      }
-    }
-  }
-
-  // Keep lastContinuationCandidates synchronized with board history
-  const [trackedHistorySync, setTrackedHistorySync] = useState({
-    currentBoardFen,
-    lastContinuationCandidates,
-  });
-
-  if (
-    trackedHistorySync.currentBoardFen !== currentBoardFen ||
-    trackedHistorySync.lastContinuationCandidates !== lastContinuationCandidates
-  ) {
-    setTrackedHistorySync({ currentBoardFen, lastContinuationCandidates });
-    if (lastContinuationCandidates) {
-      // If we are still at parentFen, it means the move is pending application by ChessBoardArea
-      if (currentBoardFen !== lastContinuationCandidates.parentFen) {
-        const actualSelected = lastContinuationCandidates.candidates.find(c => c.resultingFen === currentBoardFen);
-        if (!actualSelected) {
-          setLastContinuationCandidates(null);
-        } else if (actualSelected.move !== lastContinuationCandidates.selected.move) {
-          setLastContinuationCandidates(prev => prev ? { ...prev, selected: actualSelected } : null);
-        }
-      }
-    }
-  }
-
-  // Synchronize EvalBar with the board's active position during exploration
-  const evalEntry = isExplorationActive && currentBoardFen
-    ? explorationEvalMap[currentBoardFen]
-    : undefined;
-  const [trackedEvalSync, setTrackedEvalSync] = useState({
-    currentBoardFen,
-    isExplorationActive,
-    evalCp: evalEntry?.evalCp,
-    isUnknown: evalEntry?.isUnknown,
-  });
-
-  if (
-    trackedEvalSync.currentBoardFen !== currentBoardFen ||
-    trackedEvalSync.isExplorationActive !== isExplorationActive ||
-    trackedEvalSync.evalCp !== evalEntry?.evalCp ||
-    trackedEvalSync.isUnknown !== evalEntry?.isUnknown
-  ) {
-    setTrackedEvalSync({
-      currentBoardFen,
-      isExplorationActive,
-      evalCp: evalEntry?.evalCp,
-      isUnknown: evalEntry?.isUnknown,
-    });
-    if (evalEntry) {
-      setCurrentEvalCp(evalEntry.evalCp);
-      setIsEvalUnknown(evalEntry.isUnknown);
-    }
-  }
-
-  const handleExplorationPlayModeChange = (mode: ExplorationPlayMode) => {
-    setExplorationPlayMode(mode);
-    setPendingContinuationCandidate(null);
-    setLastContinuationCandidates(null);
-    setAlternativeContinuationToApply(null);
-    setChallengeBranchesByFen({});
-    setChallengeActiveCandidateByFen({});
-
-    if (mode === 'BOTH_SIDES') {
-      setRequestedContinuationFen(undefined);
-    } else {
-      if (activePuzzle && currentBoardFen) {
-        const fenColor = currentBoardFen.split(' ')[1];
-        const isWhiteTurn = fenColor === 'w';
-        const isUserWhite = activePuzzle.playerColor === 'WHITE';
-        const isOpponentTurn = isWhiteTurn !== isUserWhite;
-        if (isOpponentTurn) {
-          setRequestedContinuationFen(currentBoardFen);
-        } else {
-          setRequestedContinuationFen(undefined);
-        }
-      }
-    }
-  };
-
-  const handleAlternativeSelected = (candidate: ContinuationCandidate) => {
-    if (!lastContinuationCandidates) return;
-    const parentFen = lastContinuationCandidates.parentFen;
-
-    setLastContinuationCandidates((prev) =>
-      prev ? { ...prev, selected: candidate } : null
-    );
-
-    if (candidate.evalCp != null) {
-      const whiteEval = toWhitePerspective(candidate.evalCp, parentFen);
-      setCurrentEvalCp(whiteEval);
-      setIsEvalUnknown(false);
-      setExplorationEvalMap((prev) => ({
-        ...prev,
-        [candidate.resultingFen]: { evalCp: whiteEval, isUnknown: false },
-      }));
-    } else {
-      setIsEvalUnknown(true);
-      setExplorationEvalMap((prev) => ({
-        ...prev,
-        [candidate.resultingFen]: { evalCp: currentEvalCp, isUnknown: true },
-      }));
-    }
-
-    setAlternativeContinuationToApply({
-      parentFen,
-      candidate
-    });
-  };
-
-  const handleContinuationApplied = () => {
-    setPendingContinuationCandidate(null);
-  };
-
-  const handleUserExplorationMove = (
-    moveSan: string,
-    nextFen: string,
-    feedback?: { isBest: boolean; loss: number; evalCp?: number | null; fromFen?: string }
-  ) => {
-    // User made a successful, acceptable move.
-    if (explorationPlayMode === 'CHESSECHO') {
-      setRequestedContinuationFen(nextFen);
-      setLastContinuationCandidates(null);
-    } else {
-      setRequestedContinuationFen(undefined);
-      setPendingContinuationCandidate(null);
-      setLastContinuationCandidates(null);
-    }
-
-    if (feedback) {
-      if (explorationPlayMode !== 'CHALLENGE') {
-        if (feedback.isBest) {
-          setExplorationFeedbackByFen(prev => ({ ...prev, [nextFen]: { message: 'Best move. No evaluation loss.', type: 'best' } }));
-        } else {
-          setExplorationFeedbackByFen(prev => ({ ...prev, [nextFen]: { message: `Good move. It loses ${feedback.loss.toFixed(2)} pawns compared with the best move.`, type: 'good' } }));
-        }
-      }
-
-      if (feedback.evalCp != null && feedback.fromFen) {
-        const whiteEval = toWhitePerspective(feedback.evalCp, feedback.fromFen);
-        setCurrentEvalCp(whiteEval);
-        setIsEvalUnknown(false);
-        setExplorationEvalMap((prev) => ({
-          ...prev,
-          [nextFen]: { evalCp: whiteEval, isUnknown: false },
-        }));
-      } else if (feedback.evalCp === null) {
-        setIsEvalUnknown(true);
-        setExplorationEvalMap((prev) => ({
-          ...prev,
-          [nextFen]: { evalCp: currentEvalCp, isUnknown: true },
-        }));
-      }
-    } else {
-      setExplorationFeedbackByFen(prev => ({ ...prev, [nextFen]: null }));
-    }
-  };
-
-  const handleChessEchoExplorationMove = () => {
-    // ChessEcho made its move. Clear request.
-    setRequestedContinuationFen(undefined);
-  };
-
-  const puzzleBoardOrientation: 'white' | 'black' =
-    (activePuzzle?.playerColor === 'WHITE') !== isBoardFlipped ? 'white' : 'black';
-
-  const isPuzzleBoardUnsettled =
-    continuation.loading ||
-    !!requestedContinuationFen ||
-    !!pendingContinuationCandidate ||
-    !!alternativeContinuationToApply ||
-    isMoveEvaluationPending;
-
-  const handleEnterBlindfold = () => {
-    if (!activePuzzle || activePuzzle.source === 'supplied' || isPuzzleBoardUnsettled) return;
-    blindfold.start(currentBoardFen || activePuzzle.fen, activePuzzle.playerColor);
-  };
-
-  const handleEnterExploration = (
-    initialMode?: ExplorationPlayMode,
-    decisionMove?: string,
-    baselineFenOverride?: string,
-    baselineEvalOverride?: number,
-    baselineUnknownOverride?: boolean,
-  ) => {
-    setExplorationDecisionMove(decisionMove ?? null);
-    setIsExplorationActive(true);
-    setExplorationPlayMode(initialMode);
-    const baselineFen = baselineFenOverride || currentBoardFen || activePuzzle?.fen || '';
-    const baselineEval = baselineEvalOverride ?? currentEvalCp;
-    const baselineUnknown = baselineUnknownOverride ?? isEvalUnknown;
-
-    const initialMap: Record<string, { evalCp: number; isUnknown: boolean }> = {};
-    if (!baselineFenOverride && activePuzzle?.fen) {
-      initialMap[activePuzzle.fen] = { evalCp: activePuzzle.evalCp ?? 35, isUnknown: false };
-    }
-    if (baselineFen) {
-      initialMap[baselineFen] = { evalCp: baselineEval, isUnknown: baselineUnknown };
-    }
-    setExplorationEvalMap(initialMap);
-
-    if (initialMode === 'CHESSECHO') {
-      setRequestedContinuationFen(baselineFen);
-    } else {
-      setRequestedContinuationFen(undefined);
-      setPendingContinuationCandidate(null);
-    }
-
-    setFeedback({ status: 'EXPLORING' });
-    setUnacceptableMoveMessage(null);
-    setLastContinuationCandidates(null);
-    setAlternativeContinuationToApply(null);
-    setChallengeBranchesByFen({});
-    setChallengeActiveCandidateByFen({});
-  };
-
-  const captureExplorationReturnSnapshot = (tab?: TabType): LongDecisionReturnSnapshot => {
-    const timerAttempt = timerAttemptRef.current;
-    const timerWasRunning = timerAttempt?.timer.isRunning() ?? false;
-    let timerShouldResume = timerWasRunning;
-    let elapsedMs = timerElapsedMs;
-    if (timerWasRunning && timerAttempt) {
-      if (timerAttempt.timer instanceof StopwatchTimer) {
-        elapsedMs = timerAttempt.timer.pause();
-      } else {
-        const remainingMs = timerAttempt.timer.pause();
-        elapsedMs = timerAttempt.allowedMs - remainingMs;
-        if (remainingMs === 0 && !timerAttempt.hasExpired) {
-          timerAttempt.hasExpired = true;
-          timerShouldResume = false;
-          setTimerExpired(true);
-          soundService.playSound('completion');
-          void submitTimerAttempt('EXPIRED');
-        }
-      }
-      setTimerElapsedMs(elapsedMs);
-    }
-
-    return {
-      originatingTab: tab,
-      activePuzzle,
-      currentPuzzleIndex,
-      initialMoveHistorySan,
-      initialMoveHistoryStartFen,
-      currentBoardFen,
-      boardHistory: boardHistorySnapshotRef.current ?? boardHistorySnapshot,
-      currentEvalCp,
-      isEvalUnknown,
-      evalHistory,
-      feedbackHistory,
-      historyIndex,
-      moveHistory,
-      hintSquare,
-      feedback,
-      showPuzzleSettings,
-      isBoardFlipped,
-      timerMode,
-      timerElapsedMs: elapsedMs,
-      timerAllowedMs,
-      timerExpired: timerExpired || (timerAttempt?.hasExpired ?? false),
-      timerSubmissionError,
-      timerAttempt,
-      timerWasRunning: timerShouldResume,
-    };
-  };
-
-  const restoreExplorationReturnSnapshot = (returnSnapshot: LongDecisionReturnSnapshot) => {
-    setActivePuzzle(returnSnapshot.activePuzzle);
-    setCurrentPuzzleIndex(returnSnapshot.currentPuzzleIndex);
-    setInitialMoveHistorySan(returnSnapshot.initialMoveHistorySan);
-    setInitialMoveHistoryStartFen(returnSnapshot.initialMoveHistoryStartFen);
-    setCurrentBoardFen(returnSnapshot.currentBoardFen);
-    boardHistorySnapshotRef.current = returnSnapshot.boardHistory;
-    setBoardHistorySnapshot(returnSnapshot.boardHistory);
-    setCurrentEvalCp(returnSnapshot.currentEvalCp);
-    setIsEvalUnknown(returnSnapshot.isEvalUnknown);
-    setEvalHistory(returnSnapshot.evalHistory);
-    setFeedbackHistory(returnSnapshot.feedbackHistory);
-    setHistoryIndex(returnSnapshot.historyIndex);
-    setMoveHistory(returnSnapshot.moveHistory);
-    setHintSquare(returnSnapshot.hintSquare);
-    setFeedback(returnSnapshot.feedback);
-    setShowPuzzleSettings(returnSnapshot.showPuzzleSettings);
-    setIsBoardFlipped(returnSnapshot.isBoardFlipped);
-    setTimerMode(returnSnapshot.timerMode);
-    setTimerElapsedMs(returnSnapshot.timerElapsedMs);
-    setTimerAllowedMs(returnSnapshot.timerAllowedMs);
-    setTimerExpired(returnSnapshot.timerExpired);
-    setTimerSubmissionError(returnSnapshot.timerSubmissionError);
-    timerAttemptRef.current = returnSnapshot.timerAttempt;
-    timerRef.current = returnSnapshot.timerAttempt?.timer ?? null;
-    if (returnSnapshot.timerWasRunning) {
-      returnSnapshot.timerAttempt?.timer.resume();
-    }
-  };
-
-  const handleExplorePosition = (
-    position: PositionExplorationStart,
-    preserveReturnState = false,
-  ) => {
-    if (!preserveReturnState && !hasLongDecisionReturnContext && !hasSimilarPositionsReturnContext) {
-      longDecisionReturnSnapshotRef.current = captureExplorationReturnSnapshot(activeTab);
-    }
-    suppliedPositionCounterRef.current += 1;
-    blindfold.exit();
-    if (!preserveReturnState) {
-      setTimerMode(null);
-      setTimerElapsedMs(0);
-      setTimerExpired(false);
-      setTimerSubmissionError(null);
-    }
-    const sideToMove = position.fen.trim().split(/\s+/)[1];
-    setActivePuzzle({
-      puzzleId: `supplied-position-${suppliedPositionCounterRef.current}`,
-      source: 'supplied',
-      fen: position.fen,
-      playerColor: sideToMove === 'b' ? 'BLACK' : 'WHITE',
-      targetMove: '',
-      openingTitle: '',
-      acceptableMoves: [],
-      movesPlayed: [],
-      priority: 0,
-      timesReached: 0,
-      mistakeCount: 0,
-      mistakeRate: 0,
-    });
-    setInitialMoveHistorySan(position.sanHistory);
-    setInitialMoveHistoryStartFen(position.historyStartFen);
-    setCurrentBoardFen(position.fen);
-    boardHistorySnapshotRef.current = null;
-    setBoardHistorySnapshot(null);
-    setCurrentEvalCp(35);
-    setFeedback({ status: 'IDLE' });
-    setIsEvalUnknown(true);
-    setHintSquare(undefined);
+  const handleExplorePosition = (position: PositionExplorationStart) => {
     changeTab('puzzles');
+    practiceActionsRef.current?.explorePosition(position, false, activeTab);
   };
 
   const handleLongDecisionExplorePosition = (fen: string): boolean => {
-    try {
-      new Chess(fen);
-    } catch {
-      return false;
+    const success = practiceActionsRef.current?.exploreLongDecision(fen) ?? false;
+    if (success) {
+      setHasLongDecisionReturnContext(true);
+      changeTab('puzzles');
     }
-
-    longDecisionReturnSnapshotRef.current = captureExplorationReturnSnapshot('long-decisions');
-    setHasLongDecisionReturnContext(true);
-    handleExplorePosition({ fen, sanHistory: [] }, true);
-    return true;
+    return success;
   };
 
   const handleSimilarPositionsExplorePosition = (position: PositionExplorationStart): boolean => {
-    try {
-      new Chess(position.fen);
-    } catch {
-      return false;
+    const success = practiceActionsRef.current?.exploreSimilarPositions(position) ?? false;
+    if (success) {
+      setHasSimilarPositionsReturnContext(true);
+      changeTab('puzzles');
     }
+    return success;
+  };
 
-    longDecisionReturnSnapshotRef.current = captureExplorationReturnSnapshot('similar-positions');
-    setHasSimilarPositionsReturnContext(true);
-    handleExplorePosition(position, true);
-    return true;
+  const handleSelectPracticeFromLibrary = (puzzle: Puzzle, fullList?: Puzzle[]) => {
+    changeTab('puzzles');
+    practiceActionsRef.current?.selectPracticeFromLibrary(puzzle, fullList);
   };
 
   const handleSimilarPositionsSnapshotChange = React.useCallback(
     (snapshot: SimilarPositionsReturnSnapshot | null) => {
-      similarPositionsReturnSnapshotRef.current = snapshot;
       setSimilarPositionsSnapshot(snapshot);
     },
     []
   );
 
-  const handleExitExploration = () => {
-    setIsExplorationActive(false);
-    setExplorationPlayMode(undefined);
-    setRequestedContinuationFen(undefined);
-    setPendingContinuationCandidate(null);
-    setUnacceptableMoveMessage(null);
-    setLastContinuationCandidates(null);
-    setAlternativeContinuationToApply(null);
-    setExplorationEvalMap({});
-    setChallengeBranchesByFen({});
-    setChallengeActiveCandidateByFen({});
-    setExplorationDecisionMove(null);
-    if (hasSimilarPositionsReturnContext) {
-      const returnSnapshot = longDecisionReturnSnapshotRef.current;
-      if (returnSnapshot) {
-        restoreExplorationReturnSnapshot(returnSnapshot);
-        longDecisionReturnSnapshotRef.current = null;
-      }
-      setHasSimilarPositionsReturnContext(false);
-      changeTab('similar-positions');
-      return;
-    }
-    if (hasLongDecisionReturnContext) {
-      const returnSnapshot = longDecisionReturnSnapshotRef.current;
-      if (returnSnapshot) {
-        restoreExplorationReturnSnapshot(returnSnapshot);
-        longDecisionReturnSnapshotRef.current = null;
-      }
-      setHasLongDecisionReturnContext(false);
-      changeTab('long-decisions');
-      return;
-    }
-    const genericSnapshot = longDecisionReturnSnapshotRef.current;
-    if (genericSnapshot) {
-      restoreExplorationReturnSnapshot(genericSnapshot);
-      longDecisionReturnSnapshotRef.current = null;
-      if (genericSnapshot.originatingTab) {
-        changeTab(genericSnapshot.originatingTab);
-      }
-      return;
-    }
-    if (activePuzzle?.source === 'supplied') {
-      setActivePuzzle(null);
-      setInitialMoveHistorySan([]);
-      setInitialMoveHistoryStartFen(undefined);
-      setCurrentBoardFen('');
-      setFeedback({ status: 'IDLE' });
-      return;
-    }
-    if (explorationDecisionMove) {
-      setFeedback({ status: 'IDLE' });
-    } else {
-      setFeedback({ status: 'CORRECT', lastMove: activePuzzle?.targetMove });
-    }
-  };
-
-  const handleUnacceptableMove = (message?: string | null) => {
-    if (!message) {
-      setUnacceptableMoveMessage(null);
-      return;
-    }
-    setUnacceptableMoveMessage(message);
-    setTimeout(() => {
-      setUnacceptableMoveMessage(null);
-    }, 3500);
-  };
-
-  const resetPuzzleInteractionState = (puzzle: Puzzle) => {
-    const initialEval = puzzle.evalCp ?? 35;
-    setCurrentEvalCp(initialEval);
-    setEvalHistory([initialEval]);
-    setFeedbackHistory([{ status: 'IDLE' }]);
-    setFeedback({ status: 'IDLE' });
-    setHistoryIndex(0);
-    setMoveHistory([]);
-    boardHistorySnapshotRef.current = null;
-    setBoardHistorySnapshot(null);
-    setHintSquare(undefined);
-    setIsEvalUnknown(false);
-    setCurrentBoardFen(puzzle.fen);
-    exitBlindfoldRef.current();
-    setPendingContinuationCandidate(null);
-    setRequestedContinuationFen(undefined);
-    setIsExplorationActive(false);
-    setExplorationDecisionMove(null);
-    setUnacceptableMoveMessage(null);
-    setLastContinuationCandidates(null);
-    setAlternativeContinuationToApply(null);
-    setExplorationEvalMap({});
-    setChallengeBranchesByFen({});
-    setChallengeActiveCandidateByFen({});
-    // Reset timer on puzzle change
-    setTimerElapsedMs(0);
-    setTimerExpired(false);
-    setTimerSubmissionError(null);
-    if (timerRef.current) {
-      if (timerRef.current instanceof StopwatchTimer) {
-        timerRef.current.reset();
-      } else if (timerRef.current instanceof CountdownTimer) {
-        timerRef.current.reset();
-      }
-    }
-  };
-
-  const [puzzlePage, setPuzzlePage] = useState<number>(0);
-  const [hasMorePuzzles, setHasMorePuzzles] = useState<boolean>(true);
-  const [isFetchingMorePuzzles, setIsFetchingMorePuzzles] = useState<boolean>(false);
-
-  // Fetch live puzzles whenever activeUsername, puzzleColorFilter, minEvalLoss, or minMistakeCount changes, guarded by isSettingsInitialized gate
-  const [trackedPuzzleQuery, setTrackedPuzzleQuery] = useState<{
-    isSettingsInitialized: boolean;
-    activeUsername?: string;
-    puzzleColorFilter: 'BOTH' | 'WHITE' | 'BLACK';
-    minEvalLoss: number;
-    minMistakeCount: number;
-  } | null>(null);
-
-  if (
-    !trackedPuzzleQuery ||
-    trackedPuzzleQuery.isSettingsInitialized !== isSettingsInitialized ||
-    trackedPuzzleQuery.activeUsername !== activeUsername ||
-    trackedPuzzleQuery.puzzleColorFilter !== puzzleColorFilter ||
-    trackedPuzzleQuery.minEvalLoss !== minEvalLoss ||
-    trackedPuzzleQuery.minMistakeCount !== minMistakeCount
-  ) {
-    setTrackedPuzzleQuery({ isSettingsInitialized, activeUsername, puzzleColorFilter, minEvalLoss, minMistakeCount });
-    if (!isSettingsInitialized || !activeUsername) {
-      if (!activeUsername && activePuzzle?.source !== 'supplied') {
-        setPuzzlesList([]);
-        setActivePuzzle(null);
-        setPuzzleLoadError(false);
-        setFeedback({ status: 'IDLE' });
-        setMoveHistory([]);
-        setHintSquare(undefined);
-        setIsLoadingPuzzles(false);
-        setPuzzlePage(0);
-        setHasMorePuzzles(false);
-        setIsFetchingMorePuzzles(false);
-      }
-    }
-  }
-
-  React.useEffect(() => {
-    if (!isSettingsInitialized || !activeUsername) {
-      return;
-    }
-    const requestSequence = puzzleLoadSeqRef;
-
-    async function loadData() {
-      const seq = ++puzzleLoadSeqRef.current;
-      // Gate on session resolution without forcing an extra committed render.
-      await sessionGateRef.current!.promise;
-      if (seq !== puzzleLoadSeqRef.current) return;
-      setIsLoadingPuzzles(true);
-      setPuzzleLoadError(false);
-      setPuzzlePage(0);
-      setHasMorePuzzles(true);
-      setIsFetchingMorePuzzles(false);
-      try {
-        const data = await fetchPuzzles(
-          activeAccount?.id || activeUsername!,
-          'CHESS_COM',
-          puzzleColorFilter,
-          minEvalLoss,
-          minMistakeCount,
-          10,
-          0
-        );
-
-        if (seq !== puzzleLoadSeqRef.current) return;
-
-        if (data && data.length > 0) {
-          setPuzzlesList(data);
-          const savedId = typeof window !== 'undefined' ? localStorage.getItem('chessecho_puzzle_id') : null;
-          const foundIdx = savedId ? data.findIndex((p) => p.puzzleId === savedId) : -1;
-          const targetIdx = foundIdx !== -1 ? foundIdx : 0;
-          const targetPuzzle = data[targetIdx];
-
-          setCurrentPuzzleIndex(targetIdx);
-          setActivePuzzle(targetPuzzle);
-          setLoadedPuzzleContext(puzzleContextKey);
-          resetPuzzleInteractionState(targetPuzzle);
-          setWeaknessCount(data.length);
-        } else {
-          setPuzzlesList([]);
-          setActivePuzzle(null);
-          setCurrentPuzzleIndex(0);
-          setWeaknessCount(0);
-        }
-      } catch (err) {
-        if (seq !== puzzleLoadSeqRef.current) return;
-        console.error('Failed to load puzzles from backend API:', err);
-        setPuzzleLoadError(true);
-        setPuzzlesList([]);
-        setActivePuzzle(null);
-        setFeedback({ status: 'IDLE' });
-        setMoveHistory([]);
-        setHintSquare(undefined);
-        setHasMorePuzzles(false);
-      } finally {
-        if (seq === puzzleLoadSeqRef.current) {
-          setIsLoadingPuzzles(false);
-        }
-      }
-    }
-    loadData();
-    return () => {
-      requestSequence.current++;
-    };
-  }, [isSettingsInitialized, activeUsername, activeAccount?.id, puzzleColorFilter, minEvalLoss, minMistakeCount, puzzleReloadToken, puzzleContextKey]);
-
-  // Bootstrap the session from /api/me once on mount, resolving the shared gate
-  // after every outcome so guest-eligible fetches proceed once session state is
-  // known. A late resolve after unmount is ignored (#113 AC7).
-  React.useEffect(() => {
-    let active = true;
-    accountContextMountedRef.current = true;
-    fetchCurrentSession().then(async (state) => {
-      if (!active) return;
-      setSessionStatus(state.status);
-      setSessionUserId(state.status === 'authenticated' ? state.userId : undefined);
-      if (state.status === 'unauthenticated') {
-        accountRequestVersionRef.current++;
-        accountOwnerIdRef.current = undefined;
-        setAccountStatus('unconnected');
-        setAccountError(undefined);
-        reconcileSessionIdentity(undefined);
-        setIsLoadingPuzzles(false);
-        sessionGateRef.current!.resolve(true);
-      } else if (state.status === 'authenticated') {
-        if (!reconcileSessionIdentity(state.userId)) {
-          accountRequestVersionRef.current++;
-          accountOwnerIdRef.current = undefined;
-          setAccountStatus('error');
-          setAccountError('Unable to verify the authenticated user. Refresh the page and sign in again.');
-          sessionGateRef.current!.resolve(true);
-          return;
-        }
-        if (state.userId) await loadOwnedAccounts(state.userId, () => active);
-      } else {
-        accountRequestVersionRef.current++;
-        accountOwnerIdRef.current = undefined;
-        setAccountStatus('unconnected');
-        setAccountError(undefined);
-        reconcileSessionIdentity(undefined);
-        setIsLoadingPuzzles(false);
-        sessionGateRef.current!.resolve(true);
-      }
-    });
-    return () => {
-      active = false;
-      accountContextMountedRef.current = false;
-    };
-  }, [clearLiveJobState, loadOwnedAccounts, reconcileSessionIdentity]);
-
-  const handleRetryPuzzleLoad = () => {
-    invalidatePuzzleRequests();
-    setPuzzleReloadToken((token) => token + 1);
-  };
-
-  const handleApplyPuzzleSettings = async () => {
-    if (!activeUsername) return;
-    const seq = ++puzzleLoadSeqRef.current;
-    setIsLoadingPuzzles(true);
-    setPuzzleLoadError(false);
-    setPuzzlePage(0);
-    setHasMorePuzzles(true);
-    setIsFetchingMorePuzzles(false);
-    try {
-      const data = await fetchPuzzles(
-        activeAccount?.id || activeUsername,
-        'CHESS_COM',
-        puzzleColorFilter,
-        minEvalLoss,
-        minMistakeCount,
-        10,
-        0
-      );
-
-      if (seq !== puzzleLoadSeqRef.current) return;
-
-      if (data && data.length > 0) {
-        setPuzzlesList(data);
-        const currentId = activePuzzle?.puzzleId || (typeof window !== 'undefined' ? localStorage.getItem('chessecho_puzzle_id') : null);
-        const foundIdx = currentId ? data.findIndex((p) => p.puzzleId === currentId) : -1;
-        const targetIdx = foundIdx !== -1 ? foundIdx : 0;
-        const targetPuzzle = data[targetIdx];
-
-        setCurrentPuzzleIndex(targetIdx);
-        setActivePuzzle(targetPuzzle);
-        setLoadedPuzzleContext(puzzleContextKey);
-        resetPuzzleInteractionState(targetPuzzle);
-        setWeaknessCount(data.length);
-      } else {
-        setPuzzlesList([]);
-        setActivePuzzle(null);
-        setFeedback({ status: 'IDLE' });
-        setMoveHistory([]);
-        setHintSquare(undefined);
-        setHasMorePuzzles(false);
-        if (typeof window !== 'undefined') {
-          localStorage.removeItem('chessecho_puzzle_id');
-        }
-      }
-    } catch (err) {
-      if (seq !== puzzleLoadSeqRef.current) return;
-      console.error('Failed to apply puzzle settings:', err);
-      setPuzzleLoadError(true);
-      setPuzzlesList([]);
-      setActivePuzzle(null);
-      setFeedback({ status: 'IDLE' });
-      setMoveHistory([]);
-      setHintSquare(undefined);
-      setHasMorePuzzles(false);
-    } finally {
-      if (seq === puzzleLoadSeqRef.current) {
-        setIsLoadingPuzzles(false);
-      }
-    }
-  };
-
-  const handlePreviousPuzzle = () => {
-    if (puzzlesList.length === 0) return;
-    const prevIndex = (currentPuzzleIndex - 1 + puzzlesList.length) % puzzlesList.length;
-    const prevPuzzle = puzzlesList[prevIndex];
-
-    setCurrentPuzzleIndex(prevIndex);
-    setActivePuzzle(prevPuzzle);
-    resetPuzzleInteractionState(prevPuzzle);
-    if (typeof window !== 'undefined' && prevPuzzle) {
-      localStorage.setItem('chessecho_puzzle_id', prevPuzzle.puzzleId);
-    }
-  };
-
-  const handleNextPuzzle = async () => {
-    if (puzzlesList.length === 0) return;
-    const nextIndex = (currentPuzzleIndex + 1) % puzzlesList.length;
-    const nextPuzzle = puzzlesList[nextIndex];
-
-    setCurrentPuzzleIndex(nextIndex);
-    setActivePuzzle(nextPuzzle);
-    resetPuzzleInteractionState(nextPuzzle);
-    if (typeof window !== 'undefined' && nextPuzzle) {
-      localStorage.setItem('chessecho_puzzle_id', nextPuzzle.puzzleId);
-    }
-
-    // Prefetch next page if approaching the end of current puzzle list
-    if (
-      activeUsername &&
-      hasMorePuzzles &&
-      !isFetchingMorePuzzles &&
-      nextIndex >= puzzlesList.length - 2
-    ) {
-      // Capture (do not bump) the current generation: a prefetch belongs to the
-      // active load, so a superseding load (which bumps the generation) makes this
-      // prefetch stale and a total no-op on completion, including the lock release.
-      const seq = puzzleLoadSeqRef.current;
-      setIsFetchingMorePuzzles(true);
-      const nextPage = puzzlePage + 1;
-      try {
-        const data = await fetchPuzzles(
-          activeAccount?.id || activeUsername,
-          'CHESS_COM',
-          puzzleColorFilter,
-          minEvalLoss,
-          minMistakeCount,
-          10,
-          nextPage
-        );
-
-        if (seq !== puzzleLoadSeqRef.current) return;
-
-        if (data && data.length > 0) {
-          setPuzzlesList((prev) => {
-            const existingIds = new Set(prev.map((p) => p.puzzleId));
-            const newItems = data.filter((p) => !existingIds.has(p.puzzleId));
-            return [...prev, ...newItems];
-          });
-          setPuzzlePage(nextPage);
-          if (data.length < 10) {
-            setHasMorePuzzles(false);
-          }
-        } else {
-          setHasMorePuzzles(false);
-        }
-      } catch (err) {
-        if (seq !== puzzleLoadSeqRef.current) return;
-        // Background prefetch failure must stay retryable: do NOT mark the list as
-        // terminally exhausted and do not discard already-rendered puzzles, so the
-        // next navigation can re-attempt the same page.
-        console.error('Failed to prefetch next puzzle page:', err);
-      } finally {
-        if (seq === puzzleLoadSeqRef.current) {
-          setIsFetchingMorePuzzles(false);
-        }
-      }
-    }
-  };
-
-  const handleSelectPracticeFromLibrary = (puzzle: Puzzle, fullList?: Puzzle[]) => {
-    let targetList = puzzlesList;
-    let targetIdx = -1;
-
-    if (fullList && fullList.length > 0) {
-      targetList = fullList;
-      setPuzzlesList(fullList);
-      targetIdx = fullList.findIndex((p) => p.puzzleId === puzzle.puzzleId);
-    } else {
-      targetIdx = puzzlesList.findIndex((p) => p.puzzleId === puzzle.puzzleId);
-      if (targetIdx === -1) {
-        targetList = [...puzzlesList, puzzle];
-        setPuzzlesList(targetList);
-        targetIdx = targetList.length - 1;
-      }
-    }
-
-    const selectedPuzzle =
-      targetIdx !== -1
-        ? {
-            ...targetList[targetIdx],
-            gameUrls: puzzle.gameUrls || targetList[targetIdx].gameUrls || [],
-          }
-        : puzzle;
-    const finalIndex = Math.max(0, targetIdx);
-
-    setCurrentPuzzleIndex(finalIndex);
-    setActivePuzzle(selectedPuzzle);
-    setLoadedPuzzleContext(puzzleContextKey);
-    resetPuzzleInteractionState(selectedPuzzle);
-
-    if (typeof window !== 'undefined' && selectedPuzzle) {
-      localStorage.setItem('chessecho_puzzle_id', selectedPuzzle.puzzleId);
-    }
-    changeTab('puzzles');
-  };
-
-  const handleBoardUndo = () => {
-    setRequestedContinuationFen(undefined);
-    setPendingContinuationCandidate(null);
-
-    if (isExplorationActive) {
-      setLastContinuationCandidates(null);
-      return;
-    }
-
-    const prevIndex = Math.max(0, historyIndex - 1);
-    setHistoryIndex(prevIndex);
-    setCurrentEvalCp(evalHistory[prevIndex] ?? (activePuzzle?.evalCp ?? 35));
-    const prevFeedback = feedbackHistory[prevIndex];
-    setFeedback(prevFeedback ?? { status: 'IDLE' });
-    setIsEvalUnknown(false);
-  };
-
-  const handleBoardRedo = () => {
-    setRequestedContinuationFen(undefined);
-    setPendingContinuationCandidate(null);
-
-    if (isExplorationActive) {
-      setLastContinuationCandidates(null);
-      return;
-    }
-
-    if (historyIndex < evalHistory.length - 1) {
-      const nextIndex = historyIndex + 1;
-      setHistoryIndex(nextIndex);
-      setCurrentEvalCp(evalHistory[nextIndex]);
-      const nextFeedback = feedbackHistory[nextIndex];
-      setFeedback(nextFeedback ?? { status: 'IDLE' });
-    }
-  };
-
-  const handleBoardReset = () => {
-    setRequestedContinuationFen(undefined);
-    setPendingContinuationCandidate(null);
-    setIsExplorationActive(false);
-    setExplorationDecisionMove(null);
-    setUnacceptableMoveMessage(null);
-    setLastContinuationCandidates(null);
-    setAlternativeContinuationToApply(null);
-    setExplorationEvalMap({});
-    setChallengeBranchesByFen({});
-    setChallengeActiveCandidateByFen({});
-
-    setHistoryIndex(0);
-    setCurrentEvalCp(evalHistory[0] ?? (activePuzzle?.evalCp ?? 35));
-    const firstFeedback = feedbackHistory[0];
-    setFeedback(firstFeedback ?? { status: 'IDLE' });
-    setIsEvalUnknown(false);
-  };
-
-  const handleMoveAttempt = (
-    moveSan: string,
-    isCorrect: boolean,
-    isHistoricalMistake: boolean,
-    historicalInfo?: { timesPlayed: number; averageLoss: number },
-    isInitialDecision: boolean = true
-  ) => {
-    if (!activePuzzle) return;
-    if (isInitialDecision && activePuzzle.source !== 'supplied') {
-      if (!puzzleContextReady) return;
-      void puzzleAttempts.submit(moveSan, isCorrect);
-    }
-    setMoveHistory((prev) => [...prev, moveSan]);
-    setHintSquare(undefined);
-
-    const startCp = activePuzzle.evalCp ?? 35;
-
-    if (isInitialDecision) {
-      if (activePuzzle.source === 'supplied' || !activePuzzle.targetMove) {
-        // Dynamic evaluation for supplied and unanalyzed positions without static target move
-        void evaluateMove(activePuzzle.fen, moveSan).then((evalResult) => {
-          if (!evalResult) return;
-          const acceptable = evalResult.acceptable;
-          const evalCp = evalResult.evalCp ?? startCp;
-          const nextFeedback: PuzzleFeedbackState = {
-            status: acceptable ? 'CORRECT' : 'INCORRECT',
-            lastMove: moveSan,
-          };
-          setFeedback(nextFeedback);
-          setCurrentEvalCp(evalCp);
-          setIsEvalUnknown(false);
-          setEvalHistory((prev) => [...prev.slice(0, historyIndex + 1), evalCp]);
-          setFeedbackHistory((prev) => [...prev.slice(0, historyIndex + 1), nextFeedback]);
-          setHistoryIndex((prev) => prev + 1);
-          if (acceptable) {
-            soundService.playSound('completion');
-          } else {
-            soundService.playSound('incorrect');
-          }
-        });
-        return;
-      }
-
-      // Calculate evaluation update based on move played for initial decision
-      let calculatedEval = startCp;
-      let moveHasEngineData = true;
-      const acceptableMatch = activePuzzle.acceptableMoves.find((m) => m.move === moveSan);
-
-      if (moveSan === activePuzzle.targetMove) {
-        // Best move: no loss — eval stays at starting position
-        calculatedEval = startCp;
-      } else if (acceptableMatch) {
-        // Acceptable alternative: apply its specific eval loss from engine data
-        const lossCp = Math.round(acceptableMatch.evalLoss * 100);
-        calculatedEval = activePuzzle.playerColor === 'BLACK'
-          ? startCp + lossCp
-          : startCp - lossCp;
-      } else if (isHistoricalMistake && historicalInfo) {
-        // Historical mistake: use average loss from actual game data
-        const lossCp = Math.round(historicalInfo.averageLoss * 100);
-        calculatedEval = activePuzzle.playerColor === 'BLACK'
-          ? startCp + lossCp
-          : startCp - lossCp;
-      } else {
-        // No engine data for this move — freeze eval and show ? badge
-        moveHasEngineData = false;
-        calculatedEval = currentEvalCp; // keep current value unchanged
-      }
-
-      let newFeedbackState: {
-        status: 'IDLE' | 'CORRECT' | 'HISTORICAL_MISTAKE' | 'INCORRECT' | 'EXPLORING';
-        lastMove?: string;
-        historicalInfo?: { timesPlayed: number; averageLoss: number };
-      } = { status: 'IDLE' };
-
-      if (isCorrect) {
-        newFeedbackState = { status: 'CORRECT', lastMove: moveSan };
-        if (timerMode && !timerExpired) {
-          void submitTimerAttempt('SUBMITTED');
-        }
-      } else if (isHistoricalMistake) {
-        newFeedbackState = { status: 'HISTORICAL_MISTAKE', lastMove: moveSan, historicalInfo };
-      } else {
-        newFeedbackState = { status: 'INCORRECT', lastMove: moveSan };
-      }
-
-      // Truncate future stacks if making a move after undoing
-      const trimmedEvalHist = evalHistory.slice(0, historyIndex + 1);
-      const trimmedFeedHist = feedbackHistory.slice(0, historyIndex + 1);
-
-      trimmedEvalHist.push(calculatedEval);
-      trimmedFeedHist.push(newFeedbackState);
-
-      setEvalHistory(trimmedEvalHist);
-      setFeedbackHistory(trimmedFeedHist);
-      setHistoryIndex(trimmedEvalHist.length - 1);
-
-      setCurrentEvalCp(calculatedEval);
-      setIsEvalUnknown(!moveHasEngineData);
-      setFeedback(newFeedbackState);
-    } else {
-      // Continuation / Opponent move
-      const trimmedEvalHist = evalHistory.slice(0, historyIndex + 1);
-      const trimmedFeedHist = feedbackHistory.slice(0, historyIndex + 1);
-
-      trimmedEvalHist.push(currentEvalCp);
-      trimmedFeedHist.push(feedback);
-
-      setEvalHistory(trimmedEvalHist);
-      setFeedbackHistory(trimmedFeedHist);
-      setHistoryIndex(trimmedEvalHist.length - 1);
-    }
-  };
-
-  const handleChallengeCandidateSelect = async (san: string) => {
-    const chessjs = await import('chess.js');
-    try {
-      setChallengeActiveCandidateByFen(prev => ({ ...prev, [currentBoardFen]: san }));
-
-      setChallengeBranchesByFen(prev => {
-        const fenBranches = prev[currentBoardFen] || {};
-        if (!fenBranches[san]) {
-          const tempGame = new chessjs.Chess(currentBoardFen);
-          const moveObj = tempGame.move(san);
-          if (moveObj) {
-            return {
-              ...prev,
-              [currentBoardFen]: {
-                ...fenBranches,
-                [san]: [{ san, fenAfter: tempGame.fen(), isWhite: moveObj.color === 'w' }]
-              }
-            };
-          }
-        }
-        return prev;
-      });
-      setCalculationFeedback(null);
-      setCalculationInput('');
-    } catch {
-      // Ignore invalid candidates
-    }
-  };
-
-  const handleBackToCandidates = () => {
-    setChallengeActiveCandidateByFen(prev => ({ ...prev, [currentBoardFen]: null }));
-    setCalculationFeedback(null);
-    setCalculationInput('');
-  };
-
-  const challengeSubmission = challengeSubmissionByFen[currentBoardFen];
-  const [trackedChallengeQuery, setTrackedChallengeQuery] = useState<{
-    currentBoardFen: string;
-    explorationPlayMode: ExplorationPlayMode | undefined;
-    submission: ChallengeSubmissionResult | undefined;
-  } | null>(null);
-
-  if (
-    !trackedChallengeQuery ||
-    trackedChallengeQuery.currentBoardFen !== currentBoardFen ||
-    trackedChallengeQuery.explorationPlayMode !== explorationPlayMode ||
-    trackedChallengeQuery.submission !== challengeSubmission
-  ) {
-    setTrackedChallengeQuery({ currentBoardFen, explorationPlayMode, submission: challengeSubmission });
-    if (explorationPlayMode === 'CHALLENGE' && currentBoardFen && !challengeSubmission) {
-      setChallengeFeedbackByFen(prev => ({ ...prev, [currentBoardFen]: null }));
-      setChallengeInputByFen(prev => ({ ...prev, [currentBoardFen]: '' }));
-    }
-  }
-
-  React.useEffect(() => {
-    if (explorationPlayMode !== 'CHALLENGE' || !currentBoardFen) return;
-    if (challengeSubmissionByFen[currentBoardFen]) return;
-
-    let isMounted = true;
-
-    const fetchCandidates = async () => {
-      setIsChallengeLoading(true);
-      try {
-        const result = await fetchPuzzleContinuation(currentBoardFen, 'ENGINE');
-        if (isMounted && result && result.fen === currentBoardFen) {
-          const strongCandidates = result.candidates.filter(c => (c.evalLoss ?? 0) <= STRICT_OPPONENT_EVAL_LOSS_THRESHOLD);
-          setChallengeCandidatesByFen(prev => ({ ...prev, [currentBoardFen]: strongCandidates }));
-        }
-      } catch {
-        if (isMounted) setChallengeFeedbackByFen(prev => ({ ...prev, [currentBoardFen]: { type: 'error', message: 'Failed to load candidates.' } }));
-      } finally {
-        if (isMounted) setIsChallengeLoading(false);
-      }
-    };
-
-    fetchCandidates();
-    return () => { isMounted = false; };
-  }, [currentBoardFen, explorationPlayMode, challengeSubmissionByFen]);
-
-  const handleChallengeSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!currentBoardFen) return;
-
-    const currentChallengeInput = challengeInputByFen[currentBoardFen] || '';
-    if (!currentChallengeInput.trim() || isChallengeLoading) return;
-
-    const tokens = currentChallengeInput.split(/[\s,]+/).filter(t => t.trim().length > 0);
-    if (tokens.length === 0) return;
-
-    setIsChallengeLoading(true);
-    setChallengeFeedbackByFen(prev => ({ ...prev, [currentBoardFen]: null }));
-
-    const currentCandidates = challengeCandidatesByFen[currentBoardFen] || [];
-
-    const chessjs = await import('chess.js');
-    const uniqueMoves = new Map<string, string>(); // canonical -> raw
-    const invalidTokens: string[] = [];
-
-    for (const token of tokens) {
-      try {
-        const tempGame = new chessjs.Chess(challengeActiveFen);
-        const moveObj = tempGame.move(token);
-        if (moveObj) {
-          if (!uniqueMoves.has(moveObj.san)) {
-            uniqueMoves.set(moveObj.san, token);
-          }
-        } else {
-          invalidTokens.push(token);
-        }
-      } catch {
-        invalidTokens.push(token);
-      }
-    }
-
-    if (invalidTokens.length > 0) {
-      setChallengeFeedbackByFen(prev => ({ ...prev, [currentBoardFen]: { type: 'error', message: `"${invalidTokens[0]}" isn't valid SAN. Check the move and try again.` } }));
-      setIsChallengeLoading(false);
-      return;
-    }
-
-    const api = await import('@/services/api');
-    const moveResults: ChallengeSubmissionResult['moves'] = [];
-    let strongCount = 0;
-
-    for (const canonicalSan of uniqueMoves.keys()) {
-      try {
-        const res = await api.evaluateMove(currentBoardFen, canonicalSan);
-        if (res && res.evalLoss !== undefined && res.evalLoss !== null) {
-          if (res.evalLoss <= STRICT_OPPONENT_EVAL_LOSS_THRESHOLD) {
-            strongCount++;
-            moveResults.push({ san: canonicalSan, status: 'strong' });
-          } else {
-            moveResults.push({ san: canonicalSan, status: 'weak' });
-          }
-        } else {
-          moveResults.push({ san: canonicalSan, status: 'weak', errorMsg: 'Failed to evaluate.' });
-        }
-      } catch (e: unknown) {
-         moveResults.push({ san: canonicalSan, status: 'weak', errorMsg: errorMessageOf(e) });
-      }
-    }
-
-    const targetCount = Math.min(currentCandidates.length, 3);
-    const isComplete = strongCount >= targetCount;
-
-    setChallengeSubmissionByFen(prev => ({
-      ...prev,
-      [currentBoardFen]: {
-        foundCount: strongCount,
-        targetCount,
-        isComplete,
-        moves: moveResults
-      }
-    }));
-
-    setIsChallengeLoading(false);
-    if (isComplete) {
-      setChallengeInputByFen(prev => ({ ...prev, [currentBoardFen]: '' }));
-    }
-  };
-
-  const handleCalculationSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!calculationInput.trim() || isCalculationLoading) return;
-    setIsCalculationLoading(true);
-    setCalculationFeedback(null);
-
-    const chessjs = await import('chess.js');
-    let moveObj;
-    let afterFen = '';
-    try {
-      const tempGame = new chessjs.Chess(challengeActiveFen);
-      moveObj = tempGame.move(calculationInput.trim());
-      if (moveObj) {
-        afterFen = tempGame.fen();
-      }
-    } catch {
-      // Caught below
-    }
-
-    if (!moveObj) {
-      setCalculationFeedback({ type: 'error', message: 'Illegal move. Check your visualization.' });
-      setIsCalculationLoading(false);
-      return;
-    }
-
-    const api = await import('@/services/api');
-    try {
-      const res = await api.evaluateMove(challengeActiveFen, moveObj.san);
-      if (res && res.evalLoss !== undefined && res.evalLoss !== null && res.evalLoss <= STRICT_OPPONENT_EVAL_LOSS_THRESHOLD) {
-        setCalculationFeedback({ type: 'success', message: `Good calculation. ${moveObj.san} is a strong continuation.` });
-        setChallengeBranchesByFen(prev => {
-          const activeCandidate = challengeActiveCandidateByFen[currentBoardFen];
-          if (!activeCandidate) return prev;
-
-          const fenBranches = prev[currentBoardFen] || {};
-          const branchLine = fenBranches[activeCandidate] || [];
-          return {
-            ...prev,
-            [currentBoardFen]: {
-              ...fenBranches,
-              [activeCandidate]: [
-                ...branchLine,
-                { san: moveObj.san, fenAfter: afterFen, isWhite: moveObj.color === 'w' }
-              ]
-            }
-          };
-        });
-        setCalculationInput('');
-      } else {
-        setCalculationFeedback({ type: 'error', message: `Not strong enough (loses ${formatPawnLoss(res?.evalLoss)}). Try again.` });
-      }
-    } catch (err: unknown) {
-      setCalculationFeedback({ type: 'error', message: errorMessageOf(err) || 'Evaluation failed.' });
-    } finally {
-      setIsCalculationLoading(false);
-    }
-  };
-
-  const handleCalculationBack = () => {
-    setChallengeBranchesByFen(prev => {
-      const activeCandidate = challengeActiveCandidateByFen[currentBoardFen];
-      if (!activeCandidate) return prev;
-
-      const fenBranches = prev[currentBoardFen] || {};
-      const branchLine = fenBranches[activeCandidate] || [];
-      if (branchLine.length <= 1) return prev;
-
-      return {
-        ...prev,
-        [currentBoardFen]: {
-          ...fenBranches,
-          [activeCandidate]: branchLine.slice(0, branchLine.length - 1)
-        }
-      };
-    });
-    setCalculationFeedback(null);
-    setCalculationInput('');
-  };
-
-  const connectedAccount =
-    sessionStatus === 'authenticated' && accountStatus === 'connected' ? activeAccount : undefined;
   const showingPositionProgress = activeTab === 'weaknesses' && selectedProgress !== null;
-  const displayedUsername =
-    connectedAccount?.username ?? (sessionStatus === 'unauthenticated' ? activeUsername : undefined);
-  const weaknessDisplayUsername =
-    sessionStatus === 'authenticated' ? connectedAccount?.username : activeUsername;
 
   return (
     <div
@@ -1996,279 +205,91 @@ export default function Home() {
         activeTab={activeTab}
         setActiveTab={changeTab}
         onExplorePosition={handleExplorePosition}
-        username={displayedUsername}
-        connectedAccount={connectedAccount}
+        username={session.displayedUsername}
+        connectedAccount={session.connectedAccount}
         weaknessCount={weaknessCount}
-        onDisconnect={handleLogout}
-        sessionStatus={sessionStatus}
-        accountStatus={accountStatus}
-        isSourceNeutralExploration={
-          isExplorationActive && activePuzzle?.source === 'supplied'
-        }
+        onDisconnect={session.handleLogout}
+        sessionStatus={session.sessionStatus}
+        accountStatus={session.accountStatus}
+        isSourceNeutralExploration={isSourceNeutralExploration}
       />
 
       {/* Main Content Area */}
-      <main className={`flex-1 min-w-0 flex flex-col ${showingPositionProgress ? 'min-h-0' : ''} ${activeTab === 'import' ? 'justify-center overflow-hidden py-2' : 'justify-start overflow-y-auto py-2'}`}>
+      <main
+        className={`flex-1 min-w-0 flex flex-col ${
+          showingPositionProgress ? 'min-h-0' : ''
+        } ${
+          activeTab === 'import'
+            ? 'justify-center overflow-hidden py-2'
+            : 'justify-start overflow-y-auto py-2'
+        }`}
+      >
         {/* TAB 1: PRACTICE PUZZLES */}
-        {activeTab === 'puzzles' && (
-          <div className="max-w-[1536px] w-full mx-auto px-4 lg:px-8 2xl:max-w-none 2xl:px-4 flex-1 flex flex-col justify-center min-h-0">
-
-            <div className="flex-1 flex flex-col justify-center min-h-0">
-              {isLoadingPuzzles ? (
-                <div className="flex-1 flex items-center justify-center py-16">
-                  <div className="flex items-center space-x-3 text-primary bg-surface-container-low px-5 py-3 rounded-2xl border border-outline-variant shadow-lg">
-                    <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                    <span className="text-xs font-bold text-on-surface-variant font-mono">Loading Practice Puzzles...</span>
-                  </div>
-                </div>
-              ) : puzzleLoadError ? (
-                <div className="py-16 text-center space-y-4 max-w-lg mx-auto bg-surface-container-low p-8 rounded-2xl border border-error/30 shadow-xl">
-                  <div className="w-14 h-14 rounded-2xl bg-error-container/20 border border-error/40 flex items-center justify-center mx-auto text-error">
-                    <span className="text-3xl font-bold font-mono">!</span>
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-bold text-on-surface">Couldn&apos;t Load Puzzles</h3>
-                    <p className="text-xs text-error mt-1 font-mono">
-                      We couldn&apos;t load your puzzles. Please try again.
-                    </p>
-                  </div>
-                  <button
-                    onClick={handleRetryPuzzleLoad}
-                    className="px-5 py-2.5 bg-surface-container-high hover:bg-surface-bright text-on-surface font-bold text-xs font-mono rounded-xl border border-outline-variant transition inline-flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <span>Retry</span>
-                  </button>
-                </div>
-              ) : !activePuzzle ? (
-                <div className="py-16 text-center space-y-4 max-w-lg mx-auto bg-surface-container-low p-8 rounded-2xl border border-outline-variant shadow-xl">
-                  <div className="w-14 h-14 rounded-2xl bg-surface-container-lowest border border-outline-variant flex items-center justify-center mx-auto text-primary">
-                    <span className="text-3xl font-bold">♟</span>
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-bold text-on-surface">No Practice Puzzles Available</h3>
-                    <p className="text-xs text-on-surface-variant mt-1">
-                      {!activeUsername
-                        ? 'Import your games using the Import Games tab to detect your opening habits and build your custom puzzle set.'
-                        : `No weakness positions detected yet for ${activeUsername}. Import more games or adjust search criteria.`}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => changeTab('import')}
-                    className="px-5 py-2.5 bg-primary-container hover:bg-primary text-on-primary-container font-bold text-xs font-mono rounded-xl transition shadow-lg cursor-pointer"
-                  >
-                    Import Your Games Now
-                  </button>
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center gap-4 lg:flex-row lg:flex-wrap lg:items-start 2xl:flex-nowrap">
-                {/* Left Stockfish Eval Bar */}
-                <div className="hidden sm:flex flex-col items-center pt-1">
-                  <span className="text-[10px] font-bold text-slate-400 mb-1.5 uppercase tracking-wider">
-                    Eval
-                  </span>
-                  <EvalBar
-                    evalCp={currentEvalCp}
-                    isExploring={!isExplorationActive && historyIndex > 1}
-                    isUnknown={isEvalUnknown}
-                  />
-                </div>
-
-                {/* Center Interactive Chessboard & Controls */}
-                <div className="w-full max-w-[640px] shrink-0 2xl:max-w-[760px] 2xl:w-auto 2xl:min-w-0 2xl:basis-[760px] 2xl:grow 2xl:shrink">
-                  <ChessBoardArea
-                    key={activePuzzle.source === 'supplied' ? activePuzzle.puzzleId : 'puzzle-board'}
-                    initialFen={activePuzzle.fen}
-                    initialBoardHistory={
-                      activePuzzle.source === 'supplied' ? null : boardHistorySnapshot
-                    }
-                    onBoardHistoryChange={handleBoardHistoryChange}
-                    initialMoveHistorySan={
-                      activePuzzle.source === 'supplied' ? initialMoveHistorySan : undefined
-                    }
-                    initialMoveHistoryStartFen={
-                      activePuzzle.source === 'supplied' ? initialMoveHistoryStartFen : undefined
-                    }
-                    showPuzzleControls={activePuzzle.source !== 'supplied'}
-                    playerColor={activePuzzle.playerColor}
-                    blindfoldMode={isBlindfoldActive}
-                    boardOrientation={puzzleBoardOrientation}
-                    targetMove={activePuzzle.targetMove}
-                    acceptableMoves={activePuzzle.acceptableMoves}
-                    movesPlayed={activePuzzle.movesPlayed}
-                    onMoveAttempt={handleMoveAttempt}
-                    initialDecisionEnabled={activePuzzle.source === 'supplied' || puzzleContextReady}
-                    onPreviousPuzzle={handlePreviousPuzzle}
-                    onNextPuzzle={handleNextPuzzle}
-                    onUndo={handleBoardUndo}
-                    onRedo={handleBoardRedo}
-                    onReset={handleBoardReset}
-                    hintSquare={hintSquare}
-                    canHint={
-                      feedback.status !== 'CORRECT' &&
-                      (!isExplorationActive || !!pendingContinuationCandidate?.move)
-                    }
-                    onFlipBoard={() => setIsBoardFlipped((prev) => !prev)}
-                    soundEnabled={soundEnabled}
-                    onToggleSound={handleToggleSound}
-                    onFenChange={setCurrentBoardFen}
-                    pendingContinuationCandidate={pendingContinuationCandidate}
-                    onContinuationApplied={handleContinuationApplied}
-                    isExplorationActive={isExplorationActive}
-                    onUnacceptableMove={handleUnacceptableMove}
-                    onUserExplorationMove={handleUserExplorationMove}
-                    onChessEchoExplorationMove={handleChessEchoExplorationMove}
-                    alternativeContinuationToApply={alternativeContinuationToApply}
-                    onAlternativeContinuationApplied={() => setAlternativeContinuationToApply(null)}
-
-                    explorationPlayMode={explorationPlayMode}
-                    isChallengeComplete={challengeSubmissionByFen[currentBoardFen]?.isComplete ?? false}
-                    onMoveEvaluationPendingChange={setIsMoveEvaluationPending}
-                  />
-                  {blindfold.state && (
-                    <BlindfoldBoardWrapper
-                      fen={blindfold.state.currentFen}
-                      isVisible={blindfold.state.isVisible}
-                      onReveal={blindfold.reveal}
-                      onHide={blindfold.hide}
-                      onToggleVisibility={blindfold.toggleVisibility}
-                      boardOrientation={puzzleBoardOrientation}
-                    />
-                  )}
-                </div>
-
-                {/* Right Feedback & Settings Panel */}
-                <div className="w-full max-w-[480px] shrink-0 2xl:max-w-[360px] 2xl:w-auto 2xl:min-w-0 2xl:basis-[360px] 2xl:shrink">
-                  {blindfold.state ? (
-                    <NotationExchangeUI
-                      state={blindfold.state}
-                      onPlayerMove={blindfold.submitPlayerMove}
-                      onReveal={blindfold.reveal}
-                      onHide={blindfold.hide}
-                      onToggleVisibility={blindfold.toggleVisibility}
-                      onReset={blindfold.reset}
-                      onExit={blindfold.exit}
-                    />
-                  ) : (
-                    <PuzzleFeedbackPanel
-                      puzzle={activePuzzle}
-                      feedback={feedback}
-                      onPreviousPuzzle={handlePreviousPuzzle}
-                      onNextPuzzle={handleNextPuzzle}
-                      puzzleColorFilter={puzzleColorFilter}
-                      onColorFilterChange={handleColorFilterChange}
-                      showPuzzleSettings={showPuzzleSettings}
-                      onTogglePuzzleSettings={() => setShowPuzzleSettings((v) => !v)}
-                      minMistakeCount={minMistakeCount}
-                      onMinMistakeCountChange={handleMinMistakeCountChange}
-                      onApplySettings={handleApplyPuzzleSettings}
-                      username={activeUsername}
-                      isExplorationActive={isExplorationActive}
-                      explorationDecisionMove={explorationDecisionMove}
-                      onEnterExploration={handleEnterExploration}
-                      onExitExploration={handleExitExploration}
-                      onEnterBlindfold={
-                        activePuzzle.source === 'supplied' ? undefined : handleEnterBlindfold
-                      }
-                      isBlindfoldEntryDisabled={isPuzzleBoardUnsettled}
-                      continuationMode={continuationMode}
-                      onContinuationModeChange={setContinuationMode}
-                      opponentRatingBand={opponentRatingBand}
-                      onOpponentRatingBandChange={setOpponentRatingBand}
-                      explorationPlayMode={explorationPlayMode}
-                      onExplorationPlayModeChange={handleExplorationPlayModeChange}
-                      sideToMove={sideToMove}
-                      continuationCandidate={continuation.selectedCandidate}
-                      isContinuationLoading={continuation.loading || !!requestedContinuationFen}
-                      unacceptableMoveMessage={unacceptableMoveMessage}
-                      explorationFeedback={explorationFeedbackByFen[currentBoardFen] || null}
-                      lastContinuationCandidates={lastContinuationCandidates}
-                      onAlternativeSelected={handleAlternativeSelected}
-                      challengeCandidates={challengeCandidatesByFen[currentBoardFen] || []}
-                      challengeSubmission={challengeSubmissionByFen[currentBoardFen]}
-                      challengeInput={challengeInputByFen[currentBoardFen] || ''}
-                      onChallengeInputChange={(v) => setChallengeInputByFen(prev => ({ ...prev, [currentBoardFen]: v }))}
-                      onChallengeSubmit={handleChallengeSubmit}
-                      challengeFeedback={challengeFeedbackByFen[currentBoardFen]}
-                      isChallengeLoading={isChallengeLoading}
-                      onChallengeCandidateSelect={handleChallengeCandidateSelect}
-                      activeChallengeCandidate={challengeActiveCandidateByFen[currentBoardFen] || null}
-                      challengeBranches={challengeBranchesByFen[currentBoardFen] || {}}
-                      onFinishChallenge={handleExitExploration}
-                      calculationInput={calculationInput}
-                      onCalculationInputChange={setCalculationInput}
-                      onCalculationSubmit={handleCalculationSubmit}
-                      calculationFeedback={calculationFeedback}
-                      isCalculationLoading={isCalculationLoading}
-                      onCalculationBack={handleCalculationBack}
-                      onBackToCandidates={handleBackToCandidates}
-                      timerMode={timerMode}
-                      timerElapsedMs={timerElapsedMs}
-                      timerAllowedMs={timerAllowedMs}
-                      timerExpired={timerExpired}
-                      timerSubmissionError={timerSubmissionError}
-                      attemptCountState={puzzleAttempts.state}
-                      attemptRecording={puzzleAttempts.recording}
-                      pendingAttempts={puzzleAttempts.pending}
-                      onRetryAttempt={puzzleAttempts.retry}
-                      onReloadAttemptCount={puzzleAttempts.reload}
-                      onTimerModeChange={setTimerMode}
-                      onTimerAllowedMsChange={setTimerAllowedMs}
-                    />
-                  )}
-                </div>
-                </div>
-            )}
-          </div>
-          </div>
-        )}
+        <PracticePuzzlesView
+          hidden={activeTab !== 'puzzles'}
+          actionsRef={practiceActionsRef}
+          sessionStatus={session.sessionStatus}
+          sessionUserId={session.sessionUserId}
+          activeAccountId={session.activeAccountId}
+          activeUsername={session.activeUsername}
+          sessionGatePromise={session.sessionGatePromise}
+          sessionGateOpen={session.sessionGateOpen}
+          onNavigateTab={changeTab}
+          onWeaknessCountChange={setWeaknessCount}
+          onSourceNeutralExplorationChange={setIsSourceNeutralExploration}
+          onReturnToTab={changeTab}
+          hasLongDecisionReturnContext={hasLongDecisionReturnContext}
+          hasSimilarPositionsReturnContext={hasSimilarPositionsReturnContext}
+        />
 
         {/* TAB 2: WEAKNESSES LIBRARY */}
-        {activeTab === 'weaknesses' && (
-          selectedProgress ? (
+        {activeTab === 'weaknesses' &&
+          (selectedProgress ? (
             <PositionProgressView
               positionId={selectedProgress.positionId}
               playerColor={selectedProgress.playerColor}
               minEvalLoss={selectedProgress.minEvalLoss}
               accountId={selectedProgress.accountId}
-              sessionStatus={sessionStatus}
+              sessionStatus={session.sessionStatus}
               onBack={() => setSelectedProgress(null)}
             />
           ) : (
             <WeaknessesList
-              accountId={sessionGateOpen ? connectedAccount?.id : undefined}
-              username={sessionGateOpen ? weaknessDisplayUsername : undefined}
+              accountId={session.sessionGateOpen ? session.connectedAccount?.id : undefined}
+              username={session.sessionGateOpen ? session.weaknessDisplayUsername : undefined}
               minEvalLoss={minEvalLoss}
               onMinEvalLossChange={handleMinEvalLossChange}
               minMistakeCount={minMistakeCount}
               onMinMistakeCountChange={handleMinMistakeCountChange}
               onSelectPractice={handleSelectPracticeFromLibrary}
               onViewProgress={
-                sessionStatus === 'unauthenticated' || connectedAccount?.id
-                  ? (positionId, playerColor, minEvalLoss) =>
+                session.sessionStatus === 'unauthenticated' || session.connectedAccount?.id
+                  ? (positionId, playerColor, minEvalLossVal) =>
                       setSelectedProgress({
                         positionId,
                         playerColor,
-                        minEvalLoss,
-                        accountId: connectedAccount?.id,
+                        minEvalLoss: minEvalLossVal,
+                        accountId: session.connectedAccount?.id,
                       })
                   : undefined
               }
               onWeaknessCountChange={setWeaknessCount}
               activeColorFilter={puzzleColorFilter === 'BOTH' ? 'ALL' : puzzleColorFilter}
               onColorFilterChange={(c) => handleColorFilterChange(c === 'ALL' ? 'BOTH' : c)}
-              isAnalysisActive={!!activeUsername && activeJobStatus?.analysisStatus === 'ANALYZING'}
+              isAnalysisActive={
+                !!session.activeUsername && activeJobStatus?.analysisStatus === 'ANALYZING'
+              }
               refreshKey={weaknessRefreshKey}
             />
-          )
-        )}
+          ))}
 
         {(activeTab === 'long-decisions' || hasLongDecisionReturnContext) && (
           <div hidden={activeTab !== 'long-decisions'}>
             <LongDecisionsView
-              accountId={connectedAccount?.id}
-              sessionStatus={sessionStatus}
-              accountStatus={accountStatus}
-              onRetryAccountLoad={retryAccountLoad}
+              accountId={session.connectedAccount?.id}
+              sessionStatus={session.sessionStatus}
+              accountStatus={session.accountStatus}
+              onRetryAccountLoad={session.retryAccountLoad}
               onNavigateImport={() => changeTab('import')}
               onExplorePosition={handleLongDecisionExplorePosition}
             />
@@ -2278,8 +299,12 @@ export default function Home() {
         {(activeTab === 'similar-positions' || hasSimilarPositionsReturnContext) && (
           <div hidden={activeTab !== 'similar-positions'}>
             <SimilarPositionsView
-              connectedAccount={connectedAccount}
-              guestUsername={!connectedAccount ? (displayedUsername || activeUsername) : undefined}
+              connectedAccount={session.connectedAccount}
+              guestUsername={
+                !session.connectedAccount
+                  ? session.displayedUsername || session.activeUsername
+                  : undefined
+              }
               onExplorePosition={handleSimilarPositionsExplorePosition}
               initialSnapshot={similarPositionsSnapshot}
               onSnapshotChange={handleSimilarPositionsSnapshotChange}
@@ -2290,28 +315,24 @@ export default function Home() {
         {/* TAB 3: IMPORT GAMES */}
         {activeTab === 'import' && (
           <ImportGamesView
-            connectedUsername={displayedUsername}
-            connectedAccount={connectedAccount}
-            connectedAccountId={connectedAccount?.id}
-            sessionStatus={sessionStatus}
-            accountStatus={accountStatus}
-            accountError={accountError}
+            connectedUsername={session.displayedUsername}
+            connectedAccount={session.connectedAccount}
+            connectedAccountId={session.connectedAccount?.id}
+            sessionStatus={session.sessionStatus}
+            accountStatus={session.accountStatus}
+            accountError={session.accountError}
             onConnectAccount={async (username) => {
-              await connectChessAccount(username);
+              await session.connectChessAccount(username);
             }}
-            onRetryAccountLoad={retryAccountLoad}
-            onDisconnect={handleDisconnect}
-            disconnectError={disconnectError}
-            isDisconnecting={isDisconnecting}
+            onRetryAccountLoad={session.retryAccountLoad}
+            onDisconnect={session.handleDisconnect}
+            disconnectError={session.disconnectError}
+            isDisconnecting={session.isDisconnecting}
             onImportStarted={(user) => handleSetUsername(user)}
             onNavigateTab={(tab) => changeTab(tab)}
             onJobStatusUpdate={handleJobStatusUpdate}
           />
         )}
-
-
-
-
       </main>
     </div>
   );
