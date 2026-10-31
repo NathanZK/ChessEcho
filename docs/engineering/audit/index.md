@@ -678,6 +678,48 @@ This document serves as the durable evidence repository for opt-in mutation test
 - **Accepted Surviving Mutants**:
   - 108 surviving mutants consist of JSX presentation class strings, text literals, and non-functional Tailwind style variants.
 
+### 2.28 Backend: `MoveEvaluationService` & `EvaluationLossPolicy` (Issue #661)
+
+- **Test Suite**: `MoveEvaluationServiceTest`, `EvaluationLossPolicyTest`
+- **Execution Command**:
+  ```bash
+  cd backend && ./gradlew pitest \
+    -Ppitest.targetClasses="com.chessecho.service.MoveEvaluationService*,com.chessecho.service.EvaluationLossPolicy*" \
+    -Ppitest.targetTests="com.chessecho.service.MoveEvaluationServiceTest*,com.chessecho.service.EvaluationLossPolicyTest*"
+  ```
+- **Results**:
+  - Line Coverage: 97% (114/118 lines).
+  - Mutation Score: 78% (102/130 mutants killed).
+  - Test Strength: 82% (102/124 covered mutants killed).
+- **Meaningful Gaps Killed**:
+  1. *Mate Policy Delegation*: Mutation altering delegation to `EvaluationLossPolicy.calculateEvalLoss` killed by forced mate scenarios (mate in 1 vs cp, mate in 1 vs mate -1, mate -2 vs mate -1).
+  2. *Capped Loss & Mate Progressions*: Mutants altering mate progression loss capping (0.50 pawn cap for winning mates) and blunder loss capping (10.0-20.0 pawn cap) killed by targeted assertion tests.
+  3. *Threshold Boundary Verification*: Mutants mutating `evalLoss <= explorationMaxEvalLoss` comparison (< vs <=) killed at exact 0.80 boundary.
+  4. *Fallback Coercion*: Null evaluation score coercion to 0.0 evalLoss and error mode exceptions (invalid FEN, unparseable SAN) killed.
+- **Accepted Surviving Mutants**:
+  - Gregor `ConditionalsBoundaryMutator` on internal coerceIn boundaries in `EvaluationLossPolicy` where boundary values produce equivalent score saturations.
+  - Kotlin compiler null-safety assertion checks (`Intrinsics.checkNotNullParameter`).
+
+### 2.29 Frontend: `ChessBoardArea.tsx` & `useLineExploration.ts` (Issue #661)
+
+- **Test Suite**: `ExplorationEvaluation.test.tsx`, `useLineExploration.test.ts`, `PlayBothSidesExploration.test.tsx`, `BoardStateDerivation.test.tsx`, `SuppliedPositionExploration.test.tsx`
+- **Execution Command**:
+  ```bash
+  cd frontend && npm run test:mutation -- --mutate="src/hooks/useLineExploration.ts,src/components/ChessBoardArea.tsx"
+  ```
+- **Results**:
+  - Total Mutants: 1360.
+  - Killed: 871, Timed out: 165. Total mutation score: 76.57% (81.90% covered mutation score).
+  - `ChessBoardArea.tsx`: 89.02% mutation score (488 killed, 47 timed out).
+  - `useLineExploration.ts`: 66.62% mutation score (383 killed, 118 timed out).
+- **Meaningful Gaps Killed**:
+  1. *Independent Best-Move Identity*: Mutants inverting or mutating `moveSan === res.bestMove` killed by tests verifying non-best moves with 0.00 loss are classified as acceptable alternatives, never best move.
+  2. *Best Move Naming*: Mutants modifying string template `Good move. It loses ${feedback.loss.toFixed(2)} pawns compared with the best move (${feedback.bestMove}).` killed by regex assertion checks.
+  3. *Inaccuracy Rejection and Rollback*: Mutants altering rollback logic or threshold comparisons (`<= 0.80` and strict opponent `<= 0.20`) killed by board position rollback tests.
+  4. *Ply Synchronization & State Reset*: Mutants removing feedback clearing on ply transitions or reset killed by `resetExploration` tests.
+- **Accepted Surviving Mutants**:
+  - Non-functional UI string literal mutations, optional logging calls, and benign React memoization identity checks.
+
 ---
 
 ---

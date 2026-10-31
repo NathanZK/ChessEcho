@@ -297,7 +297,7 @@ export function useLineExploration({
   const handleUserExplorationMove = (
     moveSan: string,
     nextFen: string,
-    feedback?: { isBest: boolean; loss: number; evalCp?: number | null; fromFen?: string }
+    feedback?: { isBest: boolean; loss: number; evalCp?: number | null; fromFen?: string; bestMove?: string }
   ) => {
     if (explorationPlayMode === 'CHESSECHO') {
       setRequestedContinuationFen(nextFen);
@@ -316,10 +316,11 @@ export function useLineExploration({
             [nextFen]: { message: 'Best move. No evaluation loss.', type: 'best' },
           }));
         } else {
+          const bestMoveSuffix = feedback.bestMove ? ` (${feedback.bestMove})` : '';
           setExplorationFeedbackByFen((prev) => ({
             ...prev,
             [nextFen]: {
-              message: `Good move. It loses ${feedback.loss.toFixed(2)} pawns compared with the best move.`,
+              message: `Good move. It loses ${feedback.loss.toFixed(2)} pawns compared with the best move${bestMoveSuffix}.`,
               type: 'good',
             },
           }));

@@ -70,6 +70,7 @@ interface ChessBoardAreaProps {
   explorationPlayMode?: ExplorationPlayMode;
   isChallengeComplete?: boolean;
   onMoveEvaluationPendingChange?: (pending: boolean) => void;
+  resetTrigger?: number;
 }
 
 export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
@@ -108,6 +109,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   onAlternativeContinuationApplied,
   explorationPlayMode = 'CHESSECHO',
   onMoveEvaluationPendingChange,
+  resetTrigger,
 }) => {
   const createInitialHistory = (snapshot?: ChessBoardHistorySnapshot | null) => {
     if (
@@ -175,6 +177,18 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
     setHistoryIndex(0);
     setCustomSquareStyles({});
     setFenNotification({ fen: initialFen });
+  }
+
+  const [trackedResetTrigger, setTrackedResetTrigger] = useState(resetTrigger);
+  if (resetTrigger !== undefined && trackedResetTrigger !== resetTrigger) {
+    setTrackedResetTrigger(resetTrigger);
+    const prevFen = fenHistory[0] ?? initialFen;
+    setGame(cloneChessGameWithHistory(gameHistory[0] ?? new Chess(prevFen)));
+    setFenHistory([prevFen]);
+    setGameHistory((prev) => [prev[0] ?? new Chess(prevFen)]);
+    setHistoryIndex(0);
+    setCustomSquareStyles({});
+    setFenNotification({ fen: prevFen });
   }
 
   useEffect(() => {
@@ -405,24 +419,24 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
 
           if (res) {
             let acceptable = res.acceptable;
-            const lossCp = res.evalLoss ?? 0;
+            const evalLossPawns = res.evalLoss ?? 0;
             const evalCp = res.evalCp ?? null;
             let errorMessage: string | null = null;
 
             if (shouldUseStrictThreshold) {
-              if (lossCp <= STRICT_OPPONENT_EVAL_LOSS_THRESHOLD) {
+              if (evalLossPawns <= STRICT_OPPONENT_EVAL_LOSS_THRESHOLD) {
                 acceptable = true;
               } else {
                 acceptable = false;
                 if (res.acceptable) {
-                  errorMessage = `Good response, but there's a stronger move. This move loses ${formatPawnLoss(lossCp)} pawns. Keep looking.`;
+                  errorMessage = `Good response, but there's a stronger move. This move loses ${formatPawnLoss(evalLossPawns)} pawns. Keep looking.`;
                 } else {
-                  errorMessage = `That move is too inaccurate. It loses ${formatPawnLoss(lossCp)} pawns compared with the best move.`;
+                  errorMessage = `That move is too inaccurate. It loses ${formatPawnLoss(evalLossPawns)} pawns compared with the best move.`;
                 }
               }
             } else {
               if (!acceptable) {
-                errorMessage = `That move is too inaccurate. It loses ${formatPawnLoss(lossCp)} pawns compared with the best move.`;
+                errorMessage = `That move is too inaccurate. It loses ${formatPawnLoss(evalLossPawns)} pawns compared with the best move.`;
               }
             }
 
@@ -431,12 +445,13 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
               setGame(cloneChessGameWithHistory(gameHistory[historyIndex] ?? new Chess(currentFen)));
               onUnacceptableMove?.(errorMessage);
             } else {
-              if (lossCp === 0) {
+              const isBest = moveSan === res.bestMove;
+              if (isBest) {
                 playSound('completion');
                 onUserExplorationMove?.(moveSan, nextFen, { isBest: true, loss: 0, evalCp, fromFen: currentFen, bestMove: res.bestMove });
               } else {
                 playSound('correct');
-                onUserExplorationMove?.(moveSan, nextFen, { isBest: false, loss: lossCp, evalCp, fromFen: currentFen, bestMove: res.bestMove });
+                onUserExplorationMove?.(moveSan, nextFen, { isBest: false, loss: evalLossPawns, evalCp, fromFen: currentFen, bestMove: res.bestMove });
               }
               onUnacceptableMove?.(null);
               const newHistory = fenHistory.slice(0, historyIndex + 1);

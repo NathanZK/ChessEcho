@@ -571,4 +571,45 @@ describe('PuzzleFeedbackPanel Unit Tests', () => {
       expect(btn).toHaveAttribute('title', 'Continue this position blindfolded');
     });
   });
+
+  describe('Move-Quality Classification and Exploration Guard', () => {
+    it('unmounts top-level feedback card when isExplorationActive is true', () => {
+      renderPanel({
+        feedback: { status: 'CORRECT', lastMove: 'e4' },
+        puzzle: { ...basePuzzle, targetMove: 'e4' },
+        isExplorationActive: true,
+        explorationPlayMode: 'BOTH_SIDES',
+      });
+
+      expect(screen.queryByText('Puzzle Solved! 🎉')).not.toBeInTheDocument();
+      expect(screen.queryByText(/is the best move!/i)).not.toBeInTheDocument();
+      expect(screen.getByText(/Play Both Sides/i)).toBeInTheDocument();
+    });
+
+    it('renders best move feedback when lastMove matches puzzle.targetMove', () => {
+      renderPanel({
+        feedback: { status: 'CORRECT', lastMove: 'e4' },
+        puzzle: { ...basePuzzle, targetMove: 'e4' },
+        isExplorationActive: false,
+      });
+
+      expect(screen.getByText('Puzzle Solved! 🎉')).toBeInTheDocument();
+      expect(screen.getAllByText('e4').length).toBeGreaterThan(0);
+      expect(screen.getByText(/is the best move!/i)).toBeInTheDocument();
+      expect(screen.queryByText(/is an acceptable alternative!/i)).not.toBeInTheDocument();
+    });
+
+    it('renders acceptable alternative feedback when lastMove differs from puzzle.targetMove', () => {
+      renderPanel({
+        feedback: { status: 'CORRECT', lastMove: 'c5' },
+        puzzle: { ...basePuzzle, targetMove: 'e4' },
+        isExplorationActive: false,
+      });
+
+      expect(screen.getByText('Good Move! 👍')).toBeInTheDocument();
+      expect(screen.getByText(/is an acceptable alternative!/i)).toBeInTheDocument();
+      expect(screen.getByText(/is #1 best/i)).toBeInTheDocument();
+      expect(screen.queryByText('Puzzle Solved! 🎉')).not.toBeInTheDocument();
+    });
+  });
 });

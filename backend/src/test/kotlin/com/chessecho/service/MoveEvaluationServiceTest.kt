@@ -230,7 +230,7 @@ class MoveEvaluationServiceTest {
     }
 
     @Test
-    fun `12 Blunder from winning forced mate into centipawn advantage is rejected with large loss`() {
+    fun `12 Blunder from winning forced mate into centipawn advantage is rejected with mate-aware loss`() {
         whenever(stockfishService.analyzeMultiPv(eq(whiteFen), any(), eq(5))).thenReturn(
             listOf(
                 EngineCandidate(move = "Bb5", score = EvalScore(cp = null, mate = 1)),
@@ -244,12 +244,12 @@ class MoveEvaluationServiceTest {
         assertEquals("h3", result.move)
         assertEquals(9990, result.bestEvalCp)
         assertEquals(200, result.evalCp)
-        assertEquals(97.90, result.evalLoss)
+        assertEquals(11.00, result.evalLoss)
         assertFalse(result.acceptable)
     }
 
     @Test
-    fun `13 Blunder from winning forced mate into opponent forced mate is rejected with large loss`() {
+    fun `13 Blunder from winning forced mate into opponent forced mate is rejected with capped loss`() {
         whenever(stockfishService.analyzeMultiPv(eq(whiteFen), any(), eq(5))).thenReturn(
             listOf(
                 EngineCandidate(move = "Bb5", score = EvalScore(cp = null, mate = 1)),
@@ -263,12 +263,12 @@ class MoveEvaluationServiceTest {
         assertEquals("h3", result.move)
         assertEquals(9990, result.bestEvalCp)
         assertEquals(-9990, result.evalCp)
-        assertEquals(199.80, result.evalLoss)
+        assertEquals(19.50, result.evalLoss)
         assertFalse(result.acceptable)
     }
 
     @Test
-    fun `14 Longer defense against forced mate scores higher than immediate checkmate and is acceptable within tolerance`() {
+    fun `14 Shortened defense against forced mate is evaluated via mate policy and rejected above threshold`() {
         whenever(stockfishService.analyzeMultiPv(eq(whiteFen), any(), eq(5))).thenReturn(
             listOf(
                 EngineCandidate(move = "Bb5", score = EvalScore(cp = null, mate = -2)),
@@ -282,12 +282,12 @@ class MoveEvaluationServiceTest {
         assertEquals("Bc4", result.move)
         assertEquals(-9980, result.bestEvalCp)
         assertEquals(-9990, result.evalCp)
-        assertEquals(0.10, result.evalLoss)
-        assertTrue(result.acceptable)
+        assertEquals(1.00, result.evalLoss)
+        assertFalse(result.acceptable)
     }
 
     @Test
-    fun `15 Blunder from neutral drawn position into opponent forced mate is rejected with large loss`() {
+    fun `15 Blunder from neutral drawn position into opponent forced mate is rejected with mate-aware loss`() {
         whenever(stockfishService.analyzeMultiPv(eq(whiteFen), any(), eq(5))).thenReturn(
             listOf(
                 EngineCandidate(move = "Bb5", score = EvalScore(cp = 0, mate = null)),
@@ -301,8 +301,46 @@ class MoveEvaluationServiceTest {
         assertEquals("h3", result.move)
         assertEquals(0, result.bestEvalCp)
         assertEquals(-9990, result.evalCp)
-        assertEquals(99.90, result.evalLoss)
+        assertEquals(14.50, result.evalLoss)
         assertFalse(result.acceptable)
+    }
+
+    @Test
+    fun `15b Winning mate progression is capped at 0 50 loss and remains acceptable`() {
+        whenever(stockfishService.analyzeMultiPv(eq(whiteFen), any(), eq(5))).thenReturn(
+            listOf(
+                EngineCandidate(move = "Bb5", score = EvalScore(cp = null, mate = 1)),
+                EngineCandidate(move = "Bc4", score = EvalScore(cp = null, mate = 2)),
+            ),
+        )
+
+        val result = moveEvaluationService.evaluateMove(whiteFen, "Bc4")
+
+        assertEquals("Bb5", result.bestMove)
+        assertEquals("Bc4", result.move)
+        assertEquals(9990, result.bestEvalCp)
+        assertEquals(9980, result.evalCp)
+        assertEquals(0.10, result.evalLoss)
+        assertTrue(result.acceptable)
+    }
+
+    @Test
+    fun `15c Winning mate progression with large prolongation is capped at 0 50 loss and remains acceptable`() {
+        whenever(stockfishService.analyzeMultiPv(eq(whiteFen), any(), eq(5))).thenReturn(
+            listOf(
+                EngineCandidate(move = "Bb5", score = EvalScore(cp = null, mate = 1)),
+                EngineCandidate(move = "Bc4", score = EvalScore(cp = null, mate = 10)),
+            ),
+        )
+
+        val result = moveEvaluationService.evaluateMove(whiteFen, "Bc4")
+
+        assertEquals("Bb5", result.bestMove)
+        assertEquals("Bc4", result.move)
+        assertEquals(9990, result.bestEvalCp)
+        assertEquals(9900, result.evalCp)
+        assertEquals(0.50, result.evalLoss)
+        assertTrue(result.acceptable)
     }
 
     @Test

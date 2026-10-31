@@ -397,7 +397,8 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
       )}
 
       {/* Dynamic Feedback / Success Card */}
-      {feedback.status === 'CORRECT' ? (
+      {!isExplorationActive && (
+        feedback.status === 'CORRECT' ? (
         <div className="p-3.5 bg-gradient-to-br from-emerald-950/80 to-slate-900 border-2 border-emerald-500/50 rounded-2xl space-y-2.5 shadow-lg shadow-emerald-950/40 animate-in fade-in duration-200">
           <div className="flex items-center space-x-3">
             <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0">
@@ -414,7 +415,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
                   </>
                 ) : (
                   <>
-                    <span className="font-bold text-white">{feedback.lastMove}</span> is an acceptable alternative! (<span className="font-bold text-white">{puzzle.targetMove}</span> is #1 best)
+                    <span className="font-bold text-white">{feedback.lastMove}</span> is an acceptable alternative! ({puzzle.targetMove ? <><span className="font-bold text-white">{puzzle.targetMove}</span> is #1 best</> : 'stronger move available'})
                   </>
                 )}
               </p>
@@ -632,7 +633,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
             </div>
           )}
         </>
-      )}
+      ))}
 
       {/* Active Line Exploration Card (Renders ONLY when isExplorationActive is true) */}
       {isExplorationActive && (
