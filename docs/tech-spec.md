@@ -96,6 +96,7 @@ invariant:
   - Cache invalidation triggers on successful game-import completion with monotonic generation guards; concurrent rebuilds never commit partial or stale indexes.
   - `AsyncJob` rejects updates that change its persisted import configuration, including account, date range, time controls, and player color.
   - Centipawn and forced-mate evaluation columns are mutually exclusive and reject `mate = 0`.
+  - Game and BFS traversal PGN parsing operates in-memory with zero temporary disk file generation.
   - Before deployment, schema evolution updates the V1 baseline rather than adding synthetic Flyway versions. See `docs/engineering/repository-conventions.md`.
 
 constraint:

@@ -518,4 +518,65 @@ class HumanMoveBfsDistributionTest : HumanMoveBfsBaseTest() {
         assertTrue(observations.isNotEmpty())
         assertTrue(fenByHash.isNotEmpty())
     }
+
+    @Test
+    fun `processGamePgn parses PGN without creating temporary files on disk`() {
+        val traversal = HumanMoveBfsTraversal(chessComClient, LoggerFactory.getLogger(HumanMoveBfsTraversal::class.java))
+        val observations = mutableMapOf<Pair<String, String>, Int>()
+        val fenByHash = mutableMapOf<String, String>()
+        val occurrences = mutableListOf<HumanMoveCorpusOccurrence>()
+
+        val standardPgn =
+            """
+            [Event "Live Chess"]
+            [Result "1-0"]
+
+            1. e4 e5 2. Nf3 Nc6 1-0
+            """.trimIndent()
+
+        org.mockito.Mockito.mockStatic(java.io.File::class.java).use { fileMock ->
+            fileMock.`when`<java.io.File> { java.io.File.createTempFile(any(), any()) }
+                .thenThrow(AssertionError("File.createTempFile must not be called during BFS game parsing"))
+
+            val outcome =
+                traversal.processGamePgn(
+                    pgn = standardPgn,
+                    isWhiteInBand = true,
+                    isBlackInBand = true,
+                    observations = observations,
+                    fenByHash = fenByHash,
+                    occurrences = occurrences,
+                )
+
+            assertEquals(HumanMoveBfsPgnOutcome.PARSED, outcome)
+            assertEquals(4, occurrences.size)
+        }
+    }
+
+    @Test
+    fun `processGamePgn handles empty parsed games returning PARSED`() {
+        val traversal = HumanMoveBfsTraversal(chessComClient, LoggerFactory.getLogger(HumanMoveBfsTraversal::class.java))
+        val observations = mutableMapOf<Pair<String, String>, Int>()
+        val fenByHash = mutableMapOf<String, String>()
+        val occurrences = mutableListOf<HumanMoveCorpusOccurrence>()
+
+        val emptyPgn =
+            """
+            [Event "Empty Game"]
+            [Result "*"]
+            """.trimIndent()
+
+        val outcome =
+            traversal.processGamePgn(
+                pgn = emptyPgn,
+                isWhiteInBand = true,
+                isBlackInBand = true,
+                observations = observations,
+                fenByHash = fenByHash,
+                occurrences = occurrences,
+            )
+
+        assertEquals(HumanMoveBfsPgnOutcome.PARSED, outcome)
+        assertTrue(occurrences.isEmpty())
+    }
 }
