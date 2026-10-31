@@ -5,7 +5,7 @@ import { Chess } from 'chess.js';
 import Home from '../app/page';
 import * as api from '../services/api';
 import { continuationService, moveEvaluationService } from '../services/continuationService';
-import type { Puzzle } from '../mock/mockData';
+import type { Puzzle } from '@/types/puzzle';
 
 const DROPS: Array<[string, string]> = [
   ['e7', 'e5'],

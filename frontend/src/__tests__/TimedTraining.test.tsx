@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CountdownTimer,
   StopwatchTimer,
-  submitTrainingAttempt,
 } from '../utils/timedTraining';
 import { submitTrainingAttempt as submitApiTrainingAttempt } from '../services/api';
 
@@ -107,7 +106,7 @@ describe('timed training timers', () => {
     expect(timer.getCurrentAttemptId()).toBe(attemptId);
   });
 
-  it('submits the complete timing payload', async () => {
+  it('submits the complete timing payload through canonical api client', async () => {
     const response = {
       attemptId: 'attempt-1',
       puzzleId: 'puzzle-1',
@@ -116,16 +115,14 @@ describe('timed training timers', () => {
       outcome: 'SUBMITTED',
       recordedAt: '2026-01-01T00:00:00Z',
     };
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => ({
-        ok: true,
-        json: async () => response,
-      })),
-    );
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => response,
+    });
+    vi.stubGlobal('fetch', fetchMock);
 
     await expect(
-      submitTrainingAttempt({
+      submitApiTrainingAttempt({
         attemptId: response.attemptId,
         puzzleId: response.puzzleId,
         mode: response.mode,
@@ -133,5 +130,35 @@ describe('timed training timers', () => {
         outcome: response.outcome,
       }),
     ).resolves.toEqual(response);
+
+    const [url, request] = fetchMock.mock.calls[0];
+    expect(url).toMatch(/\/api\/puzzles\/attempt$/);
+    expect(request.credentials).toBe('include');
+    expect(request.headers['Content-Type']).toBe('application/json');
+  });
+
+  it('throws when canonical api submission fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: false,
+        statusText: 'Internal Server Error',
+      })),
+    );
+
+    await expect(
+      submitApiTrainingAttempt({
+        attemptId: 'attempt-fail',
+        puzzleId: 'puzzle-1',
+        mode: 'STOPWATCH',
+        elapsedMs: 1_000,
+        outcome: 'SUBMITTED',
+      }),
+    ).rejects.toThrow('Failed to submit training attempt: Internal Server Error');
+  });
+
+  it('does not export duplicate submitTrainingAttempt from timedTraining utility', async () => {
+    const timedTrainingModule = await import('../utils/timedTraining');
+    expect('submitTrainingAttempt' in timedTrainingModule).toBe(false);
   });
 });

@@ -20,7 +20,7 @@ import { ChessBoardView } from './ChessBoardView';
 import { PositionCard } from './PositionCard';
 import { StatusBanner } from './StatusBanner';
 import { fetchWeaknesses, WeaknessResponse, TimeControlStats } from '../services/api';
-import { Puzzle } from '../mock/mockData';
+import { Puzzle } from '@/types/puzzle';
 import { HistoricalGamesModal } from './HistoricalGamesModal';
 
 const PRACTICAL_TIME_CONTROLS = [

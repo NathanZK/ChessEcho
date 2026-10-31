@@ -4,7 +4,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import Home from '../app/page';
 import * as api from '../services/api';
 import { continuationService, moveEvaluationService } from '../services/continuationService';
-import { Puzzle } from '../mock/mockData';
+import { Puzzle } from '@/types/puzzle';
 
 vi.mock('react-chessboard', () => ({
   Chessboard: ({ options }: { options: { onPieceDrop: (args: { sourceSquare: string; targetSquare: string }) => boolean } }) => (

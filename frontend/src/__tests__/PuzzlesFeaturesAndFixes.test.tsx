@@ -4,7 +4,7 @@ import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Home from '../app/page';
 import { PuzzleFeedbackPanel, formatDecimal } from '../components/PuzzleFeedbackPanel';
 import * as api from '../services/api';
-import { Puzzle } from '../mock/mockData';
+import { Puzzle } from '@/types/puzzle';
 
 /** Minimal required settings props for direct PuzzleFeedbackPanel renders in tests. */
 const defaultSettingsProps = {

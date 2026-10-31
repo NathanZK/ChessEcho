@@ -5,7 +5,7 @@ import Home from '../app/page';
 import { toWhitePerspective } from '../services/api';
 import * as api from '../services/api';
 import { continuationService, moveEvaluationService } from '../services/continuationService';
-import { Puzzle } from '../mock/mockData';
+import { Puzzle } from '@/types/puzzle';
 
 let lastDropResult: boolean | null = null;
 

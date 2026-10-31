@@ -19,7 +19,7 @@ import {
 } from '@/components/SimilarPositionsView';
 import { PositionProgressView } from '@/components/PositionProgressView';
 import { ImportGamesView } from '@/components/ImportGamesView';
-import { Puzzle } from '@/mock/mockData';
+import { Puzzle } from '@/types/puzzle';
 import {
   associateAccount,
   fetchPuzzles,

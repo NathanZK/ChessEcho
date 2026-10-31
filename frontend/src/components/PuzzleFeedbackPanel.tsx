@@ -16,7 +16,7 @@ import {
   Timer,
   EyeOff,
 } from 'lucide-react';
-import { Puzzle } from '../mock/mockData';
+import { Puzzle } from '@/types/puzzle';
 import { HistoricalGamesModal } from './HistoricalGamesModal';
 import { ContinuationMode, ContinuationCandidate, ExplorationPlayMode } from '../services/api';
 import type { PuzzleAttemptCountState } from '../hooks/usePuzzleAttemptCount';

@@ -2,7 +2,7 @@ import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { PuzzleFeedbackPanel } from '../components/PuzzleFeedbackPanel';
-import type { Puzzle } from '../mock/mockData';
+import type { Puzzle } from '@/types/puzzle';
 import type { ExplorationPlayMode } from '../services/api';
 
 const puzzle: Puzzle = {

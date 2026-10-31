@@ -7,7 +7,7 @@ import {
   formatTimerMs,
   formatCalculationLine,
 } from '../components/PuzzleFeedbackPanel';
-import type { Puzzle } from '../mock/mockData';
+import type { Puzzle } from '@/types/puzzle';
 import type { ContinuationCandidate } from '../services/api';
 
 function makeCandidate(move: string): ContinuationCandidate {
