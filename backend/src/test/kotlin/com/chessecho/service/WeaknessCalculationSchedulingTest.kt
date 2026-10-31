@@ -37,7 +37,6 @@ import org.mockito.kotlin.any
 import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.whenever
-import org.springframework.test.util.ReflectionTestUtils
 import java.time.Instant
 import java.util.UUID
 
@@ -88,7 +87,7 @@ class WeaknessCalculationSchedulingTest {
         val appUserId = UUID.randomUUID()
         val principal = AuthenticatedPrincipal(appUserId = appUserId, devPrincipal = false)
 
-        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "schedUser")).thenReturn(account)
+        whenever(accountOwnershipService.resolvePrivateRead(Platform.CHESS_COM, "schedUser", principal)).thenReturn(account)
         val occurrence = setupSinglePositionSchedulingMocks(account, position)
 
         val eventTime = Instant.now().minusSeconds(120)
@@ -143,13 +142,12 @@ class WeaknessCalculationSchedulingTest {
     @Test
     fun `test authenticated scheduling re-ranks weaknesses by scheduledScore with secondary tiebreakers`() {
         val account = ChessAccount(platform = "CHESS_COM", username = "schedTiebreaker")
-        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "schedTiebreaker")).thenReturn(account)
+        val principal = AuthenticatedPrincipal(appUserId = UUID.randomUUID(), devPrincipal = false)
+        whenever(accountOwnershipService.resolvePrivateRead(Platform.CHESS_COM, "schedTiebreaker", principal)).thenReturn(account)
 
         val posA = Position(hash = "hash-A", fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
         val posB = Position(hash = "hash-B", fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1")
         setupPairWeaknessMocks(account, posA, posB)
-
-        val principal = AuthenticatedPrincipal(appUserId = UUID.randomUUID(), devPrincipal = false)
         `when`(adaptivePuzzleSchedulingPolicy.schedule(any(), eq(posA.id), any(), any())).thenReturn(5.0)
         `when`(adaptivePuzzleSchedulingPolicy.schedule(any(), eq(posB.id), any(), any())).thenReturn(10.0)
 
@@ -201,6 +199,7 @@ class WeaknessCalculationSchedulingTest {
             )
 
         val principal = AuthenticatedPrincipal(appUserId = UUID.randomUUID(), devPrincipal = false)
+        whenever(accountOwnershipService.resolvePrivateRead(Platform.CHESS_COM, "schedParity", principal)).thenReturn(account)
         val authWeaknesses =
             weaknessCalculationService.getWeaknesses(
                 Platform.CHESS_COM,
@@ -221,53 +220,24 @@ class WeaknessCalculationSchedulingTest {
     }
 
     @Test
-    fun `test authenticated scheduling graceful fallback when policy is null or repository is null`() {
+    fun `test unauthenticated requests gracefully sort weaknesses using unscheduled baseline order`() {
         val account = ChessAccount(platform = "CHESS_COM", username = "schedFallback")
         `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "schedFallback")).thenReturn(account)
         val position = Position(hash = "pos-fallback", fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
         setupSinglePositionSchedulingMocks(account, position, gameId = "gF")
 
-        val principal = AuthenticatedPrincipal(appUserId = UUID.randomUUID(), devPrincipal = false)
-        val serviceNullPolicy =
-            WeaknessCalculationService(
-                chessAccountRepository,
-                positionOccurrenceRepository,
-                engineAnalysisRepository,
-                practicalEvidenceService,
-                weaknessPriorityPolicy,
-            )
-        val weaknessesNullPolicy =
-            serviceNullPolicy.getWeaknesses(
+        val weaknesses =
+            weaknessCalculationService.getWeaknesses(
                 Platform.CHESS_COM,
                 "schedFallback",
                 PlayerColor.WHITE,
                 minEvalLoss = 0.8,
                 minTimesReached = 1,
                 minMistakeCount = 1,
-                principal = principal,
+                principal = null,
             )
-        assertEquals(1, weaknessesNullPolicy.size)
-
-        val serviceNullRepo =
-            WeaknessCalculationService(
-                chessAccountRepository,
-                positionOccurrenceRepository,
-                engineAnalysisRepository,
-                practicalEvidenceService,
-                weaknessPriorityPolicy,
-            )
-        ReflectionTestUtils.setField(serviceNullRepo, "adaptivePuzzleSchedulingPolicy", adaptivePuzzleSchedulingPolicy)
-        val weaknessesNullRepo =
-            serviceNullRepo.getWeaknesses(
-                Platform.CHESS_COM,
-                "schedFallback",
-                PlayerColor.WHITE,
-                minEvalLoss = 0.8,
-                minTimesReached = 1,
-                minMistakeCount = 1,
-                principal = principal,
-            )
-        assertEquals(1, weaknessesNullRepo.size)
+        assertEquals(1, weaknesses.size)
+        verify(puzzleSchedulingEventRepository, never()).findHistory(any(), any(), any(), any())
     }
 
     private fun setupSinglePositionSchedulingMocks(
@@ -318,7 +288,6 @@ class WeaknessCalculationSchedulingTest {
     @Test
     fun `test getWeaknesses throws AccountSelectionRequiredException when principal is present without accountId`() {
         val principal = AuthenticatedPrincipal(appUserId = UUID.randomUUID(), devPrincipal = false)
-        ReflectionTestUtils.setField(weaknessCalculationService, "accountOwnershipService", accountOwnershipService)
         whenever(accountOwnershipService.resolvePrivateRead(Platform.CHESS_COM, "nathan", principal))
             .thenThrow(AccountSelectionRequiredException("Multiple accounts found"))
 
@@ -341,10 +310,7 @@ class WeaknessCalculationSchedulingTest {
         val accountId = UUID.randomUUID()
         val account = ChessAccount(id = accountId, platform = "CHESS_COM", username = "nathan")
 
-        ReflectionTestUtils.setField(weaknessCalculationService, "accountOwnershipService", accountOwnershipService)
         whenever(accountOwnershipService.resolveSharedAccount(accountId, principal)).thenReturn(account)
-        `when`(positionOccurrenceRepository.countByChessAccountId(accountId)).thenReturn(0)
-        `when`(positionOccurrenceRepository.countByChessAccountIdAndPlayerColorOrBoth(accountId, "WHITE")).thenReturn(0)
         `when`(
             positionOccurrenceRepository.findWeaknessAggregations(
                 chessAccountId = accountId,
@@ -380,8 +346,6 @@ class WeaknessCalculationSchedulingTest {
         account: ChessAccount,
         position: Position,
     ) {
-        `when`(positionOccurrenceRepository.countByChessAccountId(account.id)).thenReturn(10)
-        `when`(positionOccurrenceRepository.countByChessAccountIdAndPlayerColorOrBoth(account.id, "BOTH")).thenReturn(10)
         val occWhite =
             (1..5).map {
                 PositionOccurrence(
@@ -479,8 +443,10 @@ class WeaknessCalculationSchedulingTest {
                 engineAnalysisRepository,
                 practicalEvidenceService,
                 weaknessPriorityPolicy,
+                accountOwnershipService,
+                puzzleSchedulingEventRepository,
+                adaptivePuzzleSchedulingPolicy,
             )
-        ReflectionTestUtils.setField(unscheduledService, "accountOwnershipService", accountOwnershipService)
 
         val weaknesses =
             unscheduledService.getWeaknesses(
@@ -500,7 +466,6 @@ class WeaknessCalculationSchedulingTest {
         val account = ChessAccount(id = accountId, platform = "CHESS_COM", username = "nathan")
         val position = Position(id = UUID.randomUUID(), hash = "dual_pos_hash_sched", fen = "dual_pos_fen_sched")
 
-        ReflectionTestUtils.setField(weaknessCalculationService, "accountOwnershipService", accountOwnershipService)
         whenever(accountOwnershipService.resolveSharedAccount(accountId, principal)).thenReturn(account)
         setupDualColorPositionOccurrences(account, position)
         whenever(adaptivePuzzleSchedulingPolicy.schedule(any(), any(), any(), any())).thenReturn(10.0)

@@ -26,6 +26,7 @@ import com.chessecho.testsupport.WeaknessCalculationTestUtils.occurrence
 import com.chessecho.testsupport.WeaknessCalculationTestUtils.setupDefaultServiceMocks
 import com.chessecho.testsupport.WeaknessCalculationTestUtils.setupPracticalRanking
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -81,6 +82,46 @@ class WeaknessCalculationServiceTest {
             puzzleSchedulingEventRepository,
             adaptivePuzzleSchedulingPolicy,
         )
+    }
+
+    @Test
+    fun `test WeaknessCalculationService primary constructor injects all required dependencies cleanly`() {
+        val service =
+            WeaknessCalculationService(
+                chessAccountRepository,
+                positionOccurrenceRepository,
+                engineAnalysisRepository,
+                practicalEvidenceService,
+                weaknessPriorityPolicy,
+                accountOwnershipService,
+                puzzleSchedulingEventRepository,
+                adaptivePuzzleSchedulingPolicy,
+            )
+        assertNotNull(service)
+    }
+
+    @Test
+    fun `test getWeaknesses does not execute redundant full-table count queries`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "nathan")
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "nathan")).thenReturn(account)
+        `when`(
+            positionOccurrenceRepository.findWeaknessAggregations(
+                chessAccountId = eq(account.id),
+                playerColor = eq("WHITE"),
+                minEvalLoss = any(),
+                minTimesReached = any(),
+                minMistakeCount = any(),
+            ),
+        ).thenReturn(emptyList())
+
+        weaknessCalculationService.getWeaknesses(
+            platform = Platform.CHESS_COM,
+            username = "nathan",
+            playerColor = PlayerColor.WHITE,
+        )
+
+        verify(positionOccurrenceRepository, never()).countByChessAccountId(any())
+        verify(positionOccurrenceRepository, never()).countByChessAccountIdAndPlayerColorOrBoth(any(), any())
     }
 
     @Test
@@ -535,8 +576,6 @@ class WeaknessCalculationServiceTest {
         analysis: EngineAnalysis,
         agg: WeaknessAggregation,
     ) {
-        `when`(positionOccurrenceRepository.countByChessAccountId(account.id)).thenReturn(1)
-        `when`(positionOccurrenceRepository.countByChessAccountIdAndPlayerColorOrBoth(account.id, "WHITE")).thenReturn(1)
         `when`(positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(eq(account.id), eq("WHITE"), any()))
             .thenReturn(listOf(occ))
         `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(any())).thenReturn(listOf(analysis))
