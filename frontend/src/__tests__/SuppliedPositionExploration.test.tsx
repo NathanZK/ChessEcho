@@ -426,4 +426,94 @@ describe('user-supplied position exploration', () => {
     expect(screen.getByText('King\'s Pawn Opening')).toBeInTheDocument();
     expect(getVisibleBoard()).toHaveAttribute('data-position', START_FEN);
   });
+
+  it('displays explicit best-move badge and evaluation when best move is played on supplied position', async () => {
+    vi.mocked(api.evaluateMove).mockResolvedValue({
+      fen: START_FEN,
+      move: 'e4',
+      bestMove: 'e4',
+      bestEvalCp: 20,
+      evalCp: 20,
+      evalLoss: 0,
+      maxEvalLoss: 0.8,
+      threshold: 0.8,
+      acceptable: true,
+    });
+
+    render(<Home />);
+    await waitFor(() => expect(screen.getByText('No Practice Puzzles Available')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Explore a position' }));
+    const dialog = screen.getByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('FEN'), { target: { value: START_FEN } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Continue from FEN' }));
+
+    fireEvent.click(within(getVisibleBoard()).getByTestId('play-e4'));
+    await waitFor(() => expect(api.evaluateMove).toHaveBeenCalledWith(START_FEN, 'e4'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Puzzle Solved! 🎉')).toBeInTheDocument();
+      expect(screen.getByText(/is the best move!/i)).toBeInTheDocument();
+      expect(screen.queryByText(/is an acceptable alternative!/i)).not.toBeInTheDocument();
+    });
+  });
+
+  it('displays acceptable alternative feedback naming engine best move on supplied position', async () => {
+    vi.mocked(api.evaluateMove).mockResolvedValue({
+      fen: START_FEN,
+      move: 'd4',
+      bestMove: 'e4',
+      bestEvalCp: 20,
+      evalCp: 15,
+      evalLoss: 0.05,
+      maxEvalLoss: 0.8,
+      threshold: 0.8,
+      acceptable: true,
+    });
+
+    render(<Home />);
+    await waitFor(() => expect(screen.getByText('No Practice Puzzles Available')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Explore a position' }));
+    const dialog = screen.getByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('FEN'), { target: { value: START_FEN } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Continue from FEN' }));
+
+    fireEvent.click(within(getVisibleBoard()).getByTestId('play-d4'));
+    await waitFor(() => expect(api.evaluateMove).toHaveBeenCalledWith(START_FEN, 'd4'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Good Move! 👍')).toBeInTheDocument();
+      expect(screen.getByText(/is an acceptable alternative!/i)).toHaveTextContent('e4 is #1 best');
+      expect(screen.queryByText('Puzzle Solved! 🎉')).not.toBeInTheDocument();
+    });
+  });
+
+  it('rejects inaccurate move (>0.80 loss) with clear feedback and resets board to pre-move position', async () => {
+    vi.mocked(api.evaluateMove).mockResolvedValue({
+      fen: START_FEN,
+      move: 'd4',
+      bestMove: 'e4',
+      bestEvalCp: 20,
+      evalCp: -80,
+      evalLoss: 1.0,
+      maxEvalLoss: 0.8,
+      threshold: 0.8,
+      acceptable: false,
+    });
+
+    render(<Home />);
+    await waitFor(() => expect(screen.getByText('No Practice Puzzles Available')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Explore a position' }));
+    const dialog = screen.getByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('FEN'), { target: { value: START_FEN } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Continue from FEN' }));
+
+    fireEvent.click(within(getVisibleBoard()).getByTestId('play-d4'));
+    await waitFor(() => expect(api.evaluateMove).toHaveBeenCalledWith(START_FEN, 'd4'));
+    console.log("BODY HTML AFTER D4 EVAL:", document.body.innerHTML);
+
+    await waitFor(() => {
+      expect(screen.getByText('Not the Recommended Move')).toBeInTheDocument();
+      expect(getVisibleBoard()).toHaveAttribute('data-position', START_FEN);
+    });
+  });
 });

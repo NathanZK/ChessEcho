@@ -57,16 +57,17 @@ class MoveEvaluationService(
 
         // 2. Obtain evaluation score for the exact requested move
         val matchingCandidate = candidates.find { it.move == move }
-        val userEvalCp: Int? =
+        val userScore: EvalScore? =
             if (matchingCandidate != null) {
-                scoreToCp(matchingCandidate.score)
+                matchingCandidate.score
             } else {
                 log.debug("Move {} not in MultiPV=5 for FEN {}, running single move evaluation...", move, fen)
                 val singleAnalysis = stockfishService.evaluateSingleMove(fen = fen, sanMove = move, depth = 16)
-                scoreToCp(singleAnalysis?.score)
+                singleAnalysis?.score
             }
+        val userEvalCp: Int? = scoreToCp(userScore)
 
-        val rawLoss = calculateEvalLoss(bestEvalCp, userEvalCp)
+        val rawLoss = EvaluationLossPolicy.calculateEvalLoss(bestCandidate.score, userScore) ?: 0.0
         val evalLoss = round(rawLoss * 100.0) / 100.0
         val acceptable = evalLoss <= explorationMaxEvalLoss
 
@@ -81,14 +82,6 @@ class MoveEvaluationService(
             threshold = explorationMaxEvalLoss,
             acceptable = acceptable,
         )
-    }
-
-    private fun calculateEvalLoss(
-        bestCp: Int?,
-        userCp: Int?,
-    ): Double {
-        if (bestCp == null || userCp == null) return 0.0
-        return maxOf(0.0, (bestCp - userCp) / 100.0)
     }
 
     private fun scoreToCp(score: EvalScore?): Int? {

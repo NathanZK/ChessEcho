@@ -128,4 +128,122 @@ describe('useLineExploration', () => {
     expect(result.current.explorationPlayMode).toBeUndefined();
     expect(onExitExploration).toHaveBeenCalled();
   });
+
+  it('formats acceptable alternative feedback naming best move', () => {
+    const onUpdateEval = vi.fn();
+    const onFeedbackChange = vi.fn();
+
+    let boardFen = mockPuzzle.fen;
+    const { result, rerender } = renderHook(() =>
+      useLineExploration({
+        activePuzzle: mockPuzzle,
+        currentBoardFen: boardFen,
+        currentEvalCp: 35,
+        isEvalUnknown: false,
+        onUpdateEval,
+        onFeedbackChange,
+      })
+    );
+
+    act(() => {
+      result.current.handleEnterExploration('BOTH_SIDES');
+    });
+
+    const nextFen = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1';
+    act(() => {
+      result.current.handleUserExplorationMove('e4', nextFen, {
+        isBest: false,
+        loss: 0.25,
+        evalCp: 30,
+        fromFen: mockPuzzle.fen,
+        bestMove: 'd4',
+      });
+      boardFen = nextFen;
+    });
+    rerender();
+
+    expect(result.current.explorationFeedback?.type).toBe('good');
+    expect(result.current.explorationFeedback?.message).toBe(
+      'Good move. It loses 0.25 pawns compared with the best move (d4).'
+    );
+  });
+
+  it('formats acceptable alternative feedback without best move when omitted', () => {
+    const onUpdateEval = vi.fn();
+    const onFeedbackChange = vi.fn();
+
+    let boardFen = mockPuzzle.fen;
+    const { result, rerender } = renderHook(() =>
+      useLineExploration({
+        activePuzzle: mockPuzzle,
+        currentBoardFen: boardFen,
+        currentEvalCp: 35,
+        isEvalUnknown: false,
+        onUpdateEval,
+        onFeedbackChange,
+      })
+    );
+
+    act(() => {
+      result.current.handleEnterExploration('BOTH_SIDES');
+    });
+
+    const nextFen = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1';
+    act(() => {
+      result.current.handleUserExplorationMove('e4', nextFen, {
+        isBest: false,
+        loss: 0.15,
+        evalCp: 30,
+        fromFen: mockPuzzle.fen,
+      });
+      boardFen = nextFen;
+    });
+    rerender();
+
+    expect(result.current.explorationFeedback?.type).toBe('good');
+    expect(result.current.explorationFeedback?.message).toBe(
+      'Good move. It loses 0.15 pawns compared with the best move.'
+    );
+  });
+
+  it('clears exploration feedback when resetExploration is invoked', () => {
+    const onUpdateEval = vi.fn();
+    const onFeedbackChange = vi.fn();
+
+    let boardFen = mockPuzzle.fen;
+    const { result, rerender } = renderHook(() =>
+      useLineExploration({
+        activePuzzle: mockPuzzle,
+        currentBoardFen: boardFen,
+        currentEvalCp: 35,
+        isEvalUnknown: false,
+        onUpdateEval,
+        onFeedbackChange,
+      })
+    );
+
+    act(() => {
+      result.current.handleEnterExploration('BOTH_SIDES');
+    });
+
+    const nextFen = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1';
+    act(() => {
+      result.current.handleUserExplorationMove('e4', nextFen, {
+        isBest: true,
+        loss: 0,
+        evalCp: 40,
+        fromFen: mockPuzzle.fen,
+      });
+      boardFen = nextFen;
+    });
+    rerender();
+    expect(result.current.explorationFeedback?.type).toBe('best');
+
+    act(() => {
+      result.current.resetExploration();
+      boardFen = mockPuzzle.fen;
+    });
+    rerender();
+    expect(result.current.explorationFeedback).toBeNull();
+  });
 });

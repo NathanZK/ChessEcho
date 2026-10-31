@@ -278,7 +278,7 @@ describe('Play Both Sides Mode in Line Exploration', () => {
     // User plays acceptable move a6
     fireEvent.click(screen.getByTestId('play-move-black-a6'));
     await waitFor(() => {
-      expect(screen.getByText(/Good move\. It loses 0\.15 pawns compared with the best move\./i)).toBeInTheDocument();
+      expect(screen.getByText(/Good move\. It loses 0\.15 pawns compared with the best move \(Nf6\)\./i)).toBeInTheDocument();
       expect(screen.getByText('+0.15')).toBeInTheDocument();
       expect(screen.getByText(/White to move/i)).toBeInTheDocument();
     });

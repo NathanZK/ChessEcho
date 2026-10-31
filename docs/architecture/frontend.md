@@ -414,7 +414,14 @@ the returned candidates. The continuation service caches responses, and
 evaluations are cached by FEN and move; `ChessBoardArea` ignores a completion
 after the board has moved or reset.
 If its evaluation returns no result, it reverts the move and shows an
-evaluation-failed message. Challenge move legality and branch visualization are
+evaluation-failed message. In user move evaluation across all exploration modes,
+the best move is classified by `moveSan === res.bestMove` independently from centipawn loss,
+and acceptable alternative moves display calculated pawn loss while naming the engine's best move.
+When user-supplied positions are explored, initial moves evaluate dynamically against Stockfish:
+acceptable moves set `targetMove` and acceptable candidates on the active puzzle, while inaccurate moves
+(loss > 0.80 pawns) or errors roll back the board. During active Line Exploration, the root dynamic feedback
+card is unmounted so continuation feedback does not compete with puzzle-level feedback.
+Challenge move legality and branch visualization are
 local; evaluation is server-backed. Challenge candidate submission reports a
 failed per-move evaluation when no result is returned. In the separate
 calculation-input branch, a null result currently falls through to the

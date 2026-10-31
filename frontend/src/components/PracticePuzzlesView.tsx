@@ -108,6 +108,7 @@ export function PracticePuzzlesView({
   const [initialMoveHistoryStartFen, setInitialMoveHistoryStartFen] = useState<string | undefined>();
   const [boardHistorySnapshot, setBoardHistorySnapshot] = useState<ChessBoardHistorySnapshot | null>(null);
   const boardHistorySnapshotRef = React.useRef<ChessBoardHistorySnapshot | null>(null);
+  const [boardResetTrigger, setBoardResetTrigger] = useState<number>(0);
   const longDecisionReturnSnapshotRef = React.useRef<LongDecisionReturnSnapshot | null>(null);
   const suppliedPositionCounterRef = React.useRef(0);
   const [loadedPuzzleContext, setLoadedPuzzleContext] = useState('');
@@ -1066,24 +1067,60 @@ export function PracticePuzzlesView({
     if (isInitialDecision) {
       if (activePuzzle.source === 'supplied' || !activePuzzle.targetMove) {
         void evaluateMove(activePuzzle.fen, moveSan).then((evalResult) => {
-          if (!evalResult) return;
+          if (!evalResult) {
+            setBoardResetTrigger((prev) => prev + 1);
+            setMoveHistory((prev) => prev.slice(0, -1));
+            setFeedback({ status: 'IDLE' });
+            return;
+          }
           const acceptable = evalResult.acceptable;
+          const isBest = moveSan === evalResult.bestMove;
           const evalCp = evalResult.evalCp ?? startCp;
-          const nextFeedback: PuzzleFeedbackState = {
-            status: acceptable ? 'CORRECT' : 'INCORRECT',
-            lastMove: moveSan,
-          };
-          setFeedback(nextFeedback);
-          setCurrentEvalCp(evalCp);
-          setIsEvalUnknown(false);
-          setEvalHistory((prev) => [...prev.slice(0, historyIndex + 1), evalCp]);
-          setFeedbackHistory((prev) => [...prev.slice(0, historyIndex + 1), nextFeedback]);
-          setHistoryIndex((prev) => prev + 1);
+
           if (acceptable) {
-            soundService.playSound('completion');
+            setActivePuzzle((prev) => {
+              if (!prev) return null;
+              const newAcceptable = prev.acceptableMoves.filter((m) => m.move !== moveSan);
+              if (!isBest) {
+                newAcceptable.push({ move: moveSan, evalLoss: evalResult.evalLoss });
+              }
+              return {
+                ...prev,
+                targetMove: evalResult.bestMove,
+                acceptableMoves: newAcceptable,
+              };
+            });
+            const nextFeedback: PuzzleFeedbackState = {
+              status: 'CORRECT',
+              lastMove: moveSan,
+            };
+            setFeedback(nextFeedback);
+            setCurrentEvalCp(evalCp);
+            setIsEvalUnknown(false);
+            setEvalHistory((prev) => [...prev.slice(0, historyIndex + 1), evalCp]);
+            setFeedbackHistory((prev) => [...prev.slice(0, historyIndex + 1), nextFeedback]);
+            setHistoryIndex((prev) => prev + 1);
+            if (isBest) {
+              soundService.playSound('completion');
+            } else {
+              soundService.playSound('correct');
+            }
           } else {
+            // Unacceptable move (>0.80 loss): rollback board, set feedback to INCORRECT, remove move from history
+            setBoardResetTrigger((prev) => prev + 1);
+            setMoveHistory((prev) => prev.slice(0, -1));
+            const nextFeedback: PuzzleFeedbackState = {
+              status: 'INCORRECT',
+              lastMove: moveSan,
+              historicalInfo: { timesPlayed: 1, averageLoss: evalResult.evalLoss },
+            };
+            setFeedback(nextFeedback);
             soundService.playSound('incorrect');
           }
+        }).catch(() => {
+          setBoardResetTrigger((prev) => prev + 1);
+          setMoveHistory((prev) => prev.slice(0, -1));
+          setFeedback({ status: 'IDLE' });
         });
         return;
       }
@@ -1259,6 +1296,7 @@ export function PracticePuzzlesView({
                 onUndo={handleBoardUndo}
                 onRedo={handleBoardRedo}
                 onReset={handleBoardReset}
+                resetTrigger={boardResetTrigger}
                 hintSquare={hintSquare}
                 canHint={
                   feedback.status !== 'CORRECT' &&

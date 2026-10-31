@@ -950,4 +950,62 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
     fireEvent.click(screen.getByTestId('simulate-expl-move-white'));
     expect(board).toHaveAttribute('data-last-drop-result', 'true');
   });
+
+  it('26. Non-best move with 0.00 loss is classified as acceptable alternative and names best move', async () => {
+    vi.mocked(api.evaluateMove).mockResolvedValue({
+      fen: 'r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3',
+      move: 'a6',
+      bestMove: 'Nf6',
+      bestEvalCp: 30,
+      evalCp: 30,
+      evalLoss: 0.0,
+      maxEvalLoss: 0.8,
+      threshold: 0.8,
+      acceptable: true,
+    });
+
+    render(<Home />);
+    await waitFor(() => screen.getByText('+0.30'));
+
+    fireEvent.click(screen.getByTestId('simulate-puzzle-move-white'));
+    await waitFor(() => screen.getByRole('button', { name: /Continue Exploration/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Play Both Sides/i }));
+
+    fireEvent.click(screen.getByTestId('simulate-expl-move-black'));
+
+    await waitFor(() => {
+      // Must not be classified as "Best move. No evaluation loss."
+      expect(screen.queryByText('Best move. No evaluation loss.')).not.toBeInTheDocument();
+      expect(screen.getByText(/Good move\. It loses 0\.00 pawns compared with the best move \(Nf6\)\./i)).toBeInTheDocument();
+    });
+  });
+
+  it('27. Engine best move matching res.bestMove is classified as best move even with minor loss variance', async () => {
+    vi.mocked(api.evaluateMove).mockResolvedValue({
+      fen: 'r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3',
+      move: 'a6',
+      bestMove: 'a6',
+      bestEvalCp: 30,
+      evalCp: 28,
+      evalLoss: 0.02,
+      maxEvalLoss: 0.8,
+      threshold: 0.8,
+      acceptable: true,
+    });
+
+    render(<Home />);
+    await waitFor(() => screen.getByText('+0.30'));
+
+    fireEvent.click(screen.getByTestId('simulate-puzzle-move-white'));
+    await waitFor(() => screen.getByRole('button', { name: /Continue Exploration/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Play Both Sides/i }));
+
+    fireEvent.click(screen.getByTestId('simulate-expl-move-black'));
+
+    await waitFor(() => {
+      expect(screen.getByText('Best move. No evaluation loss.')).toBeInTheDocument();
+    });
+  });
 });
