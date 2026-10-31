@@ -7,7 +7,7 @@ import {
   BOARD_FRAME_CLASS,
 } from './boardPresentation';
 
-interface BlinfoldBoardWrapperProps {
+interface BlindfoldBoardWrapperProps {
   fen: string;
   isVisible: boolean;
   onReveal: () => void;
@@ -16,7 +16,7 @@ interface BlinfoldBoardWrapperProps {
   boardOrientation: 'white' | 'black';
 }
 
-export const BlinfoldBoardWrapper: React.FC<BlinfoldBoardWrapperProps> = ({
+export const BlindfoldBoardWrapper: React.FC<BlindfoldBoardWrapperProps> = ({
   fen,
   isVisible,
   onReveal,

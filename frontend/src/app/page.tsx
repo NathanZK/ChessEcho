@@ -6,7 +6,7 @@ import { Header, TabType } from '@/components/Header';
 import type { PositionExplorationStart } from '@/components/ExplorePositionModal';
 import { EvalBar } from '@/components/EvalBar';
 import { ChessBoardArea, type ChessBoardHistorySnapshot } from '@/components/ChessBoardArea';
-import { BlinfoldBoardWrapper } from '@/components/BlinfoldBoardWrapper';
+import { BlindfoldBoardWrapper } from '@/components/BlindfoldBoardWrapper';
 import { NotationExchangeUI } from '@/components/NotationExchangeUI';
 import { useBlindfoldSession } from '@/hooks/useBlindfoldSession';
 import { usePuzzleAttemptCount } from '@/hooks/usePuzzleAttemptCount';
@@ -41,7 +41,7 @@ import {
 } from '@/services/api';
 import { soundService } from '@/services/soundService';
 import { createDeterministicSelectionPolicy, createStochasticSelectionPolicy } from '@/services/continuationService';
-import { usePuzzleContinuation } from '@/utils/usePuzzleContinuation';
+import { usePuzzleContinuation } from '@/hooks/usePuzzleContinuation';
 import { StopwatchTimer, CountdownTimer } from '@/utils/timedTraining';
 import { activeTabStore, activeUsernameStore, activeAccountStore, activeJobStore, clearAuthenticatedAccountState, puzzleSettingsStore, reconcileSessionStorageOwner } from '@/utils/browserStores';
 import type { AccountConnectionStatus } from '@/components/ImportGamesView';
@@ -2123,7 +2123,7 @@ export default function Home() {
                     onMoveEvaluationPendingChange={setIsMoveEvaluationPending}
                   />
                   {blindfold.state && (
-                    <BlinfoldBoardWrapper
+                    <BlindfoldBoardWrapper
                       fen={blindfold.state.currentFen}
                       isVisible={blindfold.state.isVisible}
                       onReveal={blindfold.reveal}

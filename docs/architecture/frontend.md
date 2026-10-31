@@ -322,7 +322,7 @@ a move evaluation or ChessEcho continuation is pending. The session
 (`useBlindfoldSession`) starts from the current board FEN, and the side to move
 plays first. ChessEcho replies come from `GET /api/puzzles/continuation` in
 `ENGINE` mode. The puzzle layout stays in place: `ChessBoardArea` stays mounted
-but hidden, and `BlinfoldBoardWrapper` occupies the same board column. It uses
+but hidden, and `BlindfoldBoardWrapper` occupies the same board column. It uses
 the shared presentation from `boardPresentation.ts` and the puzzle board's
 orientation. `NotationExchangeUI` replaces the feedback panel until Exit, which
 restores the previous puzzle and exploration state.
