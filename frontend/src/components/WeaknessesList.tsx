@@ -22,6 +22,11 @@ import { StatusBanner } from './StatusBanner';
 import { fetchWeaknesses, WeaknessResponse, TimeControlStats } from '../services/api';
 import { Puzzle } from '@/types/puzzle';
 import { HistoricalGamesModal } from './HistoricalGamesModal';
+import {
+  formatDecimal,
+  formatPawnLoss,
+  formatScoreRate,
+} from '@/utils/formatters';
 
 const PRACTICAL_TIME_CONTROLS = [
   { key: 'BULLET', label: 'Bullet' },
@@ -644,7 +649,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                             <div className="bg-surface-container-lowest p-2 rounded-lg border border-outline-variant">
                               <div className="text-[9px] text-outline font-sans uppercase">Mistake Rate</div>
                               <div className="text-xs font-bold text-amber-accent mt-0.5">
-                                <span>{displayMistakeRate.toFixed(1)}% ({displayMistakeCount}x)</span>
+                                <span>{formatDecimal(displayMistakeRate, 1)}% ({displayMistakeCount}x)</span>
                               </div>
                             </div>
 
@@ -656,7 +661,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
 
                             <div className="bg-surface-container-lowest p-2 rounded-lg border border-outline-variant">
                               <div className="text-[9px] text-outline font-sans uppercase">Avg Mistake Loss</div>
-                              <div className="text-xs font-bold text-error mt-0.5">-{displayAverageLoss.toFixed(2)} pawns</div>
+                              <div className="text-xs font-bold text-error mt-0.5">-{formatPawnLoss(displayAverageLoss)} pawns</div>
                             </div>
                           </div>
 
@@ -672,7 +677,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                                     key={idx}
                                     className="px-1.5 py-0.5 bg-error-container/20 border border-error/30 text-error rounded text-[11px] font-mono font-semibold"
                                   >
-                                    {m.move} ({m.timesPlayed}x, -{m.averageLoss.toFixed(2)} pawns)
+                                    {m.move} ({m.timesPlayed}x, -{formatPawnLoss(m.averageLoss)} pawns)
                                   </span>
                                 ))}
                               </div>
@@ -696,7 +701,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                                 {`Wins ${prac.wins} · Draws ${prac.draws} · Losses ${prac.losses}`}
                               </div>
                               <div className="text-outline">
-                                <span>{`${(prac.scoreRate * 100).toFixed(1)}% score rate`}</span>
+                                <span>{`${formatScoreRate(prac.scoreRate)} score rate`}</span>
                                 <span className="mx-1">·</span>
                                 <span>{`${prac.eligibleGames} eligible games`}</span>
                               </div>
@@ -722,7 +727,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                                       {`${stats.wins ?? 0}W · ${stats.draws ?? 0}D · ${stats.losses ?? 0}L`}
                                     </span>
                                     <span className="text-outline">
-                                      {`${stats.scoreRate != null ? (stats.scoreRate * 100).toFixed(1) : '0.0'}% score rate (${stats.eligibleGames} games)`}
+                                      {`${formatScoreRate(stats.scoreRate)} score rate (${stats.eligibleGames} games)`}
                                     </span>
                                   </div>
                                 ))}
@@ -854,13 +859,13 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                       <div>
                         <span className="text-[10px] text-outline font-sans block">Mistake Rate</span>
                         <span className="font-bold text-amber-accent">
-                          {displayMistakeRate.toFixed(1)}% ({displayMistakeCount}x)
+                          {formatDecimal(displayMistakeRate, 1)}% ({displayMistakeCount}x)
                         </span>
                       </div>
                       <div>
                         <span className="text-[10px] text-outline font-sans block">Avg Mistake Loss</span>
                         <span className="font-bold text-error">
-                          -{displayAverageLoss.toFixed(2)} pawns
+                          -{formatPawnLoss(displayAverageLoss)} pawns
                         </span>
                       </div>
                     </div>
@@ -881,9 +886,11 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                             Score Rate / Win Rate
                           </span>
                           <span className="text-secondary">
-                            {(prac.scoreRate * 100).toFixed(1)}% / {typeof prac.winRate === 'number' && !isNaN(prac.winRate)
-                              ? `${(prac.winRate * 100).toFixed(1)}%`
-                              : `${((prac.wins / prac.eligibleGames) * 100).toFixed(1)}%`}
+                            {formatScoreRate(prac.scoreRate)} / {formatScoreRate(
+                              typeof prac.winRate === 'number' && !isNaN(prac.winRate)
+                                ? prac.winRate
+                                : prac.wins / prac.eligibleGames
+                            )}
                           </span>
                         </div>
                         {tcBreakdown.length > 0 && (
@@ -892,7 +899,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                               <span key={key} className="inline-flex items-center gap-1 text-outline">
                                 <span className="font-semibold text-on-surface">{label}:</span>
                                 <span>{`${stats.wins ?? 0}W·${stats.draws ?? 0}D·${stats.losses ?? 0}L`}</span>
-                                <span className="text-secondary">{stats.scoreRate != null ? `${(stats.scoreRate * 100).toFixed(1)}%` : '—'}</span>
+                                <span className="text-secondary">{formatScoreRate(stats.scoreRate, '—')}</span>
                               </span>
                             ))}
                           </div>

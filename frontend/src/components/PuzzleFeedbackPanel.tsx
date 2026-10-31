@@ -20,18 +20,14 @@ import { Puzzle } from '@/types/puzzle';
 import { HistoricalGamesModal } from './HistoricalGamesModal';
 import { ContinuationMode, ContinuationCandidate, ExplorationPlayMode } from '../services/api';
 import type { PuzzleAttemptCountState } from '../hooks/usePuzzleAttemptCount';
+import { STRICT_OPPONENT_EVAL_LOSS_THRESHOLD } from '@/utils/practiceConstants';
+import {
+  formatDecimal,
+  formatPawnLoss,
+  formatTimerMs,
+} from '@/utils/formatters';
 
-export function formatDecimal(val: number, decimals: number = 2): string {
-  return (val ?? 0).toFixed(decimals).replace(',', '.');
-}
-
-export function formatTimerMs(ms: number): string {
-  const clamped = Math.max(0, Math.round(ms));
-  const totalSeconds = Math.floor(clamped / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-}
+export { formatDecimal, formatTimerMs };
 
 interface FeedbackState {
   status: 'IDLE' | 'CORRECT' | 'HISTORICAL_MISTAKE' | 'INCORRECT' | 'EXPLORING';
@@ -457,7 +453,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
                       </span>
                     </div>
                     <div className="text-amber-400/90 font-mono text-[11px] font-semibold">
-                      -{formatDecimal(mistake.averageLoss, 2)} pawns
+                      -{formatPawnLoss(mistake.averageLoss)} pawns
                     </div>
                   </div>
                 ))}
@@ -535,7 +531,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
                 </span>{' '}
                 —{' '}
                 <span className="font-bold text-white">
-                  {formatDecimal(feedback.historicalInfo?.averageLoss ?? 0, 2)} pawns worse
+                  {formatPawnLoss(feedback.historicalInfo?.averageLoss)} pawns worse
                 </span>{' '}
                 than the best move. Try{' '}
                 <span className="font-bold text-emerald-300">{puzzle.targetMove}</span> instead!
@@ -1045,10 +1041,10 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
                               Best move
                             </span>
                           );
-                        } else if (loss <= 0.20) {
+                        } else if (loss <= STRICT_OPPONENT_EVAL_LOSS_THRESHOLD) {
                           return (
                             <span className="text-[10px] text-emerald-400/80 bg-emerald-950/60 border border-emerald-700/50 px-1.5 py-0.5 rounded font-sans">
-                              Acceptable move (+{loss.toFixed(2)} pawns)
+                              Acceptable move (+{formatPawnLoss(loss)} pawns)
                             </span>
                           );
                         } else {
