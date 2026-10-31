@@ -55,8 +55,7 @@ class PositionInvertedIndex : PositionSimilarityCandidateGenerator {
             .sortedWith(
                 compareByDescending<Pair<PositionDocument, Double>> { it.second }
                     .thenBy { it.first.canonicalFen },
-            )
-            .take(maxCandidates)
+            ).take(maxCandidates)
             .map { it.first }
             .toList()
     }

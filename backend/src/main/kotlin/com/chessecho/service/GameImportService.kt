@@ -119,13 +119,14 @@ class GameImportService(
     fun createImportJob(
         request: ImportGamesRequest,
         principal: AuthenticatedPrincipal?,
-    ): AsyncJob {
-        return transactionTemplate.execute {
+    ): AsyncJob =
+        transactionTemplate.execute {
             val account = accountOwnershipService.resolveImportAccount(request, principal)
             val lockedAccount =
                 chessAccountRepository.findByIdForUpdate(account.id)
                     ?: throw AccountNotFoundException("Import account not found: ${account.id}")
-            asyncJobRepository.findByChessAccountIdAndStatusIn(lockedAccount.id, ACTIVE_STATUSES)
+            asyncJobRepository
+                .findByChessAccountIdAndStatusIn(lockedAccount.id, ACTIVE_STATUSES)
                 ?.let {
                     if (it.status == "PROCESSING" && isAsyncJobLeaseStale(it, Instant.now())) {
                         it.status = "FAILED"
@@ -162,7 +163,6 @@ class GameImportService(
                 throw ActiveImportJobException("An active import job already exists for account '${lockedAccount.id}'")
             }
         }!!
-    }
 
     /**
      * Asynchronously executes a game import job by ID.
@@ -566,4 +566,6 @@ class GameImportService(
     }
 }
 
-class ActiveImportJobException(message: String) : RuntimeException(message)
+class ActiveImportJobException(
+    message: String,
+) : RuntimeException(message)

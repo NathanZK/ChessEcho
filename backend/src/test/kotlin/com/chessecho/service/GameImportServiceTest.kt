@@ -303,12 +303,13 @@ class GameImportServiceTest {
         affectedPositionIds: Set<UUID>,
     ) {
         val method =
-            GameImportService::class.java.getDeclaredMethod(
-                "emitSchedulingEvents",
-                List::class.java,
-                AppUser::class.java,
-                Set::class.java,
-            ).apply { isAccessible = true }
+            GameImportService::class.java
+                .getDeclaredMethod(
+                    "emitSchedulingEvents",
+                    List::class.java,
+                    AppUser::class.java,
+                    Set::class.java,
+                ).apply { isAccessible = true }
         method.invoke(gameImportService, savedGames, initiatingUser, affectedPositionIds)
     }
 
@@ -516,7 +517,10 @@ class GameImportServiceTest {
         whenever(chessComClient.fetchMonthlyGames(archiveUrls[0])).thenReturn(emptyList())
         // Second month fails abruptly with a network exception
         whenever(chessComClient.fetchMonthlyGames(archiveUrls[1]))
-            .thenThrow(org.springframework.web.client.ResourceAccessException("Connection reset by peer"))
+            .thenThrow(
+                org.springframework.web.client
+                    .ResourceAccessException("Connection reset by peer"),
+            )
 
         service.executeImportJob(jobId)
 

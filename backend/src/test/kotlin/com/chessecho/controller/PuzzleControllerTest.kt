@@ -35,8 +35,7 @@ class PuzzleControllerTest {
                     trainingAttemptService = trainingAttemptService,
                     continuationService = continuationService,
                 ),
-            )
-            .setControllerAdvice(GlobalExceptionHandler())
+            ).setControllerAdvice(GlobalExceptionHandler())
             .setMessageConverters(MappingJackson2HttpMessageConverter(objectMapper))
             .build()
 

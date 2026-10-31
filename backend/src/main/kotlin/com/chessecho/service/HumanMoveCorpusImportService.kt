@@ -85,12 +85,13 @@ class HumanMoveCorpusImportService(
         now: OffsetDateTime,
     ) {
         val existingImport =
-            jdbcTemplate.query(
-                "SELECT rating_band, algorithm_version, source_revision, request_sha256 " +
-                    "FROM human_move_corpus_import WHERE source_run_id = ?",
-                { rs, _ -> listOf(rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4)) },
-                sourceRunId,
-            ).singleOrNull()
+            jdbcTemplate
+                .query(
+                    "SELECT rating_band, algorithm_version, source_revision, request_sha256 " +
+                        "FROM human_move_corpus_import WHERE source_run_id = ?",
+                    { rs, _ -> listOf(rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4)) },
+                    sourceRunId,
+                ).singleOrNull()
         val declaredIdentity =
             listOf(
                 manifest.ratingBand,
@@ -145,12 +146,13 @@ class HumanMoveCorpusImportService(
     ) {
         jdbcTemplate.query(
             { connection ->
-                connection.prepareStatement(
-                    "SELECT content_digest, covered_prefix FROM human_move_corpus_artifact_snapshot WHERE source_run_id = ?",
-                ).apply {
-                    fetchSize = 16
-                    setObject(1, sourceRunId)
-                }
+                connection
+                    .prepareStatement(
+                        "SELECT content_digest, covered_prefix FROM human_move_corpus_artifact_snapshot WHERE source_run_id = ?",
+                    ).apply {
+                        fetchSize = 16
+                        setObject(1, sourceRunId)
+                    }
             },
             RowCallbackHandler { rs ->
                 val digest = rs.getString(1)
@@ -205,14 +207,24 @@ class HumanMoveCorpusImportService(
         artifactService.forEachGame(archive) { game ->
             if (game.qualifyingOrdinal <= prefix) {
                 val bytes = mapper.writeValueAsBytes(game)
-                digest.update(java.nio.ByteBuffer.allocate(8).putLong(bytes.size.toLong()).array())
+                digest.update(
+                    java.nio.ByteBuffer
+                        .allocate(8)
+                        .putLong(bytes.size.toLong())
+                        .array(),
+                )
                 digest.update(bytes)
             }
         }
         artifactService.forEachObservation(archive) { observation ->
             if (observation.qualifyingOrdinal <= prefix) {
                 val bytes = mapper.writeValueAsBytes(observation)
-                digest.update(java.nio.ByteBuffer.allocate(8).putLong(bytes.size.toLong()).array())
+                digest.update(
+                    java.nio.ByteBuffer
+                        .allocate(8)
+                        .putLong(bytes.size.toLong())
+                        .array(),
+                )
                 digest.update(bytes)
             }
         }
@@ -224,20 +236,30 @@ class HumanMoveCorpusImportService(
         archive: Path,
         overlapEnd: Int,
     ) {
+        verifyGameOverlap(sourceRunId, archive, overlapEnd)
+        verifyObservationOverlap(sourceRunId, archive, overlapEnd)
+    }
+
+    private fun verifyGameOverlap(
+        sourceRunId: UUID,
+        archive: Path,
+        overlapEnd: Int,
+    ) {
         jdbcTemplate.query(
             { connection ->
-                connection.prepareStatement(
-                    """
-                    SELECT qualifying_ordinal, provider_game_id, traversed_player, opponent, opponent_side, opponent_rating,
-                           rules, time_class, bfs_depth, pgn, pgn_sha256, observation_total, distinct_move_count, committed_at
-                    FROM human_move_corpus_imported_game
-                    WHERE source_run_id = ? AND qualifying_ordinal <= ? ORDER BY qualifying_ordinal
-                    """.trimIndent(),
-                ).apply {
-                    fetchSize = 16
-                    setObject(1, sourceRunId)
-                    setInt(2, overlapEnd)
-                }
+                connection
+                    .prepareStatement(
+                        """
+                        SELECT qualifying_ordinal, provider_game_id, traversed_player, opponent, opponent_side, opponent_rating,
+                               rules, time_class, bfs_depth, pgn, pgn_sha256, observation_total, distinct_move_count, committed_at
+                        FROM human_move_corpus_imported_game
+                        WHERE source_run_id = ? AND qualifying_ordinal <= ? ORDER BY qualifying_ordinal
+                        """.trimIndent(),
+                    ).apply {
+                        fetchSize = 16
+                        setObject(1, sourceRunId)
+                        setInt(2, overlapEnd)
+                    }
             },
             ResultSetExtractor { rows ->
                 artifactService.forEachGame(archive) { game ->
@@ -251,22 +273,30 @@ class HumanMoveCorpusImportService(
                 null
             },
         )
+    }
+
+    private fun verifyObservationOverlap(
+        sourceRunId: UUID,
+        archive: Path,
+        overlapEnd: Int,
+    ) {
         jdbcTemplate.query(
             { connection ->
-                connection.prepareStatement(
-                    """
-                    SELECT g.qualifying_ordinal, o.position_hash, o.move_played, o.observation_count, p.fen
-                    FROM human_move_corpus_imported_observation o
-                    JOIN human_move_corpus_imported_game g ON g.id = o.game_id
-                    JOIN position p ON p.id = o.position_id
-                    WHERE g.source_run_id = ? AND g.qualifying_ordinal <= ?
-                    ORDER BY g.qualifying_ordinal, o.position_hash, o.move_played
-                    """.trimIndent(),
-                ).apply {
-                    fetchSize = 500
-                    setObject(1, sourceRunId)
-                    setInt(2, overlapEnd)
-                }
+                connection
+                    .prepareStatement(
+                        """
+                        SELECT g.qualifying_ordinal, o.position_hash, o.move_played, o.observation_count, p.fen
+                        FROM human_move_corpus_imported_observation o
+                        JOIN human_move_corpus_imported_game g ON g.id = o.game_id
+                        JOIN position p ON p.id = o.position_id
+                        WHERE g.source_run_id = ? AND g.qualifying_ordinal <= ?
+                        ORDER BY g.qualifying_ordinal, o.position_hash, o.move_played
+                        """.trimIndent(),
+                    ).apply {
+                        fetchSize = 500
+                        setObject(1, sourceRunId)
+                        setInt(2, overlapEnd)
+                    }
             },
             ResultSetExtractor { rows ->
                 artifactService.forEachObservation(archive) { observation ->
@@ -329,10 +359,21 @@ class HumanMoveCorpusImportService(
             if (game.qualifyingOrdinal > existingMaxOrdinal) {
                 gameBatch.add(
                     arrayOf(
-                        UUID.randomUUID(), sourceRunId, game.qualifyingOrdinal, game.providerGameId,
-                        game.traversedPlayer, game.opponent, game.opponentSide, game.opponentRating,
-                        game.rules, game.timeClass, game.bfsDepth, game.pgn, game.pgnSha256,
-                        game.observationTotal, game.distinctMoveCount,
+                        UUID.randomUUID(),
+                        sourceRunId,
+                        game.qualifyingOrdinal,
+                        game.providerGameId,
+                        game.traversedPlayer,
+                        game.opponent,
+                        game.opponentSide,
+                        game.opponentRating,
+                        game.rules,
+                        game.timeClass,
+                        game.bfsDepth,
+                        game.pgn,
+                        game.pgnSha256,
+                        game.observationTotal,
+                        game.distinctMoveCount,
                         OffsetDateTime.ofInstant(game.committedAt, ZoneOffset.UTC),
                     ),
                 )
@@ -363,11 +404,13 @@ class HumanMoveCorpusImportService(
     ) {
         val positionIds = resolvePositions(observations)
         val gameIds =
-            namedJdbcTemplate.query(
-                "SELECT qualifying_ordinal, id FROM human_move_corpus_imported_game " +
-                    "WHERE source_run_id = :sourceRunId AND qualifying_ordinal IN (:ordinals)",
-                mapOf("sourceRunId" to sourceRunId, "ordinals" to observations.map { it.qualifyingOrdinal }.distinct()),
-            ) { rs, _ -> rs.getInt(1) to rs.getObject(2, UUID::class.java) }.toMap()
+            namedJdbcTemplate
+                .query(
+                    "SELECT qualifying_ordinal, id FROM human_move_corpus_imported_game " +
+                        "WHERE source_run_id = :sourceRunId AND qualifying_ordinal IN (:ordinals)",
+                    mapOf("sourceRunId" to sourceRunId, "ordinals" to observations.map { it.qualifyingOrdinal }.distinct()),
+                ) { rs, _ -> rs.getInt(1) to rs.getObject(2, UUID::class.java) }
+                .toMap()
         jdbcTemplate.batchUpdate(
             "INSERT INTO human_move_corpus_imported_observation " +
                 "(id, game_id, position_id, position_hash, move_played, observation_count) VALUES (?, ?, ?, ?, ?, ?)",

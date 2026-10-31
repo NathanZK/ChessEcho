@@ -59,16 +59,16 @@ class ChessComClient(
     fun <T : Any> getJson(
         url: String,
         responseType: Class<T>,
-    ): T? {
-        return executeSerialized {
+    ): T? =
+        executeSerialized {
             executeWithRetry(url) {
-                client.get()
+                client
+                    .get()
                     .uri(url)
                     .retrieve()
                     .body(responseType)
             }
         }
-    }
 
     /**
      * Retrieves the master list of monthly archive URLs for the given username.

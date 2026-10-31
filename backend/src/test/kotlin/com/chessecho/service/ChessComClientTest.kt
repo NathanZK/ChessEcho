@@ -154,8 +154,7 @@ class ChessComClientTest {
                     ByteArray(0),
                     null,
                 ),
-            )
-            .thenThrow(
+            ).thenThrow(
                 HttpClientErrorException.create(
                     HttpStatus.TOO_MANY_REQUESTS,
                     "Too Many Requests",
@@ -163,8 +162,7 @@ class ChessComClientTest {
                     ByteArray(0),
                     null,
                 ),
-            )
-            .thenReturn(mapOf("archives" to listOf("url1")))
+            ).thenReturn(mapOf("archives" to listOf("url1")))
 
         val result = client.fetchArchiveUrls("hikaru")
 
@@ -192,8 +190,7 @@ class ChessComClientTest {
                     ByteArray(0),
                     null,
                 ),
-            )
-            .thenReturn(mapOf("archives" to listOf("url1")))
+            ).thenReturn(mapOf("archives" to listOf("url1")))
 
         val result = client.fetchArchiveUrls("hikaru")
 
@@ -254,8 +251,7 @@ class ChessComClientTest {
                     ByteArray(0),
                     null,
                 ),
-            )
-            .thenReturn(mapOf("archives" to listOf("url1")))
+            ).thenReturn(mapOf("archives" to listOf("url1")))
 
         val result = client.fetchArchiveUrls("hikaru")
 
@@ -312,7 +308,10 @@ class ChessComClientTest {
     @Test
     fun `non-HTTP network exceptions propagate immediately without retry`() {
         whenever(mockResponseSpec.body(Map::class.java))
-            .thenThrow(org.springframework.web.client.ResourceAccessException("Connection timeout"))
+            .thenThrow(
+                org.springframework.web.client
+                    .ResourceAccessException("Connection timeout"),
+            )
 
         assertThrows<org.springframework.web.client.ResourceAccessException> {
             client.fetchArchiveUrls("hikaru")

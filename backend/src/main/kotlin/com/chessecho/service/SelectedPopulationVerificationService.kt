@@ -97,32 +97,33 @@ class SelectedPopulationVerificationService(
         parameters.add(population.coveredPrefix)
         parameters.add(population.prefixN)
         val occurrences =
-            jdbcTemplate.query(
-                """
-                SELECT id, source_run_id, qualifying_ordinal, pre_move_ply, provider_game_id,
-                       position_hash, move_played, content_digest, covered_prefix
-                FROM human_move_corpus_occurrence
-                WHERE id IN ($placeholders)
-                  AND source_run_id = ?
-                  AND content_digest = ?
-                  AND covered_prefix = ?
-                  AND qualifying_ordinal <= ?
-                """.trimIndent(),
-                { rs, _ ->
-                    rs.getObject("id", UUID::class.java) to
-                        RetainedReferenceOccurrence(
-                            sourceRunId = rs.getObject("source_run_id", UUID::class.java),
-                            qualifyingOrdinal = rs.getInt("qualifying_ordinal"),
-                            preMovePly = rs.getInt("pre_move_ply"),
-                            providerGameId = rs.getString("provider_game_id"),
-                            positionHash = rs.getString("position_hash"),
-                            movePlayed = rs.getString("move_played"),
-                            contentDigest = rs.getString("content_digest"),
-                            coveredPrefix = rs.getInt("covered_prefix"),
-                        )
-                },
-                *parameters.toTypedArray(),
-            ).toMap()
+            jdbcTemplate
+                .query(
+                    """
+                    SELECT id, source_run_id, qualifying_ordinal, pre_move_ply, provider_game_id,
+                           position_hash, move_played, content_digest, covered_prefix
+                    FROM human_move_corpus_occurrence
+                    WHERE id IN ($placeholders)
+                      AND source_run_id = ?
+                      AND content_digest = ?
+                      AND covered_prefix = ?
+                      AND qualifying_ordinal <= ?
+                    """.trimIndent(),
+                    { rs, _ ->
+                        rs.getObject("id", UUID::class.java) to
+                            RetainedReferenceOccurrence(
+                                sourceRunId = rs.getObject("source_run_id", UUID::class.java),
+                                qualifyingOrdinal = rs.getInt("qualifying_ordinal"),
+                                preMovePly = rs.getInt("pre_move_ply"),
+                                providerGameId = rs.getString("provider_game_id"),
+                                positionHash = rs.getString("position_hash"),
+                                movePlayed = rs.getString("move_played"),
+                                contentDigest = rs.getString("content_digest"),
+                                coveredPrefix = rs.getInt("covered_prefix"),
+                            )
+                    },
+                    *parameters.toTypedArray(),
+                ).toMap()
         if (occurrences.keys != occurrenceIds) {
             throw RetainedEvaluationEvidenceIntegrityException("requested occurrences are missing or outside the selected prefix")
         }

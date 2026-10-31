@@ -208,8 +208,11 @@ class EvaluationEvidenceProducerLinkTest {
         assertTrue(snapshot.rows.all { it.objectiveOutcome == null })
         assertTrue(
             snapshot.rows.all {
-                it.practicalCandidate == null && it.practicalEligible == null &&
-                    it.practicalWins == null && it.practicalDraws == null && it.practicalLosses == null
+                it.practicalCandidate == null &&
+                    it.practicalEligible == null &&
+                    it.practicalWins == null &&
+                    it.practicalDraws == null &&
+                    it.practicalLosses == null
             },
         )
         assertNull(snapshot.occurrenceEvidenceId)

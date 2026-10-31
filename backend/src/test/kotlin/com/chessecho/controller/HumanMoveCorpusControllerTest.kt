@@ -133,10 +133,11 @@ class HumanMoveCorpusControllerTest {
             )
 
         cases.forEach { (bounds, _) ->
-            mockMvc.post(base) {
-                contentType = MediaType.APPLICATION_JSON
-                content = createBody(bounds)
-            }.andExpect { status { isOk() } }
+            mockMvc
+                .post(base) {
+                    contentType = MediaType.APPLICATION_JSON
+                    content = createBody(bounds)
+                }.andExpect { status { isOk() } }
         }
 
         val captor = argumentCaptor<HumanMoveCorpusRunRequest>()
@@ -156,37 +157,39 @@ class HumanMoveCorpusControllerTest {
     fun `POST corpus-runs returns run identity, configuration, status, and frontier`() {
         whenever(humanMoveCorpusService.runCorpus(any())).thenReturn(runResponse())
 
-        mockMvc.post(base) {
-            contentType = MediaType.APPLICATION_JSON
-            content = createBody(mapOf("maxQualifyingGames" to 10, "excludedPlayers" to listOf("x")))
-        }.andExpect {
-            status { isOk() }
-            jsonPath("$.runId") { value(runId.toString()) }
-            jsonPath("$.ratingBand") { value("1000-1200") }
-            jsonPath("$.status") { value("COMPLETED") }
-            jsonPath("$.committedFrontier") { value(10) }
-            jsonPath("$.rejectedGameCount") { value(1) }
-            jsonPath("$.archiveFetchFailureCount") { value(0) }
-            jsonPath("$.stopReason") { value("MAX_QUALIFYING_GAMES") }
-            jsonPath("$.algorithmVersion") { value("human-move-corpus-v1") }
-            jsonPath("$.sourceRevision") { value("abc123") }
-            jsonPath("$.sourceRevisionProvenance") { value("SELF_REPORTED") }
-            jsonPath("$.requestSha256") { value("a".repeat(64)) }
-            jsonPath("$.seedPlayers[0]") { value("p1") }
-            jsonPath("$.excludedPlayers[0]") { value("x") }
-            jsonPath("$.maxQualifyingGames") { value(10) }
-        }
+        mockMvc
+            .post(base) {
+                contentType = MediaType.APPLICATION_JSON
+                content = createBody(mapOf("maxQualifyingGames" to 10, "excludedPlayers" to listOf("x")))
+            }.andExpect {
+                status { isOk() }
+                jsonPath("$.runId") { value(runId.toString()) }
+                jsonPath("$.ratingBand") { value("1000-1200") }
+                jsonPath("$.status") { value("COMPLETED") }
+                jsonPath("$.committedFrontier") { value(10) }
+                jsonPath("$.rejectedGameCount") { value(1) }
+                jsonPath("$.archiveFetchFailureCount") { value(0) }
+                jsonPath("$.stopReason") { value("MAX_QUALIFYING_GAMES") }
+                jsonPath("$.algorithmVersion") { value("human-move-corpus-v1") }
+                jsonPath("$.sourceRevision") { value("abc123") }
+                jsonPath("$.sourceRevisionProvenance") { value("SELF_REPORTED") }
+                jsonPath("$.requestSha256") { value("a".repeat(64)) }
+                jsonPath("$.seedPlayers[0]") { value("p1") }
+                jsonPath("$.excludedPlayers[0]") { value("x") }
+                jsonPath("$.maxQualifyingGames") { value(10) }
+            }
     }
 
     @Test
     fun `POST corpus-runs rejects a missing sourceRevision without invoking the service`() {
-        mockMvc.post(base) {
-            contentType = MediaType.APPLICATION_JSON
-            content =
-                objectMapper.writeValueAsString(
-                    mapOf("ratingBand" to "1000-1200", "seedPlayers" to listOf("p1"), "maxDepth" to 1),
-                )
-        }.andExpect { status { isBadRequest() } }
+        mockMvc
+            .post(base) {
+                contentType = MediaType.APPLICATION_JSON
+                content =
+                    objectMapper.writeValueAsString(
+                        mapOf("ratingBand" to "1000-1200", "seedPlayers" to listOf("p1"), "maxDepth" to 1),
+                    )
+            }.andExpect { status { isBadRequest() } }
 
         verify(humanMoveCorpusService, never()).runCorpus(any())
     }
@@ -196,13 +199,14 @@ class HumanMoveCorpusControllerTest {
         whenever(humanMoveCorpusService.runCorpus(any()))
             .thenThrow(IllegalArgumentException("At least one BFS bound must be supplied"))
 
-        mockMvc.post(base) {
-            contentType = MediaType.APPLICATION_JSON
-            content = createBody(emptyMap())
-        }.andExpect {
-            status { isBadRequest() }
-            jsonPath("$.details[0]") { value("At least one BFS bound must be supplied") }
-        }
+        mockMvc
+            .post(base) {
+                contentType = MediaType.APPLICATION_JSON
+                content = createBody(emptyMap())
+            }.andExpect {
+                status { isBadRequest() }
+                jsonPath("$.details[0]") { value("At least one BFS bound must be supplied") }
+            }
     }
 
     @Test
@@ -233,29 +237,30 @@ class HumanMoveCorpusControllerTest {
     fun `POST checkpoints binds N, defaults minObservations to 5, and returns the evidence shape`() {
         whenever(humanMoveCorpusCheckpointService.calculate(eq(runId), any())).thenReturn(checkpointResponse())
 
-        mockMvc.post("$base/$runId/checkpoints") {
-            contentType = MediaType.APPLICATION_JSON
-            content = """{"qualifyingGames": 7}"""
-        }.andExpect {
-            status { isOk() }
-            jsonPath("$.runId") { value(runId.toString()) }
-            jsonPath("$.ratingBand") { value("1000-1200") }
-            jsonPath("$.runStatus") { value("RUNNING") }
-            jsonPath("$.requestedN") { value(7) }
-            jsonPath("$.committedFrontier") { value(9) }
-            jsonPath("$.minObservations") { value(5) }
-            jsonPath("$.positionsEvaluated") { value(3) }
-            jsonPath("$.positionsRemoved") { value(2) }
-            jsonPath("$.positionsRetained") { value(1) }
-            jsonPath("$.rowsRetained") { value(1) }
-            jsonPath("$.observationsRetained") { value(6) }
-            jsonPath("$.rows[0].positionHash") { value("hash-1") }
-            jsonPath("$.rows[0].movePlayed") { value("e4") }
-            jsonPath("$.rows[0].observationCount") { value(6) }
-            jsonPath("$.distributionSha256") { value("b".repeat(64)) }
-            jsonPath("$.calculationVersion") { value("human-move-corpus-checkpoint-v1") }
-            jsonPath("$.calculatedAt") { exists() }
-        }
+        mockMvc
+            .post("$base/$runId/checkpoints") {
+                contentType = MediaType.APPLICATION_JSON
+                content = """{"qualifyingGames": 7}"""
+            }.andExpect {
+                status { isOk() }
+                jsonPath("$.runId") { value(runId.toString()) }
+                jsonPath("$.ratingBand") { value("1000-1200") }
+                jsonPath("$.runStatus") { value("RUNNING") }
+                jsonPath("$.requestedN") { value(7) }
+                jsonPath("$.committedFrontier") { value(9) }
+                jsonPath("$.minObservations") { value(5) }
+                jsonPath("$.positionsEvaluated") { value(3) }
+                jsonPath("$.positionsRemoved") { value(2) }
+                jsonPath("$.positionsRetained") { value(1) }
+                jsonPath("$.rowsRetained") { value(1) }
+                jsonPath("$.observationsRetained") { value(6) }
+                jsonPath("$.rows[0].positionHash") { value("hash-1") }
+                jsonPath("$.rows[0].movePlayed") { value("e4") }
+                jsonPath("$.rows[0].observationCount") { value(6) }
+                jsonPath("$.distributionSha256") { value("b".repeat(64)) }
+                jsonPath("$.calculationVersion") { value("human-move-corpus-checkpoint-v1") }
+                jsonPath("$.calculatedAt") { exists() }
+            }
 
         val captor = argumentCaptor<HumanMoveCorpusCheckpointRequest>()
         verify(humanMoveCorpusCheckpointService).calculate(eq(runId), captor.capture())
@@ -265,10 +270,11 @@ class HumanMoveCorpusControllerTest {
 
     @Test
     fun `POST checkpoints rejects missing N without invoking the service`() {
-        mockMvc.post("$base/$runId/checkpoints") {
-            contentType = MediaType.APPLICATION_JSON
-            content = """{"minObservations": 5}"""
-        }.andExpect { status { isBadRequest() } }
+        mockMvc
+            .post("$base/$runId/checkpoints") {
+                contentType = MediaType.APPLICATION_JSON
+                content = """{"minObservations": 5}"""
+            }.andExpect { status { isBadRequest() } }
 
         verifyNoInteractions(humanMoveCorpusCheckpointService)
     }
@@ -278,13 +284,14 @@ class HumanMoveCorpusControllerTest {
         whenever(humanMoveCorpusCheckpointService.calculate(eq(runId), any()))
             .thenThrow(IllegalArgumentException("qualifyingGames (11) exceeds committed frontier (10)"))
 
-        mockMvc.post("$base/$runId/checkpoints") {
-            contentType = MediaType.APPLICATION_JSON
-            content = """{"qualifyingGames": 11}"""
-        }.andExpect {
-            status { isBadRequest() }
-            jsonPath("$.details[0]") { value("qualifyingGames (11) exceeds committed frontier (10)") }
-        }
+        mockMvc
+            .post("$base/$runId/checkpoints") {
+                contentType = MediaType.APPLICATION_JSON
+                content = """{"qualifyingGames": 11}"""
+            }.andExpect {
+                status { isBadRequest() }
+                jsonPath("$.details[0]") { value("qualifyingGames (11) exceeds committed frontier (10)") }
+            }
     }
 
     @Test
@@ -292,10 +299,11 @@ class HumanMoveCorpusControllerTest {
         whenever(humanMoveCorpusCheckpointService.calculate(eq(runId), any()))
             .thenThrow(NoSuchElementException("Corpus run $runId not found"))
 
-        mockMvc.post("$base/$runId/checkpoints") {
-            contentType = MediaType.APPLICATION_JSON
-            content = """{"qualifyingGames": 1}"""
-        }.andExpect { status { isNotFound() } }
+        mockMvc
+            .post("$base/$runId/checkpoints") {
+                contentType = MediaType.APPLICATION_JSON
+                content = """{"qualifyingGames": 1}"""
+            }.andExpect { status { isNotFound() } }
     }
 
     @Test
@@ -303,14 +311,15 @@ class HumanMoveCorpusControllerTest {
         whenever(humanMoveCorpusCheckpointService.calculate(eq(runId), any()))
             .thenThrow(HumanMoveCorpusIntegrityException("ordinal gap in prefix 1..3"))
 
-        mockMvc.post("$base/$runId/checkpoints") {
-            contentType = MediaType.APPLICATION_JSON
-            content = """{"qualifyingGames": 3}"""
-        }.andExpect {
-            status { isConflict() }
-            jsonPath("$.error") { value("CORPUS_INTEGRITY_VIOLATION") }
-            jsonPath("$.details[0]") { value("ordinal gap in prefix 1..3") }
-        }
+        mockMvc
+            .post("$base/$runId/checkpoints") {
+                contentType = MediaType.APPLICATION_JSON
+                content = """{"qualifyingGames": 3}"""
+            }.andExpect {
+                status { isConflict() }
+                jsonPath("$.error") { value("CORPUS_INTEGRITY_VIOLATION") }
+                jsonPath("$.details[0]") { value("ordinal gap in prefix 1..3") }
+            }
     }
 
     @Test
@@ -318,14 +327,16 @@ class HumanMoveCorpusControllerTest {
         whenever(humanMoveCorpusService.runCorpus(any())).thenReturn(runResponse())
         whenever(humanMoveCorpusCheckpointService.calculate(eq(runId), any())).thenReturn(checkpointResponse())
 
-        mockMvc.post(base) {
-            contentType = MediaType.APPLICATION_JSON
-            content = createBody(mapOf("maxDepth" to 1))
-        }.andExpect { status { isOk() } }
-        mockMvc.post("$base/$runId/checkpoints") {
-            contentType = MediaType.APPLICATION_JSON
-            content = """{"qualifyingGames": 7}"""
-        }.andExpect { status { isOk() } }
+        mockMvc
+            .post(base) {
+                contentType = MediaType.APPLICATION_JSON
+                content = createBody(mapOf("maxDepth" to 1))
+            }.andExpect { status { isOk() } }
+        mockMvc
+            .post("$base/$runId/checkpoints") {
+                contentType = MediaType.APPLICATION_JSON
+                content = """{"qualifyingGames": 7}"""
+            }.andExpect { status { isOk() } }
 
         verifyNoInteractions(humanMoveBfsService)
         verifyNoInteractions(humanMoveDistributionFinalizationService)

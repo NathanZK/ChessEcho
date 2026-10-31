@@ -167,7 +167,12 @@ class EvaluationEvidenceProducerDecisionTest {
 
         val captor = argumentCaptor<EvaluationEvidenceSnapshot>()
         verify(harness.snapshotService).persist(captor.capture(), eq(harness.input.referencePopulation))
-        assertEquals(0.75, captor.firstValue.rows.single().loss)
+        assertEquals(
+            0.75,
+            captor.firstValue.rows
+                .single()
+                .loss,
+        )
         verify(harness.engineAnalysisService).calculateEvalLoss(100, 25)
     }
 
@@ -186,7 +191,12 @@ class EvaluationEvidenceProducerDecisionTest {
 
         val captor = argumentCaptor<EvaluationEvidenceSnapshot>()
         verify(harness.snapshotService).persist(captor.capture(), eq(harness.input.referencePopulation))
-        assertEquals(2.0, captor.firstValue.rows.single().loss)
+        assertEquals(
+            2.0,
+            captor.firstValue.rows
+                .single()
+                .loss,
+        )
     }
 
     @Test
@@ -466,19 +476,20 @@ class EvaluationEvidenceProducerDecisionTest {
     ): VerifiedSelectedPopulationContext {
         val projectionId = UUID.randomUUID()
         val occurrences =
-            occurrenceIds.mapIndexed { index, id ->
-                id to
-                    RetainedReferenceOccurrence(
-                        sourceRunId = sourceRunId,
-                        qualifyingOrdinal = index + 1,
-                        preMovePly = preMovePly,
-                        providerGameId = "provider-$index",
-                        positionHash = positionHash,
-                        movePlayed = "different-reference-move",
-                        contentDigest = population.contentDigest,
-                        coveredPrefix = population.coveredPrefix,
-                    )
-            }.toMap()
+            occurrenceIds
+                .mapIndexed { index, id ->
+                    id to
+                        RetainedReferenceOccurrence(
+                            sourceRunId = sourceRunId,
+                            qualifyingOrdinal = index + 1,
+                            preMovePly = preMovePly,
+                            providerGameId = "provider-$index",
+                            positionHash = positionHash,
+                            movePlayed = "different-reference-move",
+                            contentDigest = population.contentDigest,
+                            coveredPrefix = population.coveredPrefix,
+                        )
+                }.toMap()
         return VerifiedSelectedPopulationContext(
             population = population,
             projection =

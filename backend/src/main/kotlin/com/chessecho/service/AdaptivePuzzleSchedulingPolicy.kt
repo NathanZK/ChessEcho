@@ -36,7 +36,8 @@ class AdaptivePuzzleSchedulingPolicy {
                     exp(-Duration.between(it.occurredAt, asOf).toHours().coerceAtLeast(0) / (24.0 * 14.0)) * 12.0
                 }
         val handled =
-            events.filter { it.type == SchedulingEventType.GAME_HANDLED_SUCCESSFULLY }
+            events
+                .filter { it.type == SchedulingEventType.GAME_HANDLED_SUCCESSFULLY }
                 .sumOf { exp(-Duration.between(it.occurredAt, asOf).toHours().coerceAtLeast(0) / (24.0 * 21.0)) * 4.0 }
         val failures = events.count { it.type == SchedulingEventType.FAILED }
         val failureBoost = minOf(3.0, failures * 0.5)
@@ -50,17 +51,14 @@ class AdaptivePuzzleSchedulingPolicy {
     fun sourceClaimKey(
         sourceOccurrenceId: UUID,
         eventType: SchedulingEventType,
-    ): String {
-        return "$sourceOccurrenceId:$eventType"
-    }
+    ): String = "$sourceOccurrenceId:$eventType"
 
     fun order(
         candidates: List<Candidate>,
         asOf: Instant,
-    ): List<Candidate> {
-        return candidates.sortedWith(
+    ): List<Candidate> =
+        candidates.sortedWith(
             compareByDescending<Candidate> { schedule(it.baselinePriority, it.positionId, it.events, asOf) }
                 .thenBy { it.positionId.toString() },
         )
-    }
 }

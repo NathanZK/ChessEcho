@@ -22,8 +22,14 @@ class GameImportServiceAccountStateIntegrationTest : GameImportServiceBaseIntegr
             val stale = asyncJobRepository.findAnyByIdForUpdate(job.id) ?: error("missing job")
             stale.status = "PROCESSING"
             stale.workerToken = UUID.randomUUID()
-            stale.leaseExpiresAt = java.time.Instant.now().minusSeconds(60)
-            stale.updatedAt = java.time.Instant.now().minusSeconds(60)
+            stale.leaseExpiresAt =
+                java.time.Instant
+                    .now()
+                    .minusSeconds(60)
+            stale.updatedAt =
+                java.time.Instant
+                    .now()
+                    .minusSeconds(60)
             asyncJobRepository.save(stale)
         }
 
@@ -53,7 +59,8 @@ class GameImportServiceAccountStateIntegrationTest : GameImportServiceBaseIntegr
     @Test
     fun `stale job recovery is scheduled, so nothing depends on a user creating another job`() {
         val scheduled =
-            GameImportService::class.java.getDeclaredMethod("sweepStaleImportJobs")
+            GameImportService::class.java
+                .getDeclaredMethod("sweepStaleImportJobs")
                 .getAnnotation(org.springframework.scheduling.annotation.Scheduled::class.java)
         assertNotNull(scheduled, "recovery must have a caller in the running application")
         assertTrue(
@@ -70,7 +77,10 @@ class GameImportServiceAccountStateIntegrationTest : GameImportServiceBaseIntegr
             val live = asyncJobRepository.findAnyByIdForUpdate(job.id) ?: error("missing job")
             live.status = "PROCESSING"
             live.workerToken = liveToken
-            live.leaseExpiresAt = java.time.Instant.now().plusSeconds(600)
+            live.leaseExpiresAt =
+                java.time.Instant
+                    .now()
+                    .plusSeconds(600)
             asyncJobRepository.save(live)
         }
 
@@ -90,7 +100,8 @@ class GameImportServiceAccountStateIntegrationTest : GameImportServiceBaseIntegr
 
         transactionTemplate.executeWithoutResult {
             persistImportProgressMethod().invoke(
-                org.springframework.test.util.AopTestUtils.getUltimateTargetObject<GameImportService>(gameImportService),
+                org.springframework.test.util.AopTestUtils
+                    .getUltimateTargetObject<GameImportService>(gameImportService),
                 displacedClaim,
                 99,
                 99,
@@ -110,8 +121,14 @@ class GameImportServiceAccountStateIntegrationTest : GameImportServiceBaseIntegr
             val stale = asyncJobRepository.findAnyByIdForUpdate(staleJob.id) ?: error("missing job")
             stale.status = "PROCESSING"
             stale.workerToken = UUID.randomUUID()
-            stale.leaseExpiresAt = java.time.Instant.now().minusSeconds(60)
-            stale.updatedAt = java.time.Instant.now().minusSeconds(60)
+            stale.leaseExpiresAt =
+                java.time.Instant
+                    .now()
+                    .minusSeconds(60)
+            stale.updatedAt =
+                java.time.Instant
+                    .now()
+                    .minusSeconds(60)
             asyncJobRepository.save(stale)
         }
 
@@ -136,7 +153,9 @@ class GameImportServiceAccountStateIntegrationTest : GameImportServiceBaseIntegr
         val accountId = job.chessAccount!!.id
         val deletionApplied = CountDownLatch(1)
         val releaseDeletion = CountDownLatch(1)
-        val pool = java.util.concurrent.Executors.newSingleThreadExecutor()
+        val pool =
+            java.util.concurrent.Executors
+                .newSingleThreadExecutor()
 
         try {
             val deletion =

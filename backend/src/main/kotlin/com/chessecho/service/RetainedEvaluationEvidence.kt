@@ -83,7 +83,9 @@ data class RetainedEvaluationEvidence(
     }
 }
 
-class RetainedEvaluationEvidenceIntegrityException(message: String) : RuntimeException(message)
+class RetainedEvaluationEvidenceIntegrityException(
+    message: String,
+) : RuntimeException(message)
 
 class RetainedEvaluationEvidenceValidator {
     fun admit(evidence: RetainedEvaluationEvidence): RetainedEvaluationEvidence {
@@ -131,19 +133,23 @@ class RetainedEvaluationEvidenceValidator {
             hasDuplicateIdentities(players) ||
             players.any { it.identity.isBlank() }
 
-    private fun hasDuplicatePlayerIds(players: Set<EvaluationEvidencePlayer>): Boolean {
-        return players.map { it.id }.toSet().size != players.size
-    }
+    private fun hasDuplicatePlayerIds(players: Set<EvaluationEvidencePlayer>): Boolean = players.map { it.id }.toSet().size != players.size
 
-    private fun hasDuplicateIdentities(players: Set<EvaluationEvidencePlayer>): Boolean {
-        return players.map { it.identity }.toSet().size != players.size
-    }
+    private fun hasDuplicateIdentities(players: Set<EvaluationEvidencePlayer>): Boolean =
+        players
+            .map {
+                it.identity
+            }.toSet()
+            .size != players.size
 
     private fun validateOccurrences(
         evidence: RetainedEvaluationEvidence,
         population: EvaluationReferencePopulation,
     ) {
-        val declaredIds = evidence.snapshot.players.map { it.id }.toSet()
+        val declaredIds =
+            evidence.snapshot.players
+                .map { it.id }
+                .toSet()
         evidence.snapshot.rows.forEach { row ->
             val occurrence =
                 evidence.occurrences[row.occurrenceId]
@@ -195,7 +201,8 @@ class RetainedEvaluationEvidenceValidator {
             occurrence.preMovePly == row.preMovePly
 
     private fun projectionDigest(rows: List<RetainedReferenceProjectionRow>): String =
-        MessageDigest.getInstance("SHA-256")
+        MessageDigest
+            .getInstance("SHA-256")
             .digest(rows.joinToString("") { "${it.positionHash}\t${it.movePlayed}\t${it.observationCount}\n" }.toByteArray())
             .joinToString("") { "%02x".format(it) }
 }

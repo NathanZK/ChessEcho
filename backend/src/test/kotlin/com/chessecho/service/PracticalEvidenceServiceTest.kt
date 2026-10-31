@@ -222,13 +222,14 @@ class PracticalEvidenceServiceTest {
         val scope = PracticalEvidenceScope(account.id, position.id, "WHITE")
 
         val summary =
-            service().summarize(
-                account.id,
-                account.username,
-                listOf(occurrence(account, position, legacyGame, "WHITE", "Qh5")),
-                setOf(scope),
-                asOf,
-            ).getValue(scope)
+            service()
+                .summarize(
+                    account.id,
+                    account.username,
+                    listOf(occurrence(account, position, legacyGame, "WHITE", "Qh5")),
+                    setOf(scope),
+                    asOf,
+                ).getValue(scope)
 
         assertEquals(1, summary.eligibleGames)
         assertEquals(0, summary.ineligibleGames)
@@ -242,13 +243,14 @@ class PracticalEvidenceServiceTest {
         val unknown = game(account, "unknown-only", "unknown", pgn = header())
 
         val summary =
-            service().summarize(
-                account.id,
-                account.username,
-                listOf(occurrence(account, position, unknown, "WHITE", "Qh5")),
-                setOf(scope),
-                asOf,
-            ).getValue(scope)
+            service()
+                .summarize(
+                    account.id,
+                    account.username,
+                    listOf(occurrence(account, position, unknown, "WHITE", "Qh5")),
+                    setOf(scope),
+                    asOf,
+                ).getValue(scope)
 
         assertEquals(1, summary.candidateGames)
         assertEquals(0, summary.eligibleGames)

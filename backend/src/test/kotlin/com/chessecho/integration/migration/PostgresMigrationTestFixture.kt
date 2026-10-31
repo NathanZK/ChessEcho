@@ -44,7 +44,8 @@ abstract class PostgresMigrationTestFixture {
         }
 
     private fun flyway(): Flyway =
-        Flyway.configure()
+        Flyway
+            .configure()
             .dataSource(postgres.jdbcUrl, postgres.username, postgres.password)
             .locations("classpath:db/migration")
             .cleanDisabled(false)

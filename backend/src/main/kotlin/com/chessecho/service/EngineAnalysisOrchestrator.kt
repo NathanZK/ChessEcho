@@ -25,9 +25,7 @@ class EngineAnalysisOrchestrator(
      *
      * @param affectedPositionIds Set of distinct position IDs affected by the game import.
      */
-    fun analyzeAffectedPositions(affectedPositionIds: Set<UUID>): AnalysisOutcome {
-        return analyzeAffectedPositions(affectedPositionIds, null)
-    }
+    fun analyzeAffectedPositions(affectedPositionIds: Set<UUID>): AnalysisOutcome = analyzeAffectedPositions(affectedPositionIds, null)
 
     fun analyzeAffectedPositions(
         affectedPositionIds: Set<UUID>,

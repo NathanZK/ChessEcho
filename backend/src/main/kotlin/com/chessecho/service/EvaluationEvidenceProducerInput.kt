@@ -16,7 +16,12 @@ class EvaluationEvidenceProducerInput(
 
     init {
         require(this.roster.isNotEmpty()) { "evaluation-player roster must not be empty" }
-        require(this.roster.map { it.id }.distinct().size == this.roster.size) {
+        require(
+            this.roster
+                .map { it.id }
+                .distinct()
+                .size == this.roster.size,
+        ) {
             "evaluation-player roster contains duplicate player IDs"
         }
         require(operationalOccurrenceIds.size == this.operationalOccurrenceIds.size) {

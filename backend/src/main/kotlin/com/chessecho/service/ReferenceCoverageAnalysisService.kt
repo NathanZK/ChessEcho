@@ -77,7 +77,9 @@ data class ReferenceCoverageAnalysisResult(
     val locations: Map<String, ThresholdValues<OccurrenceLocationSummary>>,
 )
 
-class ReferenceCoverageAnalysisIntegrityException(message: String) : RuntimeException(message)
+class ReferenceCoverageAnalysisIntegrityException(
+    message: String,
+) : RuntimeException(message)
 
 class ReferenceCoverageAnalysisService {
     fun analyze(input: ReferenceCoverageAnalysisInput): ReferenceCoverageAnalysisResult {
@@ -85,7 +87,10 @@ class ReferenceCoverageAnalysisService {
             throw ReferenceCoverageAnalysisIntegrityException("analysis version must not be blank")
         }
         validatePlayerMap(input.players)
-        val declaredIds = input.players.values.map { it.id }.toSet()
+        val declaredIds =
+            input.players.values
+                .map { it.id }
+                .toSet()
         validateRows(input.rows, declaredIds)
 
         val thresholds = EvaluationEvidenceSnapshotService.APPROVED_THRESHOLDS.sorted()
@@ -107,7 +112,10 @@ class ReferenceCoverageAnalysisService {
     }
 
     private fun hasDuplicatePlayerIds(players: Map<String, EvaluationEvidencePlayer>): Boolean =
-        players.values.map { it.id }.toSet().size != players.size
+        players.values
+            .map { it.id }
+            .toSet()
+            .size != players.size
 
     private fun hasMismatchedOrBlankNames(players: Map<String, EvaluationEvidencePlayer>): Boolean =
         players.any { (name, player) -> name != player.identity || name.isBlank() }
@@ -192,7 +200,11 @@ class ReferenceCoverageAnalysisService {
     ): ThresholdValues<CoverageSummary> =
         ThresholdValues(
             thresholds.associateWith { threshold ->
-                val defined = byPlayer.values.map { it.at(threshold).coverage }.filterNotNull().sorted()
+                val defined =
+                    byPlayer.values
+                        .map { it.at(threshold).coverage }
+                        .filterNotNull()
+                        .sorted()
                 val median = calculateMedian(defined)
                 CoverageSummary(
                     mean = defined.takeIf { it.isNotEmpty() }?.average(),

@@ -100,19 +100,20 @@ class DerivedProcessingPostgresConcurrencyTest : PostgresMigrationTestFixture() 
         val pool = Executors.newFixedThreadPool(workers)
         try {
             val results =
-                (1..workers).map { decisionTimeMs ->
-                    pool.submit<Result<Int>> {
-                        runCatching {
-                            newConnection().use { worker ->
-                                worker.prepareStatement(sql).use { statement ->
-                                    bindOccurrence(statement, UUID.randomUUID(), decisionTimeMs.toLong())
-                                    barrier.await(10, TimeUnit.SECONDS)
-                                    statement.executeUpdate()
+                (1..workers)
+                    .map { decisionTimeMs ->
+                        pool.submit<Result<Int>> {
+                            runCatching {
+                                newConnection().use { worker ->
+                                    worker.prepareStatement(sql).use { statement ->
+                                        bindOccurrence(statement, UUID.randomUUID(), decisionTimeMs.toLong())
+                                        barrier.await(10, TimeUnit.SECONDS)
+                                        statement.executeUpdate()
+                                    }
                                 }
                             }
                         }
-                    }
-                }.map { it.get(30, TimeUnit.SECONDS) }
+                    }.map { it.get(30, TimeUnit.SECONDS) }
 
             assertTrue(
                 results.all { it.isSuccess },

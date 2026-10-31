@@ -82,7 +82,12 @@ class SelectedPopulationVerificationPostgresIntegrationTest {
         assertEquals(1, verified.projection.prefixN)
         assertEquals(fixture.population, verified.population)
         assertEquals(fixture.occurrences.getValue(1), verified.occurrences.keys.single())
-        assertEquals(1, verified.occurrences.values.single().qualifyingOrdinal)
+        assertEquals(
+            1,
+            verified.occurrences.values
+                .single()
+                .qualifyingOrdinal,
+        )
         assertEquals(fixture.runId, verified.binding.sourceRunId)
         assertEquals(2, verified.binding.coveredPrefix)
         assertEquals(before, persistedCorpusState(fixture))
@@ -251,15 +256,16 @@ class SelectedPopulationVerificationPostgresIntegrationTest {
         val (digest, projectionId) = exportAndFinalizeProjection(runId)
         val projection = projectionRepository.findById(projectionId).orElseThrow()
         val occurrences =
-            jdbcTemplate.queryForList(
-                "SELECT id, qualifying_ordinal FROM human_move_corpus_occurrence " +
-                    "WHERE source_run_id = ? ORDER BY qualifying_ordinal",
-                runId,
-            ).associate {
-                val ordinal = checkNotNull(it["qualifying_ordinal"] as? Number).toInt()
-                val id = checkNotNull(it["id"] as? UUID)
-                ordinal to id
-            }
+            jdbcTemplate
+                .queryForList(
+                    "SELECT id, qualifying_ordinal FROM human_move_corpus_occurrence " +
+                        "WHERE source_run_id = ? ORDER BY qualifying_ordinal",
+                    runId,
+                ).associate {
+                    val ordinal = checkNotNull(it["qualifying_ordinal"] as? Number).toInt()
+                    val id = checkNotNull(it["id"] as? UUID)
+                    ordinal to id
+                }
         return Fixture(
             runId = runId,
             projection = projection,

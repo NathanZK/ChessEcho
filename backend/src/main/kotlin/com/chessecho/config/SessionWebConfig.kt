@@ -22,7 +22,8 @@ class SessionWebConfig(
     }
 
     override fun addInterceptors(registry: InterceptorRegistry) {
-        registry.addInterceptor(csrfEnforcementInterceptor)
+        registry
+            .addInterceptor(csrfEnforcementInterceptor)
             .addPathPatterns(
                 "/api/logout",
                 "/api/dev/session",

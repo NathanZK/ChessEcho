@@ -535,7 +535,8 @@ class HumanMoveBfsDistributionTest : HumanMoveBfsBaseTest() {
             """.trimIndent()
 
         org.mockito.Mockito.mockStatic(java.io.File::class.java).use { fileMock ->
-            fileMock.`when`<java.io.File> { java.io.File.createTempFile(any(), any()) }
+            fileMock
+                .`when`<java.io.File> { java.io.File.createTempFile(any(), any()) }
                 .thenThrow(AssertionError("File.createTempFile must not be called during BFS game parsing"))
 
             val outcome =

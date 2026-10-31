@@ -256,17 +256,18 @@ class LongDecisionControllerIntegrationTest {
         playedAt: String?,
         timeControl: String = "rapid",
     ): Game =
-        gameRepository.save(
-            Game(
-                chessAccount = account,
-                platformGameId = platformGameId,
-                pgn = "[Result \"*\"]",
-                timeControl = timeControl,
-                playedAt = playedAt?.let { Instant.parse(it) },
-                whiteUsername = account.username,
-                blackUsername = "opponent-test",
-            ),
-        ).also { gameIds.add(it.id) }
+        gameRepository
+            .save(
+                Game(
+                    chessAccount = account,
+                    platformGameId = platformGameId,
+                    pgn = "[Result \"*\"]",
+                    timeControl = timeControl,
+                    playedAt = playedAt?.let { Instant.parse(it) },
+                    whiteUsername = account.username,
+                    blackUsername = "opponent-test",
+                ),
+            ).also { gameIds.add(it.id) }
 
     private fun session() =
         identitySessionService.establishSession(
@@ -280,12 +281,13 @@ class LongDecisionControllerIntegrationTest {
         )
 
     private fun account(username: String): ChessAccount =
-        chessAccountRepository.save(
-            ChessAccount(
-                platform = "CHESS_COM",
-                username = "$username-${UUID.randomUUID()}",
-            ),
-        ).also { accountIds.add(it.id) }
+        chessAccountRepository
+            .save(
+                ChessAccount(
+                    platform = "CHESS_COM",
+                    username = "$username-${UUID.randomUUID()}",
+                ),
+            ).also { accountIds.add(it.id) }
 
     private fun addOccurrence(
         account: ChessAccount,
@@ -298,35 +300,38 @@ class LongDecisionControllerIntegrationTest {
         existingGame: Game? = null,
     ): PositionOccurrence {
         val game =
-            existingGame ?: gameRepository.save(
-                Game(
-                    chessAccount = account,
-                    platformGameId = platformGameId ?: "$suffix-${UUID.randomUUID()}",
-                    pgn = "[Result \"*\"]",
-                    timeControl = timeControl.lowercase(),
-                    playedAt = playedAt?.let { Instant.parse(it) },
-                    whiteUsername = account.username,
-                    blackUsername = "opponent-$suffix",
-                ),
-            ).also { gameIds.add(it.id) }
+            existingGame ?: gameRepository
+                .save(
+                    Game(
+                        chessAccount = account,
+                        platformGameId = platformGameId ?: "$suffix-${UUID.randomUUID()}",
+                        pgn = "[Result \"*\"]",
+                        timeControl = timeControl.lowercase(),
+                        playedAt = playedAt?.let { Instant.parse(it) },
+                        whiteUsername = account.username,
+                        blackUsername = "opponent-$suffix",
+                    ),
+                ).also { gameIds.add(it.id) }
         val position =
-            positionRepository.save(
-                Position(
-                    hash = UUID.randomUUID().toString(),
-                    fen = "8/8/8/8/8/8/8/8 w - -",
+            positionRepository
+                .save(
+                    Position(
+                        hash = UUID.randomUUID().toString(),
+                        fen = "8/8/8/8/8/8/8/8 w - -",
+                    ),
+                ).also { positionIds.add(it.id) }
+        return occurrenceRepository
+            .save(
+                PositionOccurrence(
+                    game = game,
+                    position = position,
+                    chessAccount = account,
+                    plyNumber = plyNumber,
+                    movePlayed = "Nf3",
+                    playerColor = "WHITE",
+                    decisionTimeMs = decisionTimeMs,
                 ),
-            ).also { positionIds.add(it.id) }
-        return occurrenceRepository.save(
-            PositionOccurrence(
-                game = game,
-                position = position,
-                chessAccount = account,
-                plyNumber = plyNumber,
-                movePlayed = "Nf3",
-                playerColor = "WHITE",
-                decisionTimeMs = decisionTimeMs,
-            ),
-        ).also { occurrenceIds.add(it.id) }
+            ).also { occurrenceIds.add(it.id) }
     }
 
     private fun get(

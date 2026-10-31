@@ -170,7 +170,8 @@ class GameParserService(
 
     private fun persistPositions(allPositions: Map<String, Position>): MutableMap<String, Position> {
         val existingPositions =
-            positionRepository.findByHashIn(allPositions.keys.toList())
+            positionRepository
+                .findByHashIn(allPositions.keys.toList())
                 .associateBy { it.hash }
                 .toMutableMap()
 
@@ -237,8 +238,7 @@ class GameParserService(
                     .thenBy { it.position.id.toString() }
                     .thenBy { it.plyNumber }
                     .thenBy { it.playerColor },
-            )
-            .forEach { occurrence ->
+            ).forEach { occurrence ->
                 positionOccurrenceRepository.insertOrRefreshDecisionTime(
                     occurrence.id,
                     occurrence.game.id,
@@ -332,7 +332,12 @@ class GameParserService(
         pgn: String,
         comments: Map<Int, String>,
     ): Boolean {
-        val moveTextStart = MOVE_TEXT_SEPARATOR.find(pgn)?.range?.last?.plus(1) ?: pgn.length
+        val moveTextStart =
+            MOVE_TEXT_SEPARATOR
+                .find(pgn)
+                ?.range
+                ?.last
+                ?.plus(1) ?: pgn.length
         val sourceClockCount = CLOCK_TAG_START.findAll(pgn.substring(moveTextStart)).count()
         val parsedClockCount = comments.values.sumOf { comment -> CLOCK_TAG_START.findAll(comment).count() }
         return sourceClockCount == parsedClockCount
@@ -353,7 +358,8 @@ class GameParserService(
 
             val plyNumber = index + 1
             val clocks =
-                CLOCK_TAG_PATTERN.findAll(comments[plyNumber].orEmpty())
+                CLOCK_TAG_PATTERN
+                    .findAll(comments[plyNumber].orEmpty())
                     .map { it.groupValues[1].trim() }
                     .toList()
             if (clocks.size != 1) return null

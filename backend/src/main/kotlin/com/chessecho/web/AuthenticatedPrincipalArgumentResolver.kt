@@ -16,9 +16,7 @@ import org.springframework.web.method.support.ModelAndViewContainer
  * [UnauthenticatedException] (mapped to 401). It never exposes the raw secret.
  */
 class AuthenticatedPrincipalArgumentResolver : HandlerMethodArgumentResolver {
-    override fun supportsParameter(parameter: MethodParameter): Boolean {
-        return parameter.parameterType == AuthenticatedPrincipal::class.java
-    }
+    override fun supportsParameter(parameter: MethodParameter): Boolean = parameter.parameterType == AuthenticatedPrincipal::class.java
 
     override fun resolveArgument(
         parameter: MethodParameter,

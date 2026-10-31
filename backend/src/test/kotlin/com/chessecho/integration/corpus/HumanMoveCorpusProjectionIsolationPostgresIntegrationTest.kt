@@ -103,10 +103,12 @@ class HumanMoveCorpusProjectionIsolationPostgresIntegrationTest {
         body: Any,
     ): JsonNode {
         val response =
-            mvc.post(path) {
-                contentType = MediaType.APPLICATION_JSON
-                content = mapper.writeValueAsString(body)
-            }.andReturn().response
+            mvc
+                .post(path) {
+                    contentType = MediaType.APPLICATION_JSON
+                    content = mapper.writeValueAsString(body)
+                }.andReturn()
+                .response
         assertEquals(200, response.status, "POST $path")
         return mapper.readTree(response.contentAsString)
     }
@@ -160,10 +162,12 @@ class HumanMoveCorpusProjectionIsolationPostgresIntegrationTest {
 
     private fun imported(artifact: Pair<String, ByteArray>) {
         val result =
-            mvc.multipart("$base/corpus-artifacts/import") {
-                file(MockMultipartFile("artifact", "corpus.zip", "application/zip", artifact.second))
-                param("expectedDigest", artifact.first)
-            }.andReturn().response
+            mvc
+                .multipart("$base/corpus-artifacts/import") {
+                    file(MockMultipartFile("artifact", "corpus.zip", "application/zip", artifact.second))
+                    param("expectedDigest", artifact.first)
+                }.andReturn()
+                .response
         assertEquals(200, result.status)
     }
 
@@ -277,18 +281,20 @@ class HumanMoveCorpusProjectionIsolationPostgresIntegrationTest {
         assertEquals(1.0, result.at("/secondToFirst/players/playerC/coverage").asDouble())
 
         val mismatchedCohort =
-            mvc.post("$base/corpus-projections/compare") {
-                contentType = MediaType.APPLICATION_JSON
-                content =
-                    mapper.writeValueAsString(
-                        mapOf(
-                            "firstProjectionId" to lowProjection,
-                            "secondProjectionId" to highProjection,
-                            "firstEvaluation" to weaknessInput("2000-2200", lowWeaknesses),
-                            "secondEvaluation" to weaknessInput("2000-2200", highWeaknesses),
-                        ),
-                    )
-            }.andReturn().response
+            mvc
+                .post("$base/corpus-projections/compare") {
+                    contentType = MediaType.APPLICATION_JSON
+                    content =
+                        mapper.writeValueAsString(
+                            mapOf(
+                                "firstProjectionId" to lowProjection,
+                                "secondProjectionId" to highProjection,
+                                "firstEvaluation" to weaknessInput("2000-2200", lowWeaknesses),
+                                "secondEvaluation" to weaknessInput("2000-2200", highWeaknesses),
+                            ),
+                        )
+                }.andReturn()
+                .response
         assertEquals(409, mismatchedCohort.status, "wrong evaluation cohort must be rejected")
     }
 
@@ -301,10 +307,12 @@ class HumanMoveCorpusProjectionIsolationPostgresIntegrationTest {
         clean()
         imported(artifact)
         val premature =
-            mvc.post("$base/corpus-artifacts/$run/purge") {
-                contentType = MediaType.APPLICATION_JSON
-                content = mapper.writeValueAsString(mapOf("contentDigest" to artifact.first))
-            }.andReturn().response
+            mvc
+                .post("$base/corpus-artifacts/$run/purge") {
+                    contentType = MediaType.APPLICATION_JSON
+                    content = mapper.writeValueAsString(mapOf("contentDigest" to artifact.first))
+                }.andReturn()
+                .response
         assertEquals(409, premature.status)
         assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM human_move_corpus_imported_game", Int::class.java))
 
@@ -312,7 +320,13 @@ class HumanMoveCorpusProjectionIsolationPostgresIntegrationTest {
         post("$base/corpus-projections/$projection/finalize", emptyMap<String, String>())
         post("$base/corpus-artifacts/$run/purge", mapOf("contentDigest" to artifact.first))
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM human_move_corpus_imported_game", Int::class.java))
-        assertEquals(200, mvc.get("$base/corpus-artifacts/${artifact.first}").andReturn().response.status)
+        assertEquals(
+            200,
+            mvc
+                .get("$base/corpus-artifacts/${artifact.first}")
+                .andReturn()
+                .response.status,
+        )
 
         imported(artifact)
         assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM human_move_corpus_imported_game", Int::class.java))
@@ -330,10 +344,12 @@ class HumanMoveCorpusProjectionIsolationPostgresIntegrationTest {
         injectFailure("human_move_corpus_projection_row", "corpus_projection_failure", "INSERT")
 
         val failed =
-            mvc.post("$base/corpus-projections/materialize") {
-                contentType = MediaType.APPLICATION_JSON
-                content = mapper.writeValueAsString(mapOf("contentDigest" to artifact.first, "prefixN" to 2, "minObservations" to 5))
-            }.andReturn().response
+            mvc
+                .post("$base/corpus-projections/materialize") {
+                    contentType = MediaType.APPLICATION_JSON
+                    content = mapper.writeValueAsString(mapOf("contentDigest" to artifact.first, "prefixN" to 2, "minObservations" to 5))
+                }.andReturn()
+                .response
         assertEquals(500, failed.status)
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM human_move_corpus_projection", Int::class.java))
         removeInjectedFailures()
@@ -368,10 +384,12 @@ class HumanMoveCorpusProjectionIsolationPostgresIntegrationTest {
         injectFailure("human_move_corpus_projection_row", "corpus_projection_failure", "DELETE")
 
         val failed =
-            mvc.post("$base/corpus-projections/$low/finalize") {
-                contentType = MediaType.APPLICATION_JSON
-                content = "{}"
-            }.andReturn().response
+            mvc
+                .post("$base/corpus-projections/$low/finalize") {
+                    contentType = MediaType.APPLICATION_JSON
+                    content = "{}"
+                }.andReturn()
+                .response
         assertEquals(500, failed.status)
         assertEquals(lowBefore, rows(low))
         assertEquals(highBefore, rows(high))
@@ -422,10 +440,12 @@ class HumanMoveCorpusProjectionIsolationPostgresIntegrationTest {
         injectFailure("human_move_corpus_imported_game", "corpus_purge_failure", "DELETE")
 
         val failed =
-            mvc.post("$base/corpus-artifacts/$run/purge") {
-                contentType = MediaType.APPLICATION_JSON
-                content = mapper.writeValueAsString(mapOf("contentDigest" to artifact.first))
-            }.andReturn().response
+            mvc
+                .post("$base/corpus-artifacts/$run/purge") {
+                    contentType = MediaType.APPLICATION_JSON
+                    content = mapper.writeValueAsString(mapOf("contentDigest" to artifact.first))
+                }.andReturn()
+                .response
         assertEquals(500, failed.status)
         assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM human_move_corpus_imported_game", Int::class.java))
         assertEquals(listOf(6), rows(projection).map { it["observation_count"] })
@@ -440,7 +460,8 @@ class HumanMoveCorpusProjectionIsolationPostgresIntegrationTest {
     ): Map<String, Any> {
         val evidence = sortedMapOf("cohort" to cohort, "players" to players, "threshold" to "0.30")
         val digest =
-            MessageDigest.getInstance("SHA-256")
+            MessageDigest
+                .getInstance("SHA-256")
                 .digest(mapper.writeValueAsBytes(evidence))
                 .joinToString("") { "%02x".format(it) }
         return evidence + mapOf("sourceDigest" to digest)

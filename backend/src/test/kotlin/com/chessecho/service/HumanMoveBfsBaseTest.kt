@@ -129,13 +129,14 @@ abstract class HumanMoveBfsBaseTest {
             }
             incoming
         }
-        lenient().whenever(
-            humanMoveDistributionRepository.findByPositionIdAndRatingBand(any<UUID>(), anyString()),
-        ).thenAnswer { inv ->
-            val posId = inv.getArgument<UUID>(0)
-            val band = inv.getArgument<String>(1)
-            distStore.filter { it.positionId == posId && it.ratingBand == band }
-        }
+        lenient()
+            .whenever(
+                humanMoveDistributionRepository.findByPositionIdAndRatingBand(any<UUID>(), anyString()),
+            ).thenAnswer { inv ->
+                val posId = inv.getArgument<UUID>(0)
+                val band = inv.getArgument<String>(1)
+                distStore.filter { it.positionId == posId && it.ratingBand == band }
+            }
     }
 
     private fun bindStatefulSeenGameRepository(seenGameStore: MutableSet<String>) {

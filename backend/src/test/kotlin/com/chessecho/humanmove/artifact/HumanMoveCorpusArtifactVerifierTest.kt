@@ -54,7 +54,9 @@ class HumanMoveCorpusArtifactVerifierTest {
     ) {
         val emptyZip = tempDir.resolve("empty.zip")
         Files.newOutputStream(emptyZip).use { out ->
-            java.util.zip.ZipOutputStream(out).use { }
+            java.util.zip
+                .ZipOutputStream(out)
+                .use { }
         }
 
         val ex =

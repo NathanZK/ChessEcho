@@ -547,7 +547,14 @@ class ProgressControllerIntegrationTest {
                 String::class.java,
             )
         assertEquals(HttpStatus.OK, reconnectedResponse.statusCode)
-        assertEquals(1, objectMapper.readTree(reconnectedResponse.body).path("baseline").path("sourceEncounterCount").asInt())
+        assertEquals(
+            1,
+            objectMapper
+                .readTree(reconnectedResponse.body)
+                .path("baseline")
+                .path("sourceEncounterCount")
+                .asInt(),
+        )
     }
 
     @Test

@@ -48,7 +48,9 @@ data class VerifiedCorpusArtifact(
 )
 
 /** A supplied expected digest, uploaded bytes, or manifest do not match trusted or recomputed evidence. */
-class CorpusArtifactConflict(message: String) : RuntimeException(message)
+class CorpusArtifactConflict(
+    message: String,
+) : RuntimeException(message)
 
 /** The archive fails structural, size, or cross-record verification before any database mutation. */
 class CorpusArtifactInvalidException(

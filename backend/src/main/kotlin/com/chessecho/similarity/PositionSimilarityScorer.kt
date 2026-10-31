@@ -30,12 +30,10 @@ class PositionSimilarityScorer {
             .map { candidate ->
                 val bm25 = calculateBm25(queryTermKeys, candidate, poolSize, avgDocumentLength, documentFrequencies)
                 candidate to bm25
-            }
-            .sortedWith(
+            }.sortedWith(
                 compareByDescending<Pair<PositionDocument, Double>> { it.second }
                     .thenBy { it.first.canonicalFen },
-            )
-            .mapIndexed { index, (doc, score) ->
+            ).mapIndexed { index, (doc, score) ->
                 RankedPositionMatch(
                     document = doc,
                     score = score,

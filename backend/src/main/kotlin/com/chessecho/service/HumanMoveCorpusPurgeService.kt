@@ -52,11 +52,12 @@ class HumanMoveCorpusPurgeService(
         contentDigest: String,
     ) {
         val snapshotRunId =
-            jdbcTemplate.query(
-                "SELECT source_run_id FROM human_move_corpus_artifact_snapshot WHERE content_digest = ?",
-                { rs, _ -> rs.getObject(1, UUID::class.java) },
-                contentDigest,
-            ).singleOrNull() ?: throw NoSuchElementException("Artifact snapshot $contentDigest not found")
+            jdbcTemplate
+                .query(
+                    "SELECT source_run_id FROM human_move_corpus_artifact_snapshot WHERE content_digest = ?",
+                    { rs, _ -> rs.getObject(1, UUID::class.java) },
+                    contentDigest,
+                ).singleOrNull() ?: throw NoSuchElementException("Artifact snapshot $contentDigest not found")
         if (snapshotRunId != runId) {
             throw CorpusArtifactConflict("Artifact snapshot $contentDigest does not belong to corpus run $runId")
         }

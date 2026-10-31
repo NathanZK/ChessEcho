@@ -61,32 +61,37 @@ class WeaknessCalculationTimeControlTest {
 
     @BeforeEach
     fun defaultPracticalFallback() {
-        lenient().`when`(
-            practicalEvidenceService.summarize(any(), any(), any(), any(), any()),
-        ).thenReturn(emptyMap())
+        lenient()
+            .`when`(
+                practicalEvidenceService.summarize(any(), any(), any(), any(), any()),
+            ).thenReturn(emptyMap())
 
-        lenient().`when`(
-            practicalEvidenceService.summarizeByTimeControl(any(), any(), any(), any(), any(), anyOrNull()),
-        ).thenReturn(emptyMap())
+        lenient()
+            .`when`(
+                practicalEvidenceService.summarizeByTimeControl(any(), any(), any(), any(), any(), anyOrNull()),
+            ).thenReturn(emptyMap())
 
         val fallbackPolicy = WeaknessPriorityPolicy(PracticalEvidenceProperties())
-        lenient().`when`(
-            weaknessPriorityPolicy.evaluate(any(), any(), anyOrNull()),
-        ).thenAnswer { invocation ->
-            fallbackPolicy.evaluate(
-                invocation.getArgument(0),
-                invocation.getArgument(1),
-                invocation.getArgument(2),
-            )
-        }
+        lenient()
+            .`when`(
+                weaknessPriorityPolicy.evaluate(any(), any(), anyOrNull()),
+            ).thenAnswer { invocation ->
+                fallbackPolicy.evaluate(
+                    invocation.getArgument(0),
+                    invocation.getArgument(1),
+                    invocation.getArgument(2),
+                )
+            }
 
-        lenient().`when`(
-            puzzleSchedulingEventRepository.findHistory(any(), any(), any(), any()),
-        ).thenReturn(emptyList())
+        lenient()
+            .`when`(
+                puzzleSchedulingEventRepository.findHistory(any(), any(), any(), any()),
+            ).thenReturn(emptyList())
 
-        lenient().`when`(
-            adaptivePuzzleSchedulingPolicy.schedule(any(), any(), any(), any()),
-        ).thenAnswer { invocation -> invocation.getArgument<Double>(0) }
+        lenient()
+            .`when`(
+                adaptivePuzzleSchedulingPolicy.schedule(any(), any(), any(), any()),
+            ).thenAnswer { invocation -> invocation.getArgument<Double>(0) }
 
         ReflectionTestUtils.setField(
             weaknessCalculationService,
@@ -120,9 +125,15 @@ class WeaknessCalculationTimeControlTest {
 
         val aggregation =
             WeaknessAggregation(
-                positionId = position.id, fen = position.fen, playerColor = "WHITE",
-                timesReached = 6, bestMove = "best", baselineEvalCp = 100,
-                mistakeCount = 4, averageLoss = 0.8, rawTotalLoss = 3.2,
+                positionId = position.id,
+                fen = position.fen,
+                playerColor = "WHITE",
+                timesReached = 6,
+                bestMove = "best",
+                baselineEvalCp = 100,
+                mistakeCount = 4,
+                averageLoss = 0.8,
+                rawTotalLoss = 3.2,
             )
         `when`(
             positionOccurrenceRepository.findWeaknessAggregations(
@@ -261,9 +272,15 @@ class WeaknessCalculationTimeControlTest {
 
         val aggregation =
             WeaknessAggregation(
-                positionId = position.id, fen = position.fen, playerColor = "WHITE",
-                timesReached = 10, bestMove = "best", baselineEvalCp = 100,
-                mistakeCount = 3, averageLoss = 0.8, rawTotalLoss = 2.4,
+                positionId = position.id,
+                fen = position.fen,
+                playerColor = "WHITE",
+                timesReached = 10,
+                bestMove = "best",
+                baselineEvalCp = 100,
+                mistakeCount = 3,
+                averageLoss = 0.8,
+                rawTotalLoss = 2.4,
             )
         `when`(
             positionOccurrenceRepository.findWeaknessAggregations(
@@ -360,9 +377,15 @@ class WeaknessCalculationTimeControlTest {
 
         val aggregation =
             WeaknessAggregation(
-                positionId = position.id, fen = position.fen, playerColor = "WHITE",
-                timesReached = 6, bestMove = "best", baselineEvalCp = 100,
-                mistakeCount = 4, averageLoss = 0.8, rawTotalLoss = 3.2,
+                positionId = position.id,
+                fen = position.fen,
+                playerColor = "WHITE",
+                timesReached = 6,
+                bestMove = "best",
+                baselineEvalCp = 100,
+                mistakeCount = 4,
+                averageLoss = 0.8,
+                rawTotalLoss = 3.2,
             )
         `when`(
             positionOccurrenceRepository.findWeaknessAggregations(

@@ -125,8 +125,8 @@ class EngineMoveProvider(
     private fun applyMove(
         fen: String,
         sanMove: String,
-    ): String? {
-        return try {
+    ): String? =
+        try {
             val board = Board()
             board.loadFromFen(fen)
             if (board.doMove(sanMove)) {
@@ -138,7 +138,6 @@ class EngineMoveProvider(
             log.error("Exception applying move $sanMove to FEN $fen", e)
             null
         }
-    }
 
     private fun isValidEngineMove(move: String?): Boolean = !move.isNullOrBlank() && move != "(none)"
 }

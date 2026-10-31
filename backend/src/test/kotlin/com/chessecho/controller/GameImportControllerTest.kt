@@ -73,15 +73,16 @@ class GameImportControllerTest {
         whenever(identitySessionService.resolveSession("good-secret"))
             .thenReturn(AuthenticatedPrincipal(UUID.randomUUID(), devPrincipal = false))
 
-        mockMvc.post("/api/games/import") {
-            contentType = MediaType.APPLICATION_JSON
-            content = """{"platform":"CHESS_COM","username":"caseplayer","timeControls":["BLITZ"],"playerColor":"WHITE"}"""
-            cookie(Cookie("CHESSECHO_SESSION", "good-secret"), Cookie("XSRF-TOKEN", "csrf-1"))
-            header("X-XSRF-TOKEN", "csrf-1")
-        }.andExpect {
-            status { isBadRequest() }
-            jsonPath("$.error") { value("ACCOUNT_SELECTION_REQUIRED") }
-        }
+        mockMvc
+            .post("/api/games/import") {
+                contentType = MediaType.APPLICATION_JSON
+                content = """{"platform":"CHESS_COM","username":"caseplayer","timeControls":["BLITZ"],"playerColor":"WHITE"}"""
+                cookie(Cookie("CHESSECHO_SESSION", "good-secret"), Cookie("XSRF-TOKEN", "csrf-1"))
+                header("X-XSRF-TOKEN", "csrf-1")
+            }.andExpect {
+                status { isBadRequest() }
+                jsonPath("$.error") { value("ACCOUNT_SELECTION_REQUIRED") }
+            }
     }
 
     @Test
@@ -89,15 +90,16 @@ class GameImportControllerTest {
         val job = AsyncJob(username = "hikaru", platform = "CHESS_COM")
         whenever(gameImportService.createImportJob(any())).thenReturn(job)
 
-        mockMvc.post("/api/games/import") {
-            contentType = MediaType.APPLICATION_JSON
-            content = objectMapper.writeValueAsString(validRequest)
-        }.andExpect {
-            status { isAccepted() }
-            jsonPath("$.jobId") { exists() }
-            jsonPath("$.status") { value("QUEUED") }
-            jsonPath("$.configurationState") { doesNotExist() }
-        }
+        mockMvc
+            .post("/api/games/import") {
+                contentType = MediaType.APPLICATION_JSON
+                content = objectMapper.writeValueAsString(validRequest)
+            }.andExpect {
+                status { isAccepted() }
+                jsonPath("$.jobId") { exists() }
+                jsonPath("$.status") { value("QUEUED") }
+                jsonPath("$.configurationState") { doesNotExist() }
+            }
 
         verify(gameImportService).executeImportJob(job.id)
     }
@@ -114,13 +116,14 @@ class GameImportControllerTest {
             )
         whenever(gameImportService.createImportJob(any())).thenReturn(job)
 
-        mockMvc.post("/api/games/import") {
-            contentType = MediaType.APPLICATION_JSON
-            content = objectMapper.writeValueAsString(validRequest)
-        }.andExpect {
-            status { isAccepted() }
-            jsonPath("$.configurationState") { value("READY") }
-        }
+        mockMvc
+            .post("/api/games/import") {
+                contentType = MediaType.APPLICATION_JSON
+                content = objectMapper.writeValueAsString(validRequest)
+            }.andExpect {
+                status { isAccepted() }
+                jsonPath("$.configurationState") { value("READY") }
+            }
 
         verify(gameImportService).executeImportJob(job.id)
     }
@@ -129,40 +132,43 @@ class GameImportControllerTest {
     fun `POST games import returns 400 when username is blank`() {
         val request = validRequest + ("username" to "")
 
-        mockMvc.post("/api/games/import") {
-            contentType = MediaType.APPLICATION_JSON
-            content = objectMapper.writeValueAsString(request)
-        }.andExpect {
-            status { isBadRequest() }
-            jsonPath("$.error") { value("VALIDATION_ERROR") }
-            jsonPath("$.details[0]") { exists() }
-        }
+        mockMvc
+            .post("/api/games/import") {
+                contentType = MediaType.APPLICATION_JSON
+                content = objectMapper.writeValueAsString(request)
+            }.andExpect {
+                status { isBadRequest() }
+                jsonPath("$.error") { value("VALIDATION_ERROR") }
+                jsonPath("$.details[0]") { exists() }
+            }
     }
 
     @Test
     fun `POST games import returns 400 when timeControls is empty`() {
         val request = validRequest + ("timeControls" to emptyList<String>())
 
-        mockMvc.post("/api/games/import") {
-            contentType = MediaType.APPLICATION_JSON
-            content = objectMapper.writeValueAsString(request)
-        }.andExpect {
-            status { isBadRequest() }
-            jsonPath("$.error") { value("VALIDATION_ERROR") }
-        }
+        mockMvc
+            .post("/api/games/import") {
+                contentType = MediaType.APPLICATION_JSON
+                content = objectMapper.writeValueAsString(request)
+            }.andExpect {
+                status { isBadRequest() }
+                jsonPath("$.error") { value("VALIDATION_ERROR") }
+            }
     }
 
     @Test
     fun `POST games import returns 400 when fromDate is after toDate`() {
         val request = validRequest + ("fromDate" to "2024-05") + ("toDate" to "2024-01")
 
-        mockMvc.post("/api/games/import") {
-            contentType = MediaType.APPLICATION_JSON
-            content = objectMapper.writeValueAsString(request)
-        }.andExpect {
-            status { isBadRequest() }
-            jsonPath("$.error") { value("VALIDATION_ERROR") }
-        }
+        mockMvc
+            .post("/api/games/import") {
+                contentType = MediaType.APPLICATION_JSON
+                content = objectMapper.writeValueAsString(request)
+            }.andExpect {
+                status { isBadRequest() }
+                jsonPath("$.error") { value("VALIDATION_ERROR") }
+            }
     }
 
     @Test
@@ -172,14 +178,15 @@ class GameImportControllerTest {
 
         val request = validRequest + ("fromDate" to "2024-01") + ("toDate" to "2024-01")
 
-        mockMvc.post("/api/games/import") {
-            contentType = MediaType.APPLICATION_JSON
-            content = objectMapper.writeValueAsString(request)
-        }.andExpect {
-            status { isAccepted() }
-            jsonPath("$.fromDate") { value("2024-01") }
-            jsonPath("$.toDate") { value("2024-01") }
-        }
+        mockMvc
+            .post("/api/games/import") {
+                contentType = MediaType.APPLICATION_JSON
+                content = objectMapper.writeValueAsString(request)
+            }.andExpect {
+                status { isAccepted() }
+                jsonPath("$.fromDate") { value("2024-01") }
+                jsonPath("$.toDate") { value("2024-01") }
+            }
     }
 
     @Test
@@ -199,24 +206,26 @@ class GameImportControllerTest {
             )
         whenever(gameImportService.createImportJob(any())).thenReturn(job)
 
-        mockMvc.post("/api/games/import") {
-            contentType = MediaType.APPLICATION_JSON
-            content = objectMapper.writeValueAsString(validRequest + ("multiPv" to 1))
-        }.andExpect {
-            status { isAccepted() }
-            jsonPath("$.multiPv") { value(1) }
-        }
+        mockMvc
+            .post("/api/games/import") {
+                contentType = MediaType.APPLICATION_JSON
+                content = objectMapper.writeValueAsString(validRequest + ("multiPv" to 1))
+            }.andExpect {
+                status { isAccepted() }
+                jsonPath("$.multiPv") { value(1) }
+            }
     }
 
     @Test
     fun `POST games import rejects non-positive multiPv`() {
-        mockMvc.post("/api/games/import") {
-            contentType = MediaType.APPLICATION_JSON
-            content = objectMapper.writeValueAsString(validRequest + ("multiPv" to 0))
-        }.andExpect {
-            status { isBadRequest() }
-            jsonPath("$.error") { value("VALIDATION_ERROR") }
-        }
+        mockMvc
+            .post("/api/games/import") {
+                contentType = MediaType.APPLICATION_JSON
+                content = objectMapper.writeValueAsString(validRequest + ("multiPv" to 0))
+            }.andExpect {
+                status { isBadRequest() }
+                jsonPath("$.error") { value("VALIDATION_ERROR") }
+            }
     }
 
     @Test
@@ -236,13 +245,14 @@ class GameImportControllerTest {
             )
         whenever(gameImportService.createImportJob(any())).thenReturn(job)
 
-        mockMvc.post("/api/games/import") {
-            contentType = MediaType.APPLICATION_JSON
-            content = objectMapper.writeValueAsString(validRequest + ("maxEligibleGames" to 500))
-        }.andExpect {
-            status { isAccepted() }
-            jsonPath("$.maxEligibleGames") { value(500) }
-        }
+        mockMvc
+            .post("/api/games/import") {
+                contentType = MediaType.APPLICATION_JSON
+                content = objectMapper.writeValueAsString(validRequest + ("maxEligibleGames" to 500))
+            }.andExpect {
+                status { isAccepted() }
+                jsonPath("$.maxEligibleGames") { value(500) }
+            }
     }
 
     @Test
@@ -251,12 +261,13 @@ class GameImportControllerTest {
         whenever(gameImportService.createImportJob(any())).thenReturn(job)
 
         val result =
-            mockMvc.post("/api/games/import") {
-                contentType = MediaType.APPLICATION_JSON
-                content = objectMapper.writeValueAsString(validRequest)
-            }.andExpect {
-                status { isAccepted() }
-            }.andReturn()
+            mockMvc
+                .post("/api/games/import") {
+                    contentType = MediaType.APPLICATION_JSON
+                    content = objectMapper.writeValueAsString(validRequest)
+                }.andExpect {
+                    status { isAccepted() }
+                }.andReturn()
 
         val response = objectMapper.readTree(result.response.contentAsString)
         assertTrue(response.path("maxEligibleGames").isMissingNode)
@@ -264,26 +275,28 @@ class GameImportControllerTest {
 
     @Test
     fun `POST games import rejects non-positive maxEligibleGames`() {
-        mockMvc.post("/api/games/import") {
-            contentType = MediaType.APPLICATION_JSON
-            content = objectMapper.writeValueAsString(validRequest + ("maxEligibleGames" to 0))
-        }.andExpect {
-            status { isBadRequest() }
-            jsonPath("$.error") { value("VALIDATION_ERROR") }
-        }
+        mockMvc
+            .post("/api/games/import") {
+                contentType = MediaType.APPLICATION_JSON
+                content = objectMapper.writeValueAsString(validRequest + ("maxEligibleGames" to 0))
+            }.andExpect {
+                status { isBadRequest() }
+                jsonPath("$.error") { value("VALIDATION_ERROR") }
+            }
     }
 
     @Test
     fun `POST games import returns 400 when playerColor is invalid`() {
         val request = validRequest + ("playerColor" to "invalid_color")
 
-        mockMvc.post("/api/games/import") {
-            contentType = MediaType.APPLICATION_JSON
-            content = objectMapper.writeValueAsString(request)
-        }.andExpect {
-            status { isBadRequest() }
-            jsonPath("$.error") { value("VALIDATION_ERROR") }
-        }
+        mockMvc
+            .post("/api/games/import") {
+                contentType = MediaType.APPLICATION_JSON
+                content = objectMapper.writeValueAsString(request)
+            }.andExpect {
+                status { isBadRequest() }
+                jsonPath("$.error") { value("VALIDATION_ERROR") }
+            }
     }
 
     @Test
@@ -296,13 +309,14 @@ class GameImportControllerTest {
                 "playerColor" to "WHITE",
             )
 
-        mockMvc.post("/api/games/import") {
-            contentType = MediaType.APPLICATION_JSON
-            content = objectMapper.writeValueAsString(request)
-        }.andExpect {
-            status { isBadRequest() }
-            jsonPath("$.error") { value("ACCOUNT_SELECTION_REQUIRED") }
-        }
+        mockMvc
+            .post("/api/games/import") {
+                contentType = MediaType.APPLICATION_JSON
+                content = objectMapper.writeValueAsString(request)
+            }.andExpect {
+                status { isBadRequest() }
+                jsonPath("$.error") { value("ACCOUNT_SELECTION_REQUIRED") }
+            }
     }
 
     @Test
@@ -316,27 +330,30 @@ class GameImportControllerTest {
                 "playerColor" to "WHITE",
             )
 
-        mockMvc.post("/api/games/import") {
-            contentType = MediaType.APPLICATION_JSON
-            content = objectMapper.writeValueAsString(request)
-        }.andExpect {
-            status { isBadRequest() }
-            jsonPath("$.error") { value("ACCOUNT_SELECTION_MISMATCH") }
-        }
+        mockMvc
+            .post("/api/games/import") {
+                contentType = MediaType.APPLICATION_JSON
+                content = objectMapper.writeValueAsString(request)
+            }.andExpect {
+                status { isBadRequest() }
+                jsonPath("$.error") { value("ACCOUNT_SELECTION_MISMATCH") }
+            }
     }
 
     @Test
     fun `POST games import returns 409 when active job exists for username`() {
         doThrow(ActiveImportJobException("Active job exists for hikaru"))
-            .whenever(gameImportService).createImportJob(any())
+            .whenever(gameImportService)
+            .createImportJob(any())
 
-        mockMvc.post("/api/games/import") {
-            contentType = MediaType.APPLICATION_JSON
-            content = objectMapper.writeValueAsString(validRequest)
-        }.andExpect {
-            status { isConflict() }
-            jsonPath("$.error") { value("CONFLICT") }
-        }
+        mockMvc
+            .post("/api/games/import") {
+                contentType = MediaType.APPLICATION_JSON
+                content = objectMapper.writeValueAsString(validRequest)
+            }.andExpect {
+                status { isConflict() }
+                jsonPath("$.error") { value("CONFLICT") }
+            }
     }
 
     @Test
@@ -356,7 +373,8 @@ class GameImportControllerTest {
         whenever(asyncJobRepository.findById(eq(jobId))).thenReturn(Optional.of(job))
 
         val result =
-            mockMvc.get("/api/jobs/$jobId")
+            mockMvc
+                .get("/api/jobs/$jobId")
                 .andExpect {
                     status { isOk() }
                     jsonPath("$.jobId") { value(jobId.toString()) }
@@ -365,8 +383,7 @@ class GameImportControllerTest {
                     jsonPath("$.gamesSkipped") { value(30) }
                     jsonPath("$.gamesProcessed") { value(200) }
                     jsonPath("$.analysisStatus") { value("FAILED") }
-                }
-                .andReturn()
+                }.andReturn()
 
         val response = objectMapper.readTree(result.response.contentAsString)
         assertTrue(response.path("errorMessage").isNull)
@@ -401,7 +418,8 @@ class GameImportControllerTest {
             "2024-03" to ArchiveDerivedStatus.PENDING,
         )
 
-        mockMvc.get("/api/jobs/$jobId")
+        mockMvc
+            .get("/api/jobs/$jobId")
             .andExpect {
                 status { isOk() }
                 jsonPath("$.derivedStatus") { value("COMPLETED") }
@@ -418,7 +436,8 @@ class GameImportControllerTest {
             "2024-02" to ArchiveDerivedStatus.FAILED,
         )
 
-        mockMvc.get("/api/jobs/$jobId")
+        mockMvc
+            .get("/api/jobs/$jobId")
             .andExpect {
                 status { isOk() }
                 jsonPath("$.derivedStatus") { value("FAILED") }
@@ -440,7 +459,8 @@ class GameImportControllerTest {
             currentMonth to ArchiveDerivedStatus.COMPLETED,
         )
 
-        mockMvc.get("/api/jobs/$jobId")
+        mockMvc
+            .get("/api/jobs/$jobId")
             .andExpect {
                 status { isOk() }
                 jsonPath("$.derivedStatus") { doesNotExist() }
@@ -453,7 +473,8 @@ class GameImportControllerTest {
         val jobId = stubJob(account, fromDate = null, toDate = null)
         stubDerivedStatuses(account)
 
-        mockMvc.get("/api/jobs/$jobId")
+        mockMvc
+            .get("/api/jobs/$jobId")
             .andExpect {
                 status { isOk() }
                 jsonPath("$.derivedStatus") { doesNotExist() }
@@ -470,7 +491,8 @@ class GameImportControllerTest {
             "2024-02" to ArchiveDerivedStatus.PENDING,
         )
 
-        mockMvc.get("/api/jobs/$jobId")
+        mockMvc
+            .get("/api/jobs/$jobId")
             .andExpect {
                 status { isOk() }
                 jsonPath("$.derivedStatus") { value("PENDING") }
@@ -483,7 +505,8 @@ class GameImportControllerTest {
         val jobId = stubJob(account, fromDate = "2024-02", toDate = "2024-02", status = "QUEUED")
         stubDerivedStatuses(account, "2024-02" to ArchiveDerivedStatus.COMPLETED)
 
-        mockMvc.get("/api/jobs/$jobId")
+        mockMvc
+            .get("/api/jobs/$jobId")
             .andExpect {
                 status { isOk() }
                 jsonPath("$.derivedStatus") { doesNotExist() }
@@ -536,7 +559,8 @@ class GameImportControllerTest {
             )
         whenever(asyncJobRepository.findById(eq(jobId))).thenReturn(Optional.of(job))
 
-        mockMvc.get("/api/jobs/$jobId")
+        mockMvc
+            .get("/api/jobs/$jobId")
             .andExpect {
                 status { isOk() }
                 jsonPath("$.maxEligibleGames") { value(500) }
@@ -557,7 +581,8 @@ class GameImportControllerTest {
         whenever(asyncJobRepository.findById(eq(jobId))).thenReturn(Optional.of(job))
 
         val result =
-            mockMvc.get("/api/jobs/$jobId")
+            mockMvc
+                .get("/api/jobs/$jobId")
                 .andExpect { status { isOk() } }
                 .andReturn()
 
@@ -571,7 +596,8 @@ class GameImportControllerTest {
         val jobId = UUID.randomUUID()
         whenever(asyncJobRepository.findById(eq(jobId))).thenReturn(Optional.empty())
 
-        mockMvc.get("/api/jobs/$jobId")
+        mockMvc
+            .get("/api/jobs/$jobId")
             .andExpect {
                 status { isNotFound() }
                 jsonPath("$.error") { value("NOT_FOUND") }

@@ -65,15 +65,16 @@ class AccountControllerTest {
             .thenReturn(AssociationResult(account, true), AssociationResult(account, false))
 
         listOf(201, 200).forEach { expectedStatus ->
-            mockMvc.post("/api/accounts") {
-                contentType = MediaType.APPLICATION_JSON
-                content = """{"platform":"CHESS_COM","username":"storedcase"}"""
-                cookie(Cookie("CHESSECHO_SESSION", "good-secret"), Cookie("XSRF-TOKEN", "csrf-1"))
-                header("X-XSRF-TOKEN", "csrf-1")
-            }.andExpect {
-                status { isEqualTo(expectedStatus) }
-                content { json("""{"id":"${account.id}","platform":"CHESS_COM","username":"StoredCase"}""", true) }
-            }
+            mockMvc
+                .post("/api/accounts") {
+                    contentType = MediaType.APPLICATION_JSON
+                    content = """{"platform":"CHESS_COM","username":"storedcase"}"""
+                    cookie(Cookie("CHESSECHO_SESSION", "good-secret"), Cookie("XSRF-TOKEN", "csrf-1"))
+                    header("X-XSRF-TOKEN", "csrf-1")
+                }.andExpect {
+                    status { isEqualTo(expectedStatus) }
+                    content { json("""{"id":"${account.id}","platform":"CHESS_COM","username":"StoredCase"}""", true) }
+                }
         }
     }
 
@@ -85,12 +86,13 @@ class AccountControllerTest {
         whenever(accountOwnershipService.listOwnedAccounts(principal)).thenReturn(emptyList(), listOf(account))
 
         listOf("[]", """[{"id":"${account.id}","platform":"CHESS_COM","username":"player"}]""").forEach { expected ->
-            mockMvc.get("/api/accounts") {
-                cookie(Cookie("CHESSECHO_SESSION", "good-secret"))
-            }.andExpect {
-                status { isOk() }
-                content { json(expected, true) }
-            }
+            mockMvc
+                .get("/api/accounts") {
+                    cookie(Cookie("CHESSECHO_SESSION", "good-secret"))
+                }.andExpect {
+                    status { isOk() }
+                    content { json(expected, true) }
+                }
         }
     }
 
@@ -100,13 +102,14 @@ class AccountControllerTest {
         whenever(identitySessionService.resolveSession("good-secret")).thenReturn(principal)
         doThrow(AccountNotFoundException()).whenever(accountOwnershipService).disconnect(any(), eq(principal))
 
-        mockMvc.delete("/api/accounts/${UUID.randomUUID()}/connection") {
-            cookie(Cookie("CHESSECHO_SESSION", "good-secret"), Cookie("XSRF-TOKEN", "csrf-1"))
-            header("X-XSRF-TOKEN", "csrf-1")
-        }.andExpect {
-            status { isNotFound() }
-            jsonPath("$.error") { value("ACCOUNT_NOT_FOUND") }
-        }
+        mockMvc
+            .delete("/api/accounts/${UUID.randomUUID()}/connection") {
+                cookie(Cookie("CHESSECHO_SESSION", "good-secret"), Cookie("XSRF-TOKEN", "csrf-1"))
+                header("X-XSRF-TOKEN", "csrf-1")
+            }.andExpect {
+                status { isNotFound() }
+                jsonPath("$.error") { value("ACCOUNT_NOT_FOUND") }
+            }
     }
 
     @Test
@@ -117,27 +120,29 @@ class AccountControllerTest {
             .whenever(accountOwnershipService)
             .associate(any(), any<AccountAssociationRequest>())
 
-        mockMvc.post("/api/accounts") {
-            contentType = MediaType.APPLICATION_JSON
-            content = """{"platform":"CHESS_COM","username":"caseplayer"}"""
-            cookie(Cookie("CHESSECHO_SESSION", "good-secret"), Cookie("XSRF-TOKEN", "csrf-1"))
-            header("X-XSRF-TOKEN", "csrf-1")
-        }.andExpect {
-            status { isConflict() }
-            jsonPath("$.error") { value("ACCOUNT_CONNECTION_LIMIT_REACHED") }
-        }
+        mockMvc
+            .post("/api/accounts") {
+                contentType = MediaType.APPLICATION_JSON
+                content = """{"platform":"CHESS_COM","username":"caseplayer"}"""
+                cookie(Cookie("CHESSECHO_SESSION", "good-secret"), Cookie("XSRF-TOKEN", "csrf-1"))
+                header("X-XSRF-TOKEN", "csrf-1")
+            }.andExpect {
+                status { isConflict() }
+                jsonPath("$.error") { value("ACCOUNT_CONNECTION_LIMIT_REACHED") }
+            }
     }
 
     @Test
     fun `POST account association without the CSRF token is rejected with 403`() {
-        mockMvc.post("/api/accounts") {
-            contentType = MediaType.APPLICATION_JSON
-            content = """{"platform":"CHESS_COM","username":"caseplayer"}"""
-            cookie(Cookie("CHESSECHO_SESSION", "good-secret"), Cookie("XSRF-TOKEN", "csrf-1"))
-        }.andExpect {
-            status { isForbidden() }
-            jsonPath("$.error") { value("CSRF_FAILED") }
-        }
+        mockMvc
+            .post("/api/accounts") {
+                contentType = MediaType.APPLICATION_JSON
+                content = """{"platform":"CHESS_COM","username":"caseplayer"}"""
+                cookie(Cookie("CHESSECHO_SESSION", "good-secret"), Cookie("XSRF-TOKEN", "csrf-1"))
+            }.andExpect {
+                status { isForbidden() }
+                jsonPath("$.error") { value("CSRF_FAILED") }
+            }
     }
 
     @Test
@@ -146,13 +151,14 @@ class AccountControllerTest {
         val accountId = UUID.randomUUID()
         whenever(identitySessionService.resolveSession("good-secret")).thenReturn(principal)
 
-        mockMvc.delete("/api/accounts/$accountId/connection") {
-            cookie(Cookie("CHESSECHO_SESSION", "good-secret"), Cookie("XSRF-TOKEN", "csrf-1"))
-            header("X-XSRF-TOKEN", "csrf-1")
-        }.andExpect {
-            status { isNoContent() }
-            content { string("") }
-        }
+        mockMvc
+            .delete("/api/accounts/$accountId/connection") {
+                cookie(Cookie("CHESSECHO_SESSION", "good-secret"), Cookie("XSRF-TOKEN", "csrf-1"))
+                header("X-XSRF-TOKEN", "csrf-1")
+            }.andExpect {
+                status { isNoContent() }
+                content { string("") }
+            }
 
         verify(accountOwnershipService).disconnect(eq(accountId), eq(principal))
     }
@@ -162,11 +168,12 @@ class AccountControllerTest {
         whenever(identitySessionService.resolveSession("good-secret"))
             .thenReturn(AuthenticatedPrincipal(UUID.randomUUID(), devPrincipal = false))
 
-        mockMvc.delete("/api/accounts/${UUID.randomUUID()}/connection") {
-            cookie(Cookie("CHESSECHO_SESSION", "good-secret"), Cookie("XSRF-TOKEN", "csrf-1"))
-        }.andExpect {
-            status { isForbidden() }
-            jsonPath("$.error") { value("CSRF_FAILED") }
-        }
+        mockMvc
+            .delete("/api/accounts/${UUID.randomUUID()}/connection") {
+                cookie(Cookie("CHESSECHO_SESSION", "good-secret"), Cookie("XSRF-TOKEN", "csrf-1"))
+            }.andExpect {
+                status { isForbidden() }
+                jsonPath("$.error") { value("CSRF_FAILED") }
+            }
     }
 }

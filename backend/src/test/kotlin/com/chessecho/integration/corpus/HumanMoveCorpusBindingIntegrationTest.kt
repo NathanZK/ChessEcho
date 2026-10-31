@@ -74,23 +74,24 @@ class HumanMoveCorpusBindingIntegrationTest : HumanMoveCorpusBaseIntegrationTest
         )
 
         val aggregateFromOccurrences =
-            jdbcTemplate.queryForList(
-                """
-                SELECT position_hash, move_played, COUNT(*) AS occurrence_count
-                FROM human_move_corpus_occurrence
-                WHERE source_run_id = ? AND covered_prefix <= ?
-                GROUP BY position_hash, move_played
-                ORDER BY position_hash, move_played
-                """.trimIndent(),
-                run,
-                1,
-            ).map {
-                Triple(
-                    it["position_hash"].toString(),
-                    it["move_played"].toString(),
-                    ((it["occurrence_count"] ?: error("missing count")) as Number).toInt(),
-                )
-            }
+            jdbcTemplate
+                .queryForList(
+                    """
+                    SELECT position_hash, move_played, COUNT(*) AS occurrence_count
+                    FROM human_move_corpus_occurrence
+                    WHERE source_run_id = ? AND covered_prefix <= ?
+                    GROUP BY position_hash, move_played
+                    ORDER BY position_hash, move_played
+                    """.trimIndent(),
+                    run,
+                    1,
+                ).map {
+                    Triple(
+                        it["position_hash"].toString(),
+                        it["move_played"].toString(),
+                        ((it["occurrence_count"] ?: error("missing count")) as Number).toInt(),
+                    )
+                }
         assertEquals(rowsOf(checkpoint(run, 1)), aggregateFromOccurrences)
     }
 

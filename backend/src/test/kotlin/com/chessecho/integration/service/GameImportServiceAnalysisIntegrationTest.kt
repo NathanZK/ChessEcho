@@ -208,7 +208,8 @@ class GameImportServiceAnalysisIntegrationTest : GameImportServiceBaseIntegratio
     @Test
     fun `analysis failure status is recorded separately after import completes`() {
         doThrow(IllegalStateException())
-            .whenever(engineAnalysisOrchestrator).analyzeAffectedPositions(any())
+            .whenever(engineAnalysisOrchestrator)
+            .analyzeAffectedPositions(any())
 
         val request =
             ImportGamesRequest(

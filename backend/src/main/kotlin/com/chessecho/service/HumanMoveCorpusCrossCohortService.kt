@@ -80,17 +80,18 @@ class HumanMoveCorpusCrossCohortService(
 
     private fun loadFinalizedProjection(id: UUID): FinalizedProjection {
         val row =
-            jdbcTemplate.query(
-                "SELECT rating_band, finalized, content_digest, verified FROM human_move_corpus_projection WHERE id = ?",
-                { rs, _ ->
-                    val ratingBand = rs.getString("rating_band")
-                    val finalized = rs.getBoolean("finalized")
-                    val verified = rs.getBoolean("verified")
-                    val contentDigest = rs.getString("content_digest")
-                    Triple(ratingBand, finalized to verified, contentDigest)
-                },
-                id,
-            ).singleOrNull() ?: throw NoSuchElementException("Projection $id not found")
+            jdbcTemplate
+                .query(
+                    "SELECT rating_band, finalized, content_digest, verified FROM human_move_corpus_projection WHERE id = ?",
+                    { rs, _ ->
+                        val ratingBand = rs.getString("rating_band")
+                        val finalized = rs.getBoolean("finalized")
+                        val verified = rs.getBoolean("verified")
+                        val contentDigest = rs.getString("content_digest")
+                        Triple(ratingBand, finalized to verified, contentDigest)
+                    },
+                    id,
+                ).singleOrNull() ?: throw NoSuchElementException("Projection $id not found")
         val (ratingBand, flags, contentDigest) = row
         val (finalized, verified) = flags
         if (!finalized) {

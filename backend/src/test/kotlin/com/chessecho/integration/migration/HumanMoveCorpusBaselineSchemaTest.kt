@@ -26,24 +26,7 @@ class HumanMoveCorpusBaselineSchemaTest : PostgresMigrationTestFixture() {
 
     @Test
     fun `fresh V1 contains the corpus run, game, and observation tables with required columns`() {
-        assertColumns(
-            "human_move_corpus_run",
-            setOf(
-                "id", "rating_band", "seed_players", "excluded_players", "max_qualifying_games",
-                "max_games_per_player", "max_players", "max_depth", "batch_size", "algorithm_version",
-                "source_revision", "request_json", "request_sha256", "status", "committed_frontier",
-                "rejected_game_count", "archive_fetch_failure_count", "stop_reason", "failure_details",
-                "created_at", "updated_at", "finished_at",
-            ),
-        )
-        assertColumns(
-            "human_move_corpus_game",
-            setOf(
-                "id", "run_id", "qualifying_ordinal", "provider_game_id", "traversed_player", "opponent",
-                "opponent_side", "opponent_rating", "rules", "time_class", "bfs_depth", "pgn", "pgn_sha256",
-                "observation_total", "distinct_move_count", "committed_at",
-            ),
-        )
+        assertRunAndGameColumns()
         assertColumns(
             "human_move_corpus_observation",
             setOf("id", "game_id", "position_id", "position_hash", "move_played", "observation_count"),
@@ -57,6 +40,57 @@ class HumanMoveCorpusBaselineSchemaTest : PostgresMigrationTestFixture() {
                 """.trimIndent(),
             )
         assertTrue(bandColumns.isEmpty(), "band derives only from the owning run")
+    }
+
+    private fun assertRunAndGameColumns() {
+        assertColumns(
+            "human_move_corpus_run",
+            setOf(
+                "id",
+                "rating_band",
+                "seed_players",
+                "excluded_players",
+                "max_qualifying_games",
+                "max_games_per_player",
+                "max_players",
+                "max_depth",
+                "batch_size",
+                "algorithm_version",
+                "source_revision",
+                "request_json",
+                "request_sha256",
+                "status",
+                "committed_frontier",
+                "rejected_game_count",
+                "archive_fetch_failure_count",
+                "stop_reason",
+                "failure_details",
+                "created_at",
+                "updated_at",
+                "finished_at",
+            ),
+        )
+        assertColumns(
+            "human_move_corpus_game",
+            setOf(
+                "id",
+                "run_id",
+                "qualifying_ordinal",
+                "provider_game_id",
+                "traversed_player",
+                "opponent",
+                "opponent_side",
+                "opponent_rating",
+                "rules",
+                "time_class",
+                "bfs_depth",
+                "pgn",
+                "pgn_sha256",
+                "observation_total",
+                "distinct_move_count",
+                "committed_at",
+            ),
+        )
     }
 
     @Test

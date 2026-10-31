@@ -279,15 +279,13 @@ abstract class PracticalWeaknessAuthenticatedSchedulingContract {
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
-class PracticalWeaknessAuthenticatedSchedulingEnabledIntegrationTest :
-    PracticalWeaknessAuthenticatedSchedulingContract() {
+class PracticalWeaknessAuthenticatedSchedulingEnabledIntegrationTest : PracticalWeaknessAuthenticatedSchedulingContract() {
     override val rankingEnabled = true
 }
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
 @TestPropertySource(properties = ["chess.weakness.practical.ranking-enabled=false"])
-class PracticalWeaknessAuthenticatedSchedulingDisabledIntegrationTest :
-    PracticalWeaknessAuthenticatedSchedulingContract() {
+class PracticalWeaknessAuthenticatedSchedulingDisabledIntegrationTest : PracticalWeaknessAuthenticatedSchedulingContract() {
     override val rankingEnabled = false
 }

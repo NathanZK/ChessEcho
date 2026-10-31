@@ -229,32 +229,34 @@ internal class ObjectiveWeaknessAnalyzer(
         phaseMistakeCount: Map<String, Int>,
         phaseMistakeLoss: Map<String, Double>,
     ): Map<String, PhaseStats>? =
-        phaseTimesReached.mapValues { (phase, reached) ->
-            val mCount = phaseMistakeCount[phase] ?: 0
-            val totalLoss = phaseMistakeLoss[phase] ?: 0.0
-            PhaseStats(
-                timesReached = reached,
-                mistakeCount = mCount,
-                mistakeRate = if (reached > 0) mCount.toDouble() / reached else 0.0,
-                averageLoss = if (mCount > 0) totalLoss / mCount else 0.0,
-            )
-        }.takeIf { it.isNotEmpty() }
+        phaseTimesReached
+            .mapValues { (phase, reached) ->
+                val mCount = phaseMistakeCount[phase] ?: 0
+                val totalLoss = phaseMistakeLoss[phase] ?: 0.0
+                PhaseStats(
+                    timesReached = reached,
+                    mistakeCount = mCount,
+                    mistakeRate = if (reached > 0) mCount.toDouble() / reached else 0.0,
+                    averageLoss = if (mCount > 0) totalLoss / mCount else 0.0,
+                )
+            }.takeIf { it.isNotEmpty() }
 
     private fun buildTimeControlStats(
         tcTimesReached: Map<String, Int>,
         tcMistakeCount: Map<String, Int>,
         tcMistakeLoss: Map<String, Double>,
     ): Map<String, TimeControlStats>? =
-        tcTimesReached.mapValues { (tc, reached) ->
-            val mCount = tcMistakeCount[tc] ?: 0
-            val totalLoss = tcMistakeLoss[tc] ?: 0.0
-            TimeControlStats(
-                timesReached = reached,
-                mistakeCount = mCount,
-                mistakeRate = if (reached > 0) mCount.toDouble() / reached else 0.0,
-                averageLoss = if (mCount > 0) totalLoss / mCount else 0.0,
-            )
-        }.takeIf { it.isNotEmpty() }
+        tcTimesReached
+            .mapValues { (tc, reached) ->
+                val mCount = tcMistakeCount[tc] ?: 0
+                val totalLoss = tcMistakeLoss[tc] ?: 0.0
+                TimeControlStats(
+                    timesReached = reached,
+                    mistakeCount = mCount,
+                    mistakeRate = if (reached > 0) mCount.toDouble() / reached else 0.0,
+                    averageLoss = if (mCount > 0) totalLoss / mCount else 0.0,
+                )
+            }.takeIf { it.isNotEmpty() }
 
     fun openingContext(
         platform: Platform,

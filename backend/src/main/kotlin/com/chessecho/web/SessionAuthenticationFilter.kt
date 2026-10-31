@@ -47,7 +47,8 @@ class SessionAuthenticationFilter(
         }
         val token = SessionSecrets.generateSecret()
         val cookie =
-            ResponseCookie.from(properties.csrf.cookieName, token)
+            ResponseCookie
+                .from(properties.csrf.cookieName, token)
                 .httpOnly(false)
                 .path(properties.cookie.path)
                 .secure(properties.cookie.secure)

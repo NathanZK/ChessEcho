@@ -20,19 +20,20 @@ class RetainedEvaluationEvidenceService(
     ): HumanMoveCorpusOccurrenceBinding {
         val binding = occurrenceService.verifyRequiredBinding(sourceRunId, contentDigest, coveredPrefix)
         val eligible =
-            jdbcTemplate.query(
-                """
-                SELECT COALESCE((s.manifest_json::jsonb ->> 'e6Eligible')::boolean, false),
-                       r.committed_frontier
-                FROM human_move_corpus_artifact_snapshot s
-                JOIN human_move_corpus_run r ON r.id = s.source_run_id
-                WHERE s.source_run_id = ? AND s.content_digest = ? AND s.covered_prefix = ?
-                """.trimIndent(),
-                { rs, _ -> rs.getBoolean(1) && rs.getInt(2) == coveredPrefix },
-                sourceRunId,
-                contentDigest,
-                coveredPrefix,
-            ).singleOrNull() == true
+            jdbcTemplate
+                .query(
+                    """
+                    SELECT COALESCE((s.manifest_json::jsonb ->> 'e6Eligible')::boolean, false),
+                           r.committed_frontier
+                    FROM human_move_corpus_artifact_snapshot s
+                    JOIN human_move_corpus_run r ON r.id = s.source_run_id
+                    WHERE s.source_run_id = ? AND s.content_digest = ? AND s.covered_prefix = ?
+                    """.trimIndent(),
+                    { rs, _ -> rs.getBoolean(1) && rs.getInt(2) == coveredPrefix },
+                    sourceRunId,
+                    contentDigest,
+                    coveredPrefix,
+                ).singleOrNull() == true
         if (!eligible) {
             throw RetainedEvaluationEvidenceIntegrityException(
                 "Run $sourceRunId artifact is not terminally eligible for reference coverage",
@@ -47,16 +48,17 @@ class RetainedEvaluationEvidenceService(
         contentDigest: String,
     ) {
         val snapshot =
-            jdbcTemplate.query(
-                """
-                SELECT covered_prefix, COALESCE((manifest_json::jsonb ->> 'e6Eligible')::boolean, false)
-                FROM human_move_corpus_artifact_snapshot
-                WHERE source_run_id = ? AND content_digest = ?
-                """.trimIndent(),
-                { rs, _ -> rs.getInt(1) to rs.getBoolean(2) },
-                sourceRunId,
-                contentDigest,
-            ).singleOrNull() ?: return
+            jdbcTemplate
+                .query(
+                    """
+                    SELECT covered_prefix, COALESCE((manifest_json::jsonb ->> 'e6Eligible')::boolean, false)
+                    FROM human_move_corpus_artifact_snapshot
+                    WHERE source_run_id = ? AND content_digest = ?
+                    """.trimIndent(),
+                    { rs, _ -> rs.getInt(1) to rs.getBoolean(2) },
+                    sourceRunId,
+                    contentDigest,
+                ).singleOrNull() ?: return
         if (snapshot.second && occurrenceService.hasSourceRun(sourceRunId)) {
             verifyTerminalReferenceCoverageEligibility(sourceRunId, contentDigest, snapshot.first)
         }
@@ -87,29 +89,30 @@ class RetainedEvaluationEvidenceService(
     }
 
     private fun queryProjectionMetadata(projectionId: UUID): RetainedReferenceProjection =
-        jdbcTemplate.query(
-            """
-            SELECT finalized, verified, distribution_sha256, content_digest, source_run_id, prefix_n,
-                   rating_band, min_observations, calculation_version
-            FROM human_move_corpus_projection
-            WHERE id = ?
-            """.trimIndent(),
-            { rs, _ ->
-                RetainedReferenceProjection(
-                    finalized = rs.getBoolean("finalized"),
-                    verified = rs.getBoolean("verified"),
-                    distributionSha256 = rs.getString("distribution_sha256"),
-                    rows = emptyList(),
-                    contentDigest = rs.getString("content_digest"),
-                    sourceRunId = rs.getObject("source_run_id", UUID::class.java),
-                    prefixN = rs.getInt("prefix_n"),
-                    ratingBand = rs.getString("rating_band"),
-                    minObservations = rs.getInt("min_observations"),
-                    calculationVersion = rs.getString("calculation_version"),
-                )
-            },
-            projectionId,
-        ).singleOrNull() ?: throw RetainedEvaluationEvidenceIntegrityException("reference projection not found")
+        jdbcTemplate
+            .query(
+                """
+                SELECT finalized, verified, distribution_sha256, content_digest, source_run_id, prefix_n,
+                       rating_band, min_observations, calculation_version
+                FROM human_move_corpus_projection
+                WHERE id = ?
+                """.trimIndent(),
+                { rs, _ ->
+                    RetainedReferenceProjection(
+                        finalized = rs.getBoolean("finalized"),
+                        verified = rs.getBoolean("verified"),
+                        distributionSha256 = rs.getString("distribution_sha256"),
+                        rows = emptyList(),
+                        contentDigest = rs.getString("content_digest"),
+                        sourceRunId = rs.getObject("source_run_id", UUID::class.java),
+                        prefixN = rs.getInt("prefix_n"),
+                        ratingBand = rs.getString("rating_band"),
+                        minObservations = rs.getInt("min_observations"),
+                        calculationVersion = rs.getString("calculation_version"),
+                    )
+                },
+                projectionId,
+            ).singleOrNull() ?: throw RetainedEvaluationEvidenceIntegrityException("reference projection not found")
 
     private fun queryProjectionRows(projectionId: UUID): List<RetainedReferenceProjectionRow> =
         jdbcTemplate.query(
@@ -155,20 +158,22 @@ class RetainedEvaluationEvidenceService(
         population: EvaluationReferencePopulation,
     ) {
         val artifactEligible =
-            jdbcTemplate.query(
-                "SELECT COALESCE((manifest_json::jsonb ->> 'e6Eligible')::boolean, false), covered_prefix, " +
-                    "manifest_json::jsonb ->> 'ratingBand', manifest_json::jsonb ->> 'sourceRunId', " +
-                    "manifest_json::jsonb ->> 'coveredPrefix' " +
-                    "FROM human_move_corpus_artifact_snapshot WHERE source_run_id = ? AND content_digest = ?",
-                { rs, _ ->
-                    rs.getBoolean(1) && rs.getInt(2) == population.coveredPrefix &&
-                        rs.getString(3) == population.ratingBand &&
-                        rs.getString(4) == sourceRunId.toString() &&
-                        rs.getString(5) == population.coveredPrefix.toString()
-                },
-                sourceRunId,
-                population.contentDigest,
-            ).singleOrNull() == true
+            jdbcTemplate
+                .query(
+                    "SELECT COALESCE((manifest_json::jsonb ->> 'e6Eligible')::boolean, false), covered_prefix, " +
+                        "manifest_json::jsonb ->> 'ratingBand', manifest_json::jsonb ->> 'sourceRunId', " +
+                        "manifest_json::jsonb ->> 'coveredPrefix' " +
+                        "FROM human_move_corpus_artifact_snapshot WHERE source_run_id = ? AND content_digest = ?",
+                    { rs, _ ->
+                        rs.getBoolean(1) &&
+                            rs.getInt(2) == population.coveredPrefix &&
+                            rs.getString(3) == population.ratingBand &&
+                            rs.getString(4) == sourceRunId.toString() &&
+                            rs.getString(5) == population.coveredPrefix.toString()
+                    },
+                    sourceRunId,
+                    population.contentDigest,
+                ).singleOrNull() == true
         if (!artifactEligible) {
             throw RetainedEvaluationEvidenceIntegrityException("selected artifact is not terminally eligible for reference coverage")
         }
@@ -178,26 +183,27 @@ class RetainedEvaluationEvidenceService(
         val ids = snapshot.rows.map { it.occurrenceId }.distinct()
         if (ids.isEmpty()) return emptyMap()
         val placeholders = ids.joinToString(",") { "?" }
-        return jdbcTemplate.query(
-            """
-            SELECT id, source_run_id, qualifying_ordinal, pre_move_ply, provider_game_id,
-                   position_hash, move_played, content_digest, covered_prefix
-            FROM human_move_corpus_occurrence WHERE id IN ($placeholders)
-            """.trimIndent(),
-            { rs, _ ->
-                rs.getObject("id", UUID::class.java) to
-                    RetainedReferenceOccurrence(
-                        rs.getObject("source_run_id", UUID::class.java),
-                        rs.getInt("qualifying_ordinal"),
-                        rs.getInt("pre_move_ply"),
-                        rs.getString("provider_game_id"),
-                        rs.getString("position_hash"),
-                        rs.getString("move_played"),
-                        rs.getString("content_digest"),
-                        rs.getInt("covered_prefix"),
-                    )
-            },
-            *ids.toTypedArray(),
-        ).toMap()
+        return jdbcTemplate
+            .query(
+                """
+                SELECT id, source_run_id, qualifying_ordinal, pre_move_ply, provider_game_id,
+                       position_hash, move_played, content_digest, covered_prefix
+                FROM human_move_corpus_occurrence WHERE id IN ($placeholders)
+                """.trimIndent(),
+                { rs, _ ->
+                    rs.getObject("id", UUID::class.java) to
+                        RetainedReferenceOccurrence(
+                            rs.getObject("source_run_id", UUID::class.java),
+                            rs.getInt("qualifying_ordinal"),
+                            rs.getInt("pre_move_ply"),
+                            rs.getString("provider_game_id"),
+                            rs.getString("position_hash"),
+                            rs.getString("move_played"),
+                            rs.getString("content_digest"),
+                            rs.getInt("covered_prefix"),
+                        )
+                },
+                *ids.toTypedArray(),
+            ).toMap()
     }
 }

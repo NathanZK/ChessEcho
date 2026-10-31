@@ -38,7 +38,11 @@ private class BfsBatchAccumulator(
         if (batchObservations.isEmpty()) return
         batchNumber++
 
-        val batchUniquePositions = batchObservations.keys.map { it.first }.toSet().size
+        val batchUniquePositions =
+            batchObservations.keys
+                .map { it.first }
+                .toSet()
+                .size
         val batchTotalObservations = batchObservations.values.sum()
 
         logBatchDiagnostics(batchUniquePositions, batchTotalObservations)
@@ -102,7 +106,10 @@ private data class PopulationDiscoveryState(
     var stopReason: String = "",
 )
 
-private data class DiscoveryOpponent(val username: String, val rating: Int)
+private data class DiscoveryOpponent(
+    val username: String,
+    val rating: Int,
+)
 
 @Service
 class HumanMoveBfsService(
@@ -256,7 +263,11 @@ class HumanMoveBfsService(
 
     private fun initDiscoveryState(request: HumanMovePopulationDiscoveryRequest): PopulationDiscoveryState {
         val excluded = request.excludedPlayers.map(String::lowercase).toSet()
-        val frontier = request.seedPlayers.map(String::lowercase).filterNot(excluded::contains).distinct()
+        val frontier =
+            request.seedPlayers
+                .map(String::lowercase)
+                .filterNot(excluded::contains)
+                .distinct()
         val state = PopulationDiscoveryState(excluded = excluded, frontier = frontier)
         state.queued.addAll(frontier)
         return state

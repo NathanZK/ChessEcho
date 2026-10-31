@@ -101,15 +101,16 @@ class PuzzleEventControllerHttpTest {
             ),
         ).thenReturn(listOf(occurrence))
 
-        mockMvc.post("/api/puzzles/events") {
-            cookie(Cookie("CHESSECHO_SESSION", "valid-session"))
-            contentType = MediaType.APPLICATION_JSON
-            content =
-                """{"positionId":"${position.id}","playerColor":"WHITE","eventType":"$eventType","accountId":"${account.id}"}"""
-        }.andExpect {
-            status { isBadRequest() }
-            jsonPath("$.error") { value("VALIDATION_ERROR") }
-        }
+        mockMvc
+            .post("/api/puzzles/events") {
+                cookie(Cookie("CHESSECHO_SESSION", "valid-session"))
+                contentType = MediaType.APPLICATION_JSON
+                content =
+                    """{"positionId":"${position.id}","playerColor":"WHITE","eventType":"$eventType","accountId":"${account.id}"}"""
+            }.andExpect {
+                status { isBadRequest() }
+                jsonPath("$.error") { value("VALIDATION_ERROR") }
+            }
 
         verify(occurrenceRepository, never()).findByChessAccountIdAndPlayerColorAndPositionIdIn(
             account.id,
@@ -134,36 +135,38 @@ class PuzzleEventControllerHttpTest {
             ),
         ).thenReturn(listOf(occurrence))
 
-        mockMvc.post("/api/puzzles/events") {
-            cookie(Cookie("CHESSECHO_SESSION", "valid-session"))
-            contentType = MediaType.APPLICATION_JSON
-            content =
-                """
-                {"positionId":"${position.id}","playerColor":"WHITE","eventType":"SOLVED",
-                 "accountId":"${account.id}","submissionId":"$submissionId","submittedMove":"e4"}
-                """.trimIndent()
-        }.andExpect {
-            status { isAccepted() }
-            jsonPath("$.submissionId") { value(submissionId.toString()) }
-        }
+        mockMvc
+            .post("/api/puzzles/events") {
+                cookie(Cookie("CHESSECHO_SESSION", "valid-session"))
+                contentType = MediaType.APPLICATION_JSON
+                content =
+                    """
+                    {"positionId":"${position.id}","playerColor":"WHITE","eventType":"SOLVED",
+                     "accountId":"${account.id}","submissionId":"$submissionId","submittedMove":"e4"}
+                    """.trimIndent()
+            }.andExpect {
+                status { isAccepted() }
+                jsonPath("$.submissionId") { value(submissionId.toString()) }
+            }
     }
 
     @org.junit.jupiter.api.Test
     fun `identified submission requires both identity and submitted move`() {
         whenever(identitySessionService.resolveSession("valid-session")).thenReturn(principal)
 
-        mockMvc.post("/api/puzzles/events") {
-            cookie(Cookie("CHESSECHO_SESSION", "valid-session"))
-            contentType = MediaType.APPLICATION_JSON
-            content =
-                """
-                {"positionId":"${position.id}","playerColor":"WHITE","eventType":"SOLVED",
-                 "accountId":"${account.id}","submissionId":"${UUID.randomUUID()}"}
-                """.trimIndent()
-        }.andExpect {
-            status { isBadRequest() }
-            jsonPath("$.error") { value("VALIDATION_ERROR") }
-        }
+        mockMvc
+            .post("/api/puzzles/events") {
+                cookie(Cookie("CHESSECHO_SESSION", "valid-session"))
+                contentType = MediaType.APPLICATION_JSON
+                content =
+                    """
+                    {"positionId":"${position.id}","playerColor":"WHITE","eventType":"SOLVED",
+                     "accountId":"${account.id}","submissionId":"${UUID.randomUUID()}"}
+                    """.trimIndent()
+            }.andExpect {
+                status { isBadRequest() }
+                jsonPath("$.error") { value("VALIDATION_ERROR") }
+            }
 
         verify(occurrenceRepository, never()).findByChessAccountIdAndPlayerColorAndPositionIdIn(
             any(),
@@ -178,41 +181,44 @@ class PuzzleEventControllerHttpTest {
         whenever(identitySessionService.resolveSession("valid-session")).thenReturn(principal)
         whenever(accountOwnershipService.resolveSharedAccount(account.id, principal)).thenReturn(account)
 
-        mockMvc.get("/api/puzzles/${position.id}/attempt-count") {
-            cookie(Cookie("CHESSECHO_SESSION", "valid-session"))
-            param("accountId", account.id.toString())
-            param("playerColor", "WHITE")
-        }.andExpect {
-            status { isOk() }
-            jsonPath("$.solvedCount") { value(2) }
-            jsonPath("$.failedCount") { value(3) }
-            jsonPath("$.attemptCount") { doesNotExist() }
-            jsonPath("$.*") { value(org.hamcrest.Matchers.hasSize<Int>(2)) }
-        }
+        mockMvc
+            .get("/api/puzzles/${position.id}/attempt-count") {
+                cookie(Cookie("CHESSECHO_SESSION", "valid-session"))
+                param("accountId", account.id.toString())
+                param("playerColor", "WHITE")
+            }.andExpect {
+                status { isOk() }
+                jsonPath("$.solvedCount") { value(2) }
+                jsonPath("$.failedCount") { value(3) }
+                jsonPath("$.attemptCount") { doesNotExist() }
+                jsonPath("$.*") { value(org.hamcrest.Matchers.hasSize<Int>(2)) }
+            }
     }
 
     @org.junit.jupiter.api.Test
     fun `guest count request is rejected before service invocation`() {
-        mockMvc.get("/api/puzzles/${position.id}/attempt-count") {
-            param("accountId", UUID.randomUUID().toString())
-            param("playerColor", "WHITE")
-        }.andExpect {
-            status { isUnauthorized() }
-            jsonPath("$.error") { value("UNAUTHENTICATED") }
-        }
+        mockMvc
+            .get("/api/puzzles/${position.id}/attempt-count") {
+                param("accountId", UUID.randomUUID().toString())
+                param("playerColor", "WHITE")
+            }.andExpect {
+                status { isUnauthorized() }
+                jsonPath("$.error") { value("UNAUTHENTICATED") }
+            }
         verify(submissionService, never()).count(any(), any(), any(), any())
     }
 
     @org.junit.jupiter.api.Test
     fun `count request requires explicit account`() {
         whenever(identitySessionService.resolveSession("valid-session")).thenReturn(principal)
-        mockMvc.get("/api/puzzles/${position.id}/attempt-count") {
-            cookie(Cookie("CHESSECHO_SESSION", "valid-session"))
-            param("playerColor", "WHITE")
-        }.andExpect {
-            status { isBadRequest() }
-            jsonPath("$.error") { value("VALIDATION_ERROR") }
-        }
+        mockMvc
+            .get("/api/puzzles/${position.id}/attempt-count") {
+                cookie(Cookie("CHESSECHO_SESSION", "valid-session"))
+                param("playerColor", "WHITE")
+            }.andExpect {
+                status { isBadRequest() }
+                jsonPath("$.error") { value("VALIDATION_ERROR") }
+            }
         verify(submissionService, never()).count(any(), any(), any(), any())
     }
 
@@ -228,14 +234,15 @@ class PuzzleEventControllerHttpTest {
             ),
         ).thenReturn(emptyList())
 
-        mockMvc.post("/api/puzzles/events") {
-            cookie(Cookie("CHESSECHO_SESSION", "valid-session"))
-            contentType = MediaType.APPLICATION_JSON
-            content =
-                """{"positionId":"${position.id}","playerColor":"WHITE","eventType":"SOLVED","accountId":"${account.id}"}"""
-        }.andExpect {
-            status { isNotFound() }
-        }
+        mockMvc
+            .post("/api/puzzles/events") {
+                cookie(Cookie("CHESSECHO_SESSION", "valid-session"))
+                contentType = MediaType.APPLICATION_JSON
+                content =
+                    """{"positionId":"${position.id}","playerColor":"WHITE","eventType":"SOLVED","accountId":"${account.id}"}"""
+            }.andExpect {
+                status { isNotFound() }
+            }
     }
 
     @org.junit.jupiter.api.Test
@@ -243,17 +250,18 @@ class PuzzleEventControllerHttpTest {
         whenever(identitySessionService.resolveSession("valid-session")).thenReturn(principal)
         whenever(submissionService.record(any(), any())).thenThrow(PuzzleSubmissionConflictException())
 
-        mockMvc.post("/api/puzzles/events") {
-            cookie(Cookie("CHESSECHO_SESSION", "valid-session"))
-            contentType = MediaType.APPLICATION_JSON
-            content =
-                """
-                {"positionId":"${position.id}","playerColor":"WHITE","eventType":"SOLVED",
-                 "accountId":"${account.id}","submissionId":"${UUID.randomUUID()}","submittedMove":"e4"}
-                """.trimIndent()
-        }.andExpect {
-            status { isConflict() }
-            jsonPath("$.error") { value("PUZZLE_SUBMISSION_CONFLICT") }
-        }
+        mockMvc
+            .post("/api/puzzles/events") {
+                cookie(Cookie("CHESSECHO_SESSION", "valid-session"))
+                contentType = MediaType.APPLICATION_JSON
+                content =
+                    """
+                    {"positionId":"${position.id}","playerColor":"WHITE","eventType":"SOLVED",
+                     "accountId":"${account.id}","submissionId":"${UUID.randomUUID()}","submittedMove":"e4"}
+                    """.trimIndent()
+            }.andExpect {
+                status { isConflict() }
+                jsonPath("$.error") { value("PUZZLE_SUBMISSION_CONFLICT") }
+            }
     }
 }

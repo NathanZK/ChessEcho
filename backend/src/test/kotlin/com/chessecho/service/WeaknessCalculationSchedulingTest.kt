@@ -115,8 +115,7 @@ class WeaknessCalculationSchedulingTest {
                 eventsCaptor.capture(),
                 timeCaptor.capture(),
             ),
-        )
-            .thenReturn(42.0)
+        ).thenReturn(42.0)
 
         val weaknesses =
             weaknessCalculationService.getWeaknesses(
@@ -403,9 +402,15 @@ class WeaknessCalculationSchedulingTest {
         color: String,
     ): WeaknessAggregation =
         WeaknessAggregation(
-            positionId = position.id, fen = position.fen, playerColor = color,
-            timesReached = 5, bestMove = "e4", baselineEvalCp = 100,
-            mistakeCount = 5, averageLoss = 1.5, rawTotalLoss = 7.5,
+            positionId = position.id,
+            fen = position.fen,
+            playerColor = color,
+            timesReached = 5,
+            bestMove = "e4",
+            baselineEvalCp = 100,
+            mistakeCount = 5,
+            averageLoss = 1.5,
+            rawTotalLoss = 7.5,
         )
 
     @Test

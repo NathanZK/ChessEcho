@@ -25,7 +25,8 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 class GlobalExceptionHandler {
     @ExceptionHandler(PuzzleSubmissionConflictException::class)
     fun handlePuzzleSubmissionConflict(ex: PuzzleSubmissionConflictException): ResponseEntity<ErrorResponse> =
-        ResponseEntity.status(HttpStatus.CONFLICT)
+        ResponseEntity
+            .status(HttpStatus.CONFLICT)
             .body(ErrorResponse(error = "PUZZLE_SUBMISSION_CONFLICT", details = listOf(requireNotNull(ex.message))))
 
     @ExceptionHandler(InvalidCredentialsException::class)

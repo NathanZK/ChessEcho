@@ -222,7 +222,8 @@ class SimilarPositionsControllerIntegrationTest {
         limit: Int? = null,
     ): java.net.URI {
         val builder =
-            UriComponentsBuilder.fromPath("/api/positions/similar")
+            UriComponentsBuilder
+                .fromPath("/api/positions/similar")
                 .queryParam("fen", fen)
         if (accountId != null) builder.queryParam("accountId", accountId)
         if (username != null) builder.queryParam("username", username)

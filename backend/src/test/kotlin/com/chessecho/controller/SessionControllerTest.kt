@@ -64,16 +64,17 @@ class SessionControllerTest {
         whenever(identitySessionService.resolveSession("good-secret"))
             .thenReturn(AuthenticatedPrincipal(appUserId = userId, devPrincipal = true))
 
-        mockMvc.get("/api/me") {
-            cookie(Cookie(sessionCookieName, "good-secret"))
-        }.andExpect {
-            status { isOk() }
-            jsonPath("$.userId") { value(userId.toString()) }
-            jsonPath("$.devPrincipal") { value(true) }
-            jsonPath("$.rawSecret") { doesNotExist() }
-            jsonPath("$.tokenHash") { doesNotExist() }
-            jsonPath("$.sessionId") { doesNotExist() }
-        }
+        mockMvc
+            .get("/api/me") {
+                cookie(Cookie(sessionCookieName, "good-secret"))
+            }.andExpect {
+                status { isOk() }
+                jsonPath("$.userId") { value(userId.toString()) }
+                jsonPath("$.devPrincipal") { value(true) }
+                jsonPath("$.rawSecret") { doesNotExist() }
+                jsonPath("$.tokenHash") { doesNotExist() }
+                jsonPath("$.sessionId") { doesNotExist() }
+            }
     }
 
     @Test
@@ -87,12 +88,13 @@ class SessionControllerTest {
     @Test
     fun `POST logout revokes the raw cookie value and clears the session cookie`() {
         val result =
-            mockMvc.post("/api/logout") {
-                cookie(Cookie(sessionCookieName, "good-secret"), Cookie(csrfCookieName, "csrf-1"))
-                header(csrfHeaderName, "csrf-1")
-            }.andExpect {
-                status { isNoContent() }
-            }.andReturn()
+            mockMvc
+                .post("/api/logout") {
+                    cookie(Cookie(sessionCookieName, "good-secret"), Cookie(csrfCookieName, "csrf-1"))
+                    header(csrfHeaderName, "csrf-1")
+                }.andExpect {
+                    status { isNoContent() }
+                }.andReturn()
 
         verify(identitySessionService).revokeSession("good-secret")
 
@@ -103,36 +105,39 @@ class SessionControllerTest {
 
     @Test
     fun `POST logout is idempotent when no session cookie is present`() {
-        mockMvc.post("/api/logout") {
-            cookie(Cookie(csrfCookieName, "csrf-1"))
-            header(csrfHeaderName, "csrf-1")
-        }.andExpect {
-            status { isNoContent() }
-        }
+        mockMvc
+            .post("/api/logout") {
+                cookie(Cookie(csrfCookieName, "csrf-1"))
+                header(csrfHeaderName, "csrf-1")
+            }.andExpect {
+                status { isNoContent() }
+            }
 
         verify(identitySessionService, never()).revokeSession(any())
     }
 
     @Test
     fun `POST logout without the CSRF header is rejected with 403`() {
-        mockMvc.post("/api/logout") {
-            cookie(Cookie(sessionCookieName, "good-secret"), Cookie(csrfCookieName, "csrf-1"))
-        }.andExpect {
-            status { isForbidden() }
-            jsonPath("$.error") { value("CSRF_FAILED") }
-        }
+        mockMvc
+            .post("/api/logout") {
+                cookie(Cookie(sessionCookieName, "good-secret"), Cookie(csrfCookieName, "csrf-1"))
+            }.andExpect {
+                status { isForbidden() }
+                jsonPath("$.error") { value("CSRF_FAILED") }
+            }
 
         verify(identitySessionService, never()).revokeSession(any())
     }
 
     @Test
     fun `POST logout with a mismatched CSRF token is rejected with 403`() {
-        mockMvc.post("/api/logout") {
-            cookie(Cookie(sessionCookieName, "good-secret"), Cookie(csrfCookieName, "csrf-1"))
-            header(csrfHeaderName, "different-token")
-        }.andExpect {
-            status { isForbidden() }
-            jsonPath("$.error") { value("CSRF_FAILED") }
-        }
+        mockMvc
+            .post("/api/logout") {
+                cookie(Cookie(sessionCookieName, "good-secret"), Cookie(csrfCookieName, "csrf-1"))
+                header(csrfHeaderName, "different-token")
+            }.andExpect {
+                status { isForbidden() }
+                jsonPath("$.error") { value("CSRF_FAILED") }
+            }
     }
 }

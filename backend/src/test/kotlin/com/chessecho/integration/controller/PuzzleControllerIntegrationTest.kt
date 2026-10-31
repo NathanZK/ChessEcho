@@ -302,7 +302,13 @@ class PuzzleControllerIntegrationTest {
         assertEquals("e4", puzzle.acceptableMoves[0].move)
         assertEquals(1, puzzle.movesPlayed.size)
         assertEquals("Qh5", puzzle.movesPlayed[0].move)
-        assertEquals("DECISION", puzzle.movesPlayed[0].practicalEvidence?.scope?.name)
+        assertEquals(
+            "DECISION",
+            puzzle.movesPlayed[0]
+                .practicalEvidence
+                ?.scope
+                ?.name,
+        )
     }
 
     @Test

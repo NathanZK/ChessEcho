@@ -91,12 +91,18 @@ data class HumanMoveCorpusRunOutcome(
 )
 
 /** A committed game with the same provider id carries a different contribution. */
-class HumanMoveCorpusContributionMismatchException(message: String) : RuntimeException(message)
+class HumanMoveCorpusContributionMismatchException(
+    message: String,
+) : RuntimeException(message)
 
-class HumanMoveCorpusRunNotRunningException(message: String) : RuntimeException(message)
+class HumanMoveCorpusRunNotRunningException(
+    message: String,
+) : RuntimeException(message)
 
 /** Persisted corpus data violates a prefix invariant; the checkpoint fails closed. */
-class HumanMoveCorpusIntegrityException(message: String) : RuntimeException(message)
+class HumanMoveCorpusIntegrityException(
+    message: String,
+) : RuntimeException(message)
 
 /**
  * The only writer of corpus rows. Each [commitGame] call is one transaction
@@ -207,11 +213,12 @@ class HumanMoveCorpusGameWriter(
     }
 
     private fun fetchRunForUpdate(runId: UUID): Pair<String, Int> =
-        jdbcTemplate.query(
-            "SELECT status, committed_frontier FROM human_move_corpus_run WHERE id = ? FOR UPDATE",
-            { rs, _ -> rs.getString("status") to rs.getInt("committed_frontier") },
-            runId,
-        ).singleOrNull() ?: throw NoSuchElementException("Corpus run $runId not found")
+        jdbcTemplate
+            .query(
+                "SELECT status, committed_frontier FROM human_move_corpus_run WHERE id = ? FOR UPDATE",
+                { rs, _ -> rs.getString("status") to rs.getInt("committed_frontier") },
+                runId,
+            ).singleOrNull() ?: throw NoSuchElementException("Corpus run $runId not found")
 
     private fun normalizeAndValidateCandidate(
         candidate: HumanMoveCorpusCandidate,
@@ -418,36 +425,37 @@ class HumanMoveCorpusGameWriter(
         runId: UUID,
         providerGameId: String,
     ): CommittedGame? =
-        jdbcTemplate.query(
-            """
-            SELECT id, qualifying_ordinal, traversed_player, opponent, opponent_side, opponent_rating, rules,
-                   time_class, bfs_depth, pgn_sha256, observation_total, distinct_move_count
-            FROM human_move_corpus_game
-            WHERE run_id = ? AND provider_game_id = ?
-            """.trimIndent(),
-            { rs, _ ->
-                CommittedGame(
-                    id = rs.getObject("id", UUID::class.java),
-                    runId = runId,
-                    ordinal = rs.getInt("qualifying_ordinal"),
-                    provenance =
-                        listOf(
-                            rs.getString("traversed_player"),
-                            rs.getString("opponent"),
-                            rs.getString("opponent_side"),
-                            rs.getInt("opponent_rating"),
-                            rs.getString("rules"),
-                            rs.getString("time_class"),
-                            rs.getInt("bfs_depth"),
-                        ),
-                    pgnSha256 = rs.getString("pgn_sha256"),
-                    observationTotal = rs.getInt("observation_total"),
-                    distinctMoveCount = rs.getInt("distinct_move_count"),
-                )
-            },
-            runId,
-            providerGameId,
-        ).singleOrNull()
+        jdbcTemplate
+            .query(
+                """
+                SELECT id, qualifying_ordinal, traversed_player, opponent, opponent_side, opponent_rating, rules,
+                       time_class, bfs_depth, pgn_sha256, observation_total, distinct_move_count
+                FROM human_move_corpus_game
+                WHERE run_id = ? AND provider_game_id = ?
+                """.trimIndent(),
+                { rs, _ ->
+                    CommittedGame(
+                        id = rs.getObject("id", UUID::class.java),
+                        runId = runId,
+                        ordinal = rs.getInt("qualifying_ordinal"),
+                        provenance =
+                            listOf(
+                                rs.getString("traversed_player"),
+                                rs.getString("opponent"),
+                                rs.getString("opponent_side"),
+                                rs.getInt("opponent_rating"),
+                                rs.getString("rules"),
+                                rs.getString("time_class"),
+                                rs.getInt("bfs_depth"),
+                            ),
+                        pgnSha256 = rs.getString("pgn_sha256"),
+                        observationTotal = rs.getInt("observation_total"),
+                        distinctMoveCount = rs.getInt("distinct_move_count"),
+                    )
+                },
+                runId,
+                providerGameId,
+            ).singleOrNull()
 
     private fun verifyIdenticalContribution(
         existing: CommittedGame,
@@ -460,18 +468,19 @@ class HumanMoveCorpusGameWriter(
         val proposed = observations.map { Triple(it.positionHash, it.movePlayed, it.observationCount) }.toSet()
         val storedOccurrences = fetchStoredOccurrences(existing.runId, existing.ordinal)
         val proposedOccurrences =
-            occurrences.map {
-                listOf(
-                    existing.runId.toString(),
-                    existing.ordinal,
-                    candidate.providerGameId,
-                    it.preMovePly,
-                    it.positionHash,
-                    it.movePlayed,
-                    null,
-                    existing.ordinal,
-                )
-            }.toSet()
+            occurrences
+                .map {
+                    listOf(
+                        existing.runId.toString(),
+                        existing.ordinal,
+                        candidate.providerGameId,
+                        it.preMovePly,
+                        it.positionHash,
+                        it.movePlayed,
+                        null,
+                        existing.ordinal,
+                    )
+                }.toSet()
         val candidateProvenance = buildCandidateProvenance(candidate)
         val identical =
             existing.pgnSha256 == pgnSha256 &&
@@ -489,37 +498,39 @@ class HumanMoveCorpusGameWriter(
     }
 
     private fun fetchStoredObservations(gameId: UUID): Set<Triple<String, String, Int>> =
-        jdbcTemplate.query(
-            "SELECT position_hash, move_played, observation_count FROM human_move_corpus_observation WHERE game_id = ?",
-            { rs, _ -> Triple(rs.getString(1), rs.getString(2), rs.getInt(3)) },
-            gameId,
-        ).toSet()
+        jdbcTemplate
+            .query(
+                "SELECT position_hash, move_played, observation_count FROM human_move_corpus_observation WHERE game_id = ?",
+                { rs, _ -> Triple(rs.getString(1), rs.getString(2), rs.getInt(3)) },
+                gameId,
+            ).toSet()
 
     private fun fetchStoredOccurrences(
         runId: UUID,
         ordinal: Int,
     ): Set<List<Any?>> =
-        jdbcTemplate.query(
-            """
-            SELECT source_run_id, qualifying_ordinal, provider_game_id, pre_move_ply,
-                   position_hash, move_played, content_digest, covered_prefix
-            FROM human_move_corpus_occurrence WHERE source_run_id = ? AND qualifying_ordinal = ?
-            """.trimIndent(),
-            { rs, _ ->
-                listOf(
-                    rs.getString("source_run_id"),
-                    rs.getInt("qualifying_ordinal"),
-                    rs.getString("provider_game_id"),
-                    rs.getInt("pre_move_ply"),
-                    rs.getString("position_hash"),
-                    rs.getString("move_played"),
-                    rs.getString("content_digest"),
-                    rs.getObject("covered_prefix"),
-                )
-            },
-            runId,
-            ordinal,
-        ).toSet()
+        jdbcTemplate
+            .query(
+                """
+                SELECT source_run_id, qualifying_ordinal, provider_game_id, pre_move_ply,
+                       position_hash, move_played, content_digest, covered_prefix
+                FROM human_move_corpus_occurrence WHERE source_run_id = ? AND qualifying_ordinal = ?
+                """.trimIndent(),
+                { rs, _ ->
+                    listOf(
+                        rs.getString("source_run_id"),
+                        rs.getInt("qualifying_ordinal"),
+                        rs.getString("provider_game_id"),
+                        rs.getInt("pre_move_ply"),
+                        rs.getString("position_hash"),
+                        rs.getString("move_played"),
+                        rs.getString("content_digest"),
+                        rs.getObject("covered_prefix"),
+                    )
+                },
+                runId,
+                ordinal,
+            ).toSet()
 
     private fun buildCandidateProvenance(candidate: HumanMoveCorpusCandidate): List<Any?> =
         listOf(
@@ -541,10 +552,12 @@ class HumanMoveCorpusGameWriter(
             fenByHash.map { (hash, fen) -> arrayOf<Any>(UUID.randomUUID(), hash, fen, now) },
         )
         val ids =
-            namedJdbcTemplate.query(
-                "SELECT id, hash FROM position WHERE hash IN (:hashes)",
-                mapOf("hashes" to fenByHash.keys.toList()),
-            ) { rs, _ -> rs.getString("hash") to rs.getObject("id", UUID::class.java) }.toMap()
+            namedJdbcTemplate
+                .query(
+                    "SELECT id, hash FROM position WHERE hash IN (:hashes)",
+                    mapOf("hashes" to fenByHash.keys.toList()),
+                ) { rs, _ -> rs.getString("hash") to rs.getObject("id", UUID::class.java) }
+                .toMap()
         check(ids.keys == fenByHash.keys) { "Positions missing after find-or-create: ${fenByHash.keys - ids.keys}" }
         return ids
     }

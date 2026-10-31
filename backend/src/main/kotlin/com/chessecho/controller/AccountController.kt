@@ -27,9 +27,7 @@ class AccountController(
     fun listAccounts(
         @RequestAttribute(name = SessionAuthenticationFilter.PRINCIPAL_ATTRIBUTE, required = false)
         principal: AuthenticatedPrincipal?,
-    ): List<ChessAccountResponse> {
-        return accountOwnershipService.listOwnedAccounts(principal ?: throw UnauthenticatedException())
-    }
+    ): List<ChessAccountResponse> = accountOwnershipService.listOwnedAccounts(principal ?: throw UnauthenticatedException())
 
     @PostMapping
     fun associate(

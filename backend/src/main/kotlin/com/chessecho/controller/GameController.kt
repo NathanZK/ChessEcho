@@ -34,13 +34,12 @@ class GameController(
         @OptionalAuthenticatedPrincipal
         @RequestAttribute(name = SessionAuthenticationFilter.PRINCIPAL_ATTRIBUTE, required = false)
         principal: AuthenticatedPrincipal?,
-    ): Page<GameDto> {
-        return if (accountId != null) {
+    ): Page<GameDto> =
+        if (accountId != null) {
             gameService.getGames(accountId, pageable, principal)
         } else if (accountOwnershipService == null) {
             gameService.getGames(username ?: "", platform ?: Platform.CHESS_COM, pageable)
         } else {
             gameService.getGames(username ?: "", platform ?: Platform.CHESS_COM, pageable, principal)
         }
-    }
 }

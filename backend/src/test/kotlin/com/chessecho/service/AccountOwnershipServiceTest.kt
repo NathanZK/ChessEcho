@@ -68,11 +68,12 @@ class AccountOwnershipServiceTest {
     private fun user(): AppUser = appUserRepository.save(AppUser(email = "${UUID.randomUUID()}@example.com"))
 
     private fun account(owner: AppUser?): ChessAccount =
-        chessAccountRepository.save(
-            ChessAccount(platform = "CHESS_COM", username = "u${UUID.randomUUID().toString().take(8)}"),
-        ).also { account ->
-            if (owner != null) connections.saveAndFlush(AccountConnection(appUser = owner, chessAccount = account))
-        }
+        chessAccountRepository
+            .save(
+                ChessAccount(platform = "CHESS_COM", username = "u${UUID.randomUUID().toString().take(8)}"),
+            ).also { account ->
+                if (owner != null) connections.saveAndFlush(AccountConnection(appUser = owner, chessAccount = account))
+            }
 
     private fun principalFor(user: AppUser) = AuthenticatedPrincipal(user.id, devPrincipal = false)
 
@@ -219,11 +220,12 @@ class AccountOwnershipServiceTest {
     fun `resolveImportAccount throws on conflicting platform snapshot`() {
         val owner = user()
         val account =
-            chessAccountRepository.save(
-                ChessAccount(platform = "OTHER_PLATFORM", username = "u${UUID.randomUUID().toString().take(8)}"),
-            ).also {
-                connections.saveAndFlush(AccountConnection(appUser = owner, chessAccount = it))
-            }
+            chessAccountRepository
+                .save(
+                    ChessAccount(platform = "OTHER_PLATFORM", username = "u${UUID.randomUUID().toString().take(8)}"),
+                ).also {
+                    connections.saveAndFlush(AccountConnection(appUser = owner, chessAccount = it))
+                }
         val request =
             ImportGamesRequest(
                 accountId = account.id,
@@ -318,7 +320,8 @@ class AccountOwnershipServiceTest {
         assertEquals(attempt.id, trainingAttemptRepository.findById(attempt.id).orElseThrow().id)
         assertEquals(
             listOf(event.id),
-            puzzleSchedulingEventRepository.findHistory(owner.id, account.id, listOf(position.id), "BOTH")
+            puzzleSchedulingEventRepository
+                .findHistory(owner.id, account.id, listOf(position.id), "BOTH")
                 .map { it.id },
         )
 
@@ -326,7 +329,8 @@ class AccountOwnershipServiceTest {
 
         assertEquals(
             listOf(event.id),
-            puzzleSchedulingEventRepository.findHistory(owner.id, account.id, listOf(position.id), "BOTH")
+            puzzleSchedulingEventRepository
+                .findHistory(owner.id, account.id, listOf(position.id), "BOTH")
                 .map { it.id },
             "the user's existing personal history must remain available after reconnecting",
         )

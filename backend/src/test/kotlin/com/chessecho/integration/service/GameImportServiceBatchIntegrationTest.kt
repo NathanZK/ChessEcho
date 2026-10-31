@@ -22,7 +22,9 @@ class GameImportServiceBatchIntegrationTest : GameImportServiceBaseIntegrationTe
             )
         val dummyGame = gameRepository.save(com.chessecho.domain.Game(chessAccount = account, platformGameId = "dummy1", pgn = "1. e4"))
 
-        val targetService = org.springframework.test.util.AopTestUtils.getUltimateTargetObject<GameImportService>(gameImportService)
+        val targetService =
+            org.springframework.test.util.AopTestUtils
+                .getUltimateTargetObject<GameImportService>(gameImportService)
         val method =
             GameImportService::class.java.getDeclaredMethod(
                 "updateUserPositionStats",
@@ -244,7 +246,12 @@ class GameImportServiceBatchIntegrationTest : GameImportServiceBaseIntegrationTe
             "Every raw entry in the month, including the one past the cap boundary, is still processed",
         )
 
-        val savedUrls = gameRepository.findAll().filter { it.whiteUsername == "capuser5" }.map { it.platformGameId }.toSet()
+        val savedUrls =
+            gameRepository
+                .findAll()
+                .filter { it.whiteUsername == "capuser5" }
+                .map { it.platformGameId }
+                .toSet()
         assertEquals(
             setOf("https://www.chess.com/game/live/capu5_e1", "https://www.chess.com/game/live/capu5_e2"),
             savedUrls,
@@ -293,7 +300,12 @@ class GameImportServiceBatchIntegrationTest : GameImportServiceBaseIntegrationTe
             "Every raw entry in the month, including ineligible/duplicate ones past the cap boundary, must still be processed",
         )
 
-        val savedUrls = gameRepository.findAll().filter { it.whiteUsername == "capuser5b" }.map { it.platformGameId }.toSet()
+        val savedUrls =
+            gameRepository
+                .findAll()
+                .filter { it.whiteUsername == "capuser5b" }
+                .map { it.platformGameId }
+                .toSet()
         assertEquals(
             setOf("https://www.chess.com/game/live/capu5b_e1", "https://www.chess.com/game/live/capu5b_e2"),
             savedUrls,
@@ -407,7 +419,11 @@ class GameImportServiceBatchIntegrationTest : GameImportServiceBaseIntegrationTe
             val job = gameImportService.createImportJob(request)
             gameImportService.executeImportJob(job.id, request)
             waitForJob(job.id)
-            return gameRepository.findAll().filter { it.whiteUsername == username }.map { it.platformGameId }.toSet()
+            return gameRepository
+                .findAll()
+                .filter { it.whiteUsername == username }
+                .map { it.platformGameId }
+                .toSet()
         }
 
         val firstSelection = runOnce("capuser8a")

@@ -178,18 +178,19 @@ abstract class HumanMoveCorpusBaseIntegrationTest {
 
     /** Exact persisted child rows per provider game of one run. */
     protected fun persistedContributions(runId: UUID): Map<String, Set<Triple<String, String, Int>>> =
-        jdbcTemplate.queryForList(
-            "SELECT g.provider_game_id, o.position_hash, o.move_played, o.observation_count " +
-                "FROM human_move_corpus_game g JOIN human_move_corpus_observation o ON o.game_id = g.id " +
-                "WHERE g.run_id = ?",
-            runId,
-        ).groupBy({ it["provider_game_id"].toString() }) {
-            Triple(
-                it["position_hash"].toString(),
-                it["move_played"].toString(),
-                ((it["observation_count"] ?: error("missing observation_count")) as Number).toInt(),
-            )
-        }.mapValues { it.value.toSet() }
+        jdbcTemplate
+            .queryForList(
+                "SELECT g.provider_game_id, o.position_hash, o.move_played, o.observation_count " +
+                    "FROM human_move_corpus_game g JOIN human_move_corpus_observation o ON o.game_id = g.id " +
+                    "WHERE g.run_id = ?",
+                runId,
+            ).groupBy({ it["provider_game_id"].toString() }) {
+                Triple(
+                    it["position_hash"].toString(),
+                    it["move_played"].toString(),
+                    ((it["observation_count"] ?: error("missing observation_count")) as Number).toInt(),
+                )
+            }.mapValues { it.value.toSet() }
 
     protected fun contributionOf(candidate: HumanMoveCorpusCandidate) =
         candidate.observations.map { Triple(it.positionHash, it.movePlayed, it.observationCount) }.toSet()
@@ -325,13 +326,15 @@ abstract class HumanMoveCorpusBaseIntegrationTest {
         )
         assertEquals(
             (1..9).toList(),
-            canonicalAnalysis.filter { it["provider_game_id"] == firstGameId }
+            canonicalAnalysis
+                .filter { it["provider_game_id"] == firstGameId }
                 .map { ((it["pre_move_ply"] ?: error("missing ply")) as Number).toInt() },
             "the first game's locations must be canonically ordered by one-based pre-move ply",
         )
         assertEquals(
             (1..5).toList(),
-            canonicalAnalysis.filter { it["provider_game_id"] == secondGameId }
+            canonicalAnalysis
+                .filter { it["provider_game_id"] == secondGameId }
                 .map { ((it["pre_move_ply"] ?: error("missing ply")) as Number).toInt() },
             "the second game's locations must be canonically ordered by one-based pre-move ply",
         )
@@ -348,17 +351,20 @@ abstract class HumanMoveCorpusBaseIntegrationTest {
             GameParserService.generateHash("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
         assertEquals(
             listOf(1, 5),
-            canonicalAnalysis.filter {
-                it["provider_game_id"] == firstGameId &&
-                    it["position_hash"] == initialPositionHash &&
-                    it["move_played"] == "Nf3"
-            }.map { ((it["pre_move_ply"] ?: error("missing ply")) as Number).toInt() },
+            canonicalAnalysis
+                .filter {
+                    it["provider_game_id"] == firstGameId &&
+                        it["position_hash"] == initialPositionHash &&
+                        it["move_played"] == "Nf3"
+                }.map { ((it["pre_move_ply"] ?: error("missing ply")) as Number).toInt() },
             "the same position and SAN must remain distinct at two plies in one game",
         )
         assertEquals(
             setOf(firstGameId, secondGameId),
-            canonicalAnalysis.filter { it["position_hash"] == initialPositionHash }
-                .map { it["provider_game_id"].toString() }.toSet(),
+            canonicalAnalysis
+                .filter { it["position_hash"] == initialPositionHash }
+                .map { it["provider_game_id"].toString() }
+                .toSet(),
             "the same position must be retained across distinct source games",
         )
         val transposedPositionHash =
@@ -367,9 +373,10 @@ abstract class HumanMoveCorpusBaseIntegrationTest {
             )
         assertEquals(
             mapOf(firstGameId to listOf(9), secondGameId to listOf(5)),
-            canonicalAnalysis.filter {
-                it["position_hash"] == transposedPositionHash && it["move_played"] == "Bg2"
-            }.groupBy { it["provider_game_id"].toString() }
+            canonicalAnalysis
+                .filter {
+                    it["position_hash"] == transposedPositionHash && it["move_played"] == "Bg2"
+                }.groupBy { it["provider_game_id"].toString() }
                 .mapValues { (_, rows) -> rows.map { ((it["pre_move_ply"] ?: error("missing ply")) as Number).toInt() } },
             "different move orders must preserve the same transposed position at their canonical plies",
         )
@@ -423,9 +430,7 @@ abstract class HumanMoveCorpusBaseIntegrationTest {
         fen: String,
         move: String,
         count: Int = 1,
-    ): HumanMoveCorpusObservedMove {
-        return HumanMoveCorpusObservedMove(GameParserService.generateHash(fen), fen, move, count)
-    }
+    ): HumanMoveCorpusObservedMove = HumanMoveCorpusObservedMove(GameParserService.generateHash(fen), fen, move, count)
 
     protected fun lifecycleCandidate(
         label: String,
@@ -504,11 +509,17 @@ abstract class HumanMoveCorpusBaseIntegrationTest {
 
     /** p1 plays three in-band opponents; newest-first traversal order is a, b, c. */
     protected fun stubThreeGames() {
-        org.mockito.kotlin.whenever(chessComClient.fetchArchiveUrls("p1")).thenReturn(listOf(archive))
+        org.mockito.kotlin
+            .whenever(chessComClient.fetchArchiveUrls("p1"))
+            .thenReturn(listOf(archive))
         org.mockito.kotlin.whenever(chessComClient.fetchMonthlyGames(archive)).thenReturn(
             listOf(rapid("http://c", "p1", "p4"), rapid("http://b", "p1", "p3"), rapid("http://a", "p1", "p2")),
         )
-        listOf("p2", "p3", "p4").forEach { org.mockito.kotlin.whenever(chessComClient.fetchArchiveUrls(it)).thenReturn(emptyList()) }
+        listOf("p2", "p3", "p4").forEach {
+            org.mockito.kotlin
+                .whenever(chessComClient.fetchArchiveUrls(it))
+                .thenReturn(emptyList())
+        }
     }
 
     protected fun installTrigger(

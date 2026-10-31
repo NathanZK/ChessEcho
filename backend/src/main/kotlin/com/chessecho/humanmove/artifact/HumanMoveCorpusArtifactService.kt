@@ -21,7 +21,10 @@ import java.nio.file.Path
 import java.sql.ResultSet
 import java.util.UUID
 
-data class HumanMoveCorpusExportRequest(val runId: UUID, val prefixN: Int)
+data class HumanMoveCorpusExportRequest(
+    val runId: UUID,
+    val prefixN: Int,
+)
 
 @ConfigurationProperties(prefix = "chessecho.corpus")
 @Component
@@ -109,21 +112,22 @@ class HumanMoveCorpusArtifactService(
     private fun validateExportPreconditions(request: HumanMoveCorpusExportRequest): HumanMoveCorpusRun {
         require(request.prefixN >= 1) { "prefixN must be >= 1 (got ${request.prefixN})" }
         val runMetadataFits =
-            jdbcTemplate.query(
-                """
-                SELECT (
-                    octet_length(seed_players)::bigint +
-                    octet_length(excluded_players)::bigint +
-                    octet_length(request_json)::bigint +
-                    COALESCE(octet_length(failure_details)::bigint, 0)
-                ) <= ?
-                FROM human_move_corpus_run
-                WHERE id = ?
-                """.trimIndent(),
-                { rows, _ -> rows.getBoolean(1) },
-                properties.maxRecordBytes.toLong(),
-                request.runId,
-            ).singleOrNull()
+            jdbcTemplate
+                .query(
+                    """
+                    SELECT (
+                        octet_length(seed_players)::bigint +
+                        octet_length(excluded_players)::bigint +
+                        octet_length(request_json)::bigint +
+                        COALESCE(octet_length(failure_details)::bigint, 0)
+                    ) <= ?
+                    FROM human_move_corpus_run
+                    WHERE id = ?
+                    """.trimIndent(),
+                    { rows, _ -> rows.getBoolean(1) },
+                    properties.maxRecordBytes.toLong(),
+                    request.runId,
+                ).singleOrNull()
         if (runMetadataFits == false) {
             throw CorpusArtifactInvalidException(
                 "Source run metadata exceeds the configured maximum manifest record size",
@@ -155,24 +159,25 @@ class HumanMoveCorpusArtifactService(
         try {
             jdbcTemplate.query(
                 { connection ->
-                    connection.prepareStatement(
-                        """
-                        SELECT qualifying_ordinal, provider_game_id, traversed_player, opponent, opponent_side, opponent_rating,
-                               CASE WHEN octet_length(pgn) <= ? THEN pgn ELSE NULL END AS pgn,
-                               octet_length(pgn) AS pgn_bytes,
-                               rules, time_class, bfs_depth, pgn_sha256, observation_total, distinct_move_count, committed_at
-                        FROM human_move_corpus_game
-                        WHERE run_id = ? AND qualifying_ordinal <= ?
-                        ORDER BY qualifying_ordinal
-                        """.trimIndent(),
-                        ResultSet.TYPE_FORWARD_ONLY,
-                        ResultSet.CONCUR_READ_ONLY,
-                    ).apply {
-                        fetchSize = 16
-                        setInt(1, properties.maxRecordBytes)
-                        setObject(2, runId)
-                        setInt(3, prefixN)
-                    }
+                    connection
+                        .prepareStatement(
+                            """
+                            SELECT qualifying_ordinal, provider_game_id, traversed_player, opponent, opponent_side, opponent_rating,
+                                   CASE WHEN octet_length(pgn) <= ? THEN pgn ELSE NULL END AS pgn,
+                                   octet_length(pgn) AS pgn_bytes,
+                                   rules, time_class, bfs_depth, pgn_sha256, observation_total, distinct_move_count, committed_at
+                            FROM human_move_corpus_game
+                            WHERE run_id = ? AND qualifying_ordinal <= ?
+                            ORDER BY qualifying_ordinal
+                            """.trimIndent(),
+                            ResultSet.TYPE_FORWARD_ONLY,
+                            ResultSet.CONCUR_READ_ONLY,
+                        ).apply {
+                            fetchSize = 16
+                            setInt(1, properties.maxRecordBytes)
+                            setObject(2, runId)
+                            setInt(3, prefixN)
+                        }
                 },
                 ResultSetExtractor { rows ->
                     writeGameRecords(rows, gameWriter)
@@ -205,24 +210,25 @@ class HumanMoveCorpusArtifactService(
         try {
             jdbcTemplate.query(
                 { connection ->
-                    connection.prepareStatement(
-                        """
-                        SELECT g.qualifying_ordinal, o.position_hash,
-                               CASE WHEN octet_length(p.fen) <= 512 THEN p.fen ELSE NULL END AS fen,
-                               octet_length(p.fen) AS fen_bytes, o.move_played, o.observation_count
-                        FROM human_move_corpus_observation o
-                        JOIN human_move_corpus_game g ON g.id = o.game_id
-                        JOIN position p ON p.id = o.position_id
-                        WHERE g.run_id = ? AND g.qualifying_ordinal <= ?
-                        ORDER BY g.qualifying_ordinal, o.position_hash, o.move_played
-                        """.trimIndent(),
-                        ResultSet.TYPE_FORWARD_ONLY,
-                        ResultSet.CONCUR_READ_ONLY,
-                    ).apply {
-                        fetchSize = 512
-                        setObject(1, runId)
-                        setInt(2, prefixN)
-                    }
+                    connection
+                        .prepareStatement(
+                            """
+                            SELECT g.qualifying_ordinal, o.position_hash,
+                                   CASE WHEN octet_length(p.fen) <= 512 THEN p.fen ELSE NULL END AS fen,
+                                   octet_length(p.fen) AS fen_bytes, o.move_played, o.observation_count
+                            FROM human_move_corpus_observation o
+                            JOIN human_move_corpus_game g ON g.id = o.game_id
+                            JOIN position p ON p.id = o.position_id
+                            WHERE g.run_id = ? AND g.qualifying_ordinal <= ?
+                            ORDER BY g.qualifying_ordinal, o.position_hash, o.move_played
+                            """.trimIndent(),
+                            ResultSet.TYPE_FORWARD_ONLY,
+                            ResultSet.CONCUR_READ_ONLY,
+                        ).apply {
+                            fetchSize = 512
+                            setObject(1, runId)
+                            setInt(2, prefixN)
+                        }
                 },
                 ResultSetExtractor { rows ->
                     writeObservationRecords(rows, observationWriter)
@@ -305,7 +311,8 @@ class HumanMoveCorpusArtifactService(
         path: Path,
         expectedDigest: String,
     ): VerifiedCorpusArtifact =
-        HumanMoveCorpusArtifactVerifier.verify(path, expectedDigest, limits())
+        HumanMoveCorpusArtifactVerifier
+            .verify(path, expectedDigest, limits())
             .copy(archivePath = path.toAbsolutePath().normalize())
 
     fun verifyAndArchive(
