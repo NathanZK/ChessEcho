@@ -261,7 +261,14 @@ class PuzzleSubmissionPostgresIntegrationTest {
                          position_occurrence_id, submission_id, submitted_move)
                     VALUES (?, ?, ?, ?, 'WHITE', ?, ?, ?, ?)
                     """.trimIndent(),
-                    UUID.randomUUID(), values[0], account.id, position.id, values[1], values[2], values[3], values[4],
+                    UUID.randomUUID(),
+                    values[0],
+                    account.id,
+                    position.id,
+                    values[1],
+                    values[2],
+                    values[3],
+                    values[4],
                 )
             }
         }

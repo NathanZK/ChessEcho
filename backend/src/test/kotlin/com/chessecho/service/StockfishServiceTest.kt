@@ -146,12 +146,10 @@ class StockfishServiceTest {
         assertEquals("(none)", result.bestMove)
     }
 
-    private fun simulatedReader(vararg lines: String): BufferedReader {
-        return BufferedReader(StringReader(lines.joinToString("\n")))
-    }
+    private fun simulatedReader(vararg lines: String): BufferedReader = BufferedReader(StringReader(lines.joinToString("\n")))
 
-    private fun isStockfishOnPath(): Boolean {
-        return try {
+    private fun isStockfishOnPath(): Boolean =
+        try {
             val process = ProcessBuilder("stockfish").start()
             val writer = OutputStreamWriter(process.outputStream)
             writer.write("quit\n")
@@ -161,7 +159,6 @@ class StockfishServiceTest {
         } catch (_: Exception) {
             false
         }
-    }
 
     @Test
     fun `resolveForcingPvContinuation resolves forcing recapture and stops at quiet move`() {
@@ -460,7 +457,8 @@ class StockfishServiceTest {
 
     @Test
     fun `resolveForcingPvContinuation executes live Stockfish subprocess when available on PATH`() {
-        org.junit.jupiter.api.Assumptions.assumeTrue(isStockfishOnPath(), "Stockfish binary not installed on host PATH")
+        org.junit.jupiter.api.Assumptions
+            .assumeTrue(isStockfishOnPath(), "Stockfish binary not installed on host PATH")
         val stockfishService = StockfishService()
         val opera = "3rkb1r/p2R1ppp/4qn2/1B2p1B1/4P3/1Q6/PPP2PPP/2K4R b k - 0 13"
         val result = stockfishService.resolveForcingPvContinuation(opera, QuiescenceOptions(timeoutMs = 5000L))

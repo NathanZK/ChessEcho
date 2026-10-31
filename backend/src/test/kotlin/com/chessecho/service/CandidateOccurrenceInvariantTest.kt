@@ -132,7 +132,5 @@ class CandidateOccurrenceInvariantTest {
     private fun accountB_f(
         user: AppUser,
         account: ChessAccount,
-    ): ChessAccount {
-        return account
-    }
+    ): ChessAccount = account
 }

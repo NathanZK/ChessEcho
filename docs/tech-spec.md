@@ -24,7 +24,7 @@ architecture:
   - **Reference-evidence subsystem**: The explicit-input producer creates #430 snapshots; retained admission and coverage are documented in `docs/engineering/human-move-corpus-portability.md`.
 
 stack:
-  - **Backend**: Kotlin 2.0, Spring Boot 3.3.2, Spring Data JPA, Flyway, PostgreSQL 16, kchesslib, Stockfish.
+  - **Backend**: Kotlin 2.1, Spring Boot 3.5.14, Spring Data JPA, Flyway, PostgreSQL 16, kchesslib, Stockfish.
   - **Frontend**: Next.js 16, React 19, TypeScript, react-chessboard, chess.js, Tailwind CSS 4.
   - **Build and runtime**: Gradle and Java 21; npm and Node.js 20; Docker Compose for PostgreSQL and the application.
   - **Tests**: JUnit 5, Mockito, H2, Testcontainers, Vitest, and Testing Library.

@@ -140,12 +140,14 @@ class HumanMoveBfsSingletonTest : HumanMoveBfsBaseTest() {
 
         // Override: claim throws HumanMoveBfsClaimConflictException to simulate
         // a DB PK collision (e.g., a race under a hypothetical multi-writer scenario).
-        org.mockito.Mockito.doThrow(
-            HumanMoveBfsClaimConflictException(
-                attempted = 2,
-                cause = IllegalStateException("simulated collision"),
-            ),
-        ).whenever(humanMoveBfsSeenGameClaimer).claimGameUrls(any<Collection<String>>())
+        org.mockito.Mockito
+            .doThrow(
+                HumanMoveBfsClaimConflictException(
+                    attempted = 2,
+                    cause = IllegalStateException("simulated collision"),
+                ),
+            ).whenever(humanMoveBfsSeenGameClaimer)
+            .claimGameUrls(any<Collection<String>>())
 
         assertThrows(HumanMoveBfsClaimConflictException::class.java) {
             service.runBfs(

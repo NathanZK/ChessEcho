@@ -82,7 +82,10 @@ class PuzzleEventControllerTest {
     fun `record searches only the explicitly selected account`() {
         val user = AppUser()
         val principal = AuthenticatedPrincipal(user.id, devPrincipal = false)
-        val accountId = com.chessecho.domain.ChessAccount(platform = "CHESS_COM", username = "shared-player").id
+        val accountId =
+            com.chessecho.domain
+                .ChessAccount(platform = "CHESS_COM", username = "shared-player")
+                .id
         val positionId = Position(hash = "position-hash", fen = "fen").id
         whenever(
             accountOwnershipService.resolveSharedAccount(accountId, principal),

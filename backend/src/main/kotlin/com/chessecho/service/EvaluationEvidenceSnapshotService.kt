@@ -94,7 +94,10 @@ data class PracticalEvidenceCounts(
     val losses: Int,
 )
 
-class EvaluationEvidenceIntegrityException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
+class EvaluationEvidenceIntegrityException(
+    message: String,
+    cause: Throwable? = null,
+) : RuntimeException(message, cause)
 
 @Service
 class EvaluationEvidenceSnapshotService(
@@ -186,21 +189,22 @@ class EvaluationEvidenceSnapshotService(
         val digest = computeEvidenceDigest(snapshot.referencePopulation, canonicalRows)
 
         val existing =
-            db.query(
-                "SELECT id, source_run_id, evidence_digest, roster_json, content_digest, covered_prefix, prefix_n, rating_band, " +
-                    "min_observations, calculation_version, distribution_sha256, occurrence_evidence_id, thresholds, " +
-                    "min_mistake_count, min_times_reached, color, platform, observation_window_days, source_revision, " +
-                    "engine_identity, parser_identity FROM evaluation_evidence_snapshot WHERE source_run_id = ?",
-                { rs, _ ->
-                    ExistingSnapshot(
-                        id = rs.getObject("id", UUID::class.java),
-                        evidenceDigest = rs.getString("evidence_digest"),
-                        snapshot = readSnapshotMetadata(rs),
-                        players = readRoster(rs.getString("roster_json")),
-                    )
-                },
-                snapshot.referencePopulation.sourceRunId,
-            ).singleOrNull()
+            db
+                .query(
+                    "SELECT id, source_run_id, evidence_digest, roster_json, content_digest, covered_prefix, prefix_n, rating_band, " +
+                        "min_observations, calculation_version, distribution_sha256, occurrence_evidence_id, thresholds, " +
+                        "min_mistake_count, min_times_reached, color, platform, observation_window_days, source_revision, " +
+                        "engine_identity, parser_identity FROM evaluation_evidence_snapshot WHERE source_run_id = ?",
+                    { rs, _ ->
+                        ExistingSnapshot(
+                            id = rs.getObject("id", UUID::class.java),
+                            evidenceDigest = rs.getString("evidence_digest"),
+                            snapshot = readSnapshotMetadata(rs),
+                            players = readRoster(rs.getString("roster_json")),
+                        )
+                    },
+                    snapshot.referencePopulation.sourceRunId,
+                ).singleOrNull()
         if (existing != null) {
             if (existing.evidenceDigest == digest &&
                 existing.snapshot == snapshotMetadata(snapshot) &&
@@ -224,21 +228,22 @@ class EvaluationEvidenceSnapshotService(
     fun readVerifiedPersisted(sourceRunId: UUID): EvaluationEvidenceSnapshot {
         val db = requireJdbcTemplate()
         val row =
-            db.query(
-                "SELECT id, source_run_id, content_digest, covered_prefix, prefix_n, rating_band, min_observations, " +
-                    "calculation_version, distribution_sha256, occurrence_evidence_id, thresholds, min_mistake_count, " +
-                    "min_times_reached, color, platform, observation_window_days, source_revision, engine_identity, " +
-                    "parser_identity, evidence_digest, roster_json FROM evaluation_evidence_snapshot WHERE source_run_id = ?",
-                { rs, _ ->
-                    ExistingSnapshot(
-                        id = rs.getObject("id", UUID::class.java),
-                        evidenceDigest = rs.getString("evidence_digest"),
-                        snapshot = readSnapshotMetadata(rs),
-                        players = readRoster(rs.getString("roster_json")),
-                    )
-                },
-                sourceRunId,
-            ).singleOrNull()
+            db
+                .query(
+                    "SELECT id, source_run_id, content_digest, covered_prefix, prefix_n, rating_band, min_observations, " +
+                        "calculation_version, distribution_sha256, occurrence_evidence_id, thresholds, min_mistake_count, " +
+                        "min_times_reached, color, platform, observation_window_days, source_revision, engine_identity, " +
+                        "parser_identity, evidence_digest, roster_json FROM evaluation_evidence_snapshot WHERE source_run_id = ?",
+                    { rs, _ ->
+                        ExistingSnapshot(
+                            id = rs.getObject("id", UUID::class.java),
+                            evidenceDigest = rs.getString("evidence_digest"),
+                            snapshot = readSnapshotMetadata(rs),
+                            players = readRoster(rs.getString("roster_json")),
+                        )
+                    },
+                    sourceRunId,
+                ).singleOrNull()
                 ?: throw EvaluationEvidenceIntegrityException("No retained evaluation evidence for source run $sourceRunId")
 
         val players =
@@ -281,19 +286,20 @@ class EvaluationEvidenceSnapshotService(
     fun reconstructPersisted(sourceRunId: UUID): EvaluationEvidenceReconstruction {
         val db = requireJdbcTemplate()
         val (snapshotId, thresholds, players) =
-            db.query(
-                "SELECT id, thresholds, roster_json FROM evaluation_evidence_snapshot WHERE source_run_id = ?",
-                { rs, _ ->
-                    val thresholdValues = extractThresholds(rs)
-                    Triple(
-                        rs.getObject("id", UUID::class.java),
-                        thresholdValues,
-                        readRoster(rs.getString("roster_json"))
-                            ?: throw EvaluationEvidenceIntegrityException("Retained evaluation evidence has no declared roster"),
-                    )
-                },
-                sourceRunId,
-            ).singleOrNull()
+            db
+                .query(
+                    "SELECT id, thresholds, roster_json FROM evaluation_evidence_snapshot WHERE source_run_id = ?",
+                    { rs, _ ->
+                        val thresholdValues = extractThresholds(rs)
+                        Triple(
+                            rs.getObject("id", UUID::class.java),
+                            thresholdValues,
+                            readRoster(rs.getString("roster_json"))
+                                ?: throw EvaluationEvidenceIntegrityException("Retained evaluation evidence has no declared roster"),
+                        )
+                    },
+                    sourceRunId,
+                ).singleOrNull()
                 ?: throw EvaluationEvidenceIntegrityException(
                     "No retained evaluation evidence for source run $sourceRunId",
                 )
@@ -353,7 +359,8 @@ class EvaluationEvidenceSnapshotService(
         val outcomes =
             players.associate { player ->
                 player.id to
-                    rowsByPlayer[player.id].orEmpty()
+                    rowsByPlayer[player.id]
+                        .orEmpty()
                         .distinctBy { it.gameId }
                         .groupBy { it.observedOutcome }
                         .mapValues { it.value.size }
@@ -384,9 +391,10 @@ class EvaluationEvidenceSnapshotService(
                 )
             }
             val practicalFacts =
-                group.map {
-                    listOf(it.practicalCandidate, it.practicalEligible, it.practicalWins, it.practicalDraws, it.practicalLosses)
-                }.toSet()
+                group
+                    .map {
+                        listOf(it.practicalCandidate, it.practicalEligible, it.practicalWins, it.practicalDraws, it.practicalLosses)
+                    }.toSet()
             if (practicalFacts.size > 1) {
                 throw EvaluationEvidenceIntegrityException(
                     "Conflicting practical evidence for player ${key.first} game ${key.second}",
@@ -409,21 +417,22 @@ class EvaluationEvidenceSnapshotService(
         if (occurrenceIds.isEmpty()) return
         val placeholders = occurrenceIds.joinToString(",") { "?" }
         val occurrences =
-            db.query(
-                "SELECT id, source_run_id, position_hash, pre_move_ply, content_digest, covered_prefix " +
-                    "FROM human_move_corpus_occurrence WHERE id IN ($placeholders)",
-                { rs, _ ->
-                    rs.getObject("id", UUID::class.java) to
-                        OccurrenceRecord(
-                            sourceRunId = rs.getObject("source_run_id", UUID::class.java),
-                            positionHash = rs.getString("position_hash"),
-                            preMovePly = rs.getInt("pre_move_ply"),
-                            contentDigest = rs.getString("content_digest"),
-                            coveredPrefix = rs.getObject("covered_prefix") as Int?,
-                        )
-                },
-                *occurrenceIds.toTypedArray(),
-            ).toMap()
+            db
+                .query(
+                    "SELECT id, source_run_id, position_hash, pre_move_ply, content_digest, covered_prefix " +
+                        "FROM human_move_corpus_occurrence WHERE id IN ($placeholders)",
+                    { rs, _ ->
+                        rs.getObject("id", UUID::class.java) to
+                            OccurrenceRecord(
+                                sourceRunId = rs.getObject("source_run_id", UUID::class.java),
+                                positionHash = rs.getString("position_hash"),
+                                preMovePly = rs.getInt("pre_move_ply"),
+                                contentDigest = rs.getString("content_digest"),
+                                coveredPrefix = rs.getObject("covered_prefix") as Int?,
+                            )
+                    },
+                    *occurrenceIds.toTypedArray(),
+                ).toMap()
 
         rows.forEach { row ->
             val occurrence =

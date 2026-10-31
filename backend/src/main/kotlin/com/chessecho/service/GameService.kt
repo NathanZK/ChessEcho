@@ -81,8 +81,8 @@ class GameService(
             .map { it.toDto() }
     }
 
-    private fun Game.toDto(): GameDto {
-        return GameDto(
+    private fun Game.toDto(): GameDto =
+        GameDto(
             id = this.id.toString(),
             platformGameId = this.platformGameId,
             timeControl = this.timeControl,
@@ -92,5 +92,4 @@ class GameService(
             blackUsername = this.blackUsername,
             pgn = this.pgn,
         )
-    }
 }

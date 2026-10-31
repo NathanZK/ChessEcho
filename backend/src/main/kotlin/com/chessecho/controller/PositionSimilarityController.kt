@@ -61,8 +61,8 @@ class PositionSimilarityController(
         accountId: UUID?,
         username: String?,
         principal: AuthenticatedPrincipal?,
-    ): ChessAccount {
-        return if (principal != null) {
+    ): ChessAccount =
+        if (principal != null) {
             if (!username.isNullOrBlank()) {
                 throw AccountSelectionRequiredException("An accountId is required for authenticated private data")
             }
@@ -79,7 +79,6 @@ class PositionSimilarityController(
             }
             accountOwnershipService.resolvePrivateRead(Platform.CHESS_COM, username, null)
         }
-    }
 
     private fun toResponse(result: SimilarPositionsResult): SimilarPositionsResponse =
         SimilarPositionsResponse(

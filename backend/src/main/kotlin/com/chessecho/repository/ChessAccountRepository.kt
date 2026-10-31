@@ -23,9 +23,7 @@ interface ChessAccountRepository : JpaRepository<ChessAccount, UUID> {
     fun findByPlatformAndUsernameIgnoreCase(
         platform: String,
         username: String,
-    ): ChessAccount? {
-        return findByPlatformAndUsernameAll(platform, username).firstOrNull()
-    }
+    ): ChessAccount? = findByPlatformAndUsernameAll(platform, username).firstOrNull()
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query(

@@ -229,7 +229,13 @@ class HumanMoveCorpusOrdinalIntegrationTest : HumanMoveCorpusBaseIntegrationTest
             listOf(1, 2, 4).forEach { min ->
                 val response = checkpoint(runId, n, min)
                 val expected = expectedRows(candidates.take(n), min)
-                val evaluated = candidates.take(n).flatMap { it.observations }.map { it.positionHash }.distinct().size
+                val evaluated =
+                    candidates
+                        .take(n)
+                        .flatMap { it.observations }
+                        .map { it.positionHash }
+                        .distinct()
+                        .size
                 assertEquals(expected, rowsOf(response), "prefix $n min $min")
                 assertEquals(n, response.requestedN)
                 assertEquals(10, response.committedFrontier)
@@ -319,17 +325,18 @@ class HumanMoveCorpusOrdinalIntegrationTest : HumanMoveCorpusBaseIntegrationTest
         }
         val finalized = finalizationService.finalize(HumanMoveFinalizeRequest(ratingBand = legacyBand, minObservations = min))
         val legacyRetained =
-            jdbcTemplate.queryForList(
-                "SELECT p.hash, d.move_played, d.observation_count FROM human_move_distribution d " +
-                    "JOIN position p ON p.id = d.position_id WHERE d.rating_band = ? ORDER BY p.hash, d.move_played",
-                legacyBand,
-            ).map {
-                Triple(
-                    it["hash"].toString(),
-                    it["move_played"].toString(),
-                    ((it["observation_count"] ?: error("missing count")) as Number).toInt(),
-                )
-            }
+            jdbcTemplate
+                .queryForList(
+                    "SELECT p.hash, d.move_played, d.observation_count FROM human_move_distribution d " +
+                        "JOIN position p ON p.id = d.position_id WHERE d.rating_band = ? ORDER BY p.hash, d.move_played",
+                    legacyBand,
+                ).map {
+                    Triple(
+                        it["hash"].toString(),
+                        it["move_played"].toString(),
+                        ((it["observation_count"] ?: error("missing count")) as Number).toInt(),
+                    )
+                }
 
         assertEquals(legacyRetained, rowsOf(response))
         assertEquals(finalized.positionsEvaluated, response.positionsEvaluated)
@@ -445,12 +452,13 @@ class HumanMoveCorpusOrdinalIntegrationTest : HumanMoveCorpusBaseIntegrationTest
 
     private fun checkOverlappedAdvisory(holder: java.sql.Connection): Boolean =
         holder.createStatement().use { statement ->
-            statement.executeQuery(
-                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity gated " +
-                    "JOIN pg_stat_activity waiter ON gated.pid = ANY(pg_blocking_pids(waiter.pid)) " +
-                    "WHERE gated.wait_event = 'advisory' AND gated.pid <> pg_backend_pid() " +
-                    "AND waiter.pid <> pg_backend_pid())",
-            ).use { rs -> rs.next() && rs.getBoolean(1) }
+            statement
+                .executeQuery(
+                    "SELECT EXISTS (SELECT 1 FROM pg_stat_activity gated " +
+                        "JOIN pg_stat_activity waiter ON gated.pid = ANY(pg_blocking_pids(waiter.pid)) " +
+                        "WHERE gated.wait_event = 'advisory' AND gated.pid <> pg_backend_pid() " +
+                        "AND waiter.pid <> pg_backend_pid())",
+                ).use { rs -> rs.next() && rs.getBoolean(1) }
         }
 
     private fun executeAdvisory(

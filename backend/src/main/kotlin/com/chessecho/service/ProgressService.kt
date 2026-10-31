@@ -115,11 +115,12 @@ class ProgressService(
                     analysis?.bestMoveEvalMate,
                 )
             val won =
-                gameOutcomeNormalizer.normalize(
-                    occurrence.game,
-                    occurrence.playerColor,
-                    accountUsername,
-                ).outcome == PracticalOutcome.WIN
+                gameOutcomeNormalizer
+                    .normalize(
+                        occurrence.game,
+                        occurrence.playerColor,
+                        accountUsername,
+                    ).outcome == PracticalOutcome.WIN
             val accumulator =
                 if (latestCheckpointIndex < 0) {
                     baselineAccumulator
@@ -194,11 +195,20 @@ class ProgressService(
         return "$mistakeClause, $conjunction $winClause."
     }
 
-    private data class Checkpoint(val id: UUID, val occurredAt: Instant)
+    private data class Checkpoint(
+        val id: UUID,
+        val occurredAt: Instant,
+    )
 
-    private data class DatedOccurrence(val occurrence: PositionOccurrence, val playedAt: Instant)
+    private data class DatedOccurrence(
+        val occurrence: PositionOccurrence,
+        val playedAt: Instant,
+    )
 
-    private data class IntervalAccumulator(val checkpoint: Checkpoint, val accumulator: Accumulator)
+    private data class IntervalAccumulator(
+        val checkpoint: Checkpoint,
+        val accumulator: Accumulator,
+    )
 
     private data class AccumulatedProgress(
         val baselineAccumulator: Accumulator,

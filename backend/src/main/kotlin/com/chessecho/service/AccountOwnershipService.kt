@@ -97,7 +97,8 @@ class AccountOwnershipService(
         if (request.isAuthenticatedForm()) {
             val accountId = request.accountId!!
             val account =
-                chessAccountRepository.findById(accountId)
+                chessAccountRepository
+                    .findById(accountId)
                     .orElseThrow { AccountNotFoundException("Account not found: $accountId") }
             verifySnapshots(request, account)
             val resolvedPrincipal = principal ?: throw UnauthenticatedException()
@@ -138,7 +139,8 @@ class AccountOwnershipService(
         principal: AuthenticatedPrincipal?,
     ): ChessAccount {
         val account =
-            chessAccountRepository.findById(accountId)
+            chessAccountRepository
+                .findById(accountId)
                 .orElseThrow { AccountNotFoundException("Account not found: $accountId") }
         if (principal == null) throw UnauthenticatedException()
         requireOwner(principal, account)
@@ -164,7 +166,8 @@ class AccountOwnershipService(
         principal: AuthenticatedPrincipal?,
     ): ChessAccount {
         val account =
-            chessAccountRepository.findById(accountId)
+            chessAccountRepository
+                .findById(accountId)
                 .orElseThrow { AccountNotFoundException("Account not found: $accountId") }
         if (principal == null) throw UnauthenticatedException()
         return account
@@ -176,7 +179,8 @@ class AccountOwnershipService(
         principal: AuthenticatedPrincipal,
     ): ChessAccount {
         val account =
-            chessAccountRepository.findById(accountId)
+            chessAccountRepository
+                .findById(accountId)
                 .orElseThrow { AccountNotFoundException("Account not found: $accountId") }
         requireOwner(principal, account)
         return account
@@ -188,7 +192,8 @@ class AccountOwnershipService(
         principal: AuthenticatedPrincipal,
     ): ChessAccount {
         val account =
-            chessAccountRepository.findById(accountId)
+            chessAccountRepository
+                .findById(accountId)
                 .orElseThrow { AccountNotFoundException("Account not found: $accountId") }
         if (!connectionRepository.existsByAppUserIdAndChessAccountId(principal.appUserId, account.id)) {
             throw AccountNotFoundException("Account connection not found: $accountId")
@@ -244,15 +249,16 @@ class AccountOwnershipService(
                         } else {
                             ""
                         }
-                    connection.prepareStatement(
-                        "INSERT INTO chess_account (id, platform, username, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP) " +
-                            "ON CONFLICT$conflictTarget DO NOTHING",
-                    ).use { statement ->
-                        statement.setObject(1, UUID.randomUUID())
-                        statement.setString(2, platform)
-                        statement.setString(3, username)
-                        statement.executeUpdate()
-                    }
+                    connection
+                        .prepareStatement(
+                            "INSERT INTO chess_account (id, platform, username, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP) " +
+                                "ON CONFLICT$conflictTarget DO NOTHING",
+                        ).use { statement ->
+                            statement.setObject(1, UUID.randomUUID())
+                            statement.setString(2, platform)
+                            statement.setString(3, username)
+                            statement.executeUpdate()
+                        }
                 },
             ) ?: throw IllegalStateException("Shared account insert returned no result")
         // A separate statement sees a concurrent winner after ON CONFLICT waits
@@ -303,16 +309,22 @@ data class AssociationResult(
     val created: Boolean,
 )
 
-class AccountNotFoundException(message: String = "Account not found") : RuntimeException(message)
+class AccountNotFoundException(
+    message: String = "Account not found",
+) : RuntimeException(message)
 
-class ForbiddenAccountException(message: String = "The authenticated principal does not own this account") :
-    RuntimeException(message)
+class ForbiddenAccountException(
+    message: String = "The authenticated principal does not own this account",
+) : RuntimeException(message)
 
-class AccountConnectionLimitReachedException(message: String = "Disconnect the current account before connecting another account") :
-    RuntimeException(message)
+class AccountConnectionLimitReachedException(
+    message: String = "Disconnect the current account before connecting another account",
+) : RuntimeException(message)
 
-class AccountSelectionRequiredException(message: String = "An accountId is required for authenticated private data") :
-    RuntimeException(message)
+class AccountSelectionRequiredException(
+    message: String = "An accountId is required for authenticated private data",
+) : RuntimeException(message)
 
-class AccountSelectionMismatchException(message: String = "The supplied account metadata does not match accountId") :
-    RuntimeException(message)
+class AccountSelectionMismatchException(
+    message: String = "The supplied account metadata does not match accountId",
+) : RuntimeException(message)

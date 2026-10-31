@@ -52,11 +52,12 @@ class PuzzleEventController(
         val accountId = request.accountId ?: throw AccountSelectionRequiredException()
         val account = accountOwnershipService.resolveSharedAccount(accountId, principal)
         val occurrence =
-            positionOccurrenceRepository.findByChessAccountIdAndPlayerColorAndPositionIdIn(
-                account.id,
-                request.playerColor,
-                listOf(request.positionId),
-            ).firstOrNull()
+            positionOccurrenceRepository
+                .findByChessAccountIdAndPlayerColorAndPositionIdIn(
+                    account.id,
+                    request.playerColor,
+                    listOf(request.positionId),
+                ).firstOrNull()
                 ?: return ResponseEntity.notFound().build<Unit>()
 
         val event =

@@ -359,7 +359,10 @@ class EngineAnalysisPostgresConcurrencyTest {
 
         assertTrue(
             failure.message.orEmpty().contains("other_unique_constraint") ||
-                failure.cause?.message.orEmpty().contains("other_unique_constraint"),
+                failure.cause
+                    ?.message
+                    .orEmpty()
+                    .contains("other_unique_constraint"),
             "an unrelated 23505 must remain distinguishable: $failure",
         )
         assertEquals(0, engineAnalysisRepository.count())
@@ -449,18 +452,20 @@ class EngineAnalysisPostgresConcurrencyTest {
         val start = CountDownLatch(1)
         val pool = Executors.newFixedThreadPool(invocations.size)
         return try {
-            invocations.map { (position, multiPv) ->
-                pool.submit<Result<Unit>> {
-                    start.await(10, TimeUnit.SECONDS)
-                    runCatching {
-                        if (multiPv == null) {
-                            engineAnalysisService.analyzePosition(position)
-                        } else {
-                            engineAnalysisService.analyzePosition(position, multiPv)
+            invocations
+                .map { (position, multiPv) ->
+                    pool.submit<Result<Unit>> {
+                        start.await(10, TimeUnit.SECONDS)
+                        runCatching {
+                            if (multiPv == null) {
+                                engineAnalysisService.analyzePosition(position)
+                            } else {
+                                engineAnalysisService.analyzePosition(position, multiPv)
+                            }
                         }
                     }
-                }
-            }.also { start.countDown() }.map { it.get(30, TimeUnit.SECONDS) }
+                }.also { start.countDown() }
+                .map { it.get(30, TimeUnit.SECONDS) }
         } finally {
             pool.shutdownNow()
             assertTrue(pool.awaitTermination(10, TimeUnit.SECONDS), "worker executor did not terminate")

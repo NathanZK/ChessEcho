@@ -70,7 +70,8 @@ class AnalysisStatusTerminalStateTest {
 
     private fun invokeAnalysisAndRequireOutcome(affectedPositionIds: Set<UUID>): AnalysisOutcomeContract {
         val method =
-            EngineAnalysisOrchestrator::class.members
+            EngineAnalysisOrchestrator::class
+                .members
                 .filterIsInstance<KFunction<*>>()
                 .single { it.name == "analyzeAffectedPositions" && it.parameters.size == 2 }
         val result = method.call(orchestrator, affectedPositionIds)

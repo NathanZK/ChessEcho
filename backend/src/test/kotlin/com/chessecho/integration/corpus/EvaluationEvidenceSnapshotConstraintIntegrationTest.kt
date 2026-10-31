@@ -10,8 +10,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
-class EvaluationEvidenceSnapshotConstraintIntegrationTest :
-    EvaluationEvidenceSnapshotBaseIntegrationTest() {
+class EvaluationEvidenceSnapshotConstraintIntegrationTest : EvaluationEvidenceSnapshotBaseIntegrationTest() {
     @Test
     fun `verification failure leaves no producer snapshot or evidence rows`() {
         val runId = finalizedRunWithSamePlyOccurrences()

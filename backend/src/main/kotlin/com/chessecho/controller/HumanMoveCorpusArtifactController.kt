@@ -50,10 +50,18 @@ class HumanMoveCorpusArtifactController(
         val path =
             artifactService.verifiedArchivePath(contentDigest)
                 ?: throw NoSuchElementException("Artifact $contentDigest not found")
-        return ResponseEntity.ok()
+        return ResponseEntity
+            .ok()
             .contentType(MediaType.APPLICATION_OCTET_STREAM)
-            .contentLength(java.nio.file.Files.size(path))
-            .body(InputStreamResource(java.nio.file.Files.newInputStream(path)))
+            .contentLength(
+                java.nio.file.Files
+                    .size(path),
+            ).body(
+                InputStreamResource(
+                    java.nio.file.Files
+                        .newInputStream(path),
+                ),
+            )
     }
 
     @Order(Ordered.HIGHEST_PRECEDENCE)
@@ -70,18 +78,21 @@ class HumanMoveCorpusArtifactController(
 
         @ExceptionHandler(CorpusArtifactInvalidException::class)
         fun invalid(ex: CorpusArtifactInvalidException): ResponseEntity<ErrorResponse> =
-            ResponseEntity.status(HttpStatus.BAD_REQUEST)
+            ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
                 .body(ErrorResponse(error = "CORPUS_ARTIFACT_INVALID", details = listOf(ex.message ?: "Invalid corpus artifact")))
 
         @ExceptionHandler(CorpusArtifactConflict::class)
         fun conflict(ex: CorpusArtifactConflict): ResponseEntity<ErrorResponse> =
-            ResponseEntity.status(HttpStatus.CONFLICT)
+            ResponseEntity
+                .status(HttpStatus.CONFLICT)
                 .body(ErrorResponse(error = "CORPUS_ARTIFACT_CONFLICT", details = listOf(ex.message ?: "Corpus artifact conflict")))
 
         @ExceptionHandler(DataAccessException::class)
         fun persistence(ex: DataAccessException): ResponseEntity<ErrorResponse> {
             logger.error("Corpus lifecycle persistence failed", ex)
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+            return ResponseEntity
+                .status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ErrorResponse(error = "INTERNAL_ERROR", details = listOf("Corpus lifecycle persistence failed")))
         }
     }

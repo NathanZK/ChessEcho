@@ -56,8 +56,14 @@ class EvaluationEvidenceProducerService(
         if (!isValidConfiguration(input.configuration)) {
             throw EvaluationEvidenceIntegrityException("Invalid frozen evaluation-evidence configuration")
         }
-        if (input.roster.map { it.id }.toSet().size != input.roster.size ||
-            input.roster.map { it.identity }.toSet().size != input.roster.size ||
+        if (input.roster
+                .map { it.id }
+                .toSet()
+                .size != input.roster.size ||
+            input.roster
+                .map { it.identity }
+                .toSet()
+                .size != input.roster.size ||
             input.roster.any { it.identity.isBlank() }
         ) {
             throw EvaluationEvidenceIntegrityException("Evaluation-player roster is invalid")
@@ -151,9 +157,10 @@ class EvaluationEvidenceProducerService(
         matchingOccurrences: Map<PositionPly, List<UUID>>,
     ): List<EvaluationEvidenceRow> {
         val declaredPlayers = input.roster.associateBy { it.id }
-        return operationalOccurrences.flatMap { operational ->
-            buildOccurrenceRows(operational, input, declaredPlayers, analyses, matchingOccurrences)
-        }.sortedWith(compareBy({ it.playerId }, { it.preMovePly }, { it.occurrenceId }, { it.gameId }))
+        return operationalOccurrences
+            .flatMap { operational ->
+                buildOccurrenceRows(operational, input, declaredPlayers, analyses, matchingOccurrences)
+            }.sortedWith(compareBy({ it.playerId }, { it.preMovePly }, { it.occurrenceId }, { it.gameId }))
     }
 
     private fun buildOccurrenceRows(
@@ -195,11 +202,12 @@ class EvaluationEvidenceProducerService(
 
     private fun resolveObservedOutcome(operational: PositionOccurrence): ObservedGameOutcome {
         val outcome =
-            gameOutcomeNormalizer.normalize(
-                operational.game,
-                operational.playerColor,
-                operational.chessAccount.username,
-            ).outcome
+            gameOutcomeNormalizer
+                .normalize(
+                    operational.game,
+                    operational.playerColor,
+                    operational.chessAccount.username,
+                ).outcome
                 ?: throw EvaluationEvidenceIntegrityException("A selected operational game has no normalized outcome")
         return when (outcome) {
             PracticalOutcome.WIN -> ObservedGameOutcome.WIN

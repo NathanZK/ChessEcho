@@ -15,8 +15,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-class EvaluationEvidenceSnapshotOperationalIntegrationTest :
-    EvaluationEvidenceSnapshotBaseIntegrationTest() {
+class EvaluationEvidenceSnapshotOperationalIntegrationTest : EvaluationEvidenceSnapshotBaseIntegrationTest() {
     @Test
     fun `producer preserves explicit operational links and remains admissible after source rows are unavailable`() {
         val runId = finalizedRunWithSamePlyOccurrences()
@@ -62,7 +61,10 @@ class EvaluationEvidenceSnapshotOperationalIntegrationTest :
             snapshot.rows.map { it.occurrenceId }.toSet(),
         )
         assertEquals(
-            fixture.decisions.take(2).map { it.game.id }.toSet(),
+            fixture.decisions
+                .take(2)
+                .map { it.game.id }
+                .toSet(),
             snapshot.rows.map { it.gameId }.toSet(),
         )
         val evaluatedPlayer = fixture.input.roster.single { it.id != fixture.zeroRowPlayer.id }
@@ -74,8 +76,12 @@ class EvaluationEvidenceSnapshotOperationalIntegrationTest :
         assertTrue(snapshot.rows.all { it.observedOutcome == ObservedGameOutcome.WIN })
         assertTrue(
             snapshot.rows.all {
-                it.objectiveOutcome == null && it.practicalCandidate == null && it.practicalEligible == null &&
-                    it.practicalWins == null && it.practicalDraws == null && it.practicalLosses == null
+                it.objectiveOutcome == null &&
+                    it.practicalCandidate == null &&
+                    it.practicalEligible == null &&
+                    it.practicalWins == null &&
+                    it.practicalDraws == null &&
+                    it.practicalLosses == null
             },
         )
         assertEquals(fixture.input.configuration, snapshot.configuration)

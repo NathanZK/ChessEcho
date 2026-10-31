@@ -63,7 +63,12 @@ class ReferenceCoverageAnalysisServiceTest {
         assertEquals(0.75, result.summaries.at(0.50).median)
         assertEquals(0.5, result.summaries.at(0.50).minimum)
         assertEquals(1.0, result.summaries.at(0.50).maximum)
-        assertNull(result.byPlayer.getValue("undefined").at(0.50).coverage)
+        assertNull(
+            result.byPlayer
+                .getValue("undefined")
+                .at(0.50)
+                .coverage,
+        )
         assertEquals(PositionCoverage(0, 0, null), result.byPlayer.getValue("zero-row").at(0.50))
     }
 
@@ -117,7 +122,13 @@ class ReferenceCoverageAnalysisServiceTest {
         assertEquals(1, higherThreshold.occurrenceCount)
         assertEquals(1, higherThreshold.denominator)
         assertEquals(1, higherThreshold.groupsByPreMovePly.getValue(5).numerator)
-        assertEquals(0, result.locations.getValue("alice").at(0.80).occurrenceCount)
+        assertEquals(
+            0,
+            result.locations
+                .getValue("alice")
+                .at(0.80)
+                .occurrenceCount,
+        )
         assertEquals(PositionCoverage(0, 0, null), result.byPlayer.getValue("alice").at(0.80))
     }
 
@@ -132,7 +143,13 @@ class ReferenceCoverageAnalysisServiceTest {
             assertNull(result.summaries.at(threshold).median)
             assertNull(result.summaries.at(threshold).minimum)
             assertNull(result.summaries.at(threshold).maximum)
-            assertEquals(0, result.locations.getValue("zero-row").at(threshold).occurrenceCount)
+            assertEquals(
+                0,
+                result.locations
+                    .getValue("zero-row")
+                    .at(threshold)
+                    .occurrenceCount,
+            )
         }
     }
 

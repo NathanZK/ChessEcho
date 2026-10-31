@@ -15,7 +15,10 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 
-data class EvalScore(val cp: Int?, val mate: Int?)
+data class EvalScore(
+    val cp: Int?,
+    val mate: Int?,
+)
 
 data class PositionAnalysis(
     val bestMove: String,

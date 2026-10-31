@@ -106,8 +106,8 @@ class HumanMoveProvider(
     private fun applyMove(
         fen: String,
         sanMove: String,
-    ): String? {
-        return try {
+    ): String? =
+        try {
             val board = Board()
             board.loadFromFen(fen)
             if (board.doMove(sanMove)) {
@@ -119,7 +119,6 @@ class HumanMoveProvider(
             log.error("Exception applying move $sanMove to FEN $fen", e)
             null
         }
-    }
 
     /**
      * Generates standard 4-part FEN SHA-256 hash matching GameParserService.

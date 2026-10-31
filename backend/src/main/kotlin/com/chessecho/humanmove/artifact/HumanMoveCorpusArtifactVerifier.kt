@@ -412,7 +412,8 @@ object HumanMoveCorpusArtifactVerifier {
     private fun validateUtf8Record(bytes: ByteArray) {
         val text =
             try {
-                Charsets.UTF_8.newDecoder()
+                Charsets.UTF_8
+                    .newDecoder()
                     .onMalformedInput(CodingErrorAction.REPORT)
                     .onUnmappableCharacter(CodingErrorAction.REPORT)
                     .decode(ByteBuffer.wrap(bytes))
@@ -445,9 +446,11 @@ object HumanMoveCorpusArtifactVerifier {
             metadata.path("requestSha256").asText(null)
                 ?: throw CorpusArtifactInvalidException("Missing sourceRunMetadata.requestSha256")
         val recomputed =
-            MessageDigest.getInstance(
-                "SHA-256",
-            ).digest(requestJson.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+            MessageDigest
+                .getInstance(
+                    "SHA-256",
+                ).digest(requestJson.toByteArray(Charsets.UTF_8))
+                .joinToString("") { "%02x".format(it) }
         if (recomputed != requestSha256) {
             throw CorpusArtifactInvalidException("sourceRunMetadata.requestJson does not match its declared requestSha256")
         }

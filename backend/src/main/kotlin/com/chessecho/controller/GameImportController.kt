@@ -159,13 +159,13 @@ class GameImportController(
         val fromMonth = job.fromDate
         val toMonth = job.toDate
         val scopedStatuses =
-            repository.findDerivedStatusesByChessAccountId(accountId)
+            repository
+                .findDerivedStatusesByChessAccountId(accountId)
                 .filter { view ->
                     view.yearMonth < currentMonth &&
                         (fromMonth == null || view.yearMonth >= fromMonth) &&
                         (toMonth == null || view.yearMonth <= toMonth)
-                }
-                .map { it.status }
+                }.map { it.status }
         return when {
             scopedStatuses.isEmpty() -> null
             ArchiveDerivedStatus.FAILED in scopedStatuses -> ArchiveDerivedStatus.FAILED.name

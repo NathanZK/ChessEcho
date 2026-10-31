@@ -1,10 +1,10 @@
 plugins {
-    id("org.springframework.boot") version "3.3.2"
-    id("io.spring.dependency-management") version "1.1.6"
-    kotlin("jvm") version "2.0.0"
-    kotlin("plugin.spring") version "2.0.0"
-    kotlin("plugin.jpa") version "2.0.0"
-    id("org.jlleitschuh.gradle.ktlint") version "12.1.1"
+    id("org.springframework.boot") version "3.5.14"
+    id("io.spring.dependency-management") version "1.1.7"
+    kotlin("jvm") version "2.1.0"
+    kotlin("plugin.spring") version "2.1.0"
+    kotlin("plugin.jpa") version "2.1.0"
+    id("org.jlleitschuh.gradle.ktlint") version "12.2.0"
     id("info.solidsoft.pitest") version "1.15.0"
     id("io.gitlab.arturbosch.detekt") version "1.23.7"
 }
@@ -18,6 +18,7 @@ version = "0.0.1-SNAPSHOT"
 // org.testcontainers dependency graph resolves consistently to the compatible
 // version declared below, instead of only the directly-declared artifacts.
 extra["testcontainers.version"] = "1.21.4"
+extra["hibernate.version"] = "6.5.3.Final"
 
 // Targeted Spring Boot BOM property overrides to remediate Dependabot alerts
 // without altering the Spring Boot 3.3.2 baseline (Issue #616).
@@ -56,7 +57,7 @@ dependencies {
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
     implementation("com.github.bhlangonijr:chesslib:1.3.7")
-    implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.6.0")
+    implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.15")
 
     runtimeOnly("org.postgresql:postgresql")
 
@@ -77,6 +78,7 @@ tasks.withType<Test> {
 }
 
 ktlint {
+    version.set("1.4.1")
     verbose.set(true)
     outputToConsole.set(true)
 }
@@ -151,7 +153,10 @@ tasks.named<io.gitlab.arturbosch.detekt.DetektCreateBaselineTask>("detektBaselin
 configurations.matching { it.name == "detekt" }.all {
     resolutionStrategy.eachDependency {
         if (requested.group == "org.jetbrains.kotlin") {
-            useVersion(io.gitlab.arturbosch.detekt.getSupportedKotlinVersion())
+            useVersion(
+                io.gitlab.arturbosch.detekt
+                    .getSupportedKotlinVersion(),
+            )
         }
     }
 }

@@ -12,6 +12,11 @@ data class PuzzleEventRequest(
     val submittedMove: String? = null,
 )
 
-data class PuzzleSubmissionReceipt(val submissionId: UUID)
+data class PuzzleSubmissionReceipt(
+    val submissionId: UUID,
+)
 
-data class PuzzleAttemptCountResponse(val solvedCount: Long, val failedCount: Long)
+data class PuzzleAttemptCountResponse(
+    val solvedCount: Long,
+    val failedCount: Long,
+)

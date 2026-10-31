@@ -95,9 +95,7 @@ class AsyncJob(
 
     @Converter
     class FailedPositionIdsConverter : AttributeConverter<Set<UUID>, String> {
-        override fun convertToDatabaseColumn(attribute: Set<UUID>?): String {
-            return attribute.orEmpty().joinToString(",") { it.toString() }
-        }
+        override fun convertToDatabaseColumn(attribute: Set<UUID>?): String = attribute.orEmpty().joinToString(",") { it.toString() }
 
         override fun convertToEntityAttribute(dbData: String?): Set<UUID> =
             dbData

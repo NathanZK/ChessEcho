@@ -44,7 +44,8 @@ class IdentitySessionServicePersistenceTest {
     private val devClaims = VerifiedIdentityClaims(issuer = "dev-local", subject = "local-dev")
 
     private fun sha256Hex(value: String): String =
-        MessageDigest.getInstance("SHA-256")
+        MessageDigest
+            .getInstance("SHA-256")
             .digest(value.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
 

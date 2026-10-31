@@ -11,6 +11,11 @@ data class PositionDocument(
     val sideToMove: String = parseSideToMove(canonicalFen),
 ) {
     companion object {
-        fun parseSideToMove(fen: String): String = fen.trim().split("\\s+".toRegex()).getOrElse(1) { "w" }.lowercase()
+        fun parseSideToMove(fen: String): String =
+            fen
+                .trim()
+                .split("\\s+".toRegex())
+                .getOrElse(1) { "w" }
+                .lowercase()
     }
 }

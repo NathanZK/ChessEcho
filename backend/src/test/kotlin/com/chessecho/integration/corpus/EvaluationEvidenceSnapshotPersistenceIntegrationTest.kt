@@ -13,8 +13,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-class EvaluationEvidenceSnapshotPersistenceIntegrationTest :
-    EvaluationEvidenceSnapshotBaseIntegrationTest() {
+class EvaluationEvidenceSnapshotPersistenceIntegrationTest : EvaluationEvidenceSnapshotBaseIntegrationTest() {
     @Test
     fun `unavailable non-core evidence round trips and identical retry remains idempotent`() {
         val runId = finalizedRunWithOccurrences()
@@ -92,8 +91,11 @@ class EvaluationEvidenceSnapshotPersistenceIntegrationTest :
             )!!
         val admitted = retainedEvaluationEvidenceService.loadAndAdmit(runId, projectionId, "e6-v1")
         val locations =
-            ReferenceCoverageAnalysisService().analyze(admitted.toAnalysisInput())
-                .locations.getValue(snapshot.players.single().identity).at(0.50)
+            ReferenceCoverageAnalysisService()
+                .analyze(admitted.toAnalysisInput())
+                .locations
+                .getValue(snapshot.players.single().identity)
+                .at(0.50)
         assertEquals(2, locations.occurrenceCount)
         assertEquals(2, locations.uniqueGameCount)
     }
@@ -277,8 +279,20 @@ class EvaluationEvidenceSnapshotPersistenceIntegrationTest :
         assertEquals(occurrences.map { it.id }.toSet(), admitted.resolvedOccurrences.keys)
         assertEquals(PositionCoverage(2, 2, 1.0), result.byPlayer.getValue("evaluated").at(0.50))
         assertEquals(PositionCoverage(0, 0, null), result.byPlayer.getValue("zero-row").at(0.50))
-        assertEquals(2, result.locations.getValue("evaluated").at(0.50).occurrenceCount)
-        assertEquals(1, result.locations.getValue("evaluated").at(0.50).uniqueGameCount)
+        assertEquals(
+            2,
+            result.locations
+                .getValue("evaluated")
+                .at(0.50)
+                .occurrenceCount,
+        )
+        assertEquals(
+            1,
+            result.locations
+                .getValue("evaluated")
+                .at(0.50)
+                .uniqueGameCount,
+        )
     }
 
     @Test

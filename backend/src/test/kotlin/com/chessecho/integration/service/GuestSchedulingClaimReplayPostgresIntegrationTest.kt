@@ -303,7 +303,8 @@ class GuestSchedulingClaimReplayPostgresIntegrationTest {
         )
         assertEquals(
             claimedIds,
-            puzzleSchedulingEventRepository.findAll()
+            puzzleSchedulingEventRepository
+                .findAll()
                 .filter { it.sourceOccurrence != null && it.appUser == null }
                 .map { it.id }
                 .toSet(),

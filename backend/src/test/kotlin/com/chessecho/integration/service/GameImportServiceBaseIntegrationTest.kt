@@ -164,20 +164,27 @@ abstract class GameImportServiceBaseIntegrationTest {
             val stale = asyncJobRepository.findAnyByIdForUpdate(jobId) ?: error("missing job")
             stale.status = "PROCESSING"
             stale.workerToken = UUID.randomUUID()
-            stale.leaseExpiresAt = java.time.Instant.now().minusSeconds(60)
-            stale.updatedAt = java.time.Instant.now().minusSeconds(60)
+            stale.leaseExpiresAt =
+                java.time.Instant
+                    .now()
+                    .minusSeconds(60)
+            stale.updatedAt =
+                java.time.Instant
+                    .now()
+                    .minusSeconds(60)
             asyncJobRepository.save(stale)
         }
     }
 
     protected fun persistImportProgressMethod(): java.lang.reflect.Method =
-        GameImportService::class.java.getDeclaredMethod(
-            "persistImportProgress",
-            Class.forName("com.chessecho.service.GameImportService\$AsyncJobClaim"),
-            Int::class.javaPrimitiveType,
-            Int::class.javaPrimitiveType,
-            Int::class.javaPrimitiveType,
-        ).apply { isAccessible = true }
+        GameImportService::class.java
+            .getDeclaredMethod(
+                "persistImportProgress",
+                Class.forName("com.chessecho.service.GameImportService\$AsyncJobClaim"),
+                Int::class.javaPrimitiveType,
+                Int::class.javaPrimitiveType,
+                Int::class.javaPrimitiveType,
+            ).apply { isAccessible = true }
 
     protected fun asyncJobClaim(
         job: AsyncJob,

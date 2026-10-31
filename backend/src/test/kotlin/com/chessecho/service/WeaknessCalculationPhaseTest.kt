@@ -65,28 +65,32 @@ class WeaknessCalculationPhaseTest {
 
     @BeforeEach
     fun defaultPracticalFallback() {
-        lenient().`when`(
-            practicalEvidenceService.summarize(any(), any(), any(), any(), any()),
-        ).thenReturn(emptyMap())
+        lenient()
+            .`when`(
+                practicalEvidenceService.summarize(any(), any(), any(), any(), any()),
+            ).thenReturn(emptyMap())
 
         val fallbackPolicy = WeaknessPriorityPolicy(PracticalEvidenceProperties())
-        lenient().`when`(
-            weaknessPriorityPolicy.evaluate(any(), any(), anyOrNull()),
-        ).thenAnswer { invocation ->
-            fallbackPolicy.evaluate(
-                invocation.getArgument(0),
-                invocation.getArgument(1),
-                invocation.getArgument(2),
-            )
-        }
+        lenient()
+            .`when`(
+                weaknessPriorityPolicy.evaluate(any(), any(), anyOrNull()),
+            ).thenAnswer { invocation ->
+                fallbackPolicy.evaluate(
+                    invocation.getArgument(0),
+                    invocation.getArgument(1),
+                    invocation.getArgument(2),
+                )
+            }
 
-        lenient().`when`(
-            puzzleSchedulingEventRepository.findHistory(any(), any(), any(), any()),
-        ).thenReturn(emptyList())
+        lenient()
+            .`when`(
+                puzzleSchedulingEventRepository.findHistory(any(), any(), any(), any()),
+            ).thenReturn(emptyList())
 
-        lenient().`when`(
-            adaptivePuzzleSchedulingPolicy.schedule(any(), any(), any(), any()),
-        ).thenAnswer { invocation -> invocation.getArgument<Double>(0) }
+        lenient()
+            .`when`(
+                adaptivePuzzleSchedulingPolicy.schedule(any(), any(), any(), any()),
+            ).thenAnswer { invocation -> invocation.getArgument<Double>(0) }
 
         ReflectionTestUtils.setField(
             weaknessCalculationService,

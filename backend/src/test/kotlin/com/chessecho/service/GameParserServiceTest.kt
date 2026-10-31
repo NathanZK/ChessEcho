@@ -114,7 +114,8 @@ class GameParserServiceTest {
             )
 
         org.mockito.Mockito.mockStatic(java.io.File::class.java).use { fileMock ->
-            fileMock.`when`<java.io.File> { java.io.File.createTempFile(any(), any()) }
+            fileMock
+                .`when`<java.io.File> { java.io.File.createTempFile(any(), any()) }
                 .thenThrow(AssertionError("File.createTempFile must not be called during game parsing"))
 
             val affectedPositionIds = gameParserService.parseAndSavePositions(listOf(game))
@@ -328,8 +329,7 @@ class GameParserServiceTest {
         whenever(positionRepository.insertIfAbsent(any(), any(), any(), any())).thenReturn(1)
         whenever(
             positionOccurrenceRepository.insertOrRefreshDecisionTime(any(), any(), any(), any(), any(), any(), any(), anyOrNull(), any()),
-        )
-            .thenReturn(1)
+        ).thenReturn(1)
         val postgresParser =
             GameParserService(positionRepository, positionOccurrenceRepository, metadataDataSource("PostgreSQL"))
 

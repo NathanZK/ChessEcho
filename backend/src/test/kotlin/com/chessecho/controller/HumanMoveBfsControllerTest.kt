@@ -72,18 +72,19 @@ class HumanMoveBfsControllerTest {
         )
 
         cases.forEach { case ->
-            mockMvc.post("/api/admin/human-move-distribution/bfs") {
-                contentType = MediaType.APPLICATION_JSON
-                content =
-                    objectMapper.writeValueAsString(
-                        mapOf(
-                            "ratingBand" to "1000-1200",
-                            "seedPlayers" to listOf("hikaru"),
-                        ) + case.bounds,
-                    )
-            }.andExpect {
-                status { isOk() }
-            }
+            mockMvc
+                .post("/api/admin/human-move-distribution/bfs") {
+                    contentType = MediaType.APPLICATION_JSON
+                    content =
+                        objectMapper.writeValueAsString(
+                            mapOf(
+                                "ratingBand" to "1000-1200",
+                                "seedPlayers" to listOf("hikaru"),
+                            ) + case.bounds,
+                        )
+                }.andExpect {
+                    status { isOk() }
+                }
         }
 
         val captor = argumentCaptor<HumanMoveBfsRequest>()
@@ -114,13 +115,14 @@ class HumanMoveBfsControllerTest {
             ),
         )
 
-        mockMvc.post("/api/admin/human-move-distribution/bfs") {
-            contentType = MediaType.APPLICATION_JSON
-            content =
-                """{"ratingBand":"1000-1200","seedPlayers":["hikaru"],"maxPlayers":null,"maxDepth":0}"""
-        }.andExpect {
-            status { isOk() }
-        }
+        mockMvc
+            .post("/api/admin/human-move-distribution/bfs") {
+                contentType = MediaType.APPLICATION_JSON
+                content =
+                    """{"ratingBand":"1000-1200","seedPlayers":["hikaru"],"maxPlayers":null,"maxDepth":0}"""
+            }.andExpect {
+                status { isOk() }
+            }
 
         val captor = argumentCaptor<HumanMoveBfsRequest>()
         verify(humanMoveBfsService).runBfs(captor.capture())
@@ -154,13 +156,14 @@ class HumanMoveBfsControllerTest {
             )
         }
 
-        mockMvc.post("/api/admin/human-move-distribution/bfs") {
-            contentType = MediaType.APPLICATION_JSON
-            content = """{"ratingBand":"1000-1200","seedPlayers":["hikaru"]}"""
-        }.andExpect {
-            status { isBadRequest() }
-            jsonPath("$.error") { value("VALIDATION_ERROR") }
-        }
+        mockMvc
+            .post("/api/admin/human-move-distribution/bfs") {
+                contentType = MediaType.APPLICATION_JSON
+                content = """{"ratingBand":"1000-1200","seedPlayers":["hikaru"]}"""
+            }.andExpect {
+                status { isBadRequest() }
+                jsonPath("$.error") { value("VALIDATION_ERROR") }
+            }
     }
 
     @Test
@@ -188,14 +191,15 @@ class HumanMoveBfsControllerTest {
             ),
         )
 
-        mockMvc.post("/api/admin/human-move-distribution/bfs") {
-            contentType = MediaType.APPLICATION_JSON
-            content = objectMapper.writeValueAsString(request)
-        }.andExpect {
-            status { isOk() }
-            jsonPath("$.ratingBand") { value("1000-1200") }
-            jsonPath("$.stopReason") { value("EMPTY_FRONTIER") }
-        }
+        mockMvc
+            .post("/api/admin/human-move-distribution/bfs") {
+                contentType = MediaType.APPLICATION_JSON
+                content = objectMapper.writeValueAsString(request)
+            }.andExpect {
+                status { isOk() }
+                jsonPath("$.ratingBand") { value("1000-1200") }
+                jsonPath("$.stopReason") { value("EMPTY_FRONTIER") }
+            }
 
         val captor = argumentCaptor<HumanMoveBfsRequest>()
         verify(humanMoveBfsService).runBfs(captor.capture())
@@ -228,12 +232,13 @@ class HumanMoveBfsControllerTest {
             ),
         )
 
-        mockMvc.post("/api/admin/human-move-distribution/bfs") {
-            contentType = MediaType.APPLICATION_JSON
-            content = objectMapper.writeValueAsString(request)
-        }.andExpect {
-            status { isOk() }
-        }
+        mockMvc
+            .post("/api/admin/human-move-distribution/bfs") {
+                contentType = MediaType.APPLICATION_JSON
+                content = objectMapper.writeValueAsString(request)
+            }.andExpect {
+                status { isOk() }
+            }
 
         val captor = argumentCaptor<HumanMoveBfsRequest>()
         verify(humanMoveBfsService).runBfs(captor.capture())
@@ -258,18 +263,19 @@ class HumanMoveBfsControllerTest {
             ),
         )
 
-        mockMvc.post("/api/admin/human-move-distribution/finalize") {
-            contentType = MediaType.APPLICATION_JSON
-            content = objectMapper.writeValueAsString(request)
-        }.andExpect {
-            status { isOk() }
-            jsonPath("$.ratingBand") { value("1000-1200") }
-            jsonPath("$.minObservations") { value(5) }
-            jsonPath("$.positionsEvaluated") { value(100) }
-            jsonPath("$.positionsRemoved") { value(40) }
-            jsonPath("$.rowsRemoved") { value(90) }
-            jsonPath("$.positionsRetained") { value(60) }
-        }
+        mockMvc
+            .post("/api/admin/human-move-distribution/finalize") {
+                contentType = MediaType.APPLICATION_JSON
+                content = objectMapper.writeValueAsString(request)
+            }.andExpect {
+                status { isOk() }
+                jsonPath("$.ratingBand") { value("1000-1200") }
+                jsonPath("$.minObservations") { value(5) }
+                jsonPath("$.positionsEvaluated") { value(100) }
+                jsonPath("$.positionsRemoved") { value(40) }
+                jsonPath("$.rowsRemoved") { value(90) }
+                jsonPath("$.positionsRetained") { value(60) }
+            }
     }
 
     @Test
@@ -280,14 +286,16 @@ class HumanMoveBfsControllerTest {
                 "minObservations" to 5,
             )
         doThrow(IllegalArgumentException("Invalid rating band: not-a-band"))
-            .whenever(humanMoveDistributionFinalizationService).finalize(any())
+            .whenever(humanMoveDistributionFinalizationService)
+            .finalize(any())
 
-        mockMvc.post("/api/admin/human-move-distribution/finalize") {
-            contentType = MediaType.APPLICATION_JSON
-            content = objectMapper.writeValueAsString(request)
-        }.andExpect {
-            status { isBadRequest() }
-            jsonPath("$.error") { value("VALIDATION_ERROR") }
-        }
+        mockMvc
+            .post("/api/admin/human-move-distribution/finalize") {
+                contentType = MediaType.APPLICATION_JSON
+                content = objectMapper.writeValueAsString(request)
+            }.andExpect {
+                status { isBadRequest() }
+                jsonPath("$.error") { value("VALIDATION_ERROR") }
+            }
     }
 }

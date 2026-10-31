@@ -15,7 +15,9 @@ import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.multipart.MultipartFile
 import java.util.UUID
 
-data class HumanMoveCorpusPurgeRequest(val contentDigest: String)
+data class HumanMoveCorpusPurgeRequest(
+    val contentDigest: String,
+)
 
 /** Issue #426 verified, transactional import publication and gated purge/reconstruction. */
 @RestController

@@ -136,8 +136,7 @@ class PracticalEvidenceService(
                 tcEnum?.let {
                     it.name to tallyTimeControlOccurrences(occs, playerColor, accountUsername, windowStart)
                 }
-            }
-            .toMap()
+            }.toMap()
     }
 
     private fun filterTimeControlOccurrences(

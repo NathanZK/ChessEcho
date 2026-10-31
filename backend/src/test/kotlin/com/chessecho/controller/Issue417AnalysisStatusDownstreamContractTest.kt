@@ -76,7 +76,8 @@ class Issue417AnalysisStatusDownstreamContractTest {
         whenever(asyncJobRepository.findById(jobId)).thenReturn(Optional.of(job))
 
         val result =
-            mockMvc.get("/api/jobs/$jobId")
+            mockMvc
+                .get("/api/jobs/$jobId")
                 .andExpect { status { isOk() } }
                 .andReturn()
 
@@ -116,7 +117,8 @@ class Issue417AnalysisStatusDownstreamContractTest {
         whenever(asyncJobRepository.findById(jobId)).thenReturn(Optional.of(job))
 
         val result =
-            mockMvc.get("/api/jobs/$jobId")
+            mockMvc
+                .get("/api/jobs/$jobId")
                 .andExpect { status { isOk() } }
                 .andReturn()
 
@@ -165,7 +167,8 @@ class Issue417AnalysisStatusDownstreamContractTest {
         whenever(asyncJobRepository.findById(jobId)).thenReturn(Optional.of(job))
 
         val result =
-            mockMvc.get("/api/jobs/$jobId")
+            mockMvc
+                .get("/api/jobs/$jobId")
                 .andExpect { status { isOk() } }
                 .andReturn()
 
@@ -201,7 +204,8 @@ class Issue417AnalysisStatusDownstreamContractTest {
         whenever(asyncJobRepository.findById(jobId)).thenReturn(Optional.of(job))
 
         val result =
-            mockMvc.get("/api/jobs/$jobId")
+            mockMvc
+                .get("/api/jobs/$jobId")
                 .andExpect { status { isOk() } }
                 .andReturn()
 
@@ -247,11 +251,13 @@ class Issue417AnalysisStatusDownstreamContractTest {
             .thenReturn(Optional.of(analyzingJob))
 
         // Verify both jobs expose their incomplete state
-        mockMvc.get("/api/jobs/${failedJob.id}")
+        mockMvc
+            .get("/api/jobs/${failedJob.id}")
             .andExpect { status { isOk() } }
             .andExpect { jsonPath("$.analysisStatus") { value("FAILED") } }
 
-        mockMvc.get("/api/jobs/${analyzingJob.id}")
+        mockMvc
+            .get("/api/jobs/${analyzingJob.id}")
             .andExpect { status { isOk() } }
             .andExpect { jsonPath("$.analysisStatus") { value("ANALYZING") } }
 
@@ -281,7 +287,8 @@ class Issue417AnalysisStatusDownstreamContractTest {
         whenever(asyncJobRepository.findById(jobId)).thenReturn(Optional.of(job))
 
         val result =
-            mockMvc.get("/api/jobs/$jobId")
+            mockMvc
+                .get("/api/jobs/$jobId")
                 .andExpect { status { isOk() } }
                 .andReturn()
 

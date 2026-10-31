@@ -49,7 +49,9 @@ class GameDecisionTimeParserTest {
         parser.parseAndSavePositions(listOf(game))
 
         val occurrences = argumentCaptor<List<PositionOccurrence>>()
-        org.mockito.kotlin.verify(occurrenceRepository).saveAll(occurrences.capture())
+        org.mockito.kotlin
+            .verify(occurrenceRepository)
+            .saveAll(occurrences.capture())
         assertEquals(
             listOf(500L, 2_300L),
             occurrences.firstValue.sortedBy { it.plyNumber }.map { it.decisionTimeMs },
@@ -77,7 +79,9 @@ class GameDecisionTimeParserTest {
         parser.parseAndSavePositions(listOf(game))
 
         val occurrences = argumentCaptor<List<PositionOccurrence>>()
-        org.mockito.kotlin.verify(occurrenceRepository).saveAll(occurrences.capture())
+        org.mockito.kotlin
+            .verify(occurrenceRepository)
+            .saveAll(occurrences.capture())
         assertEquals(
             listOf(700L, 1_600L),
             occurrences.firstValue.sortedBy { it.plyNumber }.map { it.decisionTimeMs },
@@ -104,7 +108,9 @@ class GameDecisionTimeParserTest {
         parser.parseAndSavePositions(listOf(game))
 
         val occurrences = argumentCaptor<List<PositionOccurrence>>()
-        org.mockito.kotlin.verify(occurrenceRepository).saveAll(occurrences.capture())
+        org.mockito.kotlin
+            .verify(occurrenceRepository)
+            .saveAll(occurrences.capture())
         assertEquals(2, occurrences.firstValue.size)
         assertEquals(setOf("e4", "Nf3"), occurrences.firstValue.map { it.movePlayed }.toSet())
         assertEquals(2, occurrences.firstValue.count { it.decisionTimeMs == null })
@@ -130,7 +136,9 @@ class GameDecisionTimeParserTest {
         parser.parseAndSavePositions(listOf(game))
 
         val occurrences = argumentCaptor<List<PositionOccurrence>>()
-        org.mockito.kotlin.verify(occurrenceRepository).saveAll(occurrences.capture())
+        org.mockito.kotlin
+            .verify(occurrenceRepository)
+            .saveAll(occurrences.capture())
         assertEquals(listOf(1_000L, 1_000L), occurrences.firstValue.sortedBy { it.plyNumber }.map { it.decisionTimeMs })
     }
 
@@ -153,22 +161,15 @@ class GameDecisionTimeParserTest {
         parser.parseAndSavePositions(listOf(originalGame))
 
         val persistedOccurrences = argumentCaptor<List<PositionOccurrence>>()
-        org.mockito.kotlin.verify(occurrenceRepository).saveAll(persistedOccurrences.capture())
+        org.mockito.kotlin
+            .verify(occurrenceRepository)
+            .saveAll(persistedOccurrences.capture())
         val existing = persistedOccurrences.firstValue
         whenever(positionRepository.findByHashIn(any())).thenReturn(existing.map { it.position }.distinct())
         whenever(occurrenceRepository.findByGameIdIn(any())).thenReturn(existing)
 
-        val updatedGame =
-            Game(
-                id = originalGame.id,
-                chessAccount = account,
-                platformGameId = originalGame.platformGameId,
-                pgn = originalGame.pgn.replace("0:01:01.5", "0:01:00.5"),
-                timeControl = originalGame.timeControl,
-                whiteUsername = originalGame.whiteUsername,
-                blackUsername = originalGame.blackUsername,
-            )
-        parser.parseAndSavePositions(listOf(updatedGame))
+        val updatedPgn = originalGame.pgn.replace("0:01:01.5", "0:01:00.5")
+        parser.parseAndSavePositions(listOf(createReplayGame(originalGame, updatedPgn)))
 
         org.mockito.kotlin.verify(occurrenceRepository).updateDecisionTime(
             existing[0].game.id,
@@ -178,17 +179,8 @@ class GameDecisionTimeParserTest {
             1_500L,
         )
 
-        val ineligibleReplay =
-            Game(
-                id = originalGame.id,
-                chessAccount = account,
-                platformGameId = originalGame.platformGameId,
-                pgn = updatedGame.pgn.replace("{[%clk 0:01:01.2]}", ""),
-                timeControl = originalGame.timeControl,
-                whiteUsername = originalGame.whiteUsername,
-                blackUsername = originalGame.blackUsername,
-            )
-        parser.parseAndSavePositions(listOf(ineligibleReplay))
+        val clearedPgn = updatedPgn.replace("{[%clk 0:01:01.2]}", "")
+        parser.parseAndSavePositions(listOf(createReplayGame(originalGame, clearedPgn)))
 
         org.mockito.kotlin.verify(occurrenceRepository, org.mockito.kotlin.times(2)).updateDecisionTime(
             org.mockito.kotlin.any(),
@@ -198,6 +190,20 @@ class GameDecisionTimeParserTest {
             org.mockito.kotlin.isNull(),
         )
     }
+
+    private fun createReplayGame(
+        original: Game,
+        pgn: String,
+    ): Game =
+        Game(
+            id = original.id,
+            chessAccount = original.chessAccount,
+            platformGameId = original.platformGameId,
+            pgn = pgn,
+            timeControl = original.timeControl,
+            whiteUsername = original.whiteUsername,
+            blackUsername = original.blackUsername,
+        )
 
     @Test
     fun `derives decision time of zero milliseconds for instant moves`() {
@@ -219,7 +225,9 @@ class GameDecisionTimeParserTest {
         parser.parseAndSavePositions(listOf(game))
 
         val occurrences = argumentCaptor<List<PositionOccurrence>>()
-        org.mockito.kotlin.verify(occurrenceRepository).saveAll(occurrences.capture())
+        org.mockito.kotlin
+            .verify(occurrenceRepository)
+            .saveAll(occurrences.capture())
         assertEquals(
             listOf(0L, 0L),
             occurrences.firstValue.sortedBy { it.plyNumber }.map { it.decisionTimeMs },
@@ -246,7 +254,9 @@ class GameDecisionTimeParserTest {
         parser.parseAndSavePositions(listOf(game))
 
         val occurrences = argumentCaptor<List<PositionOccurrence>>()
-        org.mockito.kotlin.verify(occurrenceRepository).saveAll(occurrences.capture())
+        org.mockito.kotlin
+            .verify(occurrenceRepository)
+            .saveAll(occurrences.capture())
         assertEquals(2, occurrences.firstValue.size)
         assertEquals(2, occurrences.firstValue.count { it.decisionTimeMs == null })
     }
@@ -271,7 +281,9 @@ class GameDecisionTimeParserTest {
         parser.parseAndSavePositions(listOf(game))
 
         val occurrences = argumentCaptor<List<PositionOccurrence>>()
-        org.mockito.kotlin.verify(occurrenceRepository).saveAll(occurrences.capture())
+        org.mockito.kotlin
+            .verify(occurrenceRepository)
+            .saveAll(occurrences.capture())
         assertEquals(
             listOf(60_000L, 1_000L),
             occurrences.firstValue.sortedBy { it.plyNumber }.map { it.decisionTimeMs },
@@ -297,7 +309,9 @@ class GameDecisionTimeParserTest {
         parser.parseAndSavePositions(listOf(invalidMinutesGame))
 
         val occurrences1 = argumentCaptor<List<PositionOccurrence>>()
-        org.mockito.kotlin.verify(occurrenceRepository).saveAll(occurrences1.capture())
+        org.mockito.kotlin
+            .verify(occurrenceRepository)
+            .saveAll(occurrences1.capture())
         assertEquals(1, occurrences1.firstValue.size)
         assertEquals(null, occurrences1.firstValue.single().decisionTimeMs)
 
@@ -317,7 +331,9 @@ class GameDecisionTimeParserTest {
         parser.parseAndSavePositions(listOf(invalidSecondsGame))
 
         val occurrences2 = argumentCaptor<List<PositionOccurrence>>()
-        org.mockito.kotlin.verify(occurrenceRepository, org.mockito.kotlin.times(2)).saveAll(occurrences2.capture())
+        org.mockito.kotlin
+            .verify(occurrenceRepository, org.mockito.kotlin.times(2))
+            .saveAll(occurrences2.capture())
         assertEquals(null, occurrences2.secondValue.single().decisionTimeMs)
     }
 

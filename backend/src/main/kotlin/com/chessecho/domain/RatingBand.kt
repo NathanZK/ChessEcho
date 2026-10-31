@@ -1,6 +1,8 @@
 package com.chessecho.domain
 
-enum class RatingBand(val value: String) {
+enum class RatingBand(
+    val value: String,
+) {
     BAND_400_600("400-600"),
     BAND_600_800("600-800"),
     BAND_800_1000("800-1000"),
@@ -16,13 +18,9 @@ enum class RatingBand(val value: String) {
     companion object {
         private val BY_VALUE = entries.associateBy { it.value }
 
-        fun fromValue(value: String?): RatingBand? {
-            return BY_VALUE[value]
-        }
+        fun fromValue(value: String?): RatingBand? = BY_VALUE[value]
 
-        fun isValid(value: String?): Boolean {
-            return value != null && BY_VALUE.containsKey(value)
-        }
+        fun isValid(value: String?): Boolean = value != null && BY_VALUE.containsKey(value)
 
         fun getAdjacentBands(band: RatingBand): List<RatingBand> {
             val index = entries.indexOf(band)

@@ -36,7 +36,8 @@ class SessionCookieWriter(
     }
 
     private fun baseCookie(value: String): ResponseCookie.ResponseCookieBuilder =
-        ResponseCookie.from(properties.cookie.name, value)
+        ResponseCookie
+            .from(properties.cookie.name, value)
             .httpOnly(true)
             .secure(properties.cookie.secure)
             .path(properties.cookie.path)

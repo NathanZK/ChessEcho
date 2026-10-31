@@ -90,11 +90,12 @@ class HumanMoveCorpusMaterializationService(
     }
 
     private fun fetchArtifactSnapshot(contentDigest: String): Pair<UUID, Int> =
-        jdbcTemplate.query(
-            "SELECT source_run_id, covered_prefix FROM human_move_corpus_artifact_snapshot WHERE content_digest = ?",
-            { rs, _ -> rs.getObject("source_run_id", UUID::class.java) to rs.getInt("covered_prefix") },
-            contentDigest,
-        ).singleOrNull() ?: throw NoSuchElementException("Artifact snapshot $contentDigest not found")
+        jdbcTemplate
+            .query(
+                "SELECT source_run_id, covered_prefix FROM human_move_corpus_artifact_snapshot WHERE content_digest = ?",
+                { rs, _ -> rs.getObject("source_run_id", UUID::class.java) to rs.getInt("covered_prefix") },
+                contentDigest,
+            ).singleOrNull() ?: throw NoSuchElementException("Artifact snapshot $contentDigest not found")
 
     private fun validateMaterializationPrerequisites(
         sourceRunId: UUID,
@@ -165,19 +166,20 @@ class HumanMoveCorpusMaterializationService(
         val batch = ArrayList<Array<Any>>(BATCH_SIZE)
         jdbcTemplate.query(
             {
-                it.prepareStatement(
-                    """
-                    SELECT o.position_hash, o.move_played, SUM(o.observation_count) AS observation_count
-                    FROM human_move_corpus_imported_observation o
-                    JOIN human_move_corpus_imported_game g ON g.id = o.game_id
-                    WHERE g.source_run_id = ? AND g.qualifying_ordinal <= ?
-                    GROUP BY o.position_hash, o.move_played
-                    """.trimIndent(),
-                ).apply {
-                    fetchSize = BATCH_SIZE
-                    setObject(1, sourceRunId)
-                    setInt(2, prefixN)
-                }
+                it
+                    .prepareStatement(
+                        """
+                        SELECT o.position_hash, o.move_played, SUM(o.observation_count) AS observation_count
+                        FROM human_move_corpus_imported_observation o
+                        JOIN human_move_corpus_imported_game g ON g.id = o.game_id
+                        WHERE g.source_run_id = ? AND g.qualifying_ordinal <= ?
+                        GROUP BY o.position_hash, o.move_played
+                        """.trimIndent(),
+                    ).apply {
+                        fetchSize = BATCH_SIZE
+                        setObject(1, sourceRunId)
+                        setInt(2, prefixN)
+                    }
             },
             RowCallbackHandler { rs ->
                 batch.add(

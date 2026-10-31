@@ -27,10 +27,11 @@ class AppConfig {
         stringToPlayerColorConverter: StringToPlayerColorConverter,
         stringToPlatformConverter: StringToPlatformConverter,
         stringToTimeControlConverter: StringToTimeControlConverter,
-    ): WebMvcConfigurer {
-        return object : WebMvcConfigurer {
+    ): WebMvcConfigurer =
+        object : WebMvcConfigurer {
             override fun addCorsMappings(registry: CorsRegistry) {
-                registry.addMapping("/**")
+                registry
+                    .addMapping("/**")
                     .allowedOrigins("http://localhost:3000", "http://127.0.0.1:3000")
                     .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                     .allowedHeaders("Content-Type", "X-XSRF-TOKEN")
@@ -43,5 +44,4 @@ class AppConfig {
                 registry.addConverter(stringToTimeControlConverter)
             }
         }
-    }
 }

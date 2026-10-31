@@ -138,7 +138,8 @@ class RetainedEvaluationEvidenceTest {
                 RetainedReferenceProjectionRow("r2", "Nf3", 6),
             )
         val digest =
-            MessageDigest.getInstance("SHA-256")
+            MessageDigest
+                .getInstance("SHA-256")
                 .digest(projectionRows.joinToString("") { "${it.positionHash}\t${it.movePlayed}\t${it.observationCount}\n" }.toByteArray())
                 .joinToString("") { "%02x".format(it) }
         val population = defaultPopulation(digest)

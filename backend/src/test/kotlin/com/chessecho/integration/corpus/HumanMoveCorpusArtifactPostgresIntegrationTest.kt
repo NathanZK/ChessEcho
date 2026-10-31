@@ -127,10 +127,12 @@ class HumanMoveCorpusArtifactPostgresIntegrationTest {
         prefix: Int,
     ): Pair<String, ByteArray> {
         val result =
-            mockMvc.post("$base/export") {
-                contentType = MediaType.APPLICATION_JSON
-                content = mapper.writeValueAsString(mapOf("runId" to runId, "prefixN" to prefix))
-            }.andReturn().response
+            mockMvc
+                .post("$base/export") {
+                    contentType = MediaType.APPLICATION_JSON
+                    content = mapper.writeValueAsString(mapOf("runId" to runId, "prefixN" to prefix))
+                }.andReturn()
+                .response
         assertEquals(200, result.status, "an explicit committed prefix must export")
         val receipt = mapper.readTree(result.contentAsString)
         assertEquals(runId.toString(), receipt.path("sourceRunId").asText())
@@ -149,10 +151,12 @@ class HumanMoveCorpusArtifactPostgresIntegrationTest {
         artifact: Pair<String, ByteArray>,
     ): Pair<Int, JsonNode?> {
         val response =
-            mockMvc.multipart("$base/$operation") {
-                file(MockMultipartFile("artifact", "corpus.zip", "application/zip", artifact.second))
-                param("expectedDigest", artifact.first)
-            }.andReturn().response
+            mockMvc
+                .multipart("$base/$operation") {
+                    file(MockMultipartFile("artifact", "corpus.zip", "application/zip", artifact.second))
+                    param("expectedDigest", artifact.first)
+                }.andReturn()
+                .response
         val json = response.contentAsString.takeIf { it.isNotBlank() }?.let(mapper::readTree)
         return response.status to json
     }
@@ -356,7 +360,8 @@ class HumanMoveCorpusArtifactPostgresIntegrationTest {
                 val game = checkNotNull(mapper.readTree(records.getValue("games.ndjson").toString(Charsets.UTF_8).trim()) as? ObjectNode)
                 val changedPgn = "[Event \"Different game\"]\n\n1. d4 d5 *"
                 val changedHash =
-                    MessageDigest.getInstance("SHA-256")
+                    MessageDigest
+                        .getInstance("SHA-256")
                         .digest(changedPgn.toByteArray(Charsets.UTF_8))
                         .joinToString("") { "%02x".format(it) }
                 game.put("pgn", changedPgn)
@@ -467,7 +472,8 @@ class HumanMoveCorpusArtifactPostgresIntegrationTest {
         assertTrue(game.path("id").isMissingNode)
         assertTrue(observation.path("positionId").isMissingNode)
         val pgnHash =
-            MessageDigest.getInstance("SHA-256")
+            MessageDigest
+                .getInstance("SHA-256")
                 .digest(game.path("pgn").asText().toByteArray(Charsets.UTF_8))
                 .joinToString("") { "%02x".format(it) }
         assertEquals(pgnHash, game.path("pgnSha256").asText())
@@ -480,8 +486,18 @@ class HumanMoveCorpusArtifactPostgresIntegrationTest {
         addGame(run, 2)
         val source = entries(export(run, 2).second)
         clean()
-        val games = source.getValue("games.ndjson").toString(Charsets.UTF_8).trimEnd().lines()
-        val observations = source.getValue("observations.ndjson").toString(Charsets.UTF_8).trimEnd().lines()
+        val games =
+            source
+                .getValue("games.ndjson")
+                .toString(Charsets.UTF_8)
+                .trimEnd()
+                .lines()
+        val observations =
+            source
+                .getValue("observations.ndjson")
+                .toString(Charsets.UTF_8)
+                .trimEnd()
+                .lines()
 
         fun change(
             line: String,
@@ -536,10 +552,12 @@ class HumanMoveCorpusArtifactPostgresIntegrationTest {
         val run = newRun()
         addGame(run, 1)
         val tooLarge =
-            mockMvc.post("$base/export") {
-                contentType = MediaType.APPLICATION_JSON
-                content = mapper.writeValueAsString(mapOf("runId" to run, "prefixN" to 2))
-            }.andReturn().response
+            mockMvc
+                .post("$base/export") {
+                    contentType = MediaType.APPLICATION_JSON
+                    content = mapper.writeValueAsString(mapOf("runId" to run, "prefixN" to 2))
+                }.andReturn()
+                .response
         assertTrue(tooLarge.status in 400..499 && tooLarge.status != 404)
         writer.finishRun(
             run,
@@ -552,10 +570,12 @@ class HumanMoveCorpusArtifactPostgresIntegrationTest {
             ),
         )
         val failed =
-            mockMvc.post("$base/export") {
-                contentType = MediaType.APPLICATION_JSON
-                content = mapper.writeValueAsString(mapOf("runId" to run, "prefixN" to 1))
-            }.andReturn().response
+            mockMvc
+                .post("$base/export") {
+                    contentType = MediaType.APPLICATION_JSON
+                    content = mapper.writeValueAsString(mapOf("runId" to run, "prefixN" to 1))
+                }.andReturn()
+                .response
         assertTrue(failed.status in 400..499 && failed.status != 404)
     }
 

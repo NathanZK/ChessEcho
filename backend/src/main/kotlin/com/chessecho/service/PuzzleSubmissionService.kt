@@ -75,7 +75,8 @@ class PuzzleSubmissionService(
     ): PuzzleAttemptCountResponse {
         validateContext(accountId, positionId, playerColor, principal)
         val counts =
-            events.countSubmittedAnswers(principal.appUserId, accountId, positionId, playerColor)
+            events
+                .countSubmittedAnswers(principal.appUserId, accountId, positionId, playerColor)
                 .associate { it.outcome to it.submissionCount }
         return PuzzleAttemptCountResponse(
             solvedCount = counts[SchedulingEventType.SOLVED] ?: 0,

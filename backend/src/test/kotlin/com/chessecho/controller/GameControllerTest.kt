@@ -43,14 +43,14 @@ class GameControllerTest {
 
         whenever(gameService.getGames(eq("user"), eq(Platform.CHESS_COM), any())).thenReturn(page)
 
-        mockMvc.perform(
-            get("/api/games")
-                .param("username", "user")
-                .param("platform", "CHESS_COM")
-                .param("page", "0")
-                .param("size", "20"),
-        )
-            .andExpect(status().isOk)
+        mockMvc
+            .perform(
+                get("/api/games")
+                    .param("username", "user")
+                    .param("platform", "CHESS_COM")
+                    .param("page", "0")
+                    .param("size", "20"),
+            ).andExpect(status().isOk)
             .andExpect(jsonPath("$.content[0].id").value("123"))
             .andExpect(jsonPath("$.content[0].platformGameId").value("url"))
             .andExpect(jsonPath("$.totalElements").value(1))

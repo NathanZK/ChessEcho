@@ -164,11 +164,12 @@ class HumanMoveCorpusOccurrenceService(
 
     @Transactional(readOnly = true)
     fun hasSourceRun(sourceRunId: UUID): Boolean =
-        jdbcTemplate.query(
-            "SELECT id FROM human_move_corpus_run WHERE id = ?",
-            { rs, _ -> rs.getObject(1, UUID::class.java) },
-            sourceRunId,
-        ).isNotEmpty()
+        jdbcTemplate
+            .query(
+                "SELECT id FROM human_move_corpus_run WHERE id = ?",
+                { rs, _ -> rs.getObject(1, UUID::class.java) },
+                sourceRunId,
+            ).isNotEmpty()
 
     @Transactional(readOnly = true)
     fun verifyBindingIfPresent(
@@ -208,31 +209,32 @@ class HumanMoveCorpusOccurrenceService(
         sourceRunId: UUID,
         coveredPrefix: Int,
     ): SourcePrefix =
-        jdbcTemplate.query(
-            """
-            SELECT r.committed_frontier,
-                   COUNT(g.id),
-                   COALESCE(MIN(g.qualifying_ordinal), 0),
-                   COALESCE(MAX(g.qualifying_ordinal), 0),
-                   COALESCE(SUM(g.observation_total), 0)
-            FROM human_move_corpus_run r
-            LEFT JOIN human_move_corpus_game g
-              ON g.run_id = r.id AND g.qualifying_ordinal <= ?
-            WHERE r.id = ?
-            GROUP BY r.committed_frontier
-            """.trimIndent(),
-            { rs, _ ->
-                SourcePrefix(
-                    frontier = rs.getInt(1),
-                    gameCount = rs.getLong(2),
-                    minimum = rs.getInt(3),
-                    maximum = rs.getInt(4),
-                    expectedOccurrences = rs.getLong(5),
-                )
-            },
-            coveredPrefix,
-            sourceRunId,
-        ).singleOrNull()
+        jdbcTemplate
+            .query(
+                """
+                SELECT r.committed_frontier,
+                       COUNT(g.id),
+                       COALESCE(MIN(g.qualifying_ordinal), 0),
+                       COALESCE(MAX(g.qualifying_ordinal), 0),
+                       COALESCE(SUM(g.observation_total), 0)
+                FROM human_move_corpus_run r
+                LEFT JOIN human_move_corpus_game g
+                  ON g.run_id = r.id AND g.qualifying_ordinal <= ?
+                WHERE r.id = ?
+                GROUP BY r.committed_frontier
+                """.trimIndent(),
+                { rs, _ ->
+                    SourcePrefix(
+                        frontier = rs.getInt(1),
+                        gameCount = rs.getLong(2),
+                        minimum = rs.getInt(3),
+                        maximum = rs.getInt(4),
+                        expectedOccurrences = rs.getLong(5),
+                    )
+                },
+                coveredPrefix,
+                sourceRunId,
+            ).singleOrNull()
             ?: throw HumanMoveCorpusIntegrityException("Source corpus run $sourceRunId is missing")
 
     private fun isPrefixBoundaryValid(
@@ -312,22 +314,23 @@ class HumanMoveCorpusOccurrenceService(
         val runId = artifact.manifest.sourceRunId
         val metadata = artifact.manifest.sourceRunMetadata
         val source =
-            jdbcTemplate.query(
-                """
-                SELECT rating_band, algorithm_version, source_revision, request_json, request_sha256
-                FROM human_move_corpus_run WHERE id = ?
-                """.trimIndent(),
-                { rs, _ ->
-                    listOf(
-                        rs.getString("rating_band"),
-                        rs.getString("algorithm_version"),
-                        rs.getString("source_revision"),
-                        rs.getString("request_json"),
-                        rs.getString("request_sha256"),
-                    )
-                },
-                runId,
-            ).singleOrNull() ?: throw HumanMoveCorpusIntegrityException("Source corpus run $runId is missing")
+            jdbcTemplate
+                .query(
+                    """
+                    SELECT rating_band, algorithm_version, source_revision, request_json, request_sha256
+                    FROM human_move_corpus_run WHERE id = ?
+                    """.trimIndent(),
+                    { rs, _ ->
+                        listOf(
+                            rs.getString("rating_band"),
+                            rs.getString("algorithm_version"),
+                            rs.getString("source_revision"),
+                            rs.getString("request_json"),
+                            rs.getString("request_sha256"),
+                        )
+                    },
+                    runId,
+                ).singleOrNull() ?: throw HumanMoveCorpusIntegrityException("Source corpus run $runId is missing")
         val declared =
             listOf(
                 artifact.manifest.ratingBand,
@@ -348,19 +351,20 @@ class HumanMoveCorpusOccurrenceService(
     ) {
         jdbcTemplate.query(
             { connection ->
-                connection.prepareStatement(
-                    """
-                    SELECT qualifying_ordinal, provider_game_id, traversed_player, opponent, opponent_side,
-                           opponent_rating, rules, time_class, bfs_depth, pgn_sha256, observation_total,
-                           distinct_move_count, committed_at
-                    FROM human_move_corpus_game
-                    WHERE run_id = ? AND qualifying_ordinal <= ? ORDER BY qualifying_ordinal
-                    """.trimIndent(),
-                ).apply {
-                    fetchSize = 64
-                    setObject(1, sourceRunId)
-                    setInt(2, coveredPrefix)
-                }
+                connection
+                    .prepareStatement(
+                        """
+                        SELECT qualifying_ordinal, provider_game_id, traversed_player, opponent, opponent_side,
+                               opponent_rating, rules, time_class, bfs_depth, pgn_sha256, observation_total,
+                               distinct_move_count, committed_at
+                        FROM human_move_corpus_game
+                        WHERE run_id = ? AND qualifying_ordinal <= ? ORDER BY qualifying_ordinal
+                        """.trimIndent(),
+                    ).apply {
+                        fetchSize = 64
+                        setObject(1, sourceRunId)
+                        setInt(2, coveredPrefix)
+                    }
             },
             ResultSetExtractor { rows ->
                 artifactService.forEachGame(archive) { game ->
@@ -389,19 +393,20 @@ class HumanMoveCorpusOccurrenceService(
     ) {
         jdbcTemplate.query(
             { connection ->
-                connection.prepareStatement(
-                    """
-                    SELECT qualifying_ordinal, position_hash, move_played, COUNT(*) AS occurrence_count
-                    FROM human_move_corpus_occurrence
-                    WHERE source_run_id = ? AND qualifying_ordinal <= ?
-                    GROUP BY qualifying_ordinal, position_hash, move_played
-                    ORDER BY qualifying_ordinal, position_hash, move_played
-                    """.trimIndent(),
-                ).apply {
-                    fetchSize = 512
-                    setObject(1, sourceRunId)
-                    setInt(2, coveredPrefix)
-                }
+                connection
+                    .prepareStatement(
+                        """
+                        SELECT qualifying_ordinal, position_hash, move_played, COUNT(*) AS occurrence_count
+                        FROM human_move_corpus_occurrence
+                        WHERE source_run_id = ? AND qualifying_ordinal <= ?
+                        GROUP BY qualifying_ordinal, position_hash, move_played
+                        ORDER BY qualifying_ordinal, position_hash, move_played
+                        """.trimIndent(),
+                    ).apply {
+                        fetchSize = 512
+                        setObject(1, sourceRunId)
+                        setInt(2, coveredPrefix)
+                    }
             },
             ResultSetExtractor { rows ->
                 artifactService.forEachObservation(archive) { observation ->
@@ -471,19 +476,20 @@ class HumanMoveCorpusOccurrenceService(
         val digest = MessageDigest.getInstance("SHA-256")
         jdbcTemplate.query(
             {
-                it.prepareStatement(
-                    """
-                    SELECT source_run_id, qualifying_ordinal, provider_game_id, pre_move_ply,
-                           move_played, position_hash, content_digest, covered_prefix
-                    FROM human_move_corpus_occurrence
-                    WHERE source_run_id = ? AND qualifying_ordinal <= ?
-                    ORDER BY qualifying_ordinal, pre_move_ply
-                    """.trimIndent(),
-                ).apply {
-                    fetchSize = 512
-                    setObject(1, sourceRunId)
-                    setInt(2, coveredPrefix)
-                }
+                it
+                    .prepareStatement(
+                        """
+                        SELECT source_run_id, qualifying_ordinal, provider_game_id, pre_move_ply,
+                               move_played, position_hash, content_digest, covered_prefix
+                        FROM human_move_corpus_occurrence
+                        WHERE source_run_id = ? AND qualifying_ordinal <= ?
+                        ORDER BY qualifying_ordinal, pre_move_ply
+                        """.trimIndent(),
+                    ).apply {
+                        fetchSize = 512
+                        setObject(1, sourceRunId)
+                        setInt(2, coveredPrefix)
+                    }
             },
             ResultSetExtractor { rows ->
                 while (rows.next()) updateDigest(digest, rows)
@@ -516,22 +522,23 @@ class HumanMoveCorpusOccurrenceService(
     }
 
     private fun findBinding(sourceRunId: UUID): HumanMoveCorpusOccurrenceBinding? =
-        jdbcTemplate.query(
-            """
-            SELECT source_run_id, content_digest, covered_prefix, occurrence_digest, occurrence_count
-            FROM human_move_corpus_occurrence_binding WHERE source_run_id = ?
-            """.trimIndent(),
-            { rs, _ ->
-                HumanMoveCorpusOccurrenceBinding(
-                    rs.getObject("source_run_id", UUID::class.java),
-                    rs.getString("content_digest"),
-                    rs.getInt("covered_prefix"),
-                    rs.getString("occurrence_digest"),
-                    rs.getInt("occurrence_count"),
-                )
-            },
-            sourceRunId,
-        ).singleOrNull()
+        jdbcTemplate
+            .query(
+                """
+                SELECT source_run_id, content_digest, covered_prefix, occurrence_digest, occurrence_count
+                FROM human_move_corpus_occurrence_binding WHERE source_run_id = ?
+                """.trimIndent(),
+                { rs, _ ->
+                    HumanMoveCorpusOccurrenceBinding(
+                        rs.getObject("source_run_id", UUID::class.java),
+                        rs.getString("content_digest"),
+                        rs.getInt("covered_prefix"),
+                        rs.getString("occurrence_digest"),
+                        rs.getInt("occurrence_count"),
+                    )
+                },
+                sourceRunId,
+            ).singleOrNull()
 
     private fun verifyBindingTarget(binding: HumanMoveCorpusOccurrenceBinding) {
         val exists =

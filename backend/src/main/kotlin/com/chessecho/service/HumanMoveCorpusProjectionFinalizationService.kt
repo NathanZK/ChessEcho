@@ -37,25 +37,26 @@ class HumanMoveCorpusProjectionFinalizationService(
         val digest = MessageDigest.getInstance("SHA-256")
         jdbcTemplate.query(
             {
-                it.prepareStatement(
-                    """
-                    SELECT position_hash, move_played, observation_count FROM (
-                        SELECT o.position_hash, o.move_played, SUM(o.observation_count) AS observation_count,
-                               SUM(SUM(o.observation_count)) OVER (PARTITION BY o.position_hash) AS position_total
-                        FROM human_move_corpus_imported_observation o
-                        JOIN human_move_corpus_imported_game g ON g.id = o.game_id
-                        WHERE g.source_run_id = ? AND g.qualifying_ordinal <= ?
-                        GROUP BY o.position_hash, o.move_played
-                    ) aggregate
-                    WHERE position_total >= ?
-                    ORDER BY position_hash, move_played
-                    """.trimIndent(),
-                ).apply {
-                    fetchSize = 500
-                    setObject(1, runId)
-                    setInt(2, prefixN)
-                    setInt(3, minObservations)
-                }
+                it
+                    .prepareStatement(
+                        """
+                        SELECT position_hash, move_played, observation_count FROM (
+                            SELECT o.position_hash, o.move_played, SUM(o.observation_count) AS observation_count,
+                                   SUM(SUM(o.observation_count)) OVER (PARTITION BY o.position_hash) AS position_total
+                            FROM human_move_corpus_imported_observation o
+                            JOIN human_move_corpus_imported_game g ON g.id = o.game_id
+                            WHERE g.source_run_id = ? AND g.qualifying_ordinal <= ?
+                            GROUP BY o.position_hash, o.move_played
+                        ) aggregate
+                        WHERE position_total >= ?
+                        ORDER BY position_hash, move_played
+                        """.trimIndent(),
+                    ).apply {
+                        fetchSize = 500
+                        setObject(1, runId)
+                        setInt(2, prefixN)
+                        setInt(3, minObservations)
+                    }
             },
             RowCallbackHandler { rs ->
                 digest.update(
@@ -69,19 +70,25 @@ class HumanMoveCorpusProjectionFinalizationService(
     @Transactional
     fun finalize(projectionId: UUID): HumanMoveCorpusProjectionFinalizeResponse {
         val projection =
-            jdbcTemplate.query(
-                """
-                SELECT source_run_id, prefix_n, min_observations, content_digest, distribution_sha256, finalized, verified
-                FROM human_move_corpus_projection WHERE id = ? FOR UPDATE
-                """.trimIndent(),
-                { rs, _ ->
-                    ProjectionEvidence(
-                        rs.getObject(1, UUID::class.java), rs.getInt(2), rs.getInt(3),
-                        rs.getString(4), rs.getString(5), rs.getBoolean(6), rs.getBoolean(7),
-                    )
-                },
-                projectionId,
-            ).singleOrNull() ?: throw NoSuchElementException("Projection $projectionId not found")
+            jdbcTemplate
+                .query(
+                    """
+                    SELECT source_run_id, prefix_n, min_observations, content_digest, distribution_sha256, finalized, verified
+                    FROM human_move_corpus_projection WHERE id = ? FOR UPDATE
+                    """.trimIndent(),
+                    { rs, _ ->
+                        ProjectionEvidence(
+                            rs.getObject(1, UUID::class.java),
+                            rs.getInt(2),
+                            rs.getInt(3),
+                            rs.getString(4),
+                            rs.getString(5),
+                            rs.getBoolean(6),
+                            rs.getBoolean(7),
+                        )
+                    },
+                    projectionId,
+                ).singleOrNull() ?: throw NoSuchElementException("Projection $projectionId not found")
         if (projection.finalized) {
             return handleAlreadyFinalized(projection, projectionId)
         }
@@ -191,13 +198,14 @@ class HumanMoveCorpusProjectionFinalizationService(
         var previousHash: String? = null
         jdbcTemplate.query(
             {
-                it.prepareStatement(
-                    "SELECT position_hash, move_played, observation_count FROM human_move_corpus_projection_row " +
-                        "WHERE projection_id = ? ORDER BY position_hash, move_played",
-                ).apply {
-                    fetchSize = 500
-                    setObject(1, projectionId)
-                }
+                it
+                    .prepareStatement(
+                        "SELECT position_hash, move_played, observation_count FROM human_move_corpus_projection_row " +
+                            "WHERE projection_id = ? ORDER BY position_hash, move_played",
+                    ).apply {
+                        fetchSize = 500
+                        setObject(1, projectionId)
+                    }
             },
             RowCallbackHandler { rs ->
                 val hash = rs.getString("position_hash")

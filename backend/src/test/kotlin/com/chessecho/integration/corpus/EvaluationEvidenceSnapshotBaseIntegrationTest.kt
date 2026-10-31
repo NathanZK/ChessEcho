@@ -111,14 +111,15 @@ open class EvaluationEvidenceSnapshotBaseIntegrationTest {
     fun tearDown() = resetDatabase()
 
     protected fun resetDatabase() =
-        jdbcTemplate.execute(
-            "TRUNCATE evaluation_evidence_row, evaluation_evidence_snapshot, human_move_corpus_import CASCADE",
-        ).also {
-            jdbcTemplate.execute(
-                "TRUNCATE human_move_corpus_observation, human_move_corpus_game, human_move_corpus_run, " +
-                    "human_move_distribution, human_move_bfs_seen_game, position CASCADE",
-            )
-        }
+        jdbcTemplate
+            .execute(
+                "TRUNCATE evaluation_evidence_row, evaluation_evidence_snapshot, human_move_corpus_import CASCADE",
+            ).also {
+                jdbcTemplate.execute(
+                    "TRUNCATE human_move_corpus_observation, human_move_corpus_game, human_move_corpus_run, " +
+                        "human_move_distribution, human_move_bfs_seen_game, position CASCADE",
+                )
+            }
 
     // --- Helper data classes -------------------------------------------------
     protected data class Occurrence(
@@ -239,21 +240,22 @@ open class EvaluationEvidenceSnapshotBaseIntegrationTest {
     }
 
     protected fun occurrencesOf(runId: UUID): List<Occurrence> =
-        jdbcTemplate.queryForList(
-            "SELECT id, qualifying_ordinal, position_hash, pre_move_ply, content_digest, covered_prefix" +
-                " FROM human_move_corpus_occurrence WHERE source_run_id = ?" +
-                " ORDER BY qualifying_ordinal, pre_move_ply",
-            runId,
-        ).map { row ->
-            Occurrence(
-                (row["id"] ?: error("missing id")) as UUID,
-                ((row["qualifying_ordinal"] ?: error("missing ordinal")) as Number).toInt(),
-                row["position_hash"].toString(),
-                ((row["pre_move_ply"] ?: error("missing ply")) as Number).toInt(),
-                row["content_digest"].toString(),
-                ((row["covered_prefix"] ?: error("missing prefix")) as Number).toInt(),
-            )
-        }
+        jdbcTemplate
+            .queryForList(
+                "SELECT id, qualifying_ordinal, position_hash, pre_move_ply, content_digest, covered_prefix" +
+                    " FROM human_move_corpus_occurrence WHERE source_run_id = ?" +
+                    " ORDER BY qualifying_ordinal, pre_move_ply",
+                runId,
+            ).map { row ->
+                Occurrence(
+                    (row["id"] ?: error("missing id")) as UUID,
+                    ((row["qualifying_ordinal"] ?: error("missing ordinal")) as Number).toInt(),
+                    row["position_hash"].toString(),
+                    ((row["pre_move_ply"] ?: error("missing ply")) as Number).toInt(),
+                    row["content_digest"].toString(),
+                    ((row["covered_prefix"] ?: error("missing prefix")) as Number).toInt(),
+                )
+            }
 
     protected fun referencePopulation(
         runId: UUID,
@@ -320,29 +322,30 @@ open class EvaluationEvidenceSnapshotBaseIntegrationTest {
         runId: UUID,
         prefixN: Int,
     ): EvaluationReferencePopulation =
-        jdbcTemplate.query(
-            """
-            SELECT p.content_digest, p.source_run_id, b.covered_prefix, p.prefix_n, p.rating_band,
-                   p.min_observations, p.calculation_version, p.distribution_sha256
-            FROM human_move_corpus_projection p
-            JOIN human_move_corpus_occurrence_binding b ON b.source_run_id = p.source_run_id
-            WHERE p.source_run_id = ? AND p.prefix_n = ? AND p.finalized AND p.verified
-            """.trimIndent(),
-            { rs, _ ->
-                EvaluationReferencePopulation(
-                    contentDigest = rs.getString("content_digest"),
-                    sourceRunId = rs.getObject("source_run_id", UUID::class.java),
-                    coveredPrefix = rs.getInt("covered_prefix"),
-                    prefixN = rs.getInt("prefix_n"),
-                    ratingBand = rs.getString("rating_band"),
-                    minObservations = rs.getInt("min_observations"),
-                    calculationVersion = rs.getString("calculation_version"),
-                    distributionSha256 = rs.getString("distribution_sha256"),
-                )
-            },
-            runId,
-            prefixN,
-        ).single()
+        jdbcTemplate
+            .query(
+                """
+                SELECT p.content_digest, p.source_run_id, b.covered_prefix, p.prefix_n, p.rating_band,
+                       p.min_observations, p.calculation_version, p.distribution_sha256
+                FROM human_move_corpus_projection p
+                JOIN human_move_corpus_occurrence_binding b ON b.source_run_id = p.source_run_id
+                WHERE p.source_run_id = ? AND p.prefix_n = ? AND p.finalized AND p.verified
+                """.trimIndent(),
+                { rs, _ ->
+                    EvaluationReferencePopulation(
+                        contentDigest = rs.getString("content_digest"),
+                        sourceRunId = rs.getObject("source_run_id", UUID::class.java),
+                        coveredPrefix = rs.getInt("covered_prefix"),
+                        prefixN = rs.getInt("prefix_n"),
+                        ratingBand = rs.getString("rating_band"),
+                        minObservations = rs.getInt("min_observations"),
+                        calculationVersion = rs.getString("calculation_version"),
+                        distributionSha256 = rs.getString("distribution_sha256"),
+                    )
+                },
+                runId,
+                prefixN,
+            ).single()
 
     protected fun producerConfiguration() =
         EvaluationEvidenceConfiguration(
@@ -464,7 +467,9 @@ open class EvaluationEvidenceSnapshotBaseIntegrationTest {
         )
 
     companion object {
-        private val archiveRoot = java.nio.file.Files.createTempDirectory("chessecho-corpus-430-artifact-")
+        private val archiveRoot =
+            java.nio.file.Files
+                .createTempDirectory("chessecho-corpus-430-artifact-")
 
         @JvmField
         val postgres: PostgreSQLContainer<Nothing> =

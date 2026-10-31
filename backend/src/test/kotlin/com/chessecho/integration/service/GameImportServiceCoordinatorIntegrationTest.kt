@@ -41,10 +41,12 @@ class GameImportServiceCoordinatorIntegrationTest : GameImportServiceBaseIntegra
         val account = assertNotNull(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "hikaru"))
         assertEquals(
             1,
-            gameRepository.findAllByChessAccountOrderByPlayedAtDesc(
-                account,
-                org.springframework.data.domain.PageRequest.of(0, 20),
-            ).content.size,
+            gameRepository
+                .findAllByChessAccountOrderByPlayedAtDesc(
+                    account,
+                    org.springframework.data.domain.PageRequest
+                        .of(0, 20),
+                ).content.size,
             "raw game rows must commit before derived processing begins",
         )
     }
@@ -104,15 +106,20 @@ class GameImportServiceCoordinatorIntegrationTest : GameImportServiceBaseIntegra
             emptySet<UUID>()
         }.whenever(gameParserService).parseAndSavePositions(any())
 
-        val targetService = org.springframework.test.util.AopTestUtils.getUltimateTargetObject<GameImportService>(gameImportService)
+        val targetService =
+            org.springframework.test.util.AopTestUtils
+                .getUltimateTargetObject<GameImportService>(gameImportService)
         val processArchive =
-            GameImportService::class.java.getDeclaredMethod(
-                "processDerivedArchive",
-                com.chessecho.domain.ChessAccount::class.java,
-                com.chessecho.domain.AppUser::class.java,
-                com.chessecho.domain.ImportedArchive::class.java,
-            ).apply { isAccessible = true }
-        val pool = java.util.concurrent.Executors.newFixedThreadPool(2)
+            GameImportService::class.java
+                .getDeclaredMethod(
+                    "processDerivedArchive",
+                    com.chessecho.domain.ChessAccount::class.java,
+                    com.chessecho.domain.AppUser::class.java,
+                    com.chessecho.domain.ImportedArchive::class.java,
+                ).apply { isAccessible = true }
+        val pool =
+            java.util.concurrent.Executors
+                .newFixedThreadPool(2)
         try {
             val first = pool.submit<Any?> { processArchive.invoke(targetService, account, null, archive) }
             assertTrue(enteredParser.await(5, TimeUnit.SECONDS), "first worker did not claim derived processing")
@@ -180,15 +187,20 @@ class GameImportServiceCoordinatorIntegrationTest : GameImportServiceBaseIntegra
             emptySet<UUID>()
         }.whenever(gameParserService).parseAndSavePositions(any())
 
-        val targetService = org.springframework.test.util.AopTestUtils.getUltimateTargetObject<GameImportService>(gameImportService)
+        val targetService =
+            org.springframework.test.util.AopTestUtils
+                .getUltimateTargetObject<GameImportService>(gameImportService)
         val processArchive =
-            GameImportService::class.java.getDeclaredMethod(
-                "processDerivedArchive",
-                com.chessecho.domain.ChessAccount::class.java,
-                com.chessecho.domain.AppUser::class.java,
-                com.chessecho.domain.ImportedArchive::class.java,
-            ).apply { isAccessible = true }
-        val pool = java.util.concurrent.Executors.newFixedThreadPool(2)
+            GameImportService::class.java
+                .getDeclaredMethod(
+                    "processDerivedArchive",
+                    com.chessecho.domain.ChessAccount::class.java,
+                    com.chessecho.domain.AppUser::class.java,
+                    com.chessecho.domain.ImportedArchive::class.java,
+                ).apply { isAccessible = true }
+        val pool =
+            java.util.concurrent.Executors
+                .newFixedThreadPool(2)
         try {
             val first = pool.submit<Any?> { processArchive.invoke(targetService, account, null, archive) }
             assertTrue(enteredParser.await(5, TimeUnit.SECONDS), "first worker did not create and claim derived processing")
@@ -233,7 +245,11 @@ class GameImportServiceCoordinatorIntegrationTest : GameImportServiceBaseIntegra
         val account = assertNotNull(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "hikaru"))
         val stats = userPositionStatsRepository.findByChessAccountIdAndPlayerColor(account.id, "WHITE")
         assertEquals(
-            positionOccurrenceRepository.findByChessAccountIdAndPlayerColor(account.id, "WHITE").map { it.position.id }.toSet().size,
+            positionOccurrenceRepository
+                .findByChessAccountIdAndPlayerColor(account.id, "WHITE")
+                .map { it.position.id }
+                .toSet()
+                .size,
             stats.size,
             "retry must create exactly one stats row per reached position/color",
         )
@@ -286,7 +302,8 @@ class GameImportServiceCoordinatorIntegrationTest : GameImportServiceBaseIntegra
         assertEquals(occurrences.size.toLong(), positionOccurrenceRepository.count())
         assertEquals(
             expectedTimesReached,
-            userPositionStatsRepository.findByChessAccountIdAndPlayerColor(account.id, "WHITE")
+            userPositionStatsRepository
+                .findByChessAccountIdAndPlayerColor(account.id, "WHITE")
                 .associate { it.position.id to it.timesReached },
             "a replayed derived unit must not inflate the occurrence counts it recomputes",
         )
@@ -339,12 +356,13 @@ class GameImportServiceCoordinatorIntegrationTest : GameImportServiceBaseIntegra
         )
 
         val expectedEvents =
-            occurrences.flatMap { occurrence ->
-                listOf(
-                    occurrence.id to SchedulingEventType.GAME_REENCOUNTERED,
-                    occurrence.id to SchedulingEventType.GAME_HANDLED_SUCCESSFULLY,
-                )
-            }.toSet()
+            occurrences
+                .flatMap { occurrence ->
+                    listOf(
+                        occurrence.id to SchedulingEventType.GAME_REENCOUNTERED,
+                        occurrence.id to SchedulingEventType.GAME_HANDLED_SUCCESSFULLY,
+                    )
+                }.toSet()
         assertEquals(
             expectedEvents,
             puzzleSchedulingEventRepository.findAll().map { it.sourceOccurrence?.id to it.eventType }.toSet(),
@@ -401,7 +419,9 @@ class GameImportServiceCoordinatorIntegrationTest : GameImportServiceBaseIntegra
                     status = "PROCESSING",
                 ),
             )
-        val targetService = org.springframework.test.util.AopTestUtils.getUltimateTargetObject<GameImportService>(gameImportService)
+        val targetService =
+            org.springframework.test.util.AopTestUtils
+                .getUltimateTargetObject<GameImportService>(gameImportService)
         val method =
             GameImportService::class.java.getDeclaredMethod(
                 "persistImportProgress",
