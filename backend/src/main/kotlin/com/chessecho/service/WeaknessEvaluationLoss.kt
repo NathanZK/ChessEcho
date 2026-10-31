@@ -6,7 +6,7 @@ internal fun MoveEvaluation.weaknessEvaluationLoss(
     bestMoveEvalCp: Int?,
     bestMoveEvalMate: Int? = null,
 ): Double? =
-    evalLossFromBest ?: EngineAnalysisService.calculateEvalLoss(
+    evalLossFromBest ?: EvaluationLossPolicy.calculateEvalLoss(
         EvalScore(cp = bestMoveEvalCp, mate = bestMoveEvalMate),
         EvalScore(cp = evalCp, mate = evalMate),
     )
