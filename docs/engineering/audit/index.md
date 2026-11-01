@@ -41,6 +41,7 @@ This document serves as the durable evidence repository for opt-in mutation test
 | [`Backend: MoveEvaluationService & EvaluationLossPolicy` (Issue #661)](#228-backend-moveevaluationservice--evaluationlosspolicy-issue-661) | `MoveEvaluationServiceTest`, `EvaluationLossPolicyTest` | Service Unit ([#661](https://github.com/NathanZK/ChessEcho/issues/661)) | 130 | 102 (78%) | 22 (17%) | 6 (5%) | 82% | 2026-10-31 |
 | [`Frontend: ChessBoardArea.tsx & useLineExploration.ts` (Issue #661)](#229-frontend-chessboardareatsx--uselineexplorationts-issue-661) | `ExplorationEvaluation.test.tsx` + suite | Frontend Interaction ([#661](https://github.com/NathanZK/ChessEcho/issues/661)) | 1360 | 871 (64%) | 324 (24%) [165 TO] | 0 (0%) | 81.90% | 2026-10-31 |
 | [`Frontend: PracticePuzzlesView.tsx & PuzzleFeedbackPanel.tsx` (Issue #662)](#230-frontend-practicepuzzlesviewtsx--puzzlefeedbackpaneltsx-issue-662) | `PracticePuzzlesView.test.tsx`, `PuzzleFeedbackPanel.test.tsx`, `SuppliedPositionExploration.test.tsx` + suite | Frontend Shell ([#662](https://github.com/NathanZK/ChessEcho/issues/662)) | 2056 | 1070 (52%) | 618 (30%) [242 TO] | 125 (6%) | 67.98% | 2026-11-01 |
+| [`Frontend: LongDecisionsView.tsx` (Issue #667)](#231-frontend-longdecisionsviewtsx-issue-667-visual-consistency--canonical-styling) | `LongDecisionsView.test.tsx` + suite | Frontend Presentation ([#667](https://github.com/NathanZK/ChessEcho/issues/667)) | 310 | 201 (65%) | 108 (35%) | 1 (0%) | 65.05% | 2026-11-02 |
 
 ---
 
@@ -762,7 +763,32 @@ This document serves as the durable evidence repository for opt-in mutation test
 - **Accepted Surviving Mutants**:
   - Non-functional Tailwind styling string literals, optional chaining guards on defensive callbacks (`onRetryAttempt?.()`, `onAlternativeSelected?.()`), and benign React layout markup outside the core context-aware decision paths.
 
----
+### 2.31 Frontend: `src/components/LongDecisionsView.tsx` (Issue #667 Visual Consistency & Canonical Styling)
+
+- **Issue**: Issue [#667](https://github.com/NathanZK/ChessEcho/issues/667)
+- **Target**: `frontend/src/components/LongDecisionsView.tsx`
+- **Test Suite**: `LongDecisionsView.test.tsx` + full Vitest suite (68 test files, 825 tests passing)
+- **Execution Command**:
+  ```bash
+  cd frontend && npm run test:mutation -- --mutate="src/components/LongDecisionsView.tsx"
+  ```
+- **Results**:
+  - Total Mutants Instrumented: 310
+  - Killed: 201
+  - Timed out: 0
+  - Survived: 108
+  - No Coverage: 1
+  - Errors: 0
+  - Mutation Score (Total): **64.84%**
+  - Covered Mutation Score ("Test Strength"): **65.05%**
+- **Meaningful Gaps Killed**:
+  1. *Filter Simplification & Defaults*: Initial time control ('RAPID') and severity ('CRITICAL') mutations killed by auto-load assertions.
+  2. *Account Readiness Guards*: Mutants modifying authentication/connection guards killed by unconnected and loading test cases.
+  3. *Dropdown Triggers & Auto-Search*: Mutants disabling automatic query dispatch on filter changes killed by dropdown interaction tests.
+  4. *Request Versioning & Race Protection*: Mutants disabling `requestVersion.current !== version` killed by stale response discard tests.
+  5. *State Branches & View Modes*: Mutants modifying loading banners, error retry handling, empty states, and view mode toggling (Grid vs List) killed by targeted interaction tests.
+- **Accepted Surviving Mutants**:
+  - 108 surviving mutants consist of JSX presentation class strings, text literals, and non-functional Tailwind style variants (e.g., color saturation tokens, borders, and button font weights).
 
 ---
 

@@ -1,12 +1,20 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { LayoutGrid, List } from 'lucide-react';
+import {
+  AlertCircle,
+  ChevronDown,
+  Clock3,
+  Filter,
+  LayoutGrid,
+  List,
+  RefreshCw,
+  SlidersHorizontal,
+} from 'lucide-react';
 import { ChessBoardView } from './ChessBoardView';
 import { ExternalGameLink } from './ExternalGameLink';
 import { PositionCard } from './PositionCard';
 import { StatusBanner } from './StatusBanner';
-import { SectionHeader } from './SectionHeader';
 import {
   fetchLongDecisions,
   type DecisionSeverity,
@@ -218,124 +226,166 @@ export const LongDecisionsView: React.FC<LongDecisionsViewProps> = ({
   };
 
   return (
-    <section
-      className="mx-auto w-full max-w-[1536px] space-y-4 px-4 py-6 lg:px-8"
-      aria-labelledby="decision-timing-title"
-    >
-      <SectionHeader
-        id="decision-timing-title"
-        title="Decision Timing"
-        description="Analyze individual positions where you spent unusually expensive thinking time relative to the time control. Decision timing describes duration only, not move quality."
-        actions={
-          <div className="flex items-center space-x-3 shrink-0 self-end sm:self-center">
-            <div className="px-2.5 py-1 rounded bg-surface-container border border-outline-variant text-xs font-mono">
-              <span className="text-outline">Loaded: </span>
-              <strong data-testid="decision-timing-count-indicator" className="text-primary">
-                {occurrences.length}
-              </strong>
-              <span className="text-outline text-[10px]"> positions</span>
-            </div>
+    <section className="space-y-4 max-w-[1536px] mx-auto" aria-labelledby="decision-timing-title">
+      {/* Section Header */}
+      <section className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-outline-variant pb-4">
+        <div className="space-y-1">
+          <h2 id="decision-timing-title" className="text-xl md:text-2xl font-bold text-on-surface tracking-tight flex items-center gap-2">
+            <Clock3 className="w-6 h-6 text-primary" />
+            <span>Decision Timing</span>
+          </h2>
+          <p className="text-xs text-on-surface-variant max-w-2xl leading-relaxed">
+            Analyze individual positions where you spent unusually expensive thinking time relative to the time control. Decision timing describes duration only, not move quality.
+          </p>
+        </div>
 
-            <div className="flex items-center bg-surface-container-lowest p-0.5 rounded border border-outline-variant">
-              <button
-                type="button"
-                onClick={() => setViewMode('grid')}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-mono transition cursor-pointer ${
-                  viewMode === 'grid'
-                    ? 'bg-surface-container text-primary font-semibold'
-                    : 'text-outline hover:text-on-surface'
-                }`}
-              >
-                <LayoutGrid className="w-3.5 h-3.5" />
-                <span>Grid</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode('list')}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-mono transition cursor-pointer ${
-                  viewMode === 'list'
-                    ? 'bg-surface-container text-primary font-semibold'
-                    : 'text-outline hover:text-on-surface'
-                }`}
-              >
-                <List className="w-3.5 h-3.5" />
-                <span>List</span>
-              </button>
-            </div>
+        {/* View Switcher & Paging Scope Indicator */}
+        <div className="flex items-center space-x-3 shrink-0 self-end sm:self-center">
+          <div className="px-2.5 py-1 rounded bg-surface-container border border-outline-variant text-xs font-mono">
+            <span className="text-outline">Loaded: </span>
+            <strong data-testid="decision-timing-count-indicator" className="text-primary">
+              {occurrences.length}
+            </strong>
+            <span className="text-outline text-[10px]"> positions</span>
           </div>
-        }
-      />
 
-      <div
-        className="grid gap-4 rounded-xl border border-outline-variant bg-surface-container-low p-5 sm:grid-cols-2"
+          <div className="flex items-center bg-surface-container-lowest p-0.5 rounded border border-outline-variant">
+            <button
+              type="button"
+              onClick={() => setViewMode('grid')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-mono transition cursor-pointer ${
+                viewMode === 'grid'
+                  ? 'bg-surface-container text-primary font-semibold'
+                  : 'text-outline hover:text-on-surface'
+              }`}
+            >
+              <LayoutGrid className="w-3.5 h-3.5" />
+              <span>Grid</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('list')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-mono transition cursor-pointer ${
+                viewMode === 'list'
+                  ? 'bg-surface-container text-primary font-semibold'
+                  : 'text-outline hover:text-on-surface'
+              }`}
+            >
+              <List className="w-3.5 h-3.5" />
+              <span>List</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {/* Filters Bar */}
+      <section
+        className="bg-surface-container-low border border-outline-variant rounded-xl p-3.5 space-y-2.5 shadow-sm"
         role="region"
         aria-label="Filter decisions"
       >
-        <label className="block space-y-2 text-sm font-semibold text-slate-200">
-          <span>Time control</span>
-          <select
-            aria-label="Time control"
-            className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-white"
-            value={timeControl}
-            onChange={(event) => setTimeControl(event.target.value as LongDecisionTimeControl)}
-          >
-            {TIME_CONTROLS.map((control) => (
-              <option key={control} value={control}>
-                {control}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="flex items-center space-x-1.5 text-xs font-mono font-semibold text-outline mr-1">
+              <Filter className="w-3.5 h-3.5" />
+              <span>Filters:</span>
+            </div>
 
-        <label className="block space-y-2 text-sm font-semibold text-slate-200">
-          <span>Severity</span>
-          <select
-            aria-label="Severity"
-            className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2.5 text-white"
-            value={severityFilter}
-            onChange={(event) =>
-              setSeverityFilter(event.target.value as 'CRITICAL' | 'SIGNIFICANT' | 'MINOR')
-            }
-          >
-            <option value="CRITICAL">Critical</option>
-            <option value="SIGNIFICANT">Significant</option>
-            <option value="MINOR">Minor</option>
-          </select>
-        </label>
+            {/* Time Control Filter */}
+            <div className="relative">
+              <select
+                aria-label="Time control"
+                value={timeControl}
+                onChange={(event) => setTimeControl(event.target.value as LongDecisionTimeControl)}
+                className="appearance-none bg-surface-container hover:bg-surface-container-high border border-outline-variant rounded-lg pl-2.5 pr-7 py-1 text-xs font-mono text-on-surface cursor-pointer outline-none"
+              >
+                {TIME_CONTROLS.map((control) => (
+                  <option key={control} value={control}>
+                    {control}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-outline w-3.5 h-3.5" />
+            </div>
 
-        <p className="text-xs leading-5 text-slate-400 sm:col-span-2">
+            {/* Severity Filter */}
+            <div className="relative">
+              <select
+                aria-label="Severity"
+                value={severityFilter}
+                onChange={(event) =>
+                  setSeverityFilter(event.target.value as 'CRITICAL' | 'SIGNIFICANT' | 'MINOR')
+                }
+                className="appearance-none bg-surface-container hover:bg-surface-container-high border border-outline-variant rounded-lg pl-2.5 pr-7 py-1 text-xs font-mono text-on-surface cursor-pointer outline-none"
+              >
+                <option value="CRITICAL">Critical</option>
+                <option value="SIGNIFICANT">Significant</option>
+                <option value="MINOR">Minor</option>
+              </select>
+              <SlidersHorizontal className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-outline w-3.5 h-3.5" />
+            </div>
+          </div>
+        </div>
+
+        <p className="text-xs text-on-surface-variant font-mono">
           Time control chooses which games to search. Severity filters occurrences by analytical thinking time.
         </p>
-      </div>
+      </section>
 
       {sessionStatus === 'loading' ||
       (sessionStatus === 'authenticated' && accountStatus === 'loading') ? (
-        <p className="rounded-xl border border-slate-800 bg-slate-900/50 p-5 text-sm text-slate-300" role="status">
-          Checking your Chess.com account
-        </p>
+        <StatusBanner variant="loading" message="Checking your Chess.com account" />
       ) : sessionStatus === 'error' ? (
-        <p className="rounded-xl border border-rose-900/60 bg-rose-950/30 p-5 text-sm text-rose-200" role="alert">
-          Unable to check your ChessProbe session. Refresh the page to try again.
-        </p>
+        <div
+          className="py-16 text-center space-y-4 max-w-lg mx-auto bg-surface-container-low p-8 rounded-2xl border border-error-container shadow-xl"
+          role="alert"
+        >
+          <div className="w-14 h-14 rounded-2xl bg-error-container/20 border border-error-container flex items-center justify-center mx-auto text-error">
+            <AlertCircle className="w-7 h-7" />
+          </div>
+          <div>
+            <h3 className="text-lg font-bold text-on-surface">Session Check Failed</h3>
+            <p className="text-xs text-error mt-1">
+              Unable to check your ChessProbe session. Refresh the page to try again.
+            </p>
+          </div>
+        </div>
       ) : sessionStatus === 'authenticated' && accountStatus === 'error' ? (
-        <div className="rounded-xl border border-rose-900/60 bg-rose-950/30 p-5 text-sm text-rose-200" role="alert">
-          <p>Unable to load your connected Chess.com account.</p>
+        <div
+          className="py-16 text-center space-y-4 max-w-lg mx-auto bg-surface-container-low p-8 rounded-2xl border border-error-container shadow-xl"
+          role="alert"
+        >
+          <div className="w-14 h-14 rounded-2xl bg-error-container/20 border border-error-container flex items-center justify-center mx-auto text-error">
+            <AlertCircle className="w-7 h-7" />
+          </div>
+          <div>
+            <h3 className="text-lg font-bold text-on-surface">Failed to Load Account</h3>
+            <p className="text-xs text-error mt-1">Unable to load your connected Chess.com account.</p>
+          </div>
           <button
-            className="mt-3 rounded-lg bg-slate-800 px-4 py-2 font-semibold text-white"
-            onClick={onRetryAccountLoad}
             type="button"
+            onClick={onRetryAccountLoad}
+            className="px-4 py-2 bg-surface-container-high hover:bg-surface-bright text-on-surface text-xs font-mono font-bold rounded-xl border border-outline-variant transition inline-flex items-center gap-1.5 cursor-pointer"
           >
-            Retry account loading
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Retry account loading</span>
           </button>
         </div>
       ) : !hasConnectedAccount ? (
-        <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-6 text-center">
-          <h3 className="font-semibold text-white">No Connected Account</h3>
-          <p className="mt-2 text-sm text-slate-400">Connect a Chess.com account to search its imported decisions.</p>
+        <div className="py-16 text-center space-y-4 max-w-lg mx-auto bg-surface-container-low p-8 rounded-2xl border border-outline-variant shadow-xl">
+          <div className="w-14 h-14 rounded-2xl bg-surface-container-lowest border border-outline-variant flex items-center justify-center mx-auto text-primary">
+            <Clock3 className="w-7 h-7" />
+          </div>
+          <div>
+            <h3 className="text-lg font-bold text-on-surface">No Connected Account</h3>
+            <p className="text-xs text-on-surface-variant mt-1">
+              Connect a Chess.com account to search its imported decisions.
+            </p>
+          </div>
           <button
-            className="mt-4 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-500"
-            onClick={onNavigateImport}
             type="button"
+            onClick={onNavigateImport}
+            className="px-4 py-2 bg-primary hover:bg-primary-container text-on-primary-container text-xs font-mono font-bold rounded-xl border border-outline-variant transition inline-flex items-center gap-1.5 cursor-pointer"
           >
             Go to Import Games
           </button>
@@ -343,24 +393,47 @@ export const LongDecisionsView: React.FC<LongDecisionsViewProps> = ({
       ) : isLoading || !hasCurrentQuery ? (
         <StatusBanner variant="loading" message="Searching long-decision occurrences" />
       ) : error ? (
-        <StatusBanner
-          variant="error"
-          message={`Could not load long-decision occurrences. ${error}`}
-          action={{ label: 'Retry search', onClick: retrySearch }}
-        />
+        <div
+          className="py-16 text-center space-y-4 max-w-lg mx-auto bg-surface-container-low p-8 rounded-2xl border border-error-container shadow-xl"
+          role="alert"
+        >
+          <div className="w-14 h-14 rounded-2xl bg-error-container/20 border border-error-container flex items-center justify-center mx-auto text-error">
+            <AlertCircle className="w-7 h-7" />
+          </div>
+          <div>
+            <h3 className="text-lg font-bold text-on-surface">Failed to Load Decisions</h3>
+            <p className="text-xs text-error mt-1">{error}</p>
+          </div>
+          <button
+            type="button"
+            onClick={retrySearch}
+            className="px-4 py-2 bg-surface-container-high hover:bg-surface-bright text-on-surface text-xs font-mono font-bold rounded-xl border border-outline-variant transition inline-flex items-center gap-1.5 cursor-pointer"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>Retry search</span>
+          </button>
+        </div>
       ) : occurrences.length === 0 ? (
-        <p className="rounded-xl border border-slate-800 bg-slate-900/50 p-5 text-sm text-slate-300">
-          No occurrences met this threshold or filter criteria in the selected time control.
-        </p>
+        <div className="py-16 text-center space-y-4 max-w-lg mx-auto bg-surface-container-low p-8 rounded-2xl border border-outline-variant shadow-xl">
+          <div className="w-14 h-14 rounded-2xl bg-surface-container-lowest border border-outline-variant flex items-center justify-center mx-auto text-outline">
+            <Clock3 className="w-7 h-7 text-outline" />
+          </div>
+          <div>
+            <h3 className="text-lg font-bold text-on-surface">No Occurrences Found</h3>
+            <p className="text-xs text-on-surface-variant mt-1">
+              No occurrences met this threshold or filter criteria in the selected time control.
+            </p>
+          </div>
+        </div>
       ) : (
         <div className="space-y-4">
-          <p className="text-sm text-slate-400">
+          <p className="text-xs text-on-surface-variant font-mono">
             {occurrences.length} occurrence{occurrences.length === 1 ? '' : 's'} shown. Positions are not grouped.
           </p>
-          <div className={viewMode === 'grid' ? 'grid gap-4 lg:grid-cols-2' : 'flex flex-col space-y-4'}>
+          <div className={viewMode === 'grid' ? 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5' : 'flex flex-col space-y-4'}>
             {occurrences.map((occurrence) => (
               <PositionCard key={occurrence.id} className="grid gap-4 sm:grid-cols-[180px_1fr]">
-                <div className="aspect-square w-full max-w-[180px] overflow-hidden rounded-xl border border-slate-700">
+                <div className="aspect-square w-full max-w-[180px] overflow-hidden rounded-xl border border-outline-variant">
                   <ChessBoardView
                     fen={occurrence.fen}
                     boardOrientation={occurrence.playerColor}
@@ -372,7 +445,7 @@ export const LongDecisionsView: React.FC<LongDecisionsViewProps> = ({
                 <div className="flex min-w-0 flex-col gap-3">
                   <div className="space-y-1">
                     <div className="flex items-center justify-between gap-2">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-on-surface-variant font-mono">
                         {occurrence.timeControl} · {occurrence.playerColor}
                       </p>
                       <span
@@ -384,25 +457,25 @@ export const LongDecisionsView: React.FC<LongDecisionsViewProps> = ({
                         {formatSeverityLabel(occurrence.severity)}
                       </span>
                     </div>
-                    <p className="text-lg font-bold text-emerald-300">
+                    <p className="text-lg font-bold text-primary font-mono">
                       {formatDecisionDuration(occurrence.decisionTimeMs)}
                     </p>
-                    <p className="text-sm text-slate-300">
-                      Move played: <span className="font-semibold text-white">{occurrence.movePlayed}</span>
+                    <p className="text-sm text-on-surface-variant">
+                      Move played: <span className="font-semibold text-on-surface">{occurrence.movePlayed}</span>
                     </p>
                   </div>
-                  <dl className="space-y-1 text-xs text-slate-400">
+                  <dl className="space-y-1 text-xs text-on-surface-variant font-mono">
                     <div>
-                      <dt className="inline">Opponent: </dt>
-                      <dd className="inline">{occurrence.opponentUsername || 'Unavailable'}</dd>
+                      <dt className="inline text-outline">Opponent: </dt>
+                      <dd className="inline text-on-surface">{occurrence.opponentUsername || 'Unavailable'}</dd>
                     </div>
                     <div>
-                      <dt className="inline">Date: </dt>
-                      <dd className="inline">{formatPlayedAt(occurrence.playedAt)}</dd>
+                      <dt className="inline text-outline">Date: </dt>
+                      <dd className="inline text-on-surface">{formatPlayedAt(occurrence.playedAt)}</dd>
                     </div>
                     <div>
-                      <dt className="inline">Ply: </dt>
-                      <dd className="inline">{occurrence.plyNumber}</dd>
+                      <dt className="inline text-outline">Ply: </dt>
+                      <dd className="inline text-on-surface">{occurrence.plyNumber}</dd>
                     </div>
                   </dl>
                   {(() => {
@@ -429,7 +502,7 @@ export const LongDecisionsView: React.FC<LongDecisionsViewProps> = ({
                   {onExplorePosition && (
                     <>
                       <button
-                        className="text-left text-sm font-semibold text-emerald-300 underline decoration-emerald-700 underline-offset-4 hover:text-emerald-200"
+                        className="text-left text-xs font-mono font-semibold text-primary underline decoration-primary/40 underline-offset-4 hover:text-primary-hover cursor-pointer"
                         onClick={() => {
                           const started = onExplorePosition(occurrence);
                           setExplorationErrorId(started === false ? occurrence.id : null);
@@ -439,7 +512,7 @@ export const LongDecisionsView: React.FC<LongDecisionsViewProps> = ({
                         Explore this position
                       </button>
                       {explorationErrorId === occurrence.id && (
-                        <p className="text-sm text-rose-300" role="alert">
+                        <p className="text-xs text-error font-mono" role="alert">
                           Could not start exploration for this position. Your current state was not changed.
                         </p>
                       )}
@@ -450,32 +523,35 @@ export const LongDecisionsView: React.FC<LongDecisionsViewProps> = ({
             ))}
           </div>
           {loadMoreError && (
-            <div className="text-sm text-rose-300" role="alert">
+            <div className="p-4 bg-surface-container-low rounded-xl border border-error-container text-xs text-error font-mono space-y-2" role="alert">
               <p>Could not load more occurrences. {loadMoreError}</p>
               <button
-                className="mt-2 rounded-lg bg-slate-800 px-4 py-2 font-semibold text-white"
-                onClick={() => void loadMore()}
                 type="button"
+                className="px-4 py-2 bg-surface-container-high hover:bg-surface-bright text-on-surface text-xs font-mono font-bold rounded-xl border border-outline-variant transition inline-flex items-center gap-1.5 cursor-pointer"
+                onClick={() => void loadMore()}
               >
-                Retry loading more
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Retry loading more</span>
               </button>
             </div>
           )}
           {hasNext && (
-            <button
-              className="rounded-lg border border-slate-700 bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
-              disabled={isLoadingMore}
-              onClick={() => void loadMore()}
-              type="button"
-            >
-              {isLoadingMore ? 'Loading more…' : 'Load more'}
-            </button>
+            <div className="pt-2 text-center">
+              <button
+                type="button"
+                className="px-4 py-2 bg-surface-container-low hover:bg-surface-container text-on-surface-variant hover:text-on-surface text-xs font-bold font-mono rounded-xl border border-outline-variant transition cursor-pointer disabled:opacity-50"
+                disabled={isLoadingMore}
+                onClick={() => void loadMore()}
+              >
+                {isLoadingMore ? 'Loading more…' : 'Load more'}
+              </button>
+            </div>
           )}
         </div>
       )}
 
       {hasCurrentQuery && occurrences.length > 0 && (
-        <p className="text-xs text-slate-500">This result describes decision time, not move quality.</p>
+        <p className="text-xs text-outline font-mono">This result describes decision time, not move quality.</p>
       )}
     </section>
   );
