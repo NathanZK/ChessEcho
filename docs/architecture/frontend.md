@@ -262,34 +262,15 @@ its SAN history and PGN starting FEN into the board, including for PGNs that
 start from a custom setup. Multiple games and variations are rejected rather
 than silently choosing a different line.
 
-`Home` uses a synthetic position record marked `source: 'supplied'` to enter
-the existing Line Exploration flow. This is an internal adapter to the
-puzzle-backed board workspace, not a claim that the position is a puzzle or
-weakness. During this session, the selected workspace label reads **Line
-Exploration** while retaining the same internal tab; it returns to **Practice
-Puzzles** on exit. No fourth tab or route is added. The board starts with an
-unknown evaluation, then uses the same FEN-based continuation and move
-evaluation services as other exploration sessions.
+`Home` uses context-aware position records with `source: 'puzzle' | 'weakness' | 'long-decision' | 'similar' | 'supplied'` to enter the shared Practice Puzzles and Line Exploration board shell without parallel workspace components. During non-puzzle exploration sessions, the feedback panel renders context-tailored headers and metadata:
+- **Weakness Library (`weakness`):** Target Opening Weakness title, mistake rate, times reached, and attempt counters.
+- **Decision Timing (`long-decision`):** Time control badge, played move, duration, critical/significant severity pill, and continuation preview card (orientation, played move, duration, baseline evaluation, with `Continue Exploration →` and `Exit` actions).
+- **Similar Positions (`similar`):** Similarity score percentage and match rank badge with orientation.
+- **Supplied Position (`supplied`):** Supplied Position badge, side-to-move orientation, and baseline evaluation.
 
-Puzzle-only settings, weakness labels, feedback/outcome cards, timer controls,
-hint, puzzle navigation, blindfold entry, and puzzle statistics are suppressed
-for supplied sessions. Puzzle-event recording is not used; the ordinary manual
-entry clears timed-training state and any prior blindfold session when entering.
-Undo, redo, reset, board flip/sound, and the shared Line Exploration modes
-remain available. Exiting an ordinary manual session clears the supplied
-session and returns to the existing empty Practice Puzzles state instead of
-showing a solved-puzzle result.
+Truthful statistics gating (`isWeaknessBacked`) guarantees that historical mistake rate and times reached badges are rendered exclusively when backed by actual account evidence (`weakness` or `puzzle`). They are omitted for Decision Timing occurrences, Similar Positions results, and supplied positions (preventing synthetic `0.0%` rates or `0 games`).
 
-The Long Decisions action reuses this supplied-position route with the
-occurrence's FEN unchanged, so its side-to-move field remains authoritative.
-For this launch origin only, `Home` keeps the Long Decisions view mounted while
-hidden and snapshots the selected puzzle, board undo/redo history, feedback,
-and timer attempt. An active stopwatch or countdown is paused during exploration
-and resumes from its saved elapsed/remaining time on return; an inactive timer
-stays inactive. Exiting Line Exploration returns to the same results and query.
-An invalid occurrence FEN leaves the current results and puzzle state in place
-with a launch error. These preservation rules do not change the ordinary manual
-entry or its exit behavior.
+Return navigation captures any originating `TabType` (`weaknesses`, `long-decisions`, `similar-positions`, `import`, or `puzzles`). When exiting practice or exploration, the user is restored to the exact originating tab with search queries, filters, scroll positions, and selected occurrences preserved without redundant API refetches. If no return snapshot is active, exit safely transitions to the idle Practice Puzzles view.
 
 ```mermaid
 %%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false, "diagramPadding": 120}}}%%

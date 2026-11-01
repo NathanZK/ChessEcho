@@ -495,4 +495,25 @@ describe('LongDecisionsView', () => {
 
     expect(await screen.findByText(/Please try again./i)).toBeInTheDocument();
   });
+
+  it('invokes onExplorePosition with the complete occurrence context when Explore this position is clicked', async () => {
+    const user = userEvent.setup();
+    const testOccurrence = occurrence('explore-occ-1', {
+      fen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1',
+      movePlayed: 'e5',
+      decisionTimeMs: 45_000,
+      timeControl: 'RAPID',
+      severity: 'SIGNIFICANT',
+    });
+    vi.mocked(api.fetchLongDecisions).mockResolvedValue(page([testOccurrence]));
+
+    const onExplorePosition = vi.fn().mockReturnValue(true);
+    render(<LongDecisionsView {...connectedProps} onExplorePosition={onExplorePosition} />);
+
+    const exploreButton = await screen.findByRole('button', { name: 'Explore this position' });
+    await user.click(exploreButton);
+
+    expect(onExplorePosition).toHaveBeenCalledTimes(1);
+    expect(onExplorePosition).toHaveBeenCalledWith(testOccurrence);
+  });
 });

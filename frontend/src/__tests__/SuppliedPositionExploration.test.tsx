@@ -126,8 +126,8 @@ describe('user-supplied position exploration', () => {
     expect(getVisibleBoard()).toHaveAttribute('data-position', START_FEN);
     expect(screen.getByRole('button', { name: 'Practice Puzzles' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Line Exploration' })).not.toBeInTheDocument();
-    expect(screen.getByText('Test candidate moves or proceed to Line Exploration.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Continue Exploration/i })).toBeInTheDocument();
+    expect(screen.getByText(/Find (White|Black)'s best move/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Continue Exploration/i })).not.toBeInTheDocument();
 
     fireEvent.click(within(getVisibleBoard()).getByTestId('play-e4'));
     await waitFor(
@@ -137,6 +137,9 @@ describe('user-supplied position exploration', () => {
     expect(api.recordPuzzleEvent).not.toHaveBeenCalled();
     expect(api.submitTrainingAttempt).not.toHaveBeenCalled();
 
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Continue Exploration/i })).toBeInTheDocument(),
+    );
     fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
     expect(screen.getByRole('button', { name: 'Line Exploration' })).toBeInTheDocument();
   });
@@ -187,7 +190,8 @@ describe('user-supplied position exploration', () => {
     expect(getVisibleBoard()).toHaveAttribute('data-position', BLACK_TO_MOVE_FEN);
     // Opened in the main puzzle experience, not raw Line Exploration
     expect(screen.getByRole('button', { name: 'Practice Puzzles' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Continue Exploration/i })).toBeInTheDocument();
+    expect(screen.getByText(/Find (White|Black)'s best move/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Continue Exploration/i })).not.toBeInTheDocument();
 
     // User can attempt a move from the position with dynamic evaluation
     fireEvent.click(within(getVisibleBoard()).getByTestId('play-black-c5'));
@@ -196,6 +200,9 @@ describe('user-supplied position exploration', () => {
     expect(api.submitTrainingAttempt).not.toHaveBeenCalled();
 
     // User can transition into Line Exploration
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Continue Exploration/i })).toBeInTheDocument(),
+    );
     fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
     expect(screen.getByRole('button', { name: 'Line Exploration' })).toBeInTheDocument();
 
@@ -271,8 +278,6 @@ describe('user-supplied position exploration', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Explore this position' }));
     expect(pauseStopwatch).toHaveBeenCalledTimes(1);
     expect(screen.getByRole('button', { name: 'Practice Puzzles' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
-    expect(screen.getByRole('button', { name: 'Line Exploration' })).toBeInTheDocument();
     fireEvent.click(screen.getByTitle('Exit Exploration'));
     expect(resumeStopwatch).toHaveBeenCalledTimes(1);
 
@@ -376,10 +381,11 @@ describe('user-supplied position exploration', () => {
     const selectedFen = 'rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2';
     expect(getVisibleBoard()).toHaveAttribute('data-position', selectedFen);
     expect(screen.getByRole('button', { name: 'Practice Puzzles' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Continue Exploration/i })).toBeInTheDocument();
+    expect(screen.getByText(/Find (White|Black)'s best move/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Continue Exploration/i })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
-    expect(screen.getByRole('button', { name: 'Line Exploration' })).toBeInTheDocument();
+    const exitBtn = screen.getByTitle('Exit Exploration');
+    expect(exitBtn).toBeInTheDocument();
   });
 
   it('preserves ordinary Practice Puzzles context when opening a supplied position and restores previous puzzle on exit', async () => {
@@ -416,7 +422,8 @@ describe('user-supplied position exploration', () => {
     // Verify supplied position in Practice Puzzles shell
     expect(getVisibleBoard()).toHaveAttribute('data-position', AFTER_D4_FEN);
     expect(screen.queryByText('King\'s Pawn Opening')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Continue Exploration/i })).toBeInTheDocument();
+    expect(screen.getByText(/Find (White|Black)'s best move/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Continue Exploration/i })).not.toBeInTheDocument();
 
     // Exit supplied position
     fireEvent.click(screen.getByTitle('Exit Exploration'));
@@ -509,11 +516,74 @@ describe('user-supplied position exploration', () => {
 
     fireEvent.click(within(getVisibleBoard()).getByTestId('play-d4'));
     await waitFor(() => expect(api.evaluateMove).toHaveBeenCalledWith(START_FEN, 'd4'));
-    console.log("BODY HTML AFTER D4 EVAL:", document.body.innerHTML);
 
     await waitFor(() => {
       expect(screen.getByText('Not the Recommended Move')).toBeInTheDocument();
       expect(getVisibleBoard()).toHaveAttribute('data-position', START_FEN);
     });
+  });
+
+  it('locks board against second move during delayed evaluation, preserves provisional attempt across retry, and permits post-evaluation exploration', async () => {
+    let rejectEval: (err: unknown) => void = () => {};
+    const deferredEval = new Promise<api.MoveEvaluationResponse | null>((_resolve, reject) => {
+      rejectEval = reject;
+    });
+
+    vi.mocked(api.evaluateMove).mockReturnValue(deferredEval);
+
+    render(<Home />);
+    await waitFor(() => expect(screen.getByText('No Practice Puzzles Available')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: 'Explore a position' }));
+    const dialog = screen.getByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('FEN'), { target: { value: START_FEN } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Continue from FEN' }));
+
+    // 1. Submit initial move
+    fireEvent.click(within(getVisibleBoard()).getByTestId('play-e4'));
+    expect(await screen.findByText('Evaluating move...')).toBeInTheDocument();
+    expect(getVisibleBoard()).toHaveAttribute('data-position', AFTER_E4_FEN);
+    expect(api.evaluateMove).toHaveBeenCalledTimes(1);
+
+    // 2. Attempt second move while evaluation is in-flight -> MUST BE REJECTED
+    fireEvent.click(within(getVisibleBoard()).getByTestId('play-d4'));
+    expect(getVisibleBoard()).toHaveAttribute('data-position', AFTER_E4_FEN);
+    expect(api.evaluateMove).toHaveBeenCalledTimes(1);
+
+    // 3. Evaluation fails with network error
+    rejectEval(new Error('Network connection dropped'));
+    expect(await screen.findByText('Move Evaluation Failed')).toBeInTheDocument();
+    expect(screen.getByText('Network connection dropped')).toBeInTheDocument();
+    // Provisional position must be preserved
+    expect(getVisibleBoard()).toHaveAttribute('data-position', AFTER_E4_FEN);
+
+    // 4. Attempt second move while in retryable error state -> MUST BE REJECTED
+    fireEvent.click(within(getVisibleBoard()).getByTestId('play-d4'));
+    expect(getVisibleBoard()).toHaveAttribute('data-position', AFTER_E4_FEN);
+    expect(api.evaluateMove).toHaveBeenCalledTimes(1);
+
+    // 5. Retry evaluation evaluates the original attempt against immutable preMoveFen
+    vi.mocked(api.evaluateMove).mockResolvedValueOnce({
+      fen: START_FEN,
+      move: 'e4',
+      bestMove: 'e4',
+      bestEvalCp: 20,
+      evalCp: 20,
+      evalLoss: 0,
+      maxEvalLoss: 0.8,
+      threshold: 0.8,
+      acceptable: true,
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Retry evaluation/i }));
+    await waitFor(() => expect(api.evaluateMove).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(api.evaluateMove).mock.calls[1]).toEqual([START_FEN, 'e4']);
+    expect(api.recordPuzzleEvent).not.toHaveBeenCalled();
+    expect(api.submitTrainingAttempt).not.toHaveBeenCalled();
+
+    // 6. On success, post-evaluation exploration actions become available
+    expect(await screen.findByText('Puzzle Solved! 🎉')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Continue Exploration/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
+    expect(screen.getByRole('button', { name: 'Line Exploration' })).toBeInTheDocument();
   });
 });

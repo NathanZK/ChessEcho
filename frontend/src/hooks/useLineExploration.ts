@@ -21,10 +21,28 @@ const chessEchoSelectionPolicy = createStochasticSelectionPolicy();
 const deterministicSelectionPolicy = createDeterministicSelectionPolicy();
 
 export type PuzzleFeedbackState = {
-  status: 'IDLE' | 'CORRECT' | 'HISTORICAL_MISTAKE' | 'INCORRECT' | 'EXPLORING';
+  status: 'IDLE' | 'CORRECT' | 'HISTORICAL_MISTAKE' | 'INCORRECT' | 'EXPLORING' | 'EVALUATING' | 'EVALUATION_ERROR';
   lastMove?: string;
   historicalInfo?: { timesPlayed: number; averageLoss: number };
+  evalLoss?: number;
+  errorMessage?: string;
+  onRetry?: () => void;
+  attemptElapsedMs?: number;
 };
+
+/**
+ * Predicate determining whether an attempt has completed evaluation
+ * (CORRECT, HISTORICAL_MISTAKE, or INCORRECT).
+ * Excludes pending/unresolved states (IDLE, EVALUATING, EVALUATION_ERROR, EXPLORING).
+ */
+export function isEvaluatedFeedback(feedback: PuzzleFeedbackState | null | undefined): boolean {
+  if (!feedback) return false;
+  return (
+    feedback.status === 'CORRECT' ||
+    feedback.status === 'HISTORICAL_MISTAKE' ||
+    feedback.status === 'INCORRECT'
+  );
+}
 
 function errorMessageOf(e: unknown): string | undefined {
   if (e instanceof Error) return e.message;

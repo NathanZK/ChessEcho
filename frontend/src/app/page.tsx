@@ -16,7 +16,7 @@ import {
 import { PositionProgressView } from '@/components/PositionProgressView';
 import { ImportGamesView } from '@/components/ImportGamesView';
 import { Puzzle } from '@/types/puzzle';
-import { JobStatusResponse } from '@/services/api';
+import { JobStatusResponse, type LongDecisionOccurrence } from '@/services/api';
 import { useAccountSession } from '@/hooks/useAccountSession';
 import {
   activeTabStore,
@@ -157,13 +157,18 @@ export default function Home() {
     }
   };
 
-  const handleExplorePosition = (position: PositionExplorationStart) => {
-    changeTab('puzzles');
-    practiceActionsRef.current?.explorePosition(position, false, activeTab);
+  const handleExplorePosition = (position: PositionExplorationStart): boolean => {
+    const success = practiceActionsRef.current?.explorePosition(position, false, activeTab) ?? false;
+    if (success) {
+      changeTab('puzzles');
+    }
+    return success;
   };
 
-  const handleLongDecisionExplorePosition = (fen: string): boolean => {
-    const success = practiceActionsRef.current?.exploreLongDecision(fen) ?? false;
+  const handleLongDecisionExplorePosition = (
+    occurrenceOrFen: LongDecisionOccurrence | string
+  ): boolean => {
+    const success = practiceActionsRef.current?.exploreLongDecision(occurrenceOrFen) ?? false;
     if (success) {
       setHasLongDecisionReturnContext(true);
       changeTab('puzzles');

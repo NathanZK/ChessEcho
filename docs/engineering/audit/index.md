@@ -38,6 +38,9 @@ This document serves as the durable evidence repository for opt-in mutation test
 | [`Frontend: SimilarPositionsView.tsx` & `WeaknessesList.tsx` (Issue #637)](#225-frontend-similarpositionsviewtsx-and-weaknesseslisttsx-issue-637) | `SimilarPositionsView.test.tsx`, `WeaknessesList.test.tsx` + suite | Frontend Presentation ([#637](https://github.com/NathanZK/ChessEcho/issues/637)) | 848 | 461 (54%) [35 TO] | 314 (37%) | 71 (8%) | 59.48% | 2026-10-30 |
 | [`DecisionTimingPolicy` & `LongDecisionService` (Issue #660 Extension)](#226-decisiontimingpolicy--longdecisionservice-issue-660-extension) | `LongDecisionServiceTest`, `LongDecisionServiceMappingTest`, `DecisionTimingPolicyTest` | Service Unit ([#660](https://github.com/NathanZK/ChessEcho/issues/660)) | 43 | 40 (93%) | 3 (7%) | 0 (0%) | 93% | 2026-10-31 |
 | [`Frontend: LongDecisionsView.tsx` (Issue #660)](#227-frontend-longdecisionsviewtsx-issue-660-simplified-filters--auto-search) | `LongDecisionsView.test.tsx` + suite | Frontend Presentation ([#660](https://github.com/NathanZK/ChessEcho/issues/660)) | 310 | 201 (65%) | 108 (35%) | 1 (0%) | 65.05% | 2026-10-31 |
+| [`Backend: MoveEvaluationService & EvaluationLossPolicy` (Issue #661)](#228-backend-moveevaluationservice--evaluationlosspolicy-issue-661) | `MoveEvaluationServiceTest`, `EvaluationLossPolicyTest` | Service Unit ([#661](https://github.com/NathanZK/ChessEcho/issues/661)) | 130 | 102 (78%) | 22 (17%) | 6 (5%) | 82% | 2026-10-31 |
+| [`Frontend: ChessBoardArea.tsx & useLineExploration.ts` (Issue #661)](#229-frontend-chessboardareatsx--uselineexplorationts-issue-661) | `ExplorationEvaluation.test.tsx` + suite | Frontend Interaction ([#661](https://github.com/NathanZK/ChessEcho/issues/661)) | 1360 | 871 (64%) | 324 (24%) [165 TO] | 0 (0%) | 81.90% | 2026-10-31 |
+| [`Frontend: PracticePuzzlesView.tsx & PuzzleFeedbackPanel.tsx` (Issue #662)](#230-frontend-practicepuzzlesviewtsx--puzzlefeedbackpaneltsx-issue-662) | `PracticePuzzlesView.test.tsx`, `PuzzleFeedbackPanel.test.tsx`, `SuppliedPositionExploration.test.tsx` + suite | Frontend Shell ([#662](https://github.com/NathanZK/ChessEcho/issues/662)) | 2056 | 1070 (52%) | 618 (30%) [242 TO] | 125 (6%) | 67.98% | 2026-11-01 |
 
 ---
 
@@ -719,6 +722,45 @@ This document serves as the durable evidence repository for opt-in mutation test
   4. *Ply Synchronization & State Reset*: Mutants removing feedback clearing on ply transitions or reset killed by `resetExploration` tests.
 - **Accepted Surviving Mutants**:
   - Non-functional UI string literal mutations, optional logging calls, and benign React memoization identity checks.
+
+### 2.30 Frontend: `PracticePuzzlesView.tsx` & `PuzzleFeedbackPanel.tsx` (Issue #662)
+
+- **Issue**: Issue [#662](https://github.com/NathanZK/ChessEcho/issues/662)
+- **Detailed Target**: Complete context-aware shared practice across position entry points (Weakness Library, Practice Puzzles, Decision Timing, Similar Positions, Header Explore Modal)
+- **Test Suites**:
+  - `src/__tests__/PracticePuzzlesView.test.tsx`
+  - `src/__tests__/PuzzleFeedbackPanel.test.tsx`
+  - `src/__tests__/SuppliedPositionExploration.test.tsx`
+  - `src/__tests__/SimilarPositionsNavigation.test.tsx`
+  - `src/__tests__/chessMove.test.ts`
+  - `src/__tests__/decisionTimingComparison.test.ts`
+  - `src/__tests__/LongDecisionsView.test.tsx`
+  - Full Vitest suite: 68 test files, 811 tests passing
+- **Execution Command**:
+  ```bash
+  cd frontend && npm run test:mutation -- --mutate="src/components/PracticePuzzlesView.tsx,src/components/PuzzleFeedbackPanel.tsx"
+  ```
+- **Aggregate Results**:
+  - Total Mutants: 2056
+  - Killed: 1070 (52.04%)
+  - Timed Out: 242 (11.77%)
+  - Survived: 618 (30.06%)
+  - No Coverage: 125 (6.08%)
+  - Errors: 1 (0.05%)
+  - Stryker Total Score: **63.84%** $\left(\frac{1070 + 242}{2055} = \frac{1312}{2055}\right)$
+  - Stryker Covered Score ("Test Strength"): **67.98%** $\left(\frac{1070 + 242}{1070 + 242 + 618} = \frac{1312}{1930}\right)$
+  - Execution Duration: 29m 40s (9 parallel workers)
+- **Per-Target Breakdown**:
+  - `PracticePuzzlesView.tsx`: 1237 mutants; 551 killed, 165 timed out, 408 survived, 112 no coverage; **57.93%** mutation score (**63.70%** covered score).
+  - `PuzzleFeedbackPanel.tsx`: 819 mutants; 519 killed (+125 killed over post-#629 baseline), 77 timed out, 210 survived (-43 survivors), 13 no coverage; **72.77%** mutation score (**73.95%** covered score).
+- **Meaningful Gaps Killed**:
+  1. *Context-Aware Header Labeling & Badges*: Mutants altering or removing context-aware headers (`Target Opening Weakness`, `Decision Timing`, `Similar Positions`, `Supplied Position`) and metadata badges (RAPID, played move, time control, similarity score) killed by assertions across `PuzzleFeedbackPanel.test.tsx` and `PracticePuzzlesView.test.tsx`.
+  2. *Truthful Statistics Enforcement (`isWeaknessBacked`)*: Mutants mutating the `isWeaknessBacked` predicate (`Boolean(puzzle) && puzzle.source !== 'supplied' && puzzle.source !== 'long-decision' && puzzle.source !== 'similar'`) killed by explicit tests asserting absence of `Mistake Rate` and `Times Reached` badges across non-weakness entry points.
+  3. *Grounded Return Navigation Mapping*: Mutants in `captureExplorationReturnSnapshot` and `restoreExplorationReturnSnapshot` substituting `originatingTab` or reverting to hardcoded fallbacks killed by multi-tab exploration and exit integration tests in `PracticePuzzlesView.test.tsx` and `SuppliedPositionExploration.test.tsx`.
+  4. *Occurrence Metadata & Continuation Preview*: Mutants mutating orientation calculation (`playerColor === 'WHITE' ? 'White to move' : 'Black to move'`), played move duration formatting, and continuation preview card action buttons killed by targeted tests in `PuzzleFeedbackPanel.test.tsx`.
+  5. *Similar Positions State Preservation*: Mutants modifying search snapshot retention and avoiding redundant API refetching killed by `SimilarPositionsNavigation.test.tsx`.
+- **Accepted Surviving Mutants**:
+  - Non-functional Tailwind styling string literals, optional chaining guards on defensive callbacks (`onRetryAttempt?.()`, `onAlternativeSelected?.()`), and benign React layout markup outside the core context-aware decision paths.
 
 ---
 

@@ -25,6 +25,7 @@ export interface ChessBoardHistorySnapshot {
 
 interface ChessBoardAreaProps {
   initialDecisionEnabled?: boolean;
+  isMoveEvaluationPending?: boolean;
   blindfoldMode?: boolean;
   initialFen: string;
   initialBoardHistory?: ChessBoardHistorySnapshot | null;
@@ -75,6 +76,7 @@ interface ChessBoardAreaProps {
 
 export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   initialDecisionEnabled = true,
+  isMoveEvaluationPending = false,
   blindfoldMode = false,
   initialFen,
   initialBoardHistory,
@@ -375,6 +377,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
 
 
   const handlePieceDrop = (sourceSquare: string, targetSquare: string): boolean => {
+    if (isMoveEvaluationPending) return false;
     if (historyIndex === 0 && !initialDecisionEnabled) return false;
     try {
       const gameCopy = cloneChessGameWithHistory(game);
@@ -640,6 +643,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   const orientation = boardOrientation ?? (playerColor === 'BLACK' ? 'black' : 'white');
 
   const handleSquareClick = ({ piece, square }: { piece?: unknown; square: string }) => {
+    if (isMoveEvaluationPending) return;
     if (explorationPlayMode === 'CHALLENGE') return;
 
     if (!moveFromSquare) {
@@ -677,7 +681,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
       <ChessBoardView
         fen={game.fen()}
         boardOrientation={orientation}
-        allowDragging={explorationPlayMode !== 'CHALLENGE'}
+        allowDragging={explorationPlayMode !== 'CHALLENGE' && !isMoveEvaluationPending}
         customSquareStyles={customSquareStyles}
         animationDurationInMs={200}
         onSquareClick={handleSquareClick}
