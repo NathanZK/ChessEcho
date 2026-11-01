@@ -14,6 +14,12 @@ vi.mock('react-chessboard', () => ({
     };
   }) => (
     <div data-testid="mock-board" data-position={options.position}>
+      <button
+        data-testid="play-d4-drop"
+        onClick={() => options.onPieceDrop?.({ sourceSquare: 'd2', targetSquare: 'd4' })}
+      >
+        Play d4
+      </button>
       {options.position}
     </div>
   ),
@@ -127,15 +133,13 @@ describe('SimilarPositions navigation and exploration bridge', () => {
     // 3. Click "Explore this position"
     fireEvent.click(exploreBtn);
 
-    // 4. Verify opening in the shared puzzle shell in idle state
+    // 4. Verify opening in the shared puzzle shell in unified puzzle-solving state
     expect(activeTabStore.getSnapshot()).toBe('puzzles');
     expect(screen.getByRole('button', { name: 'Practice Puzzles' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Continue Exploration/i })).toBeInTheDocument();
+    expect(screen.getByText(/Find (White|Black)'s best move/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Continue Exploration/i })).not.toBeInTheDocument();
 
-    // Transition into Line Exploration
-    fireEvent.click(screen.getByRole('button', { name: /Continue Exploration/i }));
-    expect(screen.getByRole('button', { name: 'Line Exploration' })).toBeInTheDocument();
-    const exitBtn = await screen.findByTitle(/Exit Exploration/i);
+    const exitBtn = screen.getByTitle(/Exit Exploration/i);
     expect(exitBtn).toBeInTheDocument();
 
     // 5. Exit Exploration and verify restoration of Similar Positions view
@@ -151,5 +155,63 @@ describe('SimilarPositions navigation and exploration bridge', () => {
     expect(screen.queryByText(/Score:/i)).not.toBeInTheDocument();
     // Verify no redundant API re-fetch was triggered upon returning
     expect(api.fetchSimilarPositions).toHaveBeenCalledTimes(1);
+  });
+
+  it('executes a legal move through rendered board mechanism on explored Similar Position and receives evaluation feedback', async () => {
+    vi.mocked(api.evaluateMove).mockResolvedValueOnce({
+      fen: similarFen,
+      move: 'd4',
+      bestMove: 'd4',
+      bestEvalCp: 25,
+      evalCp: 25,
+      evalLoss: 0,
+      maxEvalLoss: 0.8,
+      threshold: 0.8,
+      acceptable: true,
+    });
+
+    render(<Home />);
+
+    // 1. Navigate to Similar Positions tab and search
+    const similarTabBtn = await screen.findByRole('button', { name: /Similar Positions/i });
+    fireEvent.click(similarTabBtn);
+
+    const fenInput = screen.getByLabelText(/FEN Position/i);
+    fireEvent.change(fenInput, { target: { value: validFen } });
+    fireEvent.click(screen.getByRole('button', { name: /Search/i }));
+
+    const exploreBtn = await screen.findByRole('button', { name: /Explore this position/i });
+    fireEvent.click(exploreBtn);
+
+    // 2. Verify exact matched position is loaded on the active visible board
+    const visibleBoard = screen
+      .getAllByTestId('mock-board')
+      .find((element) => !element.closest('[hidden]'));
+    expect(visibleBoard).toBeDefined();
+    expect(visibleBoard).toHaveAttribute('data-position', similarFen);
+
+    // 3. Make a legal move (d2-d4 -> SAN d4) through the rendered board interaction mechanism
+    const playBtn = screen
+      .getAllByTestId('play-d4-drop')
+      .find((element) => !element.closest('[hidden]'));
+    expect(playBtn).toBeDefined();
+    fireEvent.click(playBtn!);
+
+    // 4. Verify evaluation was invoked with the exact pre-move position and submitted SAN
+    await waitFor(() => {
+      expect(api.evaluateMove).toHaveBeenCalledWith(similarFen, 'd4');
+    });
+
+    // 5. Verify post-evaluation feedback
+    expect(await screen.findByText('Puzzle Solved! 🎉')).toBeInTheDocument();
+
+    // 6. Verify return navigation preserves Similar Positions context
+    const exitBtn = screen.getAllByTitle(/Exit Exploration/i)[0];
+    fireEvent.click(exitBtn);
+
+    await waitFor(() => {
+      expect(activeTabStore.getSnapshot()).toBe('similar-positions');
+    });
+    expect(await screen.findByRole('heading', { name: /Find Similar Personal Positions/i })).toBeInTheDocument();
   });
 });

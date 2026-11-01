@@ -697,6 +697,7 @@ export async function fetchPuzzles(
 
     return {
       ...item,
+      source: item.source || 'puzzle',
       playerColor,
       openingTitle: item.openingTitle || `Weakness Position #${idx + 1}`,
       evalCp: item.evalCp ?? 35,

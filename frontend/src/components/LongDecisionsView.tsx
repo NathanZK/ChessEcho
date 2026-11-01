@@ -24,7 +24,7 @@ interface LongDecisionsViewProps {
   accountStatus: AccountStatus;
   onRetryAccountLoad?: () => void;
   onNavigateImport?: () => void;
-  onExplorePosition?: (fen: string) => boolean | void;
+  onExplorePosition?: (occurrence: LongDecisionOccurrence) => boolean | void;
 }
 
 interface SubmittedQuery {
@@ -431,7 +431,7 @@ export const LongDecisionsView: React.FC<LongDecisionsViewProps> = ({
                       <button
                         className="text-left text-sm font-semibold text-emerald-300 underline decoration-emerald-700 underline-offset-4 hover:text-emerald-200"
                         onClick={() => {
-                          const started = onExplorePosition(occurrence.fen);
+                          const started = onExplorePosition(occurrence);
                           setExplorationErrorId(started === false ? occurrence.id : null);
                         }}
                         type="button"

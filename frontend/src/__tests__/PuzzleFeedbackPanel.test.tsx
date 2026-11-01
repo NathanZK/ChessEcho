@@ -612,4 +612,316 @@ describe('PuzzleFeedbackPanel Unit Tests', () => {
       expect(screen.queryByText('Puzzle Solved! 🎉')).not.toBeInTheDocument();
     });
   });
+
+  describe('Context-Aware Practice and Truthful Statistics (Issue #662)', () => {
+    it('renders Target Opening Weakness and recurrence statistics for weakness and puzzle sources', () => {
+      renderPanel({
+        puzzle: { ...basePuzzle, source: 'weakness', mistakeRate: 25.5, timesReached: 4 },
+      });
+
+      expect(screen.getByText('Target Opening Weakness')).toBeInTheDocument();
+      expect(screen.getByText("King's Pawn Opening")).toBeInTheDocument();
+      expect(screen.getByText('Mistake Rate')).toBeInTheDocument();
+      expect(screen.getByText('25.5%')).toBeInTheDocument();
+      expect(screen.getByText('4 games')).toBeInTheDocument();
+    });
+
+    it('renders Decision Timing header and omits recurrence statistics for long-decision source', () => {
+      renderPanel({
+        puzzle: {
+          ...basePuzzle,
+          source: 'long-decision',
+          timesReached: 0,
+          mistakeRate: 0,
+          longDecisionContext: {
+            timeControl: 'RAPID',
+            decisionTimeMs: 45_000,
+            movePlayed: 'e5',
+            severity: 'CRITICAL',
+            gameUrl: 'https://www.chess.com/game/live/12345',
+          },
+        },
+      });
+
+      expect(screen.getByText('Decision Timing')).toBeInTheDocument();
+      expect(screen.getByText('RAPID')).toBeInTheDocument();
+      expect(screen.getByText('CRITICAL')).toBeInTheDocument();
+      // Pre-attempt secrecy: movePlayed and decisionTimeMs must NOT be rendered
+      expect(screen.queryByText('e5')).not.toBeInTheDocument();
+      expect(screen.queryByText('(0:45)')).not.toBeInTheDocument();
+      expect(
+        screen.getByText(/Find White's best move\. Can you improve upon your game decision/i)
+      ).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /Open game/i })).toHaveAttribute(
+        'href',
+        'https://www.chess.com/game/live/12345'
+      );
+
+      // Must suppress Target Opening Weakness
+      expect(screen.queryByText('Target Opening Weakness')).not.toBeInTheDocument();
+
+      // Recurrence statistics must NOT be rendered (no 0.0% or 0 games)
+      expect(screen.queryByText('Mistake Rate')).not.toBeInTheDocument();
+      expect(screen.queryByText('Times Reached')).not.toBeInTheDocument();
+      expect(screen.queryByText(/0\.0%/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/0 games/)).not.toBeInTheDocument();
+    });
+
+    it('renders running practice stopwatch badge for long-decision before first move while keeping game move concealed', () => {
+      renderPanel({
+        puzzle: {
+          ...basePuzzle,
+          source: 'long-decision',
+          timesReached: 0,
+          mistakeRate: 0,
+          longDecisionContext: {
+            timeControl: 'RAPID',
+            decisionTimeMs: 45_000,
+            movePlayed: 'e5',
+            severity: 'CRITICAL',
+          },
+        },
+        timerMode: 'STOPWATCH',
+        timerElapsedMs: 14200,
+        feedback: { status: 'IDLE' },
+      });
+
+      // Practice stopwatch must be visible before the first move
+      expect(screen.getByText('0:14')).toBeInTheDocument();
+
+      // Original game decision and original duration remain strictly concealed
+      expect(screen.queryByText('e5')).not.toBeInTheDocument();
+      expect(screen.queryByText('(0:45)')).not.toBeInTheDocument();
+    });
+
+    it('reveals played move, duration, and multi-dimensional comparison post-attempt for long-decision', () => {
+      renderPanel({
+        puzzle: {
+          ...basePuzzle,
+          fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+          targetMove: 'e4',
+          source: 'long-decision',
+          timesReached: 0,
+          mistakeRate: 0,
+          longDecisionContext: {
+            timeControl: 'RAPID',
+            decisionTimeMs: 45_000,
+            movePlayed: 'a3',
+            severity: 'SIGNIFICANT',
+          },
+        },
+        feedback: {
+          status: 'CORRECT',
+          lastMove: 'e4',
+          attemptElapsedMs: 12500,
+        },
+      });
+
+      expect(screen.getByText('Played:')).toBeInTheDocument();
+      expect(screen.getByText('a3')).toBeInTheDocument();
+      expect(screen.getByText('(0:45)')).toBeInTheDocument();
+      expect(screen.getByText('Decision Improved 🚀')).toBeInTheDocument();
+      expect(
+        screen.getByText(/You improved upon your game decision! In the game you played a3 \(0:45\), but in practice you found the best move e4\./)
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(/Solved in 12\.5s vs\. original game thinking time of 0:45\./)
+      ).toBeInTheDocument();
+    });
+
+    it('strictly hides played move and duration in IDLE, EVALUATING, and EVALUATION_ERROR and reveals only on evaluation', () => {
+      const decisionPuzzle: Puzzle = {
+        ...basePuzzle,
+        fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+        targetMove: 'e4',
+        source: 'long-decision',
+        timesReached: 0,
+        mistakeRate: 0,
+        longDecisionContext: {
+          timeControl: 'RAPID',
+          decisionTimeMs: 45_000,
+          movePlayed: 'a3',
+          severity: 'SIGNIFICANT',
+        },
+      };
+
+      // 1. IDLE: strictly hidden
+      const { rerender } = renderPanel({
+        puzzle: decisionPuzzle,
+        feedback: { status: 'IDLE' },
+      });
+      expect(screen.queryByText('Played:')).not.toBeInTheDocument();
+      expect(screen.queryByText('a3')).not.toBeInTheDocument();
+      expect(screen.queryByText('(0:45)')).not.toBeInTheDocument();
+      expect(screen.getByText('Critical game moment — find the best continuation under clock pressure.')).toBeInTheDocument();
+
+      // 2. EVALUATING: strictly hidden
+      rerender(
+        <PuzzleFeedbackPanel
+          puzzle={decisionPuzzle}
+          feedback={{ status: 'EVALUATING', lastMove: 'e4' }}
+          onNextPuzzle={vi.fn()}
+          puzzleColorFilter="BOTH"
+          onColorFilterChange={vi.fn()}
+          showPuzzleSettings={false}
+          onTogglePuzzleSettings={vi.fn()}
+          minMistakeCount={1}
+          onMinMistakeCountChange={vi.fn()}
+          onApplySettings={vi.fn()}
+        />
+      );
+      expect(screen.getByText('Evaluating move...')).toBeInTheDocument();
+      expect(screen.queryByText('Played:')).not.toBeInTheDocument();
+      expect(screen.queryByText('a3')).not.toBeInTheDocument();
+      expect(screen.queryByText('(0:45)')).not.toBeInTheDocument();
+
+      // 3. EVALUATION_ERROR: strictly hidden during retryable failure
+      rerender(
+        <PuzzleFeedbackPanel
+          puzzle={decisionPuzzle}
+          feedback={{
+            status: 'EVALUATION_ERROR',
+            lastMove: 'e4',
+            errorMessage: 'Network timeout',
+            onRetry: vi.fn(),
+          }}
+          onNextPuzzle={vi.fn()}
+          puzzleColorFilter="BOTH"
+          onColorFilterChange={vi.fn()}
+          showPuzzleSettings={false}
+          onTogglePuzzleSettings={vi.fn()}
+          minMistakeCount={1}
+          onMinMistakeCountChange={vi.fn()}
+          onApplySettings={vi.fn()}
+        />
+      );
+      expect(screen.getByText('Move Evaluation Failed')).toBeInTheDocument();
+      expect(screen.queryByText('Played:')).not.toBeInTheDocument();
+      expect(screen.queryByText('a3')).not.toBeInTheDocument();
+      expect(screen.queryByText('(0:45)')).not.toBeInTheDocument();
+
+      // 4. CORRECT: revealed post-evaluation
+      rerender(
+        <PuzzleFeedbackPanel
+          puzzle={decisionPuzzle}
+          feedback={{ status: 'CORRECT', lastMove: 'e4', attemptElapsedMs: 12000 }}
+          onNextPuzzle={vi.fn()}
+          puzzleColorFilter="BOTH"
+          onColorFilterChange={vi.fn()}
+          showPuzzleSettings={false}
+          onTogglePuzzleSettings={vi.fn()}
+          minMistakeCount={1}
+          onMinMistakeCountChange={vi.fn()}
+          onApplySettings={vi.fn()}
+        />
+      );
+      expect(screen.getByText('Played:')).toBeInTheDocument();
+      expect(screen.getByText('a3')).toBeInTheDocument();
+      expect(screen.getByText('(0:45)')).toBeInTheDocument();
+
+      // 5. INCORRECT: revealed post-evaluation
+      rerender(
+        <PuzzleFeedbackPanel
+          puzzle={decisionPuzzle}
+          feedback={{ status: 'INCORRECT', lastMove: 'h3', attemptElapsedMs: 8000 }}
+          onNextPuzzle={vi.fn()}
+          puzzleColorFilter="BOTH"
+          onColorFilterChange={vi.fn()}
+          showPuzzleSettings={false}
+          onTogglePuzzleSettings={vi.fn()}
+          minMistakeCount={1}
+          onMinMistakeCountChange={vi.fn()}
+          onApplySettings={vi.fn()}
+        />
+      );
+      expect(screen.getByText('Played:')).toBeInTheDocument();
+      expect(screen.getByText('a3')).toBeInTheDocument();
+      expect(screen.getByText('(0:45)')).toBeInTheDocument();
+    });
+
+    it('renders unified puzzle prompt and header Exit button for supplied source without bypass card', () => {
+      const onExitExploration = vi.fn();
+
+      renderPanel({
+        puzzle: {
+          ...basePuzzle,
+          source: 'supplied',
+          playerColor: 'BLACK',
+          timesReached: 0,
+          mistakeRate: 0,
+        },
+        feedback: { status: 'IDLE' },
+        isExplorationActive: false,
+        onExitExploration,
+      });
+
+      expect(screen.getByText("Find Black's best move in this position.")).toBeInTheDocument();
+      // Ensure bypass card "Continue Exploration" is NOT rendered in IDLE
+      expect(screen.queryByRole('button', { name: /Continue Exploration/i })).not.toBeInTheDocument();
+
+      // Exit button is available in header
+      const exitBtn = screen.getByRole('button', { name: /Exit/i });
+      expect(exitBtn).toBeInTheDocument();
+      fireEvent.click(exitBtn);
+      expect(onExitExploration).toHaveBeenCalled();
+    });
+
+    it('renders evaluation state and error state with retry action', () => {
+      const onRetry = vi.fn();
+      const { rerender } = renderPanel({
+        feedback: { status: 'EVALUATING', lastMove: 'e4' },
+      });
+
+      expect(screen.getByText('Evaluating move...')).toBeInTheDocument();
+
+      rerender(
+        <PuzzleFeedbackPanel
+          {...{
+            puzzle: basePuzzle,
+            feedback: {
+              status: 'EVALUATION_ERROR',
+              lastMove: 'e4',
+              errorMessage: 'Network timeout',
+              onRetry,
+            },
+            onNextPuzzle: vi.fn(),
+            puzzleColorFilter: 'BOTH',
+            onColorFilterChange: vi.fn(),
+            showPuzzleSettings: true,
+            onTogglePuzzleSettings: vi.fn(),
+            minMistakeCount: 1,
+            onMinMistakeCountChange: vi.fn(),
+            onApplySettings: vi.fn(),
+          }}
+        />
+      );
+
+      expect(screen.getByText('Move Evaluation Failed')).toBeInTheDocument();
+      expect(screen.getByText('Network timeout')).toBeInTheDocument();
+      const retryBtn = screen.getByRole('button', { name: /Retry evaluation/i });
+      expect(retryBtn).toBeInTheDocument();
+      fireEvent.click(retryBtn);
+      expect(onRetry).toHaveBeenCalled();
+    });
+
+    it('renders and toggles Puzzle Settings across all sources', () => {
+      const onToggle = vi.fn();
+      const sources: Array<Puzzle['source']> = ['weakness', 'long-decision', 'similar', 'supplied'];
+
+      for (const source of sources) {
+        const { unmount } = renderPanel({
+          puzzle: { ...basePuzzle, source },
+          showPuzzleSettings: true,
+          onTogglePuzzleSettings: onToggle,
+        });
+
+        const settingsButton = screen.getByRole('button', { name: /Puzzle Settings/i });
+        expect(settingsButton).toBeInTheDocument();
+        expect(screen.getByText('Color')).toBeInTheDocument();
+        fireEvent.click(settingsButton);
+        expect(onToggle).toHaveBeenCalled();
+        unmount();
+      }
+    });
+  });
 });

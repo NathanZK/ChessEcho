@@ -1,7 +1,7 @@
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { PracticePuzzlesView } from '@/components/PracticePuzzlesView';
+import { PracticePuzzlesView, type PracticePuzzlesViewHandle } from '@/components/PracticePuzzlesView';
 import * as api from '@/services/api';
 
 vi.mock('@/services/api', async () => {
@@ -15,7 +15,29 @@ vi.mock('@/services/api', async () => {
 });
 
 vi.mock('react-chessboard', () => ({
-  Chessboard: () => <div data-testid="mock-chessboard" />,
+  Chessboard: ({
+    options,
+  }: {
+    options?: {
+      position: string;
+      onPieceDrop?: (args: { sourceSquare: string; targetSquare: string }) => boolean;
+    };
+  }) => (
+    <div data-testid="mock-chessboard" data-position={options?.position}>
+      <button
+        data-testid="play-c5-drop"
+        onClick={() => options?.onPieceDrop?.({ sourceSquare: 'c7', targetSquare: 'c5' })}
+      >
+        Play c5
+      </button>
+      <button
+        data-testid="play-e5-drop"
+        onClick={() => options?.onPieceDrop?.({ sourceSquare: 'e7', targetSquare: 'e5' })}
+      >
+        Play e5
+      </button>
+    </div>
+  ),
 }));
 
 describe('PracticePuzzlesView', () => {
@@ -94,5 +116,265 @@ describe('PracticePuzzlesView', () => {
     await waitFor(() => {
       expect(screen.getByTestId('mock-chessboard')).toBeInTheDocument();
     });
+  });
+
+  it('populates activePuzzle with source long-decision and longDecisionContext when exploring long decision', async () => {
+    vi.mocked(api.fetchPuzzles).mockResolvedValueOnce([]);
+    const actionsRef = React.createRef<PracticePuzzlesViewHandle | null>();
+
+    render(
+      <PracticePuzzlesView
+        actionsRef={actionsRef}
+        sessionStatus="authenticated"
+        sessionUserId="user-1"
+        activeAccountId="acc-1"
+        activeUsername="test_user"
+        sessionGatePromise={Promise.resolve(true)}
+        sessionGateOpen={true}
+        onNavigateTab={vi.fn()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(actionsRef.current).not.toBeNull();
+    });
+
+    const testOccurrence: api.LongDecisionOccurrence = {
+      id: 'occ-123',
+      positionId: 'pos-123',
+      fen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1',
+      playerColor: 'BLACK',
+      plyNumber: 2,
+      movePlayed: 'e5',
+      decisionTimeMs: 45_000,
+      timeControl: 'RAPID',
+      platformGameId: 'game-123',
+      playedAt: '2026-03-01T12:00:00Z',
+      opponentUsername: 'opponent',
+      chessComUrl: 'https://www.chess.com/game/live/123?move=2',
+      severity: 'SIGNIFICANT',
+    };
+
+    let success = false;
+    await waitFor(() => {
+      success = actionsRef.current!.exploreLongDecision(testOccurrence);
+    });
+
+    expect(success).toBe(true);
+    // Decision Timing metadata should be rendered
+    expect(screen.getByText('Decision Timing')).toBeInTheDocument();
+    expect(screen.getByText('RAPID')).toBeInTheDocument();
+    // Pre-attempt secrecy: original move must strictly NOT be disclosed
+    expect(screen.queryByText('e5')).not.toBeInTheDocument();
+    expect(screen.getByText(/Find Black's best move\. Can you improve upon your game decision/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Target Opening Weakness/i)).not.toBeInTheDocument();
+    // Statistics badges must NOT be rendered
+    expect(screen.queryByText(/Mistake Rate/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Times Reached/i)).not.toBeInTheDocument();
+  });
+
+  it('restores captured originating tab when exiting exploration', async () => {
+    vi.mocked(api.fetchPuzzles).mockResolvedValueOnce([]);
+    const actionsRef = React.createRef<PracticePuzzlesViewHandle | null>();
+    const onReturnToTab = vi.fn();
+
+    render(
+      <PracticePuzzlesView
+        actionsRef={actionsRef}
+        sessionStatus="authenticated"
+        sessionUserId="user-1"
+        activeAccountId="acc-1"
+        activeUsername="test_user"
+        sessionGatePromise={Promise.resolve(true)}
+        sessionGateOpen={true}
+        onNavigateTab={vi.fn()}
+        onReturnToTab={onReturnToTab}
+      />
+    );
+
+    await waitFor(() => {
+      expect(actionsRef.current).not.toBeNull();
+    });
+
+    // Explore position opened from 'import' tab
+    actionsRef.current!.explorePosition(
+      {
+        fen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1',
+        sanHistory: [],
+      },
+      false,
+      'import'
+    );
+
+    const exitBtn = await screen.findByRole('button', { name: /Exit/i });
+    expect(exitBtn).toBeInTheDocument();
+    exitBtn.click();
+
+    expect(onReturnToTab).toHaveBeenCalledWith('import');
+  });
+
+  it('executes legal move on Decision Timing position, captures running practice stopwatch, and renders dual duration comparison', async () => {
+    vi.mocked(api.fetchPuzzles).mockResolvedValueOnce([]);
+    const actionsRef = React.createRef<PracticePuzzlesViewHandle | null>();
+    const onReturnToTab = vi.fn();
+
+    render(
+      <PracticePuzzlesView
+        actionsRef={actionsRef}
+        sessionStatus="authenticated"
+        sessionUserId="user-1"
+        activeAccountId="acc-1"
+        activeUsername="test_user"
+        sessionGatePromise={Promise.resolve(true)}
+        sessionGateOpen={true}
+        onNavigateTab={vi.fn()}
+        onReturnToTab={onReturnToTab}
+      />
+    );
+
+    await waitFor(() => {
+      expect(actionsRef.current).not.toBeNull();
+    });
+
+    const testOccurrence: api.LongDecisionOccurrence = {
+      id: 'occ-123',
+      positionId: 'pos-123',
+      fen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1',
+      playerColor: 'BLACK',
+      plyNumber: 2,
+      movePlayed: 'e5',
+      decisionTimeMs: 45_000,
+      timeControl: 'RAPID',
+      platformGameId: 'game-123',
+      playedAt: '2026-03-01T12:00:00Z',
+      opponentUsername: 'opponent',
+      chessComUrl: 'https://www.chess.com/game/live/123?move=2',
+      severity: 'SIGNIFICANT',
+    };
+
+    await waitFor(() => {
+      expect(actionsRef.current!.exploreLongDecision(testOccurrence)).toBe(true);
+    });
+
+    // 1. Verify expected position is loaded on the board
+    const board = screen.getByTestId('mock-chessboard');
+    expect(board).toHaveAttribute('data-position', testOccurrence.fen);
+
+    // 2. Verify running practice stopwatch is visibly rendered before the first move
+    expect(await screen.findByText(/0:0[0-9]/)).toBeInTheDocument();
+
+    // 3. Verify pre-attempt secrecy: original move 'e5' and original duration '45s' are concealed
+    expect(screen.queryByText('Played:')).not.toBeInTheDocument();
+    expect(screen.queryByText('(0:45)')).not.toBeInTheDocument();
+
+    // 4. Mock evaluation response
+    vi.mocked(api.evaluateMove).mockResolvedValueOnce({
+      fen: testOccurrence.fen,
+      move: 'c5',
+      bestMove: 'c5',
+      bestEvalCp: 20,
+      evalCp: 20,
+      evalLoss: 0,
+      maxEvalLoss: 0.8,
+      threshold: 0.8,
+      acceptable: true,
+    });
+
+    // 5. Submit move 'c5' through the rendered chessboard interaction mechanism
+    const playBtn = screen.getByTestId('play-c5-drop');
+    playBtn.click();
+
+    // 6. Verify evaluation receives the correct pre-move FEN and submitted move SAN
+    await waitFor(() => {
+      expect(api.evaluateMove).toHaveBeenCalledWith(testOccurrence.fen, 'c5');
+    });
+
+    // 7. Verify post-evaluation feedback and dual duration comparison are rendered
+    expect(await screen.findByText('Puzzle Solved! 🎉')).toBeInTheDocument();
+    expect(screen.getByText('Decision Improved 🚀')).toBeInTheDocument();
+    expect(screen.getByText('Played:')).toBeInTheDocument();
+    expect(screen.getByText('e5')).toBeInTheDocument();
+    expect(screen.getByText('(0:45)')).toBeInTheDocument();
+    expect(screen.getByText(/Solved in [0-9.]+s vs\. original game thinking time of 0:45\./)).toBeInTheDocument();
+
+    // 8. Verify return context remains intact and can exit back to long-decisions
+    const exitBtn = screen.getAllByRole('button', { name: /Exit/i })[0];
+    exitBtn.click();
+    expect(onReturnToTab).toHaveBeenCalledWith('long-decisions');
+  });
+
+  it('preserves captured duration across evaluation failure and subsequent retry', async () => {
+    vi.mocked(api.fetchPuzzles).mockResolvedValueOnce([]);
+    const actionsRef = React.createRef<PracticePuzzlesViewHandle | null>();
+
+    render(
+      <PracticePuzzlesView
+        actionsRef={actionsRef}
+        sessionStatus="authenticated"
+        sessionUserId="user-1"
+        activeAccountId="acc-1"
+        activeUsername="test_user"
+        sessionGatePromise={Promise.resolve(true)}
+        sessionGateOpen={true}
+        onNavigateTab={vi.fn()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(actionsRef.current).not.toBeNull();
+    });
+
+    const testOccurrence: api.LongDecisionOccurrence = {
+      id: 'occ-123',
+      positionId: 'pos-123',
+      fen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1',
+      playerColor: 'BLACK',
+      plyNumber: 2,
+      movePlayed: 'e5',
+      decisionTimeMs: 45_000,
+      timeControl: 'RAPID',
+      platformGameId: 'game-123',
+      playedAt: '2026-03-01T12:00:00Z',
+      opponentUsername: 'opponent',
+      severity: 'SIGNIFICANT',
+    };
+
+    await waitFor(() => {
+      expect(actionsRef.current!.exploreLongDecision(testOccurrence)).toBe(true);
+    });
+
+    // Initial evaluation returns null (failure)
+    vi.mocked(api.evaluateMove).mockResolvedValueOnce(null);
+
+    // Wait for running stopwatch before submitting move
+    expect(await screen.findByText(/0:0[0-9]/)).toBeInTheDocument();
+
+    // Submit move
+    const playBtn = screen.getByTestId('play-c5-drop');
+    playBtn.click();
+
+    // Assert evaluation error state is rendered with retry button
+    expect(await screen.findByText('Move Evaluation Failed')).toBeInTheDocument();
+    const retryBtn = screen.getByRole('button', { name: /Retry evaluation/i });
+    expect(retryBtn).toBeInTheDocument();
+
+    // On retry, evaluation succeeds
+    vi.mocked(api.evaluateMove).mockResolvedValueOnce({
+      fen: testOccurrence.fen,
+      move: 'c5',
+      bestMove: 'c5',
+      bestEvalCp: 20,
+      evalCp: 20,
+      evalLoss: 0,
+      maxEvalLoss: 0.8,
+      threshold: 0.8,
+      acceptable: true,
+    });
+
+    retryBtn.click();
+
+    // Assert evaluation resolved successfully and preserved original captured duration in comparison
+    expect(await screen.findByText('Puzzle Solved! 🎉')).toBeInTheDocument();
+    expect(screen.getByText(/Solved in [0-9.]+s vs\. original game thinking time of 0:45\./)).toBeInTheDocument();
   });
 });

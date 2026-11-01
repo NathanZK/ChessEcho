@@ -15,9 +15,14 @@ import {
   LogOut,
   Timer,
   EyeOff,
+  Clock,
+  RotateCcw,
+  AlertCircle,
+  Loader2,
 } from 'lucide-react';
-import { Puzzle } from '@/types/puzzle';
+import { Puzzle, isWeaknessBacked } from '@/types/puzzle';
 import { HistoricalGamesModal } from './HistoricalGamesModal';
+import { isEvaluatedFeedback } from '@/hooks/useLineExploration';
 import { ContinuationMode, ContinuationCandidate, ExplorationPlayMode } from '../services/api';
 import type { PuzzleAttemptCountState } from '../hooks/usePuzzleAttemptCount';
 import { STRICT_OPPONENT_EVAL_LOSS_THRESHOLD } from '@/utils/practiceConstants';
@@ -26,13 +31,18 @@ import {
   formatPawnLoss,
   formatTimerMs,
 } from '@/utils/formatters';
+import { evaluateDecisionTimingComparison } from '@/utils/decisionTimingComparison';
 
 export { formatDecimal, formatTimerMs };
 
-interface FeedbackState {
-  status: 'IDLE' | 'CORRECT' | 'HISTORICAL_MISTAKE' | 'INCORRECT' | 'EXPLORING';
+export interface FeedbackState {
+  status: 'IDLE' | 'CORRECT' | 'HISTORICAL_MISTAKE' | 'INCORRECT' | 'EXPLORING' | 'EVALUATING' | 'EVALUATION_ERROR';
   lastMove?: string;
   historicalInfo?: { timesPlayed: number; averageLoss: number };
+  evalLoss?: number;
+  errorMessage?: string;
+  onRetry?: () => void;
+  attemptElapsedMs?: number;
 }
 
 export function formatCalculationLine(line: { san: string, isWhite: boolean }[]): string {
@@ -202,8 +212,13 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
   onTimerAllowedMsChange,
 }) => {
   const [showGameModal, setShowGameModal] = React.useState<boolean>(false);
+  const weaknessBacked = isWeaknessBacked(puzzle);
+  const isWeaknessPlaylist = puzzle.source === 'weakness' || (!puzzle.source && weaknessBacked);
+  const isLongDecision = puzzle.source === 'long-decision';
+  const isSimilarPosition = puzzle.source === 'similar';
   const isSuppliedPosition = puzzle.source === 'supplied';
 
+  const promptColor = puzzle.playerColor === 'BLACK' ? "Black's" : "White's";
   const activeColorToMove = sideToMove || (puzzle.playerColor === 'BLACK' ? 'Black' : 'White');
 
   const renderBlindfoldEntry = (className: string, iconClassName: string) => onEnterBlindfold && (
@@ -236,146 +251,267 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
 
   return (
     <div className="flex flex-col space-y-3 bg-slate-900 p-4 rounded-2xl border border-slate-800 shadow-xl text-slate-200">
-      {!isSuppliedPosition && (
-        <>
-      {/* Collapsible Puzzle Settings Section */}
+      {/* Collapsible Puzzle Settings Section (Universal across all position sources) */}
       <div className="border-b border-slate-800 pb-3">
-        <button
-          type="button"
-          onClick={onTogglePuzzleSettings}
-          className="w-full flex items-center justify-between text-xs font-bold text-slate-400 hover:text-emerald-400 transition cursor-pointer"
-          aria-expanded={showPuzzleSettings}
-        >
-          <div className="flex items-center gap-1.5">
-            <Settings2 className="w-3.5 h-3.5" />
-            <span>Puzzle Settings</span>
-          </div>
-          <span className="text-[10px] font-normal text-slate-500">{showPuzzleSettings ? 'Hide ▲' : 'Show ▼'}</span>
-        </button>
-
-        {showPuzzleSettings && (
-          <div className="mt-3 space-y-3">
-            {/* Color Filter */}
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Color</span>
-              <div className="flex bg-slate-950 p-0.5 rounded-xl border border-slate-800">
-                {(['BOTH', 'WHITE', 'BLACK'] as const).map((color) => (
-                  <button
-                    key={color}
-                    type="button"
-                    onClick={() => onColorFilterChange(color)}
-                    className={`px-2.5 py-0.5 text-[11px] font-bold rounded-lg transition cursor-pointer ${
-                      puzzleColorFilter === color
-                        ? 'bg-emerald-600 text-white shadow-sm'
-                        : 'text-slate-400 hover:text-slate-200'
-                    }`}
-                  >
-                    {color === 'BOTH' ? 'Both' : color === 'WHITE' ? 'White' : 'Black'}
-                  </button>
-                ))}
-              </div>
+          <button
+            type="button"
+            onClick={onTogglePuzzleSettings}
+            className="w-full flex items-center justify-between text-xs font-bold text-slate-400 hover:text-emerald-400 transition cursor-pointer"
+            aria-expanded={showPuzzleSettings}
+          >
+            <div className="flex items-center gap-1.5">
+              <Settings2 className="w-3.5 h-3.5" />
+              <span>Puzzle Settings</span>
             </div>
+            <span className="text-[10px] font-normal text-slate-500">
+              {showPuzzleSettings ? 'Hide ▲' : 'Show ▼'}
+            </span>
+          </button>
 
-            {/* Min Mistakes + Apply */}
-            <div className="flex items-center gap-2 bg-slate-950 px-3 py-2 rounded-xl border border-slate-800">
-              <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-300 flex-1">
-                <span>Min Mistakes:</span>
-                <input
-                  type="number"
-                  step="1"
-                  min="1"
-                  value={minMistakeCount}
-                  onChange={(e) => onMinMistakeCountChange(Number(e.target.value))}
-                  aria-label="Min Mistakes"
-                  className="w-14 bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-emerald-400 font-mono text-[11px] outline-none focus:border-emerald-500"
-                />
-              </label>
-              <button
-                type="button"
-                onClick={onApplySettings}
-                className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold rounded-md transition cursor-pointer"
-              >
-                Apply
-              </button>
-            </div>
-
-            {/* Timed Training */}
-            <div className="flex flex-col gap-2 bg-slate-950 px-3 py-2 rounded-xl border border-slate-800">
+          {showPuzzleSettings && (
+            <div className="mt-3 space-y-3">
+              {/* Color Filter */}
               <div className="flex items-center justify-between">
                 <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                  Timed Training
+                  Color
                 </span>
-                <div className="flex bg-slate-900 p-0.5 rounded-xl border border-slate-800">
-                  {(
-                    [
-                      { key: null, label: 'Off' },
-                      { key: 'STOPWATCH', label: 'Stopwatch' },
-                      { key: 'COUNTDOWN', label: 'Countdown' },
-                    ] as const
-                  ).map((option) => (
+                <div className="flex bg-slate-950 p-0.5 rounded-xl border border-slate-800">
+                  {(['BOTH', 'WHITE', 'BLACK'] as const).map((color) => (
                     <button
-                      key={option.label}
+                      key={color}
                       type="button"
-                      onClick={() => onTimerModeChange?.(option.key)}
-                      className={`px-2 py-0.5 text-[11px] font-bold rounded-lg transition cursor-pointer ${
-                        timerMode === option.key
+                      onClick={() => onColorFilterChange(color)}
+                      className={`px-2.5 py-0.5 text-[11px] font-bold rounded-lg transition cursor-pointer ${
+                        puzzleColorFilter === color
                           ? 'bg-emerald-600 text-white shadow-sm'
                           : 'text-slate-400 hover:text-slate-200'
                       }`}
                     >
-                      {option.label}
+                      {color === 'BOTH' ? 'Both' : color === 'WHITE' ? 'White' : 'Black'}
                     </button>
                   ))}
                 </div>
               </div>
-              {timerMode === 'COUNTDOWN' && (
-                <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-300">
-                  <span>Allowed time:</span>
-                  <select
-                    value={timerAllowedMs}
-                    onChange={(e) => onTimerAllowedMsChange?.(Number(e.target.value))}
-                    aria-label="Countdown allowed time"
-                    className="bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-emerald-400 font-mono text-[11px] outline-none focus:border-emerald-500"
-                  >
-                    <option value={15000}>15s</option>
-                    <option value={30000}>30s</option>
-                    <option value={60000}>60s</option>
-                    <option value={120000}>120s</option>
-                  </select>
+
+              {/* Min Mistakes + Apply */}
+              <div className="flex items-center gap-2 bg-slate-950 px-3 py-2 rounded-xl border border-slate-800">
+                <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-300 flex-1">
+                  <span>Min Mistakes:</span>
+                  <input
+                    type="number"
+                    step="1"
+                    min="1"
+                    value={minMistakeCount}
+                    onChange={(e) => onMinMistakeCountChange(Number(e.target.value))}
+                    aria-label="Min Mistakes"
+                    className="w-14 bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-emerald-400 font-mono text-[11px] outline-none focus:border-emerald-500"
+                  />
                 </label>
+                <button
+                  type="button"
+                  onClick={onApplySettings}
+                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold rounded-md transition cursor-pointer"
+                >
+                  Apply
+                </button>
+              </div>
+
+              {/* Timed Training */}
+              <div className="flex flex-col gap-2 bg-slate-950 px-3 py-2 rounded-xl border border-slate-800">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                    Timed Training
+                  </span>
+                  <div className="flex bg-slate-900 p-0.5 rounded-xl border border-slate-800">
+                    {(
+                      [
+                        { key: null, label: 'Off' },
+                        { key: 'STOPWATCH', label: 'Stopwatch' },
+                        { key: 'COUNTDOWN', label: 'Countdown' },
+                      ] as const
+                    ).map((option) => (
+                      <button
+                        key={option.label}
+                        type="button"
+                        onClick={() => onTimerModeChange?.(option.key)}
+                        className={`px-2 py-0.5 text-[11px] font-bold rounded-lg transition cursor-pointer ${
+                          timerMode === option.key
+                            ? 'bg-emerald-600 text-white shadow-sm'
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {timerMode === 'COUNTDOWN' && (
+                  <label className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-300">
+                    <span>Allowed time:</span>
+                    <select
+                      value={timerAllowedMs}
+                      onChange={(e) => onTimerAllowedMsChange?.(Number(e.target.value))}
+                      aria-label="Countdown allowed time"
+                      className="bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-emerald-400 font-mono text-[11px] outline-none focus:border-emerald-500"
+                    >
+                      <option value={15000}>15s</option>
+                      <option value={30000}>30s</option>
+                      <option value={60000}>60s</option>
+                      <option value={120000}>120s</option>
+                    </select>
+                  </label>
+                )}
+                {timerSubmissionError && (
+                  <span className="text-[11px] font-semibold text-red-400">
+                    {timerSubmissionError}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+      {/* Context-Aware Header */}
+      {isLongDecision ? (
+        <div className="border-b border-slate-800 pb-2.5 flex items-center justify-between gap-2">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-bold text-amber-400 uppercase tracking-wider">
+                Decision Timing
+              </span>
+              {puzzle.longDecisionContext?.timeControl && (
+                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                  {puzzle.longDecisionContext.timeControl}
+                </span>
               )}
-              {timerSubmissionError && (
-                <span className="text-[11px] font-semibold text-red-400">{timerSubmissionError}</span>
+              {puzzle.longDecisionContext?.severity && (
+                <span
+                  className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
+                    puzzle.longDecisionContext.severity === 'CRITICAL'
+                      ? 'bg-rose-950/70 border-rose-800 text-rose-300'
+                      : puzzle.longDecisionContext.severity === 'SIGNIFICANT'
+                      ? 'bg-amber-950/70 border-amber-800 text-amber-300'
+                      : 'bg-emerald-950/70 border-emerald-800 text-emerald-300'
+                  }`}
+                >
+                  {puzzle.longDecisionContext.severity}
+                </span>
               )}
             </div>
+            {isEvaluatedFeedback(feedback) && puzzle.longDecisionContext ? (
+              <div className="text-sm font-semibold text-white flex items-center gap-2 flex-wrap">
+                <span>
+                  Played:{' '}
+                  <span className="font-bold text-emerald-300 font-mono">
+                    {puzzle.longDecisionContext?.movePlayed || '—'}
+                  </span>
+                </span>
+                {puzzle.longDecisionContext?.decisionTimeMs != null && (
+                  <span className="text-xs text-slate-400 font-normal">
+                    ({formatTimerMs(puzzle.longDecisionContext.decisionTimeMs)})
+                  </span>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-400">
+                Critical game moment — find the best continuation under clock pressure.
+              </p>
+            )}
           </div>
-        )}
-      </div>
-
-      {/* Opening Header */}
-      <div className="border-b border-slate-800 pb-2.5 flex items-center justify-between gap-2">
-        <div>
-          <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider">
-            Target Opening Weakness
-          </span>
-          <h2 className="text-base font-bold text-white mt-0.5">
-            {puzzle.openingTitle}
-          </h2>
+          <div className="flex items-center gap-2 shrink-0">
+            {puzzle.longDecisionContext?.gameUrl && (
+              <a
+                href={puzzle.longDecisionContext.gameUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-xs font-semibold text-slate-400 hover:text-emerald-400 flex items-center gap-1.5 transition cursor-pointer shrink-0"
+              >
+                <span>Open game</span>
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            )}
+            {!isExplorationActive && onExitExploration && (
+              <button
+                type="button"
+                onClick={onExitExploration}
+                title="Exit Exploration"
+                className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl transition border border-slate-700/60 flex items-center justify-center space-x-1.5 cursor-pointer shrink-0"
+              >
+                <LogOut className="w-3.5 h-3.5 text-slate-400" />
+                <span>Exit</span>
+              </button>
+            )}
+          </div>
         </div>
-        {puzzle.gameUrls && puzzle.gameUrls.length > 0 && (
-          <button
-            type="button"
-            onClick={() => setShowGameModal(true)}
-            className="text-xs font-semibold text-slate-400 hover:text-emerald-400 flex items-center gap-1.5 transition cursor-pointer shrink-0"
-          >
-            <span>View Games ({puzzle.gameUrls.length})</span>
-            <ExternalLink className="w-3.5 h-3.5" />
-          </button>
-        )}
-      </div>
+      ) : isSimilarPosition ? (
+        <div className="border-b border-slate-800 pb-2.5 flex items-center justify-between gap-2">
+          <div>
+            <span className="text-xs font-bold text-indigo-400 uppercase tracking-wider">
+              Similar Position Exploration
+            </span>
+            <h2 className="text-base font-bold text-white mt-0.5">
+              Matching Structure Practice
+            </h2>
+          </div>
+          {!isExplorationActive && onExitExploration && (
+            <button
+              type="button"
+              onClick={onExitExploration}
+              title="Exit Exploration"
+              className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl transition border border-slate-700/60 flex items-center justify-center space-x-1.5 cursor-pointer shrink-0"
+            >
+              <LogOut className="w-3.5 h-3.5 text-slate-400" />
+              <span>Exit</span>
+            </button>
+          )}
+        </div>
+      ) : isSuppliedPosition ? (
+        <div className="border-b border-slate-800 pb-2.5 flex items-center justify-between gap-2">
+          <div>
+            <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider">
+              Supplied Position Exploration
+            </span>
+            <h2 className="text-base font-bold text-white mt-0.5">
+              Custom Position
+            </h2>
+          </div>
+          {!isExplorationActive && onExitExploration && (
+            <button
+              type="button"
+              onClick={onExitExploration}
+              title="Exit Exploration"
+              className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl transition border border-slate-700/60 flex items-center justify-center space-x-1.5 cursor-pointer shrink-0"
+            >
+              <LogOut className="w-3.5 h-3.5 text-slate-400" />
+              <span>Exit</span>
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="border-b border-slate-800 pb-2.5 flex items-center justify-between gap-2">
+          <div>
+            <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider">
+              Target Opening Weakness
+            </span>
+            <h2 className="text-base font-bold text-white mt-0.5">
+              {puzzle.openingTitle}
+            </h2>
+          </div>
+          {puzzle.gameUrls && puzzle.gameUrls.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowGameModal(true)}
+              className="text-xs font-semibold text-slate-400 hover:text-emerald-400 flex items-center gap-1.5 transition cursor-pointer shrink-0"
+            >
+              <span>View Games ({puzzle.gameUrls.length})</span>
+              <ExternalLink className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Timed Training live badge */}
-      {timerMode && (
+      {Boolean(timerMode) && (
         <div
           className={`flex items-center justify-center gap-1.5 py-1.5 rounded-xl border text-sm font-mono font-bold ${
             timerExpired
@@ -393,12 +529,42 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
           {timerExpired && <span className="ml-1 text-[11px]">Time&apos;s up</span>}
         </div>
       )}
-        </>
-      )}
 
       {/* Dynamic Feedback / Success Card */}
       {!isExplorationActive && (
-        feedback.status === 'CORRECT' ? (
+        feedback.status === 'EVALUATING' ? (
+          <div className="p-3.5 bg-slate-950/80 border border-indigo-500/40 rounded-2xl space-y-2 text-xs text-indigo-300 animate-pulse">
+            <div className="flex items-center space-x-2 font-bold text-indigo-200">
+              <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
+              <span>Evaluating move...</span>
+            </div>
+            <p className="text-slate-400">
+              Analyzing move against engine evaluations. Board interactions are temporarily paused.
+            </p>
+          </div>
+        ) : feedback.status === 'EVALUATION_ERROR' ? (
+          <div className="p-3.5 bg-rose-950/40 border border-rose-500/50 rounded-2xl space-y-2 text-xs text-rose-300">
+            <div className="flex items-center space-x-2 font-bold text-rose-200">
+              <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+              <span>Move Evaluation Failed</span>
+            </div>
+            <p className="text-slate-300">
+              {feedback.errorMessage || 'Unable to evaluate move with the engine. Check your connection.'}
+            </p>
+            {feedback.onRetry && (
+              <div className="pt-1">
+                <button
+                  type="button"
+                  onClick={feedback.onRetry}
+                  className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-lg transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Retry evaluation</span>
+                </button>
+              </div>
+            )}
+          </div>
+        ) : feedback.status === 'CORRECT' ? (
         <div className="p-3.5 bg-gradient-to-br from-emerald-950/80 to-slate-900 border-2 border-emerald-500/50 rounded-2xl space-y-2.5 shadow-lg shadow-emerald-950/40 animate-in fade-in duration-200">
           <div className="flex items-center space-x-3">
             <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0">
@@ -421,6 +587,43 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
               </p>
             </div>
           </div>
+
+          {/* Decision Timing Post-Attempt Evaluation and Comparison */}
+          {isLongDecision && puzzle.longDecisionContext && (() => {
+            const comparison = evaluateDecisionTimingComparison({
+              preMoveFen: puzzle.fen,
+              targetMove: puzzle.targetMove,
+              acceptableMoves: puzzle.acceptableMoves,
+              context: puzzle.longDecisionContext,
+              userMove: feedback.lastMove,
+              isCorrect: true,
+              attemptElapsedMs: feedback.attemptElapsedMs ?? timerElapsedMs,
+            });
+            if (!comparison) return null;
+            return (
+              <div className="bg-slate-950/70 border border-amber-500/30 rounded-xl p-3 space-y-2 text-xs text-amber-300">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2 font-bold text-amber-200">
+                    <Clock className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span>{comparison.title}</span>
+                  </div>
+                  {comparison.originalQuality && (
+                    <span className="text-[10px] font-semibold bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-full border border-amber-500/20">
+                      Game: {puzzle.longDecisionContext.movePlayed} ({comparison.originalQuality.toLowerCase()})
+                    </span>
+                  )}
+                </div>
+                <p className="text-amber-200/90 leading-relaxed font-medium">
+                  {comparison.message}
+                </p>
+                {comparison.durationComparison && (
+                  <p className="text-slate-400 text-[11px] font-mono border-t border-slate-800/80 pt-1.5">
+                    {comparison.durationComparison}
+                  </p>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Historical Mistakes List Displayed Even on Correct Move */}
           {puzzle.movesPlayed && puzzle.movesPlayed.length > 0 && (
@@ -480,7 +683,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
               )}
             </div>
           )}
-          {!isSuppliedPosition ? (
+          {isWeaknessPlaylist ? (
             <div className="flex items-center space-x-2">
               {onPreviousPuzzle && (
                 <button
@@ -569,70 +772,91 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
               </p>
             </div>
           </div>
-          {!isExplorationActive && ((onEnterExploration && feedback.lastMove) || onEnterBlindfold || (isSuppliedPosition && onExitExploration)) && (
-            <div data-testid="exploration-actions" className="flex items-center space-x-2 mt-2">
-              {onEnterExploration && feedback.lastMove && (
-                <button
-                  type="button"
-                  onClick={() => onEnterExploration(undefined, feedback.lastMove)}
-                  className="flex-1 py-2 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 font-bold text-xs rounded-xl transition border border-rose-500/30 flex items-center justify-center space-x-1.5 cursor-pointer"
-                >
-                  <Sparkles className="w-3.5 h-3.5 text-rose-400" />
-                  <span>{isSuppliedPosition ? 'Continue Exploration →' : 'Explore this decision'}</span>
-                </button>
-              )}
-              {isSuppliedPosition && onExitExploration && (
-                <button
-                  type="button"
-                  onClick={onExitExploration}
-                  title="Exit Exploration"
-                  className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl transition border border-slate-700/60 flex items-center justify-center space-x-1.5 cursor-pointer"
-                >
-                  <LogOut className="w-3.5 h-3.5 text-slate-400" />
-                  <span>Exit</span>
-                </button>
-              )}
-              {renderBlindfoldEntry(
-                'flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl transition border border-slate-700/60 flex items-center justify-center space-x-1.5 cursor-pointer',
-                'w-3.5 h-3.5 text-slate-300',
-              )}
-            </div>
-          )}
+
+          {/* Decision Timing Post-Attempt Evaluation and Comparison */}
+          {isLongDecision && puzzle.longDecisionContext && (() => {
+            const comparison = evaluateDecisionTimingComparison({
+              preMoveFen: puzzle.fen,
+              targetMove: puzzle.targetMove,
+              acceptableMoves: puzzle.acceptableMoves,
+              context: puzzle.longDecisionContext,
+              userMove: feedback.lastMove,
+              isCorrect: false,
+              attemptElapsedMs: feedback.attemptElapsedMs ?? timerElapsedMs,
+            });
+            if (!comparison) return null;
+            return (
+              <div className="bg-slate-950/70 border border-amber-500/30 rounded-xl p-3 space-y-2 text-xs text-amber-300 mt-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2 font-bold text-amber-200">
+                    <Clock className="w-4 h-4 text-amber-400 shrink-0" />
+                    <span>{comparison.title}</span>
+                  </div>
+                  {comparison.originalQuality && (
+                    <span className="text-[10px] font-semibold bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded-full border border-amber-500/20">
+                      Game: {puzzle.longDecisionContext.movePlayed} ({comparison.originalQuality.toLowerCase()})
+                    </span>
+                  )}
+                </div>
+                <p className="text-amber-200/90 leading-relaxed font-medium">
+                  {comparison.message}
+                </p>
+                {comparison.durationComparison && (
+                  <p className="text-slate-400 text-[11px] font-mono border-t border-slate-800/80 pt-1.5">
+                    {comparison.durationComparison}
+                  </p>
+                )}
+              </div>
+            );
+          })()}
+
+          {!isExplorationActive &&
+            ((onEnterExploration && feedback.lastMove) ||
+              onEnterBlindfold ||
+              (!isWeaknessPlaylist && onExitExploration)) && (
+              <div data-testid="exploration-actions" className="flex items-center space-x-2 mt-2">
+                {onEnterExploration && feedback.lastMove && (
+                  <button
+                    type="button"
+                    onClick={() => onEnterExploration(undefined, feedback.lastMove)}
+                    className="flex-1 py-2 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 font-bold text-xs rounded-xl transition border border-rose-500/30 flex items-center justify-center space-x-1.5 cursor-pointer"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-rose-400" />
+                    <span>Explore this decision</span>
+                  </button>
+                )}
+                {!isWeaknessPlaylist && onExitExploration && (
+                  <button
+                    type="button"
+                    onClick={onExitExploration}
+                    title="Exit Exploration"
+                    className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl transition border border-slate-700/60 flex items-center justify-center space-x-1.5 cursor-pointer"
+                  >
+                    <LogOut className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Exit</span>
+                  </button>
+                )}
+                {renderBlindfoldEntry(
+                  'flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl transition border border-slate-700/60 flex items-center justify-center space-x-1.5 cursor-pointer',
+                  'w-3.5 h-3.5 text-slate-300'
+                )}
+              </div>
+            )}
         </>
       ) : (
-        <>
-          <div className="flex items-center space-x-3 p-3 bg-slate-950/60 border border-slate-800/80 rounded-xl text-slate-400">
-            <HelpCircle className="w-4 h-4 text-slate-400 shrink-0" />
-            <p className="text-xs">
-              {isSuppliedPosition
-                ? 'Test candidate moves or proceed to Line Exploration.'
-                : `Find ${puzzle.playerColor === 'BLACK' ? "Black's" : "White's"} best move or an acceptable alternative to fix your opening habit.`}
-            </p>
-          </div>
-          {!isExplorationActive && onEnterExploration && isSuppliedPosition && (
-            <div data-testid="exploration-actions" className="flex items-center space-x-2 mt-2">
-              <button
-                type="button"
-                onClick={() => onEnterExploration()}
-                className="flex-1 py-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 font-bold text-xs rounded-xl transition border border-emerald-500/30 flex items-center justify-center space-x-1.5 cursor-pointer"
-              >
-                <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-                <span>Continue Exploration →</span>
-              </button>
-              {isSuppliedPosition && onExitExploration && (
-                <button
-                  type="button"
-                  onClick={onExitExploration}
-                  title="Exit Exploration"
-                  className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl transition border border-slate-700/60 flex items-center justify-center space-x-1.5 cursor-pointer"
-                >
-                  <LogOut className="w-3.5 h-3.5 text-slate-400" />
-                  <span>Exit</span>
-                </button>
-              )}
-            </div>
-          )}
-        </>
+        /* IDLE State: Unified Puzzle-Solving Prompt across all five entry points */
+        <div className="flex items-center space-x-3 p-3 bg-slate-950/60 border border-slate-800/80 rounded-xl text-slate-400">
+          <HelpCircle className="w-4 h-4 text-slate-400 shrink-0" />
+          <p className="text-xs">
+            {isLongDecision
+              ? `Find ${promptColor} best move. Can you improve upon your game decision under timing pressure?`
+              : isSimilarPosition
+              ? `Find ${promptColor} best move or an acceptable alternative from this matching pawn structure.`
+              : isSuppliedPosition
+              ? `Find ${promptColor} best move in this position.`
+              : `Find ${promptColor} best move or an acceptable alternative to fix your opening habit.`}
+          </p>
+        </div>
       ))}
 
       {/* Active Line Exploration Card (Renders ONLY when isExplorationActive is true) */}
@@ -1112,7 +1336,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
         </div>
       )}
 
-      {attemptCountState.status !== 'hidden' && (
+      {attemptCountState.status !== 'hidden' && weaknessBacked && (
         <section aria-label="Your puzzle attempts" aria-live="polite" className="rounded-xl border border-slate-700 bg-slate-950 p-3 text-sm">
           {attemptCountState.status === 'loaded' ? (
             <div className="flex flex-wrap gap-x-6 gap-y-1 font-semibold">
@@ -1148,7 +1372,7 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
       )}
 
       {/* Stats Pill Badges */}
-      {!isSuppliedPosition && <div className="grid grid-cols-2 gap-2 py-0.5">
+      {weaknessBacked && <div className="grid grid-cols-2 gap-2 py-0.5">
         <div className="bg-slate-950 p-2 rounded-xl border border-slate-800 text-center">
           <div className="text-[11px] font-semibold text-slate-400">Mistake Rate</div>
           <div className="text-xs font-bold text-amber-400 mt-0.5 flex items-center justify-center gap-1">

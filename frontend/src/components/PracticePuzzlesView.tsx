@@ -11,13 +11,20 @@ import { NotationExchangeUI } from '@/components/NotationExchangeUI';
 import { useBlindfoldSession } from '@/hooks/useBlindfoldSession';
 import { usePuzzleAttemptCount } from '@/hooks/usePuzzleAttemptCount';
 import { PuzzleFeedbackPanel } from '@/components/PuzzleFeedbackPanel';
-import { Puzzle } from '@/types/puzzle';
+import {
+  Puzzle,
+  type LongDecisionContext,
+  type SimilarPositionContext,
+  type PuzzleSource,
+  isWeaknessBacked,
+} from '@/types/puzzle';
 import {
   fetchPuzzles,
   fetchPuzzleContinuation,
   submitTrainingAttempt,
   evaluateMove,
   type SessionState,
+  type LongDecisionOccurrence,
 } from '@/services/api';
 import { soundService } from '@/services/soundService';
 import { useLineExploration, type PuzzleFeedbackState } from '@/hooks/useLineExploration';
@@ -59,10 +66,29 @@ export type LongDecisionReturnSnapshot = {
   timerWasRunning: boolean;
 };
 
+function getAuthoritativeTimerElapsed(
+  timer: StopwatchTimer | CountdownTimer | null,
+  allowedMs: number,
+  fallbackMs: number,
+): number {
+  if (!timer) return fallbackMs;
+  if (timer.isRunning()) {
+    return timer instanceof StopwatchTimer ? timer.stop() : allowedMs - timer.pause();
+  }
+  return timer instanceof StopwatchTimer ? timer.getElapsed() : allowedMs - timer.getRemaining();
+}
+
 export type PracticePuzzlesViewHandle = {
-  explorePosition: (position: PositionExplorationStart, preserveReturnState?: boolean, originatingTab?: TabType) => void;
-  exploreLongDecision: (fen: string) => boolean;
-  exploreSimilarPositions: (position: PositionExplorationStart) => boolean;
+  explorePosition: (
+    position: PositionExplorationStart,
+    preserveReturnState?: boolean,
+    originatingTab?: TabType,
+    source?: PuzzleSource,
+    longDecisionContext?: LongDecisionContext,
+    similarContext?: SimilarPositionContext
+  ) => boolean;
+  exploreLongDecision: (occurrenceOrFen: LongDecisionOccurrence | string) => boolean;
+  exploreSimilarPositions: (position: PositionExplorationStart, metadata?: SimilarPositionContext) => boolean;
   selectPracticeFromLibrary: (puzzle: Puzzle, fullList?: Puzzle[]) => void;
   clearAccountUiState: () => void;
   invalidatePuzzleRequests: () => void;
@@ -147,6 +173,12 @@ export function PracticePuzzlesView({
   const [currentBoardFen, setCurrentBoardFen] = useState<string>('');
 
   const [feedback, setFeedback] = useState<PuzzleFeedbackState>({ status: 'IDLE' });
+  const [isEvaluatingMove, setIsEvaluatingMove] = useState<boolean>(false);
+  const evaluationRequestIdRef = React.useRef<number>(0);
+  const activePuzzleRef = React.useRef<Puzzle | null>(null);
+  React.useEffect(() => {
+    activePuzzleRef.current = activePuzzle;
+  }, [activePuzzle]);
 
   // Timed training state
   const timerRef = React.useRef<StopwatchTimer | CountdownTimer | null>(null);
@@ -171,7 +203,7 @@ export function PracticePuzzlesView({
       sessionUserId &&
       activeAccountId &&
       activePuzzle &&
-      activePuzzle.source !== 'supplied'
+      isWeaknessBacked(activePuzzle)
       ? {
           userId: sessionUserId,
           accountId: activeAccountId,
@@ -193,6 +225,7 @@ export function PracticePuzzlesView({
       const timer = timerRef.current;
       const mode = timerMode;
       if (!timer || !mode || !activePuzzle) return;
+      if (!isWeaknessBacked(activePuzzle)) return;
       const attemptId = timer.getCurrentAttemptId();
       if (!attemptId) return;
       if (sessionStatus === 'authenticated' && !activeAccountId) {
@@ -232,7 +265,7 @@ export function PracticePuzzlesView({
   });
 
   React.useEffect(() => {
-    if (hasLongDecisionReturnContext || hasSimilarPositionsReturnContext) return;
+    if (hasSimilarPositionsReturnContext) return;
     if (!activePuzzle || !timerMode) {
       timerRef.current = null;
       timerAttemptRef.current = null;
@@ -299,7 +332,6 @@ export function PracticePuzzlesView({
     activePuzzle,
     timerMode,
     timerAllowedMs,
-    hasLongDecisionReturnContext,
     hasSimilarPositionsReturnContext,
   ]);
 
@@ -530,34 +562,28 @@ export function PracticePuzzlesView({
 
   const handleExitExplorationInternal = React.useCallback(
     (decisionMove: string | null) => {
-      if (hasSimilarPositionsReturnContext) {
-        const returnSnapshot = longDecisionReturnSnapshotRef.current;
-        if (returnSnapshot) {
-          restoreExplorationReturnSnapshot(returnSnapshot);
-          longDecisionReturnSnapshotRef.current = null;
+      const returnSnapshot = longDecisionReturnSnapshotRef.current;
+      if (returnSnapshot) {
+        restoreExplorationReturnSnapshot(returnSnapshot);
+        longDecisionReturnSnapshotRef.current = null;
+        if (returnSnapshot.originatingTab) {
+          onReturnToTab?.(returnSnapshot.originatingTab);
         }
+        return;
+      }
+      if (hasSimilarPositionsReturnContext) {
         onReturnToTab?.('similar-positions');
         return;
       }
       if (hasLongDecisionReturnContext) {
-        const returnSnapshot = longDecisionReturnSnapshotRef.current;
-        if (returnSnapshot) {
-          restoreExplorationReturnSnapshot(returnSnapshot);
-          longDecisionReturnSnapshotRef.current = null;
-        }
         onReturnToTab?.('long-decisions');
         return;
       }
-      const genericSnapshot = longDecisionReturnSnapshotRef.current;
-      if (genericSnapshot) {
-        restoreExplorationReturnSnapshot(genericSnapshot);
-        longDecisionReturnSnapshotRef.current = null;
-        if (genericSnapshot.originatingTab) {
-          onReturnToTab?.(genericSnapshot.originatingTab);
-        }
-        return;
-      }
-      if (activePuzzle?.source === 'supplied') {
+      if (
+        activePuzzle?.source === 'supplied' ||
+        activePuzzle?.source === 'long-decision' ||
+        activePuzzle?.source === 'similar'
+      ) {
         setActivePuzzle(null);
         setInitialMoveHistorySan([]);
         setInitialMoveHistoryStartFen(undefined);
@@ -594,19 +620,43 @@ export function PracticePuzzlesView({
     lineExplorationRef.current = lineExploration;
   });
 
-  const isSourceNeutral = lineExploration.isExplorationActive && activePuzzle?.source === 'supplied';
+  const weaknessBacked = isWeaknessBacked(activePuzzle);
+  const isWeaknessPlaylist =
+    activePuzzle?.source === 'weakness' || (!activePuzzle?.source && weaknessBacked);
+  const isSourceNeutral = lineExploration.isExplorationActive && !weaknessBacked;
   React.useEffect(() => {
     onSourceNeutralExplorationChange?.(isSourceNeutral);
   }, [isSourceNeutral, onSourceNeutralExplorationChange]);
 
   const handleExplorePosition = React.useCallback(
-    (position: PositionExplorationStart, preserveReturnState = false, originatingTab?: TabType) => {
+    (
+      position: PositionExplorationStart,
+      preserveReturnState = false,
+      originatingTab?: TabType,
+      source: PuzzleSource = 'supplied',
+      longDecisionContext?: LongDecisionContext,
+      similarContext?: SimilarPositionContext
+    ): boolean => {
+      try {
+        new Chess(position.fen);
+      } catch {
+        return false;
+      }
+      evaluationRequestIdRef.current += 1;
+      setIsEvaluatingMove(false);
       if (!preserveReturnState && !hasLongDecisionReturnContext && !hasSimilarPositionsReturnContext) {
         longDecisionReturnSnapshotRef.current = captureExplorationReturnSnapshot(originatingTab);
       }
       suppliedPositionCounterRef.current += 1;
       blindfold.exit();
-      if (!preserveReturnState) {
+      if (source === 'long-decision') {
+        setTimerMode('STOPWATCH');
+        setTimerElapsedMs(0);
+        setTimerExpired(false);
+        setTimerSubmissionError(null);
+        timerRef.current = null;
+        timerAttemptRef.current = null;
+      } else if (!preserveReturnState) {
         setTimerMode(null);
         setTimerElapsedMs(0);
         setTimerExpired(false);
@@ -615,7 +665,7 @@ export function PracticePuzzlesView({
       const side = position.fen.trim().split(/\s+/)[1];
       setActivePuzzle({
         puzzleId: `supplied-position-${suppliedPositionCounterRef.current}`,
-        source: 'supplied',
+        source,
         fen: position.fen,
         playerColor: side === 'b' ? 'BLACK' : 'WHITE',
         targetMove: '',
@@ -626,6 +676,8 @@ export function PracticePuzzlesView({
         timesReached: 0,
         mistakeCount: 0,
         mistakeRate: 0,
+        longDecisionContext,
+        similarContext,
       });
       setInitialMoveHistorySan(position.sanHistory);
       setInitialMoveHistoryStartFen(position.historyStartFen);
@@ -637,6 +689,7 @@ export function PracticePuzzlesView({
       setIsEvalUnknown(true);
       setHintSquare(undefined);
       onNavigateTab('puzzles');
+      return true;
     },
     [
       blindfold,
@@ -648,29 +701,54 @@ export function PracticePuzzlesView({
   );
 
   const handleLongDecisionExplore = React.useCallback(
-    (fen: string): boolean => {
+    (occurrenceOrFen: LongDecisionOccurrence | string): boolean => {
+      const isOccurrence = typeof occurrenceOrFen !== 'string';
+      const fen = isOccurrence ? occurrenceOrFen.fen : occurrenceOrFen;
       try {
         new Chess(fen);
       } catch {
         return false;
       }
+      const longDecisionContext: LongDecisionContext | undefined = isOccurrence
+        ? {
+            timeControl: occurrenceOrFen.timeControl,
+            decisionTimeMs: occurrenceOrFen.decisionTimeMs,
+            movePlayed: occurrenceOrFen.movePlayed,
+            severity: occurrenceOrFen.severity,
+            gameUrl: occurrenceOrFen.chessComUrl,
+            platformGameId: occurrenceOrFen.platformGameId,
+            plyNumber: occurrenceOrFen.plyNumber,
+          }
+        : undefined;
+
       longDecisionReturnSnapshotRef.current = captureExplorationReturnSnapshot('long-decisions');
-      handleExplorePosition({ fen, sanHistory: [] }, true);
-      return true;
+      return handleExplorePosition(
+        { fen, sanHistory: [] },
+        true,
+        'long-decisions',
+        'long-decision',
+        longDecisionContext
+      );
     },
     [captureExplorationReturnSnapshot, handleExplorePosition]
   );
 
   const handleSimilarPositionsExplore = React.useCallback(
-    (position: PositionExplorationStart): boolean => {
+    (position: PositionExplorationStart, metadata?: SimilarPositionContext): boolean => {
       try {
         new Chess(position.fen);
       } catch {
         return false;
       }
       longDecisionReturnSnapshotRef.current = captureExplorationReturnSnapshot('similar-positions');
-      handleExplorePosition(position, true);
-      return true;
+      return handleExplorePosition(
+        position,
+        true,
+        'similar-positions',
+        'similar',
+        undefined,
+        metadata
+      );
     },
     [captureExplorationReturnSnapshot, handleExplorePosition]
   );
@@ -697,12 +775,18 @@ export function PracticePuzzlesView({
         targetIdx !== -1
           ? {
               ...targetList[targetIdx],
+              source: 'weakness' as const,
               gameUrls: puzzle.gameUrls || targetList[targetIdx].gameUrls || [],
             }
-          : puzzle;
+          : {
+              ...puzzle,
+              source: 'weakness' as const,
+            };
       const finalIndex = Math.max(0, targetIdx);
 
       setCurrentPuzzleIndex(finalIndex);
+      evaluationRequestIdRef.current += 1;
+      setIsEvaluatingMove(false);
       setActivePuzzle(selectedPuzzle);
       setLoadedPuzzleContext(puzzleContextKey);
       resetPuzzleInteractionState(selectedPuzzle);
@@ -1014,6 +1098,8 @@ export function PracticePuzzlesView({
   };
 
   const handleBoardUndo = () => {
+    evaluationRequestIdRef.current += 1;
+    setIsEvaluatingMove(false);
     lineExploration.handleUndo();
     if (lineExploration.isExplorationActive) return;
 
@@ -1039,12 +1125,23 @@ export function PracticePuzzlesView({
   };
 
   const handleBoardReset = () => {
+    evaluationRequestIdRef.current += 1;
+    setIsEvaluatingMove(false);
     lineExploration.resetExploration();
     setHistoryIndex(0);
     setCurrentEvalCp(evalHistory[0] ?? (activePuzzle?.evalCp ?? 35));
     const firstFeedback = feedbackHistory[0];
     setFeedback(firstFeedback ?? { status: 'IDLE' });
     setIsEvalUnknown(false);
+    if (activePuzzle?.source === 'long-decision' && timerMode === 'STOPWATCH') {
+      if (timerRef.current instanceof StopwatchTimer) {
+        timerRef.current.reset();
+        timerRef.current.startNewAttempt();
+        timerRef.current.start();
+      }
+      setTimerElapsedMs(0);
+      setTimerExpired(false);
+    }
   };
 
   const handleMoveAttempt = (
@@ -1055,7 +1152,7 @@ export function PracticePuzzlesView({
     isInitialDecision: boolean = true
   ) => {
     if (!activePuzzle) return;
-    if (isInitialDecision && activePuzzle.source !== 'supplied') {
+    if (isInitialDecision && weaknessBacked) {
       if (!puzzleContextReady) return;
       void puzzleAttempts.submit(moveSan, isCorrect);
     }
@@ -1065,63 +1162,117 @@ export function PracticePuzzlesView({
     const startCp = activePuzzle.evalCp ?? 35;
 
     if (isInitialDecision) {
-      if (activePuzzle.source === 'supplied' || !activePuzzle.targetMove) {
-        void evaluateMove(activePuzzle.fen, moveSan).then((evalResult) => {
-          if (!evalResult) {
-            setBoardResetTrigger((prev) => prev + 1);
-            setMoveHistory((prev) => prev.slice(0, -1));
-            setFeedback({ status: 'IDLE' });
-            return;
-          }
-          const acceptable = evalResult.acceptable;
-          const isBest = moveSan === evalResult.bestMove;
-          const evalCp = evalResult.evalCp ?? startCp;
+      if (!activePuzzle.targetMove) {
+        const preFen = activePuzzle.fen;
+        const attemptElapsed = getAuthoritativeTimerElapsed(
+          timerRef.current,
+          timerAllowedMs,
+          timerElapsedMs
+        );
+        setTimerElapsedMs(attemptElapsed);
+        evaluationRequestIdRef.current += 1;
+        const reqId = evaluationRequestIdRef.current;
 
-          if (acceptable) {
-            setActivePuzzle((prev) => {
-              if (!prev) return null;
-              const newAcceptable = prev.acceptableMoves.filter((m) => m.move !== moveSan);
-              if (!isBest) {
-                newAcceptable.push({ move: moveSan, evalLoss: evalResult.evalLoss });
+        const runEvaluation = () => {
+          setIsEvaluatingMove(true);
+          setFeedback({
+            status: 'EVALUATING',
+            lastMove: moveSan,
+            attemptElapsedMs: attemptElapsed,
+          });
+
+          void evaluateMove(preFen, moveSan)
+            .then((evalResult) => {
+              if (
+                reqId !== evaluationRequestIdRef.current ||
+                !activePuzzleRef.current ||
+                activePuzzleRef.current.fen !== preFen
+              ) {
+                return;
               }
-              return {
-                ...prev,
-                targetMove: evalResult.bestMove,
-                acceptableMoves: newAcceptable,
-              };
+              setIsEvaluatingMove(false);
+              if (!evalResult) {
+                setFeedback({
+                  status: 'EVALUATION_ERROR',
+                  lastMove: moveSan,
+                  errorMessage: 'Evaluation service returned an empty response.',
+                  attemptElapsedMs: attemptElapsed,
+                  onRetry: runEvaluation,
+                });
+                return;
+              }
+
+              const acceptable = evalResult.acceptable;
+              const isBest = moveSan === evalResult.bestMove;
+              const evalCp = evalResult.evalCp ?? startCp;
+
+              if (acceptable) {
+                setActivePuzzle((prev) => {
+                  if (!prev) return null;
+                  const newAcceptable = prev.acceptableMoves.filter((m) => m.move !== moveSan);
+                  if (!isBest) {
+                    newAcceptable.push({ move: moveSan, evalLoss: evalResult.evalLoss });
+                  }
+                  return {
+                    ...prev,
+                    targetMove: evalResult.bestMove,
+                    acceptableMoves: newAcceptable,
+                  };
+                });
+                const nextFeedback: PuzzleFeedbackState = {
+                  status: 'CORRECT',
+                  lastMove: moveSan,
+                  evalLoss: evalResult.evalLoss,
+                  attemptElapsedMs: attemptElapsed,
+                };
+                setFeedback(nextFeedback);
+                setCurrentEvalCp(evalCp);
+                setIsEvalUnknown(false);
+                setEvalHistory((prev) => [...prev.slice(0, historyIndex + 1), evalCp]);
+                setFeedbackHistory((prev) => [...prev.slice(0, historyIndex + 1), nextFeedback]);
+                setHistoryIndex((prev) => prev + 1);
+                if (isBest) {
+                  soundService.playSound('completion');
+                } else {
+                  soundService.playSound('correct');
+                }
+              } else {
+                // Roll back board to preMoveFen and remove move from history
+                setBoardResetTrigger((prev) => prev + 1);
+                setMoveHistory((prev) => prev.slice(0, -1));
+                const nextFeedback: PuzzleFeedbackState = {
+                  status: 'INCORRECT',
+                  lastMove: moveSan,
+                  evalLoss: evalResult.evalLoss,
+                  historicalInfo: { timesPlayed: 1, averageLoss: evalResult.evalLoss },
+                  attemptElapsedMs: attemptElapsed,
+                };
+                setFeedback(nextFeedback);
+                soundService.playSound('incorrect');
+              }
+            })
+            .catch((err: unknown) => {
+              if (
+                reqId !== evaluationRequestIdRef.current ||
+                !activePuzzleRef.current ||
+                activePuzzleRef.current.fen !== preFen
+              ) {
+                return;
+              }
+              setIsEvaluatingMove(false);
+              const errorMsg =
+                err instanceof Error ? err.message : 'Evaluation service network error';
+              setFeedback({
+                status: 'EVALUATION_ERROR',
+                lastMove: moveSan,
+                errorMessage: errorMsg,
+                attemptElapsedMs: attemptElapsed,
+                onRetry: runEvaluation,
+              });
             });
-            const nextFeedback: PuzzleFeedbackState = {
-              status: 'CORRECT',
-              lastMove: moveSan,
-            };
-            setFeedback(nextFeedback);
-            setCurrentEvalCp(evalCp);
-            setIsEvalUnknown(false);
-            setEvalHistory((prev) => [...prev.slice(0, historyIndex + 1), evalCp]);
-            setFeedbackHistory((prev) => [...prev.slice(0, historyIndex + 1), nextFeedback]);
-            setHistoryIndex((prev) => prev + 1);
-            if (isBest) {
-              soundService.playSound('completion');
-            } else {
-              soundService.playSound('correct');
-            }
-          } else {
-            // Unacceptable move (>0.80 loss): rollback board, set feedback to INCORRECT, remove move from history
-            setBoardResetTrigger((prev) => prev + 1);
-            setMoveHistory((prev) => prev.slice(0, -1));
-            const nextFeedback: PuzzleFeedbackState = {
-              status: 'INCORRECT',
-              lastMove: moveSan,
-              historicalInfo: { timesPlayed: 1, averageLoss: evalResult.evalLoss },
-            };
-            setFeedback(nextFeedback);
-            soundService.playSound('incorrect');
-          }
-        }).catch(() => {
-          setBoardResetTrigger((prev) => prev + 1);
-          setMoveHistory((prev) => prev.slice(0, -1));
-          setFeedback({ status: 'IDLE' });
-        });
+        };
+
+        runEvaluation();
         return;
       }
 
@@ -1147,14 +1298,27 @@ export function PracticePuzzlesView({
       let newFeedbackState: PuzzleFeedbackState = { status: 'IDLE' };
 
       if (isCorrect) {
-        newFeedbackState = { status: 'CORRECT', lastMove: moveSan };
-        if (timerMode && !timerExpired) {
+        newFeedbackState = {
+          status: 'CORRECT',
+          lastMove: moveSan,
+          attemptElapsedMs: timerElapsedMs,
+        };
+        if (timerMode && !timerExpired && weaknessBacked) {
           void submitTimerAttempt('SUBMITTED');
         }
       } else if (isHistoricalMistake) {
-        newFeedbackState = { status: 'HISTORICAL_MISTAKE', lastMove: moveSan, historicalInfo };
+        newFeedbackState = {
+          status: 'HISTORICAL_MISTAKE',
+          lastMove: moveSan,
+          historicalInfo,
+          attemptElapsedMs: timerElapsedMs,
+        };
       } else {
-        newFeedbackState = { status: 'INCORRECT', lastMove: moveSan };
+        newFeedbackState = {
+          status: 'INCORRECT',
+          lastMove: moveSan,
+          attemptElapsedMs: timerElapsedMs,
+        };
       }
 
       const trimmedEvalHist = evalHistory.slice(0, historyIndex + 1);
@@ -1270,19 +1434,19 @@ export function PracticePuzzlesView({
             {/* Center Interactive Chessboard & Controls */}
             <div className="w-full max-w-[640px] shrink-0 2xl:max-w-[760px] 2xl:w-auto 2xl:min-w-0 2xl:basis-[760px] 2xl:grow 2xl:shrink">
               <ChessBoardArea
-                key={activePuzzle.source === 'supplied' ? activePuzzle.puzzleId : 'puzzle-board'}
+                key={!isWeaknessPlaylist ? activePuzzle.puzzleId : 'puzzle-board'}
                 initialFen={activePuzzle.fen}
                 initialBoardHistory={
-                  activePuzzle.source === 'supplied' ? null : boardHistorySnapshot
+                  isWeaknessPlaylist ? boardHistorySnapshot : null
                 }
                 onBoardHistoryChange={handleBoardHistoryChange}
                 initialMoveHistorySan={
-                  activePuzzle.source === 'supplied' ? initialMoveHistorySan : undefined
+                  !isWeaknessPlaylist ? initialMoveHistorySan : undefined
                 }
                 initialMoveHistoryStartFen={
-                  activePuzzle.source === 'supplied' ? initialMoveHistoryStartFen : undefined
+                  !isWeaknessPlaylist ? initialMoveHistoryStartFen : undefined
                 }
-                showPuzzleControls={activePuzzle.source !== 'supplied'}
+                showPuzzleControls={isWeaknessPlaylist}
                 playerColor={activePuzzle.playerColor}
                 blindfoldMode={isBlindfoldActive}
                 boardOrientation={puzzleBoardOrientation}
@@ -1290,7 +1454,10 @@ export function PracticePuzzlesView({
                 acceptableMoves={activePuzzle.acceptableMoves}
                 movesPlayed={activePuzzle.movesPlayed}
                 onMoveAttempt={handleMoveAttempt}
-                initialDecisionEnabled={activePuzzle.source === 'supplied' || puzzleContextReady}
+                initialDecisionEnabled={
+                  !isEvaluatingMove && (!isWeaknessPlaylist || puzzleContextReady)
+                }
+                isMoveEvaluationPending={isEvaluatingMove || feedback.status === 'EVALUATION_ERROR'}
                 onPreviousPuzzle={handlePreviousPuzzle}
                 onNextPuzzle={handleNextPuzzle}
                 onUndo={handleBoardUndo}
@@ -1364,7 +1531,7 @@ export function PracticePuzzlesView({
                   onEnterExploration={lineExploration.handleEnterExploration}
                   onExitExploration={lineExploration.handleExitExploration}
                   onEnterBlindfold={
-                    activePuzzle.source === 'supplied' ? undefined : handleEnterBlindfold
+                    isWeaknessPlaylist ? handleEnterBlindfold : undefined
                   }
                   isBlindfoldEntryDisabled={isPuzzleBoardUnsettled}
                   continuationMode={lineExploration.continuationMode}

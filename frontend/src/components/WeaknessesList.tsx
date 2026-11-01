@@ -62,6 +62,7 @@ export function adaptWeaknessToPuzzle(
 
   return {
     puzzleId: weakness.positionId,
+    source: 'weakness',
     fen: weakness.fen,
     playerColor,
     targetMove: weakness.bestMove || '',
