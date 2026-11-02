@@ -60,13 +60,25 @@ const similarFen = 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/2N5/PPPP1PPP/R1BQKBNR w KQkq -
 const mockSimilarResponse: api.SimilarPositionsResponse = {
   queryFen: validFen,
   candidatesEvaluated: 150,
+  shortlistedCandidatesCount: 100,
+  engineCompletedCount: 98,
+  dynamicSimilarityApplied: true,
+  fallbackReason: null,
+  queryStatus: 'COMPLETED',
+  queryAchievedDepth: 8,
+  queryPrincipalVariations: [{ rank: 1, moves: ['Nf3'], achievedDepth: 8 }],
   results: [
     {
       rank: 1,
       score: 19.5,
+      staticScore: 15.0,
+      dynamicScore: 19.5,
       positionId: 'pos-abc-1',
       fen: similarFen,
       canonicalFen: 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/2N5/PPPP1PPP/R1BQKBNR w KQkq -',
+      searchStatus: 'COMPLETED',
+      achievedDepth: 8,
+      principalVariations: [{ rank: 1, moves: ['Nc3'], achievedDepth: 8 }],
       occurrences: [
         {
           id: 'occ-abc-1',

@@ -903,18 +903,36 @@ export async function submitTrainingAttempt(payload: {
   return await response.json();
 }
 
+export interface PrincipalVariationDto {
+  rank: number;
+  moves: string[];
+  achievedDepth: number;
+}
+
 export interface SimilarPositionsResponse {
   queryFen: string;
   candidatesEvaluated: number;
+  shortlistedCandidatesCount: number;
+  engineCompletedCount: number;
+  dynamicSimilarityApplied: boolean;
+  fallbackReason: string | null;
+  queryStatus: string | null;
+  queryAchievedDepth: number;
+  queryPrincipalVariations: PrincipalVariationDto[];
   results: SimilarPositionResult[];
 }
 
 export interface SimilarPositionResult {
   rank: number;
   score: number;
+  staticScore: number;
+  dynamicScore: number;
   positionId: string;
   fen: string;
   canonicalFen: string;
+  searchStatus: string | null;
+  achievedDepth: number;
+  principalVariations: PrincipalVariationDto[];
   occurrences: SimilarPositionOccurrenceDto[];
 }
 
@@ -937,6 +955,8 @@ export async function fetchSimilarPositions(params: {
   username?: string;
   minScore?: number;
   limit?: number;
+  depth?: number;
+  multiPv?: number;
 }): Promise<SimilarPositionsResponse> {
   const queryParams = new URLSearchParams();
   queryParams.set('fen', params.fen);
@@ -944,6 +964,8 @@ export async function fetchSimilarPositions(params: {
   if (params.username) queryParams.set('username', params.username);
   if (params.minScore !== undefined) queryParams.set('minScore', params.minScore.toString());
   if (params.limit !== undefined) queryParams.set('limit', params.limit.toString());
+  if (params.depth !== undefined) queryParams.set('depth', params.depth.toString());
+  if (params.multiPv !== undefined) queryParams.set('multiPv', params.multiPv.toString());
 
   const response = await fetch(`${API_BASE_URL}/positions/similar?${queryParams.toString()}`, {
     credentials: 'include',

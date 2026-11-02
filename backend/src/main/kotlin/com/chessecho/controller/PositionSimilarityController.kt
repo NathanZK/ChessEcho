@@ -2,6 +2,7 @@ package com.chessecho.controller
 
 import com.chessecho.domain.ChessAccount
 import com.chessecho.domain.Platform
+import com.chessecho.dto.PrincipalVariationDto
 import com.chessecho.dto.SimilarPositionOccurrenceDto
 import com.chessecho.dto.SimilarPositionResult
 import com.chessecho.dto.SimilarPositionsResponse
@@ -35,12 +36,20 @@ class PositionSimilarityController(
         @RequestParam(required = false) username: String?,
         @RequestParam(required = false) minScore: Double?,
         @RequestParam(defaultValue = "20") limit: Int,
+        @RequestParam(defaultValue = "8") depth: Int,
+        @RequestParam(defaultValue = "1") multiPv: Int,
         @OptionalAuthenticatedPrincipal
         @RequestAttribute(name = SessionAuthenticationFilter.PRINCIPAL_ATTRIBUTE, required = false)
         principal: AuthenticatedPrincipal?,
     ): SimilarPositionsResponse {
         if (minScore != null && minScore < 0.0) {
             throw IllegalArgumentException("minScore must be non-negative: $minScore")
+        }
+        if (depth !in 4..12) {
+            throw IllegalArgumentException("depth must be between 4 and 12: $depth")
+        }
+        if (multiPv !in 1..5) {
+            throw IllegalArgumentException("multiPv must be between 1 and 5: $multiPv")
         }
         val validatedFen = fenPositionValidator.validateOrthodoxFen(fen)
         val resolvedLimit = limit.coerceIn(1, 100)
@@ -52,6 +61,8 @@ class PositionSimilarityController(
                 account = account,
                 minScore = minScore ?: 0.0,
                 limit = resolvedLimit,
+                depth = depth,
+                multiPv = multiPv,
             )
 
         return toResponse(result)
@@ -84,14 +95,40 @@ class PositionSimilarityController(
         SimilarPositionsResponse(
             queryFen = result.queryFen,
             candidatesEvaluated = result.candidatesEvaluated,
+            shortlistedCandidatesCount = result.shortlistedCandidatesCount,
+            engineCompletedCount = result.engineCompletedCount,
+            dynamicSimilarityApplied = result.dynamicSimilarityApplied,
+            fallbackReason = result.fallbackReason,
+            queryStatus = result.queryStatus?.name,
+            queryAchievedDepth = result.queryAchievedDepth,
+            queryPrincipalVariations =
+                result.queryPrincipalVariations.map { pv ->
+                    PrincipalVariationDto(
+                        rank = pv.rank,
+                        moves = pv.moves,
+                        achievedDepth = pv.achievedDepth,
+                    )
+                },
             results =
                 result.results.map { match ->
                     SimilarPositionResult(
                         rank = match.rank,
                         score = match.score,
+                        staticScore = match.staticScore,
+                        dynamicScore = match.dynamicScore,
                         positionId = match.positionId,
                         fen = match.fen,
                         canonicalFen = match.canonicalFen,
+                        searchStatus = match.searchStatus?.name,
+                        achievedDepth = match.achievedDepth,
+                        principalVariations =
+                            match.principalVariations.map { pv ->
+                                PrincipalVariationDto(
+                                    rank = pv.rank,
+                                    moves = pv.moves,
+                                    achievedDepth = pv.achievedDepth,
+                                )
+                            },
                         occurrences =
                             match.occurrences.map { occ ->
                                 SimilarPositionOccurrenceDto(

@@ -64,7 +64,7 @@ class PositionTokenExtractorTest {
         // In endgamePawnFen, pawns form chains, passed, isolated, or backward pawns
         val pawnFeaturePrefixes = listOf("I", "F", "'F", "l", "S", "w[")
         val extractedPawnFeatures = terms.keys.filter { key -> pawnFeaturePrefixes.any { key.startsWith(it) } }
-        assertFalse(extractedPawnFeatures.isEmpty(), "Should extract Bizjak pawn structure features")
+        assertFalse(extractedPawnFeatures.isEmpty(), "Should extract relational pawn structure features")
     }
 
     @Test

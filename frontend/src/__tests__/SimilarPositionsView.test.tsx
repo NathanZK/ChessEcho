@@ -34,13 +34,25 @@ const validFen = 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2
 const mockResponse: SimilarPositionsResponse = {
   queryFen: validFen,
   candidatesEvaluated: 120,
+  shortlistedCandidatesCount: 100,
+  engineCompletedCount: 98,
+  dynamicSimilarityApplied: true,
+  fallbackReason: null,
+  queryStatus: 'COMPLETED',
+  queryAchievedDepth: 8,
+  queryPrincipalVariations: [{ rank: 1, moves: ['Nf3'], achievedDepth: 8 }],
   results: [
     {
       rank: 1,
       score: 18.75,
+      staticScore: 15.0,
+      dynamicScore: 18.75,
       positionId: 'pos-1',
       fen: 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/2N5/PPPP1PPP/R1BQKBNR w KQkq - 2 3',
       canonicalFen: 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/2N5/PPPP1PPP/R1BQKBNR w KQkq -',
+      searchStatus: 'COMPLETED',
+      achievedDepth: 8,
+      principalVariations: [{ rank: 1, moves: ['Nc3'], achievedDepth: 8 }],
       occurrences: [
         {
           id: 'occ-1',
@@ -59,9 +71,14 @@ const mockResponse: SimilarPositionsResponse = {
     {
       rank: 2,
       score: 15.2,
+      staticScore: 12.0,
+      dynamicScore: 15.2,
       positionId: 'pos-2',
       fen: 'r1bqkb1r/pppp1ppp/2n2n2/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 4 4',
       canonicalFen: 'r1bqkb1r/pppp1ppp/2n2n2/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq -',
+      searchStatus: 'COMPLETED',
+      achievedDepth: 8,
+      principalVariations: [{ rank: 1, moves: ['d3'], achievedDepth: 8 }],
       occurrences: [
         {
           id: 'occ-2',
@@ -196,6 +213,13 @@ describe('SimilarPositionsView', () => {
     vi.mocked(api.fetchSimilarPositions).mockResolvedValue({
       queryFen: validFen,
       candidatesEvaluated: 50,
+      shortlistedCandidatesCount: 50,
+      engineCompletedCount: 0,
+      dynamicSimilarityApplied: false,
+      fallbackReason: null,
+      queryStatus: null,
+      queryAchievedDepth: 0,
+      queryPrincipalVariations: [],
       results: [],
     });
 
