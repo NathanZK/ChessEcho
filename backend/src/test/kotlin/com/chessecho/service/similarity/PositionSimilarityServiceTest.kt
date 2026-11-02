@@ -1,10 +1,13 @@
 package com.chessecho.service.similarity
 
 import com.chessecho.domain.ChessAccount
-import com.chessecho.domain.Game
-import com.chessecho.domain.Position
-import com.chessecho.domain.PositionOccurrence
 import com.chessecho.repository.PositionOccurrenceRepository
+import com.chessecho.service.BatchContinuationResult
+import com.chessecho.service.ContinuationResult
+import com.chessecho.service.PrincipalVariation
+import com.chessecho.service.SearchStatus
+import com.chessecho.service.StockfishService
+import com.chessecho.similarity.DynamicTacticalScorer
 import com.chessecho.similarity.PositionSimilarityScorer
 import com.chessecho.similarity.RelationalPawnTokenExtractor
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -16,7 +19,6 @@ import org.mockito.Mockito.mock
 import org.mockito.kotlin.any
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.whenever
-import java.time.Instant
 import java.util.UUID
 
 class PositionSimilarityServiceTest {
@@ -27,15 +29,13 @@ class PositionSimilarityServiceTest {
     private val urlBuilder = ChessComUrlBuilder()
     private val validator = FenPositionValidator()
     private val cache = PositionSimilarityCache()
+    private val stockfishService: StockfishService = mock()
+    private val concurrencyManager = SimilarityConcurrencyManager(maxConcurrentSessions = 2)
+    private val dynamicScorer = DynamicTacticalScorer()
 
     private lateinit var service: PositionSimilarityService
 
-    private val account =
-        ChessAccount(
-            id = UUID.randomUUID(),
-            platform = "CHESS_COM",
-            username = "testplayer",
-        )
+    private val account = ChessAccount(id = UUID.randomUUID(), platform = "CHESS_COM", username = "testplayer")
 
     private val queryFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
     private val candidateFen1 = "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2"
@@ -45,6 +45,31 @@ class PositionSimilarityServiceTest {
 
     @BeforeEach
     fun setUp() {
+        whenever(stockfishService.batchResolveContinuations(any(), any(), any())).thenAnswer { invocation ->
+            val candsArg = invocation.getArgument<List<Pair<UUID, String>>>(1)
+            BatchContinuationResult(
+                queryResult =
+                    ContinuationResult(
+                        status = SearchStatus.COMPLETED,
+                        achievedDepth = 8,
+                        principalVariations = listOf(PrincipalVariation(1, emptyList(), 8)),
+                    ),
+                candidateResults =
+                    candsArg.associate { (id, _) ->
+                        id to
+                            ContinuationResult(
+                                status = SearchStatus.COMPLETED,
+                                achievedDepth = 8,
+                                principalVariations = listOf(PrincipalVariation(1, emptyList(), 8)),
+                            )
+                    },
+                fallbackReason = null,
+                shortlistedCount = candsArg.size,
+                engineAttemptedCount = candsArg.size,
+                engineCompletedCount = candsArg.size,
+            )
+        }
+
         service =
             PositionSimilarityService(
                 corpusProvider = corpusProvider,
@@ -54,6 +79,9 @@ class PositionSimilarityServiceTest {
                 urlBuilder = urlBuilder,
                 validator = validator,
                 cache = cache,
+                stockfishService = stockfishService,
+                concurrencyManager = concurrencyManager,
+                dynamicScorer = dynamicScorer,
             )
     }
 
@@ -68,26 +96,20 @@ class PositionSimilarityServiceTest {
         whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(listOf(doc1, doc2))
 
         val game =
-            Game(
-                id = UUID.randomUUID(),
-                chessAccount = account,
+            createTestGame(
+                account = account,
                 platformGameId = "https://www.chess.com/game/live/12345",
-                pgn = "1. e4 c5 2. Nf3",
-                timeControl = "600",
-                playedAt = Instant.parse("2026-01-10T12:00:00Z"),
                 whiteUsername = "testplayer",
                 blackUsername = "opponent1",
-                result = "win",
             )
         val occurrence =
-            PositionOccurrence(
-                id = UUID.randomUUID(),
+            createTestOccurrence(
+                account = account,
                 game = game,
-                position = Position(id = posId1, hash = "hash1", fen = candidateFen1),
-                chessAccount = account,
+                positionId = posId1,
+                fen = candidateFen1,
                 plyNumber = 3,
                 movePlayed = "Nf3",
-                playerColor = "WHITE",
             )
 
         whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
@@ -122,30 +144,8 @@ class PositionSimilarityServiceTest {
 
         whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(listOf(doc1, doc2))
 
-        val game =
-            Game(
-                id = UUID.randomUUID(),
-                chessAccount = account,
-                platformGameId = "https://www.chess.com/game/live/99999",
-                pgn = "...",
-                timeControl = "600",
-                playedAt = Instant.parse("2026-01-10T12:00:00Z"),
-                whiteUsername = "testplayer",
-                blackUsername = "opponent",
-                result = "win",
-            )
-        // posId1 (higher BM25) has NO qualifying occurrence (user played BLACK in error or no occurrence)
-        // posId2 (lower BM25) has a valid WHITE occurrence
-        val occurrence2 =
-            PositionOccurrence(
-                id = UUID.randomUUID(),
-                game = game,
-                position = Position(id = posId2, hash = "hash2", fen = candidateFen2),
-                chessAccount = account,
-                plyNumber = 40,
-                movePlayed = "f3",
-                playerColor = "WHITE",
-            )
+        val game = createTestGame(account, platformGameId = "https://www.chess.com/game/live/99999")
+        val occurrence2 = createTestOccurrence(account, game, posId2, candidateFen2, plyNumber = 40, movePlayed = "f3")
 
         whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
             .thenReturn(listOf(occurrence2))
@@ -175,28 +175,16 @@ class PositionSimilarityServiceTest {
         val doc = tokenExtractor.extractDocument(posId, candidateFen1, includeReachability = true)
         whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(listOf(doc))
 
-        val game =
-            Game(
-                id = UUID.randomUUID(),
-                chessAccount = account,
-                platformGameId = "https://www.chess.com/game/live/111",
-                pgn = "...",
-                timeControl = "600",
-                playedAt = Instant.parse("2026-01-10T12:00:00Z"),
-                whiteUsername = "opponent",
-                blackUsername = "testplayer",
-                result = "loss",
-            )
-        // Occurrence where user played BLACK on a White-to-move query
+        val game = createTestGame(account, whiteUsername = "opponent", blackUsername = "testplayer", result = "loss")
         val occurrence =
-            PositionOccurrence(
-                id = UUID.randomUUID(),
+            createTestOccurrence(
+                account = account,
                 game = game,
-                position = Position(id = posId, hash = "hash1", fen = candidateFen1),
-                chessAccount = account,
-                plyNumber = 3,
-                movePlayed = "c5",
+                positionId = posId,
+                fen = candidateFen1,
                 playerColor = "BLACK",
+                movePlayed = "c5",
+                plyNumber = 3,
             )
 
         whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
@@ -219,28 +207,16 @@ class PositionSimilarityServiceTest {
         val doc = tokenExtractor.extractDocument(posId, candidateFen1, includeReachability = true)
         whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(listOf(doc))
 
-        val game =
-            Game(
-                id = UUID.randomUUID(),
-                chessAccount = account,
-                platformGameId = "https://www.chess.com/game/live/conflict1",
-                pgn = "...",
-                timeControl = "600",
-                playedAt = Instant.parse("2026-01-10T12:00:00Z"),
-                whiteUsername = "opponent",
-                blackUsername = "testplayer",
-                result = "loss",
-            )
-        // Conflicting metadata: Candidate FEN is White-to-move, but DB occurrence records playerColor = 'BLACK'
+        val game = createTestGame(account, whiteUsername = "opponent", blackUsername = "testplayer", result = "loss")
         val conflictingOccurrence =
-            PositionOccurrence(
-                id = UUID.randomUUID(),
+            createTestOccurrence(
+                account = account,
                 game = game,
-                position = Position(id = posId, hash = "hashConflict", fen = candidateFen1),
-                chessAccount = account,
-                plyNumber = 3,
-                movePlayed = "c5",
+                positionId = posId,
+                fen = candidateFen1,
                 playerColor = "BLACK",
+                movePlayed = "c5",
+                plyNumber = 3,
             )
 
         whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
@@ -266,27 +242,16 @@ class PositionSimilarityServiceTest {
         val doc = tokenExtractor.extractDocument(posId, blackCandidateFen, includeReachability = true)
         whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(listOf(doc))
 
-        val game =
-            Game(
-                id = UUID.randomUUID(),
-                chessAccount = account,
-                platformGameId = "https://www.chess.com/game/live/222",
-                pgn = "1. e4 c5",
-                timeControl = "600",
-                playedAt = Instant.parse("2026-01-10T12:00:00Z"),
-                whiteUsername = "opponent",
-                blackUsername = "testplayer",
-                result = "win",
-            )
+        val game = createTestGame(account, whiteUsername = "opponent", blackUsername = "testplayer")
         val occurrence =
-            PositionOccurrence(
-                id = UUID.randomUUID(),
+            createTestOccurrence(
+                account = account,
                 game = game,
-                position = Position(id = posId, hash = "hashB", fen = blackCandidateFen),
-                chessAccount = account,
-                plyNumber = 2,
-                movePlayed = "c5",
+                positionId = posId,
+                fen = blackCandidateFen,
                 playerColor = "BLACK",
+                movePlayed = "c5",
+                plyNumber = 2,
             )
 
         whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
@@ -311,27 +276,16 @@ class PositionSimilarityServiceTest {
         val doc = tokenExtractor.extractDocument(posId, candidateFen1, includeReachability = true)
         whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(listOf(doc))
 
-        val game =
-            Game(
-                id = UUID.randomUUID(),
-                chessAccount = account,
-                platformGameId = "https://www.chess.com/game/live/333",
-                pgn = "...",
-                timeControl = "600",
-                playedAt = Instant.parse("2026-01-10T12:00:00Z"),
-                whiteUsername = "testplayer",
-                blackUsername = "opponent",
-                result = "win",
-            )
+        val game = createTestGame(account)
         val blankMoveOcc =
-            PositionOccurrence(
-                id = UUID.randomUUID(),
+            createTestOccurrence(
+                account = account,
                 game = game,
-                position = Position(id = posId, hash = "hash", fen = candidateFen1),
-                chessAccount = account,
-                plyNumber = 1,
-                movePlayed = "   ",
+                positionId = posId,
+                fen = candidateFen1,
                 playerColor = "WHITE",
+                movePlayed = "   ",
+                plyNumber = 1,
             )
 
         whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
@@ -396,38 +350,9 @@ class PositionSimilarityServiceTest {
 
         whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(listOf(doc1, doc2))
 
-        val game =
-            Game(
-                id = UUID.randomUUID(),
-                chessAccount = account,
-                platformGameId = "https://www.chess.com/game/live/444",
-                pgn = "...",
-                timeControl = "600",
-                playedAt = Instant.parse("2026-01-10T12:00:00Z"),
-                whiteUsername = "testplayer",
-                blackUsername = "opponent",
-                result = "win",
-            )
-        val occ1 =
-            PositionOccurrence(
-                id = UUID.randomUUID(),
-                game = game,
-                position = Position(id = posId1, hash = "hash1", fen = candidateFen1),
-                chessAccount = account,
-                plyNumber = 3,
-                movePlayed = "Nf3",
-                playerColor = "WHITE",
-            )
-        val occ2 =
-            PositionOccurrence(
-                id = UUID.randomUUID(),
-                game = game,
-                position = Position(id = posId2, hash = "hash2", fen = candidateFen2),
-                chessAccount = account,
-                plyNumber = 40,
-                movePlayed = "f3",
-                playerColor = "WHITE",
-            )
+        val game = createTestGame(account, platformGameId = "https://www.chess.com/game/live/444")
+        val occ1 = createTestOccurrence(account, game, posId1, candidateFen1, plyNumber = 3, movePlayed = "Nf3")
+        val occ2 = createTestOccurrence(account, game, posId2, candidateFen2, plyNumber = 40, movePlayed = "f3")
 
         whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
             .thenReturn(listOf(occ1, occ2))
@@ -461,5 +386,211 @@ class PositionSimilarityServiceTest {
 
         assertEquals(0, result.candidatesEvaluated)
         assertTrue(result.results.isEmpty())
+    }
+
+    @Test
+    fun `1 candidates with mismatched playerColor and activeTurn never reach Stockfish`() {
+        val posId1 = UUID.randomUUID()
+        val posId2 = UUID.randomUUID()
+
+        val doc1 = tokenExtractor.extractDocument(posId1, candidateFen1, includeReachability = true)
+        val doc2 = tokenExtractor.extractDocument(posId2, candidateFen2, includeReachability = true)
+        whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(listOf(doc1, doc2))
+
+        val game = createTestGame(account)
+        val occ1 = createTestOccurrence(account, game, posId1, candidateFen1, playerColor = "BLACK", movePlayed = "c5", plyNumber = 3)
+        val occ2 = createTestOccurrence(account, game, posId2, candidateFen2, playerColor = "WHITE", movePlayed = "f3", plyNumber = 40)
+        whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
+            .thenReturn(listOf(occ1, occ2))
+
+        service.findSimilarPositions(queryFen, account)
+
+        val captor = org.mockito.kotlin.argumentCaptor<List<Pair<UUID, String>>>()
+        org.mockito.Mockito
+            .verify(stockfishService)
+            .batchResolveContinuations(eq(queryFen), captor.capture(), any())
+
+        val submittedIds = captor.firstValue.map { it.first }
+        assertFalse(submittedIds.contains(posId1), "Mismatched playerColor must never reach Stockfish")
+        assertTrue(submittedIds.contains(posId2), "Matching candidate must reach Stockfish")
+    }
+
+    @Test
+    fun `2 candidates without personal occurrences never reach Stockfish`() {
+        val posId1 = UUID.randomUUID()
+        val posId2 = UUID.randomUUID()
+
+        val doc1 = tokenExtractor.extractDocument(posId1, candidateFen1, includeReachability = true)
+        val doc2 = tokenExtractor.extractDocument(posId2, candidateFen2, includeReachability = true)
+        whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(listOf(doc1, doc2))
+
+        val game = createTestGame(account)
+        val occ2 = createTestOccurrence(account, game, posId2, candidateFen2)
+        whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
+            .thenReturn(listOf(occ2))
+
+        service.findSimilarPositions(queryFen, account)
+
+        val captor = org.mockito.kotlin.argumentCaptor<List<Pair<UUID, String>>>()
+        org.mockito.Mockito
+            .verify(stockfishService)
+            .batchResolveContinuations(eq(queryFen), captor.capture(), any())
+
+        val submittedIds = captor.firstValue.map { it.first }
+        assertFalse(submittedIds.contains(posId1), "Candidate without occurrences must never reach Stockfish")
+        assertTrue(submittedIds.contains(posId2), "Candidate with occurrences must reach Stockfish")
+    }
+
+    @Test
+    fun `3 the qualified engine shortlist never exceeds 100 candidates`() {
+        val fens = generateCandidateFens(105)
+        val docs =
+            fens.map { fen ->
+                tokenExtractor.extractDocument(UUID.randomUUID(), fen, includeReachability = true)
+            }
+        whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(docs)
+
+        val game = createTestGame(account)
+        val occs = docs.map { createTestOccurrence(account, game, it.positionId, it.fen) }
+        whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
+            .thenReturn(occs)
+
+        val result = service.findSimilarPositions(queryFen, account)
+
+        val captor = org.mockito.kotlin.argumentCaptor<List<Pair<UUID, String>>>()
+        org.mockito.Mockito
+            .verify(stockfishService)
+            .batchResolveContinuations(eq(queryFen), captor.capture(), any())
+
+        assertEquals(100, captor.firstValue.size, "Engine shortlist must never exceed 100")
+        assertEquals(100, result.shortlistedCandidatesCount)
+    }
+
+    @Test
+    fun `4 interrupted candidates receive dynamic score 0 0 and retain their static rank`() {
+        val posId1 = UUID.randomUUID()
+        val posId2 = UUID.randomUUID()
+        val posId3 = UUID.randomUUID()
+
+        val doc1 = tokenExtractor.extractDocument(posId1, candidateFen1, includeReachability = true)
+        val doc2 = tokenExtractor.extractDocument(posId2, candidateFen2, includeReachability = true)
+        val fen3 = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3"
+        val doc3 = tokenExtractor.extractDocument(posId3, fen3, includeReachability = true)
+        whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(listOf(doc1, doc2, doc3))
+
+        val game = createTestGame(account)
+        val occs = listOf(doc1, doc2, doc3).map { createTestOccurrence(account, game, it.positionId, it.fen) }
+        whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
+            .thenReturn(occs)
+
+        whenever(stockfishService.batchResolveContinuations(any(), any(), any())).thenReturn(
+            BatchContinuationResult(
+                queryResult = completedContinuation(8, listOf("e2e4")),
+                candidateResults =
+                    mapOf(
+                        posId1 to completedContinuation(8, listOf("d2d4")),
+                        posId2 to interruptedContinuation(4),
+                        posId3 to interruptedContinuation(3),
+                    ),
+                fallbackReason = null,
+                shortlistedCount = 3,
+                engineAttemptedCount = 3,
+                engineCompletedCount = 1,
+            ),
+        )
+
+        val result = service.findSimilarPositions(queryFen, account)
+
+        assertEquals(3, result.results.size)
+        assertEquals(posId1, result.results[0].positionId)
+        assertEquals(SearchStatus.COMPLETED, result.results[0].searchStatus)
+        assertTrue(result.results[0].dynamicScore > 0.0)
+
+        assertEquals(posId3, result.results[1].positionId)
+        assertEquals(SearchStatus.INTERRUPTED, result.results[1].searchStatus)
+        assertEquals(0.0, result.results[1].dynamicScore)
+
+        assertEquals(posId2, result.results[2].positionId)
+        assertEquals(SearchStatus.INTERRUPTED, result.results[2].searchStatus)
+        assertEquals(0.0, result.results[2].dynamicScore)
+    }
+
+    @Test
+    fun `5 unrecoverable engine failure returns the original static ordering`() {
+        val posId1 = UUID.randomUUID()
+        val posId2 = UUID.randomUUID()
+
+        val doc1 = tokenExtractor.extractDocument(posId1, candidateFen1, includeReachability = true)
+        val doc2 = tokenExtractor.extractDocument(posId2, candidateFen2, includeReachability = true)
+        whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(listOf(doc1, doc2))
+
+        val game = createTestGame(account)
+        val occs = listOf(doc1, doc2).map { createTestOccurrence(account, game, it.positionId, it.fen) }
+        whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
+            .thenReturn(occs)
+
+        whenever(stockfishService.batchResolveContinuations(any(), any(), any())).thenReturn(
+            BatchContinuationResult(
+                queryResult = ContinuationResult(SearchStatus.FAILED, 0, emptyList()),
+                candidateResults = emptyMap(),
+                fallbackReason = "ENGINE_UNRESPONSIVE",
+                shortlistedCount = 2,
+                engineAttemptedCount = 0,
+                engineCompletedCount = 0,
+            ),
+        )
+
+        val result = service.findSimilarPositions(queryFen, account)
+
+        assertFalse(result.dynamicSimilarityApplied)
+        assertEquals("ENGINE_UNRESPONSIVE", result.fallbackReason)
+        assertEquals(2, result.results.size)
+        assertEquals(posId1, result.results[0].positionId)
+        assertEquals(1, result.results[0].rank)
+        assertEquals(posId2, result.results[1].positionId)
+        assertEquals(2, result.results[1].rank)
+        result.results.forEachIndexed { i, match ->
+            assertEquals(i + 1, match.rank, "Fallback match at index $i must have 1-based rank ${i + 1}")
+        }
+        assertTrue(result.results[0].score >= result.results[1].score)
+        assertEquals(result.results[0].score, result.results[0].staticScore)
+    }
+
+    @Test
+    fun `6 deterministic tie-breaking uses dynamic score descending static rank ascending then canonical FEN`() {
+        val posId1 = UUID.randomUUID()
+        val posId2 = UUID.randomUUID()
+
+        val doc1 = tokenExtractor.extractDocument(posId1, candidateFen1, includeReachability = true)
+        val doc2 = tokenExtractor.extractDocument(posId2, candidateFen2, includeReachability = true)
+        whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(listOf(doc1, doc2))
+
+        val game = createTestGame(account)
+        val occs = listOf(doc1, doc2).map { createTestOccurrence(account, game, it.positionId, it.fen) }
+        whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
+            .thenReturn(occs)
+
+        whenever(stockfishService.batchResolveContinuations(any(), any(), any())).thenReturn(
+            BatchContinuationResult(
+                queryResult = completedContinuation(8, listOf("e2e4")),
+                candidateResults =
+                    mapOf(
+                        posId1 to completedContinuation(8, emptyList()),
+                        posId2 to completedContinuation(8, emptyList()),
+                    ),
+                fallbackReason = null,
+                shortlistedCount = 2,
+                engineAttemptedCount = 2,
+                engineCompletedCount = 2,
+            ),
+        )
+
+        val result = service.findSimilarPositions(queryFen, account)
+
+        assertEquals(2, result.results.size)
+        assertEquals(0.0, result.results[0].dynamicScore)
+        assertEquals(0.0, result.results[1].dynamicScore)
+        assertEquals(posId1, result.results[0].positionId)
+        assertEquals(posId2, result.results[1].positionId)
     }
 }

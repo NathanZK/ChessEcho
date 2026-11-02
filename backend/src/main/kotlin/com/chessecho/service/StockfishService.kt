@@ -48,6 +48,40 @@ data class PvContinuationResult(
     val terminationReason: TerminationReason,
 )
 
+enum class SearchStatus {
+    COMPLETED,
+    INTERRUPTED,
+    FAILED,
+}
+
+data class PrincipalVariation(
+    val rank: Int,
+    val moves: List<String>,
+    val achievedDepth: Int,
+)
+
+data class ContinuationResult(
+    val status: SearchStatus,
+    val achievedDepth: Int,
+    val principalVariations: List<PrincipalVariation>,
+)
+
+data class DynamicAnalysisOptions(
+    val depth: Int = 8,
+    val multiPv: Int = 1,
+    val watchdogTimeoutMs: Long = 500L,
+    val drainTimeoutMs: Long = 200L,
+)
+
+data class BatchContinuationResult(
+    val queryResult: ContinuationResult,
+    val candidateResults: Map<java.util.UUID, ContinuationResult>,
+    val fallbackReason: String? = null,
+    val shortlistedCount: Int,
+    val engineAttemptedCount: Int,
+    val engineCompletedCount: Int,
+)
+
 @Service
 class StockfishService(
     private val processStarter: (List<String>) -> Process = { ProcessBuilder(it).start() },
@@ -96,6 +130,245 @@ class StockfishService(
             }
 
         return toEngineCandidates(fen, rankMap)
+    }
+
+    fun batchResolveContinuations(
+        queryFen: String,
+        candidates: List<Pair<java.util.UUID, String>>,
+        options: DynamicAnalysisOptions = DynamicAnalysisOptions(),
+    ): BatchContinuationResult {
+        val session =
+            initBatchSession(options.multiPv)
+                ?: return emptyBatchFallback("ENGINE_UNRESPONSIVE", candidates.size)
+
+        return try {
+            executeBatch(session, queryFen, candidates, options)
+        } finally {
+            session.close()
+        }
+    }
+
+    private fun initBatchSession(multiPv: Int): BatchEngineSession? {
+        val session = BatchEngineSession(multiPv)
+        return if (session.initialize()) session else null
+    }
+
+    private fun emptyBatchFallback(
+        reason: String,
+        count: Int,
+    ): BatchContinuationResult =
+        BatchContinuationResult(
+            queryResult = ContinuationResult(SearchStatus.FAILED, 0, emptyList()),
+            candidateResults = emptyMap(),
+            fallbackReason = reason,
+            shortlistedCount = count,
+            engineAttemptedCount = 0,
+            engineCompletedCount = 0,
+        )
+
+    private fun executeBatch(
+        session: BatchEngineSession,
+        queryFen: String,
+        candidates: List<Pair<java.util.UUID, String>>,
+        options: DynamicAnalysisOptions,
+    ): BatchContinuationResult {
+        val queryResult = session.searchPosition(queryFen, options)
+        if (queryResult.status != SearchStatus.COMPLETED) {
+            val reason = if (session.isAlive()) "QUERY_ANALYSIS_FAILED" else "ENGINE_UNRESPONSIVE"
+            return BatchContinuationResult(
+                queryResult = queryResult,
+                candidateResults = emptyMap(),
+                fallbackReason = reason,
+                shortlistedCount = candidates.size,
+                engineAttemptedCount = 0,
+                engineCompletedCount = 0,
+            )
+        }
+
+        return evaluateCandidates(session, queryResult, candidates, options)
+    }
+
+    private fun evaluateCandidates(
+        session: BatchEngineSession,
+        queryResult: ContinuationResult,
+        candidates: List<Pair<java.util.UUID, String>>,
+        options: DynamicAnalysisOptions,
+    ): BatchContinuationResult {
+        val candidateResults = mutableMapOf<java.util.UUID, ContinuationResult>()
+        var attempted = 0
+        var completed = 0
+        var fallbackReason: String? = null
+        var restarts = 0
+
+        for ((id, fen) in candidates) {
+            attempted++
+            val result = session.searchPosition(fen, options)
+            candidateResults[id] = result
+            when (result.status) {
+                SearchStatus.COMPLETED -> completed++
+                SearchStatus.INTERRUPTED -> {}
+                SearchStatus.FAILED -> {
+                    val (newRestarts, success) = handleCandidateFailure(session, restarts)
+                    restarts = newRestarts
+                    if (!success) {
+                        fallbackReason = "ENGINE_UNRESPONSIVE"
+                        break
+                    }
+                }
+            }
+        }
+
+        return BatchContinuationResult(
+            queryResult = queryResult,
+            candidateResults = candidateResults,
+            fallbackReason = fallbackReason,
+            shortlistedCount = candidates.size,
+            engineAttemptedCount = attempted,
+            engineCompletedCount = completed,
+        )
+    }
+
+    private fun handleCandidateFailure(
+        session: BatchEngineSession,
+        restarts: Int,
+    ): Pair<Int, Boolean> {
+        if (restarts >= 1) return Pair(restarts, false)
+        val restarted = session.tryRestart()
+        return Pair(restarts + 1, restarted)
+    }
+
+    private inner class BatchEngineSession(
+        private val multiPv: Int,
+    ) : AutoCloseable {
+        private var process: Process? = null
+        private var reader: BufferedReader? = null
+        private var writer: OutputStreamWriter? = null
+
+        fun initialize(): Boolean =
+            try {
+                val proc = processStarter(listOf("stockfish"))
+                process = proc
+                reader = BufferedReader(InputStreamReader(proc.inputStream))
+                writer = OutputStreamWriter(proc.outputStream)
+                performHandshake()
+                true
+            } catch (e: Exception) {
+                logger.warn("Failed to initialize Stockfish process", e)
+                close()
+                false
+            }
+
+        fun tryRestart(): Boolean {
+            close()
+            return initialize()
+        }
+
+        fun isAlive(): Boolean = process?.isAlive == true
+
+        private fun sendCommand(cmd: String) {
+            val w = writer ?: throw java.io.IOException("Stockfish writer not available")
+            w.write("$cmd\n")
+            w.flush()
+        }
+
+        private fun performHandshake() {
+            sendCommand("uci")
+            waitForToken(reader!!, "uciok")
+            sendCommand("setoption name MultiPV value $multiPv")
+            sendCommand("isready")
+            waitForToken(reader!!, "readyok")
+        }
+
+        fun searchPosition(
+            fen: String,
+            options: DynamicAnalysisOptions,
+        ): ContinuationResult {
+            val r = reader ?: return ContinuationResult(SearchStatus.FAILED, 0, emptyList())
+            return try {
+                sendCommand("position fen $fen")
+                sendCommand("go depth ${options.depth}")
+                readSearchWithWatchdog(r, options)
+            } catch (e: Exception) {
+                logger.warn("Search command failed", e)
+                destroyProcess()
+                ContinuationResult(SearchStatus.FAILED, 0, emptyList())
+            }
+        }
+
+        private fun readSearchWithWatchdog(
+            r: BufferedReader,
+            options: DynamicAnalysisOptions,
+        ): ContinuationResult {
+            val searchFuture =
+                engineExecutor.submit(
+                    java.util.concurrent.Callable {
+                        collectPvOutput(r)
+                    },
+                )
+
+            return try {
+                val (depth, pvs) = searchFuture.get(options.watchdogTimeoutMs, TimeUnit.MILLISECONDS)
+                ContinuationResult(SearchStatus.COMPLETED, depth, pvs)
+            } catch (e: TimeoutException) {
+                logger.debug("Search timed out, recovering via watchdog: {}", e.message)
+                recoverFromTimeout(searchFuture, options.drainTimeoutMs)
+            } catch (e: Exception) {
+                logger.warn("Search execution failed", e)
+                destroyProcess()
+                ContinuationResult(SearchStatus.FAILED, 0, emptyList())
+            }
+        }
+
+        private fun recoverFromTimeout(
+            searchFuture: java.util.concurrent.Future<Pair<Int, List<PrincipalVariation>>>,
+            drainTimeoutMs: Long,
+        ): ContinuationResult =
+            try {
+                sendCommand("stop")
+                val (depth, _) = searchFuture.get(drainTimeoutMs, TimeUnit.MILLISECONDS)
+                ContinuationResult(SearchStatus.INTERRUPTED, depth, emptyList())
+            } catch (e: Exception) {
+                logger.warn("recoverFromTimeout failed: ${e::class.java.simpleName}: ${e.message}", e)
+                destroyProcess()
+                ContinuationResult(SearchStatus.FAILED, 0, emptyList())
+            }
+
+        private fun collectPvOutput(r: BufferedReader): Pair<Int, List<PrincipalVariation>> {
+            val pvMap = mutableMapOf<Int, PrincipalVariation>()
+            var maxDepth = 0
+            while (true) {
+                val line = r.readLine() ?: break
+                if (line.startsWith("bestmove")) break
+                if (!line.startsWith("info ") || !line.contains(" pv ")) continue
+                val pv = parsePvUpdate(line) ?: continue
+                pvMap[pv.rank] = pv
+                if (pv.achievedDepth > maxDepth) maxDepth = pv.achievedDepth
+            }
+            return Pair(maxDepth, pvMap.values.sortedBy { it.rank })
+        }
+
+        private fun destroyProcess() {
+            try {
+                process?.destroyForcibly()
+            } catch (_: Exception) {
+            }
+        }
+
+        override fun close() {
+            try {
+                process?.let { p ->
+                    if (p.isAlive) {
+                        sendCommand("quit")
+                        p.waitFor(1, TimeUnit.SECONDS)
+                    }
+                }
+            } catch (_: Exception) {
+            } finally {
+                if (process?.isAlive == true) {
+                    destroyProcess()
+                }
+            }
+        }
     }
 
     private fun waitForToken(
@@ -653,6 +926,19 @@ class StockfishService(
     }
 
     companion object {
+        fun parsePvUpdate(line: String): PrincipalVariation? {
+            if (!line.startsWith("info ") || !line.contains(" pv ")) return null
+            val tokens = line.trim().split("\\s+".toRegex())
+            val depthIdx = tokens.indexOf("depth")
+            val depth = if (depthIdx != -1 && depthIdx + 1 < tokens.size) tokens[depthIdx + 1].toIntOrNull() ?: 0 else 0
+            val multipvIdx = tokens.indexOf("multipv")
+            val rank = if (multipvIdx != -1 && multipvIdx + 1 < tokens.size) tokens[multipvIdx + 1].toIntOrNull() ?: 1 else 1
+            val pvIdx = tokens.indexOf("pv")
+            if (pvIdx == -1 || pvIdx + 1 >= tokens.size) return null
+            val moves = tokens.subList(pvIdx + 1, tokens.size).filter { it.isNotBlank() }
+            return PrincipalVariation(rank = rank, moves = moves, achievedDepth = depth)
+        }
+
         fun parseMultiPvLine(line: String): Triple<Int, String, EvalScore>? {
             if (!line.contains(" multipv ") || !line.contains(" pv ")) return null
             val tokens = line.split("\\s+".toRegex())

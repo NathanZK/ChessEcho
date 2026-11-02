@@ -48,6 +48,9 @@ chessecho:
 chess:
   stockfish:
     path: ${STOCKFISH_PATH:stockfish}
+  similarity:
+    dynamic:
+      max-concurrent-sessions: ${CHESS_SIMILARITY_DYNAMIC_MAX_CONCURRENT_SESSIONS:2}
   pubapi:
     user-agent-username: ${CHESS_PUBAPI_USERNAME:}
     contact: ${CHESS_PUBAPI_CONTACT:}

@@ -11,6 +11,11 @@ import com.chessecho.repository.ChessAccountRepository
 import com.chessecho.repository.GameRepository
 import com.chessecho.repository.PositionOccurrenceRepository
 import com.chessecho.repository.PositionRepository
+import com.chessecho.service.BatchContinuationResult
+import com.chessecho.service.ContinuationResult
+import com.chessecho.service.PrincipalVariation
+import com.chessecho.service.SearchStatus
+import com.chessecho.service.StockfishService
 import com.chessecho.service.auth.IdentitySessionService
 import com.chessecho.service.auth.VerifiedIdentityClaims
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -18,9 +23,13 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.mockito.kotlin.any
+import org.mockito.kotlin.whenever
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.boot.test.mock.mockito.MockBean
 import org.springframework.boot.test.web.client.TestRestTemplate
 import org.springframework.http.HttpEntity
 import org.springframework.http.HttpHeaders
@@ -58,11 +67,40 @@ class SimilarPositionsControllerIntegrationTest {
     @Autowired
     private lateinit var occurrenceRepository: PositionOccurrenceRepository
 
+    @MockBean
+    private lateinit var stockfishService: StockfishService
+
     private val accountIds = mutableListOf<UUID>()
     private val connectionIds = mutableListOf<UUID>()
     private val gameIds = mutableListOf<UUID>()
     private val positionIds = mutableListOf<UUID>()
     private val occurrenceIds = mutableListOf<UUID>()
+
+    @BeforeEach
+    fun setUpStockfish() {
+        whenever(stockfishService.batchResolveContinuations(any(), any(), any())).thenAnswer { invocation ->
+            val candidates = invocation.getArgument<List<Pair<UUID, String>>>(1)
+            val queryPv = PrincipalVariation(rank = 1, moves = listOf("g1f3"), achievedDepth = 8)
+            val queryResult = ContinuationResult(SearchStatus.COMPLETED, 8, listOf(queryPv))
+            val candMap =
+                candidates.associate { (id, _) ->
+                    id to
+                        ContinuationResult(
+                            SearchStatus.COMPLETED,
+                            8,
+                            listOf(PrincipalVariation(rank = 1, moves = listOf("b1c3"), achievedDepth = 8)),
+                        )
+                }
+            BatchContinuationResult(
+                queryResult = queryResult,
+                candidateResults = candMap,
+                fallbackReason = null,
+                shortlistedCount = candidates.size,
+                engineAttemptedCount = candidates.size,
+                engineCompletedCount = candidates.size,
+            )
+        }
+    }
 
     @AfterEach
     fun tearDown() {
@@ -212,6 +250,43 @@ class SimilarPositionsControllerIntegrationTest {
 
         val body = objectMapper.readValue(response.body, SimilarPositionsResponse::class.java)
         assertTrue(body.results.isEmpty(), "Candidates where user was opposite color must be excluded")
+    }
+
+    @Test
+    fun `authenticated user receives 200 with static fallback when dynamic similarity engine fails`() {
+        whenever(stockfishService.batchResolveContinuations(any(), any(), any())).thenAnswer { invocation ->
+            val candidates = invocation.getArgument<List<Pair<UUID, String>>>(1)
+            BatchContinuationResult(
+                queryResult = ContinuationResult(SearchStatus.FAILED, 0, emptyList()),
+                candidateResults = emptyMap(),
+                fallbackReason = "ENGINE_UNRESPONSIVE",
+                shortlistedCount = candidates.size,
+                engineAttemptedCount = 0,
+                engineCompletedCount = 0,
+            )
+        }
+
+        val userSession = createSession("owner-${UUID.randomUUID()}")
+        val account = createAccount("owner-user-${UUID.randomUUID()}")
+        connectAccount(userSession.principal.appUserId, account)
+
+        val game = createGame(account, "https://www.chess.com/game/live/123456789")
+        val posFen = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3"
+        val position = createPosition(posFen)
+        createOccurrence(game, position, 4, "Nf3")
+
+        val queryFen = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/2N5/PPPP1PPP/R1BQKBNR w KQkq - 2 3"
+        val response = get(buildUrl(queryFen, accountId = account.id), userSession.rawSecret)
+        assertEquals(HttpStatus.OK, response.statusCode)
+
+        val body = objectMapper.readValue(response.body, SimilarPositionsResponse::class.java)
+        assertEquals(queryFen, body.queryFen)
+        assertEquals(false, body.dynamicSimilarityApplied)
+        assertEquals("ENGINE_UNRESPONSIVE", body.fallbackReason)
+        assertEquals(1, body.results.size)
+        assertEquals(1, body.results[0].rank)
+        assertEquals(0.0, body.results[0].dynamicScore)
+        assertTrue(body.results[0].score > 0.0)
     }
 
     private fun buildUrl(

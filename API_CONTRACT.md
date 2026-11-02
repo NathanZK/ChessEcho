@@ -665,6 +665,8 @@ Searches personal-game positions similar to an arbitrary orthodox FEN input usin
 - `username` (string, optional): Chess.com username. Required for unauthenticated guest callers; forbidden for authenticated callers.
 - `minScore` (double, optional, default `0.0`): Minimum BM25 similarity score required for inclusion. Must be $\ge 0.0$.
 - `limit` (integer, optional, default `20`): Maximum number of results to return. Coerced into range `1..100`.
+- `depth` (integer, optional, default `8`): Stockfish search depth for dynamic analysis. Coerced into range `4..12`.
+- `multiPv` (integer, optional, default `1`): Number of principal variations computed per position. Coerced into range `1..5`.
 
 #### Authorization and Isolation
 - Authenticated callers must supply `accountId` matching their connected account (403 `FORBIDDEN` if accessing another user's account). Passing `username` returns 400 `ACCOUNT_SELECTION_REQUIRED` to prevent ownership bypass.
@@ -676,7 +678,20 @@ Searches personal-game positions similar to an arbitrary orthodox FEN input usin
 ```json
 {
   "queryFen": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/2N5/PPPP1PPP/R1BQKBNR w KQkq - 2 3",
-  "candidatesEvaluated": 120,
+  "candidatesEvaluated": 100,
+  "shortlistedCandidatesCount": 100,
+  "engineCompletedCount": 100,
+  "dynamicSimilarityApplied": true,
+  "fallbackReason": null,
+  "queryStatus": "COMPLETED",
+  "queryAchievedDepth": 8,
+  "queryPrincipalVariations": [
+    {
+      "rank": 1,
+      "moves": ["Nf3", "Nf6", "d4", "exd4"],
+      "achievedDepth": 8
+    }
+  ],
   "results": [
     {
       "rank": 1,
@@ -684,6 +699,15 @@ Searches personal-game positions similar to an arbitrary orthodox FEN input usin
       "positionId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
       "fen": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",
       "canonicalFen": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq -",
+      "status": "COMPLETED",
+      "achievedDepth": 8,
+      "principalVariations": [
+        {
+          "rank": 1,
+          "moves": ["d4", "exd4", "Nxd4", "Nf6"],
+          "achievedDepth": 8
+        }
+      ],
       "occurrences": [
         {
           "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
