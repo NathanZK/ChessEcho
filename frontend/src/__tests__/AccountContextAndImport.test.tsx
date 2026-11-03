@@ -238,7 +238,7 @@ describe('Account Context and Import Games MVP Behavior', () => {
       expect(fromBtn).toHaveTextContent('Select month...');
 
       // Verify container uses max-w-6xl (deliberate middle-ground desktop workspace)
-      const importContainer = screen.getByText('Chess.com Game Importer').closest('.max-w-6xl');
+      const importContainer = screen.getByText(/import & analyze your game history/i).closest('.max-w-6xl');
       expect(importContainer).toBeInTheDocument();
     });
 
