@@ -7,7 +7,11 @@ import { WeaknessResponse } from '../services/api';
 
 // Mock react-chessboard to prevent canvas / window rendering issues in jsdom environment
 vi.mock('react-chessboard', () => ({
-  Chessboard: () => <div data-testid="mock-chessboard">Mock Chessboard</div>,
+  Chessboard: (props: { options?: Record<string, unknown> }) => (
+    <div data-testid="mock-chessboard" data-options={JSON.stringify(props?.options || {})}>
+      Mock Chessboard
+    </div>
+  ),
 }));
 
 class MockIntersectionObserver {
@@ -28,6 +32,7 @@ vi.mock('../services/api', async () => {
 
 const mockWeaknessItem: WeaknessResponse = {
   positionId: 'w-pos-123',
+  playerColor: 'BLACK',
   fen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2',
   timesReached: 15,
   mistakeCount: 5,
@@ -138,7 +143,7 @@ describe('Weaknesses Tab MVP', () => {
       fireEvent.click(screen.getByRole('button', { name: /^List$/i }));
 
       // List row elements
-      expect(screen.getByRole('link', { name: 'B12' })).toHaveAttribute(
+      expect(screen.getByRole('link', { name: 'ECO B12' })).toHaveAttribute(
         'href',
         'https://www.chess.com/openings/Caro-Kann-Defense'
       );
@@ -315,7 +320,7 @@ describe('Weaknesses Tab MVP', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText('As BLACK')).toBeInTheDocument();
+        expect(screen.getByText('Playing as Black')).toBeInTheDocument();
         expect(screen.getByText('33.3% (5x)')).toBeInTheDocument();
         expect(screen.getByText('15')).toBeInTheDocument();
         expect(screen.getByText('-1.25 pawns')).toBeInTheDocument();
@@ -907,6 +912,144 @@ describe('Weaknesses Tab MVP', () => {
         });
         expect(screen.getByRole('button', { name: /Retry/i })).toBeInTheDocument();
       });
+    });
+  });
+
+  describe('Issue #666: Truthful Opening Context & Player Color Attribution', () => {
+    it('binds player attribution context and board orientation to item.playerColor (WHITE) while deriving turn from FEN (b)', async () => {
+      const whitePlayerBlackToMove: api.WeaknessResponse = {
+        ...mockWeaknessItem,
+        positionId: 'white-player-b-fen',
+        fen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2',
+        playerColor: 'WHITE',
+        openingContext: {
+          eco: 'C40',
+          ecoUrl: 'https://www.chess.com/openings/Kings-Knight-Opening',
+        },
+      };
+
+      vi.mocked(api.fetchWeaknesses).mockResolvedValue([whitePlayerBlackToMove]);
+
+      render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
+
+      // Player attribution badge
+      expect(await screen.findByText('Playing as White')).toBeInTheDocument();
+      expect(screen.queryByText('Playing as Black')).not.toBeInTheDocument();
+
+      // Board orientation matches playerColor 'white'
+      const board = screen.getByTestId('mock-chessboard');
+      const options = JSON.parse(board.getAttribute('data-options') || '{}');
+      expect(options.boardOrientation).toBe('white');
+
+      // Turn indicator derived from FEN active color ('b' -> Black to move)
+      expect(screen.getByText('Turn: Black to move')).toBeInTheDocument();
+      expect(screen.queryByText('Turn: White')).not.toBeInTheDocument();
+      expect(screen.queryByText('Turn: Black')).not.toBeInTheDocument();
+
+      // Opening context
+      const openingLink = screen.getByRole('link', { name: 'Opening: C40' });
+      expect(openingLink).toHaveAttribute('href', 'https://www.chess.com/openings/Kings-Knight-Opening');
+    });
+
+    it('binds player attribution context and board orientation to item.playerColor (BLACK) while deriving turn from FEN (w)', async () => {
+      const blackPlayerWhiteToMove: api.WeaknessResponse = {
+        ...mockWeaknessItem,
+        positionId: 'black-player-w-fen',
+        fen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2',
+        playerColor: 'BLACK',
+        openingContext: {
+          eco: 'C20',
+          ecoUrl: 'https://www.chess.com/openings/Kings-Pawn-Opening',
+        },
+      };
+
+      vi.mocked(api.fetchWeaknesses).mockResolvedValue([blackPlayerWhiteToMove]);
+
+      render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
+
+      // Player attribution badge
+      expect(await screen.findByText('Playing as Black')).toBeInTheDocument();
+      expect(screen.queryByText('Playing as White')).not.toBeInTheDocument();
+
+      // Board orientation matches playerColor 'black'
+      const board = screen.getByTestId('mock-chessboard');
+      const options = JSON.parse(board.getAttribute('data-options') || '{}');
+      expect(options.boardOrientation).toBe('black');
+
+      // Turn indicator derived from FEN active color ('w' -> White to move)
+      expect(screen.getByText('Turn: White to move')).toBeInTheDocument();
+
+      // Opening context
+      const openingLink = screen.getByRole('link', { name: 'Opening: C20' });
+      expect(openingLink).toHaveAttribute('href', 'https://www.chess.com/openings/Kings-Pawn-Opening');
+    });
+
+    it('renders ECO link in list view without regex slug parsing', async () => {
+      const itemWithEco: api.WeaknessResponse = {
+        ...mockWeaknessItem,
+        positionId: 'list-eco-item',
+        playerColor: 'WHITE',
+        openingContext: {
+          eco: 'B01',
+          ecoUrl: 'https://www.chess.com/openings/B01-Scandinavian-Defense',
+        },
+      };
+
+      vi.mocked(api.fetchWeaknesses).mockResolvedValue([itemWithEco]);
+
+      render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
+
+      const listViewBtn = await screen.findByRole('button', { name: /^list$/i });
+      fireEvent.click(listViewBtn);
+
+      const link = await screen.findByRole('link', { name: 'ECO B01' });
+      expect(link).toHaveAttribute('href', 'https://www.chess.com/openings/B01-Scandinavian-Defense');
+      expect(screen.getByText('Playing as White')).toBeInTheDocument();
+    });
+
+    it('does not guess player color or render attribution badge when playerColor is missing/unattributed', async () => {
+      const unattributedItem: api.WeaknessResponse = {
+        ...mockWeaknessItem,
+        positionId: 'unattributed-item',
+        playerColor: undefined,
+        openingContext: null,
+      };
+
+      vi.mocked(api.fetchWeaknesses).mockResolvedValue([unattributedItem]);
+
+      render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Turn: Black to move')).toBeInTheDocument();
+      });
+
+      // Does not guess player color
+      expect(screen.queryByText('Playing as White')).not.toBeInTheDocument();
+      expect(screen.queryByText('Playing as Black')).not.toBeInTheDocument();
+      expect(screen.queryByText('As WHITE')).not.toBeInTheDocument();
+      expect(screen.queryByText('As BLACK')).not.toBeInTheDocument();
+
+      // Missing opening context fallback
+      expect(screen.getByText('Weakness Position')).toBeInTheDocument();
+    });
+
+    it('calls onViewProgress with item.playerColor', async () => {
+      const onViewProgress = vi.fn();
+      const item: api.WeaknessResponse = {
+        ...mockWeaknessItem,
+        positionId: 'progress-test-item',
+        fen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2',
+        playerColor: 'BLACK',
+      };
+
+      vi.mocked(api.fetchWeaknesses).mockResolvedValue([item]);
+
+      render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} onViewProgress={onViewProgress} />);
+
+      const progressBtn = await screen.findByTitle('View progress');
+      fireEvent.click(progressBtn);
+
+      expect(onViewProgress).toHaveBeenCalledWith('progress-test-item', 'BLACK', 0.8);
     });
   });
 });

@@ -61,6 +61,28 @@ describe('Weaknesses API Contract – failure signalling', () => {
     vi.restoreAllMocks();
   });
 
+  it('preserves authoritative playerColor and openingContext contract fields from backend', async () => {
+    const weaknessWithColor: WeaknessResponse = {
+      ...mockWeakness,
+      playerColor: 'WHITE',
+      openingContext: {
+        eco: 'B01',
+        ecoUrl: 'https://www.chess.com/openings/Scandinavian-Defense',
+      },
+    };
+    vi.mocked(global.fetch).mockResolvedValueOnce({
+      ok: true,
+      json: async () => [weaknessWithColor],
+    } as Response);
+
+    const res = await fetchWeaknesses('hikaru');
+    expect(res[0].playerColor).toBe('WHITE');
+    expect(res[0].openingContext).toEqual({
+      eco: 'B01',
+      ecoUrl: 'https://www.chess.com/openings/Scandinavian-Defense',
+    });
+  });
+
   it('still resolves a populated array on a successful 2xx array body', async () => {
     vi.mocked(global.fetch).mockResolvedValueOnce({
       ok: true,

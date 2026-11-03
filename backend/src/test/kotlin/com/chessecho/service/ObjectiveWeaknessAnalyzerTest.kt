@@ -64,6 +64,47 @@ class ObjectiveWeaknessAnalyzerTest {
     }
 
     @Test
+    fun `openingContext returns truthful ECO context when all games agree and does not parse URL slug`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "alice")
+        val game1 =
+            Game(
+                chessAccount = account,
+                platformGameId = "123",
+                pgn = "[ECO \"B01\"]\n[ECOUrl \"https://www.chess.com/openings/Scandinavian-Defense\"]\n\n1. e4",
+            )
+        val game2 =
+            Game(
+                chessAccount = account,
+                platformGameId = "124",
+                pgn = "[ECO \"B01\"]\n[ECOUrl \"https://www.chess.com/openings/Scandinavian-Defense\"]\n\n1. e4",
+            )
+        val context = analyzer.openingContext(Platform.CHESS_COM, listOf(game1, game2))
+        assertNotNull(context)
+        assertEquals("B01", context?.eco)
+        assertEquals("https://www.chess.com/openings/Scandinavian-Defense", context?.ecoUrl)
+    }
+
+    @Test
+    fun `openingContext returns null when ECO or ecoUrl is missing or non-chess-com platform`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "alice")
+        val gameMissingEco =
+            Game(
+                chessAccount = account,
+                platformGameId = "125",
+                pgn = "[ECOUrl \"https://www.chess.com/openings/Scandinavian-Defense\"]\n\n1. e4",
+            )
+        assertNull(analyzer.openingContext(Platform.CHESS_COM, listOf(gameMissingEco)))
+
+        val gameMissingUrl =
+            Game(
+                chessAccount = account,
+                platformGameId = "126",
+                pgn = "[ECO \"B01\"]\n\n1. e4",
+            )
+        assertNull(analyzer.openingContext(Platform.CHESS_COM, listOf(gameMissingUrl)))
+    }
+
+    @Test
     fun `buildDraft returns null when mistake count is below minMistakeCount`() {
         val account = ChessAccount(platform = "CHESS_COM", username = "alice")
         val position = Position(hash = "hash-1", fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1")

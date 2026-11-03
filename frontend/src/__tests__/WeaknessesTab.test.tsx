@@ -28,6 +28,7 @@ vi.mock('../services/api', async () => {
 
 const mockWeaknessItem: WeaknessResponse = {
   positionId: 'w-pos-123',
+  playerColor: 'BLACK',
   fen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2',
   timesReached: 15,
   mistakeCount: 5,
@@ -171,7 +172,7 @@ describe('Weaknesses Tab MVP', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText('As BLACK')).toBeInTheDocument();
+        expect(screen.getByText('Playing as Black')).toBeInTheDocument();
         expect(screen.getByText('33.3% (5x)')).toBeInTheDocument();
         expect(screen.getByText('15')).toBeInTheDocument();
         expect(screen.getByText('-1.25 pawns')).toBeInTheDocument();
