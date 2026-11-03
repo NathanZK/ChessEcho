@@ -102,7 +102,7 @@ describe('SimilarPositionsView', () => {
     vi.clearAllMocks();
   });
 
-  it('renders FEN input, search button, and sample positions', () => {
+  it('renders FEN input, search button, limit selector with supported choices (default 20), and sample positions', () => {
     render(
       <SimilarPositionsView
         connectedAccount={mockConnectedAccount}
@@ -113,10 +113,22 @@ describe('SimilarPositionsView', () => {
     expect(screen.getByLabelText(/FEN Position/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Search/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Search/i })).toBeDisabled();
+
+    const limitSelect = screen.getByLabelText(/Results limit/i) as HTMLSelectElement;
+    expect(limitSelect).toBeInTheDocument();
+    expect(limitSelect.value).toBe('20');
+    expect(Array.from(limitSelect.options).map((opt) => opt.value)).toEqual([
+      '5',
+      '10',
+      '20',
+      '30',
+      '40',
+      '50',
+    ]);
+
     expect(screen.getByText('Italian Game')).toBeInTheDocument();
     expect(screen.getByText('Sicilian Defense')).toBeInTheDocument();
     expect(screen.queryByLabelText(/Min BM25 Score/i)).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/Results limit/i)).not.toBeInTheDocument();
   });
 
   it('populates FEN input when clicking a sample position', async () => {
@@ -173,7 +185,7 @@ describe('SimilarPositionsView', () => {
         accountId: mockConnectedAccount.id,
         username: undefined,
         minScore: undefined,
-        limit: undefined,
+        limit: 20,
       });
     });
 
@@ -263,13 +275,14 @@ describe('SimilarPositionsView', () => {
     });
   });
 
-  it('restores state from initialSnapshot', () => {
+  it('restores state and selected limit from initialSnapshot', () => {
     const snapshot: SimilarPositionsReturnSnapshot = {
       queryFen: validFen,
       fenInput: validFen,
       results: mockResponse.results,
       selectedOccurrenceId: 'occ-1',
       activeAccountId: mockConnectedAccount.id,
+      limit: 30,
     };
 
     render(
@@ -282,7 +295,103 @@ describe('SimilarPositionsView', () => {
 
     const input = screen.getByLabelText(/FEN Position/i) as HTMLInputElement;
     expect(input.value).toBe(validFen);
+    const limitSelect = screen.getByLabelText(/Results limit/i) as HTMLSelectElement;
+    expect(limitSelect.value).toBe('30');
     expect(screen.queryByText(/Rank #1/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Score: 18.75/i)).not.toBeInTheDocument();
+  });
+
+  it('triggers immediate re-fetch with new limit when limit changes and results are displayed', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.fetchSimilarPositions).mockResolvedValue(mockResponse);
+
+    render(
+      <SimilarPositionsView
+        connectedAccount={mockConnectedAccount}
+        onExplorePosition={vi.fn()}
+      />
+    );
+
+    const input = screen.getByLabelText(/FEN Position/i);
+    await user.type(input, validFen);
+    await user.click(screen.getByRole('button', { name: /Search/i }));
+
+    await waitFor(() => {
+      expect(api.fetchSimilarPositions).toHaveBeenCalledWith({
+        fen: validFen,
+        accountId: mockConnectedAccount.id,
+        username: undefined,
+        minScore: undefined,
+        limit: 20,
+      });
+    });
+
+    // Results are now displayed. Changing limit should trigger an immediate re-fetch.
+    const limitSelect = screen.getByLabelText(/Results limit/i);
+    await user.selectOptions(limitSelect, '10');
+
+    await waitFor(() => {
+      expect(api.fetchSimilarPositions).toHaveBeenCalledWith({
+        fen: validFen,
+        accountId: mockConnectedAccount.id,
+        username: undefined,
+        minScore: undefined,
+        limit: 10,
+      });
+    });
+  });
+
+  it('does not trigger fetch on limit change if search has not been performed', async () => {
+    const user = userEvent.setup();
+    render(
+      <SimilarPositionsView
+        connectedAccount={mockConnectedAccount}
+        onExplorePosition={vi.fn()}
+      />
+    );
+
+    const limitSelect = screen.getByLabelText(/Results limit/i);
+    await user.selectOptions(limitSelect, '50');
+
+    expect(api.fetchSimilarPositions).not.toHaveBeenCalled();
+    expect((limitSelect as HTMLSelectElement).value).toBe('50');
+  });
+
+  it('emits updated snapshot with limit on search and exploration', async () => {
+    const user = userEvent.setup();
+    const onSnapshotChange = vi.fn();
+    vi.mocked(api.fetchSimilarPositions).mockResolvedValue(mockResponse);
+
+    render(
+      <SimilarPositionsView
+        connectedAccount={mockConnectedAccount}
+        onExplorePosition={vi.fn()}
+        onSnapshotChange={onSnapshotChange}
+      />
+    );
+
+    const limitSelect = screen.getByLabelText(/Results limit/i);
+    await user.selectOptions(limitSelect, '40');
+
+    const input = screen.getByLabelText(/FEN Position/i);
+    await user.type(input, validFen);
+    await user.click(screen.getByRole('button', { name: /Search/i }));
+
+    await waitFor(() => {
+      expect(api.fetchSimilarPositions).toHaveBeenCalledWith({
+        fen: validFen,
+        accountId: mockConnectedAccount.id,
+        username: undefined,
+        minScore: undefined,
+        limit: 40,
+      });
+    });
+
+    expect(onSnapshotChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        queryFen: validFen,
+        limit: 40,
+      })
+    );
   });
 });

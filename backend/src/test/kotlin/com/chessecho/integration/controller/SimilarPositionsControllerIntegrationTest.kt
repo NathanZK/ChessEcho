@@ -234,6 +234,45 @@ class SimilarPositionsControllerIntegrationTest {
     }
 
     @Test
+    fun `respects limit parameter and preserves ranking invariance across different limits`() {
+        val userSession = createSession("owner-${UUID.randomUUID()}")
+        val account = createAccount("owner-user-${UUID.randomUUID()}")
+        connectAccount(userSession.principal.appUserId, account)
+
+        val game = createGame(account, "https://www.chess.com/game/live/111222333")
+        val posFen1 = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3"
+        val posFen2 = "r1bqkbnr/pppp1ppp/2n5/4p3/3P4/5N2/PPP1PPPP/RNBQKB1R w KQkq - 2 3"
+        val posFen3 = "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4"
+
+        val pos1 = createPosition(posFen1)
+        val pos2 = createPosition(posFen2)
+        val pos3 = createPosition(posFen3)
+
+        createOccurrence(game, pos1, 4, "Nf3")
+        createOccurrence(game, pos2, 4, "d4")
+        createOccurrence(game, pos3, 6, "Bc4")
+
+        val queryFen = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/2N5/PPPP1PPP/R1BQKBNR w KQkq - 2 3"
+
+        // Request with limit = 1
+        val resLimit1 = get(buildUrl(queryFen, accountId = account.id, limit = 1), userSession.rawSecret)
+        assertEquals(HttpStatus.OK, resLimit1.statusCode)
+        val body1 = objectMapper.readValue(resLimit1.body, SimilarPositionsResponse::class.java)
+        assertEquals(1, body1.results.size)
+
+        // Request with limit = 2
+        val resLimit2 = get(buildUrl(queryFen, accountId = account.id, limit = 2), userSession.rawSecret)
+        assertEquals(HttpStatus.OK, resLimit2.statusCode)
+        val body2 = objectMapper.readValue(resLimit2.body, SimilarPositionsResponse::class.java)
+        assertTrue(body2.results.size >= 2)
+
+        // Verify mathematical ranking and scoring invariance between limit=1 and limit=2
+        assertEquals(body1.results[0].positionId, body2.results[0].positionId)
+        assertEquals(body1.results[0].score, body2.results[0].score)
+        assertEquals(body1.results[0].canonicalFen, body2.results[0].canonicalFen)
+    }
+
+    @Test
     fun `controller excludes candidate positions where user played opposite color`() {
         val userSession = createSession("owner-${UUID.randomUUID()}")
         val account = createAccount("owner-user-${UUID.randomUUID()}")
