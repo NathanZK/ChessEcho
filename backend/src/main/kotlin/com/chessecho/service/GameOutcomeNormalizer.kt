@@ -96,6 +96,45 @@ class GameOutcomeNormalizer(
         )
     }
 
+    fun resolvePerspectiveResult(
+        game: Game,
+        authoritativeColor: String,
+        accountUsername: String,
+    ): String? {
+        val color = authoritativeColor.uppercase()
+        if (color != WHITE && color != BLACK) return game.result
+
+        val normalized = normalize(game, color, accountUsername)
+        val outcome = normalized.outcome
+
+        val rawSource = game.result?.trim()?.lowercase()
+        val isWhiteCheckmated = rawSource == "checkmated"
+        val isPgnCheckmate = hasPgnCheckmate(game.pgn)
+        val isCheckmate = isWhiteCheckmated || isPgnCheckmate
+
+        if (isCheckmate) {
+            return when (outcome) {
+                PracticalOutcome.WIN -> "Won by checkmate"
+                PracticalOutcome.LOSS -> "Lost by checkmate"
+                PracticalOutcome.DRAW, null -> game.result
+            }
+        }
+
+        if (outcome == null) return game.result
+
+        return when (outcome) {
+            PracticalOutcome.WIN -> "win"
+            PracticalOutcome.LOSS -> "loss"
+            PracticalOutcome.DRAW -> if (rawSource in DRAW_TOKENS) rawSource else "draw"
+        }
+    }
+
+    private fun hasPgnCheckmate(pgn: String?): Boolean {
+        if (pgn.isNullOrBlank()) return false
+        if (pgn.contains("won by checkmate", ignoreCase = true)) return true
+        return PGN_CHECKMATE_REGEX.containsMatchIn(pgn)
+    }
+
     private fun sourceOutcome(result: String?): PracticalOutcome? =
         when (result?.trim()?.lowercase()) {
             "win" -> PracticalOutcome.WIN
@@ -154,5 +193,8 @@ class GameOutcomeNormalizer(
         private const val WHITE = "WHITE"
         private const val BLACK = "BLACK"
         private const val STANDARD_VARIANT = "Standard"
+        private val DRAW_TOKENS =
+            setOf("agreed", "repetition", "stalemate", "insufficient", "50move", "timevsinsufficient")
+        private val PGN_CHECKMATE_REGEX = Regex("""#(?:\s+(?:1-0|0-1|1/2-1/2|\*))?\s*$""")
     }
 }

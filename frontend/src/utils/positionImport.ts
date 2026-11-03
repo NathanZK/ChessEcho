@@ -12,7 +12,12 @@ export interface PgnPly {
 
 export type FenParseResult =
   | { ok: true; fen: string }
-  | { ok: false; error: string };
+  | {
+      ok: false;
+      error: string;
+      missingActiveColor?: boolean;
+      piecePlacement?: string;
+    };
 
 export type PgnParseResult =
   | { ok: true; startFen: string; plies: PgnPly[] }
@@ -30,16 +35,48 @@ export function parseFenInput(input: string): FenParseResult {
     return { ok: false, error: 'Enter a FEN position.' };
   }
 
+  const tokens = fen.split(/\s+/);
+  if (tokens.length === 1 && tokens[0].split('/').length === 8) {
+    const candidatePlacement = tokens[0];
+    const whiteValidation = validateFen(`${candidatePlacement} w - - 0 1`);
+    const blackValidation = validateFen(`${candidatePlacement} b - - 0 1`);
+    if (whiteValidation.ok || blackValidation.ok) {
+      return {
+        ok: false,
+        error: 'Active color missing. Choose who is to move to continue.',
+        missingActiveColor: true,
+        piecePlacement: candidatePlacement,
+      };
+    }
+    const structureError =
+      (!whiteValidation.ok && whiteValidation.error) ||
+      (!blackValidation.ok && blackValidation.error) ||
+      'This FEN is invalid.';
+    return {
+      ok: false,
+      error: structureError,
+      missingActiveColor: false,
+    };
+  }
+
   const validation = validateFen(fen);
   if (!validation.ok) {
-    return { ok: false, error: validation.error ?? 'This FEN is invalid.' };
+    return {
+      ok: false,
+      error: validation.error ?? 'This FEN is invalid.',
+      missingActiveColor: false,
+    };
   }
 
   try {
     new Chess(fen);
     return { ok: true, fen };
   } catch {
-    return { ok: false, error: 'This FEN cannot be used as a chess position.' };
+    return {
+      ok: false,
+      error: 'This FEN cannot be used as a chess position.',
+      missingActiveColor: false,
+    };
   }
 }
 

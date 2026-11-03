@@ -14,6 +14,29 @@ describe('parseFenInput', () => {
       expect(parseFenInput(input).ok).toBe(false);
     },
   );
+
+  it('detects piece-placement-only FEN inputs missing active color and provides placement', () => {
+    const placement = 'r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/3P1N2/PPP2PPP/RNBQK2R';
+    const result = parseFenInput(`  ${placement}  `);
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'Active color missing. Choose who is to move to continue.',
+      missingActiveColor: true,
+      piecePlacement: placement,
+    });
+  });
+
+  it('rejects structurally invalid 8-rank inputs without flagging missingActiveColor', () => {
+    // 8 ranks with no kings
+    const invalidPlacement = '8/8/8/8/8/8/8/8';
+    const result = parseFenInput(invalidPlacement);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.missingActiveColor).toBe(false);
+    }
+  });
 });
 
 describe('parsePgnMainLine', () => {
