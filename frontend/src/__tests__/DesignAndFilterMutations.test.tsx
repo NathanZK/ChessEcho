@@ -83,7 +83,7 @@ describe('Targeted Mutation & Invariant Guards', () => {
   });
 
   describe('2. Navigation Layout & Desktop Sidebar Rail Mutants', () => {
-    it('kills mutant: Puzzles layout enforces 2xl sidebar tokens and preserves item icons', () => {
+    it('kills mutant: All views including Puzzles enforce 60px top header and omit 2xl sidebar rail tokens', () => {
       const { container } = render(
         <Header
           activeTab="puzzles"
@@ -93,7 +93,8 @@ describe('Targeted Mutation & Invariant Guards', () => {
       );
 
       const header = container.querySelector('header');
-      expect(header).toHaveClass('2xl:w-[280px]', '2xl:h-screen', '2xl:border-r');
+      expect(header).toHaveClass('h-[60px]', 'border-b');
+      expect(header).not.toHaveClass('2xl:w-[280px]', '2xl:h-screen', '2xl:border-r');
 
       // Confirm all navigation items render with their labels and icons
       expect(screen.getByRole('button', { name: /practice puzzles/i })).toBeInTheDocument();

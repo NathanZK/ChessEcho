@@ -83,7 +83,7 @@ describe('PracticePuzzlesView', () => {
     });
   });
 
-  it('renders puzzle board and controls when puzzles are available', async () => {
+  it('renders puzzle board and controls when puzzles are available, and toggles discovery catalog', async () => {
     vi.mocked(api.fetchPuzzles).mockResolvedValueOnce([
       {
         puzzleId: 'puzzle-1',
@@ -113,8 +113,167 @@ describe('PracticePuzzlesView', () => {
       />
     );
 
+    // Initial practice mode
     await waitFor(() => {
       expect(screen.getByTestId('mock-chessboard')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Browse Puzzles/i })).toBeInTheDocument();
+    });
+
+    // Toggle to discovery catalog
+    screen.getByRole('button', { name: /Browse Puzzles/i }).click();
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /Practice Puzzles/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Start Practice/i })).toBeInTheDocument();
+      expect(screen.getByText('King Pawn Game')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Practice Puzzle/i })).toBeInTheDocument();
+    });
+  });
+
+  it('transitions to practice shell when clicking Start Practice and returns to discovery on back', async () => {
+    vi.mocked(api.fetchPuzzles).mockResolvedValueOnce([
+      {
+        puzzleId: 'puzzle-1',
+        fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+        playerColor: 'WHITE',
+        targetMove: 'e4',
+        openingTitle: 'King Pawn Game',
+        acceptableMoves: [],
+        movesPlayed: [],
+        priority: 1,
+        timesReached: 1,
+        mistakeCount: 1,
+        mistakeRate: 1,
+        evalCp: 35,
+      },
+    ]);
+
+    render(
+      <PracticePuzzlesView
+        sessionStatus="authenticated"
+        sessionUserId="user-1"
+        activeAccountId="acc-1"
+        activeUsername="test_user"
+        sessionGatePromise={Promise.resolve(true)}
+        sessionGateOpen={true}
+        onNavigateTab={vi.fn()}
+      />
+    );
+
+    // Toggle to discovery catalog
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Browse Puzzles/i })).toBeInTheDocument();
+    });
+    screen.getByRole('button', { name: /Browse Puzzles/i }).click();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Start Practice/i })).toBeInTheDocument();
+    });
+
+    // Enter practice
+    screen.getByRole('button', { name: /Start Practice/i }).click();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-chessboard')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Back to Puzzles/i })).toBeInTheDocument();
+    });
+
+    // Exit practice back to discovery
+    screen.getByRole('button', { name: /Back to Puzzles/i }).click();
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /Practice Puzzles/i })).toBeInTheDocument();
+      expect(screen.getByText('King Pawn Game')).toBeInTheDocument();
+    });
+  });
+
+  it('transitions to practice shell when clicking Practice Puzzle on a catalog card', async () => {
+    vi.mocked(api.fetchPuzzles).mockResolvedValueOnce([
+      {
+        puzzleId: 'puzzle-1',
+        fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+        playerColor: 'WHITE',
+        targetMove: 'e4',
+        openingTitle: 'Sicilian Defense',
+        acceptableMoves: [],
+        movesPlayed: [],
+        priority: 1,
+        timesReached: 1,
+        mistakeCount: 1,
+        mistakeRate: 1,
+        evalCp: 35,
+      },
+    ]);
+
+    render(
+      <PracticePuzzlesView
+        sessionStatus="authenticated"
+        sessionUserId="user-1"
+        activeAccountId="acc-1"
+        activeUsername="test_user"
+        sessionGatePromise={Promise.resolve(true)}
+        sessionGateOpen={true}
+        onNavigateTab={vi.fn()}
+      />
+    );
+
+    // Toggle to discovery catalog
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Browse Puzzles/i })).toBeInTheDocument();
+    });
+    screen.getByRole('button', { name: /Browse Puzzles/i }).click();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Practice Puzzle/i })).toBeInTheDocument();
+    });
+
+    screen.getByRole('button', { name: /Practice Puzzle/i }).click();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-chessboard')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Back to Puzzles/i })).toBeInTheDocument();
+    });
+  });
+
+  it('bypasses discovery catalog and mounts practice shell directly when selectPracticeFromLibrary is called', async () => {
+    vi.mocked(api.fetchPuzzles).mockResolvedValueOnce([]);
+    const actionsRef = React.createRef<PracticePuzzlesViewHandle | null>();
+
+    render(
+      <PracticePuzzlesView
+        actionsRef={actionsRef}
+        sessionStatus="authenticated"
+        sessionUserId="user-1"
+        activeAccountId="acc-1"
+        activeUsername="test_user"
+        sessionGatePromise={Promise.resolve(true)}
+        sessionGateOpen={true}
+        onNavigateTab={vi.fn()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(actionsRef.current).not.toBeNull();
+    });
+
+    actionsRef.current!.selectPracticeFromLibrary({
+      puzzleId: 'lib-puzzle-1',
+      fen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1',
+      playerColor: 'BLACK',
+      targetMove: 'c5',
+      openingTitle: 'Sicilian Defense',
+      acceptableMoves: [],
+      movesPlayed: [],
+      priority: 1,
+      timesReached: 2,
+      mistakeCount: 1,
+      mistakeRate: 0.5,
+      evalCp: 35,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-chessboard')).toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: /Practice Puzzles/i })).not.toBeInTheDocument();
     });
   });
 

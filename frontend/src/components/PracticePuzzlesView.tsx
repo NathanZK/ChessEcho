@@ -8,6 +8,17 @@ import { EvalBar } from '@/components/EvalBar';
 import { ChessBoardArea, type ChessBoardHistorySnapshot } from '@/components/ChessBoardArea';
 import { BlindfoldBoardWrapper } from '@/components/BlindfoldBoardWrapper';
 import { NotationExchangeUI } from '@/components/NotationExchangeUI';
+import { PositionCard } from '@/components/PositionCard';
+import { ChessBoardView } from '@/components/ChessBoardView';
+import {
+  Swords,
+  Filter,
+  SlidersHorizontal,
+  Repeat,
+  LayoutGrid,
+  List,
+  ArrowLeft,
+} from 'lucide-react';
 import { useBlindfoldSession } from '@/hooks/useBlindfoldSession';
 import { usePuzzleAttemptCount } from '@/hooks/usePuzzleAttemptCount';
 import { PuzzleFeedbackPanel } from '@/components/PuzzleFeedbackPanel';
@@ -130,12 +141,15 @@ export function PracticePuzzlesView({
   const [puzzlesList, setPuzzlesList] = useState<Puzzle[]>([]);
   const [currentPuzzleIndex, setCurrentPuzzleIndex] = useState<number>(0);
   const [activePuzzle, setActivePuzzle] = useState<Puzzle | null>(null);
+  const [viewMode, setViewMode] = useState<'practice' | 'discovery'>('practice');
+  const [catalogViewMode, setCatalogViewMode] = useState<'grid' | 'list'>('grid');
   const [initialMoveHistorySan, setInitialMoveHistorySan] = useState<string[]>([]);
   const [initialMoveHistoryStartFen, setInitialMoveHistoryStartFen] = useState<string | undefined>();
   const [boardHistorySnapshot, setBoardHistorySnapshot] = useState<ChessBoardHistorySnapshot | null>(null);
   const boardHistorySnapshotRef = React.useRef<ChessBoardHistorySnapshot | null>(null);
   const [boardResetTrigger, setBoardResetTrigger] = useState<number>(0);
   const longDecisionReturnSnapshotRef = React.useRef<LongDecisionReturnSnapshot | null>(null);
+  const [activeOriginatingTab, setActiveOriginatingTab] = useState<TabType | null>(null);
   const suppliedPositionCounterRef = React.useRef(0);
   const [loadedPuzzleContext, setLoadedPuzzleContext] = useState('');
   const [isLoadingPuzzles, setIsLoadingPuzzles] = useState<boolean>(true);
@@ -394,6 +408,14 @@ export function PracticePuzzlesView({
     }
   };
 
+  const handleMinEvalLossChange = (val: number) => {
+    invalidatePuzzleRequests();
+    setMinEvalLoss(val);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('chessecho_min_eval_loss', String(val));
+    }
+  };
+
   const handleColorFilterChange = (color: 'BOTH' | 'WHITE' | 'BLACK') => {
     invalidatePuzzleRequests();
     setPuzzleColorFilter(color);
@@ -566,6 +588,7 @@ export function PracticePuzzlesView({
       if (returnSnapshot) {
         restoreExplorationReturnSnapshot(returnSnapshot);
         longDecisionReturnSnapshotRef.current = null;
+        setActiveOriginatingTab(null);
         if (returnSnapshot.originatingTab) {
           onReturnToTab?.(returnSnapshot.originatingTab);
         }
@@ -646,6 +669,7 @@ export function PracticePuzzlesView({
       setIsEvaluatingMove(false);
       if (!preserveReturnState && !hasLongDecisionReturnContext && !hasSimilarPositionsReturnContext) {
         longDecisionReturnSnapshotRef.current = captureExplorationReturnSnapshot(originatingTab);
+        setActiveOriginatingTab(originatingTab ?? null);
       }
       suppliedPositionCounterRef.current += 1;
       blindfold.exit();
@@ -688,6 +712,7 @@ export function PracticePuzzlesView({
       setFeedback({ status: 'IDLE' });
       setIsEvalUnknown(true);
       setHintSquare(undefined);
+      setViewMode('practice');
       onNavigateTab('puzzles');
       return true;
     },
@@ -722,6 +747,7 @@ export function PracticePuzzlesView({
         : undefined;
 
       longDecisionReturnSnapshotRef.current = captureExplorationReturnSnapshot('long-decisions');
+      setActiveOriginatingTab('long-decisions');
       return handleExplorePosition(
         { fen, sanHistory: [] },
         true,
@@ -741,6 +767,7 @@ export function PracticePuzzlesView({
         return false;
       }
       longDecisionReturnSnapshotRef.current = captureExplorationReturnSnapshot('similar-positions');
+      setActiveOriginatingTab('similar-positions');
       return handleExplorePosition(
         position,
         true,
@@ -795,18 +822,67 @@ export function PracticePuzzlesView({
       if (typeof window !== 'undefined' && selectedPuzzle) {
         localStorage.setItem('chessecho_puzzle_id', selectedPuzzle.puzzleId);
       }
+      setViewMode('practice');
       onNavigateTab('puzzles');
     },
     [lineExploration, onNavigateTab, puzzleContextKey, puzzlesList, resetPuzzleInteractionState]
   );
 
+  const handleStartPractice = React.useCallback(
+    (puzzle?: Puzzle, index?: number) => {
+      if (puzzle && index !== undefined) {
+        setCurrentPuzzleIndex(index);
+        setActivePuzzle(puzzle);
+        resetPuzzleInteractionState(puzzle);
+      } else if (puzzlesList.length > 0) {
+        const idx =
+          currentPuzzleIndex >= 0 && currentPuzzleIndex < puzzlesList.length
+            ? currentPuzzleIndex
+            : 0;
+        setCurrentPuzzleIndex(idx);
+        setActivePuzzle(puzzlesList[idx]);
+        resetPuzzleInteractionState(puzzlesList[idx]);
+      }
+      setViewMode('practice');
+    },
+    [currentPuzzleIndex, puzzlesList, resetPuzzleInteractionState]
+  );
+
+  const handleExitPractice = React.useCallback(() => {
+    const returnSnapshot = longDecisionReturnSnapshotRef.current;
+    if (returnSnapshot?.originatingTab && returnSnapshot.originatingTab !== 'puzzles') {
+      restoreExplorationReturnSnapshot(returnSnapshot);
+      longDecisionReturnSnapshotRef.current = null;
+      setActiveOriginatingTab(null);
+      onReturnToTab?.(returnSnapshot.originatingTab);
+      return;
+    }
+    if (hasSimilarPositionsReturnContext) {
+      onReturnToTab?.('similar-positions');
+      return;
+    }
+    if (hasLongDecisionReturnContext) {
+      onReturnToTab?.('long-decisions');
+      return;
+    }
+    setActiveOriginatingTab(null);
+    setViewMode('discovery');
+  }, [
+    hasLongDecisionReturnContext,
+    hasSimilarPositionsReturnContext,
+    onReturnToTab,
+    restoreExplorationReturnSnapshot,
+  ]);
+
   const clearAccountUiState = React.useCallback(() => {
     longDecisionReturnSnapshotRef.current = null;
+    setActiveOriginatingTab(null);
     boardHistorySnapshotRef.current = null;
     setBoardHistorySnapshot(null);
     setPuzzlesList([]);
     setCurrentPuzzleIndex(0);
     setActivePuzzle(null);
+    setViewMode('discovery');
     setPuzzleLoadError(false);
     setIsLoadingPuzzles(false);
     setPuzzlePage(0);
@@ -1397,6 +1473,228 @@ export function PracticePuzzlesView({
               <span>Retry</span>
             </button>
           </div>
+        ) : !activePuzzle && puzzlesList.length === 0 ? (
+          <div className="py-16 text-center space-y-4 max-w-lg mx-auto bg-surface-container-low p-8 rounded-2xl border border-outline-variant shadow-xl">
+            <div className="w-14 h-14 rounded-2xl bg-surface-container-lowest border border-outline-variant flex items-center justify-center mx-auto text-primary">
+              <span className="text-3xl font-bold">♟</span>
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-on-surface">No Practice Puzzles Available</h3>
+              <p className="text-xs text-on-surface-variant mt-1">
+                {!activeUsername
+                  ? 'Import your games using the Import Games tab to detect your opening habits and build your custom puzzle set.'
+                  : `No weakness positions detected yet for ${activeUsername}. Import more games or adjust search criteria.`}
+              </p>
+            </div>
+            <button
+              onClick={() => onNavigateTab('import')}
+              className="px-5 py-2.5 bg-primary-container hover:bg-primary text-on-primary-container font-bold text-xs font-mono rounded-xl transition shadow-lg cursor-pointer"
+            >
+              Import Your Games Now
+            </button>
+          </div>
+        ) : viewMode === 'discovery' ? (
+          <div className="space-y-4 max-w-[1536px] w-full mx-auto py-2 pb-8">
+            {/* Discovery Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-outline-variant pb-4">
+              <div className="space-y-1">
+                <h2 className="text-xl md:text-2xl font-bold text-on-surface tracking-tight flex items-center gap-2">
+                  <Swords className="w-6 h-6 text-primary" />
+                  <span>Practice Puzzles</span>
+                </h2>
+                <p className="text-xs text-on-surface-variant max-w-2xl leading-relaxed">
+                  Strengthen your play by solving recurring mistake positions detected from your imported games.
+                </p>
+              </div>
+
+              {/* Actions & Loaded Counter & View Switcher */}
+              <div className="flex items-center space-x-3 shrink-0 self-end sm:self-center">
+                {puzzlesList.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => handleStartPractice()}
+                    className="px-3.5 py-1.5 bg-primary-container hover:bg-primary text-on-primary-container font-bold text-xs font-mono rounded-lg transition shadow-md flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Swords className="w-3.5 h-3.5" />
+                    <span>Start Practice</span>
+                  </button>
+                )}
+                <div className="px-2.5 py-1 rounded bg-surface-container border border-outline-variant text-xs font-mono">
+                  <span className="text-outline">Loaded: </span>
+                  <strong className="text-primary">{puzzlesList.length}</strong>
+                  <span className="text-outline text-[10px]"> puzzles</span>
+                </div>
+
+                <div className="flex items-center bg-surface-container-lowest p-0.5 rounded border border-outline-variant">
+                  <button
+                    type="button"
+                    onClick={() => setCatalogViewMode('grid')}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-mono transition cursor-pointer ${
+                      catalogViewMode === 'grid'
+                        ? 'bg-surface-container text-primary font-semibold'
+                        : 'text-outline hover:text-on-surface'
+                    }`}
+                  >
+                    <LayoutGrid className="w-3.5 h-3.5" />
+                    <span>Grid</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCatalogViewMode('list')}
+                    className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-mono transition cursor-pointer ${
+                      catalogViewMode === 'list'
+                        ? 'bg-surface-container text-primary font-semibold'
+                        : 'text-outline hover:text-on-surface'
+                    }`}
+                  >
+                    <List className="w-3.5 h-3.5" />
+                    <span>List</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Inline Filter Toolbar */}
+            <div className="bg-surface-container-low border border-outline-variant rounded-xl p-3.5 space-y-2.5 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <div className="flex items-center space-x-1.5 text-xs font-mono font-semibold text-outline mr-1">
+                    <Filter className="w-3.5 h-3.5" />
+                    <span>Filters:</span>
+                  </div>
+
+                  {/* Color Filter Segment */}
+                  <div className="flex bg-surface-container-lowest p-0.5 rounded-lg border border-outline-variant text-xs font-mono">
+                    <button
+                      type="button"
+                      onClick={() => handleColorFilterChange('BOTH')}
+                      className={`px-2.5 py-1 rounded-md font-semibold transition cursor-pointer ${
+                        puzzleColorFilter === 'BOTH'
+                          ? 'bg-surface-container text-primary border border-outline-variant'
+                          : 'text-on-surface-variant hover:text-on-surface'
+                      }`}
+                    >
+                      Both Sides
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleColorFilterChange('WHITE')}
+                      className={`px-2.5 py-1 rounded-md font-semibold transition cursor-pointer ${
+                        puzzleColorFilter === 'WHITE'
+                          ? 'bg-surface-container text-primary border border-outline-variant'
+                          : 'text-on-surface-variant hover:text-on-surface'
+                      }`}
+                    >
+                      White
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleColorFilterChange('BLACK')}
+                      className={`px-2.5 py-1 rounded-md font-semibold transition cursor-pointer ${
+                        puzzleColorFilter === 'BLACK'
+                          ? 'bg-surface-container text-primary border border-outline-variant'
+                          : 'text-on-surface-variant hover:text-on-surface'
+                      }`}
+                    >
+                      Black
+                    </button>
+                  </div>
+
+                  {/* Shared Mistake Threshold Filter */}
+                  <div className="relative">
+                    <select
+                      aria-label="Filter by Threshold"
+                      value={minEvalLoss}
+                      onChange={(e) => handleMinEvalLossChange(Number(e.target.value))}
+                      className="appearance-none bg-surface-container hover:bg-surface-container-high border border-outline-variant rounded-lg pl-2.5 pr-7 py-1 text-xs font-mono text-on-surface cursor-pointer outline-none"
+                    >
+                      <option value={0.3}>Threshold: 0.3 pawns (Strict)</option>
+                      <option value={0.5}>Threshold: 0.5 pawns (Moderate)</option>
+                      <option value={0.8}>Threshold: 0.8 pawns (Standard)</option>
+                      <option value={1.2}>Threshold: 1.2 pawns (Severe)</option>
+                      <option value={2.0}>Threshold: 2.0 pawns (Critical)</option>
+                    </select>
+                    <SlidersHorizontal className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-outline w-3.5 h-3.5" />
+                  </div>
+
+                  {/* Min Mistakes Filter */}
+                  <div className="relative">
+                    <select
+                      aria-label="Filter by Min Mistakes"
+                      value={minMistakeCount}
+                      onChange={(e) => handleMinMistakeCountChange(Number(e.target.value))}
+                      className="appearance-none bg-surface-container hover:bg-surface-container-high border border-outline-variant rounded-lg pl-2.5 pr-7 py-1 text-xs font-mono text-on-surface cursor-pointer outline-none"
+                    >
+                      <option value={1}>Min Mistakes: 1 (All)</option>
+                      <option value={3}>Min Mistakes: 3 (Habits only)</option>
+                      <option value={5}>Min Mistakes: 5+ (Frequent)</option>
+                    </select>
+                    <Repeat className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-outline w-3.5 h-3.5" />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Puzzle Cards Grid / List */}
+            <div className={catalogViewMode === 'grid' ? 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 pt-2' : 'space-y-4 pt-2'}>
+              {puzzlesList.map((puzzle, idx) => (
+                <PositionCard
+                  key={puzzle.puzzleId}
+                  board={
+                    <ChessBoardView
+                      fen={puzzle.fen}
+                      boardOrientation={puzzle.playerColor === 'WHITE' ? 'white' : 'black'}
+                    />
+                  }
+                  title={
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-bold text-on-surface text-sm truncate">
+                        {puzzle.openingTitle || `Puzzle #${idx + 1}`}
+                      </span>
+                      <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase tracking-wider shrink-0 ${
+                        puzzle.playerColor === 'WHITE'
+                          ? 'bg-surface-container-high text-on-surface border border-outline-variant'
+                          : 'bg-surface-container-highest text-primary border border-outline-variant'
+                      }`}>
+                        {puzzle.playerColor}
+                      </span>
+                    </div>
+                  }
+                  metadata={
+                    <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
+                      {isWeaknessBacked(puzzle) && puzzle.mistakeCount != null && (
+                        <span className="px-2 py-0.5 rounded bg-surface-container text-on-surface-variant border border-outline-variant text-[11px]">
+                          {puzzle.mistakeCount} {puzzle.mistakeCount === 1 ? 'mistake' : 'mistakes'}
+                        </span>
+                      )}
+                      {isWeaknessBacked(puzzle) && puzzle.timesReached != null && (
+                        <span className="px-2 py-0.5 rounded bg-surface-container text-on-surface-variant border border-outline-variant text-[11px]">
+                          {puzzle.timesReached} {puzzle.timesReached === 1 ? 'time' : 'times'} reached
+                        </span>
+                      )}
+                    </div>
+                  }
+                  actions={
+                    <div className="flex items-center justify-between w-full">
+                      <button
+                        type="button"
+                        onClick={() => handleStartPractice(puzzle, idx)}
+                        className="px-3 py-1.5 bg-primary-container hover:bg-primary text-on-primary-container font-bold text-xs font-mono rounded-lg transition shadow-md flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Swords className="w-3.5 h-3.5" />
+                        <span>Practice Puzzle</span>
+                      </button>
+                      {puzzle.gameUrls && puzzle.gameUrls.length > 0 && (
+                        <span className="text-[11px] font-mono text-outline">
+                          {puzzle.gameUrls.length} {puzzle.gameUrls.length === 1 ? 'game' : 'games'}
+                        </span>
+                      )}
+                    </div>
+                  }
+                />
+              ))}
+            </div>
+          </div>
         ) : !activePuzzle ? (
           <div className="py-16 text-center space-y-4 max-w-lg mx-auto bg-surface-container-low p-8 rounded-2xl border border-outline-variant shadow-xl">
             <div className="w-14 h-14 rounded-2xl bg-surface-container-lowest border border-outline-variant flex items-center justify-center mx-auto text-primary">
@@ -1418,18 +1716,56 @@ export function PracticePuzzlesView({
             </button>
           </div>
         ) : (
-          <div className="flex flex-col items-center justify-center gap-4 lg:flex-row lg:flex-wrap lg:items-start 2xl:flex-nowrap">
-            {/* Left Stockfish Eval Bar */}
-            <div className="hidden sm:flex flex-col items-center pt-1">
-              <span className="text-[10px] font-bold text-slate-400 mb-1.5 uppercase tracking-wider">
-                Eval
-              </span>
-              <EvalBar
-                evalCp={currentEvalCp}
-                isExploring={!lineExploration.isExplorationActive && historyIndex > 1}
-                isUnknown={isEvalUnknown}
-              />
+          <div className="flex flex-col w-full">
+            <div className="flex items-center justify-between pb-3 border-b border-outline-variant w-full mb-4">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleExitPractice}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-outline-variant bg-surface-container hover:bg-surface-container-high text-xs font-mono text-on-surface transition cursor-pointer"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5 text-primary" />
+                  <span>
+                    {hasLongDecisionReturnContext ||
+                    (activeOriginatingTab && activeOriginatingTab !== 'puzzles')
+                      ? `Back to ${
+                          activeOriginatingTab === 'weaknesses'
+                            ? 'Weaknesses'
+                            : activeOriginatingTab === 'similar-positions'
+                            ? 'Similar Positions'
+                            : 'Decision Timing'
+                        }`
+                      : hasSimilarPositionsReturnContext
+                      ? 'Back to Similar Positions'
+                      : 'Back to Puzzles'}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode('discovery')}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-outline-variant bg-surface-container-low hover:bg-surface-container text-xs font-mono text-outline hover:text-on-surface transition cursor-pointer"
+                >
+                  <List className="w-3.5 h-3.5 text-primary" />
+                  <span>Browse Puzzles</span>
+                </button>
+              </div>
+              <div className="text-xs font-mono text-outline">
+                {`Puzzle ${currentPuzzleIndex + 1} of ${puzzlesList.length}`}
+              </div>
             </div>
+
+            <div className="flex flex-col items-center justify-center gap-4 lg:flex-row lg:flex-wrap lg:items-start 2xl:flex-nowrap">
+              {/* Left Stockfish Eval Bar */}
+              <div className="hidden sm:flex flex-col items-center pt-1">
+                <span className="text-[10px] font-bold text-slate-400 mb-1.5 uppercase tracking-wider">
+                  Eval
+                </span>
+                <EvalBar
+                  evalCp={currentEvalCp}
+                  isExploring={!lineExploration.isExplorationActive && historyIndex > 1}
+                  isUnknown={isEvalUnknown}
+                />
+              </div>
 
             {/* Center Interactive Chessboard & Controls */}
             <div className="w-full max-w-[640px] shrink-0 2xl:max-w-[760px] 2xl:w-auto 2xl:min-w-0 2xl:basis-[760px] 2xl:grow 2xl:shrink">
@@ -1584,6 +1920,7 @@ export function PracticePuzzlesView({
               )}
             </div>
           </div>
+        </div>
         )}
       </div>
     </div>
