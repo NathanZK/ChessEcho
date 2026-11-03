@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { Compass, Swords, Target, Download, User, Clock3 } from 'lucide-react';
 import type { AccountSummary } from '../services/api';
 import { ExplorePositionModal, type PositionExplorationStart } from './ExplorePositionModal';
+import { AccountMenu } from './AccountMenu';
 
 export type TabType = 'puzzles' | 'weaknesses' | 'long-decisions' | 'similar-positions' | 'import';
 
@@ -154,8 +155,24 @@ export const Header: React.FC<HeaderProps> = ({
             <span className="hidden sm:inline">Explore a position</span>
           </button>
 
+          {sessionStatus === 'authenticated' && (
+            <div className="md:hidden">
+              <AccountMenu
+                username={username}
+                connectedAccount={connectedAccount}
+                sessionStatus={sessionStatus}
+                accountStatus={accountStatus}
+                onDisconnect={onDisconnect}
+              />
+            </div>
+          )}
+
           {showAccount ? (
-            <div className="flex items-center space-x-2">
+            <div
+              className={`items-center space-x-2 ${
+                sessionStatus === 'authenticated' ? 'hidden md:flex' : 'flex'
+              }`}
+            >
               <div className="flex items-center space-x-2 px-3 py-1 bg-surface-container border border-outline-variant rounded text-xs font-mono text-on-surface-variant">
                 <div className="flex items-center space-x-2">
                   <span className="w-2 h-2 rounded-full bg-secondary"></span>
@@ -190,7 +207,11 @@ export const Header: React.FC<HeaderProps> = ({
               )}
             </div>
           ) : (
-            <div className="flex items-center space-x-2">
+            <div
+              className={`items-center space-x-2 ${
+                sessionStatus === 'authenticated' ? 'hidden md:flex' : 'flex'
+              }`}
+            >
               {sessionStatus === 'authenticated' ? (
                 <div className="flex items-center space-x-2 px-3 py-1 bg-surface-container border border-outline-variant rounded text-xs font-mono text-on-surface-variant">
                   <span className="text-on-surface font-semibold">Signed in to ChessProbe</span>
