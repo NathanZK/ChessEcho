@@ -21,6 +21,7 @@ export interface SimilarPositionsReturnSnapshot {
   results: SimilarPositionResult[];
   selectedOccurrenceId: string | null;
   activeAccountId: string | null;
+  limit?: number;
 }
 
 export interface SimilarPositionsViewProps {
@@ -50,6 +51,9 @@ const SAMPLE_POSITIONS = [
   },
 ];
 
+const SUPPORTED_LIMITS = [5, 10, 20, 30, 40, 50] as const;
+const DEFAULT_LIMIT = 20;
+
 export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
   connectedAccount,
   guestUsername,
@@ -63,6 +67,7 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
   const [selectedOccurrenceId, setSelectedOccurrenceId] = useState<string | null>(
     initialSnapshot?.selectedOccurrenceId ?? null
   );
+  const [limit, setLimit] = useState<number>(initialSnapshot?.limit ?? DEFAULT_LIMIT);
   const [inputError, setInputError] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -83,6 +88,7 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
     results: initialSnapshot?.results ?? [],
     selectedOccurrenceId: initialSnapshot?.selectedOccurrenceId ?? null,
     activeAccountId: connectedAccount?.id ?? guestUsername ?? null,
+    limit: initialSnapshot?.limit ?? DEFAULT_LIMIT,
   });
 
   useEffect(() => {
@@ -92,8 +98,9 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
       results,
       selectedOccurrenceId,
       activeAccountId: activeAccountIdentifier,
+      limit,
     };
-  }, [queryFen, fenInput, results, selectedOccurrenceId, activeAccountIdentifier]);
+  }, [queryFen, fenInput, results, selectedOccurrenceId, activeAccountIdentifier, limit]);
 
   const handleFenChange = (value: string) => {
     setFenInput(value);
@@ -107,15 +114,7 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
     setInputError(null);
   };
 
-  const handleSearch = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-
-    const parseResult = parseFenInput(fenInput);
-    if (!parseResult.ok) {
-      setInputError(parseResult.error);
-      return;
-    }
-
+  const executeSearch = async (targetFen: string, searchLimit: number) => {
     if (!connectedAccount && !guestUsername) {
       setSearchError('Connect a Chess.com account or specify a guest username to search.');
       return;
@@ -127,9 +126,10 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
 
     try {
       const data = await fetchSimilarPositions({
-        fen: parseResult.fen,
+        fen: targetFen,
         accountId: connectedAccount?.id,
         username: !connectedAccount ? guestUsername : undefined,
+        limit: searchLimit,
       });
 
       setQueryFen(data.queryFen);
@@ -146,6 +146,7 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
         results: data.results,
         selectedOccurrenceId: selectedId,
         activeAccountId: activeAccountIdentifier,
+        limit: searchLimit,
       };
       latestSnapshotRef.current = newSnapshot;
       onSnapshotChangeRef.current?.(newSnapshot);
@@ -154,6 +155,32 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
       setSearchError(message);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleSearch = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+
+    const parseResult = parseFenInput(fenInput);
+    if (!parseResult.ok) {
+      setInputError(parseResult.error);
+      return;
+    }
+
+    await executeSearch(parseResult.fen, limit);
+  };
+
+  const handleLimitChange = (newLimit: number) => {
+    setLimit(newLimit);
+    const updatedSnapshot: SimilarPositionsReturnSnapshot = {
+      ...latestSnapshotRef.current,
+      limit: newLimit,
+    };
+    latestSnapshotRef.current = updatedSnapshot;
+    onSnapshotChangeRef.current?.(updatedSnapshot);
+
+    if (hasSearched && queryFen) {
+      void executeSearch(queryFen, newLimit);
     }
   };
 
@@ -221,6 +248,23 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
                   : 'border-slate-800 focus:border-emerald-500 focus:ring-emerald-500/20'
               }`}
             />
+            <label htmlFor="limit-select" className="sr-only">
+              Results limit
+            </label>
+            <select
+              id="limit-select"
+              aria-label="Results limit"
+              value={limit}
+              onChange={(e) => handleLimitChange(Number(e.target.value))}
+              disabled={isLoading}
+              className="bg-surface-container border border-outline-variant rounded-lg text-xs font-mono px-3 py-2.5 text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer disabled:opacity-50"
+            >
+              {SUPPORTED_LIMITS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
             <button
               type="submit"
               disabled={isLoading || !fenInput.trim() || !isAccountAvailable}
