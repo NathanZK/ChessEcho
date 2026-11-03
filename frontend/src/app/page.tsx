@@ -201,9 +201,7 @@ export default function Home() {
 
   return (
     <div
-      className={`${showingPositionProgress ? 'h-dvh' : 'h-screen'} bg-surface text-on-surface flex flex-col font-sans selection:bg-primary-container selection:text-on-primary-container overflow-hidden ${
-        activeTab === 'puzzles' ? '2xl:flex-row' : ''
-      }`}
+      className={`${showingPositionProgress ? 'h-dvh' : 'h-screen'} bg-surface text-on-surface flex flex-col font-sans selection:bg-primary-container selection:text-on-primary-container overflow-hidden`}
     >
       {/* Top Header */}
       <Header

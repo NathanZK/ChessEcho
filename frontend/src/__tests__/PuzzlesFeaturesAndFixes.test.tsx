@@ -718,9 +718,7 @@ describe('Puzzles Tab Features and Fixes', () => {
         expect(screen.getByRole('button', { name: /View Games \(1\)/i })).toBeInTheDocument();
       });
 
-      let layout = getHomeLayout();
-      expectClassTokens(layout.shell, ['2xl:flex-row']);
-      expectClassTokens(layout.header, ['2xl:w-[280px]', '2xl:h-screen', '2xl:overflow-y-auto']);
+      expectWideTopHeader();
 
       fireEvent.click(screen.getByRole('button', { name: /Weaknesses Library/i }));
       await waitFor(() => {
@@ -741,9 +739,7 @@ describe('Puzzles Tab Features and Fixes', () => {
         expect(screen.getByText("King's Pawn Opening")).toBeInTheDocument();
         expect(window.location.hash).toBe('#puzzles');
       });
-      layout = getHomeLayout();
-      expectClassTokens(layout.shell, ['2xl:flex-row']);
-      expectClassTokens(layout.header, ['2xl:w-[280px]', '2xl:h-screen', '2xl:overflow-y-auto']);
+      expectWideTopHeader();
     });
 
     it('keeps the Puzzles rail and connected account usable while puzzles are loading', async () => {

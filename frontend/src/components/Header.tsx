@@ -36,7 +36,6 @@ export const Header: React.FC<HeaderProps> = ({
   isSourceNeutralExploration = false,
 }) => {
   const [isExplorePositionOpen, setIsExplorePositionOpen] = useState(false);
-  const isPuzzlesLayout = activeTab === 'puzzles';
   const showConnected = sessionStatus === 'authenticated' && !!connectedAccount;
   const showGuestSelection = sessionStatus === 'unauthenticated' && !!username;
   const showAccount = showConnected || showGuestSelection;
@@ -51,33 +50,13 @@ export const Header: React.FC<HeaderProps> = ({
   const accountUsername = showConnected ? connectedAccount?.username : username;
 
   return (
-    <header
-      className={`border-outline-variant bg-surface-container-lowest sticky top-0 z-50 transition-all ${
-        isPuzzlesLayout
-          ? 'w-full shrink-0 2xl:w-[280px] 2xl:h-screen 2xl:border-r 2xl:border-b-0 2xl:left-0 2xl:px-4 2xl:py-5 2xl:overflow-y-auto border-b px-4 md:px-8 py-3'
-          : 'w-full h-[60px] px-6 md:px-10 border-b flex items-center justify-between'
-      }`}
-    >
-      <div
-        className={`w-full flex items-center justify-between ${
-          isPuzzlesLayout
-            ? 'flex-wrap gap-3 2xl:max-w-none 2xl:mx-0 2xl:h-full 2xl:flex-col 2xl:flex-nowrap 2xl:items-stretch 2xl:justify-start'
-            : 'h-full flex-nowrap'
-        }`}
-      >
-        {/* Left / Top: Brand Logo & Navigation */}
-        <div
-          className={`flex items-center ${
-            isPuzzlesLayout
-              ? 'order-1 min-w-0 max-w-full 2xl:w-full 2xl:shrink-0 2xl:flex-col 2xl:items-stretch 2xl:space-y-4'
-              : 'space-x-8 h-full'
-          }`}
-        >
+    <header className="w-full h-[60px] px-6 md:px-10 border-b border-outline-variant bg-surface-container-lowest sticky top-0 z-50 flex items-center justify-between">
+      <div className="w-full flex items-center justify-between h-full flex-nowrap">
+        {/* Left: Brand Logo & Navigation */}
+        <div className="flex items-center space-x-8 h-full">
           {/* Exact Prototype ChessProbe Brand Logo */}
           <div
-            className={`flex items-center space-x-2.5 font-bold tracking-tight text-primary text-lg cursor-pointer shrink-0 ${
-              isPuzzlesLayout ? '2xl:pb-3 2xl:border-b 2xl:border-outline-variant' : ''
-            }`}
+            className="flex items-center space-x-2.5 font-bold tracking-tight text-primary text-lg cursor-pointer shrink-0"
             onClick={() => setActiveTab('puzzles')}
           >
             <span className="w-8 h-8 rounded bg-surface-container-high border border-outline-variant flex items-center justify-center text-primary shadow-inner shrink-0">
@@ -89,20 +68,14 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           {/* Primary Navigation Tabs */}
-          <nav
-            className={`flex items-center text-xs font-mono ${
-              isPuzzlesLayout
-                ? 'gap-1 order-3 w-full min-w-0 overflow-x-auto 2xl:order-2 2xl:flex-col 2xl:items-stretch 2xl:overflow-visible 2xl:space-y-1'
-                : 'hidden md:flex space-x-6 h-full items-center'
-            }`}
-          >
+          <nav className="hidden md:flex space-x-6 h-full items-center text-xs font-mono">
             <button
               type="button"
               onClick={() => setActiveTab('puzzles')}
-              className={`transition cursor-pointer whitespace-nowrap flex items-center gap-2 ${
-                isPuzzlesLayout
-                  ? 'px-3 py-2.5 rounded-lg 2xl:w-full 2xl:justify-start font-medium text-xs bg-primary-container text-on-primary-container font-bold shadow-md shadow-primary/20'
-                  : 'pb-1 text-on-surface-variant hover:text-on-surface'
+              className={`transition cursor-pointer whitespace-nowrap flex items-center gap-2 pb-1 ${
+                activeTab === 'puzzles'
+                  ? 'border-b-2 border-primary text-primary font-semibold'
+                  : 'text-on-surface-variant hover:text-on-surface'
               }`}
             >
               <Swords className="w-3.5 h-3.5 shrink-0" />
@@ -113,26 +86,16 @@ export const Header: React.FC<HeaderProps> = ({
               type="button"
               aria-label="Position Weaknesses (Weaknesses Library)"
               onClick={() => setActiveTab('weaknesses')}
-              className={`transition cursor-pointer whitespace-nowrap flex items-center gap-2 ${
-                isPuzzlesLayout
-                  ? 'px-3 py-2.5 rounded-lg 2xl:w-full 2xl:justify-start font-medium text-xs text-on-surface-variant hover:text-on-surface hover:bg-surface-container'
-                  : `pb-1 ${
-                      activeTab === 'weaknesses'
-                        ? 'border-b-2 border-primary text-primary font-semibold'
-                        : 'text-on-surface-variant hover:text-on-surface'
-                    }`
+              className={`transition cursor-pointer whitespace-nowrap flex items-center gap-2 pb-1 ${
+                activeTab === 'weaknesses'
+                  ? 'border-b-2 border-primary text-primary font-semibold'
+                  : 'text-on-surface-variant hover:text-on-surface'
               }`}
             >
               <Target className="w-3.5 h-3.5 shrink-0" />
               <span>Position Weaknesses</span>
               {weaknessCount > 0 && (
-                <span
-                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
-                    isPuzzlesLayout
-                      ? 'ml-auto bg-primary/20 text-primary border border-primary/30'
-                      : 'bg-primary/20 text-primary border border-primary/30'
-                  }`}
-                >
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-primary/20 text-primary border border-primary/30">
                   {weaknessCount}
                 </span>
               )}
@@ -142,14 +105,10 @@ export const Header: React.FC<HeaderProps> = ({
               type="button"
               aria-label="Decision Timing (Long Decisions)"
               onClick={() => setActiveTab('long-decisions')}
-              className={`transition cursor-pointer whitespace-nowrap flex items-center gap-2 ${
-                isPuzzlesLayout
-                  ? 'px-3 py-2.5 rounded-lg 2xl:w-full 2xl:justify-start font-medium text-xs text-on-surface-variant hover:text-on-surface hover:bg-surface-container'
-                  : `pb-1 ${
-                      activeTab === 'long-decisions'
-                        ? 'border-b-2 border-primary text-primary font-semibold'
-                        : 'text-on-surface-variant hover:text-on-surface'
-                    }`
+              className={`transition cursor-pointer whitespace-nowrap flex items-center gap-2 pb-1 ${
+                activeTab === 'long-decisions'
+                  ? 'border-b-2 border-primary text-primary font-semibold'
+                  : 'text-on-surface-variant hover:text-on-surface'
               }`}
             >
               <Clock3 className="w-3.5 h-3.5 shrink-0" />
@@ -159,14 +118,10 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               type="button"
               onClick={() => setActiveTab('similar-positions')}
-              className={`transition cursor-pointer whitespace-nowrap flex items-center gap-2 ${
-                isPuzzlesLayout
-                  ? 'px-3 py-2.5 rounded-lg 2xl:w-full 2xl:justify-start font-medium text-xs text-on-surface-variant hover:text-on-surface hover:bg-surface-container'
-                  : `pb-1 ${
-                      activeTab === 'similar-positions'
-                        ? 'border-b-2 border-primary text-primary font-semibold'
-                        : 'text-on-surface-variant hover:text-on-surface'
-                    }`
+              className={`transition cursor-pointer whitespace-nowrap flex items-center gap-2 pb-1 ${
+                activeTab === 'similar-positions'
+                  ? 'border-b-2 border-primary text-primary font-semibold'
+                  : 'text-on-surface-variant hover:text-on-surface'
               }`}
             >
               <Compass className="w-3.5 h-3.5 shrink-0" />
@@ -176,14 +131,10 @@ export const Header: React.FC<HeaderProps> = ({
             <button
               type="button"
               onClick={() => setActiveTab('import')}
-              className={`transition cursor-pointer whitespace-nowrap flex items-center gap-2 ${
-                isPuzzlesLayout
-                  ? 'px-3 py-2.5 rounded-lg 2xl:w-full 2xl:justify-start font-medium text-xs text-on-surface-variant hover:text-on-surface hover:bg-surface-container'
-                  : `pb-1 ${
-                      activeTab === 'import'
-                        ? 'border-b-2 border-primary text-primary font-semibold'
-                        : 'text-on-surface-variant hover:text-on-surface'
-                    }`
+              className={`transition cursor-pointer whitespace-nowrap flex items-center gap-2 pb-1 ${
+                activeTab === 'import'
+                  ? 'border-b-2 border-primary text-primary font-semibold'
+                  : 'text-on-surface-variant hover:text-on-surface'
               }`}
             >
               <Download className="w-3.5 h-3.5 shrink-0" />
@@ -192,48 +143,20 @@ export const Header: React.FC<HeaderProps> = ({
           </nav>
         </div>
 
-        {/* Explore a position Button (In 2xl sidebar or top right) */}
-        {isPuzzlesLayout && (
+        {/* Right: Actions & Account Status */}
+        <div className="flex items-center space-x-3 shrink-0">
           <button
             type="button"
             onClick={() => setIsExplorePositionOpen(true)}
-            className="hidden 2xl:flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border border-outline-variant bg-surface-container hover:bg-surface-container-high text-xs font-mono font-medium text-primary transition cursor-pointer 2xl:w-full 2xl:mt-3"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-outline-variant hover:border-primary/40 text-xs font-mono text-on-surface-variant hover:text-primary transition shrink-0 cursor-pointer"
           >
-            <Compass className="w-4 h-4 shrink-0" />
-            <span>Explore a position</span>
+            <Compass className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Explore a position</span>
           </button>
-        )}
-
-        {/* Right / Bottom: Actions & Account Status */}
-        <div
-          className={`flex items-center space-x-3 shrink-0 ${
-            isPuzzlesLayout
-              ? 'order-2 ml-auto max-w-full min-w-0 flex-wrap gap-2 2xl:order-3 2xl:mt-auto 2xl:ml-0 2xl:w-full 2xl:shrink-0 2xl:flex-col 2xl:items-stretch 2xl:pt-4 2xl:border-t 2xl:border-outline-variant'
-              : ''
-          }`}
-        >
-          {!isPuzzlesLayout && (
-            <button
-              type="button"
-              onClick={() => setIsExplorePositionOpen(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-outline-variant hover:border-primary/40 text-xs font-mono text-on-surface-variant hover:text-primary transition shrink-0 cursor-pointer"
-            >
-              <Compass className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Explore a position</span>
-            </button>
-          )}
 
           {showAccount ? (
-            <div
-              className={`flex items-center space-x-2 ${
-                isPuzzlesLayout ? '2xl:flex-col 2xl:items-stretch 2xl:space-x-0 2xl:space-y-2 2xl:w-full' : ''
-              }`}
-            >
-              <div
-                className={`flex items-center space-x-2 px-3 py-1 bg-surface-container border border-outline-variant rounded text-xs font-mono text-on-surface-variant ${
-                  isPuzzlesLayout ? '2xl:w-full 2xl:justify-between' : ''
-                }`}
-              >
+            <div className="flex items-center space-x-2">
+              <div className="flex items-center space-x-2 px-3 py-1 bg-surface-container border border-outline-variant rounded text-xs font-mono text-on-surface-variant">
                 <div className="flex items-center space-x-2">
                   <span className="w-2 h-2 rounded-full bg-secondary"></span>
                   <span className="text-on-surface font-semibold">{accountUsername}</span>
@@ -241,7 +164,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <span className="text-outline hidden sm:inline">·</span>
                 <span className="text-secondary text-[11px]">{showConnected ? 'Chess.com Connected' : 'Guest Mode'}</span>
               </div>
-              {sessionStatus === 'authenticated' && !isPuzzlesLayout && (
+              {sessionStatus === 'authenticated' && (
                 <div className="hidden xl:flex items-center px-2.5 py-1 bg-surface-container-high border border-outline-variant rounded text-xs font-mono text-on-surface">
                   <User className="w-3.5 h-3.5 mr-1 text-primary" />
                   <span>Signed in to ChessProbe</span>
@@ -252,9 +175,7 @@ export const Header: React.FC<HeaderProps> = ({
                   type="button"
                   onClick={onDisconnect}
                   title={sessionStatus === 'authenticated' ? 'Sign out' : 'Disconnect Account'}
-                  className={`px-2.5 py-1 bg-surface-container-high hover:bg-surface-bright text-xs font-mono rounded text-on-surface border border-outline-variant transition cursor-pointer ${
-                    isPuzzlesLayout ? '2xl:w-full 2xl:py-1.5' : ''
-                  }`}
+                  className="px-2.5 py-1 bg-surface-container-high hover:bg-surface-bright text-xs font-mono rounded text-on-surface border border-outline-variant transition cursor-pointer"
                 >
                   {sessionStatus === 'authenticated' ? 'Sign out' : 'Disconnect'}
                 </button>
@@ -262,32 +183,22 @@ export const Header: React.FC<HeaderProps> = ({
               {showGuestSelection && (
                 <a
                   href="/login"
-                  className={`px-3 py-1 bg-primary-container hover:bg-primary text-on-primary-container text-xs font-mono font-bold rounded transition cursor-pointer text-center ${
-                    isPuzzlesLayout ? '2xl:w-full 2xl:py-1.5' : ''
-                  }`}
+                  className="px-3 py-1 bg-primary-container hover:bg-primary text-on-primary-container text-xs font-mono font-bold rounded transition cursor-pointer text-center"
                 >
                   Sign In
                 </a>
               )}
             </div>
           ) : (
-            <div
-              className={`flex items-center space-x-2 ${
-                isPuzzlesLayout ? '2xl:flex-col 2xl:items-stretch 2xl:space-x-0 2xl:space-y-2 2xl:w-full' : ''
-              }`}
-            >
+            <div className="flex items-center space-x-2">
               {sessionStatus === 'authenticated' ? (
-                <div
-                  className={`flex items-center space-x-2 px-3 py-1 bg-surface-container border border-outline-variant rounded text-xs font-mono text-on-surface-variant ${
-                    isPuzzlesLayout ? '2xl:w-full' : ''
-                  }`}
-                >
+                <div className="flex items-center space-x-2 px-3 py-1 bg-surface-container border border-outline-variant rounded text-xs font-mono text-on-surface-variant">
                   <span className="text-on-surface font-semibold">Signed in to ChessProbe</span>
                   <span className="text-outline">·</span>
                   <span className="text-outline">{accountConnectionLabel}</span>
                 </div>
               ) : (
-                <span className={`text-outline text-xs font-mono ${isPuzzlesLayout ? '2xl:block text-center py-1' : 'hidden sm:inline'}`}>
+                <span className="text-outline text-xs font-mono hidden sm:inline">
                   Not Connected
                 </span>
               )}
@@ -296,28 +207,22 @@ export const Header: React.FC<HeaderProps> = ({
                   type="button"
                   onClick={onDisconnect}
                   title="Sign out"
-                  className={`px-2.5 py-1 bg-surface-container-high hover:bg-surface-bright text-xs font-mono rounded text-on-surface border border-outline-variant transition cursor-pointer ${
-                    isPuzzlesLayout ? '2xl:w-full 2xl:py-1.5' : ''
-                  }`}
+                  className="px-2.5 py-1 bg-surface-container-high hover:bg-surface-bright text-xs font-mono rounded text-on-surface border border-outline-variant transition cursor-pointer"
                 >
                   Sign out
                 </button>
               )}
               {sessionStatus === 'unauthenticated' && (
-                <div className={`flex items-center space-x-2 ${isPuzzlesLayout ? '2xl:w-full' : ''}`}>
+                <div className="flex items-center space-x-2">
                   <a
                     href="/login"
-                    className={`px-3 py-1 bg-primary-container hover:bg-primary text-on-primary-container text-xs font-mono font-bold rounded transition cursor-pointer text-center ${
-                      isPuzzlesLayout ? 'flex-1' : ''
-                    }`}
+                    className="px-3 py-1 bg-primary-container hover:bg-primary text-on-primary-container text-xs font-mono font-bold rounded transition cursor-pointer text-center"
                   >
                     Sign In
                   </a>
                   <a
                     href="/register"
-                    className={`px-2.5 py-1 text-primary hover:text-white text-xs font-mono transition text-center ${
-                      isPuzzlesLayout ? 'flex-1' : ''
-                    }`}
+                    className="px-2.5 py-1 text-primary hover:text-white text-xs font-mono transition text-center"
                   >
                     Register
                   </a>
