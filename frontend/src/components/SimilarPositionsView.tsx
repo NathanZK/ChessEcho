@@ -32,6 +32,17 @@ export interface SimilarPositionsViewProps {
   initialSnapshot?: SimilarPositionsReturnSnapshot | null;
 }
 
+function getResultColorClass(result: string): string {
+  const normalized = result.trim().toLowerCase();
+  if (normalized === 'win' || normalized.startsWith('won')) {
+    return 'text-emerald-400';
+  }
+  if (normalized === 'loss' || normalized.startsWith('lost') || normalized === 'checkmated') {
+    return 'text-rose-400';
+  }
+  return 'text-amber-400';
+}
+
 const SAMPLE_POSITIONS = [
   {
     name: 'Italian Game',
@@ -69,6 +80,7 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
   );
   const [limit, setLimit] = useState<number>(initialSnapshot?.limit ?? DEFAULT_LIMIT);
   const [inputError, setInputError] = useState<string | null>(null);
+  const [incompletePiecePlacement, setIncompletePiecePlacement] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [hasSearched, setHasSearched] = useState<boolean>(
@@ -107,14 +119,18 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
     if (inputError) {
       setInputError(null);
     }
+    if (incompletePiecePlacement) {
+      setIncompletePiecePlacement(null);
+    }
   };
 
   const handleSampleClick = (fen: string) => {
     setFenInput(fen);
     setInputError(null);
+    setIncompletePiecePlacement(null);
   };
 
-  const executeSearch = async (targetFen: string, searchLimit: number) => {
+  const executeSearch = async (validFenString: string, searchLimit: number = limit) => {
     if (!connectedAccount && !guestUsername) {
       setSearchError('Connect a Chess.com account or specify a guest username to search.');
       return;
@@ -122,11 +138,12 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
 
     setInputError(null);
     setSearchError(null);
+    setIncompletePiecePlacement(null);
     setIsLoading(true);
 
     try {
       const data = await fetchSimilarPositions({
-        fen: targetFen,
+        fen: validFenString,
         accountId: connectedAccount?.id,
         username: !connectedAccount ? guestUsername : undefined,
         limit: searchLimit,
@@ -142,7 +159,7 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
       setSelectedOccurrenceId(selectedId);
       const newSnapshot: SimilarPositionsReturnSnapshot = {
         queryFen: data.queryFen,
-        fenInput,
+        fenInput: validFenString,
         results: data.results,
         selectedOccurrenceId: selectedId,
         activeAccountId: activeAccountIdentifier,
@@ -164,6 +181,7 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
     const parseResult = parseFenInput(fenInput);
     if (!parseResult.ok) {
       setInputError(parseResult.error);
+      setIncompletePiecePlacement(parseResult.missingActiveColor ? parseResult.piecePlacement ?? null : null);
       return;
     }
 
@@ -182,6 +200,13 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
     if (hasSearched && queryFen) {
       void executeSearch(queryFen, newLimit);
     }
+  };
+
+  const handleSelectActiveColor = async (turn: 'w' | 'b') => {
+    if (!incompletePiecePlacement) return;
+    const completedFen = `${incompletePiecePlacement} ${turn} - - 0 1`;
+    setFenInput(completedFen);
+    await executeSearch(completedFen, limit);
   };
 
   const handleExplore = (fen: string) => {
@@ -284,10 +309,31 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
             </button>
           </div>
           {inputError && (
-            <p className="text-xs text-red-400 flex items-center gap-1 mt-1">
-              <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-              {inputError}
-            </p>
+            <div className="space-y-2 mt-1">
+              <p className="text-xs text-red-400 flex items-center gap-1">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                {inputError}
+              </p>
+              {incompletePiecePlacement && (
+                <div className="flex items-center gap-2 pt-1">
+                  <span className="text-xs text-slate-300">Set active color:</span>
+                  <button
+                    type="button"
+                    onClick={() => handleSelectActiveColor('w')}
+                    className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1 text-xs font-medium text-slate-100 hover:bg-slate-700 hover:border-slate-600 transition"
+                  >
+                    White to move
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSelectActiveColor('b')}
+                    className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1 text-xs font-medium text-slate-100 hover:bg-slate-700 hover:border-slate-600 transition"
+                  >
+                    Black to move
+                  </button>
+                </div>
+              )}
+            </div>
           )}
         </div>
 
@@ -412,13 +458,9 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
                               <p className="text-slate-400">
                                 Result:{' '}
                                 <span
-                                  className={`font-medium ${
-                                    primaryOccurrence.gameResult.toLowerCase() === 'win'
-                                      ? 'text-emerald-400'
-                                      : primaryOccurrence.gameResult.toLowerCase() === 'loss'
-                                      ? 'text-rose-400'
-                                      : 'text-amber-400'
-                                  }`}
+                                  className={`font-medium ${getResultColorClass(
+                                    primaryOccurrence.gameResult
+                                  )}`}
                                 >
                                   {primaryOccurrence.gameResult}
                                 </span>

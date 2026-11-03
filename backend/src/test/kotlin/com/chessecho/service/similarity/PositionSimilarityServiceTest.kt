@@ -4,6 +4,8 @@ import com.chessecho.domain.ChessAccount
 import com.chessecho.repository.PositionOccurrenceRepository
 import com.chessecho.service.BatchContinuationResult
 import com.chessecho.service.ContinuationResult
+import com.chessecho.service.GameOutcomeNormalizer
+import com.chessecho.service.PgnHeaderTagReader
 import com.chessecho.service.PrincipalVariation
 import com.chessecho.service.SearchStatus
 import com.chessecho.service.StockfishService
@@ -32,6 +34,7 @@ class PositionSimilarityServiceTest {
     private val stockfishService: StockfishService = mock()
     private val concurrencyManager = SimilarityConcurrencyManager(maxConcurrentSessions = 2)
     private val dynamicScorer = DynamicTacticalScorer()
+    private val gameOutcomeNormalizer = GameOutcomeNormalizer(PgnHeaderTagReader())
 
     private lateinit var service: PositionSimilarityService
 
@@ -82,6 +85,7 @@ class PositionSimilarityServiceTest {
                 stockfishService = stockfishService,
                 concurrencyManager = concurrencyManager,
                 dynamicScorer = dynamicScorer,
+                gameOutcomeNormalizer = gameOutcomeNormalizer,
             )
     }
 
@@ -132,6 +136,53 @@ class PositionSimilarityServiceTest {
         assertEquals("Nf3", occDto.playedMove)
         assertEquals(3, occDto.plyNumber)
         assertEquals("https://www.chess.com/game/live/12345?move=3", occDto.chessComUrl)
+        assertEquals("win", occDto.gameResult)
+    }
+
+    @Test
+    fun `findSimilarPositions normalizes occurrence gameResult relative to playerColor and checkmate`() {
+        val posId = UUID.randomUUID()
+        val doc = tokenExtractor.extractDocument(posId, blackCandidateFen, includeReachability = true)
+        whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(listOf(doc))
+
+        // When Black player had an occurrence where White was checkmated:
+        // game.result is "checkmated" (White's perspective), but Black won by checkmate!
+        val gameCheckmated =
+            createTestGame(
+                account = account,
+                whiteUsername = "opponent",
+                blackUsername = "testplayer",
+                result = "checkmated",
+            )
+        val blackOccurrence =
+            createTestOccurrence(
+                account = account,
+                game = gameCheckmated,
+                positionId = posId,
+                fen = blackCandidateFen,
+                playerColor = "BLACK",
+                movePlayed = "c5",
+                plyNumber = 2,
+            )
+
+        whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
+            .thenReturn(listOf(blackOccurrence))
+
+        val result =
+            service.findSimilarPositions(
+                queryFen = blackQueryFen,
+                account = account,
+                minScore = 0.0,
+                limit = 10,
+            )
+
+        assertEquals(1, result.results.size)
+        val match = result.results[0]
+        assertEquals(1, match.occurrences.size)
+        val occ = match.occurrences[0]
+        assertEquals("BLACK", occ.playerColor)
+        assertEquals("opponent", occ.opponentUsername)
+        assertEquals("Won by checkmate", occ.gameResult)
     }
 
     @Test

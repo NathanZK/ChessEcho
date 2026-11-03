@@ -6,6 +6,7 @@ import com.chessecho.repository.PositionOccurrenceRepository
 import com.chessecho.service.BatchContinuationResult
 import com.chessecho.service.ContinuationResult
 import com.chessecho.service.DynamicAnalysisOptions
+import com.chessecho.service.GameOutcomeNormalizer
 import com.chessecho.service.PrincipalVariation
 import com.chessecho.service.SearchStatus
 import com.chessecho.service.StockfishService
@@ -72,6 +73,7 @@ class PositionSimilarityService(
     private val stockfishService: StockfishService,
     private val concurrencyManager: SimilarityConcurrencyManager,
     private val dynamicScorer: DynamicTacticalScorer,
+    private val gameOutcomeNormalizer: GameOutcomeNormalizer,
 ) {
     @Transactional(readOnly = true)
     fun findSimilarPositions(
@@ -342,6 +344,12 @@ class PositionSimilarityService(
             }
 
         val url = urlBuilder.buildExactPlyUrl(game.platformGameId, occ.plyNumber, game.timeControl)
+        val resolvedResult =
+            gameOutcomeNormalizer.resolvePerspectiveResult(
+                game = game,
+                authoritativeColor = occ.playerColor,
+                accountUsername = occ.chessAccount.username,
+            )
 
         return SimilarOccurrenceDto(
             id = occ.id,
@@ -352,7 +360,7 @@ class PositionSimilarityService(
             playedAt = game.playedAt,
             opponentUsername = opponent,
             timeControl = game.timeControl,
-            gameResult = game.result,
+            gameResult = resolvedResult,
             chessComUrl = url,
         )
     }

@@ -245,6 +245,55 @@ class GameOutcomeNormalizerTest {
         assertNull(limitExceeded.outcome)
     }
 
+    @Test
+    fun `resolvePerspectiveResult normalizes wins losses checkmates draws and PGN outcomes for both perspectives`() {
+        // Standard win/loss
+        val winGame = game(result = "win")
+        assertEquals("win", normalizer.resolvePerspectiveResult(winGame, "WHITE", "account"))
+        assertEquals("loss", normalizer.resolvePerspectiveResult(winGame, "BLACK", "account"))
+
+        // White checkmated: Black won by checkmate, White lost by checkmate
+        val whiteCheckmatedGame = game(result = "checkmated")
+        assertEquals("Lost by checkmate", normalizer.resolvePerspectiveResult(whiteCheckmatedGame, "WHITE", "account"))
+        assertEquals("Won by checkmate", normalizer.resolvePerspectiveResult(whiteCheckmatedGame, "BLACK", "account"))
+
+        // White won by checkmate (mate in PGN)
+        val whiteMatedBlackGame = game(result = "win", pgn = "1. e4 e5 2. Qh5 Nc6 3. Bc4 Nf6 4. Qxf7# 1-0")
+        assertEquals("Won by checkmate", normalizer.resolvePerspectiveResult(whiteMatedBlackGame, "WHITE", "account"))
+        assertEquals("Lost by checkmate", normalizer.resolvePerspectiveResult(whiteMatedBlackGame, "BLACK", "account"))
+
+        // Resignation & timeout
+        val resignedGame = game(result = "resigned")
+        assertEquals("loss", normalizer.resolvePerspectiveResult(resignedGame, "WHITE", "account"))
+        assertEquals("win", normalizer.resolvePerspectiveResult(resignedGame, "BLACK", "account"))
+
+        val timeoutGame = game(result = "timeout")
+        assertEquals("loss", normalizer.resolvePerspectiveResult(timeoutGame, "WHITE", "account"))
+        assertEquals("win", normalizer.resolvePerspectiveResult(timeoutGame, "BLACK", "account"))
+
+        // Draws: preserves specific draw token or defaults to draw
+        val stalemateGame = game(result = "stalemate")
+        assertEquals("stalemate", normalizer.resolvePerspectiveResult(stalemateGame, "WHITE", "account"))
+        assertEquals("stalemate", normalizer.resolvePerspectiveResult(stalemateGame, "BLACK", "account"))
+
+        val agreedGame = game(result = "agreed")
+        assertEquals("agreed", normalizer.resolvePerspectiveResult(agreedGame, "WHITE", "account"))
+        assertEquals("agreed", normalizer.resolvePerspectiveResult(agreedGame, "BLACK", "account"))
+
+        // PGN outcomes
+        val pgn10 = game(result = null, pgn = header(result = "1-0"))
+        assertEquals("win", normalizer.resolvePerspectiveResult(pgn10, "WHITE", "account"))
+        assertEquals("loss", normalizer.resolvePerspectiveResult(pgn10, "BLACK", "account"))
+
+        val pgn01 = game(result = null, pgn = header(result = "0-1"))
+        assertEquals("loss", normalizer.resolvePerspectiveResult(pgn01, "WHITE", "account"))
+        assertEquals("win", normalizer.resolvePerspectiveResult(pgn01, "BLACK", "account"))
+
+        val pgnDraw = game(result = null, pgn = header(result = "1/2-1/2"))
+        assertEquals("draw", normalizer.resolvePerspectiveResult(pgnDraw, "WHITE", "account"))
+        assertEquals("draw", normalizer.resolvePerspectiveResult(pgnDraw, "BLACK", "account"))
+    }
+
     private fun game(
         result: String?,
         pgn: String = "1. e4 e5",

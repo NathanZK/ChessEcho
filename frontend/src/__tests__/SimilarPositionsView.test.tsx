@@ -394,4 +394,125 @@ describe('SimilarPositionsView', () => {
       })
     );
   });
+
+  it('prompts user with active-color buttons when input is piece placement only', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.fetchSimilarPositions).mockResolvedValue(mockResponse);
+
+    render(
+      <SimilarPositionsView
+        connectedAccount={mockConnectedAccount}
+        onExplorePosition={vi.fn()}
+      />
+    );
+
+    const placement = 'r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/3P1N2/PPP2PPP/RNBQK2R';
+    await user.type(screen.getByLabelText(/FEN Position/i), placement);
+    await user.click(screen.getByRole('button', { name: /Search/i }));
+
+    expect(screen.getByText(/Active color missing/i)).toBeInTheDocument();
+    const whiteBtn = screen.getByRole('button', { name: /White to move/i });
+    const blackBtn = screen.getByRole('button', { name: /Black to move/i });
+    expect(whiteBtn).toBeInTheDocument();
+    expect(blackBtn).toBeInTheDocument();
+
+    await user.click(whiteBtn);
+
+    await waitFor(() => {
+      expect(api.fetchSimilarPositions).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fen: `${placement} w - - 0 1`,
+        })
+      );
+    });
+
+    const input = screen.getByLabelText(/FEN Position/i) as HTMLInputElement;
+    expect(input.value).toBe(`${placement} w - - 0 1`);
+  });
+
+  it('does not show active-color buttons for structurally invalid 8-rank input', async () => {
+    const user = userEvent.setup();
+    render(
+      <SimilarPositionsView
+        connectedAccount={mockConnectedAccount}
+        onExplorePosition={vi.fn()}
+      />
+    );
+
+    await user.type(screen.getByLabelText(/FEN Position/i), '8/8/8/8/8/8/8/8');
+    await user.click(screen.getByRole('button', { name: /Search/i }));
+
+    expect(screen.queryByRole('button', { name: /White to move/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Black to move/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/invalid/i)).toBeInTheDocument();
+  });
+
+  it('correctly styles checkmate win in emerald, checkmate loss in rose, and draws in amber', async () => {
+    const user = userEvent.setup();
+    const customResponse: SimilarPositionsResponse = {
+      ...mockResponse,
+      results: [
+        {
+          ...mockResponse.results[0],
+          positionId: 'pos-1',
+          occurrences: [
+            {
+              ...mockResponse.results[0].occurrences[0],
+              id: 'occ-won-mate',
+              gameResult: 'Won by checkmate',
+            },
+          ],
+        },
+        {
+          ...mockResponse.results[0],
+          positionId: 'pos-2',
+          occurrences: [
+            {
+              ...mockResponse.results[0].occurrences[0],
+              id: 'occ-lost-mate',
+              gameResult: 'Lost by checkmate',
+            },
+          ],
+        },
+        {
+          ...mockResponse.results[0],
+          positionId: 'pos-3',
+          occurrences: [
+            {
+              ...mockResponse.results[0].occurrences[0],
+              id: 'occ-stalemate',
+              gameResult: 'stalemate',
+            },
+          ],
+        },
+      ],
+    };
+
+    vi.mocked(api.fetchSimilarPositions).mockResolvedValue(customResponse);
+
+    render(
+      <SimilarPositionsView
+        connectedAccount={mockConnectedAccount}
+        onExplorePosition={vi.fn()}
+      />
+    );
+
+    await user.type(screen.getByLabelText(/FEN Position/i), validFen);
+    await user.click(screen.getByRole('button', { name: /Search/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Won by checkmate')).toBeInTheDocument();
+      expect(screen.getByText('Lost by checkmate')).toBeInTheDocument();
+      expect(screen.getByText('stalemate')).toBeInTheDocument();
+    });
+
+    const winBadge = screen.getByText('Won by checkmate');
+    expect(winBadge).toHaveClass('text-emerald-400');
+
+    const lossBadge = screen.getByText('Lost by checkmate');
+    expect(lossBadge).toHaveClass('text-rose-400');
+
+    const drawBadge = screen.getByText('stalemate');
+    expect(drawBadge).toHaveClass('text-amber-400');
+  });
 });
