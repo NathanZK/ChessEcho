@@ -639,9 +639,11 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
               {viewMode === 'grid' ? (
             <div data-testid="weakness-grid-container" className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
               {weaknesses.map((item) => {
-                const activeColorInFen = item.fen ? item.fen.split(' ')[1] : 'w';
-                const playerColor: 'WHITE' | 'BLACK' =
-                  activeColorInFen === 'b' ? 'BLACK' : activeColorInFen === 'w' ? 'WHITE' : 'WHITE';
+                const activeColorInFen = item.fen ? item.fen.split(' ')[1] : undefined;
+                const turnToMoveText = activeColorInFen === 'b' ? 'Turn: Black to move' : activeColorInFen === 'w' ? 'Turn: White to move' : 'Turn: Unknown';
+                const playerColor = item.playerColor;
+                const boardOrientation = playerColor === 'BLACK' ? 'black' : 'white';
+                const progressColor: 'WHITE' | 'BLACK' = playerColor ?? (activeColorInFen === 'b' ? 'BLACK' : 'WHITE');
                   
                 const tcStats = timeControlFilter !== 'ALL' && item.timeControlStats ? item.timeControlStats[timeControlFilter] : null;
                 const phStats = phaseFilter !== 'ALL' && item.phaseStats ? item.phaseStats[phaseFilter] : null;
@@ -651,9 +653,11 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                 const displayTimesReached = phStats ? phStats.timesReached : tcStats ? tcStats.timesReached : item.timesReached;
                 const displayAverageLoss = phStats ? phStats.averageLoss : tcStats ? tcStats.averageLoss : item.averageLoss;
 
-                const colorBadge = playerColor === 'WHITE'
-                  ? <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-white text-slate-900">As WHITE</span>
-                  : <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-surface-container-highest text-on-surface border border-outline-variant">As BLACK</span>;
+                const colorBadge = playerColor === 'WHITE' ? (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-white text-slate-900">Playing as White</span>
+                ) : playerColor === 'BLACK' ? (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-surface-container-highest text-on-surface border border-outline-variant">Playing as Black</span>
+                ) : null;
 
                 const openingText = item.openingContext ? (
                   <a
@@ -662,7 +666,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                     rel="noopener noreferrer"
                     className="hover:text-primary underline text-primary font-mono text-xs font-semibold"
                   >
-                    Opening Context: {item.openingContext.eco}
+                    Opening: {item.openingContext.eco}
                   </a>
                 ) : (
                   <span className="text-outline font-mono text-xs">Weakness Position</span>
@@ -699,14 +703,14 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                           <div className="w-full h-full">
                             <ChessBoardView
                               fen={item.fen}
-                              boardOrientation={playerColor}
+                              boardOrientation={boardOrientation}
                               allowDragging={false}
                               containerClassName="w-full h-full"
                               frameClassName="w-full h-full"
                             />
                           </div>
                           <div className="flex items-center justify-between text-[10px] font-mono text-outline px-1 pt-1">
-                            <span>Turn: {playerColor}</span>
+                            <span>{turnToMoveText}</span>
                             <span className="text-on-surface-variant">{displayTimesReached} Encounters</span>
                           </div>
                         </div>
@@ -826,7 +830,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                         {onViewProgress && (
                           <button
                             type="button"
-                            onClick={() => onViewProgress(item.positionId, playerColor, weaknessResult.minEvalLoss)}
+                            onClick={() => onViewProgress(item.positionId, progressColor, weaknessResult.minEvalLoss)}
                             className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-outline-variant hover:border-secondary/40 text-xs font-mono text-on-surface-variant hover:text-secondary transition cursor-pointer"
                             title="View progress"
                           >
@@ -842,7 +846,8 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                               const col: 'WHITE' | 'BLACK' = w.fen && w.fen.split(' ')[1] === 'b' ? 'BLACK' : 'WHITE';
                               return adaptWeaknessToPuzzle(w, col);
                             });
-                            onSelectPractice(adaptWeaknessToPuzzle(item, playerColor), fullConvertedList);
+                            const currentTurn: 'WHITE' | 'BLACK' = item.fen && item.fen.split(' ')[1] === 'b' ? 'BLACK' : 'WHITE';
+                            onSelectPractice(adaptWeaknessToPuzzle(item, currentTurn), fullConvertedList);
                           }}
                           className="flex items-center space-x-1 px-3 py-1.5 bg-primary-container hover:bg-primary text-on-primary-container rounded-lg font-mono text-xs font-bold transition shadow-sm cursor-pointer"
                         >
@@ -858,9 +863,10 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
           ) : (
             <div data-testid="weakness-list-container" className="space-y-3">
               {weaknesses.map((item) => {
-                const activeColorInFen = item.fen ? item.fen.split(' ')[1] : 'w';
-                const playerColor: 'WHITE' | 'BLACK' =
-                  activeColorInFen === 'b' ? 'BLACK' : activeColorInFen === 'w' ? 'WHITE' : 'WHITE';
+                const activeColorInFen = item.fen ? item.fen.split(' ')[1] : undefined;
+                const playerColor = item.playerColor;
+                const boardOrientation = playerColor === 'BLACK' ? 'black' : 'white';
+                const progressColor: 'WHITE' | 'BLACK' = playerColor ?? (activeColorInFen === 'b' ? 'BLACK' : 'WHITE');
 
                 const tcStats = timeControlFilter !== 'ALL' && item.timeControlStats ? item.timeControlStats[timeControlFilter] : null;
                 const phStats = phaseFilter !== 'ALL' && item.phaseStats ? item.phaseStats[phaseFilter] : null;
@@ -870,9 +876,11 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                 const displayTimesReached = phStats ? phStats.timesReached : tcStats ? tcStats.timesReached : item.timesReached;
                 const displayAverageLoss = phStats ? phStats.averageLoss : tcStats ? tcStats.averageLoss : item.averageLoss;
 
-                const colorBadge = playerColor === 'WHITE'
-                  ? <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-white text-slate-900">WHITE</span>
-                  : <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-surface-container-highest text-on-surface border border-outline-variant">BLACK</span>;
+                const colorBadge = playerColor === 'WHITE' ? (
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-white text-slate-900">Playing as White</span>
+                ) : playerColor === 'BLACK' ? (
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-surface-container-highest text-on-surface border border-outline-variant">Playing as Black</span>
+                ) : null;
 
                 const openingText = item.openingContext ? (
                   <a
@@ -881,7 +889,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                     rel="noopener noreferrer"
                     className="font-mono text-xs font-semibold text-primary underline"
                   >
-                    {item.openingContext.eco}
+                    ECO {item.openingContext.eco}
                   </a>
                 ) : (
                   <span className="text-outline font-mono text-xs">Position</span>
@@ -900,7 +908,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                       <div className="w-[88px] h-[88px] bg-surface-container-lowest border border-outline-variant rounded-lg p-1 shrink-0 overflow-hidden">
                         <ChessBoardView
                           fen={item.fen}
-                          boardOrientation={playerColor}
+                          boardOrientation={boardOrientation}
                           allowDragging={false}
                           containerClassName="w-full h-full"
                           frameClassName="w-full h-full"
@@ -993,7 +1001,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                       {onViewProgress && (
                         <button
                           type="button"
-                          onClick={() => onViewProgress(item.positionId, playerColor, weaknessResult.minEvalLoss)}
+                          onClick={() => onViewProgress(item.positionId, progressColor, weaknessResult.minEvalLoss)}
                           className="px-2.5 py-1.5 text-xs font-mono text-on-surface-variant hover:text-secondary rounded-lg border border-outline-variant transition cursor-pointer"
                           title="View progress"
                         >
@@ -1008,7 +1016,8 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                             const col: 'WHITE' | 'BLACK' = w.fen && w.fen.split(' ')[1] === 'b' ? 'BLACK' : 'WHITE';
                             return adaptWeaknessToPuzzle(w, col);
                           });
-                          onSelectPractice(adaptWeaknessToPuzzle(item, playerColor), fullConvertedList);
+                          const currentTurn: 'WHITE' | 'BLACK' = item.fen && item.fen.split(' ')[1] === 'b' ? 'BLACK' : 'WHITE';
+                          onSelectPractice(adaptWeaknessToPuzzle(item, currentTurn), fullConvertedList);
                         }}
                         className="px-3 py-1.5 bg-primary-container hover:bg-primary text-on-primary-container rounded-lg font-mono text-xs font-bold transition shadow-sm cursor-pointer"
                       >

@@ -324,6 +324,7 @@ export interface WeaknessResponse {
   } | null;
   evalCp?: number;
   lastSeenAt?: string;
+  playerColor?: 'WHITE' | 'BLACK';
   practicalEvidence?: PracticalEvidenceResponse | null;
   timeControlStats?: Record<string, TimeControlStats>;
   phaseStats?: Record<string, PhaseStats>;

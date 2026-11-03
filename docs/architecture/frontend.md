@@ -214,10 +214,7 @@ cannot replace the current result.
 The list distinguishes loading, no account/selector, request failure, and an
 empty successful result. Initial failure offers Retry. Pagination failure
 preserves already-rendered rows and requires explicit Retry instead of
-auto-retrying. Cards render the returned weakness evidence and optional actual
-game results; clicking **Practice Position** converts the row to the local
-puzzle shape and selects it on the existing `/` practice tab without another
-read request.
+auto-retrying. Cards render the returned weakness evidence, authoritative player color context (`Playing as White` / `Playing as Black`), board orientation matched to the player's perspective, FEN active turn indicators, truthful ECO opening links without manufactured URL slug names, and optional actual game results; clicking **Practice Position** converts the row to the local puzzle shape and selects it on the existing `/` practice tab without another read request.
 
 **View Progress** selects a position and color in `Home`; it does not add a
 route. `PositionProgressView` calls
