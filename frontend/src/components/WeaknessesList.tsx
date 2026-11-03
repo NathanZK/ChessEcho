@@ -158,6 +158,24 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
     return tcPass && phasePass;
   });
 
+  const activeFilterBadges: string[] = [];
+  if (colorFilter !== 'ALL') {
+    activeFilterBadges.push(`Color: ${colorFilter === 'WHITE' ? 'White' : 'Black'}`);
+  }
+  if (phaseFilter !== 'ALL') {
+    activeFilterBadges.push(`Phase: ${phaseFilter.charAt(0) + phaseFilter.slice(1).toLowerCase()}`);
+  }
+  if (timeControlFilter !== 'ALL') {
+    activeFilterBadges.push(`Speed: ${timeControlFilter.charAt(0) + timeControlFilter.slice(1).toLowerCase()}`);
+  }
+  if (minEvalLoss !== 0.8) {
+    activeFilterBadges.push(`Threshold: ${minEvalLoss} pawns`);
+  }
+  if (minMistakeCount !== 3) {
+    activeFilterBadges.push(`Min Mistakes: ${minMistakeCount === 1 ? '1' : `${minMistakeCount}+`}`);
+  }
+  const hasActiveFilters = activeFilterBadges.length > 0;
+
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isLoadingMore, setIsLoadingMore] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -196,6 +214,26 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
   const handleRetryInitialLoad = () => {
     invalidateWeaknessRequests();
     setReloadToken((prev) => prev + 1);
+  };
+
+  const handleResetFilters = () => {
+    invalidateWeaknessRequests();
+    if (colorFilter !== 'ALL') {
+      setColorFilter('ALL');
+      onColorFilterChange?.('ALL');
+    }
+    if (phaseFilter !== 'ALL') {
+      setPhaseFilter('ALL');
+    }
+    if (timeControlFilter !== 'ALL') {
+      setTimeControlFilter('ALL');
+    }
+    if (minEvalLoss !== 0.8) {
+      handleMinEvalLossChange(0.8);
+    }
+    if (minMistakeCount !== 3) {
+      handleMinMistakeCountChange(3);
+    }
   };
 
   const loadNextPage = useCallback(
@@ -555,21 +593,50 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
             <span>Retry</span>
           </button>
         </div>
-      ) : weaknesses.length === 0 ? (
-        <div className="py-16 text-center space-y-4 max-w-lg mx-auto bg-surface-container-low p-8 rounded-2xl border border-outline-variant shadow-xl">
-          <div className="w-14 h-14 rounded-2xl bg-surface-container-lowest border border-outline-variant flex items-center justify-center mx-auto text-outline">
-            <Target className="w-7 h-7 text-outline" />
-          </div>
-          <div>
-            <h3 className="text-lg font-bold text-on-surface">No Recurring Weaknesses Found</h3>
-            <p className="text-xs text-on-surface-variant mt-1">
-              No positions met your weakness filter criteria{username && <> for <span className="text-primary font-semibold">{username}</span></>}. Try lowering the minimum mistakes filter or importing more games.
-            </p>
-          </div>
-        </div>
       ) : (
         <div className="space-y-4">
-          {viewMode === 'grid' ? (
+          {weaknesses.length === 0 ? (
+            <div
+              data-testid="weakness-empty-state"
+              className="w-full py-16 text-center space-y-4 bg-surface-container-low p-8 md:p-12 rounded-2xl border border-outline-variant shadow-sm"
+            >
+              <div className="w-14 h-14 rounded-2xl bg-surface-container-lowest border border-outline-variant flex items-center justify-center mx-auto text-outline">
+                <Target className="w-7 h-7 text-outline" />
+              </div>
+              <div className="space-y-1 max-w-xl mx-auto">
+                <h3 className="text-lg font-bold text-on-surface">No Recurring Weaknesses Found</h3>
+                <p className="text-xs text-on-surface-variant leading-relaxed">
+                  No positions met your weakness filter criteria{username && <> for <span className="text-primary font-semibold">{username}</span></>}. {hasActiveFilters ? 'Try resetting your active filters, lowering the minimum mistakes filter, or importing more games.' : 'Try lowering the minimum mistakes filter or importing more games.'}
+                </p>
+              </div>
+
+              {hasActiveFilters && (
+                <div className="pt-2 flex flex-col items-center gap-3">
+                  <div className="flex flex-wrap items-center justify-center gap-2 text-xs font-mono">
+                    <span className="text-outline">Active filters:</span>
+                    {activeFilterBadges.map((badge) => (
+                      <span
+                        key={badge}
+                        className="px-2.5 py-1 rounded-md bg-surface-container border border-outline-variant text-on-surface text-[11px]"
+                      >
+                        {badge}
+                      </span>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleResetFilters}
+                    className="px-4 py-2 bg-surface-container-high hover:bg-surface-bright text-primary text-xs font-mono font-bold rounded-xl border border-outline-variant transition inline-flex items-center gap-1.5 cursor-pointer shadow-sm"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Reset Filters</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <>
+              {viewMode === 'grid' ? (
             <div data-testid="weakness-grid-container" className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
               {weaknesses.map((item) => {
                 const activeColorInFen = item.fen ? item.fen.split(' ')[1] : 'w';
@@ -995,6 +1062,8 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
               </button>
             )}
           </div>
+            </>
+          )}
         </div>
       )}
 

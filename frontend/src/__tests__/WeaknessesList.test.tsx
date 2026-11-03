@@ -779,5 +779,134 @@ describe('Weaknesses Tab MVP', () => {
       expect(within(listBreakdown).getByText(/2W·1D·1L/i)).toBeInTheDocument();
       expect(within(listBreakdown).getByText('62.5%')).toBeInTheDocument();
     });
+
+    describe('7. Issue #664: Consistent Empty and Populated Structure & Actionable Guidance', () => {
+      it('maintains space-y-4 container and full-width card styling without max-w-lg in empty state', async () => {
+        vi.mocked(api.fetchWeaknesses).mockResolvedValue([]);
+        render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
+
+        await waitFor(() => {
+          expect(screen.getByText('No Recurring Weaknesses Found')).toBeInTheDocument();
+        });
+
+        const emptyCard = screen.getByTestId('weakness-empty-state');
+        expect(emptyCard).toBeInTheDocument();
+        expect(emptyCard.parentElement).toHaveClass('space-y-4');
+        expect(emptyCard).not.toHaveClass('max-w-lg');
+        expect(emptyCard).not.toHaveClass('shadow-xl');
+
+        // Header controls stay stable
+        expect(screen.getByTestId('weakness-count-indicator')).toHaveTextContent('0');
+        expect(screen.getByRole('button', { name: /^Grid$/i })).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /^List$/i })).toBeInTheDocument();
+      });
+
+      it('shows active filter badges and Reset Filters button when filters result in 0 weaknesses, and restores populated state on reset', async () => {
+        vi.mocked(api.fetchWeaknesses).mockResolvedValue([mockWeaknessItem]);
+        render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
+
+        await waitFor(() => {
+          expect(screen.getByText(/33.3% \(5x\)/i)).toBeInTheDocument();
+        });
+
+        // Change Phase filter to Opening (mockWeaknessItem only has MIDDLEGAME)
+        const phaseSelect = screen.getByLabelText('Filter by Phase');
+        fireEvent.change(phaseSelect, { target: { value: 'OPENING' } });
+
+        await waitFor(() => {
+          expect(screen.getByText('No Recurring Weaknesses Found')).toBeInTheDocument();
+        });
+
+        expect(screen.getByText(/Active filters:/i)).toBeInTheDocument();
+        expect(screen.getByText(/Phase: Opening/i)).toBeInTheDocument();
+
+        const resetBtn = screen.getByRole('button', { name: /Reset Filters/i });
+        expect(resetBtn).toBeInTheDocument();
+
+        // Clicking Reset Filters clears the active filter
+        fireEvent.click(resetBtn);
+
+        await waitFor(() => {
+          expect(screen.getByText(/33.3% \(5x\)/i)).toBeInTheDocument();
+        });
+        expect(screen.queryByText('No Recurring Weaknesses Found')).not.toBeInTheDocument();
+      });
+
+      it('invokes parent filter callbacks when Reset Filters is clicked with non-default parent-controlled filters', async () => {
+        vi.mocked(api.fetchWeaknesses).mockResolvedValue([]);
+        const onColorFilterChange = vi.fn();
+        const onMinEvalLossChange = vi.fn();
+        const onMinMistakeCountChange = vi.fn();
+
+        render(
+          <WeaknessesList
+            username="hikaru"
+            activeColorFilter="WHITE"
+            onColorFilterChange={onColorFilterChange}
+            minEvalLoss={1.2}
+            onMinEvalLossChange={onMinEvalLossChange}
+            minMistakeCount={5}
+            onMinMistakeCountChange={onMinMistakeCountChange}
+            onSelectPractice={vi.fn()}
+          />
+        );
+
+        await waitFor(() => {
+          expect(screen.getByText('No Recurring Weaknesses Found')).toBeInTheDocument();
+        });
+
+        const emptyCard = screen.getByTestId('weakness-empty-state');
+        expect(within(emptyCard).getByText(/Color: White/i)).toBeInTheDocument();
+        expect(within(emptyCard).getByText(/Threshold: 1.2/i)).toBeInTheDocument();
+        expect(within(emptyCard).getByText(/Min Mistakes: 5/i)).toBeInTheDocument();
+
+        const resetBtn = within(emptyCard).getByRole('button', { name: /Reset Filters/i });
+        fireEvent.click(resetBtn);
+
+        expect(onColorFilterChange).toHaveBeenCalledWith('ALL');
+        expect(onMinEvalLossChange).toHaveBeenCalledWith(0.8);
+        expect(onMinMistakeCountChange).toHaveBeenCalledWith(3);
+      });
+
+      it('does not render Reset Filters button or filter badges when weaknesses are empty under default filter criteria', async () => {
+        vi.mocked(api.fetchWeaknesses).mockResolvedValue([]);
+        render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
+
+        await waitFor(() => {
+          expect(screen.getByText('No Recurring Weaknesses Found')).toBeInTheDocument();
+        });
+
+        expect(screen.queryByRole('button', { name: /Reset Filters/i })).not.toBeInTheDocument();
+        expect(screen.queryByText(/Active filters:/i)).not.toBeInTheDocument();
+        expect(screen.getByText(/Try lowering the minimum mistakes filter or importing more games/i)).toBeInTheDocument();
+      });
+
+      it('transitions to error banner if API fetch fails after clicking Reset Filters', async () => {
+        vi.mocked(api.fetchWeaknesses).mockResolvedValue([mockWeaknessItem]);
+        render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
+
+        await waitFor(() => {
+          expect(screen.getByText(/33.3% \(5x\)/i)).toBeInTheDocument();
+        });
+
+        // Set color filter to White, which returns empty
+        vi.mocked(api.fetchWeaknesses).mockResolvedValue([]);
+        const whiteBtn = screen.getByRole('button', { name: /^White$/i });
+        fireEvent.click(whiteBtn);
+
+        await waitFor(() => {
+          expect(screen.getByRole('button', { name: /Reset Filters/i })).toBeInTheDocument();
+        });
+
+        // Next fetch on reset fails
+        vi.mocked(api.fetchWeaknesses).mockRejectedValue(new Error('Network error on reset'));
+        fireEvent.click(screen.getByRole('button', { name: /Reset Filters/i }));
+
+        await waitFor(() => {
+          expect(screen.getByText(/We couldn't load your weaknesses/i)).toBeInTheDocument();
+        });
+        expect(screen.getByRole('button', { name: /Retry/i })).toBeInTheDocument();
+      });
+    });
   });
 });
