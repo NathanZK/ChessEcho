@@ -1,0 +1,20 @@
+# Testing Capability Map
+
+This capability map maps each of the ten canonical user journeys to existing test evidence across four explicit evidence tiers:
+- **Tier 1 (Unit / Component)**: Isolated unit tests verifying functions or single components in JSDOM / JVM.
+- **Tier 2 (Frontend Journey / Mocked)**: Home-mounted Vitest suites driving multi-step tab navigation with mocked HTTP APIs.
+- **Tier 3 (Backend Integration)**: JUnit 5 integration tests against real Testcontainers PostgreSQL, Flyway, and subprocesses.
+- **Tier 4 (Full-Stack)**: Automated end-to-end tests exercising real browser against real backend/database (currently 0 tests).
+
+| Journey ID | Journey Name | Tier 1 (Unit / Component) | Tier 2 (Frontend Journey / Mocked) | Tier 3 (Backend Integration / Testcontainers) | Tier 4 (Full-Stack) |
+|---|---|---|---|---|---|
+| **J01** | Shared-practice from Weaknesses Library | `PositionCard.test.tsx`, `ObjectiveWeaknessAnalyzerTest.kt` | `WeaknessesTab.test.tsx`, `WeaknessesList.test.tsx`, `WeaknessLoadStates.test.tsx` | `WeaknessControllerIntegrationTest.kt`, `PracticalWeaknessControllerIntegrationTest.kt` | None (0 tests) |
+| **J02** | Shared-practice from Decision Review / Timing | `decisionTimingComparison.test.ts`, `DecisionTimingPolicyTest.kt` | `LongDecisionsView.test.tsx`, `ExploreDecisionAfterWrongMove.test.tsx` | `LongDecisionControllerIntegrationTest.kt` | None (0 tests) |
+| **J03** | Shared-practice from Similar Positions | `PositionSimilarityServiceTest.kt`, `FenPositionValidatorTest.kt` | `SimilarPositionsView.test.tsx`, `SimilarPositionsNavigation.test.tsx` | `SimilarPositionsControllerIntegrationTest.kt`, `SimilarityConcurrencyManagerTest.kt` | None (0 tests) |
+| **J04** | Shared-practice from Explore Position | `positionImport.test.ts`, `MoveEvaluationServiceTest.kt` | `ExplorePositionModal.test.tsx`, `SuppliedPositionExploration.test.tsx` | `PuzzleControllerIntegrationTest.kt` | None (0 tests) |
+| **J05** | Shared-practice from Practice Puzzles direct tab | `PuzzleFeedbackPanel.test.tsx`, `AdaptivePuzzleSchedulingPolicyTest.kt` | `PracticePuzzlesView.test.tsx`, `PuzzlesFeaturesAndFixes.test.tsx`, `PuzzleAttemptCountFlow.test.tsx` | `PuzzleControllerIntegrationTest.kt`, `PuzzleSubmissionPostgresIntegrationTest.kt` | None (0 tests) |
+| **J06** | Guest game import and analysis pipeline | `ImportGamesRequestTest.kt`, `GameParserServiceAttributionTest.kt` | `ImportGamesViewPresentation.test.tsx`, `ImportJobStore.test.tsx` | `GameImportServiceBaseIntegrationTest.kt`, `GameImportServiceAttributionIntegrationTest.kt`, `GuestSchedulingClaimReplayPostgresIntegrationTest.kt` | None (0 tests) |
+| **J07** | Authenticated game import and analysis pipeline | `AccountOwnershipServiceTest.kt`, `AsyncJobConfigurationInvariantTest.kt` | `ConnectedAccountFlow.test.tsx`, `AccountContextAndImport.test.tsx` | `OwnerScopedAccessIntegrationTest.kt`, `GameImportServiceAccountStateIntegrationTest.kt`, `AsyncJobConcurrencyIntegrationTest.kt` | None (0 tests) |
+| **J08** | Session initialization and guest bootstrap | `SessionAuthenticationFilterTest.kt`, `SessionCookiePropertiesTest.kt` | `SessionBootstrap.test.tsx`, `useAccountSession.test.ts`, `HeaderResponsiveAccount.test.tsx` | `SessionCookieAuthIntegrationTest.kt`, `DevSessionAbsenceTest.kt` | None (0 tests) |
+| **J09** | User registration and initial credential creation | `LocalAuthApi.test.ts`, `RegisterPasswordVisibilityToggle.test.tsx` | `RegisterPasswordVisibilityToggle.test.tsx` | `LocalAuthIntegrationTest.kt`, `LocalCredentialRepositoryTest.kt` | None (0 tests) |
+| **J10** | User login, session persistence, and logout lifecycle | `LoginPasswordVisibilityToggle.test.tsx`, `SessionCredentialsCsrf.test.ts` | `SessionLogoutExpiry.test.tsx` | `LocalAuthIntegrationTest.kt`, `OwnerScopedCsrfIntegrationTest.kt`, `CookieTransportSecurityIntegrationTest.kt` | None (0 tests) |
