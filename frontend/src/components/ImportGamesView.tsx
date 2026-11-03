@@ -14,6 +14,7 @@ import {
 } from '../services/api';
 import { activeJobStore } from '../utils/browserStores';
 import { MonthPicker } from './MonthPicker';
+import { SectionHeader } from './SectionHeader';
 
 export type AccountConnectionStatus = 'loading' | 'connected' | 'unconnected' | 'error';
 
@@ -283,38 +284,29 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
   };
 
   return (
-    <div className="max-w-6xl w-full mx-auto px-4 lg:px-8 space-y-4 py-2 text-slate-200">
+    <div className="max-w-6xl w-full mx-auto px-4 lg:px-8 space-y-6 py-2 text-on-surface">
       {/* Header */}
-      <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-3">
-        <div>
-          <div className="flex items-center space-x-2 text-[11px] font-bold text-emerald-400 uppercase tracking-wider">
-            <Download className="w-3.5 h-3.5" />
-            <span>Chess.com Game Importer</span>
-          </div>
-          <h2 className="text-lg font-bold text-white mt-0.5">
-            Import & Analyze Your Game History
-          </h2>
-          <p className="text-xs text-slate-400 mt-0.5 max-w-xl">
-            Import your Chess.com games to automatically detect your recurring opening positions and compute Stockfish evaluations.
-          </p>
-        </div>
-      </div>
+      <SectionHeader
+        title="Import & Analyze Your Game History"
+        description="Import your Chess.com games to automatically detect your recurring opening positions and compute Stockfish evaluations."
+        badgeText="CHESS.COM"
+      />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 
         {/* Form Settings Card */}
-        <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 shadow-xl space-y-3.5">
-          <h3 className="text-sm font-bold text-white border-b border-slate-800 pb-2.5 flex items-center justify-between">
+        <div className="bg-surface-container-low p-6 rounded-2xl border border-outline-variant shadow-xl space-y-4">
+          <h3 className="text-sm font-bold text-on-surface border-b border-outline-variant pb-3 flex items-center justify-between">
             <span>Import Configuration</span>
             {isAuthenticated && accountStatus === 'connected' && connectedAccount && (
               <div className="flex items-center gap-2">
-                <span className="text-xs text-emerald-400 font-medium">● Connected: {connectedAccount.username}</span>
+                <span className="text-xs text-primary font-mono font-medium">● Connected: {connectedAccount.username}</span>
                 {onDisconnect && (
                   <button
                     type="button"
                     onClick={onDisconnect}
                     disabled={isDisconnecting}
-                    className="text-[11px] font-semibold text-slate-400 hover:text-rose-400 underline disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+                    className="text-[11px] font-semibold font-mono text-on-surface-variant hover:text-error underline disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
                   >
                     {isDisconnecting ? 'Disconnecting…' : 'Disconnect'}
                   </button>
@@ -323,14 +315,14 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
             )}
           </h3>
           {disconnectError && (
-            <p role="alert" className="text-xs text-rose-300">
+            <p role="alert" className="rounded-lg border border-error-container bg-error-container/20 p-2.5 text-xs font-mono text-error">
               Unable to disconnect account. {disconnectError}
             </p>
           )}
 
           {/* Username Input */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-300">
+            <label className="text-xs font-semibold font-mono text-on-surface-variant">
               Chess.com Username
             </label>
             <input
@@ -343,35 +335,35 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                 sessionStatus === 'error' ||
                 (isAuthenticated && accountStatus === 'loading')
               }
-              className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-xl text-sm font-medium text-slate-200 outline-none transition"
+              className="w-full px-3.5 py-2.5 bg-surface-container-lowest border border-outline-variant focus:border-primary rounded-xl text-sm font-medium text-on-surface outline-none transition font-sans"
             />
           </div>
 
           {isAuthenticated && (
             <div className="space-y-2" aria-live="polite">
               {accountStatus === 'loading' && (
-                <p role="status" className="text-xs text-slate-400">
+                <p role="status" className="text-xs font-mono text-on-surface-variant">
                   Loading your connected Chess.com account…
                 </p>
               )}
               {accountStatus === 'connected' && connectedAccount && (
-                <p role="status" className="text-xs text-emerald-400">
+                <p role="status" className="text-xs font-mono text-primary">
                   Connected Chess.com account: {connectedAccount.username}
                 </p>
               )}
               {accountStatus === 'unconnected' && (
-                <p role="status" className="text-xs text-slate-400">
+                <p role="status" className="text-xs font-mono text-on-surface-variant">
                   No Chess.com account connected. Connect an account before importing.
                 </p>
               )}
               {accountStatus === 'error' && (
-                <div role="alert" className="space-y-2 text-xs text-rose-300">
+                <div role="alert" className="rounded-lg border border-error-container bg-error-container/20 p-2.5 space-y-2 text-xs font-mono text-error">
                   <p>Unable to load your connected account. {accountError}</p>
                   {onRetryAccountLoad && (
                     <button
                       type="button"
                       onClick={onRetryAccountLoad}
-                      className="font-semibold underline cursor-pointer"
+                      className="font-mono font-semibold underline cursor-pointer"
                     >
                       Retry account loading
                     </button>
@@ -383,18 +375,18 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                   type="button"
                   onClick={handleConnectAccount}
                   disabled={!username.trim() || isAssociating}
-                  className="text-xs font-semibold text-emerald-300 hover:text-emerald-200 underline disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+                  className="text-xs font-mono font-semibold text-primary hover:underline disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
                 >
                   {isAssociating ? 'Connecting account…' : 'Connect Chess.com account'}
                 </button>
               )}
               {associationError && (
-                <p role="alert" className="text-xs text-rose-300">
+                <p role="alert" className="rounded-lg border border-error-container bg-error-container/20 p-2.5 text-xs font-mono text-error">
                   {associationError}
                 </p>
               )}
               {isAuthenticated && accountStatus === 'connected' && !usernameMatchesAccount && (
-                <p role="status" className="text-xs text-amber-300">
+                <p role="status" className="text-xs font-mono text-amber-accent">
                   Connect this username before importing it.
                 </p>
               )}
@@ -403,9 +395,9 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
 
           {/* Multi-Select Time Controls (Order: Blitz, Rapid, Bullet, Classical) */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
+            <label className="text-xs font-semibold font-mono text-on-surface-variant flex items-center justify-between">
               <span>Time Controls (Select one or more)</span>
-              <span className="text-[11px] text-emerald-400 font-normal">
+              <span className="text-[11px] text-primary font-mono font-normal">
                 {timeControls.length} selected
               </span>
             </label>
@@ -424,8 +416,8 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                     onClick={() => handleTimeControlToggle(tc.id)}
                     className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold border transition cursor-pointer ${
                       isSelected
-                        ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300'
-                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                        ? 'bg-primary/10 border-primary text-primary'
+                        : 'bg-surface-container-lowest border-outline-variant text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'
                     }`}
                   >
                     <span>{tc.label}</span>
@@ -433,7 +425,7 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                       type="checkbox"
                       checked={isSelected}
                       readOnly
-                      className="accent-emerald-500 pointer-events-none"
+                      className="accent-primary pointer-events-none"
                     />
                   </button>
                 );
@@ -443,19 +435,19 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
 
           {/* Player Color Selection */}
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-300">
+            <label className="text-xs font-semibold font-mono text-on-surface-variant">
               Player Color
             </label>
-            <div className="grid grid-cols-3 gap-2 bg-slate-950 p-1 rounded-xl border border-slate-800">
+            <div className="grid grid-cols-3 gap-2 bg-surface-container-lowest p-1 rounded-xl border border-outline-variant">
               {(['WHITE', 'BLACK', 'BOTH'] as const).map((color) => (
                 <button
                   type="button"
                   key={color}
                   onClick={() => setPlayerColor(color)}
-                  className={`py-1.5 text-xs font-bold rounded-lg uppercase tracking-wider transition cursor-pointer ${
+                  className={`py-1.5 text-xs font-bold rounded-lg uppercase tracking-wider transition cursor-pointer font-mono ${
                     playerColor === color
-                      ? 'bg-emerald-600 text-white shadow-sm'
-                      : 'text-slate-400 hover:text-slate-200'
+                      ? 'bg-primary-container text-on-primary-container shadow-sm'
+                      : 'text-on-surface-variant hover:text-on-surface'
                   }`}
                 >
                   {color}
@@ -465,13 +457,13 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
           </div>
 
           {/* Advanced Date Range Controls (Optional) */}
-          <div className="pt-2 border-t border-slate-800 space-y-3">
+          <div className="pt-2 border-t border-outline-variant space-y-3">
             <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-2 text-xs font-bold text-slate-300">
-                <Calendar className="w-3.5 h-3.5 text-emerald-400" />
+              <div className="flex items-center space-x-2 text-xs font-bold font-mono text-on-surface">
+                <Calendar className="w-3.5 h-3.5 text-primary" />
                 <span>Advanced Date Range</span>
               </div>
-              <span className="text-[11px] text-slate-400">Optional date bounds</span>
+              <span className="text-[11px] font-mono text-on-surface-variant">Optional date bounds</span>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <MonthPicker
@@ -488,7 +480,7 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
           </div>
 
           {errorMessage && (
-            <div className="p-3.5 bg-rose-500/10 border border-rose-500/30 rounded-xl text-xs font-semibold text-rose-300 whitespace-pre-line">
+            <div role="alert" className="p-3.5 bg-error-container/20 border border-error-container rounded-xl text-xs font-mono font-semibold text-error whitespace-pre-line">
               ⚠️ {errorMessage}
             </div>
           )}
@@ -498,9 +490,9 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
             type="button"
             onClick={handleStartImport}
             disabled={!canStartImport || activeJob?.status === 'QUEUED' || activeJob?.status === 'PROCESSING'}
-            className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-sm rounded-xl transition shadow-lg shadow-emerald-900/40 flex items-center justify-center space-x-2 cursor-pointer disabled:cursor-not-allowed"
+            className="w-full py-3 bg-primary-container hover:bg-primary disabled:opacity-50 text-on-primary-container font-bold font-mono text-sm rounded-xl transition shadow-sm flex items-center justify-center space-x-2 cursor-pointer disabled:cursor-not-allowed"
           >
-            <Play className="w-4 h-4 fill-white" />
+            <Play className="w-4 h-4 fill-current" />
             <span>
               {activeJob?.status === 'QUEUED' || activeJob?.status === 'PROCESSING'
                 ? 'Import Job Active...'
@@ -510,42 +502,42 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
         </div>
 
         {/* Live Job Status Monitor Card */}
-        <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 shadow-xl flex flex-col justify-between space-y-4">
+        <div className="bg-surface-container-low p-6 rounded-2xl border border-outline-variant shadow-xl flex flex-col justify-between space-y-4">
           <div>
-            <h3 className="text-sm font-bold text-white border-b border-slate-800 pb-2.5 flex items-center justify-between">
+            <h3 className="text-sm font-bold text-on-surface border-b border-outline-variant pb-3 flex items-center justify-between">
               <span>Live Job Status Monitor</span>
-              <Clock className="w-4 h-4 text-emerald-400" />
+              <Clock className="w-4 h-4 text-primary" />
             </h3>
 
             {!activeJob ? (
               <div className="py-8 text-center space-y-2.5">
-                <div className="w-10 h-10 rounded-full bg-slate-950 border border-slate-800 flex items-center justify-center mx-auto text-slate-500">
+                <div className="w-10 h-10 rounded-full bg-surface-container-lowest border border-outline-variant flex items-center justify-center mx-auto text-on-surface-variant">
                   <Download className="w-5 h-5" />
                 </div>
-                <h4 className="text-xs font-semibold text-slate-300">No Active Import Job</h4>
-                <p className="text-[11px] text-slate-500 max-w-xs mx-auto">
+                <h4 className="text-xs font-semibold font-mono text-on-surface">No Active Import Job</h4>
+                <p className="text-[11px] text-on-surface-variant max-w-xs mx-auto">
                   Fill in your Chess.com username and click &quot;Start Import &amp; Engine Analysis&quot; to monitor live progress.
                 </p>
               </div>
             ) : (
               <div className="space-y-5 pt-3">
                 <div className="flex items-center justify-between text-xs font-bold">
-                  <span className="text-slate-300 flex items-center gap-2 truncate max-w-[200px]">
+                  <span className="text-on-surface flex items-center gap-2 truncate max-w-[200px] font-mono">
                     {(activeJob.status === 'QUEUED' || activeJob.status === 'PROCESSING') && (
-                      <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+                      <span className="w-2 h-2 rounded-full bg-amber-accent animate-ping"></span>
                     )}
                     {activeJob.status === 'COMPLETED' && (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                      <CheckCircle2 className="w-4 h-4 text-primary" />
                     )}
                     <span>Import Progress</span>
                   </span>
                   <span
-                    className={`px-2.5 py-1 rounded-md text-[10px] uppercase font-bold tracking-wide ${
+                    className={`px-2.5 py-1 rounded-md text-[10px] uppercase font-bold font-mono tracking-wide ${
                       activeJob.status === 'COMPLETED'
-                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                        ? 'bg-primary/20 text-primary border border-primary/30'
                         : activeJob.status === 'FAILED'
-                        ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30'
-                        : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                        ? 'bg-error-container/20 text-error border border-error-container/30'
+                        : 'bg-amber-accent/20 text-amber-accent border border-amber-accent/30'
                     }`}
                   >
                     {activeJob.status}
@@ -554,16 +546,16 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
 
                 {/* Metrics Grid */}
                 <div className="grid grid-cols-2 gap-3 pt-2 text-center">
-                  <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
-                    <span className="text-[10px] text-slate-400">Imported</span>
-                    <div className="text-sm font-bold text-emerald-400 mt-0.5 font-mono">
+                  <div className="bg-surface-container-lowest p-3 rounded-xl border border-outline-variant">
+                    <span className="text-[10px] font-mono text-on-surface-variant">Imported</span>
+                    <div className="text-sm font-bold text-primary mt-0.5 font-mono">
                       {activeJob.gamesImported.toLocaleString()}
                     </div>
                   </div>
 
-                  <div className="bg-slate-950 p-2.5 rounded-xl border border-slate-800">
-                    <span className="text-[10px] text-slate-400">Already imported</span>
-                    <div className="text-sm font-bold text-slate-300 mt-0.5 font-mono">
+                  <div className="bg-surface-container-lowest p-3 rounded-xl border border-outline-variant">
+                    <span className="text-[10px] font-mono text-on-surface-variant">Already imported</span>
+                    <div className="text-sm font-bold text-on-surface mt-0.5 font-mono">
                       {activeJob.gamesSkipped.toLocaleString()}
                     </div>
                   </div>
@@ -571,18 +563,18 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                 </div>
 
                 {activeJob.status === 'COMPLETED' && (
-                  <div className="p-4 bg-emerald-950/40 border border-emerald-500/40 rounded-xl space-y-3">
-                    <div className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
-                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                  <div className="p-4 bg-surface-container border border-primary/40 rounded-xl space-y-3">
+                    <div className="text-xs font-bold font-mono text-primary flex items-center gap-1.5">
+                      <CheckCircle2 className="w-4 h-4 text-primary" />
                       <span>Import Completed Successfully!</span>
                     </div>
-                    <div className="text-[11px] text-slate-300">
+                    <div className="text-[11px] text-on-surface-variant">
                       {activeJob.analysisStatus === 'ANALYZING' ? (
                         <p>Stockfish is analyzing candidate positions in the background.</p>
                       ) : activeJob.analysisStatus === 'COMPLETED' ? (
                         <p>Analysis complete.</p>
                       ) : activeJob.analysisStatus === 'FAILED' ? (
-                        <p className="font-semibold text-rose-300">Analysis failed.</p>
+                        <p className="font-semibold text-error">Analysis failed.</p>
                       ) : (
                         <p>
                           Your games have been imported into the database and board positions
@@ -603,7 +595,7 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                             onNavigateTab('puzzles');
                           }
                         }}
-                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-lg transition shadow-sm cursor-pointer"
+                        className="px-3 py-1.5 bg-primary-container hover:bg-primary text-on-primary-container font-mono font-bold text-xs rounded-lg transition shadow-sm cursor-pointer"
                       >
                         Practice Puzzles
                       </button>
@@ -618,7 +610,7 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                             onNavigateTab('weaknesses');
                           }
                         }}
-                        className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-lg transition shadow-sm border border-slate-700 cursor-pointer"
+                        className="px-3 py-1.5 bg-surface-container-high hover:bg-surface-container-highest text-on-surface font-mono font-bold text-xs rounded-lg transition shadow-sm border border-outline-variant cursor-pointer"
                       >
                         View Weaknesses
                       </button>
@@ -627,13 +619,13 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                 )}
 
                 {activeJob.errorMessage && (
-                  <div className="bg-rose-950/40 p-3 rounded-xl border border-rose-800/60 text-xs text-rose-300 whitespace-pre-line">
+                  <div role="alert" className="bg-error-container/20 p-3 rounded-xl border border-error-container text-xs font-mono text-error whitespace-pre-line">
                     Error: {activeJob.errorMessage}
                   </div>
                 )}
 
                 {pollingError && (
-                  <div className="bg-rose-950/40 p-3 rounded-xl border border-rose-800/60 text-xs text-rose-300 whitespace-pre-line">
+                  <div role="alert" className="bg-error-container/20 p-3 rounded-xl border border-error-container text-xs font-mono text-error whitespace-pre-line">
                     ⚠️ {pollingError}
                   </div>
                 )}
