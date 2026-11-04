@@ -42,6 +42,7 @@ This document serves as the durable evidence repository for opt-in mutation test
 | [`Frontend: ChessBoardArea.tsx & useLineExploration.ts` (Issue #661)](#229-frontend-chessboardareatsx--uselineexplorationts-issue-661) | `ExplorationEvaluation.test.tsx` + suite | Frontend Interaction ([#661](https://github.com/NathanZK/ChessEcho/issues/661)) | 1360 | 871 (64%) | 324 (24%) [165 TO] | 0 (0%) | 81.90% | 2026-10-31 |
 | [`Frontend: PracticePuzzlesView.tsx & PuzzleFeedbackPanel.tsx` (Issue #662)](#230-frontend-practicepuzzlesviewtsx--puzzlefeedbackpaneltsx-issue-662) | `PracticePuzzlesView.test.tsx`, `PuzzleFeedbackPanel.test.tsx`, `SuppliedPositionExploration.test.tsx` + suite | Frontend Shell ([#662](https://github.com/NathanZK/ChessEcho/issues/662)) | 2056 | 1070 (52%) | 618 (30%) [242 TO] | 125 (6%) | 67.98% | 2026-11-01 |
 | [`Frontend: LongDecisionsView.tsx` (Issue #667)](#231-frontend-longdecisionsviewtsx-issue-667-visual-consistency--canonical-styling) | `LongDecisionsView.test.tsx` + suite | Frontend Presentation ([#667](https://github.com/NathanZK/ChessEcho/issues/667)) | 310 | 201 (65%) | 108 (35%) | 1 (0%) | 65.05% | 2026-11-02 |
+| [`Historical Position Clustering via Static Relational Similarity` (Issue #702)](#232-historical-position-clustering-via-static-relational-similarity-issue-702) | `PositionClusterSimilarityScorerTest`, `RelaxedMnnGraphBuilderTest`, `PositionLeidenCommunityDetectorTest`, `PositionClusterCentroidEvaluatorTest`, `CandidateRetrievalRecallBenchmarkTest`, `PositionInvertedIndexTest`, `PositionClusteringPropertiesTest` | Domain Algorithmic Core ([#702](https://github.com/NathanZK/ChessEcho/issues/702)) | 336 | 261 (78%) | 60 (18%) | 15 (4%) | 81% | 2026-11-04 |
 
 ---
 
@@ -789,6 +790,50 @@ This document serves as the durable evidence repository for opt-in mutation test
   5. *State Branches & View Modes*: Mutants modifying loading banners, error retry handling, empty states, and view mode toggling (Grid vs List) killed by targeted interaction tests.
 - **Accepted Surviving Mutants**:
   - 108 surviving mutants consist of JSX presentation class strings, text literals, and non-functional Tailwind style variants (e.g., color saturation tokens, borders, and button font weights).
+
+### 2.32 Historical Position Clustering via Static Relational Similarity (Issue #702)
+
+- **Issue**: Issue [#702](https://github.com/NathanZK/ChessEcho/issues/702)
+- **Target Classes**:
+  - `com.chessecho.config.PositionClusteringProperties`
+  - `com.chessecho.similarity.PositionInvertedIndex`
+  - `com.chessecho.similarity.clustering.PositionClusterSimilarityScorer`
+  - `com.chessecho.similarity.clustering.PositionClusterVector`
+  - `com.chessecho.similarity.clustering.RelaxedMnnGraphBuilder`
+  - `com.chessecho.similarity.clustering.PositionLeidenCommunityDetector`
+  - `com.chessecho.similarity.clustering.PositionClusterCentroidEvaluator`
+- **Test Suites**:
+  - `com.chessecho.config.PositionClusteringPropertiesTest`
+  - `com.chessecho.similarity.PositionInvertedIndexTest`
+  - `com.chessecho.similarity.clustering.PositionClusterSimilarityScorerTest`
+  - `com.chessecho.similarity.clustering.RelaxedMnnGraphBuilderTest`
+  - `com.chessecho.similarity.clustering.PositionLeidenCommunityDetectorTest`
+  - `com.chessecho.similarity.clustering.PositionClusterCentroidEvaluatorTest`
+  - `com.chessecho.similarity.clustering.CandidateRetrievalRecallBenchmarkTest`
+- **Execution Command**:
+  ```bash
+  cd backend && ./gradlew pitest \
+    -Ppitest.targetClasses="com.chessecho.similarity.clustering.*,com.chessecho.similarity.PositionInvertedIndex*,com.chessecho.config.PositionClusteringProperties*" \
+    -Ppitest.targetTests="com.chessecho.similarity.clustering.*Test*,com.chessecho.similarity.PositionInvertedIndexTest*,com.chessecho.config.PositionClusteringPropertiesTest*"
+  ```
+- **Results**:
+  - Mutants Generated: 336
+  - Killed: 261 (78%)
+  - Survived: 60 (18%)
+  - No Coverage: 15 (4%)
+  - Line Coverage: 490/510 (96%)
+  - Test Strength: **81%** (261 / 321 covered mutants)
+- **Meaningful Gaps Killed**:
+  1. *Validation Boundary Protection*: Mutants modifying inclusive ranges on $\alpha \in [0.0, 1.0]$, $k \in [25, 40]$, candidate limit $[50, 500]$, thresholds $\tau_{\text{floor}}, \tau_{\text{top1}}, \tau_c$, and resolution $\gamma_{RB} > 0.0$ killed by boundary acceptance and rejection suites in `PositionClusteringPropertiesTest` (59/60 mutants killed, 98.3%).
+  2. *Cosine Similarity & Block Normalization*: Mutants altering subvector energy accumulation ($\sqrt{\alpha}\hat{v}_{\text{pawn}}, \sqrt{1-\alpha}\hat{v}_{\text{piece}}$), self-similarity identity return, zero-norm early exit, and dot-product accumulation killed by `PositionClusterSimilarityScorerTest` (46/57 mutants killed, 80.7%).
+  3. *Inverted Index Candidate Generation*: Mutants altering pawn/piece term weight scaling, candidate score accumulation, active turn filtering, and tie-breaking by `canonicalFen` ascending killed by `PositionInvertedIndexTest` (including `inlined$thenBy$1` 100% killed).
+  4. *Relaxed MNN Graph Construction*: Mutants altering mutual top-$k$ validation ($\text{sim} \ge 0.40$), absolute top-1 asymmetric exception ($\text{sim} \ge 0.65$), candidate ranking tie-breaks, and undirected edge deduplication killed by `RelaxedMnnGraphBuilderTest`.
+  5. *CWTS Leiden Detection & Quality Parity*: Mutants modifying CPM resolution scaling ($\gamma_{CWTS} = \frac{\gamma_{RB}}{2m}$), zero-edge graph guard ($2m = 0.0 \to \text{isolates}$), and isolate degree detection killed by `PositionLeidenCommunityDetectorTest` (23/27 mutants killed, 85.2%).
+  6. *Centroid Cohesion & Outlier Eviction*: Mutants altering mean centroid vector aggregation, cohesion similarity thresholding ($\text{sim}(u, C) < 0.38 \to \text{OUTLIER\_EVICTED}$), empty cluster pruning, and isolate retention killed by `PositionClusterCentroidEvaluatorTest` (32/41 mutants killed, 78.0%).
+- **Accepted Surviving Mutants**:
+  - *Category 2 (Heuristic / Numerical Formulas)*: BM25 IDF smoothing constants (`0.5`) in `ln(1.0 + (totalDocs - df + 0.5) / (df + 0.5))`, and norm denominator math variations.
+  - *Category 3 (Kotlin Compiler Bytecode Artifacts)*: Synthetic `Intrinsics.checkNotNull` null-checks on non-nullable Kotlin stdlib returns.
+  - *Category 5 (Equivalent / Symmetrical Mutants)*: Boundary operators on non-negative total graph weight (`twoM <= 0.0`), symmetrical tie-breaking in `canonicalPair` (`u < v` vs `v < u` for undirected edge deduplication), and `sim.coerceIn(0.0, 1.0)` clamps on valid cosine values.
 
 ---
 

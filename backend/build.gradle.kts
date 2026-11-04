@@ -58,6 +58,7 @@ dependencies {
     implementation("org.jetbrains.kotlin:kotlin-reflect")
     implementation("com.github.bhlangonijr:chesslib:1.3.7")
     implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.15")
+    implementation("nl.cwts:networkanalysis:1.3.0")
 
     runtimeOnly("org.postgresql:postgresql")
 
