@@ -1,0 +1,13 @@
+{
+  "meanSpearmanRho" : 0.8832322216079911,
+  "meanTop10Jaccard" : 0.18425591883177067,
+  "tfidfHitAt1" : 0.5,
+  "tfidfHitAt5" : 0.9375,
+  "tfidfHitAt10" : 1.0,
+  "tfidfMrr" : 0.6692708333333333,
+  "bm25HitAt1" : 0.4375,
+  "bm25HitAt5" : 0.90625,
+  "bm25HitAt10" : 0.96875,
+  "bm25Mrr" : 0.6420138888888888,
+  "lengthSensitivityNotes" : "BM25 penalizes multi-ply continuation tokens via document length normalization (1 - b + b*L/avgL). In tactical positions, rich combination lines produce more tokens, which BM25 suppresses relative to brief lines. TF-IDF Cosine normalizes solely by vector magnitude, maintaining stable retrieval across continuation lengths."
+}
