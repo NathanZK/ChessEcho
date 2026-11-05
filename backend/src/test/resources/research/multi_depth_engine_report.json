@@ -1,0 +1,74 @@
+{
+  "totalAnalysesExecuted" : 1353,
+  "maxBudgetAllowed" : 1500,
+  "timeoutsEncountered" : 0,
+  "timeoutPct" : 0.0,
+  "passedScreeningTimeoutAudit" : true,
+  "analysesByStratum" : {
+    "Stratum1_Census" : 428,
+    "Stratum2_Stability" : 550,
+    "Stratum3_Coherence" : 225,
+    "Stratum4_Boundary" : 150
+  },
+  "analysesByDepth" : {
+    "8" : 601,
+    "12" : 451,
+    "16" : 251,
+    "20" : 50
+  },
+  "hypothesis6ScreeningReliability" : 0.5936254980079682,
+  "hypothesis6Satisfied" : false,
+  "depthAgreementStats" : {
+    "meanAgreementD8VsD16" : 0.5936254980079682,
+    "meanAgreementD12VsD16" : 0.6892430278884463,
+    "meanAgreementD16VsD20" : 0.7,
+    "meanEvalDiffD8VsD16" : 33.756972111553786,
+    "meanEvalDiffD12VsD16" : 18.768924302788843,
+    "meanEvalDiffD16VsD20" : 22.28,
+    "volatilePositionsPctD8VsD16" : 6.772908366533864,
+    "volatilePositionsPctD16VsD20" : 6.0
+  },
+  "samplingBenchmarks" : {
+    "CENTROID_GREEDY" : {
+      "strategy" : "CENTROID_GREEDY",
+      "totalClustersEvaluated" : 5,
+      "meanSampleSize" : 9.6,
+      "meanSquaredErrorCp" : 3029.20963102908,
+      "rootMeanSquaredErrorCp" : 55.03825606820296,
+      "meanAbsoluteErrorCp" : 48.16032927684631,
+      "meanBiasCp" : 22.638900705417733,
+      "stdDevEstimationErrorCp" : 90.08317697801633
+    },
+    "STRATIFIED_TIERED" : {
+      "strategy" : "STRATIFIED_TIERED",
+      "totalClustersEvaluated" : 5,
+      "meanSampleSize" : 9.6,
+      "meanSquaredErrorCp" : 23825.062401857896,
+      "rootMeanSquaredErrorCp" : 154.35369254364437,
+      "meanAbsoluteErrorCp" : 121.32371311523013,
+      "meanBiasCp" : 111.40228454380156,
+      "stdDevEstimationErrorCp" : 51.314564708110105
+    },
+    "BOUNDARY_WEIGHTED" : {
+      "strategy" : "BOUNDARY_WEIGHTED",
+      "totalClustersEvaluated" : 5,
+      "meanSampleSize" : 9.6,
+      "meanSquaredErrorCp" : 9796.704850409313,
+      "rootMeanSquaredErrorCp" : 98.9783049481517,
+      "meanAbsoluteErrorCp" : 90.17871112719408,
+      "meanBiasCp" : -48.56791747640045,
+      "stdDevEstimationErrorCp" : 110.40548930569915
+    },
+    "ADAPTIVE_SEQUENTIAL" : {
+      "strategy" : "ADAPTIVE_SEQUENTIAL",
+      "totalClustersEvaluated" : 5,
+      "meanSampleSize" : 9.6,
+      "meanSquaredErrorCp" : 7101.360944356014,
+      "rootMeanSquaredErrorCp" : 84.26957306380527,
+      "meanAbsoluteErrorCp" : 72.38620751969049,
+      "meanBiasCp" : -9.85049323397621,
+      "stdDevEstimationErrorCp" : 48.20228564776024
+    }
+  },
+  "stratum1Clusters" : [ 1007, 268, 1008, 413, 449 ]
+}

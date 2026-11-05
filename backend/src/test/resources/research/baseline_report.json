@@ -1,0 +1,238 @@
+{
+  "baselineMetrics" : {
+    "totalPositions" : 10000,
+    "assignedPositions" : 5793,
+    "assignedPct" : 57.93000000000001,
+    "isolatePositions" : 1006,
+    "isolatePct" : 10.059999999999999,
+    "outlierPositions" : 3201,
+    "outlierPct" : 32.01,
+    "totalClusters" : 246,
+    "distribution" : {
+      "count" : 246,
+      "mean" : 23.548780487804876,
+      "median" : 3.0,
+      "mode" : 2,
+      "min" : 2,
+      "max" : 337,
+      "p10" : 2.0,
+      "p25" : 2.0,
+      "p50" : 3.0,
+      "p75" : 9.0,
+      "p90" : 88.0,
+      "p99" : 233.3500000000002
+    },
+    "categories" : {
+      "singletons" : 0,
+      "small" : 168,
+      "medium" : 31,
+      "large" : 26,
+      "veryLarge" : 21,
+      "mega" : 0,
+      "totalClusters" : 246,
+      "singletonPct" : 0.0,
+      "smallPct" : 68.29268292682927,
+      "mediumPct" : 12.601626016260163,
+      "largePct" : 10.569105691056912,
+      "veryLargePct" : 8.536585365853659,
+      "megaPct" : 0.0
+    },
+    "totalEdges" : 57433,
+    "leidenQuality" : 0.8366502442027642,
+    "phaseTimingsMs" : {
+      "idfComputation" : 168,
+      "invertedIndexing" : 91,
+      "vectorBuilding" : 140,
+      "candidateRetrieval" : 106195,
+      "graphConstruction" : 4984,
+      "leidenDetection" : 222,
+      "centroidEvaluation" : 130
+    },
+    "totalDurationMs" : 111933,
+    "heapMemoryUsedMb" : 439.2807312011719
+  },
+  "bipartitionMetrics" : {
+    "unifiedQ" : 0.8366502442027642,
+    "separatedQ" : 1.6117562086370265,
+    "deltaQ" : -0.7751059644342623,
+    "ami" : 0.868505642462461,
+    "ari" : 0.7123869704394336,
+    "jaccardAssigned" : 0.8042068866157615,
+    "variationOfInformation" : 0.9858488294992576
+  },
+  "nullModelMetrics" : {
+    "r" : 20,
+    "empiricalQ" : 0.8366502442027642,
+    "meanNullQ" : 0.38159946254875093,
+    "stdNullQ" : 0.005738296985395013,
+    "deltaQ" : 0.4550507816540133,
+    "meanMasd" : 0.04245747652252259,
+    "meanRsd" : 0.006940330915599828,
+    "runs" : [ {
+      "runIndex" : 1,
+      "modularityQ" : 0.37684478211777805,
+      "masd" : 0.04246370358190065,
+      "rsd" : 0.00694134882472337,
+      "totalSwapsAttempted" : 229732,
+      "successfulSwaps" : 223958
+    }, {
+      "runIndex" : 2,
+      "modularityQ" : 0.3848304491141906,
+      "masd" : 0.04228839820274079,
+      "rsd" : 0.006912692450338783,
+      "totalSwapsAttempted" : 229732,
+      "successfulSwaps" : 224000
+    }, {
+      "runIndex" : 3,
+      "modularityQ" : 0.37601142437818574,
+      "masd" : 0.042111579627331176,
+      "rsd" : 0.006883788720633684,
+      "totalSwapsAttempted" : 229732,
+      "successfulSwaps" : 223993
+    }, {
+      "runIndex" : 4,
+      "modularityQ" : 0.3890272126618951,
+      "masd" : 0.04178029281576375,
+      "rsd" : 0.006829634769702752,
+      "totalSwapsAttempted" : 229732,
+      "successfulSwaps" : 223933
+    }, {
+      "runIndex" : 5,
+      "modularityQ" : 0.3926742052205389,
+      "masd" : 0.042309263459508153,
+      "rsd" : 0.006916103199127108,
+      "totalSwapsAttempted" : 229732,
+      "successfulSwaps" : 224006
+    }, {
+      "runIndex" : 6,
+      "modularityQ" : 0.3844151619016902,
+      "masd" : 0.04216786412965742,
+      "rsd" : 0.006892989292677969,
+      "totalSwapsAttempted" : 229732,
+      "successfulSwaps" : 224061
+    }, {
+      "runIndex" : 7,
+      "modularityQ" : 0.3805217299436987,
+      "masd" : 0.0415118005737067,
+      "rsd" : 0.00678574556194075,
+      "totalSwapsAttempted" : 229732,
+      "successfulSwaps" : 223954
+    }, {
+      "runIndex" : 8,
+      "modularityQ" : 0.39015158160330776,
+      "masd" : 0.04210037919769244,
+      "rsd" : 0.00688195783725444,
+      "totalSwapsAttempted" : 229732,
+      "successfulSwaps" : 224152
+    }, {
+      "runIndex" : 9,
+      "modularityQ" : 0.37608875804233516,
+      "masd" : 0.04308477014593581,
+      "rsd" : 0.007042871756090523,
+      "totalSwapsAttempted" : 229732,
+      "successfulSwaps" : 224071
+    }, {
+      "runIndex" : 10,
+      "modularityQ" : 0.3774313754221707,
+      "masd" : 0.042598577772476276,
+      "rsd" : 0.006963396096281583,
+      "totalSwapsAttempted" : 229732,
+      "successfulSwaps" : 224000
+    }, {
+      "runIndex" : 11,
+      "modularityQ" : 0.37680575239034914,
+      "masd" : 0.04191217549019148,
+      "rsd" : 0.006851193031698779,
+      "totalSwapsAttempted" : 229732,
+      "successfulSwaps" : 224027
+    }, {
+      "runIndex" : 12,
+      "modularityQ" : 0.38945526457856894,
+      "masd" : 0.043090937115141704,
+      "rsd" : 0.0070438798425464496,
+      "totalSwapsAttempted" : 229732,
+      "successfulSwaps" : 223903
+    }, {
+      "runIndex" : 13,
+      "modularityQ" : 0.3761611487968482,
+      "masd" : 0.0433803771485234,
+      "rsd" : 0.007091193290646117,
+      "totalSwapsAttempted" : 229732,
+      "successfulSwaps" : 223978
+    }, {
+      "runIndex" : 14,
+      "modularityQ" : 0.37620107439858436,
+      "masd" : 0.04261573798114526,
+      "rsd" : 0.006966201197679456,
+      "totalSwapsAttempted" : 229732,
+      "successfulSwaps" : 223939
+    }, {
+      "runIndex" : 15,
+      "modularityQ" : 0.37832903260124046,
+      "masd" : 0.042355707585306185,
+      "rsd" : 0.006923695209499017,
+      "totalSwapsAttempted" : 229732,
+      "successfulSwaps" : 224041
+    }, {
+      "runIndex" : 16,
+      "modularityQ" : 0.38734843226526294,
+      "masd" : 0.04251047564528387,
+      "rsd" : 0.00694899444156338,
+      "totalSwapsAttempted" : 229732,
+      "successfulSwaps" : 223973
+    }, {
+      "runIndex" : 17,
+      "modularityQ" : 0.38525393034428307,
+      "masd" : 0.042537364633118024,
+      "rsd" : 0.006953389862319382,
+      "totalSwapsAttempted" : 229732,
+      "successfulSwaps" : 224134
+    }, {
+      "runIndex" : 18,
+      "modularityQ" : 0.37668779525651513,
+      "masd" : 0.04265980340532172,
+      "rsd" : 0.0069734043724974095,
+      "totalSwapsAttempted" : 229732,
+      "successfulSwaps" : 223943
+    }, {
+      "runIndex" : 19,
+      "modularityQ" : 0.3762209974623496,
+      "masd" : 0.04248785369647739,
+      "rsd" : 0.006945296534303408,
+      "totalSwapsAttempted" : 229732,
+      "successfulSwaps" : 223940
+    }, {
+      "runIndex" : 20,
+      "modularityQ" : 0.38152914247522624,
+      "masd" : 0.04318246824322953,
+      "rsd" : 0.007058842020472184,
+      "totalSwapsAttempted" : 229732,
+      "successfulSwaps" : 223920
+    } ],
+    "zscoreQ" : 79.30066756952428
+  },
+  "candidateRecall" : {
+    "200" : {
+      "1" : 1.0,
+      "10" : 0.9836000000000001,
+      "20" : 0.9653999999999995
+    },
+    "500" : {
+      "1" : 1.0,
+      "10" : 0.9980000000000001,
+      "20" : 0.995
+    },
+    "1000" : {
+      "1" : 1.0,
+      "10" : 1.0,
+      "20" : 0.9996
+    }
+  },
+  "stochasticStability" : {
+    "seeds" : [ 42, 100, 777, 2024, 9999 ],
+    "meanAmi" : 0.9219450877773129,
+    "minAmi" : 0.9003084786575208,
+    "meanAri" : 0.8410253727468427,
+    "minAri" : 0.7969700042351449
+  }
+}

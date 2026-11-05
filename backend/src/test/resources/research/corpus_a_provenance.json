@@ -1,0 +1,140 @@
+{
+  "totalPositions" : 10000,
+  "ecoBreakdown" : {
+    "C" : 1206,
+    "B" : 3624,
+    "D" : 1171,
+    "A" : 3218,
+    "E" : 781
+  },
+  "phaseBreakdown" : {
+    "opening" : 2350,
+    "middlegame" : 5700,
+    "endgame" : 1950
+  },
+  "turnBreakdown" : {
+    "white" : 5025,
+    "black" : 4975
+  },
+  "sampleProvenanceRecords" : [ {
+    "canonicalFen" : "6rk/p2RR2p/1p4P1/3p4/3Kb3/PP6/8/8 b - -",
+    "occurrenceCount" : 1,
+    "sampleGameId" : "https://www.chess.com/game/live/95284840769",
+    "samplePlayerId" : "navnp04",
+    "whitePlayer" : "DanielNaroditsky",
+    "blackPlayer" : "navnp04",
+    "samplePly" : 82,
+    "sampleTimeControl" : "60",
+    "eco" : "C11",
+    "phase" : "ENDGAME",
+    "sideToMove" : "b"
+  }, {
+    "canonicalFen" : "6k1/5pp1/7p/1q5P/p4P2/6R1/7K/8 w - -",
+    "occurrenceCount" : 1,
+    "sampleGameId" : "https://www.chess.com/game/live/95593146493",
+    "samplePlayerId" : "DanielNaroditsky",
+    "whitePlayer" : "DanielNaroditsky",
+    "blackPlayer" : "VincentKeymer",
+    "samplePly" : 83,
+    "sampleTimeControl" : "180",
+    "eco" : "B12",
+    "phase" : "ENDGAME",
+    "sideToMove" : "w"
+  }, {
+    "canonicalFen" : "r6k/pp3Q1p/3PB1p1/2P1b2q/8/5prP/P7/3R1K2 b - -",
+    "occurrenceCount" : 1,
+    "sampleGameId" : "https://www.chess.com/game/live/99442386433",
+    "samplePlayerId" : "LiamPutnam2008",
+    "whitePlayer" : "DanielNaroditsky",
+    "blackPlayer" : "LiamPutnam2008",
+    "samplePly" : 64,
+    "sampleTimeControl" : "30",
+    "eco" : "B01",
+    "phase" : "ENDGAME",
+    "sideToMove" : "b"
+  }, {
+    "canonicalFen" : "rn2k2r/pp3ppb/2p1p2p/7P/3PpBP1/2q1P3/P1PNQP2/R4RK1 w kq -",
+    "occurrenceCount" : 1,
+    "sampleGameId" : "https://www.chess.com/game/live/102533394191",
+    "samplePlayerId" : "DanielNaroditsky",
+    "whitePlayer" : "DanielNaroditsky",
+    "blackPlayer" : "Kunoichi_69",
+    "samplePly" : 29,
+    "sampleTimeControl" : "60",
+    "eco" : "D00",
+    "phase" : "MIDDLEGAME",
+    "sideToMove" : "w"
+  }, {
+    "canonicalFen" : "1r2r1k1/2p2pp1/2p1b2p/p1N1p1n1/4P3/2NPP2P/P1P3P1/RR4K1 b - -",
+    "occurrenceCount" : 1,
+    "sampleGameId" : "https://www.chess.com/game/live/101253729607",
+    "samplePlayerId" : "INVICTVS",
+    "whitePlayer" : "Hikaru",
+    "blackPlayer" : "INVICTVS",
+    "samplePly" : 38,
+    "sampleTimeControl" : "60",
+    "eco" : "C25",
+    "phase" : "MIDDLEGAME",
+    "sideToMove" : "b"
+  }, {
+    "canonicalFen" : "r1b1rnk1/2q2pbp/p2p2p1/2pPp2n/2P1P3/P1N1BN1P/3Q1PP1/1R1BR1K1 b - -",
+    "occurrenceCount" : 1,
+    "sampleGameId" : "https://www.chess.com/game/live/99182674701",
+    "samplePlayerId" : "Hikaru",
+    "whitePlayer" : "LeonLivaic2000",
+    "blackPlayer" : "Hikaru",
+    "samplePly" : 38,
+    "sampleTimeControl" : "180+1",
+    "eco" : "A41",
+    "phase" : "MIDDLEGAME",
+    "sideToMove" : "b"
+  }, {
+    "canonicalFen" : "4k3/6R1/1p6/3P1Kp1/4B3/p3r3/P2b4/8 b - -",
+    "occurrenceCount" : 1,
+    "sampleGameId" : "https://www.chess.com/game/live/100722163413",
+    "samplePlayerId" : "OhanyanEminChess",
+    "whitePlayer" : "DanielNaroditsky",
+    "blackPlayer" : "OhanyanEminChess",
+    "samplePly" : 92,
+    "sampleTimeControl" : "60",
+    "eco" : "C47",
+    "phase" : "ENDGAME",
+    "sideToMove" : "b"
+  }, {
+    "canonicalFen" : "r1q1k1nr/ppp1ppb1/2np2p1/8/3PP2p/2N1BNPb/PPP2PBP/R2QR1K1 w kq -",
+    "occurrenceCount" : 1,
+    "sampleGameId" : "https://www.chess.com/game/live/100733649209",
+    "samplePlayerId" : "ShadowKing71",
+    "whitePlayer" : "ShadowKing71",
+    "blackPlayer" : "Hikaru",
+    "samplePly" : 19,
+    "sampleTimeControl" : "180",
+    "eco" : "A04",
+    "phase" : "OPENING",
+    "sideToMove" : "w"
+  }, {
+    "canonicalFen" : "3rr3/p4pkp/2p3p1/2P2b2/8/4qNP1/P3P1BP/2R2Q1K b - -",
+    "occurrenceCount" : 1,
+    "sampleGameId" : "https://www.chess.com/game/live/91346927991",
+    "samplePlayerId" : "DanielNaroditsky",
+    "whitePlayer" : "Eragon",
+    "blackPlayer" : "DanielNaroditsky",
+    "samplePly" : 46,
+    "sampleTimeControl" : "30",
+    "eco" : "A49",
+    "phase" : "ENDGAME",
+    "sideToMove" : "b"
+  }, {
+    "canonicalFen" : "8/8/8/8/2R1k3/1K6/7r/8 b - -",
+    "occurrenceCount" : 1,
+    "sampleGameId" : "https://www.chess.com/game/live/101244107939",
+    "samplePlayerId" : "Hikaru",
+    "whitePlayer" : "Chesswizard_2007",
+    "blackPlayer" : "Hikaru",
+    "samplePly" : 154,
+    "sampleTimeControl" : "180",
+    "eco" : "E90",
+    "phase" : "ENDGAME",
+    "sideToMove" : "b"
+  } ]
+}

@@ -1,0 +1,53 @@
+{
+  "scorecards" : [ {
+    "modelId" : "Model_A",
+    "modelName" : "Structural-Only Baseline (Status Quo)",
+    "indexingLatencyScore" : 10,
+    "memoryFootprintScore" : 9,
+    "dynamicCoherenceScore" : 3,
+    "searchFlexibilityScore" : 5,
+    "determinismScore" : 10,
+    "implementationSimplicityScore" : 10,
+    "totalWeightedScore" : 7.15,
+    "recommendationVerdict" : "RETAIN_AS_STRUCTURAL_SUBSTRATE",
+    "rationale" : "Exceptional throughput and determinism make it ideal as a static candidate-generation foundation, but unsuited as a sole dynamic similarity proxy due to false-familiarity blind spots."
+  }, {
+    "modelId" : "Model_B",
+    "modelName" : "Structurally Supplemented Dynamic Filtering",
+    "indexingLatencyScore" : 8,
+    "memoryFootprintScore" : 8,
+    "dynamicCoherenceScore" : 7,
+    "searchFlexibilityScore" : 8,
+    "determinismScore" : 8,
+    "implementationSimplicityScore" : 8,
+    "totalWeightedScore" : 7.85,
+    "recommendationVerdict" : "NEAR_TERM_RECOMMENDED_EXTENSION",
+    "rationale" : "Retains static graph construction speed while applying cheap dynamic screening (depth 8-12) at query/retrieval time to eliminate severe evaluation divergence."
+  }, {
+    "modelId" : "Model_C",
+    "modelName" : "Fused Static-Dynamic Similarity",
+    "indexingLatencyScore" : 3,
+    "memoryFootprintScore" : 6,
+    "dynamicCoherenceScore" : 8,
+    "searchFlexibilityScore" : 6,
+    "determinismScore" : 6,
+    "implementationSimplicityScore" : 5,
+    "totalWeightedScore" : 5.65,
+    "recommendationVerdict" : "NOT_RECOMMENDED",
+    "rationale" : "Requires engine evaluation for every historical position before graph construction; couples structural clusters to engine version and search depth volatility."
+  }, {
+    "modelId" : "Model_D",
+    "modelName" : "Orthogonal Dual-Space Relationship Model",
+    "indexingLatencyScore" : 7,
+    "memoryFootprintScore" : 8,
+    "dynamicCoherenceScore" : 9,
+    "searchFlexibilityScore" : 10,
+    "determinismScore" : 9,
+    "implementationSimplicityScore" : 7,
+    "totalWeightedScore" : 8.45,
+    "recommendationVerdict" : "TARGET_LONG_TERM_ARCHITECTURE",
+    "rationale" : "Decouples static pawn/piece structure from dynamic game state/criticality into orthogonal facets. Users can query by pawn structure and filter by dynamic state without topological interference."
+  } ],
+  "recommendedArchitecture" : "Model D (Orthogonal Dual-Space) with Model B as Phase 2 bridge",
+  "architecturalRoadmap" : [ "Phase 1 (Complete): Production static structural clustering (Issue #702) establishes robust pawn/piece topology.", "Phase 2: Introduce on-demand dynamic filtering (Model B) using screening-depth Stockfish evaluation to flag false familiarity.", "Phase 3: Formalize orthogonal dual-space indexing (Model D), storing static cluster IDs and dynamic criticality/evaluation facets independently." ]
+}

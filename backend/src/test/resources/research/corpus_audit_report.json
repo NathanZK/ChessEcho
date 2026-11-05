@@ -1,0 +1,80 @@
+{
+  "corpusA" : {
+    "corpusName" : "Corpus A (GM Scaling)",
+    "totalPositions" : 10000,
+    "uniqueFens" : 10000,
+    "whiteCount" : 5025,
+    "blackCount" : 4975,
+    "whitePct" : 50.24999999999999,
+    "blackPct" : 49.75,
+    "openingCount" : 2350,
+    "middlegameCount" : 5700,
+    "endgameCount" : 1950,
+    "openingPct" : 23.5,
+    "middlegamePct" : 56.99999999999999,
+    "endgamePct" : 19.5,
+    "ecoDistribution" : {
+      "C" : 1206,
+      "B" : 3624,
+      "D" : 1171,
+      "A" : 3218,
+      "E" : 781
+    },
+    "maxFamilyPct" : 14.000000000000002,
+    "maxFamilyName" : "B0",
+    "uncapturableEpCount" : 0,
+    "allCriteriaPassed" : true
+  },
+  "corpusB1" : {
+    "corpusName" : "Corpus B1 (Single Repertoire - Naroditsky)",
+    "totalPositions" : 3000,
+    "uniqueFens" : 3000,
+    "whiteCount" : 1457,
+    "blackCount" : 1543,
+    "whitePct" : 48.56666666666667,
+    "blackPct" : 51.43333333333333,
+    "openingCount" : 451,
+    "middlegameCount" : 606,
+    "endgameCount" : 1943,
+    "openingPct" : 15.033333333333335,
+    "middlegamePct" : 20.200000000000003,
+    "endgamePct" : 64.76666666666667,
+    "ecoDistribution" : {
+      "B" : 1026,
+      "C" : 301,
+      "E" : 256,
+      "D" : 364,
+      "A" : 1053
+    },
+    "maxFamilyPct" : 17.566666666666666,
+    "maxFamilyName" : "A0",
+    "uncapturableEpCount" : 0,
+    "allCriteriaPassed" : false
+  },
+  "corpusB2" : {
+    "corpusName" : "Corpus B2 (1700-1900 Blitz Cohort)",
+    "totalPositions" : 10000,
+    "uniqueFens" : 10000,
+    "whiteCount" : 5048,
+    "blackCount" : 4952,
+    "whitePct" : 50.480000000000004,
+    "blackPct" : 49.519999999999996,
+    "openingCount" : 2588,
+    "middlegameCount" : 2616,
+    "endgameCount" : 4796,
+    "openingPct" : 25.88,
+    "middlegamePct" : 26.16,
+    "endgamePct" : 47.96,
+    "ecoDistribution" : {
+      "C" : 5030,
+      "A" : 1917,
+      "B" : 2718,
+      "D" : 328,
+      "E" : 7
+    },
+    "maxFamilyPct" : 21.2,
+    "maxFamilyName" : "C4",
+    "uncapturableEpCount" : 0,
+    "allCriteriaPassed" : false
+  }
+}
