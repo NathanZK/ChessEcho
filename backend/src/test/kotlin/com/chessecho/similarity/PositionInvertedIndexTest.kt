@@ -102,4 +102,78 @@ class PositionInvertedIndexTest {
         assertEquals(listOf(whiteDoc.positionId), explicitWhiteCandidates.map { it.positionId })
         assertEquals(listOf(blackDoc.positionId), blackCandidates.map { it.positionId })
     }
+
+    @Test
+    fun `generateCandidates with alpha 1_0 prioritizes pawn matches over piece matches`() {
+        val index = PositionInvertedIndex()
+        // docPawn shares 2 pawn tokens and 0 piece tokens with query
+        val docPawn =
+            PositionDocument(
+                positionId = UUID.randomUUID(),
+                fen = "fenPawn w - -",
+                canonicalFen = "fenPawn w - -",
+                terms = mapOf("Ie4" to 1.0, "Id4" to 1.0),
+            )
+        // docPiece shares 0 pawn tokens and 10 piece tokens with query
+        val docPiece =
+            PositionDocument(
+                positionId = UUID.randomUUID(),
+                fen = "fenPiece w - -",
+                canonicalFen = "fenPiece w - -",
+                terms = (1..10).associate { "piece|white|knight|s$it" to 1.0 },
+            )
+        index.index(listOf(docPawn, docPiece))
+
+        val queryTerms = setOf("Ie4", "Id4") + (1..10).map { "piece|white|knight|s$it" }
+
+        // With alpha = 1.0, docPawn must rank first
+        val pawnFirst = index.generateCandidates(queryTerms, activeTurn = "w", alpha = 1.0)
+        assertEquals(docPawn.positionId, pawnFirst[0].positionId)
+
+        // With alpha = 0.0, docPiece must rank first
+        val pieceFirst = index.generateCandidates(queryTerms, activeTurn = "w", alpha = 0.0)
+        assertEquals(docPiece.positionId, pieceFirst[0].positionId)
+    }
+
+    @Test
+    fun `generateCandidates breaks score ties using canonicalFen ascending`() {
+        val index = PositionInvertedIndex()
+        val docZ =
+            PositionDocument(
+                positionId = UUID.randomUUID(),
+                fen = "z_fen w - - 0 1",
+                canonicalFen = "z_fen w - - 0 1",
+                terms = mapOf("P(e4)" to 1.0),
+            )
+        val docA =
+            PositionDocument(
+                positionId = UUID.randomUUID(),
+                fen = "a_fen w - - 0 1",
+                canonicalFen = "a_fen w - - 0 1",
+                terms = mapOf("P(e4)" to 1.0),
+            )
+        index.index(listOf(docZ, docA))
+
+        val candidates = index.generateCandidates(setOf("P(e4)"), activeTurn = "w", maxCandidates = 10)
+        assertEquals(2, candidates.size)
+        assertEquals("a_fen w - - 0 1", candidates[0].canonicalFen)
+        assertEquals("z_fen w - - 0 1", candidates[1].canonicalFen)
+    }
+
+    @Test
+    fun `generateCandidates rejects invalid alpha`() {
+        val index = PositionInvertedIndex()
+        val doc = extractor.extractDocument(UUID.randomUUID(), fen1, includeReachability = false)
+        index.index(listOf(doc))
+
+        org.junit.jupiter.api.assertThrows<IllegalArgumentException> {
+            index.generateCandidates(doc.terms.keys, activeTurn = "w", maxCandidates = 10, alpha = -0.1)
+        }
+        org.junit.jupiter.api.assertThrows<IllegalArgumentException> {
+            index.generateCandidates(doc.terms.keys, activeTurn = "w", maxCandidates = 10, alpha = 1.1)
+        }
+        org.junit.jupiter.api.assertThrows<IllegalArgumentException> {
+            index.generateCandidates(doc.terms.keys, activeTurn = "w", maxCandidates = 10, alpha = Double.NaN)
+        }
+    }
 }

@@ -1069,3 +1069,51 @@ CREATE TRIGGER trg_evaluation_evidence_row_immutable
     BEFORE UPDATE OR DELETE ON evaluation_evidence_row
     FOR EACH ROW
     EXECUTE FUNCTION reject_evaluation_evidence_mutation();
+
+
+-- Position Clustering Schema (Issue #702)
+CREATE TABLE position_cluster_snapshot (
+    id                  UUID PRIMARY KEY,
+    account_id          UUID NOT NULL REFERENCES chess_account(id) ON DELETE CASCADE,
+    snapshot_version    INT NOT NULL,
+    status              VARCHAR(20) NOT NULL CHECK (status IN ('GENERATING', 'ACTIVE', 'SUPERSEDED', 'FAILED', 'EXPERIMENTAL')),
+    alpha               DOUBLE PRECISION NOT NULL DEFAULT 0.60 CHECK (alpha >= 0.0 AND alpha <= 1.0),
+    top_k               INT NOT NULL CHECK (top_k >= 1),
+    floor_threshold     DOUBLE PRECISION NOT NULL CHECK (floor_threshold >= 0.0 AND floor_threshold <= 1.0),
+    top1_threshold      DOUBLE PRECISION NOT NULL CHECK (top1_threshold >= 0.0 AND top1_threshold <= 1.0),
+    resolution          DOUBLE PRECISION NOT NULL CHECK (resolution > 0.0),
+    centroid_threshold  DOUBLE PRECISION NOT NULL CHECK (centroid_threshold >= 0.0 AND centroid_threshold <= 1.0),
+    total_positions     INT NOT NULL DEFAULT 0,
+    cluster_count       INT NOT NULL DEFAULT 0,
+    unassigned_count    INT NOT NULL DEFAULT 0,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at        TIMESTAMPTZ,
+    error_message       TEXT,
+    CONSTRAINT uk_position_cluster_snapshot_account_version UNIQUE (account_id, snapshot_version)
+);
+
+CREATE UNIQUE INDEX uk_position_cluster_snapshot_active_account ON position_cluster_snapshot (account_id) WHERE (status = 'ACTIVE');
+CREATE INDEX idx_position_cluster_snapshot_account ON position_cluster_snapshot (account_id);
+
+CREATE TABLE position_cluster (
+    id                  UUID PRIMARY KEY,
+    snapshot_id         UUID NOT NULL REFERENCES position_cluster_snapshot(id) ON DELETE CASCADE,
+    cluster_index       INT NOT NULL,
+    size                INT NOT NULL CHECK (size > 0),
+    centroid_vector     JSONB NOT NULL,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uk_position_cluster_snapshot_index UNIQUE (snapshot_id, cluster_index)
+);
+
+CREATE INDEX idx_position_cluster_snapshot_id ON position_cluster (snapshot_id);
+
+CREATE TABLE position_cluster_assignment (
+    snapshot_id         UUID NOT NULL REFERENCES position_cluster_snapshot(id) ON DELETE CASCADE,
+    position_id         UUID NOT NULL REFERENCES position(id) ON DELETE CASCADE,
+    cluster_id          UUID REFERENCES position_cluster(id) ON DELETE SET NULL,
+    assignment_status   VARCHAR(20) NOT NULL CHECK (assignment_status IN ('ASSIGNED', 'OUTLIER_EVICTED', 'ISOLATE')),
+    centroid_similarity DOUBLE PRECISION,
+    PRIMARY KEY (snapshot_id, position_id)
+);
+
+CREATE INDEX idx_position_cluster_assignment_cluster ON position_cluster_assignment (cluster_id);

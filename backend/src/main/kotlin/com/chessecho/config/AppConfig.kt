@@ -14,6 +14,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer
     ChessPubApiProperties::class,
     PracticalEvidenceProperties::class,
     SessionCookieProperties::class,
+    PositionClusteringProperties::class,
 )
 class AppConfig {
     @Bean
