@@ -1,0 +1,341 @@
+{
+  "metadata" : {
+    "experimentId" : "DIAG-ISSUE-722-TOKEN-INTERSECTION",
+    "timestamp" : "2026-11-06T12:37:22.474992Z",
+    "corpusSize" : 10000,
+    "queryCount" : 250,
+    "meanUniverseSize" : 5001.8,
+    "zeroEngineSearchesGuaranteed" : true
+  },
+  "queryVerification" : {
+    "totalQueries" : 250,
+    "whiteCount" : 139,
+    "blackCount" : 111,
+    "meanUniverseSize" : 5001.8,
+    "samplingSeed" : 42,
+    "kotlinRandomIdentitiesVerified" : true,
+    "historicalJavaRandomDistinctionDocumented" : true
+  },
+  "tokenSystemComparison" : {
+    "literalStringOverlapPercentage" : 0.0,
+    "dynamicTokenCountPerPosition" : {
+      "mean" : 30.0349,
+      "median" : 30.0,
+      "min" : 0.0,
+      "max" : 64.0
+    },
+    "attackClosureTokenCountPerPosition" : {
+      "mean" : 4.8027,
+      "median" : 5.0,
+      "min" : 0.0,
+      "max" : 17.0
+    },
+    "defenseClosureTokenCountPerPosition" : {
+      "mean" : 33.2517,
+      "median" : 36.0,
+      "min" : 0.0,
+      "max" : 59.0
+    },
+    "dynamicFeaturesWithZeroClosureCounterpart" : [ "Player capture flag (?px)", "Opponent capture flag (?ox)", "Check delivery (?+)", "Pawn promotion (?=)", "Checkmate flag (?#)", "Piece sacrifice (?S, !S<piece>)", "Move sequence / temporal rhythm (!-<piece>, !-<p1><p2>)", "Consecutive capture sequences (!x<c1><c2>)", "Multi-ply continuation reactions" ],
+    "closureFeaturesWithZeroDynamicCounterpart" : [ "Pawn-Pawn mutual defense chains (defense|pawn|pawn|sq)", "Minor piece piece-protection (defense|knight|pawn|sq, defense|bishop|piece|sq)", "Major piece battery defense (defense|rook|rook|sq, defense|queen|piece|sq)", "King shelter and guard (defense|king|piece|sq)", "Absolute target square coordinates (a1..h8)", "Unactivated static potential attacks" ],
+    "semanticCorrespondenceDefinitions" : {
+      "Created Attack <-> Static Attack" : "Dynamic '!S>T' corresponds semantically to static 'attack|S|T|*' when source piece S attacks target piece T, abstracted over square coordinates.",
+      "Capture Event <-> Static Attack" : "Immediate move-0 capture of piece T by piece S corresponds to static 'attack|S|T|sq' on the destination square.",
+      "Tactical Tension <-> Mutual Attack" : "Dynamic reciprocal threats correspond to dual static attack closure terms between opposing pieces."
+    }
+  },
+  "attackClosureFailureAnalysis" : {
+    "meanPositiveScorePoolSize" : 603.212,
+    "medianPositiveScorePoolSize" : 532,
+    "minPositiveScorePoolSize" : 0,
+    "maxPositiveScorePoolSize" : 2022,
+    "poolExhaustionPercentageByBudget" : {
+      "budget_50" : 5.6000000000000005,
+      "budget_80" : 9.2,
+      "budget_200" : 21.2,
+      "budget_500" : 48.4,
+      "budget_1000" : 79.60000000000001
+    },
+    "refTop10ZeroAttackOverlapCount" : 2055,
+    "refTop10ZeroAttackOverlapPercentage" : 82.19999999999999,
+    "refTop20ZeroAttackOverlapCount" : 4143,
+    "refTop20ZeroAttackOverlapPercentage" : 82.86,
+    "squareSpecificityBreakdown" : {
+      "exactSquareMatchCount" : 445,
+      "exactSquareMatchPercentage" : 17.8,
+      "samePieceTypeDifferentSquareCount" : 1607,
+      "samePieceTypeDifferentSquarePercentage" : 64.28,
+      "completelyDisjointPieceTypesCount" : 448,
+      "completelyDisjointPieceTypesPercentage" : 17.919999999999998
+    }
+  },
+  "defenseClosureBudgetAnalysis" : {
+    "meanPositiveScorePoolSize" : 4347.516,
+    "poolExhaustionPercentageByBudget" : {
+      "budget_50" : 0.4,
+      "budget_80" : 0.4,
+      "budget_200" : 1.2,
+      "budget_500" : 2.8000000000000003,
+      "budget_1000" : 3.5999999999999996
+    },
+    "incrementalReferenceCandidatesByBudget" : {
+      "budget_50" : {
+        "budget" : 50,
+        "totalRetrievedRefCandidatesTop10" : 69,
+        "newlyEnteringRefCandidatesTop10" : 69,
+        "recallAt10" : 0.0276
+      },
+      "budget_80" : {
+        "budget" : 80,
+        "totalRetrievedRefCandidatesTop10" : 106,
+        "newlyEnteringRefCandidatesTop10" : 37,
+        "recallAt10" : 0.0424
+      },
+      "budget_200" : {
+        "budget" : 200,
+        "totalRetrievedRefCandidatesTop10" : 213,
+        "newlyEnteringRefCandidatesTop10" : 107,
+        "recallAt10" : 0.0852
+      },
+      "budget_500" : {
+        "budget" : 500,
+        "totalRetrievedRefCandidatesTop10" : 406,
+        "newlyEnteringRefCandidatesTop10" : 193,
+        "recallAt10" : 0.1624
+      },
+      "budget_1000" : {
+        "budget" : 1000,
+        "totalRetrievedRefCandidatesTop10" : 725,
+        "newlyEnteringRefCandidatesTop10" : 319,
+        "recallAt10" : 0.29
+      }
+    },
+    "tokenFamilyScoreContributions" : {
+      "pawn_pawn_chains" : 7.062077139611834,
+      "minor_piece_protection" : 36.74996296113388,
+      "major_piece_coordination" : 24.040693367573706,
+      "king_shelter_defense" : 32.14726653168058
+    },
+    "bm25VsTfidfRecallComparison" : {
+      "budget_50" : {
+        "budget" : 50,
+        "bm25RecallAt10" : 0.0276,
+        "tfidfRecallAt10" : 0.0268,
+        "bm25RecallAt20" : 0.0246,
+        "tfidfRecallAt20" : 0.0244
+      },
+      "budget_80" : {
+        "budget" : 80,
+        "bm25RecallAt10" : 0.0424,
+        "tfidfRecallAt10" : 0.0368,
+        "bm25RecallAt20" : 0.0372,
+        "tfidfRecallAt20" : 0.0336
+      },
+      "budget_200" : {
+        "budget" : 200,
+        "bm25RecallAt10" : 0.0852,
+        "tfidfRecallAt10" : 0.0772,
+        "bm25RecallAt20" : 0.0746,
+        "tfidfRecallAt20" : 0.0732
+      },
+      "budget_500" : {
+        "budget" : 500,
+        "bm25RecallAt10" : 0.1624,
+        "tfidfRecallAt10" : 0.1784,
+        "bm25RecallAt20" : 0.1582,
+        "tfidfRecallAt20" : 0.168
+      },
+      "budget_1000" : {
+        "budget" : 1000,
+        "bm25RecallAt10" : 0.29,
+        "tfidfRecallAt10" : 0.3116,
+        "bm25RecallAt20" : 0.281,
+        "tfidfRecallAt20" : 0.292
+      }
+    }
+  },
+  "missedCandidateClassification" : {
+    "attackClosureByBudget" : {
+      "budget_50" : {
+        "budget" : 50,
+        "totalTop10ReferenceInstances" : 2500,
+        "category1Disjoint" : 2055,
+        "category1DisjointPct" : 82.19999999999999,
+        "category2InsufficientScore" : 0,
+        "category2InsufficientScorePct" : 0.0,
+        "category3PositiveBelowBudget" : 400,
+        "category3PositiveBelowBudgetPct" : 16.0,
+        "category4Retrieved" : 45,
+        "category4RetrievedPct" : 1.7999999999999998
+      },
+      "budget_80" : {
+        "budget" : 80,
+        "totalTop10ReferenceInstances" : 2500,
+        "category1Disjoint" : 2055,
+        "category1DisjointPct" : 82.19999999999999,
+        "category2InsufficientScore" : 0,
+        "category2InsufficientScorePct" : 0.0,
+        "category3PositiveBelowBudget" : 378,
+        "category3PositiveBelowBudgetPct" : 15.120000000000001,
+        "category4Retrieved" : 67,
+        "category4RetrievedPct" : 2.68
+      },
+      "budget_200" : {
+        "budget" : 200,
+        "totalTop10ReferenceInstances" : 2500,
+        "category1Disjoint" : 2055,
+        "category1DisjointPct" : 82.19999999999999,
+        "category2InsufficientScore" : 0,
+        "category2InsufficientScorePct" : 0.0,
+        "category3PositiveBelowBudget" : 301,
+        "category3PositiveBelowBudgetPct" : 12.04,
+        "category4Retrieved" : 144,
+        "category4RetrievedPct" : 5.76
+      },
+      "budget_500" : {
+        "budget" : 500,
+        "totalTop10ReferenceInstances" : 2500,
+        "category1Disjoint" : 2055,
+        "category1DisjointPct" : 82.19999999999999,
+        "category2InsufficientScore" : 0,
+        "category2InsufficientScorePct" : 0.0,
+        "category3PositiveBelowBudget" : 160,
+        "category3PositiveBelowBudgetPct" : 6.4,
+        "category4Retrieved" : 285,
+        "category4RetrievedPct" : 11.4
+      },
+      "budget_1000" : {
+        "budget" : 1000,
+        "totalTop10ReferenceInstances" : 2500,
+        "category1Disjoint" : 2055,
+        "category1DisjointPct" : 82.19999999999999,
+        "category2InsufficientScore" : 0,
+        "category2InsufficientScorePct" : 0.0,
+        "category3PositiveBelowBudget" : 46,
+        "category3PositiveBelowBudgetPct" : 1.8399999999999999,
+        "category4Retrieved" : 399,
+        "category4RetrievedPct" : 15.959999999999999
+      }
+    },
+    "defenseClosureByBudget" : {
+      "budget_50" : {
+        "budget" : 50,
+        "totalTop10ReferenceInstances" : 2500,
+        "category1Disjoint" : 278,
+        "category1DisjointPct" : 11.12,
+        "category2InsufficientScore" : 0,
+        "category2InsufficientScorePct" : 0.0,
+        "category3PositiveBelowBudget" : 2153,
+        "category3PositiveBelowBudgetPct" : 86.11999999999999,
+        "category4Retrieved" : 69,
+        "category4RetrievedPct" : 2.76
+      },
+      "budget_80" : {
+        "budget" : 80,
+        "totalTop10ReferenceInstances" : 2500,
+        "category1Disjoint" : 278,
+        "category1DisjointPct" : 11.12,
+        "category2InsufficientScore" : 0,
+        "category2InsufficientScorePct" : 0.0,
+        "category3PositiveBelowBudget" : 2116,
+        "category3PositiveBelowBudgetPct" : 84.64,
+        "category4Retrieved" : 106,
+        "category4RetrievedPct" : 4.24
+      },
+      "budget_200" : {
+        "budget" : 200,
+        "totalTop10ReferenceInstances" : 2500,
+        "category1Disjoint" : 278,
+        "category1DisjointPct" : 11.12,
+        "category2InsufficientScore" : 0,
+        "category2InsufficientScorePct" : 0.0,
+        "category3PositiveBelowBudget" : 2009,
+        "category3PositiveBelowBudgetPct" : 80.36,
+        "category4Retrieved" : 213,
+        "category4RetrievedPct" : 8.52
+      },
+      "budget_500" : {
+        "budget" : 500,
+        "totalTop10ReferenceInstances" : 2500,
+        "category1Disjoint" : 278,
+        "category1DisjointPct" : 11.12,
+        "category2InsufficientScore" : 0,
+        "category2InsufficientScorePct" : 0.0,
+        "category3PositiveBelowBudget" : 1816,
+        "category3PositiveBelowBudgetPct" : 72.64,
+        "category4Retrieved" : 406,
+        "category4RetrievedPct" : 16.24
+      },
+      "budget_1000" : {
+        "budget" : 1000,
+        "totalTop10ReferenceInstances" : 2500,
+        "category1Disjoint" : 278,
+        "category1DisjointPct" : 11.12,
+        "category2InsufficientScore" : 0,
+        "category2InsufficientScorePct" : 0.0,
+        "category3PositiveBelowBudget" : 1497,
+        "category3PositiveBelowBudgetPct" : 59.88,
+        "category4Retrieved" : 725,
+        "category4RetrievedPct" : 28.999999999999996
+      }
+    }
+  },
+  "persistentZeroRecallAnalysis" : {
+    "persistentZeroRecallQueriesAtN1000Count" : 18,
+    "persistentZeroRecallQueryIds" : [ "0b2340d7-4bac-5bbc-9fd8-8851083761c9", "89f197a4-947f-5af6-8862-b967a70c75c9", "a05f8fd5-c6c7-59a0-af75-c6eef1af8a04", "98f19d31-1626-5242-91c2-7e5b782eec60", "338665bb-1ed8-5178-aa0b-f2e905915f91", "55bf24d6-49f5-58ab-889c-656491f06cae", "fa3b9d1d-b99f-5bd9-98cb-1035ce3bb15a", "918e500b-dc27-54e4-971e-35a2f0c64cff", "8b62f318-19a6-5190-a0da-ffccd224401e", "9494ddd1-3665-5cbe-98c4-3399205789e5", "8b31616e-a393-594d-a397-639b18aebe04", "8e7f7867-64f9-5a48-bb31-9f2201408e38", "3d941054-2e7b-5a60-b654-e096f7c635ac", "0359a6cf-d427-5ad5-bede-a6abd07b645e", "1b31ae4d-1259-5a61-bdec-c045a588b25c", "97d69a72-6d91-54ea-9b7f-45db67b3c740", "245cb777-665f-585f-9c49-c6f571450b95", "851496e3-2c70-53df-989d-dcb02607bb84" ],
+    "meanDynamicTokensPerPersistentZeroQuery" : 23.666666666666668,
+    "meanDynamicTokensPerRetrievedQuery" : 29.913793103448278,
+    "sacrificeRatePersistentZeroQueries" : 33.33333333333333,
+    "sacrificeRateRetrievedQueries" : 30.603448275862068,
+    "tacticalExplanations" : [ "Dynamic references depend on deep multi-ply preparatory piece sacrifices (?S) that completely reconstruct the board.", "Positions with extreme dynamic mobility produce continuations where pieces flee initial defensive squares.", "Tactical continuations featuring checkmate attacks (?#) diverge completely from quiet static pawn defense networks." ]
+  },
+  "representativeExamples" : [ {
+    "category" : "Category 1 (Zero Overlap)",
+    "system" : "ATTACK_CLOSURE",
+    "budget" : 50,
+    "queryId" : "74b5f658-4e89-5882-9d87-9ad6f5a81893",
+    "queryFen" : "r2k1q1r/pppbn2p/2np4/5p1Q/2PPpN2/P1N1P3/1P2BP1P/2KR3R b - -",
+    "candidateId" : "6ac2d66a-d842-528c-b888-d8366d7872b6",
+    "candidateFen" : "1r3rk1/pp2ppbp/3p2p1/P2Pn3/3NP3/4B1Pq/P2N1P2/2RQ1RK1 b - -",
+    "dynamicRank" : 1,
+    "closureRank" : null,
+    "closureScore" : 0.0,
+    "dynamicTokensShared" : [ "!-P", "!-R", "!-K", "!-Q", "!Q>N", "!Q>P" ],
+    "queryClosureTokens" : [ "attack|knight|pawn|e4", "attack|queen|pawn|f5", "attack|queen|pawn|h7", "attack|knight|pawn|d4" ],
+    "candidateClosureTokens" : [ "attack|queen|rook|f1", "attack|queen|pawn|g3" ],
+    "sharedClosureTokens" : [ ],
+    "diagnosticExplanation" : "The dynamic reference shares rich tactical activity (!-P, !-R, !-K), but neither position shares a single static attack relationship on the same square. Attack closure assigns score 0.0, causing total omission."
+  }, {
+    "category" : "Category 3 (Ranked Below Budget)",
+    "system" : "DEFENSE_CLOSURE",
+    "budget" : 50,
+    "queryId" : "74b5f658-4e89-5882-9d87-9ad6f5a81893",
+    "queryFen" : "r2k1q1r/pppbn2p/2np4/5p1Q/2PPpN2/P1N1P3/1P2BP1P/2KR3R b - -",
+    "candidateId" : "6ac2d66a-d842-528c-b888-d8366d7872b6",
+    "candidateFen" : "1r3rk1/pp2ppbp/3p2p1/P2Pn3/3NP3/4B1Pq/P2N1P2/2RQ1RK1 b - -",
+    "dynamicRank" : 2,
+    "closureRank" : 142,
+    "closureScore" : 1.9900301719506541,
+    "dynamicTokensShared" : [ "!-P", "!-R", "!-K", "!-Q", "!Q>N", "!Q>P" ],
+    "queryClosureTokens" : [ "defense|king|rook|d1", "defense|king|pawn|b2", "defense|rook|king|c1", "defense|rook|rook|h1", "defense|rook|pawn|d4" ],
+    "candidateClosureTokens" : [ "defense|rook|queen|d1", "defense|queen|rook|c1", "defense|queen|rook|f1", "defense|queen|knight|d2", "defense|rook|king|g1" ],
+    "sharedClosureTokens" : [ "defense|pawn|pawn|d6" ],
+    "diagnosticExplanation" : "Candidate shares valid defensive relationships (defense|pawn|pawn|d6), achieving positive BM25 score, but scores below generic pawn-chain candidates, requiring budget expansion to N=200 to retrieve."
+  }, {
+    "category" : "Category 4 (Successfully Retrieved)",
+    "system" : "DEFENSE_CLOSURE",
+    "budget" : 50,
+    "queryId" : "74b5f658-4e89-5882-9d87-9ad6f5a81893",
+    "queryFen" : "r2k1q1r/pppbn2p/2np4/5p1Q/2PPpN2/P1N1P3/1P2BP1P/2KR3R b - -",
+    "candidateId" : "59413222-57f0-58a6-b057-c7af64ea430e",
+    "candidateFen" : "r6r/1ppnk1p1/p2qpnB1/3p4/3P2pP/2N1P3/PPP1QP2/2KR3R b - -",
+    "dynamicRank" : 1,
+    "closureRank" : 8,
+    "closureScore" : 24.376003646907833,
+    "dynamicTokensShared" : [ "!-P", "!-R", "!-K", "!-Q", "!Q>P", "!R>Q" ],
+    "queryClosureTokens" : [ "defense|king|rook|d1", "defense|king|pawn|b2", "defense|rook|king|c1", "defense|rook|rook|h1", "defense|rook|pawn|d4" ],
+    "candidateClosureTokens" : [ "defense|king|rook|d1", "defense|king|pawn|b2", "defense|king|pawn|c2", "defense|rook|king|c1", "defense|rook|rook|h1" ],
+    "sharedClosureTokens" : [ "defense|king|rook|d1", "defense|king|pawn|b2", "defense|rook|king|c1", "defense|rook|rook|h1", "defense|rook|pawn|d4" ],
+    "diagnosticExplanation" : "Candidate shares multiple dense piece-protection networks (defense|king|rook|d1, defense|king|pawn|b2, defense|rook|king|c1), ranking 8th in defence BM25 and successfully entering the Top-50 candidate pool."
+  } ]
+}

@@ -1,0 +1,2360 @@
+{
+  "metadata" : {
+    "experimentId" : "EXP-ISSUE-722-CONNECTIVITY-CLOSURE-ABLATION",
+    "timestamp" : "2026-11-06T11:49:34.698880Z",
+    "gitCommit" : "c3f672e95ed5be3ed38a93a2ff64af424e1b920e",
+    "corpusSize" : 10000,
+    "queryCount" : 250,
+    "meanCandidateUniverseSize" : 5001.8,
+    "zeroEngineSearchesGuaranteed" : true,
+    "zeroProductionChangesGuaranteed" : true
+  },
+  "vocabularyStatistics" : {
+    "ATTACK_CLOSURE" : {
+      "vocabularySize" : 1508,
+      "avgDocumentLength" : 4.8027,
+      "medianDocumentLength" : 5,
+      "maxDocumentLength" : 17,
+      "emptyDocumentCount" : 271,
+      "emptyDocumentPercentage" : 2.71
+    },
+    "DEFENSE_CLOSURE" : {
+      "vocabularySize" : 1741,
+      "avgDocumentLength" : 33.2517,
+      "medianDocumentLength" : 36,
+      "maxDocumentLength" : 59,
+      "emptyDocumentCount" : 26,
+      "emptyDocumentPercentage" : 0.26
+    },
+    "COMBINED_CLOSURE" : {
+      "vocabularySize" : 3249,
+      "avgDocumentLength" : 38.0544,
+      "medianDocumentLength" : 41,
+      "maxDocumentLength" : 67,
+      "emptyDocumentCount" : 18,
+      "emptyDocumentPercentage" : 0.18
+    }
+  },
+  "diagnosticResults" : {
+    "populationSize" : 10000,
+    "emptyPvCount" : 2,
+    "nxqDiagnostic" : {
+      "captureType" : "N_x_Q",
+      "immediatePly0" : {
+        "totalEvents" : 21,
+        "matchedEvents" : 21,
+        "eventMatchRate" : 1.0,
+        "uniquePositions" : 21,
+        "matchedPositions" : 21,
+        "positionMatchRate" : 1.0
+      },
+      "preparatoryPlyK" : {
+        "totalEvents" : 363,
+        "matchedEvents" : 3,
+        "eventMatchRate" : 0.008264462809917356,
+        "uniquePositions" : 355,
+        "matchedPositions" : 3,
+        "positionMatchRate" : 0.008450704225352112,
+        "rootPlayerEvents" : 148,
+        "matchedRootPlayerEvents" : 0,
+        "rootPlayerEventMatchRate" : 0.0,
+        "meanPlyOfCapture" : 10.041322314049587
+      }
+    },
+    "captureFamilyBreakdown" : {
+      "N_x_Q" : {
+        "captureType" : "N_x_Q",
+        "immediatePly0" : {
+          "totalEvents" : 21,
+          "matchedEvents" : 21,
+          "eventMatchRate" : 1.0,
+          "uniquePositions" : 21,
+          "matchedPositions" : 21,
+          "positionMatchRate" : 1.0
+        },
+        "preparatoryPlyK" : {
+          "totalEvents" : 363,
+          "matchedEvents" : 3,
+          "eventMatchRate" : 0.008264462809917356,
+          "uniquePositions" : 355,
+          "matchedPositions" : 3,
+          "positionMatchRate" : 0.008450704225352112,
+          "rootPlayerEvents" : 148,
+          "matchedRootPlayerEvents" : 0,
+          "rootPlayerEventMatchRate" : 0.0,
+          "meanPlyOfCapture" : 10.041322314049587
+        }
+      },
+      "B_x_Q" : {
+        "captureType" : "B_x_Q",
+        "immediatePly0" : {
+          "totalEvents" : 14,
+          "matchedEvents" : 14,
+          "eventMatchRate" : 1.0,
+          "uniquePositions" : 14,
+          "matchedPositions" : 14,
+          "positionMatchRate" : 1.0
+        },
+        "preparatoryPlyK" : {
+          "totalEvents" : 302,
+          "matchedEvents" : 2,
+          "eventMatchRate" : 0.006622516556291391,
+          "uniquePositions" : 296,
+          "matchedPositions" : 2,
+          "positionMatchRate" : 0.006756756756756757,
+          "rootPlayerEvents" : 149,
+          "matchedRootPlayerEvents" : 2,
+          "rootPlayerEventMatchRate" : 0.013422818791946308,
+          "meanPlyOfCapture" : 9.619205298013245
+        }
+      },
+      "R_x_Q" : {
+        "captureType" : "R_x_Q",
+        "immediatePly0" : {
+          "totalEvents" : 31,
+          "matchedEvents" : 31,
+          "eventMatchRate" : 1.0,
+          "uniquePositions" : 31,
+          "matchedPositions" : 31,
+          "positionMatchRate" : 1.0
+        },
+        "preparatoryPlyK" : {
+          "totalEvents" : 714,
+          "matchedEvents" : 8,
+          "eventMatchRate" : 0.011204481792717087,
+          "uniquePositions" : 703,
+          "matchedPositions" : 8,
+          "positionMatchRate" : 0.011379800853485065,
+          "rootPlayerEvents" : 330,
+          "matchedRootPlayerEvents" : 3,
+          "rootPlayerEventMatchRate" : 0.00909090909090909,
+          "meanPlyOfCapture" : 10.089635854341736
+        }
+      },
+      "N_x_R" : {
+        "captureType" : "N_x_R",
+        "immediatePly0" : {
+          "totalEvents" : 24,
+          "matchedEvents" : 24,
+          "eventMatchRate" : 1.0,
+          "uniquePositions" : 24,
+          "matchedPositions" : 24,
+          "positionMatchRate" : 1.0
+        },
+        "preparatoryPlyK" : {
+          "totalEvents" : 448,
+          "matchedEvents" : 28,
+          "eventMatchRate" : 0.0625,
+          "uniquePositions" : 429,
+          "matchedPositions" : 28,
+          "positionMatchRate" : 0.06526806526806526,
+          "rootPlayerEvents" : 221,
+          "matchedRootPlayerEvents" : 8,
+          "rootPlayerEventMatchRate" : 0.03619909502262444,
+          "meanPlyOfCapture" : 10.484375
+        }
+      },
+      "B_x_R" : {
+        "captureType" : "B_x_R",
+        "immediatePly0" : {
+          "totalEvents" : 18,
+          "matchedEvents" : 18,
+          "eventMatchRate" : 1.0,
+          "uniquePositions" : 18,
+          "matchedPositions" : 18,
+          "positionMatchRate" : 1.0
+        },
+        "preparatoryPlyK" : {
+          "totalEvents" : 588,
+          "matchedEvents" : 27,
+          "eventMatchRate" : 0.04591836734693878,
+          "uniquePositions" : 559,
+          "matchedPositions" : 26,
+          "positionMatchRate" : 0.046511627906976744,
+          "rootPlayerEvents" : 334,
+          "matchedRootPlayerEvents" : 15,
+          "rootPlayerEventMatchRate" : 0.04491017964071856,
+          "meanPlyOfCapture" : 10.448979591836734
+        }
+      },
+      "P_x_Q" : {
+        "captureType" : "P_x_Q",
+        "immediatePly0" : {
+          "totalEvents" : 15,
+          "matchedEvents" : 15,
+          "eventMatchRate" : 1.0,
+          "uniquePositions" : 15,
+          "matchedPositions" : 15,
+          "positionMatchRate" : 1.0
+        },
+        "preparatoryPlyK" : {
+          "totalEvents" : 438,
+          "matchedEvents" : 2,
+          "eventMatchRate" : 0.0045662100456621,
+          "uniquePositions" : 436,
+          "matchedPositions" : 2,
+          "positionMatchRate" : 0.0045871559633027525,
+          "rootPlayerEvents" : 203,
+          "matchedRootPlayerEvents" : 2,
+          "rootPlayerEventMatchRate" : 0.009852216748768473,
+          "meanPlyOfCapture" : 10.280821917808218
+        }
+      }
+    }
+  },
+  "systemResults" : {
+    "SYSTEM_C1_ATTACK_CLOSURE" : {
+      "systemId" : "SYSTEM_C1_ATTACK_CLOSURE",
+      "representationType" : "ATTACK_CLOSURE",
+      "budgetResults" : {
+        "budget_50" : {
+          "requestedBudget" : 50,
+          "actualMeanCandidateCount" : 47.504,
+          "positiveCandidatePoolExhaustionRate" : 5.6000000000000005,
+          "actualMeanCandidateReductionRate" : 0.9905015116824041,
+          "nominalCandidateReductionRate" : 0.9900035987044664,
+          "bm25Metrics" : {
+            "recallAt10" : {
+              "mean" : 0.01800000000000001,
+              "median" : 0.0,
+              "stdDev" : 0.04142463035441596,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.0,
+              "p90" : 0.1,
+              "max" : 0.2
+            },
+            "recallAt20" : {
+              "mean" : 0.01679999999999999,
+              "median" : 0.0,
+              "stdDev" : 0.02859650328274423,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.05,
+              "p90" : 0.05,
+              "max" : 0.15
+            },
+            "purityAt10" : {
+              "mean" : 0.0036628571428571448,
+              "median" : 0.0,
+              "stdDev" : 0.008466730087072983,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.0,
+              "p90" : 0.02,
+              "max" : 0.04
+            },
+            "purityAt20" : {
+              "mean" : 0.006876770186335408,
+              "median" : 0.0,
+              "stdDev" : 0.011754722850566196,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.02,
+              "p90" : 0.02,
+              "max" : 0.06
+            },
+            "zeroRecallCountAt10" : 208,
+            "zeroRecallPercentageAt10" : 83.2,
+            "zeroRecallCountAt20" : 177,
+            "zeroRecallPercentageAt20" : 70.8
+          },
+          "tfidfMetrics" : {
+            "recallAt10" : {
+              "mean" : 0.016000000000000007,
+              "median" : 0.0,
+              "stdDev" : 0.03878143885933063,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.0,
+              "p90" : 0.1,
+              "max" : 0.2
+            },
+            "recallAt20" : {
+              "mean" : 0.017199999999999993,
+              "median" : 0.0,
+              "stdDev" : 0.029734828064073255,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.05,
+              "p90" : 0.05,
+              "max" : 0.15
+            },
+            "purityAt10" : {
+              "mean" : 0.003928888888888891,
+              "median" : 0.0,
+              "stdDev" : 0.01568740565856242,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.0,
+              "p90" : 0.02,
+              "max" : 0.2222222222222222
+            },
+            "purityAt20" : {
+              "mean" : 0.007973333333333337,
+              "median" : 0.0,
+              "stdDev" : 0.02356417620032579,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.02,
+              "p90" : 0.02,
+              "max" : 0.3333333333333333
+            },
+            "zeroRecallCountAt10" : 212,
+            "zeroRecallPercentageAt10" : 84.8,
+            "zeroRecallCountAt20" : 177,
+            "zeroRecallPercentageAt20" : 70.8
+          },
+          "unweightedOverlapDiagnostic" : {
+            "meanRetrievedOverlap" : 1.7019878260869568,
+            "medianRetrievedOverlap" : 2,
+            "maxRetrievedOverlap" : 6,
+            "bm25ReferenceTop10Overlap" : {
+              "mean" : 0.2056000000000001,
+              "median" : 0,
+              "max" : 3
+            },
+            "bm25ReferenceTop20Overlap" : {
+              "mean" : 0.19999999999999998,
+              "median" : 0,
+              "max" : 5
+            },
+            "tfidfReferenceTop10Overlap" : {
+              "mean" : 0.17360000000000012,
+              "median" : 0,
+              "max" : 4
+            },
+            "tfidfReferenceTop20Overlap" : {
+              "mean" : 0.17960000000000004,
+              "median" : 0,
+              "max" : 4
+            }
+          },
+          "overlapWithDefenseClosureJaccard" : 0.0427607998804831,
+          "bm25IncrementalRecallGainAt10OverBestSingle" : null,
+          "bm25IncrementalRecallGainAt20OverBestSingle" : null,
+          "tfidfIncrementalRecallGainAt10OverBestSingle" : null,
+          "tfidfIncrementalRecallGainAt20OverBestSingle" : null
+        },
+        "budget_80" : {
+          "requestedBudget" : 80,
+          "actualMeanCandidateCount" : 75.308,
+          "positiveCandidatePoolExhaustionRate" : 9.2,
+          "actualMeanCandidateReductionRate" : 0.9849415850960038,
+          "nominalCandidateReductionRate" : 0.9840057579271462,
+          "bm25Metrics" : {
+            "recallAt10" : {
+              "mean" : 0.026800000000000004,
+              "median" : 0.0,
+              "stdDev" : 0.05255244999046192,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.0,
+              "p90" : 0.1,
+              "max" : 0.2
+            },
+            "recallAt20" : {
+              "mean" : 0.02499999999999996,
+              "median" : 0.0,
+              "stdDev" : 0.03528455752875474,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.05,
+              "p90" : 0.05,
+              "max" : 0.15
+            },
+            "purityAt10" : {
+              "mean" : 0.0034556226778978427,
+              "median" : 0.0,
+              "stdDev" : 0.006873971357605026,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.0,
+              "p90" : 0.0125,
+              "max" : 0.03571428571428571
+            },
+            "purityAt20" : {
+              "mean" : 0.006532416366325955,
+              "median" : 0.0,
+              "stdDev" : 0.009444066390736057,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.0125,
+              "p90" : 0.025,
+              "max" : 0.043478260869565216
+            },
+            "zeroRecallCountAt10" : 193,
+            "zeroRecallPercentageAt10" : 77.2,
+            "zeroRecallCountAt20" : 152,
+            "zeroRecallPercentageAt20" : 60.8
+          },
+          "tfidfMetrics" : {
+            "recallAt10" : {
+              "mean" : 0.021999999999999995,
+              "median" : 0.0,
+              "stdDev" : 0.04422668877499193,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.0,
+              "p90" : 0.1,
+              "max" : 0.2
+            },
+            "recallAt20" : {
+              "mean" : 0.024999999999999974,
+              "median" : 0.0,
+              "stdDev" : 0.03667424164178453,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.05,
+              "p90" : 0.05,
+              "max" : 0.15
+            },
+            "purityAt10" : {
+              "mean" : 0.0035388888888888883,
+              "median" : 0.0,
+              "stdDev" : 0.014853690774673804,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.0,
+              "p90" : 0.0125,
+              "max" : 0.2222222222222222
+            },
+            "purityAt20" : {
+              "mean" : 0.007464031620553353,
+              "median" : 0.0,
+              "stdDev" : 0.02251988343868015,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.0125,
+              "p90" : 0.0125,
+              "max" : 0.3333333333333333
+            },
+            "zeroRecallCountAt10" : 198,
+            "zeroRecallPercentageAt10" : 79.2,
+            "zeroRecallCountAt20" : 152,
+            "zeroRecallPercentageAt20" : 60.8
+          },
+          "unweightedOverlapDiagnostic" : {
+            "meanRetrievedOverlap" : 1.5737554202408397,
+            "medianRetrievedOverlap" : 1,
+            "maxRetrievedOverlap" : 6,
+            "bm25ReferenceTop10Overlap" : {
+              "mean" : 0.2056000000000001,
+              "median" : 0,
+              "max" : 3
+            },
+            "bm25ReferenceTop20Overlap" : {
+              "mean" : 0.19999999999999998,
+              "median" : 0,
+              "max" : 5
+            },
+            "tfidfReferenceTop10Overlap" : {
+              "mean" : 0.17360000000000012,
+              "median" : 0,
+              "max" : 4
+            },
+            "tfidfReferenceTop20Overlap" : {
+              "mean" : 0.17960000000000004,
+              "median" : 0,
+              "max" : 4
+            }
+          },
+          "overlapWithDefenseClosureJaccard" : 0.048797794443578055,
+          "bm25IncrementalRecallGainAt10OverBestSingle" : null,
+          "bm25IncrementalRecallGainAt20OverBestSingle" : null,
+          "tfidfIncrementalRecallGainAt10OverBestSingle" : null,
+          "tfidfIncrementalRecallGainAt20OverBestSingle" : null
+        },
+        "budget_200" : {
+          "requestedBudget" : 200,
+          "actualMeanCandidateCount" : 176.788,
+          "positiveCandidatePoolExhaustionRate" : 21.2,
+          "actualMeanCandidateReductionRate" : 0.964643746526524,
+          "nominalCandidateReductionRate" : 0.9600143948178655,
+          "bm25Metrics" : {
+            "recallAt10" : {
+              "mean" : 0.05759999999999993,
+              "median" : 0.0,
+              "stdDev" : 0.08125416912380555,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.1,
+              "p90" : 0.2,
+              "max" : 0.4
+            },
+            "recallAt20" : {
+              "mean" : 0.0537999999999999,
+              "median" : 0.05,
+              "stdDev" : 0.053995925772228434,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.1,
+              "p90" : 0.15,
+              "max" : 0.25
+            },
+            "purityAt10" : {
+              "mean" : 0.003171880181142662,
+              "median" : 0.0,
+              "stdDev" : 0.004737977549652161,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.005,
+              "p90" : 0.01,
+              "max" : 0.03571428571428571
+            },
+            "purityAt20" : {
+              "mean" : 0.006129337567646114,
+              "median" : 0.005,
+              "stdDev" : 0.006769388634422242,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.01,
+              "p90" : 0.015,
+              "max" : 0.043478260869565216
+            },
+            "zeroRecallCountAt10" : 150,
+            "zeroRecallPercentageAt10" : 60.0,
+            "zeroRecallCountAt20" : 93,
+            "zeroRecallPercentageAt20" : 37.2
+          },
+          "tfidfMetrics" : {
+            "recallAt10" : {
+              "mean" : 0.04999999999999995,
+              "median" : 0.0,
+              "stdDev" : 0.07389181280764474,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.1,
+              "p90" : 0.2,
+              "max" : 0.3
+            },
+            "recallAt20" : {
+              "mean" : 0.05339999999999991,
+              "median" : 0.05,
+              "stdDev" : 0.053088981907736865,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.1,
+              "p90" : 0.15,
+              "max" : 0.25
+            },
+            "purityAt10" : {
+              "mean" : 0.0034453163874204537,
+              "median" : 0.0,
+              "stdDev" : 0.01439868758876039,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.005,
+              "p90" : 0.01,
+              "max" : 0.2222222222222222
+            },
+            "purityAt20" : {
+              "mean" : 0.006896883817525345,
+              "median" : 0.005,
+              "stdDev" : 0.02147741308868115,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.01,
+              "p90" : 0.015,
+              "max" : 0.3333333333333333
+            },
+            "zeroRecallCountAt10" : 157,
+            "zeroRecallPercentageAt10" : 62.8,
+            "zeroRecallCountAt20" : 90,
+            "zeroRecallPercentageAt20" : 36.0
+          },
+          "unweightedOverlapDiagnostic" : {
+            "meanRetrievedOverlap" : 1.3413154628620185,
+            "medianRetrievedOverlap" : 1,
+            "maxRetrievedOverlap" : 6,
+            "bm25ReferenceTop10Overlap" : {
+              "mean" : 0.2056000000000001,
+              "median" : 0,
+              "max" : 3
+            },
+            "bm25ReferenceTop20Overlap" : {
+              "mean" : 0.19999999999999998,
+              "median" : 0,
+              "max" : 5
+            },
+            "tfidfReferenceTop10Overlap" : {
+              "mean" : 0.17360000000000012,
+              "median" : 0,
+              "max" : 4
+            },
+            "tfidfReferenceTop20Overlap" : {
+              "mean" : 0.17960000000000004,
+              "median" : 0,
+              "max" : 4
+            }
+          },
+          "overlapWithDefenseClosureJaccard" : 0.06995138829340318,
+          "bm25IncrementalRecallGainAt10OverBestSingle" : null,
+          "bm25IncrementalRecallGainAt20OverBestSingle" : null,
+          "tfidfIncrementalRecallGainAt10OverBestSingle" : null,
+          "tfidfIncrementalRecallGainAt20OverBestSingle" : null
+        },
+        "budget_500" : {
+          "requestedBudget" : 500,
+          "actualMeanCandidateCount" : 370.248,
+          "positiveCandidatePoolExhaustionRate" : 48.4,
+          "actualMeanCandidateReductionRate" : 0.9259458838828141,
+          "nominalCandidateReductionRate" : 0.9000359870446639,
+          "bm25Metrics" : {
+            "recallAt10" : {
+              "mean" : 0.11399999999999987,
+              "median" : 0.1,
+              "stdDev" : 0.11560276813294754,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.2,
+              "p90" : 0.3,
+              "max" : 0.4
+            },
+            "recallAt20" : {
+              "mean" : 0.10619999999999995,
+              "median" : 0.1,
+              "stdDev" : 0.09193236644403309,
+              "min" : 0.0,
+              "p25" : 0.05,
+              "p75" : 0.15,
+              "p90" : 0.25,
+              "max" : 0.4
+            },
+            "purityAt10" : {
+              "mean" : 0.003055659213051227,
+              "median" : 0.002,
+              "stdDev" : 0.0037557951067629445,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.0040650406504065045,
+              "p90" : 0.007692307692307693,
+              "max" : 0.03571428571428571
+            },
+            "purityAt20" : {
+              "mean" : 0.005928663877617157,
+              "median" : 0.004761904761904762,
+              "stdDev" : 0.005873729766496641,
+              "min" : 0.0,
+              "p25" : 0.002,
+              "p75" : 0.008,
+              "p90" : 0.012121212121212121,
+              "max" : 0.043478260869565216
+            },
+            "zeroRecallCountAt10" : 93,
+            "zeroRecallPercentageAt10" : 37.2,
+            "zeroRecallCountAt20" : 53,
+            "zeroRecallPercentageAt20" : 21.2
+          },
+          "tfidfMetrics" : {
+            "recallAt10" : {
+              "mean" : 0.09359999999999986,
+              "median" : 0.1,
+              "stdDev" : 0.10563635737756188,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.1,
+              "p90" : 0.2,
+              "max" : 0.5
+            },
+            "recallAt20" : {
+              "mean" : 0.09999999999999999,
+              "median" : 0.1,
+              "stdDev" : 0.08555699854482963,
+              "min" : 0.0,
+              "p25" : 0.05,
+              "p75" : 0.15,
+              "p90" : 0.2,
+              "max" : 0.35
+            },
+            "purityAt10" : {
+              "mean" : 0.0031903002694152207,
+              "median" : 0.002,
+              "stdDev" : 0.014173924333994826,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.004,
+              "p90" : 0.006,
+              "max" : 0.2222222222222222
+            },
+            "purityAt20" : {
+              "mean" : 0.006319724041706406,
+              "median" : 0.004,
+              "stdDev" : 0.02124452127469431,
+              "min" : 0.0,
+              "p25" : 0.002,
+              "p75" : 0.008,
+              "p90" : 0.011363636363636364,
+              "max" : 0.3333333333333333
+            },
+            "zeroRecallCountAt10" : 109,
+            "zeroRecallPercentageAt10" : 43.6,
+            "zeroRecallCountAt20" : 61,
+            "zeroRecallPercentageAt20" : 24.4
+          },
+          "unweightedOverlapDiagnostic" : {
+            "meanRetrievedOverlap" : 1.1590965156552,
+            "medianRetrievedOverlap" : 1,
+            "maxRetrievedOverlap" : 6,
+            "bm25ReferenceTop10Overlap" : {
+              "mean" : 0.2056000000000001,
+              "median" : 0,
+              "max" : 3
+            },
+            "bm25ReferenceTop20Overlap" : {
+              "mean" : 0.19999999999999998,
+              "median" : 0,
+              "max" : 5
+            },
+            "tfidfReferenceTop10Overlap" : {
+              "mean" : 0.17360000000000012,
+              "median" : 0,
+              "max" : 4
+            },
+            "tfidfReferenceTop20Overlap" : {
+              "mean" : 0.17960000000000004,
+              "median" : 0,
+              "max" : 4
+            }
+          },
+          "overlapWithDefenseClosureJaccard" : 0.10148034613725551,
+          "bm25IncrementalRecallGainAt10OverBestSingle" : null,
+          "bm25IncrementalRecallGainAt20OverBestSingle" : null,
+          "tfidfIncrementalRecallGainAt10OverBestSingle" : null,
+          "tfidfIncrementalRecallGainAt20OverBestSingle" : null
+        },
+        "budget_1000" : {
+          "requestedBudget" : 1000,
+          "actualMeanCandidateCount" : 548.604,
+          "positiveCandidatePoolExhaustionRate" : 79.60000000000001,
+          "actualMeanCandidateReductionRate" : 0.8902822505051753,
+          "nominalCandidateReductionRate" : 0.8000719740893278,
+          "bm25Metrics" : {
+            "recallAt10" : {
+              "mean" : 0.15959999999999988,
+              "median" : 0.1,
+              "stdDev" : 0.1491570983895839,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.3,
+              "p90" : 0.4,
+              "max" : 0.6
+            },
+            "recallAt20" : {
+              "mean" : 0.1544000000000001,
+              "median" : 0.15,
+              "stdDev" : 0.12296601156417165,
+              "min" : 0.0,
+              "p25" : 0.05,
+              "p75" : 0.25,
+              "p90" : 0.35,
+              "max" : 0.5
+            },
+            "purityAt10" : {
+              "mean" : 0.003016908895038059,
+              "median" : 0.002183406113537118,
+              "stdDev" : 0.003604013944569548,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.004197271773347324,
+              "p90" : 0.0072992700729927005,
+              "max" : 0.03571428571428571
+            },
+            "purityAt20" : {
+              "mean" : 0.0059565656165195685,
+              "median" : 0.005,
+              "stdDev" : 0.005525924548171274,
+              "min" : 0.0,
+              "p25" : 0.0029585798816568047,
+              "p75" : 0.007751937984496124,
+              "p90" : 0.011611030478955007,
+              "max" : 0.043478260869565216
+            },
+            "zeroRecallCountAt10" : 73,
+            "zeroRecallPercentageAt10" : 29.2,
+            "zeroRecallCountAt20" : 39,
+            "zeroRecallPercentageAt20" : 15.6
+          },
+          "tfidfMetrics" : {
+            "recallAt10" : {
+              "mean" : 0.13599999999999987,
+              "median" : 0.1,
+              "stdDev" : 0.1424921050444551,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.2,
+              "p90" : 0.4,
+              "max" : 0.7
+            },
+            "recallAt20" : {
+              "mean" : 0.14220000000000005,
+              "median" : 0.15,
+              "stdDev" : 0.12405305316678,
+              "min" : 0.0,
+              "p25" : 0.05,
+              "p75" : 0.2,
+              "p90" : 0.3,
+              "max" : 0.6
+            },
+            "purityAt10" : {
+              "mean" : 0.003156317095464063,
+              "median" : 0.0018281535648994515,
+              "stdDev" : 0.014137097982990105,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.003875968992248062,
+              "p90" : 0.005165289256198347,
+              "max" : 0.2222222222222222
+            },
+            "purityAt20" : {
+              "mean" : 0.006216009839275858,
+              "median" : 0.0045045045045045045,
+              "stdDev" : 0.021209608824234914,
+              "min" : 0.0,
+              "p25" : 0.0018214936247723133,
+              "p75" : 0.007,
+              "p90" : 0.01060070671378092,
+              "max" : 0.3333333333333333
+            },
+            "zeroRecallCountAt10" : 89,
+            "zeroRecallPercentageAt10" : 35.6,
+            "zeroRecallCountAt20" : 55,
+            "zeroRecallPercentageAt20" : 22.0
+          },
+          "unweightedOverlapDiagnostic" : {
+            "meanRetrievedOverlap" : 1.0908666753370153,
+            "medianRetrievedOverlap" : 1,
+            "maxRetrievedOverlap" : 6,
+            "bm25ReferenceTop10Overlap" : {
+              "mean" : 0.2056000000000001,
+              "median" : 0,
+              "max" : 3
+            },
+            "bm25ReferenceTop20Overlap" : {
+              "mean" : 0.19999999999999998,
+              "median" : 0,
+              "max" : 5
+            },
+            "tfidfReferenceTop10Overlap" : {
+              "mean" : 0.17360000000000012,
+              "median" : 0,
+              "max" : 4
+            },
+            "tfidfReferenceTop20Overlap" : {
+              "mean" : 0.17960000000000004,
+              "median" : 0,
+              "max" : 4
+            }
+          },
+          "overlapWithDefenseClosureJaccard" : 0.1375213380520002,
+          "bm25IncrementalRecallGainAt10OverBestSingle" : null,
+          "bm25IncrementalRecallGainAt20OverBestSingle" : null,
+          "tfidfIncrementalRecallGainAt10OverBestSingle" : null,
+          "tfidfIncrementalRecallGainAt20OverBestSingle" : null
+        }
+      }
+    },
+    "SYSTEM_C2_DEFENSE_CLOSURE" : {
+      "systemId" : "SYSTEM_C2_DEFENSE_CLOSURE",
+      "representationType" : "DEFENSE_CLOSURE",
+      "budgetResults" : {
+        "budget_50" : {
+          "requestedBudget" : 50,
+          "actualMeanCandidateCount" : 49.8,
+          "positiveCandidatePoolExhaustionRate" : 0.4,
+          "actualMeanCandidateReductionRate" : 0.9900435609116446,
+          "nominalCandidateReductionRate" : 0.9900035987044664,
+          "bm25Metrics" : {
+            "recallAt10" : {
+              "mean" : 0.0276,
+              "median" : 0.0,
+              "stdDev" : 0.055120232220120406,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.0,
+              "p90" : 0.1,
+              "max" : 0.3
+            },
+            "recallAt20" : {
+              "mean" : 0.024599999999999993,
+              "median" : 0.0,
+              "stdDev" : 0.03981004898263755,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.05,
+              "p90" : 0.05,
+              "max" : 0.2
+            },
+            "purityAt10" : {
+              "mean" : 0.005520000000000003,
+              "median" : 0.0,
+              "stdDev" : 0.01102404644402409,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.0,
+              "p90" : 0.02,
+              "max" : 0.06
+            },
+            "purityAt20" : {
+              "mean" : 0.009840000000000007,
+              "median" : 0.0,
+              "stdDev" : 0.015924019593055005,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.02,
+              "p90" : 0.02,
+              "max" : 0.08
+            },
+            "zeroRecallCountAt10" : 192,
+            "zeroRecallPercentageAt10" : 76.8,
+            "zeroRecallCountAt20" : 160,
+            "zeroRecallPercentageAt20" : 64.0
+          },
+          "tfidfMetrics" : {
+            "recallAt10" : {
+              "mean" : 0.026799999999999997,
+              "median" : 0.0,
+              "stdDev" : 0.05405330702186501,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.0,
+              "p90" : 0.1,
+              "max" : 0.4
+            },
+            "recallAt20" : {
+              "mean" : 0.024399999999999967,
+              "median" : 0.0,
+              "stdDev" : 0.036669333236370706,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.05,
+              "p90" : 0.05,
+              "max" : 0.2
+            },
+            "purityAt10" : {
+              "mean" : 0.005360000000000003,
+              "median" : 0.0,
+              "stdDev" : 0.010810661404373005,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.0,
+              "p90" : 0.02,
+              "max" : 0.08
+            },
+            "purityAt20" : {
+              "mean" : 0.009760000000000007,
+              "median" : 0.0,
+              "stdDev" : 0.014667733294548294,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.02,
+              "p90" : 0.02,
+              "max" : 0.08
+            },
+            "zeroRecallCountAt10" : 192,
+            "zeroRecallPercentageAt10" : 76.8,
+            "zeroRecallCountAt20" : 156,
+            "zeroRecallPercentageAt20" : 62.4
+          },
+          "unweightedOverlapDiagnostic" : {
+            "meanRetrievedOverlap" : 16.26392000000001,
+            "medianRetrievedOverlap" : 17,
+            "maxRetrievedOverlap" : 46,
+            "bm25ReferenceTop10Overlap" : {
+              "mean" : 7.2627999999999995,
+              "median" : 7,
+              "max" : 40
+            },
+            "bm25ReferenceTop20Overlap" : {
+              "mean" : 7.1628000000000025,
+              "median" : 7,
+              "max" : 40
+            },
+            "tfidfReferenceTop10Overlap" : {
+              "mean" : 7.474000000000001,
+              "median" : 7,
+              "max" : 40
+            },
+            "tfidfReferenceTop20Overlap" : {
+              "mean" : 7.2802,
+              "median" : 7,
+              "max" : 40
+            }
+          },
+          "overlapWithDefenseClosureJaccard" : null,
+          "bm25IncrementalRecallGainAt10OverBestSingle" : null,
+          "bm25IncrementalRecallGainAt20OverBestSingle" : null,
+          "tfidfIncrementalRecallGainAt10OverBestSingle" : null,
+          "tfidfIncrementalRecallGainAt20OverBestSingle" : null
+        },
+        "budget_80" : {
+          "requestedBudget" : 80,
+          "actualMeanCandidateCount" : 79.68,
+          "positiveCandidatePoolExhaustionRate" : 0.4,
+          "actualMeanCandidateReductionRate" : 0.9840696974586338,
+          "nominalCandidateReductionRate" : 0.9840057579271462,
+          "bm25Metrics" : {
+            "recallAt10" : {
+              "mean" : 0.042399999999999986,
+              "median" : 0.0,
+              "stdDev" : 0.06900898492225488,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.1,
+              "p90" : 0.1,
+              "max" : 0.3
+            },
+            "recallAt20" : {
+              "mean" : 0.03719999999999996,
+              "median" : 0.0,
+              "stdDev" : 0.04976102892826876,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.05,
+              "p90" : 0.1,
+              "max" : 0.25
+            },
+            "purityAt10" : {
+              "mean" : 0.005299999999999998,
+              "median" : 0.0,
+              "stdDev" : 0.00862612311528186,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.0125,
+              "p90" : 0.0125,
+              "max" : 0.0375
+            },
+            "purityAt20" : {
+              "mean" : 0.00929999999999999,
+              "median" : 0.0,
+              "stdDev" : 0.01244025723206719,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.0125,
+              "p90" : 0.025,
+              "max" : 0.0625
+            },
+            "zeroRecallCountAt10" : 167,
+            "zeroRecallPercentageAt10" : 66.8,
+            "zeroRecallCountAt20" : 133,
+            "zeroRecallPercentageAt20" : 53.2
+          },
+          "tfidfMetrics" : {
+            "recallAt10" : {
+              "mean" : 0.03679999999999997,
+              "median" : 0.0,
+              "stdDev" : 0.06136578851444833,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.1,
+              "p90" : 0.1,
+              "max" : 0.4
+            },
+            "recallAt20" : {
+              "mean" : 0.03359999999999995,
+              "median" : 0.0,
+              "stdDev" : 0.04348608972993553,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.05,
+              "p90" : 0.1,
+              "max" : 0.2
+            },
+            "purityAt10" : {
+              "mean" : 0.0045999999999999965,
+              "median" : 0.0,
+              "stdDev" : 0.007670723564306041,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.0125,
+              "p90" : 0.0125,
+              "max" : 0.05
+            },
+            "purityAt20" : {
+              "mean" : 0.008399999999999987,
+              "median" : 0.0,
+              "stdDev" : 0.010871522432483882,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.0125,
+              "p90" : 0.025,
+              "max" : 0.05
+            },
+            "zeroRecallCountAt10" : 172,
+            "zeroRecallPercentageAt10" : 68.8,
+            "zeroRecallCountAt20" : 131,
+            "zeroRecallPercentageAt20" : 52.400000000000006
+          },
+          "unweightedOverlapDiagnostic" : {
+            "meanRetrievedOverlap" : 15.62959999999999,
+            "medianRetrievedOverlap" : 16,
+            "maxRetrievedOverlap" : 46,
+            "bm25ReferenceTop10Overlap" : {
+              "mean" : 7.2627999999999995,
+              "median" : 7,
+              "max" : 40
+            },
+            "bm25ReferenceTop20Overlap" : {
+              "mean" : 7.1628000000000025,
+              "median" : 7,
+              "max" : 40
+            },
+            "tfidfReferenceTop10Overlap" : {
+              "mean" : 7.474000000000001,
+              "median" : 7,
+              "max" : 40
+            },
+            "tfidfReferenceTop20Overlap" : {
+              "mean" : 7.2802,
+              "median" : 7,
+              "max" : 40
+            }
+          },
+          "overlapWithDefenseClosureJaccard" : null,
+          "bm25IncrementalRecallGainAt10OverBestSingle" : null,
+          "bm25IncrementalRecallGainAt20OverBestSingle" : null,
+          "tfidfIncrementalRecallGainAt10OverBestSingle" : null,
+          "tfidfIncrementalRecallGainAt20OverBestSingle" : null
+        },
+        "budget_200" : {
+          "requestedBudget" : 200,
+          "actualMeanCandidateCount" : 198.832,
+          "positiveCandidatePoolExhaustionRate" : 1.2,
+          "actualMeanCandidateReductionRate" : 0.9602474920542232,
+          "nominalCandidateReductionRate" : 0.9600143948178655,
+          "bm25Metrics" : {
+            "recallAt10" : {
+              "mean" : 0.08519999999999987,
+              "median" : 0.1,
+              "stdDev" : 0.1098224020862776,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.1,
+              "p90" : 0.2,
+              "max" : 0.7
+            },
+            "recallAt20" : {
+              "mean" : 0.07459999999999996,
+              "median" : 0.05,
+              "stdDev" : 0.07605813565950714,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.1,
+              "p90" : 0.15,
+              "max" : 0.5
+            },
+            "purityAt10" : {
+              "mean" : 0.004277922077922079,
+              "median" : 0.005,
+              "stdDev" : 0.005533294249554277,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.005,
+              "p90" : 0.01,
+              "max" : 0.035
+            },
+            "purityAt20" : {
+              "mean" : 0.007477922077922069,
+              "median" : 0.005,
+              "stdDev" : 0.007628803572870999,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.01,
+              "p90" : 0.015,
+              "max" : 0.05
+            },
+            "zeroRecallCountAt10" : 114,
+            "zeroRecallPercentageAt10" : 45.6,
+            "zeroRecallCountAt20" : 69,
+            "zeroRecallPercentageAt20" : 27.6
+          },
+          "tfidfMetrics" : {
+            "recallAt10" : {
+              "mean" : 0.07719999999999991,
+              "median" : 0.1,
+              "stdDev" : 0.09716048579540972,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.1,
+              "p90" : 0.2,
+              "max" : 0.6
+            },
+            "recallAt20" : {
+              "mean" : 0.07319999999999995,
+              "median" : 0.05,
+              "stdDev" : 0.07295039410448725,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.1,
+              "p90" : 0.15,
+              "max" : 0.45
+            },
+            "purityAt10" : {
+              "mean" : 0.003871948051948055,
+              "median" : 0.005,
+              "stdDev" : 0.004876747718338015,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.005,
+              "p90" : 0.01,
+              "max" : 0.03
+            },
+            "purityAt20" : {
+              "mean" : 0.007349870129870122,
+              "median" : 0.005,
+              "stdDev" : 0.007344839799584819,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.01,
+              "p90" : 0.015,
+              "max" : 0.045
+            },
+            "zeroRecallCountAt10" : 122,
+            "zeroRecallPercentageAt10" : 48.8,
+            "zeroRecallCountAt20" : 73,
+            "zeroRecallPercentageAt20" : 29.2
+          },
+          "unweightedOverlapDiagnostic" : {
+            "meanRetrievedOverlap" : 14.21042597402598,
+            "medianRetrievedOverlap" : 14,
+            "maxRetrievedOverlap" : 46,
+            "bm25ReferenceTop10Overlap" : {
+              "mean" : 7.2627999999999995,
+              "median" : 7,
+              "max" : 40
+            },
+            "bm25ReferenceTop20Overlap" : {
+              "mean" : 7.1628000000000025,
+              "median" : 7,
+              "max" : 40
+            },
+            "tfidfReferenceTop10Overlap" : {
+              "mean" : 7.474000000000001,
+              "median" : 7,
+              "max" : 40
+            },
+            "tfidfReferenceTop20Overlap" : {
+              "mean" : 7.2802,
+              "median" : 7,
+              "max" : 40
+            }
+          },
+          "overlapWithDefenseClosureJaccard" : null,
+          "bm25IncrementalRecallGainAt10OverBestSingle" : null,
+          "bm25IncrementalRecallGainAt20OverBestSingle" : null,
+          "tfidfIncrementalRecallGainAt10OverBestSingle" : null,
+          "tfidfIncrementalRecallGainAt20OverBestSingle" : null
+        },
+        "budget_500" : {
+          "requestedBudget" : 500,
+          "actualMeanCandidateCount" : 493.484,
+          "positiveCandidatePoolExhaustionRate" : 2.8000000000000003,
+          "actualMeanCandidateReductionRate" : 0.9013344944667664,
+          "nominalCandidateReductionRate" : 0.9000359870446639,
+          "bm25Metrics" : {
+            "recallAt10" : {
+              "mean" : 0.16239999999999985,
+              "median" : 0.1,
+              "stdDev" : 0.1465136171145876,
+              "min" : 0.0,
+              "p25" : 0.1,
+              "p75" : 0.2,
+              "p90" : 0.3,
+              "max" : 0.8
+            },
+            "recallAt20" : {
+              "mean" : 0.15819999999999998,
+              "median" : 0.15,
+              "stdDev" : 0.11542426088132415,
+              "min" : 0.0,
+              "p25" : 0.1,
+              "p75" : 0.2,
+              "p90" : 0.3,
+              "max" : 0.65
+            },
+            "purityAt10" : {
+              "mean" : 0.0033083629089829406,
+              "median" : 0.002,
+              "stdDev" : 0.003097754971805226,
+              "min" : 0.0,
+              "p25" : 0.002,
+              "p75" : 0.004,
+              "p90" : 0.006,
+              "max" : 0.01948051948051948
+            },
+            "purityAt20" : {
+              "mean" : 0.006409364973345334,
+              "median" : 0.006,
+              "stdDev" : 0.004694404361156526,
+              "min" : 0.0,
+              "p25" : 0.004,
+              "p75" : 0.008,
+              "p90" : 0.012,
+              "max" : 0.026
+            },
+            "zeroRecallCountAt10" : 51,
+            "zeroRecallPercentageAt10" : 20.4,
+            "zeroRecallCountAt20" : 20,
+            "zeroRecallPercentageAt20" : 8.0
+          },
+          "tfidfMetrics" : {
+            "recallAt10" : {
+              "mean" : 0.1783999999999998,
+              "median" : 0.2,
+              "stdDev" : 0.1520968112749245,
+              "min" : 0.0,
+              "p25" : 0.1,
+              "p75" : 0.3,
+              "p90" : 0.4,
+              "max" : 0.9
+            },
+            "recallAt20" : {
+              "mean" : 0.168,
+              "median" : 0.15,
+              "stdDev" : 0.12319090875547588,
+              "min" : 0.0,
+              "p25" : 0.1,
+              "p75" : 0.2,
+              "p90" : 0.35,
+              "max" : 0.6
+            },
+            "purityAt10" : {
+              "mean" : 0.0036122062549465545,
+              "median" : 0.004,
+              "stdDev" : 0.0030973164398669225,
+              "min" : 0.0,
+              "p25" : 0.002,
+              "p75" : 0.006,
+              "p90" : 0.008,
+              "max" : 0.018
+            },
+            "purityAt20" : {
+              "mean" : 0.006834019691060187,
+              "median" : 0.006,
+              "stdDev" : 0.0050653737895030235,
+              "min" : 0.0,
+              "p25" : 0.004,
+              "p75" : 0.008,
+              "p90" : 0.014,
+              "max" : 0.025974025974025976
+            },
+            "zeroRecallCountAt10" : 52,
+            "zeroRecallPercentageAt10" : 20.8,
+            "zeroRecallCountAt20" : 26,
+            "zeroRecallPercentageAt20" : 10.4
+          },
+          "unweightedOverlapDiagnostic" : {
+            "meanRetrievedOverlap" : 12.565725822137756,
+            "medianRetrievedOverlap" : 12,
+            "maxRetrievedOverlap" : 46,
+            "bm25ReferenceTop10Overlap" : {
+              "mean" : 7.2627999999999995,
+              "median" : 7,
+              "max" : 40
+            },
+            "bm25ReferenceTop20Overlap" : {
+              "mean" : 7.1628000000000025,
+              "median" : 7,
+              "max" : 40
+            },
+            "tfidfReferenceTop10Overlap" : {
+              "mean" : 7.474000000000001,
+              "median" : 7,
+              "max" : 40
+            },
+            "tfidfReferenceTop20Overlap" : {
+              "mean" : 7.2802,
+              "median" : 7,
+              "max" : 40
+            }
+          },
+          "overlapWithDefenseClosureJaccard" : null,
+          "bm25IncrementalRecallGainAt10OverBestSingle" : null,
+          "bm25IncrementalRecallGainAt20OverBestSingle" : null,
+          "tfidfIncrementalRecallGainAt10OverBestSingle" : null,
+          "tfidfIncrementalRecallGainAt20OverBestSingle" : null
+        },
+        "budget_1000" : {
+          "requestedBudget" : 1000,
+          "actualMeanCandidateCount" : 976.604,
+          "positiveCandidatePoolExhaustionRate" : 3.5999999999999996,
+          "actualMeanCandidateReductionRate" : 0.8047318870227091,
+          "nominalCandidateReductionRate" : 0.8000719740893278,
+          "bm25Metrics" : {
+            "recallAt10" : {
+              "mean" : 0.29,
+              "median" : 0.3,
+              "stdDev" : 0.20024984394500786,
+              "min" : 0.0,
+              "p25" : 0.1,
+              "p75" : 0.4,
+              "p90" : 0.6,
+              "max" : 0.9
+            },
+            "recallAt20" : {
+              "mean" : 0.28100000000000025,
+              "median" : 0.25,
+              "stdDev" : 0.1600281225285106,
+              "min" : 0.0,
+              "p25" : 0.15,
+              "p75" : 0.35,
+              "p90" : 0.5,
+              "max" : 0.8
+            },
+            "purityAt10" : {
+              "mean" : 0.0029880491834927444,
+              "median" : 0.003,
+              "stdDev" : 0.0022526490809501682,
+              "min" : 0.0,
+              "p25" : 0.001,
+              "p75" : 0.004,
+              "p90" : 0.006,
+              "max" : 0.01948051948051948
+            },
+            "purityAt20" : {
+              "mean" : 0.0057700891903048335,
+              "median" : 0.005,
+              "stdDev" : 0.003297971680938129,
+              "min" : 0.0,
+              "p25" : 0.004,
+              "p75" : 0.007575757575757576,
+              "p90" : 0.01,
+              "max" : 0.01948051948051948
+            },
+            "zeroRecallCountAt10" : 18,
+            "zeroRecallPercentageAt10" : 7.199999999999999,
+            "zeroRecallCountAt20" : 6,
+            "zeroRecallPercentageAt20" : 2.4
+          },
+          "tfidfMetrics" : {
+            "recallAt10" : {
+              "mean" : 0.3115999999999998,
+              "median" : 0.3,
+              "stdDev" : 0.18693699473351966,
+              "min" : 0.0,
+              "p25" : 0.2,
+              "p75" : 0.4,
+              "p90" : 0.6,
+              "max" : 0.9
+            },
+            "recallAt20" : {
+              "mean" : 0.2920000000000001,
+              "median" : 0.25,
+              "stdDev" : 0.15885842753848478,
+              "min" : 0.0,
+              "p25" : 0.2,
+              "p75" : 0.4,
+              "p90" : 0.55,
+              "max" : 0.85
+            },
+            "purityAt10" : {
+              "mean" : 0.003185401060141359,
+              "median" : 0.003,
+              "stdDev" : 0.0019589205556245,
+              "min" : 0.0,
+              "p25" : 0.002,
+              "p75" : 0.004,
+              "p90" : 0.006,
+              "max" : 0.012987012987012988
+            },
+            "purityAt20" : {
+              "mean" : 0.006017604106644588,
+              "median" : 0.006,
+              "stdDev" : 0.0033874763590545647,
+              "min" : 0.0,
+              "p25" : 0.004,
+              "p75" : 0.008,
+              "p90" : 0.011,
+              "max" : 0.025974025974025976
+            },
+            "zeroRecallCountAt10" : 16,
+            "zeroRecallPercentageAt10" : 6.4,
+            "zeroRecallCountAt20" : 5,
+            "zeroRecallPercentageAt20" : 2.0
+          },
+          "unweightedOverlapDiagnostic" : {
+            "meanRetrievedOverlap" : 11.064624314625664,
+            "medianRetrievedOverlap" : 11,
+            "maxRetrievedOverlap" : 46,
+            "bm25ReferenceTop10Overlap" : {
+              "mean" : 7.2627999999999995,
+              "median" : 7,
+              "max" : 40
+            },
+            "bm25ReferenceTop20Overlap" : {
+              "mean" : 7.1628000000000025,
+              "median" : 7,
+              "max" : 40
+            },
+            "tfidfReferenceTop10Overlap" : {
+              "mean" : 7.474000000000001,
+              "median" : 7,
+              "max" : 40
+            },
+            "tfidfReferenceTop20Overlap" : {
+              "mean" : 7.2802,
+              "median" : 7,
+              "max" : 40
+            }
+          },
+          "overlapWithDefenseClosureJaccard" : null,
+          "bm25IncrementalRecallGainAt10OverBestSingle" : null,
+          "bm25IncrementalRecallGainAt20OverBestSingle" : null,
+          "tfidfIncrementalRecallGainAt10OverBestSingle" : null,
+          "tfidfIncrementalRecallGainAt20OverBestSingle" : null
+        }
+      }
+    },
+    "SYSTEM_C3_COMBINED_CLOSURE" : {
+      "systemId" : "SYSTEM_C3_COMBINED_CLOSURE",
+      "representationType" : "COMBINED_CLOSURE",
+      "budgetResults" : {
+        "budget_50" : {
+          "requestedBudget" : 50,
+          "actualMeanCandidateCount" : 49.8,
+          "positiveCandidatePoolExhaustionRate" : 0.4,
+          "actualMeanCandidateReductionRate" : 0.9900435609116446,
+          "nominalCandidateReductionRate" : 0.9900035987044664,
+          "bm25Metrics" : {
+            "recallAt10" : {
+              "mean" : 0.029599999999999998,
+              "median" : 0.0,
+              "stdDev" : 0.057304799100947865,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.0,
+              "p90" : 0.1,
+              "max" : 0.3
+            },
+            "recallAt20" : {
+              "mean" : 0.025599999999999977,
+              "median" : 0.0,
+              "stdDev" : 0.03904663877979764,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.05,
+              "p90" : 0.1,
+              "max" : 0.2
+            },
+            "purityAt10" : {
+              "mean" : 0.005920000000000003,
+              "median" : 0.0,
+              "stdDev" : 0.011460959820189572,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.0,
+              "p90" : 0.02,
+              "max" : 0.06
+            },
+            "purityAt20" : {
+              "mean" : 0.010240000000000008,
+              "median" : 0.0,
+              "stdDev" : 0.01561865551191907,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.02,
+              "p90" : 0.04,
+              "max" : 0.08
+            },
+            "zeroRecallCountAt10" : 189,
+            "zeroRecallPercentageAt10" : 75.6,
+            "zeroRecallCountAt20" : 156,
+            "zeroRecallPercentageAt20" : 62.4
+          },
+          "tfidfMetrics" : {
+            "recallAt10" : {
+              "mean" : 0.02839999999999999,
+              "median" : 0.0,
+              "stdDev" : 0.054712338644952854,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.0,
+              "p90" : 0.1,
+              "max" : 0.4
+            },
+            "recallAt20" : {
+              "mean" : 0.02519999999999997,
+              "median" : 0.0,
+              "stdDev" : 0.038012629480213556,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.05,
+              "p90" : 0.05,
+              "max" : 0.2
+            },
+            "purityAt10" : {
+              "mean" : 0.005680000000000004,
+              "median" : 0.0,
+              "stdDev" : 0.010942467728990565,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.0,
+              "p90" : 0.02,
+              "max" : 0.08
+            },
+            "purityAt20" : {
+              "mean" : 0.010080000000000007,
+              "median" : 0.0,
+              "stdDev" : 0.015205051792085434,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.02,
+              "p90" : 0.02,
+              "max" : 0.08
+            },
+            "zeroRecallCountAt10" : 188,
+            "zeroRecallPercentageAt10" : 75.2,
+            "zeroRecallCountAt20" : 154,
+            "zeroRecallPercentageAt20" : 61.6
+          },
+          "unweightedOverlapDiagnostic" : {
+            "meanRetrievedOverlap" : 16.809439999999995,
+            "medianRetrievedOverlap" : 17,
+            "maxRetrievedOverlap" : 49,
+            "bm25ReferenceTop10Overlap" : {
+              "mean" : 7.4684,
+              "median" : 7,
+              "max" : 42
+            },
+            "bm25ReferenceTop20Overlap" : {
+              "mean" : 7.362799999999998,
+              "median" : 7,
+              "max" : 42
+            },
+            "tfidfReferenceTop10Overlap" : {
+              "mean" : 7.647599999999995,
+              "median" : 7,
+              "max" : 42
+            },
+            "tfidfReferenceTop20Overlap" : {
+              "mean" : 7.459800000000003,
+              "median" : 7,
+              "max" : 42
+            }
+          },
+          "overlapWithDefenseClosureJaccard" : null,
+          "bm25IncrementalRecallGainAt10OverBestSingle" : 0.0020000000000000018,
+          "bm25IncrementalRecallGainAt20OverBestSingle" : 0.0010000000000000009,
+          "tfidfIncrementalRecallGainAt10OverBestSingle" : 0.0015999999999999938,
+          "tfidfIncrementalRecallGainAt20OverBestSingle" : 7.999999999999917E-4
+        },
+        "budget_80" : {
+          "requestedBudget" : 80,
+          "actualMeanCandidateCount" : 79.68,
+          "positiveCandidatePoolExhaustionRate" : 0.4,
+          "actualMeanCandidateReductionRate" : 0.9840696974586338,
+          "nominalCandidateReductionRate" : 0.9840057579271462,
+          "bm25Metrics" : {
+            "recallAt10" : {
+              "mean" : 0.041599999999999984,
+              "median" : 0.0,
+              "stdDev" : 0.07006739612687199,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.1,
+              "p90" : 0.1,
+              "max" : 0.4
+            },
+            "recallAt20" : {
+              "mean" : 0.03739999999999994,
+              "median" : 0.0,
+              "stdDev" : 0.050112273945611414,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.05,
+              "p90" : 0.1,
+              "max" : 0.25
+            },
+            "purityAt10" : {
+              "mean" : 0.005199999999999998,
+              "median" : 0.0,
+              "stdDev" : 0.008758424515858999,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.0125,
+              "p90" : 0.0125,
+              "max" : 0.05
+            },
+            "purityAt20" : {
+              "mean" : 0.009349999999999985,
+              "median" : 0.0,
+              "stdDev" : 0.012528068486402854,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.0125,
+              "p90" : 0.025,
+              "max" : 0.0625
+            },
+            "zeroRecallCountAt10" : 170,
+            "zeroRecallPercentageAt10" : 68.0,
+            "zeroRecallCountAt20" : 132,
+            "zeroRecallPercentageAt20" : 52.800000000000004
+          },
+          "tfidfMetrics" : {
+            "recallAt10" : {
+              "mean" : 0.039199999999999985,
+              "median" : 0.0,
+              "stdDev" : 0.06620694827584193,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.1,
+              "p90" : 0.1,
+              "max" : 0.4
+            },
+            "recallAt20" : {
+              "mean" : 0.03659999999999994,
+              "median" : 0.0,
+              "stdDev" : 0.047438802683035707,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.05,
+              "p90" : 0.1,
+              "max" : 0.25
+            },
+            "purityAt10" : {
+              "mean" : 0.004899999999999998,
+              "median" : 0.0,
+              "stdDev" : 0.008275868534480242,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.0125,
+              "p90" : 0.0125,
+              "max" : 0.05
+            },
+            "purityAt20" : {
+              "mean" : 0.009149999999999985,
+              "median" : 0.0,
+              "stdDev" : 0.011859700670758927,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.0125,
+              "p90" : 0.025,
+              "max" : 0.0625
+            },
+            "zeroRecallCountAt10" : 171,
+            "zeroRecallPercentageAt10" : 68.4,
+            "zeroRecallCountAt20" : 126,
+            "zeroRecallPercentageAt20" : 50.4
+          },
+          "unweightedOverlapDiagnostic" : {
+            "meanRetrievedOverlap" : 16.090199999999992,
+            "medianRetrievedOverlap" : 16,
+            "maxRetrievedOverlap" : 49,
+            "bm25ReferenceTop10Overlap" : {
+              "mean" : 7.4684,
+              "median" : 7,
+              "max" : 42
+            },
+            "bm25ReferenceTop20Overlap" : {
+              "mean" : 7.362799999999998,
+              "median" : 7,
+              "max" : 42
+            },
+            "tfidfReferenceTop10Overlap" : {
+              "mean" : 7.647599999999995,
+              "median" : 7,
+              "max" : 42
+            },
+            "tfidfReferenceTop20Overlap" : {
+              "mean" : 7.459800000000003,
+              "median" : 7,
+              "max" : 42
+            }
+          },
+          "overlapWithDefenseClosureJaccard" : null,
+          "bm25IncrementalRecallGainAt10OverBestSingle" : -8.000000000000021E-4,
+          "bm25IncrementalRecallGainAt20OverBestSingle" : 1.999999999999988E-4,
+          "tfidfIncrementalRecallGainAt10OverBestSingle" : 0.0023999999999999924,
+          "tfidfIncrementalRecallGainAt20OverBestSingle" : 0.0030000000000000165
+        },
+        "budget_200" : {
+          "requestedBudget" : 200,
+          "actualMeanCandidateCount" : 198.84,
+          "positiveCandidatePoolExhaustionRate" : 1.2,
+          "actualMeanCandidateReductionRate" : 0.9602458996975354,
+          "nominalCandidateReductionRate" : 0.9600143948178655,
+          "bm25Metrics" : {
+            "recallAt10" : {
+              "mean" : 0.08399999999999987,
+              "median" : 0.1,
+              "stdDev" : 0.1072567014223354,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.1,
+              "p90" : 0.2,
+              "max" : 0.7
+            },
+            "recallAt20" : {
+              "mean" : 0.07479999999999995,
+              "median" : 0.05,
+              "stdDev" : 0.07392536777047515,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.1,
+              "p90" : 0.15,
+              "max" : 0.45
+            },
+            "purityAt10" : {
+              "mean" : 0.00421792207792208,
+              "median" : 0.005,
+              "stdDev" : 0.005406209013856297,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.005,
+              "p90" : 0.01,
+              "max" : 0.035
+            },
+            "purityAt20" : {
+              "mean" : 0.007497922077922067,
+              "median" : 0.005,
+              "stdDev" : 0.007416139633955955,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.01,
+              "p90" : 0.015,
+              "max" : 0.045
+            },
+            "zeroRecallCountAt10" : 117,
+            "zeroRecallPercentageAt10" : 46.800000000000004,
+            "zeroRecallCountAt20" : 69,
+            "zeroRecallPercentageAt20" : 27.6
+          },
+          "tfidfMetrics" : {
+            "recallAt10" : {
+              "mean" : 0.08119999999999986,
+              "median" : 0.1,
+              "stdDev" : 0.09212252710385231,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.1,
+              "p90" : 0.2,
+              "max" : 0.4
+            },
+            "recallAt20" : {
+              "mean" : 0.07639999999999994,
+              "median" : 0.05,
+              "stdDev" : 0.07199333302466285,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.1,
+              "p90" : 0.15,
+              "max" : 0.45
+            },
+            "purityAt10" : {
+              "mean" : 0.004071948051948055,
+              "median" : 0.005,
+              "stdDev" : 0.00462535286086757,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.005,
+              "p90" : 0.01,
+              "max" : 0.02
+            },
+            "purityAt20" : {
+              "mean" : 0.007669537129537121,
+              "median" : 0.005,
+              "stdDev" : 0.007248528531283416,
+              "min" : 0.0,
+              "p25" : 0.0,
+              "p75" : 0.01,
+              "p90" : 0.015,
+              "max" : 0.045
+            },
+            "zeroRecallCountAt10" : 112,
+            "zeroRecallPercentageAt10" : 44.800000000000004,
+            "zeroRecallCountAt20" : 65,
+            "zeroRecallPercentageAt20" : 26.0
+          },
+          "unweightedOverlapDiagnostic" : {
+            "meanRetrievedOverlap" : 14.597951282051287,
+            "medianRetrievedOverlap" : 15,
+            "maxRetrievedOverlap" : 49,
+            "bm25ReferenceTop10Overlap" : {
+              "mean" : 7.4684,
+              "median" : 7,
+              "max" : 42
+            },
+            "bm25ReferenceTop20Overlap" : {
+              "mean" : 7.362799999999998,
+              "median" : 7,
+              "max" : 42
+            },
+            "tfidfReferenceTop10Overlap" : {
+              "mean" : 7.647599999999995,
+              "median" : 7,
+              "max" : 42
+            },
+            "tfidfReferenceTop20Overlap" : {
+              "mean" : 7.459800000000003,
+              "median" : 7,
+              "max" : 42
+            }
+          },
+          "overlapWithDefenseClosureJaccard" : null,
+          "bm25IncrementalRecallGainAt10OverBestSingle" : -0.0012000000000000344,
+          "bm25IncrementalRecallGainAt20OverBestSingle" : 1.9999999999995022E-4,
+          "tfidfIncrementalRecallGainAt10OverBestSingle" : 0.004000000000000017,
+          "tfidfIncrementalRecallGainAt20OverBestSingle" : 0.003200000000000036
+        },
+        "budget_500" : {
+          "requestedBudget" : 500,
+          "actualMeanCandidateCount" : 493.952,
+          "positiveCandidatePoolExhaustionRate" : 2.4,
+          "actualMeanCandidateReductionRate" : 0.9012413416005244,
+          "nominalCandidateReductionRate" : 0.9000359870446639,
+          "bm25Metrics" : {
+            "recallAt10" : {
+              "mean" : 0.16599999999999987,
+              "median" : 0.1,
+              "stdDev" : 0.1491442255000172,
+              "min" : 0.0,
+              "p25" : 0.1,
+              "p75" : 0.2,
+              "p90" : 0.3,
+              "max" : 0.8
+            },
+            "recallAt20" : {
+              "mean" : 0.1616,
+              "median" : 0.15,
+              "stdDev" : 0.11792132970756385,
+              "min" : 0.0,
+              "p25" : 0.1,
+              "p75" : 0.2,
+              "p90" : 0.35,
+              "max" : 0.65
+            },
+            "purityAt10" : {
+              "mean" : 0.0033801096161764567,
+              "median" : 0.002,
+              "stdDev" : 0.003146217769150978,
+              "min" : 0.0,
+              "p25" : 0.002,
+              "p75" : 0.004,
+              "p90" : 0.008,
+              "max" : 0.01948051948051948
+            },
+            "purityAt20" : {
+              "mean" : 0.006538144736835322,
+              "median" : 0.006,
+              "stdDev" : 0.004789715821346713,
+              "min" : 0.0,
+              "p25" : 0.004,
+              "p75" : 0.008,
+              "p90" : 0.014,
+              "max" : 0.026
+            },
+            "zeroRecallCountAt10" : 51,
+            "zeroRecallPercentageAt10" : 20.4,
+            "zeroRecallCountAt20" : 14,
+            "zeroRecallPercentageAt20" : 5.6000000000000005
+          },
+          "tfidfMetrics" : {
+            "recallAt10" : {
+              "mean" : 0.17479999999999987,
+              "median" : 0.2,
+              "stdDev" : 0.1529867968159345,
+              "min" : 0.0,
+              "p25" : 0.1,
+              "p75" : 0.3,
+              "p90" : 0.4,
+              "max" : 0.9
+            },
+            "recallAt20" : {
+              "mean" : 0.16479999999999995,
+              "median" : 0.15,
+              "stdDev" : 0.1209171617265308,
+              "min" : 0.0,
+              "p25" : 0.1,
+              "p75" : 0.2,
+              "p90" : 0.3,
+              "max" : 0.6
+            },
+            "purityAt10" : {
+              "mean" : 0.0035406256564275967,
+              "median" : 0.004,
+              "stdDev" : 0.003117677917916758,
+              "min" : 0.0,
+              "p25" : 0.002,
+              "p75" : 0.006,
+              "p90" : 0.008,
+              "max" : 0.018
+            },
+            "purityAt20" : {
+              "mean" : 0.00670424985467554,
+              "median" : 0.006,
+              "stdDev" : 0.00498478585298261,
+              "min" : 0.0,
+              "p25" : 0.004,
+              "p75" : 0.008,
+              "p90" : 0.012,
+              "max" : 0.025974025974025976
+            },
+            "zeroRecallCountAt10" : 56,
+            "zeroRecallPercentageAt10" : 22.400000000000002,
+            "zeroRecallCountAt20" : 21,
+            "zeroRecallPercentageAt20" : 8.4
+          },
+          "unweightedOverlapDiagnostic" : {
+            "meanRetrievedOverlap" : 12.880002754239383,
+            "medianRetrievedOverlap" : 13,
+            "maxRetrievedOverlap" : 49,
+            "bm25ReferenceTop10Overlap" : {
+              "mean" : 7.4684,
+              "median" : 7,
+              "max" : 42
+            },
+            "bm25ReferenceTop20Overlap" : {
+              "mean" : 7.362799999999998,
+              "median" : 7,
+              "max" : 42
+            },
+            "tfidfReferenceTop10Overlap" : {
+              "mean" : 7.647599999999995,
+              "median" : 7,
+              "max" : 42
+            },
+            "tfidfReferenceTop20Overlap" : {
+              "mean" : 7.459800000000003,
+              "median" : 7,
+              "max" : 42
+            }
+          },
+          "overlapWithDefenseClosureJaccard" : null,
+          "bm25IncrementalRecallGainAt10OverBestSingle" : 0.003599999999999992,
+          "bm25IncrementalRecallGainAt20OverBestSingle" : 0.003400000000000042,
+          "tfidfIncrementalRecallGainAt10OverBestSingle" : -0.0035999999999999366,
+          "tfidfIncrementalRecallGainAt20OverBestSingle" : -0.0032000000000000084
+        },
+        "budget_1000" : {
+          "requestedBudget" : 1000,
+          "actualMeanCandidateCount" : 977.648,
+          "positiveCandidatePoolExhaustionRate" : 3.5999999999999996,
+          "actualMeanCandidateReductionRate" : 0.8045240844749386,
+          "nominalCandidateReductionRate" : 0.8000719740893278,
+          "bm25Metrics" : {
+            "recallAt10" : {
+              "mean" : 0.29359999999999997,
+              "median" : 0.3,
+              "stdDev" : 0.19089012546488618,
+              "min" : 0.0,
+              "p25" : 0.2,
+              "p75" : 0.4,
+              "p90" : 0.6,
+              "max" : 0.9
+            },
+            "recallAt20" : {
+              "mean" : 0.28320000000000023,
+              "median" : 0.25,
+              "stdDev" : 0.15445957399915367,
+              "min" : 0.0,
+              "p25" : 0.15,
+              "p75" : 0.35,
+              "p90" : 0.5,
+              "max" : 0.8
+            },
+            "purityAt10" : {
+              "mean" : 0.00302379589068626,
+              "median" : 0.003,
+              "stdDev" : 0.0021684096664970954,
+              "min" : 0.0,
+              "p25" : 0.002,
+              "p75" : 0.004,
+              "p90" : 0.006,
+              "max" : 0.01948051948051948
+            },
+            "purityAt20" : {
+              "mean" : 0.005801502494167492,
+              "median" : 0.005,
+              "stdDev" : 0.003186101076659519,
+              "min" : 0.0,
+              "p25" : 0.004,
+              "p75" : 0.007,
+              "p90" : 0.01,
+              "max" : 0.01948051948051948
+            },
+            "zeroRecallCountAt10" : 16,
+            "zeroRecallPercentageAt10" : 6.4,
+            "zeroRecallCountAt20" : 3,
+            "zeroRecallPercentageAt20" : 1.2
+          },
+          "tfidfMetrics" : {
+            "recallAt10" : {
+              "mean" : 0.3115999999999998,
+              "median" : 0.3,
+              "stdDev" : 0.18348144320339307,
+              "min" : 0.0,
+              "p25" : 0.2,
+              "p75" : 0.4,
+              "p90" : 0.5,
+              "max" : 0.9
+            },
+            "recallAt20" : {
+              "mean" : 0.2938000000000004,
+              "median" : 0.3,
+              "stdDev" : 0.1553433616219244,
+              "min" : 0.0,
+              "p25" : 0.2,
+              "p75" : 0.35,
+              "p90" : 0.5,
+              "max" : 0.85
+            },
+            "purityAt10" : {
+              "mean" : 0.0031898204616224017,
+              "median" : 0.003,
+              "stdDev" : 0.0019379725389404186,
+              "min" : 0.0,
+              "p25" : 0.002,
+              "p75" : 0.004,
+              "p90" : 0.006,
+              "max" : 0.012987012987012988
+            },
+            "purityAt20" : {
+              "mean" : 0.006058045450384166,
+              "median" : 0.006,
+              "stdDev" : 0.0033432775276669687,
+              "min" : 0.0,
+              "p25" : 0.004,
+              "p75" : 0.007,
+              "p90" : 0.01,
+              "max" : 0.025974025974025976
+            },
+            "zeroRecallCountAt10" : 15,
+            "zeroRecallPercentageAt10" : 6.0,
+            "zeroRecallCountAt20" : 3,
+            "zeroRecallPercentageAt20" : 1.2
+          },
+          "unweightedOverlapDiagnostic" : {
+            "meanRetrievedOverlap" : 11.32988711008133,
+            "medianRetrievedOverlap" : 12,
+            "maxRetrievedOverlap" : 49,
+            "bm25ReferenceTop10Overlap" : {
+              "mean" : 7.4684,
+              "median" : 7,
+              "max" : 42
+            },
+            "bm25ReferenceTop20Overlap" : {
+              "mean" : 7.362799999999998,
+              "median" : 7,
+              "max" : 42
+            },
+            "tfidfReferenceTop10Overlap" : {
+              "mean" : 7.647599999999995,
+              "median" : 7,
+              "max" : 42
+            },
+            "tfidfReferenceTop20Overlap" : {
+              "mean" : 7.459800000000003,
+              "median" : 7,
+              "max" : 42
+            }
+          },
+          "overlapWithDefenseClosureJaccard" : null,
+          "bm25IncrementalRecallGainAt10OverBestSingle" : 0.003600000000000325,
+          "bm25IncrementalRecallGainAt20OverBestSingle" : 0.0022000000000000908,
+          "tfidfIncrementalRecallGainAt10OverBestSingle" : -1.1102230246251565E-16,
+          "tfidfIncrementalRecallGainAt20OverBestSingle" : 0.0017999999999999683
+        }
+      }
+    }
+  },
+  "baselineComparisons" : {
+    "SYSTEM_2A_ALPHA_0.60_N50" : {
+      "systemId" : "SYSTEM_2A_ALPHA_0.60_N50",
+      "architectureFamily" : "STATIC_INVERTED_INDEX",
+      "budget" : 50,
+      "meanCandidateCount" : 50.0,
+      "candidateReductionRate" : 0.9900035987044664,
+      "bm25RecallAt10" : 0.021199999999999993,
+      "bm25RecallAt20" : 0.021399999999999975,
+      "tfidfRecallAt10" : 0.02239999999999999,
+      "tfidfRecallAt20" : 0.019799999999999974
+    },
+    "SYSTEM_2A_ALPHA_0.60_N80" : {
+      "systemId" : "SYSTEM_2A_ALPHA_0.60_N80",
+      "architectureFamily" : "STATIC_INVERTED_INDEX",
+      "budget" : 80,
+      "meanCandidateCount" : 80.0,
+      "candidateReductionRate" : 0.9840057579271462,
+      "bm25RecallAt10" : 0.03199999999999997,
+      "bm25RecallAt20" : 0.03039999999999996,
+      "tfidfRecallAt10" : 0.032399999999999964,
+      "tfidfRecallAt20" : 0.02999999999999995
+    },
+    "SYSTEM_2A_ALPHA_0.60_N200" : {
+      "systemId" : "SYSTEM_2A_ALPHA_0.60_N200",
+      "architectureFamily" : "STATIC_INVERTED_INDEX",
+      "budget" : 200,
+      "meanCandidateCount" : 200.0,
+      "candidateReductionRate" : 0.9600143948178655,
+      "bm25RecallAt10" : 0.06999999999999991,
+      "bm25RecallAt20" : 0.06760000000000009,
+      "tfidfRecallAt10" : 0.06999999999999992,
+      "tfidfRecallAt20" : 0.0700000000000001
+    },
+    "SYSTEM_2A_ALPHA_0.60_N500" : {
+      "systemId" : "SYSTEM_2A_ALPHA_0.60_N500",
+      "architectureFamily" : "STATIC_INVERTED_INDEX",
+      "budget" : 500,
+      "meanCandidateCount" : 500.0,
+      "candidateReductionRate" : 0.9000359870446639,
+      "bm25RecallAt10" : 0.14840000000000017,
+      "bm25RecallAt20" : 0.14640000000000003,
+      "tfidfRecallAt10" : 0.1480000000000002,
+      "tfidfRecallAt20" : 0.14440000000000006
+    },
+    "SYSTEM_2A_ALPHA_0.60_N1000" : {
+      "systemId" : "SYSTEM_2A_ALPHA_0.60_N1000",
+      "architectureFamily" : "STATIC_INVERTED_INDEX",
+      "budget" : 1000,
+      "meanCandidateCount" : 1000.0,
+      "candidateReductionRate" : 0.8000719740893278,
+      "bm25RecallAt10" : 0.27,
+      "bm25RecallAt20" : 0.2656000000000001,
+      "tfidfRecallAt10" : 0.27159999999999984,
+      "tfidfRecallAt20" : 0.27119999999999994
+    },
+    "SYSTEM_2A_ALPHA_0.00_N50" : {
+      "systemId" : "SYSTEM_2A_ALPHA_0.00_N50",
+      "architectureFamily" : "STATIC_INVERTED_INDEX_PAWNLESS",
+      "budget" : 50,
+      "meanCandidateCount" : 50.0,
+      "candidateReductionRate" : 0.9900035987044664,
+      "bm25RecallAt10" : 0.034399999999999965,
+      "bm25RecallAt20" : 0.02999999999999996,
+      "tfidfRecallAt10" : 0.030799999999999977,
+      "tfidfRecallAt20" : 0.028199999999999958
+    },
+    "SYSTEM_2A_ALPHA_0.00_N80" : {
+      "systemId" : "SYSTEM_2A_ALPHA_0.00_N80",
+      "architectureFamily" : "STATIC_INVERTED_INDEX_PAWNLESS",
+      "budget" : 80,
+      "meanCandidateCount" : 80.0,
+      "candidateReductionRate" : 0.9840057579271462,
+      "bm25RecallAt10" : 0.05359999999999992,
+      "bm25RecallAt20" : 0.045599999999999995,
+      "tfidfRecallAt10" : 0.04479999999999993,
+      "tfidfRecallAt20" : 0.041
+    },
+    "SYSTEM_2A_ALPHA_0.00_N200" : {
+      "systemId" : "SYSTEM_2A_ALPHA_0.00_N200",
+      "architectureFamily" : "STATIC_INVERTED_INDEX_PAWNLESS",
+      "budget" : 200,
+      "meanCandidateCount" : 200.0,
+      "candidateReductionRate" : 0.9600143948178655,
+      "bm25RecallAt10" : 0.10360000000000005,
+      "bm25RecallAt20" : 0.09320000000000019,
+      "tfidfRecallAt10" : 0.09000000000000004,
+      "tfidfRecallAt20" : 0.08580000000000013
+    },
+    "SYSTEM_2A_ALPHA_0.00_N500" : {
+      "systemId" : "SYSTEM_2A_ALPHA_0.00_N500",
+      "architectureFamily" : "STATIC_INVERTED_INDEX_PAWNLESS",
+      "budget" : 500,
+      "meanCandidateCount" : 500.0,
+      "candidateReductionRate" : 0.9000359870446639,
+      "bm25RecallAt10" : 0.2056000000000002,
+      "bm25RecallAt20" : 0.1932000000000001,
+      "tfidfRecallAt10" : 0.19400000000000012,
+      "tfidfRecallAt20" : 0.18240000000000006
+    },
+    "SYSTEM_2A_ALPHA_0.00_N1000" : {
+      "systemId" : "SYSTEM_2A_ALPHA_0.00_N1000",
+      "architectureFamily" : "STATIC_INVERTED_INDEX_PAWNLESS",
+      "budget" : 1000,
+      "meanCandidateCount" : 1000.0,
+      "candidateReductionRate" : 0.8000719740893278,
+      "bm25RecallAt10" : 0.33279999999999993,
+      "bm25RecallAt20" : 0.3203999999999997,
+      "tfidfRecallAt10" : 0.3339999999999997,
+      "tfidfRecallAt20" : 0.3183999999999998
+    },
+    "SYSTEM_2B_ALPHA_0.60_N50" : {
+      "systemId" : "SYSTEM_2B_ALPHA_0.60_N50",
+      "architectureFamily" : "EXHAUSTIVE_STATIC_COSINE",
+      "budget" : 50,
+      "meanCandidateCount" : 50.0,
+      "candidateReductionRate" : 0.9900035987044664,
+      "bm25RecallAt10" : 0.019999999999999997,
+      "bm25RecallAt20" : 0.01979999999999998,
+      "tfidfRecallAt10" : 0.021999999999999985,
+      "tfidfRecallAt20" : 0.02019999999999998
+    },
+    "SYSTEM_2B_ALPHA_0.60_N80" : {
+      "systemId" : "SYSTEM_2B_ALPHA_0.60_N80",
+      "architectureFamily" : "EXHAUSTIVE_STATIC_COSINE",
+      "budget" : 80,
+      "meanCandidateCount" : 80.0,
+      "candidateReductionRate" : 0.9840057579271462,
+      "bm25RecallAt10" : 0.03079999999999998,
+      "bm25RecallAt20" : 0.027999999999999962,
+      "tfidfRecallAt10" : 0.031599999999999975,
+      "tfidfRecallAt20" : 0.027799999999999953
+    },
+    "SYSTEM_2B_ALPHA_0.60_N200" : {
+      "systemId" : "SYSTEM_2B_ALPHA_0.60_N200",
+      "architectureFamily" : "EXHAUSTIVE_STATIC_COSINE",
+      "budget" : 200,
+      "meanCandidateCount" : 200.0,
+      "candidateReductionRate" : 0.9600143948178655,
+      "bm25RecallAt10" : 0.07119999999999993,
+      "bm25RecallAt20" : 0.06940000000000009,
+      "tfidfRecallAt10" : 0.06959999999999995,
+      "tfidfRecallAt20" : 0.06620000000000006
+    },
+    "SYSTEM_2B_ALPHA_0.60_N500" : {
+      "systemId" : "SYSTEM_2B_ALPHA_0.60_N500",
+      "architectureFamily" : "EXHAUSTIVE_STATIC_COSINE",
+      "budget" : 500,
+      "meanCandidateCount" : 500.0,
+      "candidateReductionRate" : 0.9000359870446639,
+      "bm25RecallAt10" : 0.15560000000000013,
+      "bm25RecallAt20" : 0.14740000000000011,
+      "tfidfRecallAt10" : 0.15280000000000024,
+      "tfidfRecallAt20" : 0.15200000000000008
+    },
+    "SYSTEM_2B_ALPHA_0.60_N1000" : {
+      "systemId" : "SYSTEM_2B_ALPHA_0.60_N1000",
+      "architectureFamily" : "EXHAUSTIVE_STATIC_COSINE",
+      "budget" : 1000,
+      "meanCandidateCount" : 1000.0,
+      "candidateReductionRate" : 0.8000719740893278,
+      "bm25RecallAt10" : 0.2775999999999999,
+      "bm25RecallAt20" : 0.27099999999999985,
+      "tfidfRecallAt10" : 0.2795999999999998,
+      "tfidfRecallAt20" : 0.2790000000000001
+    },
+    "SYSTEM_3_ALPHA_0.60" : {
+      "systemId" : "SYSTEM_3_ALPHA_0.60",
+      "architectureFamily" : "PRODUCTION_CLUSTERED_BASELINE",
+      "budget" : null,
+      "meanCandidateCount" : 76.076,
+      "candidateReductionRate" : 0.9847902755008197,
+      "bm25RecallAt10" : 0.0208,
+      "bm25RecallAt20" : 0.02079999999999998,
+      "tfidfRecallAt10" : 0.023199999999999988,
+      "tfidfRecallAt20" : 0.021999999999999978
+    },
+    "SYSTEM_4D_ALPHA_0.60" : {
+      "systemId" : "SYSTEM_4D_ALPHA_0.60",
+      "architectureFamily" : "SIDE_CONSTRAINED_CLUSTERED_PIPELINE",
+      "budget" : null,
+      "meanCandidateCount" : 59.052,
+      "candidateReductionRate" : 0.988193850213923,
+      "bm25RecallAt10" : 0.014400000000000007,
+      "bm25RecallAt20" : 0.01539999999999999,
+      "tfidfRecallAt10" : 0.016000000000000007,
+      "tfidfRecallAt20" : 0.015199999999999993
+    },
+    "SYSTEM_1_DYNAMIC_REFERENCE" : {
+      "systemId" : "SYSTEM_1_DYNAMIC_REFERENCE",
+      "architectureFamily" : "DYNAMIC_REFERENCE_STANDARD",
+      "budget" : null,
+      "meanCandidateCount" : 5001.8,
+      "candidateReductionRate" : 0.0,
+      "bm25RecallAt10" : 1.0,
+      "bm25RecallAt20" : 1.0,
+      "tfidfRecallAt10" : 1.0,
+      "tfidfRecallAt20" : 1.0
+    }
+  }
+}
