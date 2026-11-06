@@ -1,0 +1,2358 @@
+{
+  "metadata" : {
+    "experimentId" : "EXP-ISSUE-723-DEPTH8-DYNAMIC-SIMILARITY",
+    "timestamp" : "2026-11-06T17:46:00.863849Z",
+    "corpusSize" : 10000,
+    "queryCount" : 250,
+    "budgets" : [ 50, 80, 100, 200, 500, 1000 ],
+    "evaluatedConditions" : [ "C1: MPV1_R1", "C2: MPV3_R1", "C3: MPV3_R13", "C4: MPV5_R1", "C5: MPV5_R13", "C6: MPV5_R15", "ABLATION_MODEL_B_MPV3", "ABLATION_MODEL_B_MPV5", "ABLATION_MODEL_C_MPV5_R2", "ABLATION_MODEL_C_MPV5_R3", "ABLATION_MODEL_C_MPV5_R4", "ABLATION_MODEL_C_MPV5_R5", "ABLATION_MODEL_D_MPV5_R12", "ABLATION_MODEL_D_MPV5_R14", "ABLATION_C6_EXCLUDE_INCOMPLETE", "ASYMMETRIC_C1_MPV1_R1", "ASYMMETRIC_C6_MPV5_R15" ]
+  },
+  "conditions" : {
+    "C1: MPV1_R1" : {
+      "bm25" : {
+        "N=50" : {
+          "recallAt10" : 6.2,
+          "recallAt20" : 5.5,
+          "precisionAt10" : 1.92,
+          "precisionAtN" : 1.24,
+          "mrrAtNTop1" : 0.0089,
+          "mrrAtNFirstRef" : 0.0409,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 155,
+          "uniqueCandidatesRetrieved" : 5989
+        },
+        "N=80" : {
+          "recallAt10" : 8.24,
+          "recallAt20" : 7.3,
+          "precisionAt10" : 1.92,
+          "precisionAtN" : 1.03,
+          "mrrAtNTop1" : 0.0091,
+          "mrrAtNFirstRef" : 0.0421,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 206,
+          "uniqueCandidatesRetrieved" : 7242
+        },
+        "N=100" : {
+          "recallAt10" : 9.64,
+          "recallAt20" : 8.46,
+          "precisionAt10" : 1.92,
+          "precisionAtN" : 0.96,
+          "mrrAtNTop1" : 0.0093,
+          "mrrAtNFirstRef" : 0.0425,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 241,
+          "uniqueCandidatesRetrieved" : 7768
+        },
+        "N=200" : {
+          "recallAt10" : 14.76,
+          "recallAt20" : 13.82,
+          "precisionAt10" : 1.92,
+          "precisionAtN" : 0.74,
+          "mrrAtNTop1" : 0.0096,
+          "mrrAtNFirstRef" : 0.0439,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 369,
+          "uniqueCandidatesRetrieved" : 8988
+        },
+        "N=500" : {
+          "recallAt10" : 26.68,
+          "recallAt20" : 25.06,
+          "precisionAt10" : 1.92,
+          "precisionAtN" : 0.53,
+          "mrrAtNTop1" : 0.01,
+          "mrrAtNFirstRef" : 0.0446,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 667,
+          "uniqueCandidatesRetrieved" : 9703
+        },
+        "N=1000" : {
+          "recallAt10" : 39.48,
+          "recallAt20" : 39.04,
+          "precisionAt10" : 1.92,
+          "precisionAtN" : 0.39,
+          "mrrAtNTop1" : 0.0102,
+          "mrrAtNFirstRef" : 0.0447,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 987,
+          "uniqueCandidatesRetrieved" : 9932
+        }
+      },
+      "tfidf" : {
+        "N=50" : {
+          "recallAt10" : 6.0,
+          "recallAt20" : 5.54,
+          "precisionAt10" : 1.92,
+          "precisionAtN" : 1.2,
+          "mrrAtNTop1" : 0.009,
+          "mrrAtNFirstRef" : 0.0541,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 150,
+          "uniqueCandidatesRetrieved" : 6543
+        },
+        "N=80" : {
+          "recallAt10" : 8.24,
+          "recallAt20" : 7.82,
+          "precisionAt10" : 1.92,
+          "precisionAtN" : 1.03,
+          "mrrAtNTop1" : 0.0094,
+          "mrrAtNFirstRef" : 0.0556,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 206,
+          "uniqueCandidatesRetrieved" : 8034
+        },
+        "N=100" : {
+          "recallAt10" : 9.68,
+          "recallAt20" : 9.26,
+          "precisionAt10" : 1.92,
+          "precisionAtN" : 0.97,
+          "mrrAtNTop1" : 0.0096,
+          "mrrAtNFirstRef" : 0.0563,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 242,
+          "uniqueCandidatesRetrieved" : 8619
+        },
+        "N=200" : {
+          "recallAt10" : 13.96,
+          "recallAt20" : 13.84,
+          "precisionAt10" : 1.92,
+          "precisionAtN" : 0.7,
+          "mrrAtNTop1" : 0.0098,
+          "mrrAtNFirstRef" : 0.0571,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 349,
+          "uniqueCandidatesRetrieved" : 9738
+        },
+        "N=500" : {
+          "recallAt10" : 25.36,
+          "recallAt20" : 25.16,
+          "precisionAt10" : 1.92,
+          "precisionAtN" : 0.51,
+          "mrrAtNTop1" : 0.0102,
+          "mrrAtNFirstRef" : 0.0578,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 634,
+          "uniqueCandidatesRetrieved" : 9993
+        },
+        "N=1000" : {
+          "recallAt10" : 39.32,
+          "recallAt20" : 38.86,
+          "precisionAt10" : 1.92,
+          "precisionAtN" : 0.39,
+          "mrrAtNTop1" : 0.0104,
+          "mrrAtNFirstRef" : 0.0581,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 983,
+          "uniqueCandidatesRetrieved" : 9998
+        }
+      }
+    },
+    "C2: MPV3_R1" : {
+      "bm25" : {
+        "N=50" : {
+          "recallAt10" : 6.44,
+          "recallAt20" : 6.26,
+          "precisionAt10" : 2.0,
+          "precisionAtN" : 1.29,
+          "mrrAtNTop1" : 0.0141,
+          "mrrAtNFirstRef" : 0.0666,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 161,
+          "uniqueCandidatesRetrieved" : 5909
+        },
+        "N=80" : {
+          "recallAt10" : 8.84,
+          "recallAt20" : 8.24,
+          "precisionAt10" : 2.0,
+          "precisionAtN" : 1.11,
+          "mrrAtNTop1" : 0.0145,
+          "mrrAtNFirstRef" : 0.0675,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 221,
+          "uniqueCandidatesRetrieved" : 7081
+        },
+        "N=100" : {
+          "recallAt10" : 9.88,
+          "recallAt20" : 9.52,
+          "precisionAt10" : 2.0,
+          "precisionAtN" : 0.99,
+          "mrrAtNTop1" : 0.0147,
+          "mrrAtNFirstRef" : 0.068,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 247,
+          "uniqueCandidatesRetrieved" : 7568
+        },
+        "N=200" : {
+          "recallAt10" : 15.68,
+          "recallAt20" : 14.88,
+          "precisionAt10" : 2.0,
+          "precisionAtN" : 0.78,
+          "mrrAtNTop1" : 0.0151,
+          "mrrAtNFirstRef" : 0.069,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 392,
+          "uniqueCandidatesRetrieved" : 8699
+        },
+        "N=500" : {
+          "recallAt10" : 26.24,
+          "recallAt20" : 25.64,
+          "precisionAt10" : 2.0,
+          "precisionAtN" : 0.52,
+          "mrrAtNTop1" : 0.0154,
+          "mrrAtNFirstRef" : 0.0697,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 656,
+          "uniqueCandidatesRetrieved" : 9568
+        },
+        "N=1000" : {
+          "recallAt10" : 39.84,
+          "recallAt20" : 39.8,
+          "precisionAt10" : 2.0,
+          "precisionAtN" : 0.4,
+          "mrrAtNTop1" : 0.0156,
+          "mrrAtNFirstRef" : 0.0699,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 996,
+          "uniqueCandidatesRetrieved" : 9884
+        }
+      },
+      "tfidf" : {
+        "N=50" : {
+          "recallAt10" : 6.68,
+          "recallAt20" : 5.76,
+          "precisionAt10" : 2.44,
+          "precisionAtN" : 1.34,
+          "mrrAtNTop1" : 0.0074,
+          "mrrAtNFirstRef" : 0.064,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 167,
+          "uniqueCandidatesRetrieved" : 6549
+        },
+        "N=80" : {
+          "recallAt10" : 9.0,
+          "recallAt20" : 8.26,
+          "precisionAt10" : 2.44,
+          "precisionAtN" : 1.13,
+          "mrrAtNTop1" : 0.0078,
+          "mrrAtNFirstRef" : 0.0654,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 225,
+          "uniqueCandidatesRetrieved" : 8047
+        },
+        "N=100" : {
+          "recallAt10" : 10.08,
+          "recallAt20" : 9.38,
+          "precisionAt10" : 2.44,
+          "precisionAtN" : 1.01,
+          "mrrAtNTop1" : 0.0079,
+          "mrrAtNFirstRef" : 0.0657,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 252,
+          "uniqueCandidatesRetrieved" : 8597
+        },
+        "N=200" : {
+          "recallAt10" : 15.44,
+          "recallAt20" : 14.62,
+          "precisionAt10" : 2.44,
+          "precisionAtN" : 0.77,
+          "mrrAtNTop1" : 0.0081,
+          "mrrAtNFirstRef" : 0.0667,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 386,
+          "uniqueCandidatesRetrieved" : 9689
+        },
+        "N=500" : {
+          "recallAt10" : 25.32,
+          "recallAt20" : 25.16,
+          "precisionAt10" : 2.44,
+          "precisionAtN" : 0.51,
+          "mrrAtNTop1" : 0.0085,
+          "mrrAtNFirstRef" : 0.0673,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 633,
+          "uniqueCandidatesRetrieved" : 9983
+        },
+        "N=1000" : {
+          "recallAt10" : 37.92,
+          "recallAt20" : 38.72,
+          "precisionAt10" : 2.44,
+          "precisionAtN" : 0.38,
+          "mrrAtNTop1" : 0.0087,
+          "mrrAtNFirstRef" : 0.0675,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 948,
+          "uniqueCandidatesRetrieved" : 9997
+        }
+      }
+    },
+    "C3: MPV3_R13" : {
+      "bm25" : {
+        "N=50" : {
+          "recallAt10" : 7.28,
+          "recallAt20" : 7.02,
+          "precisionAt10" : 2.28,
+          "precisionAtN" : 1.46,
+          "mrrAtNTop1" : 0.017,
+          "mrrAtNFirstRef" : 0.0895,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 182,
+          "uniqueCandidatesRetrieved" : 4579
+        },
+        "N=80" : {
+          "recallAt10" : 10.12,
+          "recallAt20" : 9.64,
+          "precisionAt10" : 2.28,
+          "precisionAtN" : 1.27,
+          "mrrAtNTop1" : 0.0174,
+          "mrrAtNFirstRef" : 0.0911,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 253,
+          "uniqueCandidatesRetrieved" : 5656
+        },
+        "N=100" : {
+          "recallAt10" : 11.64,
+          "recallAt20" : 11.22,
+          "precisionAt10" : 2.28,
+          "precisionAtN" : 1.16,
+          "mrrAtNTop1" : 0.0176,
+          "mrrAtNFirstRef" : 0.0917,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 291,
+          "uniqueCandidatesRetrieved" : 6147
+        },
+        "N=200" : {
+          "recallAt10" : 18.2,
+          "recallAt20" : 17.72,
+          "precisionAt10" : 2.28,
+          "precisionAtN" : 0.91,
+          "mrrAtNTop1" : 0.0181,
+          "mrrAtNFirstRef" : 0.0926,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 455,
+          "uniqueCandidatesRetrieved" : 7555
+        },
+        "N=500" : {
+          "recallAt10" : 31.08,
+          "recallAt20" : 30.84,
+          "precisionAt10" : 2.28,
+          "precisionAtN" : 0.62,
+          "mrrAtNTop1" : 0.0184,
+          "mrrAtNFirstRef" : 0.0933,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 777,
+          "uniqueCandidatesRetrieved" : 8963
+        },
+        "N=1000" : {
+          "recallAt10" : 46.52,
+          "recallAt20" : 46.5,
+          "precisionAt10" : 2.28,
+          "precisionAtN" : 0.47,
+          "mrrAtNTop1" : 0.0186,
+          "mrrAtNFirstRef" : 0.0935,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 1163,
+          "uniqueCandidatesRetrieved" : 9608
+        }
+      },
+      "tfidf" : {
+        "N=50" : {
+          "recallAt10" : 6.64,
+          "recallAt20" : 6.06,
+          "precisionAt10" : 2.08,
+          "precisionAtN" : 1.33,
+          "mrrAtNTop1" : 0.009,
+          "mrrAtNFirstRef" : 0.069,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 166,
+          "uniqueCandidatesRetrieved" : 6300
+        },
+        "N=80" : {
+          "recallAt10" : 8.92,
+          "recallAt20" : 8.5,
+          "precisionAt10" : 2.08,
+          "precisionAtN" : 1.12,
+          "mrrAtNTop1" : 0.0096,
+          "mrrAtNFirstRef" : 0.0705,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 223,
+          "uniqueCandidatesRetrieved" : 7705
+        },
+        "N=100" : {
+          "recallAt10" : 10.6,
+          "recallAt20" : 10.1,
+          "precisionAt10" : 2.08,
+          "precisionAtN" : 1.06,
+          "mrrAtNTop1" : 0.0098,
+          "mrrAtNFirstRef" : 0.0713,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 265,
+          "uniqueCandidatesRetrieved" : 8310
+        },
+        "N=200" : {
+          "recallAt10" : 16.24,
+          "recallAt20" : 15.74,
+          "precisionAt10" : 2.08,
+          "precisionAtN" : 0.81,
+          "mrrAtNTop1" : 0.0101,
+          "mrrAtNFirstRef" : 0.0726,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 406,
+          "uniqueCandidatesRetrieved" : 9514
+        },
+        "N=500" : {
+          "recallAt10" : 29.24,
+          "recallAt20" : 28.86,
+          "precisionAt10" : 2.08,
+          "precisionAtN" : 0.58,
+          "mrrAtNTop1" : 0.0105,
+          "mrrAtNFirstRef" : 0.0732,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 731,
+          "uniqueCandidatesRetrieved" : 9953
+        },
+        "N=1000" : {
+          "recallAt10" : 44.56,
+          "recallAt20" : 44.42,
+          "precisionAt10" : 2.08,
+          "precisionAtN" : 0.45,
+          "mrrAtNTop1" : 0.0107,
+          "mrrAtNFirstRef" : 0.0733,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 1114,
+          "uniqueCandidatesRetrieved" : 9997
+        }
+      }
+    },
+    "C4: MPV5_R1" : {
+      "bm25" : {
+        "N=50" : {
+          "recallAt10" : 5.6,
+          "recallAt20" : 5.48,
+          "precisionAt10" : 1.92,
+          "precisionAtN" : 1.12,
+          "mrrAtNTop1" : 0.0059,
+          "mrrAtNFirstRef" : 0.0558,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 140,
+          "uniqueCandidatesRetrieved" : 5953
+        },
+        "N=80" : {
+          "recallAt10" : 8.04,
+          "recallAt20" : 7.56,
+          "precisionAt10" : 1.92,
+          "precisionAtN" : 1.0,
+          "mrrAtNTop1" : 0.0066,
+          "mrrAtNFirstRef" : 0.0576,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 201,
+          "uniqueCandidatesRetrieved" : 7130
+        },
+        "N=100" : {
+          "recallAt10" : 9.32,
+          "recallAt20" : 8.66,
+          "precisionAt10" : 1.92,
+          "precisionAtN" : 0.93,
+          "mrrAtNTop1" : 0.0068,
+          "mrrAtNFirstRef" : 0.0582,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 233,
+          "uniqueCandidatesRetrieved" : 7582
+        },
+        "N=200" : {
+          "recallAt10" : 14.0,
+          "recallAt20" : 13.66,
+          "precisionAt10" : 1.92,
+          "precisionAtN" : 0.7,
+          "mrrAtNTop1" : 0.007,
+          "mrrAtNFirstRef" : 0.0593,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 350,
+          "uniqueCandidatesRetrieved" : 8833
+        },
+        "N=500" : {
+          "recallAt10" : 24.84,
+          "recallAt20" : 24.88,
+          "precisionAt10" : 1.92,
+          "precisionAtN" : 0.5,
+          "mrrAtNTop1" : 0.0074,
+          "mrrAtNFirstRef" : 0.06,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 621,
+          "uniqueCandidatesRetrieved" : 9590
+        },
+        "N=1000" : {
+          "recallAt10" : 37.48,
+          "recallAt20" : 38.28,
+          "precisionAt10" : 1.92,
+          "precisionAtN" : 0.37,
+          "mrrAtNTop1" : 0.0076,
+          "mrrAtNFirstRef" : 0.0602,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 937,
+          "uniqueCandidatesRetrieved" : 9860
+        }
+      },
+      "tfidf" : {
+        "N=50" : {
+          "recallAt10" : 6.68,
+          "recallAt20" : 5.82,
+          "precisionAt10" : 2.32,
+          "precisionAtN" : 1.34,
+          "mrrAtNTop1" : 0.0131,
+          "mrrAtNFirstRef" : 0.0646,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 167,
+          "uniqueCandidatesRetrieved" : 6450
+        },
+        "N=80" : {
+          "recallAt10" : 8.56,
+          "recallAt20" : 7.64,
+          "precisionAt10" : 2.32,
+          "precisionAtN" : 1.07,
+          "mrrAtNTop1" : 0.0132,
+          "mrrAtNFirstRef" : 0.0657,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 214,
+          "uniqueCandidatesRetrieved" : 7950
+        },
+        "N=100" : {
+          "recallAt10" : 9.96,
+          "recallAt20" : 8.82,
+          "precisionAt10" : 2.32,
+          "precisionAtN" : 1.0,
+          "mrrAtNTop1" : 0.0133,
+          "mrrAtNFirstRef" : 0.0663,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 249,
+          "uniqueCandidatesRetrieved" : 8572
+        },
+        "N=200" : {
+          "recallAt10" : 15.36,
+          "recallAt20" : 14.22,
+          "precisionAt10" : 2.32,
+          "precisionAtN" : 0.77,
+          "mrrAtNTop1" : 0.0137,
+          "mrrAtNFirstRef" : 0.0675,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 384,
+          "uniqueCandidatesRetrieved" : 9729
+        },
+        "N=500" : {
+          "recallAt10" : 26.28,
+          "recallAt20" : 25.08,
+          "precisionAt10" : 2.32,
+          "precisionAtN" : 0.53,
+          "mrrAtNTop1" : 0.014,
+          "mrrAtNFirstRef" : 0.0682,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 657,
+          "uniqueCandidatesRetrieved" : 9991
+        },
+        "N=1000" : {
+          "recallAt10" : 40.0,
+          "recallAt20" : 39.22,
+          "precisionAt10" : 2.32,
+          "precisionAtN" : 0.4,
+          "mrrAtNTop1" : 0.0143,
+          "mrrAtNFirstRef" : 0.0684,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 1000,
+          "uniqueCandidatesRetrieved" : 9998
+        }
+      }
+    },
+    "C5: MPV5_R13" : {
+      "bm25" : {
+        "N=50" : {
+          "recallAt10" : 7.44,
+          "recallAt20" : 6.86,
+          "precisionAt10" : 2.28,
+          "precisionAtN" : 1.49,
+          "mrrAtNTop1" : 0.012,
+          "mrrAtNFirstRef" : 0.0646,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 186,
+          "uniqueCandidatesRetrieved" : 4594
+        },
+        "N=80" : {
+          "recallAt10" : 10.12,
+          "recallAt20" : 9.34,
+          "precisionAt10" : 2.28,
+          "precisionAtN" : 1.27,
+          "mrrAtNTop1" : 0.0122,
+          "mrrAtNFirstRef" : 0.0661,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 253,
+          "uniqueCandidatesRetrieved" : 5673
+        },
+        "N=100" : {
+          "recallAt10" : 11.4,
+          "recallAt20" : 10.7,
+          "precisionAt10" : 2.28,
+          "precisionAtN" : 1.14,
+          "mrrAtNTop1" : 0.0125,
+          "mrrAtNFirstRef" : 0.0667,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 285,
+          "uniqueCandidatesRetrieved" : 6214
+        },
+        "N=200" : {
+          "recallAt10" : 17.72,
+          "recallAt20" : 17.02,
+          "precisionAt10" : 2.28,
+          "precisionAtN" : 0.89,
+          "mrrAtNTop1" : 0.0129,
+          "mrrAtNFirstRef" : 0.068,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 443,
+          "uniqueCandidatesRetrieved" : 7698
+        },
+        "N=500" : {
+          "recallAt10" : 31.64,
+          "recallAt20" : 30.82,
+          "precisionAt10" : 2.28,
+          "precisionAtN" : 0.63,
+          "mrrAtNTop1" : 0.0132,
+          "mrrAtNFirstRef" : 0.0685,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 791,
+          "uniqueCandidatesRetrieved" : 9076
+        },
+        "N=1000" : {
+          "recallAt10" : 46.76,
+          "recallAt20" : 46.98,
+          "precisionAt10" : 2.28,
+          "precisionAtN" : 0.47,
+          "mrrAtNTop1" : 0.0135,
+          "mrrAtNFirstRef" : 0.0686,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 1169,
+          "uniqueCandidatesRetrieved" : 9682
+        }
+      },
+      "tfidf" : {
+        "N=50" : {
+          "recallAt10" : 7.16,
+          "recallAt20" : 6.92,
+          "precisionAt10" : 2.48,
+          "precisionAtN" : 1.43,
+          "mrrAtNTop1" : 0.0174,
+          "mrrAtNFirstRef" : 0.0825,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 179,
+          "uniqueCandidatesRetrieved" : 6307
+        },
+        "N=80" : {
+          "recallAt10" : 10.12,
+          "recallAt20" : 9.68,
+          "precisionAt10" : 2.48,
+          "precisionAtN" : 1.27,
+          "mrrAtNTop1" : 0.0178,
+          "mrrAtNFirstRef" : 0.0836,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 253,
+          "uniqueCandidatesRetrieved" : 7741
+        },
+        "N=100" : {
+          "recallAt10" : 11.36,
+          "recallAt20" : 10.92,
+          "precisionAt10" : 2.48,
+          "precisionAtN" : 1.14,
+          "mrrAtNTop1" : 0.0179,
+          "mrrAtNFirstRef" : 0.084,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 284,
+          "uniqueCandidatesRetrieved" : 8321
+        },
+        "N=200" : {
+          "recallAt10" : 17.92,
+          "recallAt20" : 17.12,
+          "precisionAt10" : 2.48,
+          "precisionAtN" : 0.9,
+          "mrrAtNTop1" : 0.0182,
+          "mrrAtNFirstRef" : 0.0854,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 448,
+          "uniqueCandidatesRetrieved" : 9552
+        },
+        "N=500" : {
+          "recallAt10" : 29.88,
+          "recallAt20" : 29.14,
+          "precisionAt10" : 2.48,
+          "precisionAtN" : 0.6,
+          "mrrAtNTop1" : 0.0187,
+          "mrrAtNFirstRef" : 0.0859,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 747,
+          "uniqueCandidatesRetrieved" : 9968
+        },
+        "N=1000" : {
+          "recallAt10" : 45.12,
+          "recallAt20" : 44.04,
+          "precisionAt10" : 2.48,
+          "precisionAtN" : 0.45,
+          "mrrAtNTop1" : 0.019,
+          "mrrAtNFirstRef" : 0.0861,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 1128,
+          "uniqueCandidatesRetrieved" : 9997
+        }
+      }
+    },
+    "C6: MPV5_R15" : {
+      "bm25" : {
+        "N=50" : {
+          "recallAt10" : 7.6,
+          "recallAt20" : 6.8,
+          "precisionAt10" : 2.36,
+          "precisionAtN" : 1.52,
+          "mrrAtNTop1" : 0.0165,
+          "mrrAtNFirstRef" : 0.0867,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 190,
+          "uniqueCandidatesRetrieved" : 3944
+        },
+        "N=80" : {
+          "recallAt10" : 10.44,
+          "recallAt20" : 9.58,
+          "precisionAt10" : 2.36,
+          "precisionAtN" : 1.31,
+          "mrrAtNTop1" : 0.017,
+          "mrrAtNFirstRef" : 0.0885,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 261,
+          "uniqueCandidatesRetrieved" : 4903
+        },
+        "N=100" : {
+          "recallAt10" : 12.24,
+          "recallAt20" : 11.1,
+          "precisionAt10" : 2.36,
+          "precisionAtN" : 1.22,
+          "mrrAtNTop1" : 0.0172,
+          "mrrAtNFirstRef" : 0.0891,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 306,
+          "uniqueCandidatesRetrieved" : 5401
+        },
+        "N=200" : {
+          "recallAt10" : 18.48,
+          "recallAt20" : 17.34,
+          "precisionAt10" : 2.36,
+          "precisionAtN" : 0.92,
+          "mrrAtNTop1" : 0.0177,
+          "mrrAtNFirstRef" : 0.0903,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 462,
+          "uniqueCandidatesRetrieved" : 6908
+        },
+        "N=500" : {
+          "recallAt10" : 31.92,
+          "recallAt20" : 30.96,
+          "precisionAt10" : 2.36,
+          "precisionAtN" : 0.64,
+          "mrrAtNTop1" : 0.0181,
+          "mrrAtNFirstRef" : 0.0909,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 798,
+          "uniqueCandidatesRetrieved" : 8586
+        },
+        "N=1000" : {
+          "recallAt10" : 47.48,
+          "recallAt20" : 47.16,
+          "precisionAt10" : 2.36,
+          "precisionAtN" : 0.47,
+          "mrrAtNTop1" : 0.0183,
+          "mrrAtNFirstRef" : 0.091,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 1187,
+          "uniqueCandidatesRetrieved" : 9439
+        }
+      },
+      "tfidf" : {
+        "N=50" : {
+          "recallAt10" : 6.96,
+          "recallAt20" : 6.72,
+          "precisionAt10" : 2.08,
+          "precisionAtN" : 1.39,
+          "mrrAtNTop1" : 0.0115,
+          "mrrAtNFirstRef" : 0.0589,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 174,
+          "uniqueCandidatesRetrieved" : 6285
+        },
+        "N=80" : {
+          "recallAt10" : 10.32,
+          "recallAt20" : 9.7,
+          "precisionAt10" : 2.08,
+          "precisionAtN" : 1.29,
+          "mrrAtNTop1" : 0.0118,
+          "mrrAtNFirstRef" : 0.0609,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 258,
+          "uniqueCandidatesRetrieved" : 7746
+        },
+        "N=100" : {
+          "recallAt10" : 12.16,
+          "recallAt20" : 11.42,
+          "precisionAt10" : 2.08,
+          "precisionAtN" : 1.22,
+          "mrrAtNTop1" : 0.0119,
+          "mrrAtNFirstRef" : 0.0616,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 304,
+          "uniqueCandidatesRetrieved" : 8298
+        },
+        "N=200" : {
+          "recallAt10" : 18.72,
+          "recallAt20" : 17.24,
+          "precisionAt10" : 2.08,
+          "precisionAtN" : 0.94,
+          "mrrAtNTop1" : 0.0124,
+          "mrrAtNFirstRef" : 0.0626,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 468,
+          "uniqueCandidatesRetrieved" : 9521
+        },
+        "N=500" : {
+          "recallAt10" : 32.08,
+          "recallAt20" : 30.56,
+          "precisionAt10" : 2.08,
+          "precisionAtN" : 0.64,
+          "mrrAtNTop1" : 0.0129,
+          "mrrAtNFirstRef" : 0.0633,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 802,
+          "uniqueCandidatesRetrieved" : 9966
+        },
+        "N=1000" : {
+          "recallAt10" : 47.4,
+          "recallAt20" : 44.94,
+          "precisionAt10" : 2.08,
+          "precisionAtN" : 0.47,
+          "mrrAtNTop1" : 0.013,
+          "mrrAtNFirstRef" : 0.0634,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 1185,
+          "uniqueCandidatesRetrieved" : 9996
+        }
+      }
+    },
+    "ABLATION_MODEL_B_MPV3" : {
+      "bm25" : {
+        "N=50" : {
+          "recallAt10" : 6.72,
+          "recallAt20" : 6.7,
+          "precisionAt10" : 2.28,
+          "precisionAtN" : 1.34,
+          "mrrAtNTop1" : 0.018,
+          "mrrAtNFirstRef" : 0.0807,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 168,
+          "uniqueCandidatesRetrieved" : 5486
+        },
+        "N=80" : {
+          "recallAt10" : 9.12,
+          "recallAt20" : 9.2,
+          "precisionAt10" : 2.28,
+          "precisionAtN" : 1.14,
+          "mrrAtNTop1" : 0.0183,
+          "mrrAtNFirstRef" : 0.082,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 228,
+          "uniqueCandidatesRetrieved" : 6602
+        },
+        "N=100" : {
+          "recallAt10" : 11.16,
+          "recallAt20" : 11.02,
+          "precisionAt10" : 2.28,
+          "precisionAtN" : 1.12,
+          "mrrAtNTop1" : 0.0185,
+          "mrrAtNFirstRef" : 0.0826,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 279,
+          "uniqueCandidatesRetrieved" : 7084
+        },
+        "N=200" : {
+          "recallAt10" : 17.96,
+          "recallAt20" : 17.08,
+          "precisionAt10" : 2.28,
+          "precisionAtN" : 0.9,
+          "mrrAtNTop1" : 0.019,
+          "mrrAtNFirstRef" : 0.0839,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 449,
+          "uniqueCandidatesRetrieved" : 8347
+        },
+        "N=500" : {
+          "recallAt10" : 30.72,
+          "recallAt20" : 30.06,
+          "precisionAt10" : 2.28,
+          "precisionAtN" : 0.61,
+          "mrrAtNTop1" : 0.0194,
+          "mrrAtNFirstRef" : 0.0846,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 768,
+          "uniqueCandidatesRetrieved" : 9407
+        },
+        "N=1000" : {
+          "recallAt10" : 45.8,
+          "recallAt20" : 45.76,
+          "precisionAt10" : 2.28,
+          "precisionAtN" : 0.46,
+          "mrrAtNTop1" : 0.0196,
+          "mrrAtNFirstRef" : 0.0848,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 1145,
+          "uniqueCandidatesRetrieved" : 9796
+        }
+      },
+      "tfidf" : {
+        "N=50" : {
+          "recallAt10" : 5.12,
+          "recallAt20" : 4.9,
+          "precisionAt10" : 1.48,
+          "precisionAtN" : 1.02,
+          "mrrAtNTop1" : 0.0041,
+          "mrrAtNFirstRef" : 0.0436,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 128,
+          "uniqueCandidatesRetrieved" : 6612
+        },
+        "N=80" : {
+          "recallAt10" : 7.48,
+          "recallAt20" : 7.28,
+          "precisionAt10" : 1.48,
+          "precisionAtN" : 0.93,
+          "mrrAtNTop1" : 0.0044,
+          "mrrAtNFirstRef" : 0.0448,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 187,
+          "uniqueCandidatesRetrieved" : 8006
+        },
+        "N=100" : {
+          "recallAt10" : 8.76,
+          "recallAt20" : 8.56,
+          "precisionAt10" : 1.48,
+          "precisionAtN" : 0.88,
+          "mrrAtNTop1" : 0.0045,
+          "mrrAtNFirstRef" : 0.0455,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 219,
+          "uniqueCandidatesRetrieved" : 8570
+        },
+        "N=200" : {
+          "recallAt10" : 14.4,
+          "recallAt20" : 14.32,
+          "precisionAt10" : 1.48,
+          "precisionAtN" : 0.72,
+          "mrrAtNTop1" : 0.0049,
+          "mrrAtNFirstRef" : 0.0466,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 360,
+          "uniqueCandidatesRetrieved" : 9605
+        },
+        "N=500" : {
+          "recallAt10" : 26.28,
+          "recallAt20" : 25.78,
+          "precisionAt10" : 1.48,
+          "precisionAtN" : 0.53,
+          "mrrAtNTop1" : 0.0053,
+          "mrrAtNFirstRef" : 0.0475,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 657,
+          "uniqueCandidatesRetrieved" : 9959
+        },
+        "N=1000" : {
+          "recallAt10" : 41.84,
+          "recallAt20" : 41.0,
+          "precisionAt10" : 1.48,
+          "precisionAtN" : 0.42,
+          "mrrAtNTop1" : 0.0055,
+          "mrrAtNFirstRef" : 0.0477,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 1046,
+          "uniqueCandidatesRetrieved" : 9994
+        }
+      }
+    },
+    "ABLATION_MODEL_B_MPV5" : {
+      "bm25" : {
+        "N=50" : {
+          "recallAt10" : 6.92,
+          "recallAt20" : 6.42,
+          "precisionAt10" : 2.44,
+          "precisionAtN" : 1.38,
+          "mrrAtNTop1" : 0.0142,
+          "mrrAtNFirstRef" : 0.0616,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 173,
+          "uniqueCandidatesRetrieved" : 5090
+        },
+        "N=80" : {
+          "recallAt10" : 9.8,
+          "recallAt20" : 9.02,
+          "precisionAt10" : 2.44,
+          "precisionAtN" : 1.23,
+          "mrrAtNTop1" : 0.0147,
+          "mrrAtNFirstRef" : 0.0631,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 245,
+          "uniqueCandidatesRetrieved" : 6189
+        },
+        "N=100" : {
+          "recallAt10" : 11.16,
+          "recallAt20" : 10.4,
+          "precisionAt10" : 2.44,
+          "precisionAtN" : 1.12,
+          "mrrAtNTop1" : 0.0148,
+          "mrrAtNFirstRef" : 0.0636,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 279,
+          "uniqueCandidatesRetrieved" : 6721
+        },
+        "N=200" : {
+          "recallAt10" : 17.36,
+          "recallAt20" : 16.56,
+          "precisionAt10" : 2.44,
+          "precisionAtN" : 0.87,
+          "mrrAtNTop1" : 0.0153,
+          "mrrAtNFirstRef" : 0.0649,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 434,
+          "uniqueCandidatesRetrieved" : 8095
+        },
+        "N=500" : {
+          "recallAt10" : 30.68,
+          "recallAt20" : 29.84,
+          "precisionAt10" : 2.44,
+          "precisionAtN" : 0.61,
+          "mrrAtNTop1" : 0.0157,
+          "mrrAtNFirstRef" : 0.0656,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 767,
+          "uniqueCandidatesRetrieved" : 9275
+        },
+        "N=1000" : {
+          "recallAt10" : 46.4,
+          "recallAt20" : 46.12,
+          "precisionAt10" : 2.44,
+          "precisionAtN" : 0.46,
+          "mrrAtNTop1" : 0.0159,
+          "mrrAtNFirstRef" : 0.0657,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 1160,
+          "uniqueCandidatesRetrieved" : 9762
+        }
+      },
+      "tfidf" : {
+        "N=50" : {
+          "recallAt10" : 5.32,
+          "recallAt20" : 4.96,
+          "precisionAt10" : 1.2,
+          "precisionAtN" : 1.06,
+          "mrrAtNTop1" : 0.0064,
+          "mrrAtNFirstRef" : 0.0273,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 133,
+          "uniqueCandidatesRetrieved" : 6531
+        },
+        "N=80" : {
+          "recallAt10" : 7.28,
+          "recallAt20" : 7.08,
+          "precisionAt10" : 1.2,
+          "precisionAtN" : 0.91,
+          "mrrAtNTop1" : 0.0068,
+          "mrrAtNFirstRef" : 0.0289,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 182,
+          "uniqueCandidatesRetrieved" : 7899
+        },
+        "N=100" : {
+          "recallAt10" : 8.56,
+          "recallAt20" : 8.28,
+          "precisionAt10" : 1.2,
+          "precisionAtN" : 0.86,
+          "mrrAtNTop1" : 0.007,
+          "mrrAtNFirstRef" : 0.0296,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 214,
+          "uniqueCandidatesRetrieved" : 8430
+        },
+        "N=200" : {
+          "recallAt10" : 14.36,
+          "recallAt20" : 13.72,
+          "precisionAt10" : 1.2,
+          "precisionAtN" : 0.72,
+          "mrrAtNTop1" : 0.0074,
+          "mrrAtNFirstRef" : 0.031,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 359,
+          "uniqueCandidatesRetrieved" : 9520
+        },
+        "N=500" : {
+          "recallAt10" : 26.36,
+          "recallAt20" : 25.4,
+          "precisionAt10" : 1.2,
+          "precisionAtN" : 0.53,
+          "mrrAtNTop1" : 0.0079,
+          "mrrAtNFirstRef" : 0.0317,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 659,
+          "uniqueCandidatesRetrieved" : 9954
+        },
+        "N=1000" : {
+          "recallAt10" : 41.84,
+          "recallAt20" : 40.0,
+          "precisionAt10" : 1.2,
+          "precisionAtN" : 0.42,
+          "mrrAtNTop1" : 0.0081,
+          "mrrAtNFirstRef" : 0.0319,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 1046,
+          "uniqueCandidatesRetrieved" : 9988
+        }
+      }
+    },
+    "ABLATION_MODEL_C_MPV5_R2" : {
+      "bm25" : {
+        "N=50" : {
+          "recallAt10" : 4.32,
+          "recallAt20" : 4.42,
+          "precisionAt10" : 1.08,
+          "precisionAtN" : 0.86,
+          "mrrAtNTop1" : 0.0073,
+          "mrrAtNFirstRef" : 0.0385,
+          "exhaustionRate" : 0.8,
+          "relevantRecoveredCount" : 108,
+          "uniqueCandidatesRetrieved" : 5748
+        },
+        "N=80" : {
+          "recallAt10" : 6.6,
+          "recallAt20" : 6.28,
+          "precisionAt10" : 1.08,
+          "precisionAtN" : 0.82,
+          "mrrAtNTop1" : 0.0075,
+          "mrrAtNFirstRef" : 0.0401,
+          "exhaustionRate" : 0.8,
+          "relevantRecoveredCount" : 165,
+          "uniqueCandidatesRetrieved" : 6913
+        },
+        "N=100" : {
+          "recallAt10" : 7.8,
+          "recallAt20" : 7.38,
+          "precisionAt10" : 1.08,
+          "precisionAtN" : 0.78,
+          "mrrAtNTop1" : 0.0076,
+          "mrrAtNFirstRef" : 0.0407,
+          "exhaustionRate" : 0.8,
+          "relevantRecoveredCount" : 195,
+          "uniqueCandidatesRetrieved" : 7415
+        },
+        "N=200" : {
+          "recallAt10" : 12.64,
+          "recallAt20" : 11.68,
+          "precisionAt10" : 1.08,
+          "precisionAtN" : 0.63,
+          "mrrAtNTop1" : 0.008,
+          "mrrAtNFirstRef" : 0.0419,
+          "exhaustionRate" : 0.8,
+          "relevantRecoveredCount" : 316,
+          "uniqueCandidatesRetrieved" : 8597
+        },
+        "N=500" : {
+          "recallAt10" : 23.0,
+          "recallAt20" : 22.0,
+          "precisionAt10" : 1.08,
+          "precisionAtN" : 0.46,
+          "mrrAtNTop1" : 0.0083,
+          "mrrAtNFirstRef" : 0.0427,
+          "exhaustionRate" : 0.8,
+          "relevantRecoveredCount" : 575,
+          "uniqueCandidatesRetrieved" : 9436
+        },
+        "N=1000" : {
+          "recallAt10" : 35.76,
+          "recallAt20" : 35.22,
+          "precisionAt10" : 1.08,
+          "precisionAtN" : 0.36,
+          "mrrAtNTop1" : 0.0086,
+          "mrrAtNFirstRef" : 0.0429,
+          "exhaustionRate" : 0.8,
+          "relevantRecoveredCount" : 894,
+          "uniqueCandidatesRetrieved" : 9756
+        }
+      },
+      "tfidf" : {
+        "N=50" : {
+          "recallAt10" : 4.24,
+          "recallAt20" : 4.3,
+          "precisionAt10" : 1.08,
+          "precisionAtN" : 0.85,
+          "mrrAtNTop1" : 0.0046,
+          "mrrAtNFirstRef" : 0.033,
+          "exhaustionRate" : 0.8,
+          "relevantRecoveredCount" : 106,
+          "uniqueCandidatesRetrieved" : 6305
+        },
+        "N=80" : {
+          "recallAt10" : 5.96,
+          "recallAt20" : 5.98,
+          "precisionAt10" : 1.08,
+          "precisionAtN" : 0.74,
+          "mrrAtNTop1" : 0.005,
+          "mrrAtNFirstRef" : 0.0343,
+          "exhaustionRate" : 0.8,
+          "relevantRecoveredCount" : 149,
+          "uniqueCandidatesRetrieved" : 7783
+        },
+        "N=100" : {
+          "recallAt10" : 6.92,
+          "recallAt20" : 6.92,
+          "precisionAt10" : 1.08,
+          "precisionAtN" : 0.69,
+          "mrrAtNTop1" : 0.005,
+          "mrrAtNFirstRef" : 0.0349,
+          "exhaustionRate" : 0.8,
+          "relevantRecoveredCount" : 173,
+          "uniqueCandidatesRetrieved" : 8381
+        },
+        "N=200" : {
+          "recallAt10" : 11.52,
+          "recallAt20" : 11.3,
+          "precisionAt10" : 1.08,
+          "precisionAtN" : 0.58,
+          "mrrAtNTop1" : 0.0053,
+          "mrrAtNFirstRef" : 0.0362,
+          "exhaustionRate" : 0.8,
+          "relevantRecoveredCount" : 288,
+          "uniqueCandidatesRetrieved" : 9537
+        },
+        "N=500" : {
+          "recallAt10" : 22.64,
+          "recallAt20" : 22.04,
+          "precisionAt10" : 1.08,
+          "precisionAtN" : 0.45,
+          "mrrAtNTop1" : 0.0056,
+          "mrrAtNFirstRef" : 0.037,
+          "exhaustionRate" : 0.8,
+          "relevantRecoveredCount" : 566,
+          "uniqueCandidatesRetrieved" : 9916
+        },
+        "N=1000" : {
+          "recallAt10" : 36.88,
+          "recallAt20" : 35.98,
+          "precisionAt10" : 1.08,
+          "precisionAtN" : 0.37,
+          "mrrAtNTop1" : 0.0059,
+          "mrrAtNFirstRef" : 0.0372,
+          "exhaustionRate" : 0.8,
+          "relevantRecoveredCount" : 922,
+          "uniqueCandidatesRetrieved" : 9957
+        }
+      }
+    },
+    "ABLATION_MODEL_C_MPV5_R3" : {
+      "bm25" : {
+        "N=50" : {
+          "recallAt10" : 3.96,
+          "recallAt20" : 3.76,
+          "precisionAt10" : 1.4,
+          "precisionAtN" : 0.79,
+          "mrrAtNTop1" : 0.0079,
+          "mrrAtNFirstRef" : 0.0482,
+          "exhaustionRate" : 1.6,
+          "relevantRecoveredCount" : 99,
+          "uniqueCandidatesRetrieved" : 5797
+        },
+        "N=80" : {
+          "recallAt10" : 6.24,
+          "recallAt20" : 5.78,
+          "precisionAt10" : 1.4,
+          "precisionAtN" : 0.78,
+          "mrrAtNTop1" : 0.0086,
+          "mrrAtNFirstRef" : 0.0498,
+          "exhaustionRate" : 1.6,
+          "relevantRecoveredCount" : 156,
+          "uniqueCandidatesRetrieved" : 6984
+        },
+        "N=100" : {
+          "recallAt10" : 7.24,
+          "recallAt20" : 6.6,
+          "precisionAt10" : 1.4,
+          "precisionAtN" : 0.72,
+          "mrrAtNTop1" : 0.0088,
+          "mrrAtNFirstRef" : 0.0502,
+          "exhaustionRate" : 1.6,
+          "relevantRecoveredCount" : 181,
+          "uniqueCandidatesRetrieved" : 7478
+        },
+        "N=200" : {
+          "recallAt10" : 11.36,
+          "recallAt20" : 10.62,
+          "precisionAt10" : 1.4,
+          "precisionAtN" : 0.57,
+          "mrrAtNTop1" : 0.009,
+          "mrrAtNFirstRef" : 0.0514,
+          "exhaustionRate" : 1.6,
+          "relevantRecoveredCount" : 284,
+          "uniqueCandidatesRetrieved" : 8593
+        },
+        "N=500" : {
+          "recallAt10" : 21.24,
+          "recallAt20" : 20.34,
+          "precisionAt10" : 1.4,
+          "precisionAtN" : 0.42,
+          "mrrAtNTop1" : 0.0093,
+          "mrrAtNFirstRef" : 0.0522,
+          "exhaustionRate" : 1.6,
+          "relevantRecoveredCount" : 531,
+          "uniqueCandidatesRetrieved" : 9418
+        },
+        "N=1000" : {
+          "recallAt10" : 34.96,
+          "recallAt20" : 33.54,
+          "precisionAt10" : 1.4,
+          "precisionAtN" : 0.35,
+          "mrrAtNTop1" : 0.0095,
+          "mrrAtNFirstRef" : 0.0524,
+          "exhaustionRate" : 1.6,
+          "relevantRecoveredCount" : 874,
+          "uniqueCandidatesRetrieved" : 9716
+        }
+      },
+      "tfidf" : {
+        "N=50" : {
+          "recallAt10" : 3.92,
+          "recallAt20" : 3.96,
+          "precisionAt10" : 0.84,
+          "precisionAtN" : 0.78,
+          "mrrAtNTop1" : 0.0043,
+          "mrrAtNFirstRef" : 0.0371,
+          "exhaustionRate" : 1.6,
+          "relevantRecoveredCount" : 98,
+          "uniqueCandidatesRetrieved" : 6368
+        },
+        "N=80" : {
+          "recallAt10" : 5.48,
+          "recallAt20" : 5.26,
+          "precisionAt10" : 0.84,
+          "precisionAtN" : 0.68,
+          "mrrAtNTop1" : 0.0045,
+          "mrrAtNFirstRef" : 0.0381,
+          "exhaustionRate" : 1.6,
+          "relevantRecoveredCount" : 137,
+          "uniqueCandidatesRetrieved" : 7805
+        },
+        "N=100" : {
+          "recallAt10" : 6.6,
+          "recallAt20" : 6.28,
+          "precisionAt10" : 0.84,
+          "precisionAtN" : 0.66,
+          "mrrAtNTop1" : 0.0046,
+          "mrrAtNFirstRef" : 0.0385,
+          "exhaustionRate" : 1.6,
+          "relevantRecoveredCount" : 165,
+          "uniqueCandidatesRetrieved" : 8342
+        },
+        "N=200" : {
+          "recallAt10" : 10.36,
+          "recallAt20" : 10.22,
+          "precisionAt10" : 0.84,
+          "precisionAtN" : 0.52,
+          "mrrAtNTop1" : 0.0048,
+          "mrrAtNFirstRef" : 0.0395,
+          "exhaustionRate" : 1.6,
+          "relevantRecoveredCount" : 259,
+          "uniqueCandidatesRetrieved" : 9509
+        },
+        "N=500" : {
+          "recallAt10" : 18.72,
+          "recallAt20" : 19.06,
+          "precisionAt10" : 0.84,
+          "precisionAtN" : 0.37,
+          "mrrAtNTop1" : 0.0052,
+          "mrrAtNFirstRef" : 0.0403,
+          "exhaustionRate" : 1.6,
+          "relevantRecoveredCount" : 468,
+          "uniqueCandidatesRetrieved" : 9866
+        },
+        "N=1000" : {
+          "recallAt10" : 32.32,
+          "recallAt20" : 32.34,
+          "precisionAt10" : 0.84,
+          "precisionAtN" : 0.32,
+          "mrrAtNTop1" : 0.0054,
+          "mrrAtNFirstRef" : 0.0406,
+          "exhaustionRate" : 1.6,
+          "relevantRecoveredCount" : 808,
+          "uniqueCandidatesRetrieved" : 9896
+        }
+      }
+    },
+    "ABLATION_MODEL_C_MPV5_R4" : {
+      "bm25" : {
+        "N=50" : {
+          "recallAt10" : 3.8,
+          "recallAt20" : 3.44,
+          "precisionAt10" : 1.08,
+          "precisionAtN" : 0.76,
+          "mrrAtNTop1" : 0.0111,
+          "mrrAtNFirstRef" : 0.0374,
+          "exhaustionRate" : 2.0,
+          "relevantRecoveredCount" : 95,
+          "uniqueCandidatesRetrieved" : 5870
+        },
+        "N=80" : {
+          "recallAt10" : 5.48,
+          "recallAt20" : 5.18,
+          "precisionAt10" : 1.08,
+          "precisionAtN" : 0.68,
+          "mrrAtNTop1" : 0.0115,
+          "mrrAtNFirstRef" : 0.0387,
+          "exhaustionRate" : 2.0,
+          "relevantRecoveredCount" : 137,
+          "uniqueCandidatesRetrieved" : 7077
+        },
+        "N=100" : {
+          "recallAt10" : 6.4,
+          "recallAt20" : 5.98,
+          "precisionAt10" : 1.08,
+          "precisionAtN" : 0.64,
+          "mrrAtNTop1" : 0.0116,
+          "mrrAtNFirstRef" : 0.0394,
+          "exhaustionRate" : 2.0,
+          "relevantRecoveredCount" : 160,
+          "uniqueCandidatesRetrieved" : 7573
+        },
+        "N=200" : {
+          "recallAt10" : 10.24,
+          "recallAt20" : 9.96,
+          "precisionAt10" : 1.08,
+          "precisionAtN" : 0.51,
+          "mrrAtNTop1" : 0.0118,
+          "mrrAtNFirstRef" : 0.0406,
+          "exhaustionRate" : 2.0,
+          "relevantRecoveredCount" : 256,
+          "uniqueCandidatesRetrieved" : 8701
+        },
+        "N=500" : {
+          "recallAt10" : 20.0,
+          "recallAt20" : 19.72,
+          "precisionAt10" : 1.08,
+          "precisionAtN" : 0.4,
+          "mrrAtNTop1" : 0.012,
+          "mrrAtNFirstRef" : 0.0415,
+          "exhaustionRate" : 2.0,
+          "relevantRecoveredCount" : 500,
+          "uniqueCandidatesRetrieved" : 9460
+        },
+        "N=1000" : {
+          "recallAt10" : 33.28,
+          "recallAt20" : 32.42,
+          "precisionAt10" : 1.08,
+          "precisionAtN" : 0.33,
+          "mrrAtNTop1" : 0.0122,
+          "mrrAtNFirstRef" : 0.0416,
+          "exhaustionRate" : 2.0,
+          "relevantRecoveredCount" : 832,
+          "uniqueCandidatesRetrieved" : 9659
+        }
+      },
+      "tfidf" : {
+        "N=50" : {
+          "recallAt10" : 4.16,
+          "recallAt20" : 3.72,
+          "precisionAt10" : 0.92,
+          "precisionAtN" : 0.83,
+          "mrrAtNTop1" : 0.0043,
+          "mrrAtNFirstRef" : 0.0277,
+          "exhaustionRate" : 2.0,
+          "relevantRecoveredCount" : 104,
+          "uniqueCandidatesRetrieved" : 6251
+        },
+        "N=80" : {
+          "recallAt10" : 5.8,
+          "recallAt20" : 5.42,
+          "precisionAt10" : 0.92,
+          "precisionAtN" : 0.72,
+          "mrrAtNTop1" : 0.0043,
+          "mrrAtNFirstRef" : 0.0289,
+          "exhaustionRate" : 2.0,
+          "relevantRecoveredCount" : 145,
+          "uniqueCandidatesRetrieved" : 7730
+        },
+        "N=100" : {
+          "recallAt10" : 6.72,
+          "recallAt20" : 6.16,
+          "precisionAt10" : 0.92,
+          "precisionAtN" : 0.67,
+          "mrrAtNTop1" : 0.0044,
+          "mrrAtNFirstRef" : 0.0294,
+          "exhaustionRate" : 2.0,
+          "relevantRecoveredCount" : 168,
+          "uniqueCandidatesRetrieved" : 8345
+        },
+        "N=200" : {
+          "recallAt10" : 10.6,
+          "recallAt20" : 10.3,
+          "precisionAt10" : 0.92,
+          "precisionAtN" : 0.53,
+          "mrrAtNTop1" : 0.0047,
+          "mrrAtNFirstRef" : 0.0305,
+          "exhaustionRate" : 2.0,
+          "relevantRecoveredCount" : 265,
+          "uniqueCandidatesRetrieved" : 9456
+        },
+        "N=500" : {
+          "recallAt10" : 20.04,
+          "recallAt20" : 19.6,
+          "precisionAt10" : 0.92,
+          "precisionAtN" : 0.4,
+          "mrrAtNTop1" : 0.005,
+          "mrrAtNFirstRef" : 0.0314,
+          "exhaustionRate" : 2.0,
+          "relevantRecoveredCount" : 501,
+          "uniqueCandidatesRetrieved" : 9772
+        },
+        "N=1000" : {
+          "recallAt10" : 32.6,
+          "recallAt20" : 31.9,
+          "precisionAt10" : 0.92,
+          "precisionAtN" : 0.33,
+          "mrrAtNTop1" : 0.0052,
+          "mrrAtNFirstRef" : 0.0316,
+          "exhaustionRate" : 2.0,
+          "relevantRecoveredCount" : 815,
+          "uniqueCandidatesRetrieved" : 9806
+        }
+      }
+    },
+    "ABLATION_MODEL_C_MPV5_R5" : {
+      "bm25" : {
+        "N=50" : {
+          "recallAt10" : 3.92,
+          "recallAt20" : 3.58,
+          "precisionAt10" : 1.12,
+          "precisionAtN" : 0.78,
+          "mrrAtNTop1" : 0.0032,
+          "mrrAtNFirstRef" : 0.0431,
+          "exhaustionRate" : 2.0,
+          "relevantRecoveredCount" : 98,
+          "uniqueCandidatesRetrieved" : 5660
+        },
+        "N=80" : {
+          "recallAt10" : 5.52,
+          "recallAt20" : 5.28,
+          "precisionAt10" : 1.12,
+          "precisionAtN" : 0.69,
+          "mrrAtNTop1" : 0.0035,
+          "mrrAtNFirstRef" : 0.044,
+          "exhaustionRate" : 2.0,
+          "relevantRecoveredCount" : 138,
+          "uniqueCandidatesRetrieved" : 6864
+        },
+        "N=100" : {
+          "recallAt10" : 6.48,
+          "recallAt20" : 6.08,
+          "precisionAt10" : 1.12,
+          "precisionAtN" : 0.65,
+          "mrrAtNTop1" : 0.0036,
+          "mrrAtNFirstRef" : 0.0445,
+          "exhaustionRate" : 2.0,
+          "relevantRecoveredCount" : 162,
+          "uniqueCandidatesRetrieved" : 7321
+        },
+        "N=200" : {
+          "recallAt10" : 10.32,
+          "recallAt20" : 9.88,
+          "precisionAt10" : 1.12,
+          "precisionAtN" : 0.52,
+          "mrrAtNTop1" : 0.0038,
+          "mrrAtNFirstRef" : 0.0459,
+          "exhaustionRate" : 2.0,
+          "relevantRecoveredCount" : 258,
+          "uniqueCandidatesRetrieved" : 8421
+        },
+        "N=500" : {
+          "recallAt10" : 19.84,
+          "recallAt20" : 20.08,
+          "precisionAt10" : 1.12,
+          "precisionAtN" : 0.4,
+          "mrrAtNTop1" : 0.0042,
+          "mrrAtNFirstRef" : 0.0466,
+          "exhaustionRate" : 2.0,
+          "relevantRecoveredCount" : 496,
+          "uniqueCandidatesRetrieved" : 9273
+        },
+        "N=1000" : {
+          "recallAt10" : 33.08,
+          "recallAt20" : 33.06,
+          "precisionAt10" : 1.12,
+          "precisionAtN" : 0.33,
+          "mrrAtNTop1" : 0.0044,
+          "mrrAtNFirstRef" : 0.0468,
+          "exhaustionRate" : 2.0,
+          "relevantRecoveredCount" : 827,
+          "uniqueCandidatesRetrieved" : 9551
+        }
+      },
+      "tfidf" : {
+        "N=50" : {
+          "recallAt10" : 3.96,
+          "recallAt20" : 3.64,
+          "precisionAt10" : 0.72,
+          "precisionAtN" : 0.79,
+          "mrrAtNTop1" : 0.0022,
+          "mrrAtNFirstRef" : 0.0331,
+          "exhaustionRate" : 2.0,
+          "relevantRecoveredCount" : 99,
+          "uniqueCandidatesRetrieved" : 6203
+        },
+        "N=80" : {
+          "recallAt10" : 5.72,
+          "recallAt20" : 5.2,
+          "precisionAt10" : 0.72,
+          "precisionAtN" : 0.71,
+          "mrrAtNTop1" : 0.0024,
+          "mrrAtNFirstRef" : 0.0346,
+          "exhaustionRate" : 2.0,
+          "relevantRecoveredCount" : 143,
+          "uniqueCandidatesRetrieved" : 7626
+        },
+        "N=100" : {
+          "recallAt10" : 6.68,
+          "recallAt20" : 6.08,
+          "precisionAt10" : 0.72,
+          "precisionAtN" : 0.67,
+          "mrrAtNTop1" : 0.0026,
+          "mrrAtNFirstRef" : 0.0351,
+          "exhaustionRate" : 2.0,
+          "relevantRecoveredCount" : 167,
+          "uniqueCandidatesRetrieved" : 8185
+        },
+        "N=200" : {
+          "recallAt10" : 11.2,
+          "recallAt20" : 10.1,
+          "precisionAt10" : 0.72,
+          "precisionAtN" : 0.56,
+          "mrrAtNTop1" : 0.003,
+          "mrrAtNFirstRef" : 0.0363,
+          "exhaustionRate" : 2.0,
+          "relevantRecoveredCount" : 280,
+          "uniqueCandidatesRetrieved" : 9281
+        },
+        "N=500" : {
+          "recallAt10" : 20.68,
+          "recallAt20" : 19.56,
+          "precisionAt10" : 0.72,
+          "precisionAtN" : 0.41,
+          "mrrAtNTop1" : 0.0033,
+          "mrrAtNFirstRef" : 0.037,
+          "exhaustionRate" : 2.0,
+          "relevantRecoveredCount" : 517,
+          "uniqueCandidatesRetrieved" : 9685
+        },
+        "N=1000" : {
+          "recallAt10" : 32.76,
+          "recallAt20" : 31.54,
+          "precisionAt10" : 0.72,
+          "precisionAtN" : 0.33,
+          "mrrAtNTop1" : 0.0035,
+          "mrrAtNFirstRef" : 0.0372,
+          "exhaustionRate" : 2.0,
+          "relevantRecoveredCount" : 819,
+          "uniqueCandidatesRetrieved" : 9723
+        }
+      }
+    },
+    "ABLATION_MODEL_D_MPV5_R12" : {
+      "bm25" : {
+        "N=50" : {
+          "recallAt10" : 6.56,
+          "recallAt20" : 6.24,
+          "precisionAt10" : 2.24,
+          "precisionAtN" : 1.31,
+          "mrrAtNTop1" : 0.0092,
+          "mrrAtNFirstRef" : 0.0655,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 164,
+          "uniqueCandidatesRetrieved" : 5104
+        },
+        "N=80" : {
+          "recallAt10" : 9.24,
+          "recallAt20" : 8.7,
+          "precisionAt10" : 2.24,
+          "precisionAtN" : 1.16,
+          "mrrAtNTop1" : 0.0094,
+          "mrrAtNFirstRef" : 0.067,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 231,
+          "uniqueCandidatesRetrieved" : 6235
+        },
+        "N=100" : {
+          "recallAt10" : 10.68,
+          "recallAt20" : 10.18,
+          "precisionAt10" : 2.24,
+          "precisionAtN" : 1.07,
+          "mrrAtNTop1" : 0.0095,
+          "mrrAtNFirstRef" : 0.0676,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 267,
+          "uniqueCandidatesRetrieved" : 6748
+        },
+        "N=200" : {
+          "recallAt10" : 16.36,
+          "recallAt20" : 16.26,
+          "precisionAt10" : 2.24,
+          "precisionAtN" : 0.82,
+          "mrrAtNTop1" : 0.0101,
+          "mrrAtNFirstRef" : 0.0688,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 409,
+          "uniqueCandidatesRetrieved" : 8106
+        },
+        "N=500" : {
+          "recallAt10" : 30.12,
+          "recallAt20" : 30.0,
+          "precisionAt10" : 2.24,
+          "precisionAtN" : 0.6,
+          "mrrAtNTop1" : 0.0106,
+          "mrrAtNFirstRef" : 0.0694,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 753,
+          "uniqueCandidatesRetrieved" : 9277
+        },
+        "N=1000" : {
+          "recallAt10" : 44.96,
+          "recallAt20" : 44.82,
+          "precisionAt10" : 2.24,
+          "precisionAtN" : 0.45,
+          "mrrAtNTop1" : 0.0108,
+          "mrrAtNFirstRef" : 0.0695,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 1124,
+          "uniqueCandidatesRetrieved" : 9765
+        }
+      },
+      "tfidf" : {
+        "N=50" : {
+          "recallAt10" : 6.92,
+          "recallAt20" : 6.76,
+          "precisionAt10" : 2.12,
+          "precisionAtN" : 1.38,
+          "mrrAtNTop1" : 0.0158,
+          "mrrAtNFirstRef" : 0.0629,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 173,
+          "uniqueCandidatesRetrieved" : 6355
+        },
+        "N=80" : {
+          "recallAt10" : 9.32,
+          "recallAt20" : 9.2,
+          "precisionAt10" : 2.12,
+          "precisionAtN" : 1.17,
+          "mrrAtNTop1" : 0.016,
+          "mrrAtNFirstRef" : 0.0644,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 233,
+          "uniqueCandidatesRetrieved" : 7825
+        },
+        "N=100" : {
+          "recallAt10" : 10.6,
+          "recallAt20" : 10.38,
+          "precisionAt10" : 2.12,
+          "precisionAtN" : 1.06,
+          "mrrAtNTop1" : 0.016,
+          "mrrAtNFirstRef" : 0.0648,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 265,
+          "uniqueCandidatesRetrieved" : 8414
+        },
+        "N=200" : {
+          "recallAt10" : 16.52,
+          "recallAt20" : 16.1,
+          "precisionAt10" : 2.12,
+          "precisionAtN" : 0.83,
+          "mrrAtNTop1" : 0.0163,
+          "mrrAtNFirstRef" : 0.066,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 413,
+          "uniqueCandidatesRetrieved" : 9600
+        },
+        "N=500" : {
+          "recallAt10" : 29.76,
+          "recallAt20" : 28.72,
+          "precisionAt10" : 2.12,
+          "precisionAtN" : 0.6,
+          "mrrAtNTop1" : 0.0169,
+          "mrrAtNFirstRef" : 0.0668,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 744,
+          "uniqueCandidatesRetrieved" : 9972
+        },
+        "N=1000" : {
+          "recallAt10" : 45.48,
+          "recallAt20" : 44.36,
+          "precisionAt10" : 2.12,
+          "precisionAtN" : 0.45,
+          "mrrAtNTop1" : 0.0171,
+          "mrrAtNFirstRef" : 0.0669,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 1137,
+          "uniqueCandidatesRetrieved" : 9996
+        }
+      }
+    },
+    "ABLATION_MODEL_D_MPV5_R14" : {
+      "bm25" : {
+        "N=50" : {
+          "recallAt10" : 7.04,
+          "recallAt20" : 6.48,
+          "precisionAt10" : 2.16,
+          "precisionAtN" : 1.41,
+          "mrrAtNTop1" : 0.0154,
+          "mrrAtNFirstRef" : 0.0742,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 176,
+          "uniqueCandidatesRetrieved" : 4260
+        },
+        "N=80" : {
+          "recallAt10" : 10.2,
+          "recallAt20" : 9.54,
+          "precisionAt10" : 2.16,
+          "precisionAtN" : 1.28,
+          "mrrAtNTop1" : 0.0159,
+          "mrrAtNFirstRef" : 0.0762,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 255,
+          "uniqueCandidatesRetrieved" : 5284
+        },
+        "N=100" : {
+          "recallAt10" : 12.2,
+          "recallAt20" : 11.18,
+          "precisionAt10" : 2.16,
+          "precisionAtN" : 1.22,
+          "mrrAtNTop1" : 0.0161,
+          "mrrAtNFirstRef" : 0.0768,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 305,
+          "uniqueCandidatesRetrieved" : 5815
+        },
+        "N=200" : {
+          "recallAt10" : 18.8,
+          "recallAt20" : 17.6,
+          "precisionAt10" : 2.16,
+          "precisionAtN" : 0.94,
+          "mrrAtNTop1" : 0.0165,
+          "mrrAtNFirstRef" : 0.0777,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 470,
+          "uniqueCandidatesRetrieved" : 7327
+        },
+        "N=500" : {
+          "recallAt10" : 32.76,
+          "recallAt20" : 31.36,
+          "precisionAt10" : 2.16,
+          "precisionAtN" : 0.66,
+          "mrrAtNTop1" : 0.0169,
+          "mrrAtNFirstRef" : 0.0783,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 819,
+          "uniqueCandidatesRetrieved" : 8914
+        },
+        "N=1000" : {
+          "recallAt10" : 47.4,
+          "recallAt20" : 46.46,
+          "precisionAt10" : 2.16,
+          "precisionAtN" : 0.47,
+          "mrrAtNTop1" : 0.0171,
+          "mrrAtNFirstRef" : 0.0784,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 1185,
+          "uniqueCandidatesRetrieved" : 9617
+        }
+      },
+      "tfidf" : {
+        "N=50" : {
+          "recallAt10" : 7.0,
+          "recallAt20" : 7.0,
+          "precisionAt10" : 2.0,
+          "precisionAtN" : 1.4,
+          "mrrAtNTop1" : 0.0123,
+          "mrrAtNFirstRef" : 0.0675,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 175,
+          "uniqueCandidatesRetrieved" : 6375
+        },
+        "N=80" : {
+          "recallAt10" : 10.08,
+          "recallAt20" : 9.76,
+          "precisionAt10" : 2.0,
+          "precisionAtN" : 1.26,
+          "mrrAtNTop1" : 0.0127,
+          "mrrAtNFirstRef" : 0.0692,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 252,
+          "uniqueCandidatesRetrieved" : 7787
+        },
+        "N=100" : {
+          "recallAt10" : 11.28,
+          "recallAt20" : 11.22,
+          "precisionAt10" : 2.0,
+          "precisionAtN" : 1.13,
+          "mrrAtNTop1" : 0.0128,
+          "mrrAtNFirstRef" : 0.0694,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 282,
+          "uniqueCandidatesRetrieved" : 8396
+        },
+        "N=200" : {
+          "recallAt10" : 17.92,
+          "recallAt20" : 17.2,
+          "precisionAt10" : 2.0,
+          "precisionAtN" : 0.9,
+          "mrrAtNTop1" : 0.0131,
+          "mrrAtNFirstRef" : 0.0707,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 448,
+          "uniqueCandidatesRetrieved" : 9584
+        },
+        "N=500" : {
+          "recallAt10" : 31.04,
+          "recallAt20" : 29.74,
+          "precisionAt10" : 2.0,
+          "precisionAtN" : 0.62,
+          "mrrAtNTop1" : 0.0135,
+          "mrrAtNFirstRef" : 0.0714,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 776,
+          "uniqueCandidatesRetrieved" : 9965
+        },
+        "N=1000" : {
+          "recallAt10" : 46.48,
+          "recallAt20" : 44.9,
+          "precisionAt10" : 2.0,
+          "precisionAtN" : 0.46,
+          "mrrAtNTop1" : 0.0138,
+          "mrrAtNFirstRef" : 0.0715,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 1162,
+          "uniqueCandidatesRetrieved" : 9997
+        }
+      }
+    },
+    "ABLATION_C6_EXCLUDE_INCOMPLETE" : {
+      "bm25" : {
+        "N=50" : {
+          "recallAt10" : 7.56,
+          "recallAt20" : 6.78,
+          "precisionAt10" : 2.0,
+          "precisionAtN" : 1.51,
+          "mrrAtNTop1" : 0.0167,
+          "mrrAtNFirstRef" : 0.0793,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 189,
+          "uniqueCandidatesRetrieved" : 4020
+        },
+        "N=80" : {
+          "recallAt10" : 10.4,
+          "recallAt20" : 9.52,
+          "precisionAt10" : 2.0,
+          "precisionAtN" : 1.3,
+          "mrrAtNTop1" : 0.0171,
+          "mrrAtNFirstRef" : 0.0808,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 260,
+          "uniqueCandidatesRetrieved" : 5028
+        },
+        "N=100" : {
+          "recallAt10" : 12.04,
+          "recallAt20" : 10.88,
+          "precisionAt10" : 2.0,
+          "precisionAtN" : 1.2,
+          "mrrAtNTop1" : 0.0173,
+          "mrrAtNFirstRef" : 0.0813,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 301,
+          "uniqueCandidatesRetrieved" : 5514
+        },
+        "N=200" : {
+          "recallAt10" : 18.08,
+          "recallAt20" : 17.32,
+          "precisionAt10" : 2.0,
+          "precisionAtN" : 0.9,
+          "mrrAtNTop1" : 0.0178,
+          "mrrAtNFirstRef" : 0.0824,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 452,
+          "uniqueCandidatesRetrieved" : 7049
+        },
+        "N=500" : {
+          "recallAt10" : 30.52,
+          "recallAt20" : 30.1,
+          "precisionAt10" : 2.0,
+          "precisionAtN" : 0.61,
+          "mrrAtNTop1" : 0.0181,
+          "mrrAtNFirstRef" : 0.083,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 763,
+          "uniqueCandidatesRetrieved" : 8700
+        },
+        "N=1000" : {
+          "recallAt10" : 47.2,
+          "recallAt20" : 46.9,
+          "precisionAt10" : 2.0,
+          "precisionAtN" : 0.47,
+          "mrrAtNTop1" : 0.0183,
+          "mrrAtNFirstRef" : 0.0832,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 1180,
+          "uniqueCandidatesRetrieved" : 9484
+        }
+      },
+      "tfidf" : {
+        "N=50" : {
+          "recallAt10" : 6.6,
+          "recallAt20" : 6.42,
+          "precisionAt10" : 1.88,
+          "precisionAtN" : 1.32,
+          "mrrAtNTop1" : 0.0148,
+          "mrrAtNFirstRef" : 0.0596,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 165,
+          "uniqueCandidatesRetrieved" : 6250
+        },
+        "N=80" : {
+          "recallAt10" : 10.08,
+          "recallAt20" : 9.64,
+          "precisionAt10" : 1.88,
+          "precisionAtN" : 1.26,
+          "mrrAtNTop1" : 0.0151,
+          "mrrAtNFirstRef" : 0.0619,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 252,
+          "uniqueCandidatesRetrieved" : 7724
+        },
+        "N=100" : {
+          "recallAt10" : 11.8,
+          "recallAt20" : 11.16,
+          "precisionAt10" : 1.88,
+          "precisionAtN" : 1.18,
+          "mrrAtNTop1" : 0.0152,
+          "mrrAtNFirstRef" : 0.0625,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 295,
+          "uniqueCandidatesRetrieved" : 8257
+        },
+        "N=200" : {
+          "recallAt10" : 18.52,
+          "recallAt20" : 17.04,
+          "precisionAt10" : 1.88,
+          "precisionAtN" : 0.93,
+          "mrrAtNTop1" : 0.0156,
+          "mrrAtNFirstRef" : 0.0636,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 463,
+          "uniqueCandidatesRetrieved" : 9497
+        },
+        "N=500" : {
+          "recallAt10" : 31.84,
+          "recallAt20" : 30.54,
+          "precisionAt10" : 1.88,
+          "precisionAtN" : 0.64,
+          "mrrAtNTop1" : 0.0161,
+          "mrrAtNFirstRef" : 0.0642,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 796,
+          "uniqueCandidatesRetrieved" : 9943
+        },
+        "N=1000" : {
+          "recallAt10" : 47.0,
+          "recallAt20" : 44.94,
+          "precisionAt10" : 1.88,
+          "precisionAtN" : 0.47,
+          "mrrAtNTop1" : 0.0162,
+          "mrrAtNFirstRef" : 0.0644,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 1175,
+          "uniqueCandidatesRetrieved" : 9992
+        }
+      }
+    },
+    "ASYMMETRIC_C1_MPV1_R1" : {
+      "bm25" : {
+        "N=50" : {
+          "recallAt10" : 15.0,
+          "recallAt20" : 13.32,
+          "precisionAt10" : 6.16,
+          "precisionAtN" : 3.0,
+          "mrrAtNTop1" : 0.0436,
+          "mrrAtNFirstRef" : 0.1918,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 375,
+          "uniqueCandidatesRetrieved" : 4742
+        },
+        "N=80" : {
+          "recallAt10" : 18.84,
+          "recallAt20" : 16.84,
+          "precisionAt10" : 6.16,
+          "precisionAtN" : 2.36,
+          "mrrAtNTop1" : 0.0448,
+          "mrrAtNFirstRef" : 0.1931,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 471,
+          "uniqueCandidatesRetrieved" : 5761
+        },
+        "N=100" : {
+          "recallAt10" : 21.04,
+          "recallAt20" : 18.9,
+          "precisionAt10" : 6.16,
+          "precisionAtN" : 2.1,
+          "mrrAtNTop1" : 0.045,
+          "mrrAtNFirstRef" : 0.1934,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 526,
+          "uniqueCandidatesRetrieved" : 6204
+        },
+        "N=200" : {
+          "recallAt10" : 28.52,
+          "recallAt20" : 26.38,
+          "precisionAt10" : 6.16,
+          "precisionAtN" : 1.43,
+          "mrrAtNTop1" : 0.0456,
+          "mrrAtNFirstRef" : 0.1941,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 713,
+          "uniqueCandidatesRetrieved" : 7491
+        },
+        "N=500" : {
+          "recallAt10" : 43.04,
+          "recallAt20" : 40.56,
+          "precisionAt10" : 6.16,
+          "precisionAtN" : 0.86,
+          "mrrAtNTop1" : 0.0459,
+          "mrrAtNFirstRef" : 0.1943,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 1076,
+          "uniqueCandidatesRetrieved" : 8858
+        },
+        "N=1000" : {
+          "recallAt10" : 58.32,
+          "recallAt20" : 55.9,
+          "precisionAt10" : 6.16,
+          "precisionAtN" : 0.58,
+          "mrrAtNTop1" : 0.0461,
+          "mrrAtNFirstRef" : 0.1943,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 1458,
+          "uniqueCandidatesRetrieved" : 9487
+        }
+      },
+      "tfidf" : {
+        "N=50" : {
+          "recallAt10" : 16.8,
+          "recallAt20" : 15.14,
+          "precisionAt10" : 6.16,
+          "precisionAtN" : 3.36,
+          "mrrAtNTop1" : 0.038,
+          "mrrAtNFirstRef" : 0.2085,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 420,
+          "uniqueCandidatesRetrieved" : 6161
+        },
+        "N=80" : {
+          "recallAt10" : 21.8,
+          "recallAt20" : 19.96,
+          "precisionAt10" : 6.16,
+          "precisionAtN" : 2.73,
+          "mrrAtNTop1" : 0.039,
+          "mrrAtNFirstRef" : 0.2104,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 545,
+          "uniqueCandidatesRetrieved" : 7573
+        },
+        "N=100" : {
+          "recallAt10" : 23.16,
+          "recallAt20" : 22.0,
+          "precisionAt10" : 6.16,
+          "precisionAtN" : 2.32,
+          "mrrAtNTop1" : 0.0391,
+          "mrrAtNFirstRef" : 0.2106,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 579,
+          "uniqueCandidatesRetrieved" : 8159
+        },
+        "N=200" : {
+          "recallAt10" : 30.8,
+          "recallAt20" : 29.58,
+          "precisionAt10" : 6.16,
+          "precisionAtN" : 1.54,
+          "mrrAtNTop1" : 0.0397,
+          "mrrAtNFirstRef" : 0.2112,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 770,
+          "uniqueCandidatesRetrieved" : 9445
+        },
+        "N=500" : {
+          "recallAt10" : 45.92,
+          "recallAt20" : 44.52,
+          "precisionAt10" : 6.16,
+          "precisionAtN" : 0.92,
+          "mrrAtNTop1" : 0.0401,
+          "mrrAtNFirstRef" : 0.2114,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 1148,
+          "uniqueCandidatesRetrieved" : 9964
+        },
+        "N=1000" : {
+          "recallAt10" : 60.16,
+          "recallAt20" : 58.88,
+          "precisionAt10" : 6.16,
+          "precisionAtN" : 0.6,
+          "mrrAtNTop1" : 0.0403,
+          "mrrAtNFirstRef" : 0.2114,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 1504,
+          "uniqueCandidatesRetrieved" : 9994
+        }
+      }
+    },
+    "ASYMMETRIC_C6_MPV5_R15" : {
+      "bm25" : {
+        "N=50" : {
+          "recallAt10" : 15.24,
+          "recallAt20" : 13.94,
+          "precisionAt10" : 5.24,
+          "precisionAtN" : 3.05,
+          "mrrAtNTop1" : 0.0287,
+          "mrrAtNFirstRef" : 0.1595,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 381,
+          "uniqueCandidatesRetrieved" : 4862
+        },
+        "N=80" : {
+          "recallAt10" : 20.48,
+          "recallAt20" : 19.04,
+          "precisionAt10" : 5.24,
+          "precisionAtN" : 2.56,
+          "mrrAtNTop1" : 0.0294,
+          "mrrAtNFirstRef" : 0.1611,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 512,
+          "uniqueCandidatesRetrieved" : 6004
+        },
+        "N=100" : {
+          "recallAt10" : 23.08,
+          "recallAt20" : 21.76,
+          "precisionAt10" : 5.24,
+          "precisionAtN" : 2.31,
+          "mrrAtNTop1" : 0.0299,
+          "mrrAtNFirstRef" : 0.1616,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 577,
+          "uniqueCandidatesRetrieved" : 6506
+        },
+        "N=200" : {
+          "recallAt10" : 32.68,
+          "recallAt20" : 30.78,
+          "precisionAt10" : 5.24,
+          "precisionAtN" : 1.63,
+          "mrrAtNTop1" : 0.0307,
+          "mrrAtNFirstRef" : 0.1624,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 817,
+          "uniqueCandidatesRetrieved" : 7996
+        },
+        "N=500" : {
+          "recallAt10" : 48.28,
+          "recallAt20" : 46.9,
+          "precisionAt10" : 5.24,
+          "precisionAtN" : 0.97,
+          "mrrAtNTop1" : 0.0312,
+          "mrrAtNFirstRef" : 0.1625,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 1207,
+          "uniqueCandidatesRetrieved" : 9317
+        },
+        "N=1000" : {
+          "recallAt10" : 63.36,
+          "recallAt20" : 63.16,
+          "precisionAt10" : 5.24,
+          "precisionAtN" : 0.63,
+          "mrrAtNTop1" : 0.0313,
+          "mrrAtNFirstRef" : 0.1626,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 1584,
+          "uniqueCandidatesRetrieved" : 9786
+        }
+      },
+      "tfidf" : {
+        "N=50" : {
+          "recallAt10" : 17.64,
+          "recallAt20" : 15.98,
+          "precisionAt10" : 6.0,
+          "precisionAtN" : 3.53,
+          "mrrAtNTop1" : 0.0365,
+          "mrrAtNFirstRef" : 0.1711,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 441,
+          "uniqueCandidatesRetrieved" : 6453
+        },
+        "N=80" : {
+          "recallAt10" : 23.04,
+          "recallAt20" : 20.94,
+          "precisionAt10" : 6.0,
+          "precisionAtN" : 2.88,
+          "mrrAtNTop1" : 0.0376,
+          "mrrAtNFirstRef" : 0.1728,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 576,
+          "uniqueCandidatesRetrieved" : 7901
+        },
+        "N=100" : {
+          "recallAt10" : 25.96,
+          "recallAt20" : 23.58,
+          "precisionAt10" : 6.0,
+          "precisionAtN" : 2.6,
+          "mrrAtNTop1" : 0.0381,
+          "mrrAtNFirstRef" : 0.1731,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 649,
+          "uniqueCandidatesRetrieved" : 8488
+        },
+        "N=200" : {
+          "recallAt10" : 35.96,
+          "recallAt20" : 32.9,
+          "precisionAt10" : 6.0,
+          "precisionAtN" : 1.8,
+          "mrrAtNTop1" : 0.039,
+          "mrrAtNFirstRef" : 0.1735,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 899,
+          "uniqueCandidatesRetrieved" : 9646
+        },
+        "N=500" : {
+          "recallAt10" : 52.6,
+          "recallAt20" : 50.52,
+          "precisionAt10" : 6.0,
+          "precisionAtN" : 1.05,
+          "mrrAtNTop1" : 0.0394,
+          "mrrAtNFirstRef" : 0.1737,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 1315,
+          "uniqueCandidatesRetrieved" : 9978
+        },
+        "N=1000" : {
+          "recallAt10" : 67.44,
+          "recallAt20" : 65.62,
+          "precisionAt10" : 6.0,
+          "precisionAtN" : 0.67,
+          "mrrAtNTop1" : 0.0397,
+          "mrrAtNFirstRef" : 0.1737,
+          "exhaustionRate" : 0.0,
+          "relevantRecoveredCount" : 1686,
+          "uniqueCandidatesRetrieved" : 9997
+        }
+      }
+    }
+  }
+}

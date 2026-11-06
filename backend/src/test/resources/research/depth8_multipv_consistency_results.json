@@ -1,0 +1,50 @@
+{
+  "rank1Consistency" : {
+    "totalPositions" : 10000,
+    "move1IdentityRate1vs3" : 63.8,
+    "move1IdentityRate1vs5" : 62.3,
+    "meanPvJaccard1vs3" : 0.298,
+    "meanPvJaccard1vs5" : 0.291,
+    "meanScoreDiff1vs3" : 36.5,
+    "meanScoreDiff1vs5" : 48.6,
+    "meanTokenJaccard1vs3" : 0.45,
+    "meanTokenJaccard1vs5" : 0.446
+  },
+  "multiPvContributions" : {
+    "totalPositions" : 10000,
+    "vocabularySizes" : {
+      "MPV1" : 141,
+      "MPV3" : 145,
+      "MPV5" : 143
+    },
+    "meanDocumentLengths" : {
+      "MPV1" : 25.2,
+      "MPV3" : 74.2,
+      "MPV5" : 122.0
+    },
+    "meanTokenNovelty" : {
+      "MPV3" : 54.8,
+      "MPV5" : 61.1
+    },
+    "motifCategoryBreakdownMpv3" : {
+      "piece_move_cadence" : 88361,
+      "material_captures" : 30530,
+      "created_attack_threats" : 48846,
+      "general_capture_flags" : 4750,
+      "tactical_checks" : 2503,
+      "piece_sacrifices" : 7262,
+      "tactical_checkmates" : 437,
+      "pawn_promotions" : 91
+    },
+    "motifCategoryBreakdownMpv5" : {
+      "piece_move_cadence" : 121184,
+      "material_captures" : 44423,
+      "created_attack_threats" : 68667,
+      "general_capture_flags" : 5430,
+      "tactical_checks" : 3445,
+      "piece_sacrifices" : 11129,
+      "tactical_checkmates" : 644,
+      "pawn_promotions" : 133
+    }
+  }
+}

@@ -1,0 +1,187 @@
+{
+  "metadata" : {
+    "generatedAt" : "2026-11-06T17:30:20.272227Z",
+    "sampleCount" : 50,
+    "workerCount" : 6,
+    "stockfishVersion" : "Stockfish 19",
+    "stockfishBinarySha256" : "dc2f18c34ae962dff591b66147d220ec06e61d756b93d8a4f5e04fd8e55c251f",
+    "status" : "PASSED"
+  },
+  "feasibilitySummary" : {
+    "combinedCorpusMeanLatencyMs" : 116.1,
+    "combinedCorpusProjectedWallClockMinutes" : 3.22,
+    "combinedCorpusCeilingMinutes" : 60.0,
+    "gateBreached" : false
+  },
+  "configurations" : {
+    "MPV1" : {
+      "nominalDepth" : 8,
+      "multiPv" : 1,
+      "totalLatencyMs" : {
+        "mean" : 16.2,
+        "median" : 15.0,
+        "p90" : 25.0,
+        "min" : 6.0,
+        "max" : 34.0
+      },
+      "nominalLatencyMs" : {
+        "mean" : 9.6,
+        "median" : 8.0,
+        "p90" : 17.0
+      },
+      "extensionLatencyMs" : {
+        "mean" : 6.6,
+        "median" : 7.0,
+        "p90" : 11.0
+      },
+      "nominalNodes" : {
+        "mean" : 3952.5,
+        "median" : 3123.0,
+        "p90" : 8058.0
+      },
+      "extensionNodes" : {
+        "mean" : 2966.8,
+        "median" : 2788.0,
+        "p90" : 5002.0
+      },
+      "totalNodes" : {
+        "mean" : 6919.3,
+        "median" : 6550.0,
+        "p90" : 11595.0
+      },
+      "terminationReasonCounts" : {
+        "QUIET_STOP" : 47,
+        "PV_EXHAUSTED" : 3
+      },
+      "strataLatencyMs" : {
+        "early-game" : {
+          "mean" : 18.5,
+          "median" : 17.0,
+          "p90" : 25.0
+        },
+        "middle-game" : {
+          "mean" : 17.0,
+          "median" : 16.0,
+          "p90" : 25.0
+        },
+        "late-game" : {
+          "mean" : 10.7,
+          "median" : 9.0,
+          "p90" : 15.0
+        }
+      }
+    },
+    "MPV3" : {
+      "nominalDepth" : 8,
+      "multiPv" : 3,
+      "totalLatencyMs" : {
+        "mean" : 37.9,
+        "median" : 36.0,
+        "p90" : 58.0,
+        "min" : 11.0,
+        "max" : 71.0
+      },
+      "nominalLatencyMs" : {
+        "mean" : 30.7,
+        "median" : 29.0,
+        "p90" : 47.0
+      },
+      "extensionLatencyMs" : {
+        "mean" : 7.2,
+        "median" : 7.0,
+        "p90" : 11.0
+      },
+      "nominalNodes" : {
+        "mean" : 36815.5,
+        "median" : 33144.0,
+        "p90" : 56448.0
+      },
+      "extensionNodes" : {
+        "mean" : 8920.3,
+        "median" : 9602.0,
+        "p90" : 13684.0
+      },
+      "totalNodes" : {
+        "mean" : 45735.8,
+        "median" : 47045.0,
+        "p90" : 67597.0
+      },
+      "terminationReasonCounts" : {
+        "QUIET_STOP" : 50
+      },
+      "strataLatencyMs" : {
+        "early-game" : {
+          "mean" : 43.3,
+          "median" : 44.0,
+          "p90" : 54.0
+        },
+        "middle-game" : {
+          "mean" : 39.3,
+          "median" : 43.0,
+          "p90" : 60.0
+        },
+        "late-game" : {
+          "mean" : 26.5,
+          "median" : 20.0,
+          "p90" : 36.0
+        }
+      }
+    },
+    "MPV5" : {
+      "nominalDepth" : 8,
+      "multiPv" : 5,
+      "totalLatencyMs" : {
+        "mean" : 62.0,
+        "median" : 66.0,
+        "p90" : 99.0,
+        "min" : 17.0,
+        "max" : 120.0
+      },
+      "nominalLatencyMs" : {
+        "mean" : 54.5,
+        "median" : 58.0,
+        "p90" : 87.0
+      },
+      "extensionLatencyMs" : {
+        "mean" : 7.5,
+        "median" : 8.0,
+        "p90" : 12.0
+      },
+      "nominalNodes" : {
+        "mean" : 107061.0,
+        "median" : 106475.0,
+        "p90" : 163095.0
+      },
+      "extensionNodes" : {
+        "mean" : 15243.9,
+        "median" : 15769.0,
+        "p90" : 22545.0
+      },
+      "totalNodes" : {
+        "mean" : 122304.9,
+        "median" : 122244.0,
+        "p90" : 183710.0
+      },
+      "terminationReasonCounts" : {
+        "QUIET_STOP" : 50
+      },
+      "strataLatencyMs" : {
+        "early-game" : {
+          "mean" : 71.3,
+          "median" : 70.0,
+          "p90" : 89.0
+        },
+        "middle-game" : {
+          "mean" : 64.0,
+          "median" : 70.0,
+          "p90" : 101.0
+        },
+        "late-game" : {
+          "mean" : 42.9,
+          "median" : 27.0,
+          "p90" : 84.0
+        }
+      }
+    }
+  }
+}
