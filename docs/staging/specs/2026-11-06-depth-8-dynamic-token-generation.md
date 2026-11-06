@@ -18,7 +18,7 @@
 | 1.0 | 2026-11-06 | Antigravity | Initial draft proposing depth-8 search with nominal MultiPV 1, 3, 5. |
 | 2.0 | 2026-11-06 | Antigravity | Major Peer-Review Corrections: quiescence semantics reclassified as bounded PV extension; 6 MultiPV retrieval conditions; corrected retrieval metrics and tie-breaking; provisional quality-cost frontier; cache schema alignment. |
 | 2.1 | 2026-11-06 | Antigravity | Surgical Peer-Review Corrections: universal non-terminal horizon gating; reconciled batch runtime feasibility arithmetic ($T_{\text{pos}}/36$ min); 13-parameter cache preimage and configuration file isolation; precision corrections (early/middle/late pilot strata, separate BM25/TF-IDF exhaustion, fixed Precision@10 denominator, TT clearHash policy). |
-| **2.2** | **2026-11-06** | **Antigravity** | **Spec-Compliance Review Synthesis (3-Reviewer Audit):**<br>1. *Scope Boundaries (§1.4):* Explicitly locked production code (`backend/src/main/`) as strictly read-only; confined all harness, benchmarks, and cache runners to `backend/src/test/` and `docs/research/`.<br>2. *Subprocess & Extension Mechanics (§4.4, §5.1, §5.2):* Added dedicated `SingleEngineWorker.resolveForcingPvExtension` that avoids process destruction (`quit`); mandates temporarily resetting `MultiPV 1` on worker before horizon search to avoid node splitting; specified watchdog timeouts (10s) and crash-recovery procedures.<br>3. *Cache Preimage & Aggregation Decoupling (§4.3, §10.B):* Decoupled downstream token aggregation (`tokenAgg`) from engine evaluation cache key preimage; preimage strictly indexes engine search outputs via `normalizedFen` (6 fields); defined `canonicalFen` (4 fields) vs `normalizedFen` (6 fields).<br>4. *Model A Reconciliation (§4.3, §9.4):* Reconciled Model A with general episode flag clamping ($\text{tf} \le 1.0$ for `?*`); defined Model A as primary baseline for C3/C5/C6 in Artifact 3.<br>5. *Concrete Schemas (§10):* Authored full JSON schemas for Artifact 1 (`timing_pilot_results.json`) and Artifact 3 (`retrieval_results.json`); defined `nominalNodes`, `extensionNodes`, and `totalNodes` in `principalVariations`.<br>6. *Metric Rigor & Edge Cases (§6.2, §6.3, §8):* Defined candidate pool restriction to $S > 0$; handled division-by-zero in $\text{Precision@N}$ and undefined min in $\text{MRR@N\_firstRef}$; defined novelty edge cases and FP collision rates.<br>7. *Pilot Determinism (§7.2):* Formally specified stratified sampling code with `Random(42L)` and cyclic configuration interleaving.<br>8. *Verification Commands (§12):* Added separated execution targets for Phase 3 corpus generation vs Phase 4 retrieval benchmarking, plus unit tests for TT clear policy and cache serialization. |
+| **2.2** | **2026-11-06** | **Antigravity** | **Spec-Compliance Review Synthesis & Final Parameter Rigor:**<br>1. *Scope Boundaries (§1.4):* Explicitly locked production code (`backend/src/main/`) as strictly read-only; confined all harness, benchmarks, and cache runners to `backend/src/test/` and `docs/research/`.<br>2. *Subprocess & Extension Mechanics (§4.4, §5.1, §5.2):* Added dedicated `SingleEngineWorker.resolveForcingPvExtension` that avoids process destruction (`quit`); mandates temporarily resetting `MultiPV 1` on worker before horizon search to avoid node splitting; specified 10-second watchdog timeouts and crash-recovery procedures.<br>3. *Horizon Semantics Rigor (§5.2):* Replaced claims of establishing horizon quietness with accurate wording: resolver examines whether the engine-selected continuation begins with a forcing move, without exploring alternative forcing branches.<br>4. *Cache Identity & Preimage Rigor (§10.B):* Decoupled downstream token aggregation (`tokenAgg`) from engine evaluation cache key preimage; preimage strictly indexes engine search outputs via an exact **15-parameter specification** (covering engine, binHash, depth, multipv, threads, hash, ponder, syzygy, analyseMode, hashPolicy, ext, extLimits, extTimeoutMs, tokenVersion, and normalizedFen); defined canonicalFen (4 fields) vs normalizedFen (6 fields).<br>5. *Model A Reconciliation (§4.3, §9.4):* Reconciled Model A with general episode flag clamping ($\text{tf} \le 1.0$ for `?*`); defined Model A as primary baseline for C3/C5/C6 in Artifact 3.<br>6. *Example Artifact Integrity (§10):* Authored full JSON schemas for Artifact 1 (`timing_pilot_results.json`) and Artifact 3 (`retrieval_results.json`) using explicit placeholders and null values to ensure illustrative schemas cannot be mistaken for empirical results.<br>7. *Metric Rigor & Edge Cases (§6.2, §6.3, §8):* Defined candidate pool restriction to $S > 0$; handled boundary division in $\text{Precision@N}$ and $\text{MRR@N\_firstRef}$; defined novelty edge cases and FP collision rates.<br>8. *Pilot Determinism & Verification (§7.2, §12):* Formally specified stratified sampling code with `Random(42L)` and cyclic configuration interleaving; separated execution targets for Phase 3 corpus generation vs Phase 4 retrieval benchmarking, plus unit tests for TT clear policy and 15-parameter cache serialization. |
 
 ---
 
@@ -273,7 +273,7 @@ For each PV rank $r \in \{1, \dots, M\}$ with nominal depth-8 moves $[m_1, \dots
    - Otherwise, `applyNextForcingMove` evaluates move $e_1$ from $B_k$:
      - If $e_1$ is **non-forcing** (`!isForcingMove(B_k, e_1)` and `!B_k.isKingAttacked`):
        - Halt immediately: $E_r = \emptyset$, plies resolved = 0, `TerminationReason.QUIET_STOP`.
-       - *Soundness:* Horizon quietness is determined by evaluating whether a tactical continuation exists *from* $B_k$, rather than incorrectly inferring quietness from the move entering $B_k$.
+       - *Operational Semantics & Structural Limitation:* The resolver examines the engine-selected principal variation from $B_k$ and determines whether this selected continuation begins with a forcing move (`isForcingMove(B_k, e_1)` or `B_k.isKingAttacked`). Crucially, the resolver does **not** explore alternative forcing branches outside the engine's preferred line; therefore, halting with `QUIET_STOP` indicates only that the engine's preferred continuation begins quietly—it cannot establish that no alternative tactical continuation exists from $B_k$.
      - If $e_1$ is **forcing** (in check, capture, promotion, or gives check):
        - Apply $e_1$ and sequentially replay subsequent continuation moves $[e_2, \dots, e_p]$ bounded by `maxPlies = 10`.
    - **Termination Reason Precedence:**
@@ -291,10 +291,9 @@ For each PV rank $r \in \{1, \dots, M\}$ with nominal depth-8 moves $[m_1, \dots
    - For MultiPV 1, this represents a modest $\approx 10-20$ ms overhead; for MultiPV 5, resolving all 5 lines adds up to $\sim 50-100$ ms per position. This overhead is explicitly tracked in $T_{\text{ext}}$ and accounted for in the feasibility budget.
 5. **Architectural Distinction: Bounded Single-PV Replay vs. Full Quiescence Tree Search:**
    - It is essential to emphasize that `resolveForcingPvExtension` is a **bounded single-PV extension**, not an alpha-beta quiescence tree search.
-   - A full quiescence search explores all legal captures and checks across an alpha-beta minimax tree to guarantee tactical quietness.
-   - In contrast, the single-PV resolver follows only the engine's single preferred line. If the opponent has an alternative forcing tactical retort that the engine's shallow search overlooked or chose not to play, that branch is not explored.
-   - The implementation therefore guarantees bounded linear extension along the engine's principal variation, but does not provide a formal minimax proof of tactical quiescence.
-   - The implementation therefore guarantees bounded linear extension along the engine's principal variation, but does not provide a formal minimax proof of tactical quiescence.
+   - A full quiescence search explores all legal captures and checks across an alpha-beta minimax tree to establish tactical quietness.
+   - In contrast, the single-PV resolver examines only the engine's single preferred line. It determines whether this selected sequence begins with a forcing move, but does not explore alternative forcing branches. It therefore cannot establish that no alternative tactical continuation exists from $B_k$.
+   - The implementation guarantees bounded linear extension along the engine's principal variation, but does not provide a formal minimax proof of tactical quiescence.
 
 ### 5.3 Treatment of Incomplete Lines
 Positions whose extensions end in resource-limited states (`PLY_LIMIT`, `NODE_LIMIT`, `TIMEOUT`, `PV_EXHAUSTED`) are **retained and flagged** in the dataset:
@@ -465,41 +464,41 @@ To determine whether additional MultiPV ranks provide genuine discriminative inf
 ```json
 {
   "metadata": {
-    "generatedAt": "2026-11-06T12:00:00Z",
+    "generatedAt": "<TIMESTAMP_PLACEHOLDER: ISO-8601>",
     "sampleCount": 50,
     "workerCount": 6,
     "stockfishVersion": "Stockfish 19",
-    "stockfishBinarySha256": "3a8f...4e1b",
-    "status": "PASSED"
+    "stockfishBinarySha256": "<SHA256_HEX_PLACEHOLDER: 64 hex chars>",
+    "status": "<STATUS_PLACEHOLDER: PENDING | PASSED | GATE_BREACHED>"
   },
   "feasibilitySummary": {
-    "combinedCorpusMeanLatencyMs": 384.2,
-    "combinedCorpusProjectedWallClockMinutes": 10.67,
+    "combinedCorpusMeanLatencyMs": null,
+    "combinedCorpusProjectedWallClockMinutes": null,
     "combinedCorpusCeilingMinutes": 60.0,
-    "gateBreached": false
+    "gateBreached": null
   },
   "configurations": {
     "MPV1": {
       "nominalDepth": 8,
       "multiPv": 1,
-      "totalLatencyMs": { "mean": 42.1, "median": 38.0, "p90": 65.0, "min": 21.0, "max": 112.0 },
-      "nominalLatencyMs": { "mean": 28.5, "median": 26.0, "p90": 41.0 },
-      "extensionLatencyMs": { "mean": 13.6, "median": 12.0, "p90": 24.0 },
-      "nominalNodes": { "mean": 1420.0, "median": 1310.0, "p90": 2100.0 },
-      "extensionNodes": { "mean": 680.0, "median": 510.0, "p90": 1240.0 },
-      "totalNodes": { "mean": 2100.0, "median": 1820.0, "p90": 3340.0 },
+      "totalLatencyMs": { "mean": null, "median": null, "p90": null, "min": null, "max": null },
+      "nominalLatencyMs": { "mean": null, "median": null, "p90": null },
+      "extensionLatencyMs": { "mean": null, "median": null, "p90": null },
+      "nominalNodes": { "mean": null, "median": null, "p90": null },
+      "extensionNodes": { "mean": null, "median": null, "p90": null },
+      "totalNodes": { "mean": null, "median": null, "p90": null },
       "terminationReasonCounts": {
-        "QUIET_STOP": 38,
-        "TERMINAL": 2,
-        "PLY_LIMIT": 4,
-        "NODE_LIMIT": 3,
-        "TIMEOUT": 0,
-        "PV_EXHAUSTED": 3
+        "QUIET_STOP": null,
+        "TERMINAL": null,
+        "PLY_LIMIT": null,
+        "NODE_LIMIT": null,
+        "TIMEOUT": null,
+        "PV_EXHAUSTED": null
       },
       "strataLatencyMs": {
-        "early-game": { "mean": 36.2, "median": 34.0, "p90": 48.0 },
-        "middle-game": { "mean": 48.4, "median": 42.0, "p90": 72.0 },
-        "late-game": { "mean": 35.1, "median": 31.0, "p90": 52.0 }
+        "early-game": { "mean": null, "median": null, "p90": null },
+        "middle-game": { "mean": null, "median": null, "p90": null },
+        "late-game": { "mean": null, "median": null, "p90": null }
       }
     },
     "MPV3": { "nominalDepth": 8, "multiPv": 3 },
@@ -518,11 +517,11 @@ To eliminate cross-configuration cache pollution, thread write contention, and a
 - *(Reference Ground Truth remains immutable in `backend/src/test/resources/research/engine_evaluation_cache_d16_mpv1.json`)*.
 
 #### B. Cache Key Preimage Specification & Collision Prevention
-The engine evaluation cache records raw Stockfish search lines and unaggregated per-rank tokens (`tokensByRank`). Downstream token aggregation models (Model A–D) are applied at index construction time; therefore, the engine evaluation cache key preimage strictly specifies the engine execution parameters.
+The engine evaluation cache records raw Stockfish search lines and unaggregated per-rank tokens (`tokensByRank`). Downstream token aggregation models (Model A–D) are applied at index construction time; therefore, the engine evaluation cache key preimage strictly specifies the engine execution parameters and tactical token extraction version.
 
-Each cache record is indexed by a 64-character SHA-256 hex digest generated from an exact, canonical preimage string specifying the 12 engine execution parameters:
+Each cache record is indexed by a 64-character SHA-256 hex digest generated from an exact, canonical preimage string specifying all **15 parameters**:
 ```
-engine=Stockfish 19:binHash=<binSha256>:depth=8:multipv=<k>:threads=1:hash=64:ponder=false:syzygy=none:hashPolicy=clearHash:ext=bounded_pv:extLimits=d8_n5000_p10:fen=<normalizedFen>
+engine=Stockfish 19:binHash=<binSha256>:depth=8:multipv=<k>:threads=1:hash=64:ponder=false:syzygy=none:analyseMode=true:hashPolicy=clearHash:ext=bounded_pv:extLimits=d8_n5000_p10:extTimeoutMs=10000:tokenVersion=bizjak_v1:fen=<normalizedFen>
 ```
 Where:
 - `engine`: Engine release identifier (`Stockfish 19`).
@@ -533,51 +532,51 @@ Where:
 - `hash`: UCI `Hash` transposition table size in MB (`64`).
 - `ponder`: UCI `Ponder` flag (`false`).
 - `syzygy`: Endgame tablebase path (`none`).
+- `analyseMode`: UCI `UCI_AnalyseMode` option (`true`).
 - `hashPolicy`: Transposition table clearing policy (`clearHash`, enforcing `ucinewgame` + `isready` prior to root search).
 - `ext`: Bounded extension method (`bounded_pv`).
 - `extLimits`: Search bounds for extension (`d8_n5000_p10` representing depth 8, nodes 5000, maxPlies 10).
+- `extTimeoutMs`: Watchdog timeout policy in milliseconds (`10000`, enforcing the 10-second subprocess watchdog).
+- `tokenVersion`: Dynamic tactical token extractor implementation version (`bizjak_v1`).
 - `fen`: 6-field normalized FEN (`normalizedFen`) required by chesslib: `"<canonicalFen> 0 1"`.
 
 *FEN Distinction & Canonical Integrity:*
 - `canonicalFen`: The standard 4-field position identifier used throughout the project (`"<board> <color> <castling> <en_passant>"`). Stored in the record JSON body.
 - `normalizedFen`: The 6-field representation (`"<canonicalFen> 0 1"`) required by `DynamicTacticalScorer.extractDynamicTokens` to avoid `IllegalArgumentException`. Used in the hash preimage.
 
-*Collision Prevention Guarantee:* Because all search parameters, extension limits, and board positions are embedded into the preimage, record keys are cryptographically unique ($p < 10^{-60}$), guaranteeing zero collision across distinct positions and configurations.
+*Collision Prevention Guarantee:* Because all search parameters, extension limits, watchdog timeouts, feature extraction versions, and board positions are embedded into the preimage, record keys are cryptographically unique ($p < 10^{-60}$), guaranteeing zero collision across distinct positions and configurations.
 
 #### C. Cache Record Schema (Compatible with `CachedEngineRecord` and `DynamicReferenceRankingEvaluator`):
 ```json
 {
-  "<sha256_cache_key>": {
-    "canonicalFen": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq -",
-    "normalizedFen": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 0 1",
+  "<sha256_cache_key_placeholder>": {
+    "canonicalFen": "<board> <color> <castling> <en_passant>",
+    "normalizedFen": "<board> <color> <castling> <en_passant> 0 1",
     "depth": 8,
     "multiPv": 5,
-    "bestMove": "f1c4",
-    "scoreCp": 35,
+    "bestMove": "<uci_move_placeholder>",
+    "scoreCp": null,
     "principalVariations": [
       {
         "rank": 1,
-        "scoreCp": 35,
-        "moves": ["f1c4", "g8f6", "d2d3", "f8c5"],
+        "scoreCp": null,
+        "moves": ["<uci_move_placeholder>"],
         "nominalDepth": 8,
-        "nominalMoves": ["f1c4", "g8f6", "d2d3"],
-        "extensionMoves": ["f8c5"],
-        "terminationReason": "QUIET_STOP",
-        "nominalNodes": 1420,
-        "extensionNodes": 680,
-        "totalNodes": 2100
+        "nominalMoves": ["<uci_move_placeholder>"],
+        "extensionMoves": ["<uci_move_placeholder>"],
+        "terminationReason": "<TERMINATION_REASON_PLACEHOLDER: QUIET_STOP | TERMINAL | PLY_LIMIT | NODE_LIMIT | TIMEOUT | PV_EXHAUSTED>",
+        "nominalNodes": null,
+        "extensionNodes": null,
+        "totalNodes": null
       }
     ],
     "dynamicTokens": {
-      "!-B": 2.0,
-      "!-N": 1.0,
-      "!-P": 1.0
+      "<token_placeholder>": 1.0
     },
     "tokensByRank": {
-      "1": { "!-B": 1.0, "!-N": 1.0, "!-P": 1.0 },
-      "2": { "!-B": 1.0 }
+      "1": { "<token_placeholder>": 1.0 }
     },
-    "elapsedMs": 38,
+    "elapsedMs": null,
     "timedOut": false
   }
 }
@@ -589,7 +588,7 @@ Where:
 ```json
 {
   "metadata": {
-    "generatedAt": "2026-11-06T15:00:00Z",
+    "generatedAt": "<TIMESTAMP_PLACEHOLDER: ISO-8601>",
     "queryCount": 250,
     "corpusCount": 10000,
     "referenceArtifact": "engine_evaluation_cache_d16_mpv1.json"
@@ -598,22 +597,22 @@ Where:
     "C1_MPV1_R1": {
       "bm25": {
         "50": {
-          "recallAt10": 0.482,
-          "recallAt20": 0.441,
-          "precisionAt10": 0.482,
-          "precisionAtN": 0.096,
-          "mrrAtNTop1": 0.312,
-          "mrrAtNFirstRef": 0.624,
-          "exhaustionRate": 0.4,
-          "relevantRecoveredCount": 1205,
-          "uniqueCandidatesRetrieved": 6420
+          "recallAt10": null,
+          "recallAt20": null,
+          "precisionAt10": null,
+          "precisionAtN": null,
+          "mrrAtNTop1": null,
+          "mrrAtNFirstRef": null,
+          "exhaustionRate": null,
+          "relevantRecoveredCount": null,
+          "uniqueCandidatesRetrieved": null
         },
         "80": {}, "100": {}, "200": {}, "500": {}, "1000": {}
       },
       "tfidf": {},
       "incompleteLinesAblation": {
-        "excludedCount": 82,
-        "bm25RecallAt10_N200": 0.618
+        "excludedCount": null,
+        "bm25RecallAt10_N200": null
       }
     },
     "C2_MPV3_R1": {},
@@ -676,7 +675,7 @@ cd backend && ./gradlew test --tests "com.chessecho.research.DynamicReferenceRan
 # Verify worker transposition table reset policy (ucinewgame / isready)
 cd backend && ./gradlew test --tests "com.chessecho.research.EngineTranspositionTablePolicyTest"
 
-# Verify 12-parameter cache key SHA-256 preimage generation and record serialization
+# Verify 15-parameter cache key SHA-256 preimage generation and record serialization
 cd backend && ./gradlew test --tests "com.chessecho.research.Depth8CacheSerializationTest"
 ```
 
