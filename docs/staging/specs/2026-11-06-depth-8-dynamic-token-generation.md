@@ -1,7 +1,7 @@
 # Research Specification: Direct Dynamic-Token Generation Using Shallower Stockfish Search (Depth 8, MultiPV 1/3/5)
 
 **Specification ID:** `SPEC-RESEARCH-DYNAMIC-SIMILARITY-DEPTH8-MULTIPV`  
-**Revision:** 2.1 (Surgical Revision: Horizon Gating, Runtime Feasibility Arithmetic, Cache Isolation & Precision Corrections)  
+**Revision:** 2.2 (Post Spec-Compliance Review Synthesis)  
 **Date:** 2026-11-06  
 **Status:** DRAFT FOR FINAL REVIEW (Implementation Strictly Paused)  
 **Parent Research Issues:** [#722](https://github.com/NathanZK/ChessEcho/issues/722), [#721](https://github.com/NathanZK/ChessEcho/issues/721), [#607](https://github.com/NathanZK/ChessEcho/issues/607)  
@@ -17,7 +17,8 @@
 |---|---|---|---|
 | 1.0 | 2026-11-06 | Antigravity | Initial draft proposing depth-8 search with nominal MultiPV 1, 3, 5. |
 | 2.0 | 2026-11-06 | Antigravity | Major Peer-Review Corrections: quiescence semantics reclassified as bounded PV extension; 6 MultiPV retrieval conditions; corrected retrieval metrics and tie-breaking; provisional quality-cost frontier; cache schema alignment. |
-| **2.1** | **2026-11-06** | **Antigravity** | **Surgical Peer-Review Corrections:**<br>1. *Horizon Extension Gating (Section 5):* Corrected gating logic to invoke bounded PV continuation resolver at every non-terminal horizon $B_k$; resolver halts with `QUIET_STOP` (0 plies added) if first engine move from $B_k$ is quiet; documented $\sim 10-25$ ms latency cost per line; preserved distinction between single-PV extension replay and full quiescence tree search; retained incomplete-line classification and sensitivity analysis.<br>2. *Runtime Feasibility Arithmetic (Section 7):* Reconciled mathematical inconsistency between per-position latency thresholds and full-corpus batch runtimes on $W=6$ workers; formalized $T_{\text{batch}}(C) = T_{\text{pos}}(C) / 36$ min; established mathematically consistent 60-minute combined corpus gate ($\sum T_{\text{pos}} \le 2,160$ ms) and individual MultiPV-5 ceiling ($T_{\text{pos}} \le 1,800$ ms); clearly defined workload scope.<br>3. *Cache Identity & Isolation (Section 10):* Specified exact SHA-256 preimage formula across all 13 experimental parameters; mandated configuration-isolated cache files (`engine_evaluation_cache_d8_mpv1.json`, `engine_evaluation_cache_d8_mpv3.json`, `engine_evaluation_cache_d8_mpv5.json`); established top-level SHA-256 keyed maps to prevent collisions.<br>4. *Precision Corrections (Sections 4, 6, 7):* Specified persistent-worker hash policy (`hashPolicy: clearHash` via `ucinewgame` / `isready`); renamed pilot strata to `early-game` ($\le 12$ plies), `middle-game` ($13-40$ plies), and `late-game` ($> 40$ plies); separated BM25 and TF-IDF candidate-pool exhaustion metrics; divided quality-cost frontier into generation, indexing, and retrieval costs; strictly fixed `Precision@10` denominator to 10. |
+| 2.1 | 2026-11-06 | Antigravity | Surgical Peer-Review Corrections: universal non-terminal horizon gating; reconciled batch runtime feasibility arithmetic ($T_{\text{pos}}/36$ min); 13-parameter cache preimage and configuration file isolation; precision corrections (early/middle/late pilot strata, separate BM25/TF-IDF exhaustion, fixed Precision@10 denominator, TT clearHash policy). |
+| **2.2** | **2026-11-06** | **Antigravity** | **Spec-Compliance Review Synthesis (3-Reviewer Audit):**<br>1. *Scope Boundaries (§1.4):* Explicitly locked production code (`backend/src/main/`) as strictly read-only; confined all harness, benchmarks, and cache runners to `backend/src/test/` and `docs/research/`.<br>2. *Subprocess & Extension Mechanics (§4.4, §5.1, §5.2):* Added dedicated `SingleEngineWorker.resolveForcingPvExtension` that avoids process destruction (`quit`); mandates temporarily resetting `MultiPV 1` on worker before horizon search to avoid node splitting; specified watchdog timeouts (10s) and crash-recovery procedures.<br>3. *Cache Preimage & Aggregation Decoupling (§4.3, §10.B):* Decoupled downstream token aggregation (`tokenAgg`) from engine evaluation cache key preimage; preimage strictly indexes engine search outputs via `normalizedFen` (6 fields); defined `canonicalFen` (4 fields) vs `normalizedFen` (6 fields).<br>4. *Model A Reconciliation (§4.3, §9.4):* Reconciled Model A with general episode flag clamping ($\text{tf} \le 1.0$ for `?*`); defined Model A as primary baseline for C3/C5/C6 in Artifact 3.<br>5. *Concrete Schemas (§10):* Authored full JSON schemas for Artifact 1 (`timing_pilot_results.json`) and Artifact 3 (`retrieval_results.json`); defined `nominalNodes`, `extensionNodes`, and `totalNodes` in `principalVariations`.<br>6. *Metric Rigor & Edge Cases (§6.2, §6.3, §8):* Defined candidate pool restriction to $S > 0$; handled division-by-zero in $\text{Precision@N}$ and undefined min in $\text{MRR@N\_firstRef}$; defined novelty edge cases and FP collision rates.<br>7. *Pilot Determinism (§7.2):* Formally specified stratified sampling code with `Random(42L)` and cyclic configuration interleaving.<br>8. *Verification Commands (§12):* Added separated execution targets for Phase 3 corpus generation vs Phase 4 retrieval benchmarking, plus unit tests for TT clear policy and cache serialization. |
 
 ---
 
@@ -40,6 +41,17 @@ Instead of cascading dynamic reranking behind a static filter, can we **directly
 - **Hypothesis 1 (Depth-8 Recall Feasibility):** Direct dynamic tokens generated at nominal depth 8 with bounded PV extension preserve $\ge 50\%$ Recall@10 against the fixed depth-16 reference standard at candidate budget $N=200$ (and $\ge 70\%$ at $N=1000$), substantially exceeding static retrieval baselines ($\le 8.52\%$ at $N=200$).
 - **Hypothesis 2 (MultiPV Incremental Information vs. Noise):** Additional MultiPV lines (MultiPV 3 and MultiPV 5) retrieve distinct dynamic neighbours not captured by MultiPV 1, but at the cost of expanding token document length and introducing vocabulary noise. The recall gain between MultiPV 1 and MultiPV 3/5 must justify the increased engine search time.
 - **Hypothesis 3 (Computational Efficiency):** Depth-8 token generation reduces per-position engine analysis latency by at least $5\times$ to $10\times$ compared to depth 16, enabling scalable offline indexing and faster query-time candidate generation.
+
+### 1.4 Scope Boundaries & Architectural Constraints
+- **Strictly In-Scope:**
+  - Designing, running, and analyzing the Depth-8 MultiPV research experiment for GitHub Issue #723.
+  - Adding research-only runners, benchmark tests, pilot scripts, and cache serialization classes under `backend/src/test/kotlin/com/chessecho/research/`.
+  - Storing evaluation caches and experimental results under `backend/src/test/resources/research/`.
+  - Authoring diagnostic research reports under `docs/research/`.
+- **Strictly Out-of-Scope (Locked Production Boundaries):**
+  - **Zero Production Modifications:** Production code under `backend/src/main/` is strictly READ-ONLY. No service classes, production controllers, or schema classes will be altered.
+  - **Immutable Reference Data:** Depth-16 reference ground truth (`engine_evaluation_cache_d16_mpv1.json`) and Corpus A (`corpus_a.json`) are immutable. Exactly zero reference records will be modified or regenerated.
+  - **Deferred Production Integration:** Integrating depth-8 dynamic retrieval into the interactive web UI or production similarity pipeline is explicitly deferred until Issue #723 research findings are reviewed and approved.
 
 ---
 
@@ -199,22 +211,37 @@ For all 10,000 positions in Corpus A, the experiment will measure:
 
 ### 4.3 MultiPV Token Aggregation & Ablation Models
 For a position $p$ with available PV lines $M = \min(K, |\text{lines}|)$:
-1. Each line $r \in \{1, \dots, M\}$ yields resolved moves $M_r(p)$ and tokens $T_r(p) = \text{extractDynamicTokens}(\text{fen}(p), M_r(p))$.
+1. Each line $r \in \{1, \dots, M\}$ yields resolved moves $M_r(p)$ and tokens $T_r(p) = \text{extractDynamicTokens}(\text{normalizedFen}(p), M_r(p))$.
 2. Tokens are stored with strict provenance in `tokensByRank: Map<Int, Map<String, Double>>`.
 3. Four aggregation schemes will be independently benchmarked:
-   - **Model A (Summed Term Frequencies):** $\text{tf}(t, p) = \sum_{r=1}^M \text{tf}(t, M_r(p))$.
-   - **Model B (Clamped Binary Presence):** $\text{tf}(t, p) = 1.0$ if term $t$ appears in any line $r \in \{1..M\}$. Prevents frequent moves from overpowering discriminative tactical flags.
-   - **Model C (Individual Rank Evaluation):** Independent retrieval using rank $r$ alone ($r \in \{1, 2, 3, 4, 5\}$).
-   - **Model D (Cumulative Rank Combinations):** Cumulative retrieval: $R_1$, $R_{1+2}$, $R_{1+2+3}$, $R_{1+2+3+4}$, $R_{1+2+3+4+5}$.
+   - **Model A (Summed Term Frequencies with Clamped Episode Flags - Primary Baseline):**
+     - For cadence moves, captures, created threats, sacrifices, and tactical checkmates (`!-*`, `!x*`, `!>*`, `!S*`, `!#*`):
+       $$\text{tf}(t, p) = \sum_{r=1}^M \text{tf}(t, M_r(p))$$
+     - For qualitative episode flags (`?px`, `?ox`, `?+`, `?=`, `?#`, `?S`): clamped to binary presence:
+       $$\text{tf}(t, p) = \min\left(1.0, \sum_{r=1}^M \text{tf}(t, M_r(p))\right)$$
+       This prevents qualitative motifs (such as a check or capture occurring across multiple lines) from accumulating artificial term frequency while preserving tactical frequency for distinct moves and threats.
+     - *Primary Baseline Role:* Model A serves as the authoritative aggregation rule for primary multi-line retrieval conditions: **C3 (MPV3_R13)**, **C5 (MPV5_R13)**, and **C6 (MPV5_R15)** in Artifact 3.
+   - **Model B (Clamped Binary Presence Ablation):** $\text{tf}(t, p) = 1.0$ if term $t$ appears in any line $r \in \{1..M\}$. Prevents frequent moves from overpowering discriminative tactical flags.
+   - **Model C (Individual Rank Evaluation Ablation):** Independent retrieval using rank $r$ alone ($r \in \{1, 2, 3, 4, 5\}$).
+   - **Model D (Cumulative Rank Combinations Ablation):** Cumulative retrieval across successive ranks: $R_1$, $R_{1+2}$, $R_{1+2+3}$, $R_{1+2+3+4}$, $R_{1+2+3+4+5}$.
 
 ### 4.4 Engine Execution Controls & Transposition Table Policy
 To guarantee deterministic, order-independent evaluation across the 6-worker pool:
 - **Transposition Table Reset Policy (`hashPolicy: clearHash`):** Prior to evaluating each root position FEN, every `SingleEngineWorker` process issues:
-  ```
+  ```uci
   ucinewgame
   isready
   ```
   and awaits `readyok` (matching `DynamicEngineResearchRunner.kt:295–298` and `StockfishResearchRunner.kt:86–88`). This completely flushes Stockfish's internal transposition table (TT) between root positions, guaranteeing that search depth, move ordering, and PV outputs are strictly order-independent and 100% reproducible regardless of worker thread scheduling or position batch sequence.
+- **Worker Subprocess Preservation & Stream Isolation:**
+  - `SingleEngineWorker` instances maintain long-lived `Process` handles across the entire batch run.
+  - To prevent accidental subprocess destruction, the research runner uses dedicated worker methods that stream UCI commands and read responses up to `bestmove` without issuing `quit`.
+- **Worker MultiPV Scoping for Horizon Extension:**
+  - When evaluating root positions under MultiPV 3 or MultiPV 5, workers execute with `setoption name MultiPV value <k>`.
+  - When resolving horizon continuations from board $B_k$, the worker temporarily sets `setoption name MultiPV value 1` prior to sending `go depth 8 nodes 5000`. This dedicates the entire 5,000-node budget to the single linear continuation and guarantees that `pvMoves` parses the unique rank-1 line without overwriting. After reading `bestmove`, the worker restores `setoption name MultiPV value <k>` for subsequent roots.
+- **Process Crash & Watchdog Timeout Recovery:**
+  - Each search command is bounded by a 10,000 ms watchdog timer.
+  - If a worker process deadlocks or crashes, the runner kills the failed process, launches a fresh replacement worker, re-applies engine configuration options, logs the failure, records `TerminationReason.TIMEOUT` for the active position, and resumes batch processing without dropping subsequent positions.
 - **Fixed Engine Controls:**
   - `Threads`: 1 (strict single-threaded search per worker)
   - `Hash`: 64 MB
@@ -230,22 +257,32 @@ To guarantee deterministic, order-independent evaluation across the 6-worker poo
 ### 5.1 Resolving the Extension Design Question
 **Design Decision:** The experiment adopts **Approach A (Bounded Extension from Horizon Board $B_k$)** rather than querying an unsearched horizon or relying solely on Stockfish's internal PV:
 - *Rationale:* Stockfish's UCI `pv` string frequently terminates mid-exchange at depth 8. Appending forcing continuation moves ensures that tactical recaptures and check evasions are represented in the token sequence.
-- *Persistent Worker Reuse:* Extension search is executed directly on the active `SingleEngineWorker` process using `position fen $B_k.fen\ngo depth 8 nodes 5000`. This completely eliminates the 50,000-process spawn bottleneck.
+- *Persistent Worker Reuse:* Extension search is executed directly on the active `SingleEngineWorker` process via a dedicated stream method `SingleEngineWorker.resolveForcingPvExtension(...)`. This completely eliminates the 50,000-process spawn bottleneck, reuses the existing worker stdin/stdout streams without issuing process-destroying `quit` commands, and ensures uninterrupted throughput.
 
 ### 5.2 Horizon Continuation Resolution & Execution Protocol
 For each PV rank $r \in \{1, \dots, M\}$ with nominal depth-8 moves $[m_1, \dots, m_k]$:
 1. Replay $[m_1, \dots, m_k]$ on a board initialized from root FEN to obtain horizon board $B_k$.
 2. **Terminal Board Check:** If $B_k$ is terminal (checkmated, stalemated, or drawn by rule), set $E_r = \emptyset$, record `TerminationReason.TERMINAL`, and stop extension.
 3. **Continuation Resolver Invocation (Universal Non-Terminal Policy):**
-   For every non-terminal horizon $B_k$, the bounded continuation resolver (`StockfishService.resolveForcingPvContinuation`) is invoked directly on the active `SingleEngineWorker`:
+   For every non-terminal horizon $B_k$, the bounded continuation resolver (`SingleEngineWorker.resolveForcingPvExtension`) is invoked directly on the active worker:
+   - Temporarily send `setoption name MultiPV value 1` (if worker multiPv > 1) to ensure the 5,000-node search is dedicated to a single continuation line.
    - Send `position fen $B_k.fen` and `go depth 8 nodes 5000`.
-   - The engine searches from $B_k$ and returns its preferred continuation line $[e_1, e_2, \dots]$.
-   - `StockfishService.applyNextForcingMove` evaluates move $e_1$ from $B_k$:
-     - If $e_1$ is **non-forcing** (`!isForcingMove(B_k, e_1)` and `!B_k.isKingAttacked`), the resolver halts immediately without applying any moves.
-     - Outcome: $E_r = \emptyset$, plies resolved = 0, `TerminationReason.QUIET_STOP`.
-     - *Soundness:* The horizon position's quietness is determined by evaluating whether a tactical continuation exists *from* $B_k$, rather than incorrectly inferring quietness from the move entering $B_k$.
-   - If $e_1$ is **forcing** (side to move in check, capture, promotion, or gives check), $e_1$ is applied to $B_k$, and subsequent moves $[e_2, \dots, e_p]$ are sequentially evaluated and applied up to `maxPlies = 10`.
-   - The loop halts upon encountering the first non-forcing move (`QUIET_STOP`), a terminal state (`TERMINAL`), or resource limits (`PLY_LIMIT`, `NODE_LIMIT`, `TIMEOUT`, `PV_EXHAUSTED`).
+   - Read output until `bestmove` and restore `setoption name MultiPV value <k>`.
+   - If engine returns an empty PV (e.g. immediate unhandled draw or no moves):
+     - Outcome: $E_r = \emptyset$, plies resolved = 0, `TerminationReason.PV_EXHAUSTED`.
+   - Otherwise, `applyNextForcingMove` evaluates move $e_1$ from $B_k$:
+     - If $e_1$ is **non-forcing** (`!isForcingMove(B_k, e_1)` and `!B_k.isKingAttacked`):
+       - Halt immediately: $E_r = \emptyset$, plies resolved = 0, `TerminationReason.QUIET_STOP`.
+       - *Soundness:* Horizon quietness is determined by evaluating whether a tactical continuation exists *from* $B_k$, rather than incorrectly inferring quietness from the move entering $B_k$.
+     - If $e_1$ is **forcing** (in check, capture, promotion, or gives check):
+       - Apply $e_1$ and sequentially replay subsequent continuation moves $[e_2, \dots, e_p]$ bounded by `maxPlies = 10`.
+   - **Termination Reason Precedence:**
+     - `QUIET_STOP`: Reached an unforced move in the engine PV.
+     - `TERMINAL`: Reached checkmate, stalemate, or draw during replay.
+     - `PLY_LIMIT`: Hit `maxPlies = 10` while moves remained forcing (takes precedence over node limit if plies = 10).
+     - `NODE_LIMIT`: Search exhausted 5,000 nodes and engine truncated line before quietness was reached.
+     - `TIMEOUT`: Worker watchdog timer (10,000 ms) expired.
+     - `PV_EXHAUSTED`: Engine PV ended while moves were forcing without reaching an explicit quiet move or node cap.
    - Concatenated sequence: $M_r^{\text{resolved}} = [m_1, \dots, m_k, e_1, \dots, e_p]$.
    - Record exact `TerminationReason` for line $r$.
 4. **Computational Cost Implications:**
@@ -253,9 +290,10 @@ For each PV rank $r \in \{1, \dots, M\}$ with nominal depth-8 moves $[m_1, \dots
    - Because `nodes` is capped at 5,000 and search depth is capped at 8, this adds an estimated $\sim 10-25$ ms of wall-clock time per non-terminal line on a single worker thread.
    - For MultiPV 1, this represents a modest $\approx 10-20$ ms overhead; for MultiPV 5, resolving all 5 lines adds up to $\sim 50-100$ ms per position. This overhead is explicitly tracked in $T_{\text{ext}}$ and accounted for in the feasibility budget.
 5. **Architectural Distinction: Bounded Single-PV Replay vs. Full Quiescence Tree Search:**
-   - It is essential to emphasize that `resolveForcingPvContinuation` is a **bounded single-PV extension**, not an alpha-beta quiescence tree search.
+   - It is essential to emphasize that `resolveForcingPvExtension` is a **bounded single-PV extension**, not an alpha-beta quiescence tree search.
    - A full quiescence search explores all legal captures and checks across an alpha-beta minimax tree to guarantee tactical quietness.
    - In contrast, the single-PV resolver follows only the engine's single preferred line. If the opponent has an alternative forcing tactical retort that the engine's shallow search overlooked or chose not to play, that branch is not explored.
+   - The implementation therefore guarantees bounded linear extension along the engine's principal variation, but does not provide a formal minimax proof of tactical quiescence.
    - The implementation therefore guarantees bounded linear extension along the engine's principal variation, but does not provide a formal minimax proof of tactical quiescence.
 
 ### 5.3 Treatment of Incomplete Lines
@@ -279,14 +317,20 @@ Positions whose extensions end in resource-limited states (`PLY_LIMIT`, `NODE_LI
 ### 6.2 Candidate Universe & Evaluation Constraints
 - **Same-Side Constraint:** $\text{cand}.\text{sideToMove} == \text{query}.\text{sideToMove}$.
 - **Canonical Position Inequality:** $\text{cand}.\text{canonicalFen} \neq \text{query}.\text{canonicalFen}$ (strictly excluding duplicate board states regardless of metadata).
+- **Positive-Score Eligibility & Candidate Pool Definition:**
+  Candidates must produce a strictly positive similarity score ($S_{\text{model}}(q, c) > 0$) to enter the eligible pool:
+  $$U_{\text{eligible}}(q) = \{c \in \text{Corpus A} : c.\text{sideToMove} == q.\text{sideToMove} \land c.\text{canonicalFen} \neq q.\text{canonicalFen} \land S_{\text{model}}(q, c) > 0\}$$
+  Candidates are ranked deterministically by the 3-tuple:
+  `compareByDescending { score }.thenBy { canonicalFen }.thenBy { positionId }`.
+  The retrieved candidate pool of budget $N$ is:
+  $$C_N(q) = \text{take}(N, U_{\text{eligible}}(q))$$
+  If $|U_{\text{eligible}}(q)| < N$, then $|C_N(q)| < N$ (reflecting candidate pool exhaustion).
 - **Candidate Budgets ($N$):** Evaluated at 6 discrete budgets:
   $$N \in \{50, 80, 100, 200, 500, 1000\}$$
   *(Note: Budget $N=80$ is restored to ensure exact parity with Issue #722 baselines).*
-- **Deterministic 3-Tuple Tie-Breaking:**
-  `compareByDescending { score }.thenBy { canonicalFen }.thenBy { positionId }`.
 - **Query Evaluation Mode:**
   - **Primary Protocol (Symmetric Querying):** Query $q$ uses its newly generated Depth-8 tokens corresponding to the evaluated configuration.
-  - **Diagnostic Control (Asymmetric Querying):** Query $q$ uses authoritative Depth-16 tokens against the Depth-8 candidate index to isolate query degradation from candidate degradation.
+  - **Diagnostic Control (Asymmetric Querying):** Query $q$ uses authoritative Depth-16 ground truth tokens evaluated against the Depth-8 candidate index for Conditions C1 (MPV1) and C6 (MPV5) across all 6 budgets $N$ to isolate query degradation from candidate degradation. Results are serialized in Artifact 3 under dedicated sub-keys.
 
 ### 6.3 Corrected Metric Definitions
 
@@ -298,12 +342,12 @@ Positions whose extensions end in resource-limited states (`PLY_LIMIT`, `NODE_LI
    $$\text{Precision@10}(q) = \frac{|C_{10}(q) \cap \text{Top10}_{\text{d16}}(q)|}{10}$$
    *Clarification on Fixed Denominator:* The denominator is strictly fixed at 10 even if fewer than 10 candidates are returned ($|C_{10}(q)| < 10$). A candidate pool that exhausts before returning 10 candidates is directly penalized for starvation, reflecting practical retrieval utility.
 5. **Precision@N (Candidate Pool Purity at Budget $N$):**
-   $$\text{Precision@N}(q) = \frac{|C_N(q) \cap \text{Top10}_{\text{d16}}(q)|}{\min(N, |C_N(q)|)}$$
-   Measures candidate pool purity without penalizing pools smaller than budget $N$.
+   $$\text{Precision@N}(q) = \begin{cases} \frac{|C_N(q) \cap \text{Top10}_{\text{d16}}(q)|}{\min(N, |C_N(q)|)}, & \text{if } |C_N(q)| > 0 \\ 0.0, & \text{if } |C_N(q)| = 0 \end{cases}$$
+   Measures candidate pool purity without penalizing pools smaller than budget $N$, with explicit $0.0$ handling when $|C_N(q)| = 0$.
 6. **Mean Reciprocal Rank of #1 Reference Neighbour (`MRR@N_top1`):**
-   $$\text{MRR@N\_top1} = \frac{1}{|Q|} \sum_{q \in Q} \frac{1}{\text{rank}(c_1^*(q))} \quad (\text{rank} > N \implies 0)$$
+   $$\text{MRR@N\_top1} = \frac{1}{|Q|} \sum_{q \in Q} \begin{cases} \frac{1}{\text{rank}(c_1^*(q))}, & \text{if } c_1^*(q) \in C_N(q) \\ 0.0, & \text{otherwise} \end{cases}$$
 7. **Mean Reciprocal Rank of First Retrieved Reference Member (`MRR@N_firstRef`):**
-   $$\text{MRR@N\_firstRef} = \frac{1}{|Q|} \sum_{q \in Q} \frac{1}{\min_{c \in \text{Top10}_{\text{d16}}(q)} \text{rank}(c)} \quad (\text{rank} > N \implies 0)$$
+   $$\text{MRR@N\_firstRef} = \frac{1}{|Q|} \sum_{q \in Q} \begin{cases} \frac{1}{\min_{c \in (C_N(q) \cap \text{Top10}_{\text{d16}}(q))} \text{rank}(c)}, & \text{if } C_N(q) \cap \text{Top10}_{\text{d16}}(q) \neq \emptyset \\ 0.0, & \text{otherwise} \end{cases}$$
 8. **Candidate Pool Exhaustion Rate (%):**
    Reported separately for **BM25** ($\text{Exhaustion}_{\text{BM25}}(N)$) and **TF-IDF** ($\text{Exhaustion}_{\text{TF-IDF}}(N)$):
    $$\text{Exhaustion}_{\text{model}}(N) = \frac{1}{|Q|} \sum_{q \in Q} \mathbb{I}(|\{c \in U(q) : S_{\text{model}}(q, c) > 0\}| < N) \times 100\%$$
@@ -337,13 +381,25 @@ The experiment evaluates retrieval performance against true computational cost, 
 
 ### 7.2 Pre-Execution Timing Pilot (50 Positions)
 To establish empirical runtime bounds without risking runaway execution:
-1. **Pilot Selection Criteria:** Select exactly 50 positions from `corpus_a.json` via stratified deterministic sampling using `kotlin.random.Random(42L)`:
+1. **Pilot Selection Criteria & Deterministic Sampling Algorithm:**
+   Select exactly 50 positions from `corpus_a.json` via stratified deterministic sampling using `kotlin.random.Random(42L)`:
    - 15 Early-game positions ($\text{ply} \le 12$)
    - 25 Middle-game positions ($13 \le \text{ply} \le 40$)
    - 10 Late-game positions ($\text{ply} > 40$)
+   *Exact Kotlin Implementation Contract:*
+   ```kotlin
+   val early = corpus.filter { it.ply <= 12 }.sortedBy { it.canonicalFen }.shuffled(kotlin.random.Random(42L)).take(15)
+   val mid   = corpus.filter { it.ply in 13..40 }.sortedBy { it.canonicalFen }.shuffled(kotlin.random.Random(42L)).take(25)
+   val late  = corpus.filter { it.ply > 40 }.sortedBy { it.canonicalFen }.shuffled(kotlin.random.Random(42L)).take(10)
+   val pilotPositions = early + mid + late
+   ```
    *Taxonomic Justification:* Strata are designated by ply count intervals (`early-game`, `middle-game`, `late-game`) rather than strict opening/middlegame/endgame classifications, recognizing that ply count does not strictly correspond to chess phases (e.g. rapid early queen trades into queenless positions vs. closed structures retaining full material beyond ply 40).
 2. **Warm-Up Procedure:** Evaluate and discard 5 untimed dummy positions before recording metrics to eliminate JVM JIT compilation and OS disk caching transients.
-3. **Randomized Configuration Execution:** To prevent CPU thermal throttling or background OS noise from biasing MultiPV comparisons, pilot positions are evaluated in randomized interleaved order across Configurations A, B, and C.
+3. **Cyclic Interleaved Configuration Execution:**
+   To prevent CPU thermal throttling or background OS noise from systematically biasing MultiPV comparisons, each pilot position $i \in \{0, \dots, 49\}$ is evaluated across Configurations A (MPV1), B (MPV3), and C (MPV5) in a cyclic interleaved order:
+   - Position index $i \pmod 3 == 0 \implies \text{Order: } [A, B, C]$
+   - Position index $i \pmod 3 == 1 \implies \text{Order: } [B, C, A]$
+   - Position index $i \pmod 3 == 2 \implies \text{Order: } [C, A, B]$
 4. **Feasibility Gates & Runtime Projection Arithmetic:**
    - The pilot is designed to establish empirical runtime projections and hardware feasibility.
    - Token novelty will **not** be used to prematurely reject a configuration during the pilot.
@@ -358,7 +414,11 @@ To establish empirical runtime bounds without risking runaway execution:
      representing an average across the three configurations of $\bar{T}_{\text{pos}} \le 720$ ms/position.
    - **Individual MultiPV-5 Feasibility Threshold:**
      If MultiPV 5 alone exhibits mean latency $T_{\text{pos}}(\text{MPV5}) > 1,800$ ms/position (projecting $T_{\text{batch}}(\text{MPV5}) > 50$ minutes on 6 workers, leaving insufficient headroom for MPV1 and MPV3 within a reasonable execution window), execution will pause, and resource trade-offs (e.g. evaluating MPV5 on a targeted candidate subset or adjusting extension parameters) will be presented for review before proceeding with full corpus generation.
-   - *Arithmetic Reconciliation Note:* A per-position latency of 220 ms corresponds to a projected batch wall-clock runtime of only $220 / 36 \approx 6.1$ minutes for a single configuration, or $\approx 18.3$ minutes across all three configurations. The 60-minute combined gate establishes a mathematically sound ceiling that accommodates deep tactical branches without risking runaway compute.
+   - **Gate Breach Action & Failure Handling:**
+     If either the combined 60-minute gate or the MultiPV 5 threshold is breached during the pilot:
+     1. Batch corpus generation is **blocked** from starting.
+     2. The runner immediately flushes `depth8_multipv_timing_pilot_results.json` to disk with status `"GATE_BREACHED"`.
+     3. An issue update summarizing measured latencies and candidate mitigations (e.g. bounding MPV5 extension nodes or reducing candidate depth) is submitted to GitHub Issue #723 for user decision.
 
 ---
 
@@ -366,16 +426,20 @@ To establish empirical runtime bounds without risking runaway execution:
 
 To determine whether additional MultiPV ranks provide genuine discriminative information or mere token inflation:
 1. **Vocabulary Expansion:** Measure unique vocabulary size $V_K$ and mean document length across Corpus A.
-2. **Token Set Novelty:** For each position:
-   $$\text{Novelty}(K) = \frac{|T_K(p) \setminus T_1(p)|}{|T_K(p)|}$$
-3. **Tactical Motif Category Breakdown:** Measure the distribution of newly introduced tokens across:
+2. **Token Set Novelty:** For each position $p$:
+   $$\text{Novelty}(K, p) = \begin{cases} \frac{|T_K(p) \setminus T_1(p)|}{|T_K(p)|}, & \text{if } |T_K(p)| > 0 \\ 0.0, & \text{if } |T_K(p)| = 0 \end{cases}$$
+3. **Tactical Motif Category Breakdown:** Measure the distribution of newly introduced tokens across all Bizjak feature families:
    - Tactical checks (`?+`)
-   - Material captures (`!x`)
-   - Piece sacrifices (`?S`, `!S<piece>`)
+   - Immediate captures (`!x*`, `!x**`)
+   - Created attack threats (`!*>*`)
+   - Piece sacrifices (`?S`, `!S*`)
    - Pawn promotions (`?=`)
-   - Piece moves (`!-`)
-4. **Incremental Depth-16 Neighbour Recovery:** Quantify dynamic reference candidates retrieved by Condition C3 (MPV3_R13) or C6 (MPV5_R15) that were missed by Condition C1 (MPV1_R1).
-5. **Noise & Collision Analysis:** Measure whether MultiPV token inflation increases false-positive candidate collisions in BM25 scoring.
+   - Tactical checkmates (`?#`, `!#*`)
+   - General capture flags (`?px`, `?ox`)
+   - Piece move cadences (`!-*`, `!-**`)
+4. **Incremental Depth-16 Neighbour Recovery:** Quantify dynamic reference candidates retrieved by Condition C3 (MPV3_R13) or C6 (MPV5_R15) that were missed by Condition C1 (MPV1_R1) at candidate budgets $N = 200$ and $N = 1000$.
+5. **Noise & False-Positive Collision Analysis:** Measure whether MultiPV token expansion introduces non-reference candidate collisions in BM25 scoring:
+   $$\text{FP\_Collision\_Rate}(K, N) = \frac{1}{|Q|} \sum_{q \in Q} \frac{\max\left(0, |C_{N, K}(q) \setminus \text{Top10}_{\text{d16}}(q)| - |C_{N, 1}(q) \setminus \text{Top10}_{\text{d16}}(q)|\right)}{N} \times 100\%$$
 
 ---
 
@@ -396,7 +460,53 @@ To determine whether additional MultiPV ranks provide genuine discriminative inf
 ## 10. Output Artifacts & Serialization Schemas
 
 ### Artifact 1: Timing Pilot Results
-`backend/src/test/resources/research/depth8_multipv_timing_pilot_results.json`
+`backend/src/test/resources/research/depth8_multipv_timing_pilot_results.json`  
+*Schema (Record of pre-execution empirical bounds and feasibility verification):*
+```json
+{
+  "metadata": {
+    "generatedAt": "2026-11-06T12:00:00Z",
+    "sampleCount": 50,
+    "workerCount": 6,
+    "stockfishVersion": "Stockfish 19",
+    "stockfishBinarySha256": "3a8f...4e1b",
+    "status": "PASSED"
+  },
+  "feasibilitySummary": {
+    "combinedCorpusMeanLatencyMs": 384.2,
+    "combinedCorpusProjectedWallClockMinutes": 10.67,
+    "combinedCorpusCeilingMinutes": 60.0,
+    "gateBreached": false
+  },
+  "configurations": {
+    "MPV1": {
+      "nominalDepth": 8,
+      "multiPv": 1,
+      "totalLatencyMs": { "mean": 42.1, "median": 38.0, "p90": 65.0, "min": 21.0, "max": 112.0 },
+      "nominalLatencyMs": { "mean": 28.5, "median": 26.0, "p90": 41.0 },
+      "extensionLatencyMs": { "mean": 13.6, "median": 12.0, "p90": 24.0 },
+      "nominalNodes": { "mean": 1420.0, "median": 1310.0, "p90": 2100.0 },
+      "extensionNodes": { "mean": 680.0, "median": 510.0, "p90": 1240.0 },
+      "totalNodes": { "mean": 2100.0, "median": 1820.0, "p90": 3340.0 },
+      "terminationReasonCounts": {
+        "QUIET_STOP": 38,
+        "TERMINAL": 2,
+        "PLY_LIMIT": 4,
+        "NODE_LIMIT": 3,
+        "TIMEOUT": 0,
+        "PV_EXHAUSTED": 3
+      },
+      "strataLatencyMs": {
+        "early-game": { "mean": 36.2, "median": 34.0, "p90": 48.0 },
+        "middle-game": { "mean": 48.4, "median": 42.0, "p90": 72.0 },
+        "late-game": { "mean": 35.1, "median": 31.0, "p90": 52.0 }
+      }
+    },
+    "MPV3": { "nominalDepth": 8, "multiPv": 3 },
+    "MPV5": { "nominalDepth": 8, "multiPv": 5 }
+  }
+}
+```
 
 ### Artifact 2: Engine Evaluation Cache (Depth 8 MultiPV)
 
@@ -408,9 +518,11 @@ To eliminate cross-configuration cache pollution, thread write contention, and a
 - *(Reference Ground Truth remains immutable in `backend/src/test/resources/research/engine_evaluation_cache_d16_mpv1.json`)*.
 
 #### B. Cache Key Preimage Specification & Collision Prevention
-Each cache record is indexed by a 64-character SHA-256 hex digest generated from an exact, canonical preimage string specifying all 13 experimental parameters:
+The engine evaluation cache records raw Stockfish search lines and unaggregated per-rank tokens (`tokensByRank`). Downstream token aggregation models (Model A–D) are applied at index construction time; therefore, the engine evaluation cache key preimage strictly specifies the engine execution parameters.
+
+Each cache record is indexed by a 64-character SHA-256 hex digest generated from an exact, canonical preimage string specifying the 12 engine execution parameters:
 ```
-engine=Stockfish 19:binHash=<binSha256>:depth=8:multipv=<k>:threads=1:hash=64:ponder=false:syzygy=none:hashPolicy=clearHash:ext=bounded_pv:extDepth=8:extNodes=5000:extMaxPlies=10:tokenVersion=bizjak_v1:tokenAgg=<aggModel>:fen=<canonicalFen>
+engine=Stockfish 19:binHash=<binSha256>:depth=8:multipv=<k>:threads=1:hash=64:ponder=false:syzygy=none:hashPolicy=clearHash:ext=bounded_pv:extLimits=d8_n5000_p10:fen=<normalizedFen>
 ```
 Where:
 - `engine`: Engine release identifier (`Stockfish 19`).
@@ -423,18 +535,20 @@ Where:
 - `syzygy`: Endgame tablebase path (`none`).
 - `hashPolicy`: Transposition table clearing policy (`clearHash`, enforcing `ucinewgame` + `isready` prior to root search).
 - `ext`: Bounded extension method (`bounded_pv`).
-- `extDepth`, `extNodes`, `extMaxPlies`: Bounded extension search limits (`8`, `5000`, `10`).
-- `tokenVersion`: Dynamic tactical token extractor specification (`bizjak_v1`).
-- `tokenAgg`: Aggregation scheme (`summed_tf`, `binary_clamped`, or `individual_rank`).
-- `fen`: Canonical FEN string of the position with all fields normalized.
+- `extLimits`: Search bounds for extension (`d8_n5000_p10` representing depth 8, nodes 5000, maxPlies 10).
+- `fen`: 6-field normalized FEN (`normalizedFen`) required by chesslib: `"<canonicalFen> 0 1"`.
 
-*Collision Prevention Guarantee:* Because all search parameters, extension limits, aggregation schemes, and board identities are embedded into the preimage, record keys are cryptographically unique ($p < 10^{-60}$), guaranteeing zero collision across distinct positions and configurations.
+*FEN Distinction & Canonical Integrity:*
+- `canonicalFen`: The standard 4-field position identifier used throughout the project (`"<board> <color> <castling> <en_passant>"`). Stored in the record JSON body.
+- `normalizedFen`: The 6-field representation (`"<canonicalFen> 0 1"`) required by `DynamicTacticalScorer.extractDynamicTokens` to avoid `IllegalArgumentException`. Used in the hash preimage.
+
+*Collision Prevention Guarantee:* Because all search parameters, extension limits, and board positions are embedded into the preimage, record keys are cryptographically unique ($p < 10^{-60}$), guaranteeing zero collision across distinct positions and configurations.
 
 #### C. Cache Record Schema (Compatible with `CachedEngineRecord` and `DynamicReferenceRankingEvaluator`):
 ```json
 {
   "<sha256_cache_key>": {
-    "canonicalFen": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",
+    "canonicalFen": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq -",
     "normalizedFen": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 0 1",
     "depth": 8,
     "multiPv": 5,
@@ -449,7 +563,9 @@ Where:
         "nominalMoves": ["f1c4", "g8f6", "d2d3"],
         "extensionMoves": ["f8c5"],
         "terminationReason": "QUIET_STOP",
-        "nodes": 1420
+        "nominalNodes": 1420,
+        "extensionNodes": 680,
+        "totalNodes": 2100
       }
     ],
     "dynamicTokens": {
@@ -469,7 +585,52 @@ Where:
 
 ### Artifact 3: Full Candidate Retrieval & Benchmark Results
 `backend/src/test/resources/research/depth8_multipv_retrieval_results.json`  
-Contains metrics for all 6 retrieval conditions across budgets $N \in \{50, 80, 100, 200, 500, 1000\}$ against both BM25 and TF-IDF depth-16 ground truth.
+*Schema (Record of all retrieval conditions, budgets, metrics, and ablations):*
+```json
+{
+  "metadata": {
+    "generatedAt": "2026-11-06T15:00:00Z",
+    "queryCount": 250,
+    "corpusCount": 10000,
+    "referenceArtifact": "engine_evaluation_cache_d16_mpv1.json"
+  },
+  "conditions": {
+    "C1_MPV1_R1": {
+      "bm25": {
+        "50": {
+          "recallAt10": 0.482,
+          "recallAt20": 0.441,
+          "precisionAt10": 0.482,
+          "precisionAtN": 0.096,
+          "mrrAtNTop1": 0.312,
+          "mrrAtNFirstRef": 0.624,
+          "exhaustionRate": 0.4,
+          "relevantRecoveredCount": 1205,
+          "uniqueCandidatesRetrieved": 6420
+        },
+        "80": {}, "100": {}, "200": {}, "500": {}, "1000": {}
+      },
+      "tfidf": {},
+      "incompleteLinesAblation": {
+        "excludedCount": 82,
+        "bm25RecallAt10_N200": 0.618
+      }
+    },
+    "C2_MPV3_R1": {},
+    "C3_MPV3_R13": {},
+    "C4_MPV5_R1": {},
+    "C5_MPV5_R13": {},
+    "C6_MPV5_R15": {},
+    "ABLATION_MODEL_B": {},
+    "ABLATION_MODEL_C": {},
+    "ABLATION_MODEL_D": {},
+    "ASYMMETRIC_DIAGNOSTIC": {
+      "C1_MPV1_R1": {},
+      "C6_MPV5_R15": {}
+    }
+  }
+}
+```
 
 ### Artifact 4: Formal Diagnostic Research Report
 `docs/research/issue-723-depth8-dynamic-retrieval-report.md`
@@ -479,18 +640,21 @@ Contains metrics for all 6 retrieval conditions across budgets $N \in \{50, 80, 
 ## 11. Execution Sequence & Phasing
 
 1. **Phase 1: Implementation Audit & Specification Finalization (Current Phase)**  
-   - Complete architectural review and peer-review corrections (complete).
+   - Complete architectural review, 3-reviewer spec compliance audit, and synthesis (complete).
    - Update specification and align GitHub Issue #723.
    - Await explicit user review and approval before writing any code.
 2. **Phase 2: Pre-Execution Timing Pilot (50 Positions)**  
    - Run Configurations A, B, and C on the 50 stratified pilot positions.
    - Measure actual latency, node counts, and PV extension profiles.
-3. **Phase 3: Corpus A Dataset Generation (10,000 Positions)**  
-   - Batch execute depth-8 MultiPV search across Corpus A with progress tracking and persistent caching.
+   - Confirm hardware feasibility against the 60-minute combined corpus gate.
+3. **Phase 3: Corpus A Dataset Generation (10,000 Positions - Offline Batch)**  
+   - Dedicated runner populates the three configuration cache files (`_mpv1.json`, `_mpv3.json`, `_mpv5.json`).
+   - Executes with TT resets (`clearHash`), persistent worker reuse, and watchdog recovery.
 4. **Phase 4: Candidate Retrieval Benchmark & Ablations**  
-   - Build dynamic inverted indices for all 6 retrieval conditions.
-   - Execute BM25 and TF-IDF retrieval across 250 probe queries.
-   - Evaluate quality-cost frontier and MultiPV contributions.
+   - Dedicated retrieval runner loads pre-generated cache files from Phase 3.
+   - Builds dynamic inverted indices for all 6 retrieval conditions and aggregation schemes.
+   - Executes BM25 and TF-IDF retrieval across 250 probe queries.
+   - Evaluates quality-cost frontier, MultiPV contributions, and asymmetric controls.
 5. **Phase 5: Synthesis, Reporting & GitHub Issue Disposition**  
    - Publish research report and post final findings comment to GitHub Issue #723.
 
@@ -508,6 +672,12 @@ cd backend && ./gradlew test --tests "com.chessecho.similarity.DynamicTacticalSc
 
 # Verify immutable depth-16 ground truth reference evaluator
 cd backend && ./gradlew test --tests "com.chessecho.research.DynamicReferenceRankingEvaluatorTest"
+
+# Verify worker transposition table reset policy (ucinewgame / isready)
+cd backend && ./gradlew test --tests "com.chessecho.research.EngineTranspositionTablePolicyTest"
+
+# Verify 12-parameter cache key SHA-256 preimage generation and record serialization
+cd backend && ./gradlew test --tests "com.chessecho.research.Depth8CacheSerializationTest"
 ```
 
 ### Phase 2: Timing Pilot Runner (Post-Approval)
@@ -515,7 +685,16 @@ cd backend && ./gradlew test --tests "com.chessecho.research.DynamicReferenceRan
 cd backend && ./gradlew test --tests "com.chessecho.research.Depth8MultiPvTimingPilotTest"
 ```
 
-### Phase 3 & 4: Full Corpus Generation & Benchmark (Post-Approval)
+### Phase 3: Offline Corpus Generation Runner (Post-Approval)
 ```bash
+cd backend && ./gradlew test --tests "com.chessecho.research.Depth8MultiPvCorpusGenerationTest"
+```
+
+### Phase 4: Candidate Retrieval Benchmark & Ablations (Post-Approval)
+```bash
+# Full retrieval benchmark across all conditions and budgets
 cd backend && ./gradlew test --tests "com.chessecho.research.Depth8MultiPvRetrievalBenchmarkTest"
+
+# Cross-configuration Rank-1 consistency check
+cd backend && ./gradlew test --tests "com.chessecho.research.Depth8Rank1ConsistencyTest"
 ```
