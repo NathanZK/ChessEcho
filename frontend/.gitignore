@@ -14,6 +14,8 @@
 /coverage
 /.stryker-tmp
 /reports
+/test-results
+/playwright-report
 
 # next.js
 /.next/

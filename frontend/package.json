@@ -9,6 +9,7 @@
     "lint": "eslint --max-warnings 0",
     "knip": "knip",
     "test": "vitest run",
+    "test:journeys": "playwright test",
     "test:mutation": "stryker run"
   },
   "dependencies": {
@@ -20,6 +21,7 @@
     "react-dom": "19.2.8"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.0",
     "@stryker-mutator/core": "^10.1.1",
     "@stryker-mutator/vitest-runner": "^10.1.1",
     "@tailwindcss/postcss": "^4",
