@@ -1,7 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { ArrowLeft, RefreshCw } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  ProgressChart,
+  chartMeasurements,
+} from './PositionProgressChart';
 import {
   fetchPositionProgress,
   type PositionProgressBaseline,
@@ -11,13 +14,16 @@ import {
   type SessionState,
 } from '../services/api';
 
-interface PositionProgressViewProps {
+export interface PositionProgressViewProps {
   positionId: string;
   playerColor: 'WHITE' | 'BLACK';
   minEvalLoss: number;
   accountId?: string;
   sessionStatus: SessionState['status'];
-  onBack: () => void;
+  ecoCode?: string | null;
+  openingName?: string | null;
+  onBack?: () => void;
+  onClose?: () => void;
 }
 
 type LoadState =
@@ -45,37 +51,6 @@ function formatRate(rate: number): string {
   return `${Number(rate.toFixed(1))}%`;
 }
 
-interface ChartMeasurement {
-  key: string;
-  label: string;
-  occurredAt: string;
-  mistakeRate: number;
-  winRate: number;
-  attempts: number;
-}
-
-function chartMeasurements(progress: PositionProgressResponse): ChartMeasurement[] {
-  const baseline = progress.baseline
-    ? [{
-        key: 'baseline',
-        label: 'Historical baseline',
-        occurredAt: progress.baseline.occurredAt,
-        mistakeRate: progress.baseline.mistakeRate,
-        winRate: progress.baseline.winRate,
-        attempts: progress.baseline.sourceEncounterCount,
-      }]
-    : [];
-  const intervals = progress.points.map((point, index) => ({
-    key: point.checkpointId,
-    label: progress.baseline || index > 0 ? `Interval ${index + 1}` : `Baseline · Interval ${index + 1}`,
-    occurredAt: point.occurredAt,
-    mistakeRate: point.mistakeRate,
-    winRate: point.winRate,
-    attempts: point.attempts,
-  }));
-  return [...baseline, ...intervals];
-}
-
 function displayBaseline(progress: PositionProgressResponse): PositionProgressBaseline | null {
   if (progress.baseline) return progress.baseline;
   const firstInterval = progress.points[0];
@@ -90,24 +65,27 @@ function displayBaseline(progress: PositionProgressResponse): PositionProgressBa
 
 function BaselineSummary({ baseline }: { baseline: PositionProgressBaseline | null }) {
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900 p-5">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-300">Historical baseline</h2>
+    <div className="rounded-xl border border-outline-variant bg-surface-container-low p-4 sm:p-5 shadow-sm">
+      <h2 className="text-xs font-mono font-semibold uppercase tracking-wide text-on-surface-variant flex items-center gap-1.5">
+        <span className="material-symbols-outlined text-sm text-outline" aria-hidden="true">history</span>
+        Historical baseline
+      </h2>
       {baseline === null ? (
-        <p className="mt-2 text-sm text-slate-400">No dated baseline evidence yet.</p>
+        <p className="mt-2 text-xs font-mono text-outline">No dated baseline evidence yet.</p>
       ) : (
         <>
-          <p className="mt-2 text-sm text-slate-400">{baseline.sourceEncounterCount} dated encounters</p>
-          <dl className="mt-3 grid grid-cols-2 gap-3 text-sm">
-            <div>
-              <dt className="text-slate-400">Mistake rate</dt>
-              <dd className="mt-1 font-semibold text-white">{formatRate(baseline.mistakeRate)}</dd>
+          <p className="mt-2 text-xs font-mono text-on-surface-variant">{baseline.sourceEncounterCount} dated encounters</p>
+          <dl className="mt-3 grid grid-cols-2 gap-3 text-xs font-mono">
+            <div className="p-2.5 rounded-lg bg-surface-container-lowest border border-outline-variant">
+              <dt className="text-outline text-[11px]">Mistake rate</dt>
+              <dd className="mt-1 text-base font-bold text-primary">{formatRate(baseline.mistakeRate)}</dd>
             </div>
-            <div>
-              <dt className="text-slate-400">Win rate</dt>
-              <dd className="mt-1 font-semibold text-white">{formatRate(baseline.winRate)}</dd>
+            <div className="p-2.5 rounded-lg bg-surface-container-lowest border border-outline-variant">
+              <dt className="text-outline text-[11px]">Win rate</dt>
+              <dd className="mt-1 text-base font-bold text-sky-400">{formatRate(baseline.winRate)}</dd>
             </div>
           </dl>
-          <p className="mt-3 text-xs text-slate-500">
+          <p className="mt-3 text-[11px] font-mono text-outline">
             Dated through {new Date(baseline.occurredAt).toLocaleDateString()}
           </p>
         </>
@@ -120,184 +98,47 @@ function LatestIntervalSummary({ point }: { point: PositionProgressPoint | null 
   return (
     <section
       aria-labelledby="latest-interval-heading"
-      className="rounded-xl border border-slate-800 bg-slate-900 p-5"
+      className="rounded-xl border border-outline-variant bg-surface-container-low p-4 sm:p-5 shadow-sm"
     >
       <h2
         id="latest-interval-heading"
-        className="text-sm font-semibold uppercase tracking-wide text-slate-300"
+        className="text-xs font-mono font-semibold uppercase tracking-wide text-on-surface-variant flex items-center gap-1.5"
       >
+        <span className="material-symbols-outlined text-sm text-outline" aria-hidden="true">update</span>
         Latest measured interval
       </h2>
       {point === null ? (
-        <p className="mt-2 text-sm text-slate-400">No measured interval data yet.</p>
+        <p className="mt-2 text-xs font-mono text-outline">No measured interval data yet.</p>
       ) : (
         <>
-          <dl className="mt-3 grid grid-cols-2 gap-3 text-sm">
-            <div>
-              <dt className="text-slate-400">Mistake rate</dt>
-              <dd className="mt-1 font-semibold text-white">{formatRate(point.mistakeRate)}</dd>
+          <dl className="mt-3 grid grid-cols-2 gap-3 text-xs font-mono">
+            <div className="p-2.5 rounded-lg bg-surface-container-lowest border border-outline-variant">
+              <dt className="text-outline text-[11px]">Mistake rate</dt>
+              <dd className="mt-1 text-base font-bold text-primary">{formatRate(point.mistakeRate)}</dd>
             </div>
-            <div>
-              <dt className="text-slate-400">Win rate</dt>
-              <dd className="mt-1 font-semibold text-white">{formatRate(point.winRate)}</dd>
+            <div className="p-2.5 rounded-lg bg-surface-container-lowest border border-outline-variant">
+              <dt className="text-outline text-[11px]">Win rate</dt>
+              <dd className="mt-1 text-base font-bold text-sky-400">{formatRate(point.winRate)}</dd>
             </div>
-            <div>
-              <dt className="text-slate-400">Attempts</dt>
-              <dd className="mt-1 font-semibold text-white">
+            <div className="p-2.5 rounded-lg bg-surface-container-lowest border border-outline-variant">
+              <dt className="text-outline text-[11px]">Attempts</dt>
+              <dd className="mt-1 font-semibold text-on-surface">
                 {point.attempts} {point.attempts === 1 ? 'attempt' : 'attempts'}
               </dd>
             </div>
-            <div>
-              <dt className="text-slate-400">Interval status</dt>
-              <dd className="mt-1 font-semibold text-white">
+            <div className="p-2.5 rounded-lg bg-surface-container-lowest border border-outline-variant">
+              <dt className="text-outline text-[11px]">Interval status</dt>
+              <dd className="mt-1 font-semibold text-on-surface">
                 {point.open ? 'Open interval' : 'Closed interval'}
               </dd>
             </div>
           </dl>
-          <p className="mt-3 text-xs text-slate-500">
+          <p className="mt-3 text-[11px] font-mono text-outline">
             Latest included game: {new Date(point.occurredAt).toLocaleDateString()}
           </p>
         </>
       )}
     </section>
-  );
-}
-
-function chartX(index: number, points: ChartMeasurement[]): number {
-  if (points.length === 1) return 300;
-  const first = Date.parse(points[0].occurredAt);
-  const last = Date.parse(points[points.length - 1].occurredAt);
-  if (first === last) return 42 + (index / (points.length - 1)) * 516;
-  return 42 + ((Date.parse(points[index].occurredAt) - first) / (last - first)) * 516;
-}
-
-function chartY(rate: number): number {
-  return 220 - (rate / 100) * 180;
-}
-
-function seriesPoints(
-  points: ChartMeasurement[],
-  key: 'mistakeRate' | 'winRate',
-): string {
-  return points.map((point, index) => `${chartX(index, points)},${chartY(point[key])}`).join(' ');
-}
-
-function ProgressChart({ points }: { points: ChartMeasurement[] }) {
-  return (
-    <div className="rounded-xl border border-slate-800 bg-slate-950/70 p-3 sm:p-5">
-      <div className="mb-3 flex flex-wrap gap-x-5 gap-y-2 text-xs">
-        <span className="flex items-center gap-2 text-emerald-300">
-          <span className="h-2 w-2 rounded-full bg-emerald-400" />
-          Mistake rate
-        </span>
-        <span className="flex items-center gap-2 text-sky-300">
-          <span className="h-2 w-2 rounded-full bg-sky-400" />
-          Win rate
-        </span>
-      </div>
-      <svg
-        viewBox="0 0 600 270"
-        role="img"
-        aria-label="Position progress over time"
-        aria-describedby="progress-chart-description"
-        className="h-auto w-full"
-        preserveAspectRatio="none"
-      >
-        <title>Position progress over time</title>
-        <desc>
-          Mistake rate and win rate by measurement, shown as percentages from 0 to 100. The first point
-          is the historical baseline when available, followed by measured intervals.
-        </desc>
-        {[0, 50, 100].map((rate) => {
-          const y = chartY(rate);
-          return (
-            <g key={rate}>
-              <line x1="42" y1={y} x2="558" y2={y} stroke="#334155" strokeDasharray="4 5" />
-              <text x="34" y={y + 4} fill="#94a3b8" fontSize="11" textAnchor="end">
-                {rate}%
-              </text>
-            </g>
-          );
-        })}
-        <polyline
-          data-testid="progress-series-mistake-rate"
-          points={seriesPoints(points, 'mistakeRate')}
-          fill="none"
-          stroke="#34d399"
-          strokeWidth="3"
-          strokeLinejoin="round"
-          strokeLinecap="round"
-        />
-        <polyline
-          data-testid="progress-series-win-rate"
-          points={seriesPoints(points, 'winRate')}
-          fill="none"
-          stroke="#38bdf8"
-          strokeWidth="3"
-          strokeLinejoin="round"
-          strokeLinecap="round"
-        />
-        {points.map((point, index) => {
-          const x = chartX(index, points);
-          return (
-            <g key={point.key}>
-              <circle
-                data-testid="progress-point-mistake-rate"
-                cx={x}
-                cy={chartY(point.mistakeRate)}
-                r="4"
-                fill="#34d399"
-              >
-                <title>
-                  {point.attempts} encounters, {new Date(point.occurredAt).toLocaleDateString()}:
-                  mistake rate {point.mistakeRate}%
-                </title>
-              </circle>
-              <circle
-                data-testid="progress-point-win-rate"
-                cx={x}
-                cy={chartY(point.winRate)}
-                r="4"
-                fill="#38bdf8"
-              >
-                <title>
-                  {point.attempts} encounters, {new Date(point.occurredAt).toLocaleDateString()}:
-                  win rate {point.winRate}%
-                </title>
-              </circle>
-            </g>
-          );
-        })}
-        <text x="42" y="254" fill="#94a3b8" fontSize="11">
-          {new Date(points[0].occurredAt).toLocaleDateString()}
-        </text>
-        {points.length > 1 && (
-          <text x="558" y="254" fill="#94a3b8" fontSize="11" textAnchor="end">
-            {new Date(points[points.length - 1].occurredAt).toLocaleDateString()}
-          </text>
-        )}
-      </svg>
-      <p className="mt-2 text-xs text-slate-400">Each label below corresponds to one point in the chart.</p>
-      <ul
-        className="mt-2 flex flex-wrap gap-2 text-xs text-slate-300"
-        aria-label="Progress measurements shown in chart"
-      >
-        {points.map((point) => (
-          <li
-            key={point.key}
-            className="rounded-full border border-slate-700 px-3 py-1"
-            data-testid={`progress-interval-label-${point.key}`}
-          >
-            {point.label} · {point.attempts} {point.attempts === 1 ? 'encounter' : 'encounters'} ·{' '}
-            {new Date(point.occurredAt).toLocaleDateString()}
-          </li>
-        ))}
-      </ul>
-      <p id="progress-chart-description" className="sr-only">
-        Mistake rate is green and win rate is blue. The horizontal axis is the latest included
-        game date for each training interval, and the vertical axis is percentage.
-      </p>
-    </div>
   );
 }
 
@@ -307,11 +148,40 @@ export function PositionProgressView({
   minEvalLoss,
   accountId,
   sessionStatus,
+  ecoCode,
   onBack,
+  onClose,
 }: PositionProgressViewProps) {
   const [loadState, setLoadState] = useState<LoadState | null>(null);
   const [retryToken, setRetryToken] = useState(0);
+  const modalRef = useRef<HTMLDivElement>(null);
   const requestKey = `${positionId}:${playerColor}:${accountId ?? ''}:${minEvalLoss}`;
+
+  const handleClose = React.useCallback(() => {
+    if (onClose) {
+      onClose();
+    } else if (onBack) {
+      onBack();
+    }
+  }, [onClose, onBack]);
+
+  useEffect(() => {
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        handleClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [handleClose]);
+
   const visibleLoadState =
     loadState?.requestKey === requestKey ? loadState : { status: 'loading' as const };
   const intervalStateMessage =
@@ -340,140 +210,208 @@ export function PositionProgressView({
   }, [positionId, playerColor, accountId, minEvalLoss, requestKey, retryToken, sessionStatus]);
 
   return (
-    <section className="mx-auto w-full max-w-5xl px-4 py-6 lg:px-8" aria-labelledby="progress-heading">
-      <button
-        type="button"
-        onClick={onBack}
-        className="mb-5 inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-slate-300 hover:bg-slate-900 hover:text-white"
+    <div
+      className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="progress-heading"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) handleClose();
+      }}
+    >
+      <div
+        ref={modalRef}
+        className="w-[95vw] max-w-4xl max-h-[90vh] rounded-2xl border border-outline-variant bg-surface-container shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-150"
       >
-        <ArrowLeft className="h-4 w-4" />
-        Back to weaknesses
-      </button>
-
-      <div className="mb-6">
-        <h1 id="progress-heading" className="text-2xl font-bold text-white">
-          Position Progress
-        </h1>
-        <p className="mt-1 text-sm text-slate-400">
-          Your {playerColor.toLowerCase()}-side history at this exact position.
-        </p>
-      </div>
-
-      {sessionStatus === 'loading' && (
-        <p role="status" className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">
-          Checking sign-in…
-        </p>
-      )}
-
-      {sessionStatus === 'error' && (
-        <p role="alert" className="rounded-xl border border-rose-900/60 bg-rose-950/30 p-5 text-sm text-rose-200">
-          Unable to verify sign-in. Refresh the page and try again.
-        </p>
-      )}
-
-      {sessionStatus === 'unauthenticated' && (
-        <div className="rounded-xl border border-slate-800 bg-slate-900 p-6">
-          <h2 className="text-lg font-semibold text-white">Sign in to view progress</h2>
-          <p className="mt-2 text-sm text-slate-400">
-            Position progress is private to your account.
-          </p>
-          <a
-            href="/login"
-            className="mt-4 inline-flex rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-500"
-          >
-            Sign in
-          </a>
+        {/* Modal Header */}
+        <div className="flex items-center justify-between p-4 sm:p-5 border-b border-outline-variant bg-surface-container-low shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0">
+              <span className="material-symbols-outlined text-2xl" aria-hidden="true">query_stats</span>
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 id="progress-heading" className="text-xl font-bold text-on-surface">
+                  Position Progress
+                </h2>
+                {ecoCode && (
+                  <span className="px-2 py-0.5 rounded-full bg-secondary/10 border border-secondary/20 text-secondary text-xs font-mono font-semibold">
+                    ECO {ecoCode}
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-on-surface-variant font-mono mt-0.5">
+                Your {playerColor.toLowerCase()}-side history at this exact position.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleClose}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-semibold text-outline hover:text-on-surface hover:bg-surface-container transition cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-sm" aria-hidden="true">arrow_back</span>
+              <span>Back to weaknesses</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleClose}
+              aria-label="Close"
+              className="p-1.5 rounded-lg text-outline hover:text-on-surface hover:bg-surface-container transition cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-xl" aria-hidden="true">close</span>
+            </button>
+          </div>
         </div>
-      )}
 
-      {sessionStatus === 'authenticated' && !accountId && (
-        <p role="status" className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">
-          Connect a Chess.com account to view position progress.
-        </p>
-      )}
+        {/* Modal Scrollable Content */}
+        <div className="overflow-y-auto p-4 sm:p-6 space-y-5 flex-1 min-h-0">
+          {sessionStatus === 'loading' && (
+            <p role="status" className="rounded-xl border border-outline-variant bg-surface-container-low p-5 text-xs font-mono text-on-surface-variant">
+              Checking sign-in…
+            </p>
+          )}
 
-      {sessionStatus === 'authenticated' && accountId && visibleLoadState.status === 'loading' && (
-        <p role="status" className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">
-          Loading position progress…
-        </p>
-      )}
+          {sessionStatus === 'error' && (
+            <p role="alert" className="rounded-xl border border-error-container bg-error-container/20 p-5 text-xs font-mono text-error">
+              Unable to verify sign-in. Refresh the page and try again.
+            </p>
+          )}
 
-      {sessionStatus === 'authenticated' && accountId && visibleLoadState.status === 'error' && (
-        <div role="alert" className="rounded-xl border border-rose-900/60 bg-rose-950/30 p-5">
-          <p className="text-sm text-rose-200">We couldn&apos;t load position progress. Please try again.</p>
+          {sessionStatus === 'unauthenticated' && (
+            <div className="rounded-xl border border-outline-variant bg-surface-container-low p-6 text-center space-y-3">
+              <h3 className="text-base font-bold text-on-surface font-sans">Sign in to view progress</h3>
+              <p className="text-xs text-on-surface-variant font-mono">
+                Position progress is private to your account.
+              </p>
+              <a
+                href="/login"
+                className="inline-flex px-4 py-2 bg-primary hover:bg-primary-container text-on-primary-container text-xs font-mono font-bold rounded-xl border border-outline-variant transition"
+              >
+                Sign in
+              </a>
+            </div>
+          )}
+
+          {sessionStatus === 'authenticated' && !accountId && (
+            <p role="status" className="rounded-xl border border-outline-variant bg-surface-container-low p-5 text-xs font-mono text-on-surface-variant">
+              Connect a Chess.com account to view position progress.
+            </p>
+          )}
+
+          {sessionStatus === 'authenticated' && accountId && visibleLoadState.status === 'loading' && (
+            <p role="status" className="rounded-xl border border-outline-variant bg-surface-container-low p-5 text-xs font-mono text-on-surface-variant">
+              Loading position progress…
+            </p>
+          )}
+
+          {sessionStatus === 'authenticated' && accountId && visibleLoadState.status === 'error' && (
+            <div role="alert" className="rounded-xl border border-error-container bg-surface-container-low p-5 text-center space-y-3">
+              <p className="text-xs text-error font-mono">We couldn&apos;t load position progress. Please try again.</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setLoadState({ requestKey, status: 'loading' });
+                  setRetryToken((token) => token + 1);
+                }}
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-surface-container-high hover:bg-surface-bright text-on-surface text-xs font-mono font-bold rounded-xl border border-outline-variant transition cursor-pointer"
+              >
+                <span className="material-symbols-outlined text-sm" aria-hidden="true">refresh</span>
+                <span>Retry</span>
+              </button>
+            </div>
+          )}
+
+          {sessionStatus === 'authenticated' && accountId && visibleLoadState.status === 'loaded' && (
+            <div className="space-y-5">
+              {/* Progress Assessment Card */}
+              <div className="rounded-xl border-l-4 border-l-amber-accent border border-outline-variant bg-surface-container-low p-5 shadow-sm space-y-2">
+                <div className="flex items-center gap-2 text-amber-accent text-xs font-mono font-semibold uppercase tracking-wider">
+                  <span className="material-symbols-outlined text-base" aria-hidden="true">schedule</span>
+                  <h2>Progress assessment</h2>
+                </div>
+                <p className="text-on-surface font-sans text-sm leading-relaxed">{visibleLoadState.progress.assessment}</p>
+              </div>
+
+              {intervalStateMessage !== null && (
+                <p
+                  className="rounded-xl border border-outline-variant bg-surface-container-low p-4 text-xs font-mono text-on-surface-variant"
+                  data-testid="progress-current-interval-state"
+                >
+                  {intervalStateMessage}
+                </p>
+              )}
+
+              {/* Baseline vs Latest Interval */}
+              <div className="grid gap-4 sm:grid-cols-2">
+                <BaselineSummary baseline={baseline} />
+                <LatestIntervalSummary
+                  point={visibleLoadState.progress.points.at(-1) ?? null}
+                />
+              </div>
+
+              {visibleLoadState.progress.excludedUndatedEncounters > 0 && (
+                <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-xs font-mono text-amber-400">
+                  {visibleLoadState.progress.excludedUndatedEncounters} undated encounters excluded because
+                  game date is unavailable.
+                </p>
+              )}
+
+              {visibleLoadState.progress.points.length === 0 && (
+                <p className="rounded-xl border border-outline-variant bg-surface-container-low p-5 text-xs font-mono text-on-surface-variant">
+                  No measured interval observations yet.
+                </p>
+              )}
+              {measurements.length > 0 && <ProgressChart points={measurements} />}
+
+              {/* Metric Change Cards */}
+              <dl className="grid gap-4 sm:grid-cols-2 font-mono">
+                <div className="rounded-xl border border-outline-variant bg-surface-container-low p-4 shadow-sm">
+                  <dt className="text-[11px] font-semibold uppercase tracking-wide text-outline">
+                    Mistake-rate change
+                  </dt>
+                  <dd className={`mt-2 text-xl font-bold ${
+                    visibleLoadState.progress.mistakeRateChange !== null && visibleLoadState.progress.mistakeRateChange < 0
+                      ? 'text-primary'
+                      : visibleLoadState.progress.mistakeRateChange !== null && visibleLoadState.progress.mistakeRateChange > 0
+                        ? 'text-rose-400'
+                        : 'text-on-surface'
+                  }`}>
+                    {changeText(visibleLoadState.progress.mistakeRateChange)}
+                  </dd>
+                </div>
+                <div className="rounded-xl border border-outline-variant bg-surface-container-low p-4 shadow-sm">
+                  <dt className="text-[11px] font-semibold uppercase tracking-wide text-outline">
+                    Win-rate change
+                  </dt>
+                  <dd className={`mt-2 text-xl font-bold ${
+                    visibleLoadState.progress.winRateChange !== null && visibleLoadState.progress.winRateChange > 0
+                      ? 'text-primary'
+                      : visibleLoadState.progress.winRateChange !== null && visibleLoadState.progress.winRateChange < 0
+                        ? 'text-rose-400'
+                        : 'text-on-surface'
+                  }`}>
+                    {changeText(visibleLoadState.progress.winRateChange)}
+                  </dd>
+                </div>
+              </dl>
+            </div>
+          )}
+        </div>
+
+        {/* Modal Footer */}
+        <div className="flex items-center justify-between p-4 border-t border-outline-variant bg-surface-container-low shrink-0 text-xs font-mono">
+          <span className="text-outline">Sync: Live data from indexed personal encounters</span>
           <button
             type="button"
-            onClick={() => {
-              setLoadState({ requestKey, status: 'loading' });
-              setRetryToken((token) => token + 1);
-            }}
-            className="mt-4 inline-flex items-center gap-2 rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700"
+            onClick={handleClose}
+            className="px-4 py-2 bg-surface-container hover:bg-surface-container-high text-on-surface font-semibold rounded-xl border border-outline-variant transition cursor-pointer"
           >
-            <RefreshCw className="h-4 w-4" />
-            Retry
+            Close Window
           </button>
         </div>
-      )}
-
-      {sessionStatus === 'authenticated' && accountId && visibleLoadState.status === 'loaded' && (
-        <div className="space-y-5">
-          <div className="rounded-xl border border-emerald-900/60 bg-emerald-950/20 p-5">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-emerald-300">
-              Progress assessment
-            </h2>
-            <p className="mt-2 text-slate-100">{visibleLoadState.progress.assessment}</p>
-          </div>
-
-          {intervalStateMessage !== null && (
-            <p
-              className="rounded-lg border border-slate-800 bg-slate-900/70 p-4 text-sm text-slate-300"
-              data-testid="progress-current-interval-state"
-            >
-              {intervalStateMessage}
-            </p>
-          )}
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <BaselineSummary baseline={baseline} />
-            <LatestIntervalSummary
-              point={visibleLoadState.progress.points.at(-1) ?? null}
-            />
-          </div>
-
-          {visibleLoadState.progress.excludedUndatedEncounters > 0 && (
-            <p className="rounded-lg border border-amber-900/60 bg-amber-950/20 p-4 text-sm text-amber-200">
-              {visibleLoadState.progress.excludedUndatedEncounters} undated encounters excluded because
-              game date is unavailable.
-            </p>
-          )}
-
-          {visibleLoadState.progress.points.length === 0 && (
-            <p className="rounded-xl border border-slate-800 bg-slate-900 p-5 text-sm text-slate-300">
-              No measured interval observations yet.
-            </p>
-          )}
-          {measurements.length > 0 && <ProgressChart points={measurements} />}
-
-          <dl className="grid gap-3 sm:grid-cols-2">
-            <div className="rounded-xl border border-slate-800 bg-slate-900 p-4">
-              <dt className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Mistake-rate change
-              </dt>
-              <dd className="mt-2 text-xl font-bold text-white">
-                {changeText(visibleLoadState.progress.mistakeRateChange)}
-              </dd>
-            </div>
-            <div className="rounded-xl border border-slate-800 bg-slate-900 p-4">
-              <dt className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Win-rate change
-              </dt>
-              <dd className="mt-2 text-xl font-bold text-white">
-                {changeText(visibleLoadState.progress.winRateChange)}
-              </dd>
-            </div>
-          </dl>
-        </div>
-      )}
-    </section>
+      </div>
+    </div>
   );
 }

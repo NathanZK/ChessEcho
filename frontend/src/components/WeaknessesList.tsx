@@ -109,7 +109,7 @@ interface WeaknessesListProps {
   minMistakeCount?: number;
   onMinMistakeCountChange?: (val: number) => void;
   onSelectPractice: (puzzle: Puzzle, fullList?: Puzzle[]) => void;
-  onViewProgress?: (positionId: string, playerColor: 'WHITE' | 'BLACK', minEvalLoss: number) => void;
+  onViewProgress?: (positionId: string, playerColor: 'WHITE' | 'BLACK', minEvalLoss: number, ecoCode?: string) => void;
   onWeaknessCountChange?: (count: number) => void;
   activeColorFilter?: 'ALL' | 'WHITE' | 'BLACK';
   onColorFilterChange?: (color: 'ALL' | 'WHITE' | 'BLACK') => void;
@@ -830,7 +830,14 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                         {onViewProgress && (
                           <button
                             type="button"
-                            onClick={() => onViewProgress(item.positionId, progressColor, weaknessResult.minEvalLoss)}
+                            onClick={() => {
+                              const eco = item.openingContext?.eco;
+                              if (eco) {
+                                onViewProgress(item.positionId, progressColor, weaknessResult.minEvalLoss, eco);
+                              } else {
+                                onViewProgress(item.positionId, progressColor, weaknessResult.minEvalLoss);
+                              }
+                            }}
                             className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-outline-variant hover:border-secondary/40 text-xs font-mono text-on-surface-variant hover:text-secondary transition cursor-pointer"
                             title="View progress"
                           >
@@ -1001,7 +1008,14 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                       {onViewProgress && (
                         <button
                           type="button"
-                          onClick={() => onViewProgress(item.positionId, progressColor, weaknessResult.minEvalLoss)}
+                          onClick={() => {
+                            const eco = item.openingContext?.eco;
+                            if (eco) {
+                              onViewProgress(item.positionId, progressColor, weaknessResult.minEvalLoss, eco);
+                            } else {
+                              onViewProgress(item.positionId, progressColor, weaknessResult.minEvalLoss);
+                            }
+                          }}
                           className="px-2.5 py-1.5 text-xs font-mono text-on-surface-variant hover:text-secondary rounded-lg border border-outline-variant transition cursor-pointer"
                           title="View progress"
                         >

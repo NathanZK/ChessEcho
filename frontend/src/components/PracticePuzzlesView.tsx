@@ -1728,8 +1728,8 @@ export function PracticePuzzlesView({
           </div>
         ) : (
           <div className="flex flex-col w-full">
-            <div className="flex items-center justify-between pb-3 border-b border-outline-variant w-full mb-4">
-              <div className="flex items-center gap-2">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 pb-3 border-b border-outline-variant w-full mb-4">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={handleExitPractice}
@@ -1759,96 +1759,116 @@ export function PracticePuzzlesView({
                   <List className="w-3.5 h-3.5 text-primary" />
                   <span>Browse Puzzles</span>
                 </button>
+                <span className="hidden sm:inline text-outline-variant">|</span>
+                <div className="text-xs font-mono text-on-surface-variant flex items-center gap-1.5">
+                  <span>Training Workspace</span>
+                  <span>/</span>
+                  <span className="text-primary font-semibold">Weakness Drill</span>
+                </div>
               </div>
-              <div className="text-xs font-mono text-outline">
-                {`Puzzle ${currentPuzzleIndex + 1} of ${puzzlesList.length}`}
-              </div>
-            </div>
-
-            <div className="flex flex-col items-center justify-center gap-4 lg:flex-row lg:flex-wrap lg:items-start 2xl:flex-nowrap">
-              {/* Left Stockfish Eval Bar */}
-              <div className="hidden sm:flex flex-col items-center pt-1">
-                <span className="text-[10px] font-bold text-slate-400 mb-1.5 uppercase tracking-wider">
-                  Eval
+              <div className="flex items-center gap-3 text-xs font-mono text-outline">
+                <span className="hidden md:inline text-on-surface-variant/70">
+                  Live Archive &bull; Stockfish 16.1 depth 22
                 </span>
-                <EvalBar
-                  evalCp={currentEvalCp}
-                  isExploring={!lineExploration.isExplorationActive && historyIndex > 1}
-                  isUnknown={isEvalUnknown}
-                />
+                <span className="px-2.5 py-0.5 rounded-full bg-surface-container border border-outline-variant text-primary font-bold">
+                  {`Puzzle ${currentPuzzleIndex + 1} of ${puzzlesList.length}`}
+                </span>
               </div>
-
-            {/* Center Interactive Chessboard & Controls */}
-            <div className="w-full max-w-[640px] shrink-0 2xl:max-w-[760px] 2xl:w-auto 2xl:min-w-0 2xl:basis-[760px] 2xl:grow 2xl:shrink">
-              <ChessBoardArea
-                key={!isWeaknessPlaylist ? activePuzzle.puzzleId : 'puzzle-board'}
-                initialFen={activePuzzle.fen}
-                initialBoardHistory={
-                  isWeaknessPlaylist ? boardHistorySnapshot : null
-                }
-                onBoardHistoryChange={handleBoardHistoryChange}
-                initialMoveHistorySan={
-                  !isWeaknessPlaylist ? initialMoveHistorySan : undefined
-                }
-                initialMoveHistoryStartFen={
-                  !isWeaknessPlaylist ? initialMoveHistoryStartFen : undefined
-                }
-                showPuzzleControls={isWeaknessPlaylist}
-                playerColor={activePuzzle.playerColor}
-                blindfoldMode={isBlindfoldActive}
-                boardOrientation={puzzleBoardOrientation}
-                targetMove={activePuzzle.targetMove}
-                acceptableMoves={activePuzzle.acceptableMoves}
-                movesPlayed={activePuzzle.movesPlayed}
-                onMoveAttempt={handleMoveAttempt}
-                initialDecisionEnabled={
-                  !isEvaluatingMove && (!isWeaknessPlaylist || puzzleContextReady)
-                }
-                isMoveEvaluationPending={isEvaluatingMove || feedback.status === 'EVALUATION_ERROR'}
-                onPreviousPuzzle={handlePreviousPuzzle}
-                onNextPuzzle={handleNextPuzzle}
-                onUndo={handleBoardUndo}
-                onRedo={handleBoardRedo}
-                onReset={handleBoardReset}
-                resetTrigger={boardResetTrigger}
-                hintSquare={hintSquare}
-                canHint={
-                  feedback.status !== 'CORRECT' &&
-                  (!lineExploration.isExplorationActive ||
-                    !!lineExploration.pendingContinuationCandidate?.move)
-                }
-                onFlipBoard={() => setIsBoardFlipped((prev) => !prev)}
-                soundEnabled={soundEnabled}
-                onToggleSound={handleToggleSound}
-                onFenChange={setCurrentBoardFen}
-                pendingContinuationCandidate={lineExploration.pendingContinuationCandidate}
-                onContinuationApplied={lineExploration.handleContinuationApplied}
-                isExplorationActive={lineExploration.isExplorationActive}
-                onUnacceptableMove={lineExploration.handleUnacceptableMove}
-                onUserExplorationMove={lineExploration.handleUserExplorationMove}
-                onChessEchoExplorationMove={lineExploration.handleChessEchoExplorationMove}
-                alternativeContinuationToApply={lineExploration.alternativeContinuationToApply}
-                onAlternativeContinuationApplied={() =>
-                  lineExploration.setAlternativeContinuationToApply(null)
-                }
-                explorationPlayMode={lineExploration.explorationPlayMode}
-                isChallengeComplete={lineExploration.challengeSubmission?.isComplete ?? false}
-                onMoveEvaluationPendingChange={lineExploration.setIsMoveEvaluationPending}
-              />
-              {blindfold.state && (
-                <BlindfoldBoardWrapper
-                  fen={blindfold.state.currentFen}
-                  isVisible={blindfold.state.isVisible}
-                  onReveal={blindfold.reveal}
-                  onHide={blindfold.hide}
-                  onToggleVisibility={blindfold.toggleVisibility}
-                  boardOrientation={puzzleBoardOrientation}
-                />
-              )}
             </div>
 
-            {/* Right Feedback & Settings Panel */}
-            <div className="w-full max-w-[480px] shrink-0 2xl:max-w-[360px] 2xl:w-auto 2xl:min-w-0 2xl:basis-[360px] 2xl:shrink">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 w-full max-w-[1720px] mx-auto items-start">
+              {/* Left Stockfish Eval Bar & Center Interactive Chessboard */}
+              <div className="lg:col-span-8 2xl:col-span-9 flex flex-col items-center">
+                <div className="flex items-start justify-center gap-3 w-full">
+                  <div className="hidden sm:flex flex-col items-center pt-1 shrink-0">
+                    <span className="text-[10px] font-bold text-on-surface-variant mb-1.5 uppercase tracking-wider font-mono">
+                      Eval
+                    </span>
+                    <EvalBar
+                      evalCp={currentEvalCp}
+                      isExploring={!lineExploration.isExplorationActive && historyIndex > 1}
+                      isUnknown={isEvalUnknown}
+                    />
+                  </div>
+
+                  <div className="w-full max-w-[680px] shrink-0 flex flex-col space-y-2.5">
+                    <ChessBoardArea
+                      key={!isWeaknessPlaylist ? activePuzzle.puzzleId : 'puzzle-board'}
+                      initialFen={activePuzzle.fen}
+                      initialBoardHistory={
+                        isWeaknessPlaylist ? boardHistorySnapshot : null
+                      }
+                      onBoardHistoryChange={handleBoardHistoryChange}
+                      initialMoveHistorySan={
+                        !isWeaknessPlaylist ? initialMoveHistorySan : undefined
+                      }
+                      initialMoveHistoryStartFen={
+                        !isWeaknessPlaylist ? initialMoveHistoryStartFen : undefined
+                      }
+                      showPuzzleControls={isWeaknessPlaylist}
+                      playerColor={activePuzzle.playerColor}
+                      blindfoldMode={isBlindfoldActive}
+                      boardOrientation={puzzleBoardOrientation}
+                      targetMove={activePuzzle.targetMove}
+                      acceptableMoves={activePuzzle.acceptableMoves}
+                      movesPlayed={activePuzzle.movesPlayed}
+                      onMoveAttempt={handleMoveAttempt}
+                      initialDecisionEnabled={
+                        !isEvaluatingMove && (!isWeaknessPlaylist || puzzleContextReady)
+                      }
+                      isMoveEvaluationPending={isEvaluatingMove || feedback.status === 'EVALUATION_ERROR'}
+                      onPreviousPuzzle={handlePreviousPuzzle}
+                      onNextPuzzle={handleNextPuzzle}
+                      onUndo={handleBoardUndo}
+                      onRedo={handleBoardRedo}
+                      onReset={handleBoardReset}
+                      resetTrigger={boardResetTrigger}
+                      hintSquare={hintSquare}
+                      canHint={
+                        feedback.status !== 'CORRECT' &&
+                        (!lineExploration.isExplorationActive ||
+                          !!lineExploration.pendingContinuationCandidate?.move)
+                      }
+                      onFlipBoard={() => setIsBoardFlipped((prev) => !prev)}
+                      soundEnabled={soundEnabled}
+                      onToggleSound={handleToggleSound}
+                      onFenChange={setCurrentBoardFen}
+                      pendingContinuationCandidate={lineExploration.pendingContinuationCandidate}
+                      onContinuationApplied={lineExploration.handleContinuationApplied}
+                      isExplorationActive={lineExploration.isExplorationActive}
+                      onUnacceptableMove={lineExploration.handleUnacceptableMove}
+                      onUserExplorationMove={lineExploration.handleUserExplorationMove}
+                      onChessEchoExplorationMove={lineExploration.handleChessEchoExplorationMove}
+                      alternativeContinuationToApply={lineExploration.alternativeContinuationToApply}
+                      onAlternativeContinuationApplied={() =>
+                        lineExploration.setAlternativeContinuationToApply(null)
+                      }
+                      explorationPlayMode={lineExploration.explorationPlayMode}
+                      isChallengeComplete={lineExploration.challengeSubmission?.isComplete ?? false}
+                      onMoveEvaluationPendingChange={lineExploration.setIsMoveEvaluationPending}
+                    />
+                    {blindfold.state && (
+                      <BlindfoldBoardWrapper
+                        fen={blindfold.state.currentFen}
+                        isVisible={blindfold.state.isVisible}
+                        onReveal={blindfold.reveal}
+                        onHide={blindfold.hide}
+                        onToggleVisibility={blindfold.toggleVisibility}
+                        boardOrientation={puzzleBoardOrientation}
+                      />
+                    )}
+
+                    {/* Keyboard Shortcuts Micro-Bar */}
+                    <div className="flex flex-wrap items-center justify-between text-[11px] font-mono text-on-surface-variant/70 border-t border-outline-variant/60 pt-2 px-1">
+                      <span>&larr; Prev Move &bull; &rarr; Next Move &bull; X Flip &bull; &crarr; Next Puzzle</span>
+                      <span className="hidden sm:inline text-primary/80">&bull; Interactive analysis mode active</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Feedback & Settings Panel */}
+              <div className="lg:col-span-4 2xl:col-span-3 w-full space-y-4">
               {blindfold.state ? (
                 <NotationExchangeUI
                   state={blindfold.state}

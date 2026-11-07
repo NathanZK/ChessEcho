@@ -1,8 +1,6 @@
 'use client';
 
-import React, { useState, useSyncExternalStore } from 'react';
-import { Download, CheckCircle2, Clock, Calendar, Play } from 'lucide-react';
-
+import React, { useState, useEffect, useRef, useSyncExternalStore } from 'react';
 import {
   AccountAssociationError,
   AccountSummary,
@@ -56,6 +54,7 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
   const [playerColor, setPlayerColor] = useState<'WHITE' | 'BLACK' | 'BOTH'>('BOTH');
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
+  const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
 
   const activeJob = useSyncExternalStore(
     activeJobStore.subscribe,
@@ -79,6 +78,27 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
       usernameMatchesAccount &&
       !isAssociating);
 
+  // Elapsed timer tracking
+  const jobStartTimeRef = useRef<number | null>(null);
+  useEffect(() => {
+    let timer: NodeJS.Timeout | null = null;
+    if (activeJob?.status === 'QUEUED' || activeJob?.status === 'PROCESSING') {
+      if (!jobStartTimeRef.current) {
+        jobStartTimeRef.current = Date.now();
+      }
+      timer = setInterval(() => {
+        if (jobStartTimeRef.current) {
+          setElapsedSeconds(Math.floor((Date.now() - jobStartTimeRef.current) / 1000));
+        }
+      }, 1000);
+    } else {
+      jobStartTimeRef.current = null;
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [activeJob?.status]);
+
   // Sync username input if connectedUsername changes
   const [trackedConnectedUsername, setTrackedConnectedUsername] = useState(connectedUsername);
   if (trackedConnectedUsername !== connectedUsername) {
@@ -95,18 +115,18 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
     }
   };
 
-  const updateActiveJobRef = React.useRef(updateActiveJob);
-  React.useEffect(() => {
+  const updateActiveJobRef = useRef(updateActiveJob);
+  useEffect(() => {
     updateActiveJobRef.current = updateActiveJob;
   });
 
-  const prevPolledJobRef = React.useRef<{ jobId: string; status: string } | null>(
+  const prevPolledJobRef = useRef<{ jobId: string; status: string } | null>(
     activeJob ? { jobId: activeJob.jobId, status: activeJob.status } : null
   );
 
   // Clear activeJob if user explicitly disconnects
-  const prevUserRef = React.useRef(connectedUsername);
-  React.useEffect(() => {
+  const prevUserRef = useRef(connectedUsername);
+  useEffect(() => {
     if (prevUserRef.current && !connectedUsername) {
       updateActiveJobRef.current(null);
     }
@@ -114,7 +134,7 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
   }, [connectedUsername]);
 
   // Resume polling on mount or tab change if activeJob is still processing
-  React.useEffect(() => {
+  useEffect(() => {
     const isImportActive = activeJob?.status === 'QUEUED' || activeJob?.status === 'PROCESSING';
     const isAnalysisInFlight =
       activeJob?.status === 'COMPLETED' && activeJob?.analysisStatus === 'ANALYZING';
@@ -228,6 +248,10 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
       setErrorMessage('Please enter a Chess.com username');
       return;
     }
+    if (timeControls.length === 0) {
+      setErrorMessage('Please select at least one time control');
+      return;
+    }
     if (!isValidMonthFormat(fromDate)) {
       setErrorMessage('Please select a valid "From month" (e.g. 2026-08)');
       return;
@@ -284,7 +308,22 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
   };
 
   return (
-    <div className="max-w-6xl w-full mx-auto px-4 lg:px-8 space-y-6 py-2 text-on-surface">
+    <div className="max-w-6xl 2xl:max-w-[1536px] w-full mx-auto px-4 lg:px-8 space-y-6 py-4 text-on-surface">
+      {/* Breadcrumb & Engine Status Row */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 border-b border-outline-variant pb-3">
+        <div aria-label="Breadcrumb" className="flex items-center space-x-2 text-xs font-mono text-on-surface-variant">
+          <span>ChessProbe</span>
+          <span>/</span>
+          <span>Data Ingestion</span>
+          <span>/</span>
+          <span className="text-primary font-semibold">Game Importer</span>
+        </div>
+        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-surface-container border border-outline-variant text-xs font-mono">
+          <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+          <span className="text-on-surface">Engine API: Stockfish 16.1 NNUE</span>
+        </div>
+      </div>
+
       {/* Header */}
       <SectionHeader
         title="Import & Analyze Your Game History"
@@ -292,12 +331,15 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
         badgeText="CHESS.COM"
       />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-12 gap-6">
 
-        {/* Form Settings Card */}
-        <div className="bg-surface-container-low p-6 rounded-2xl border border-outline-variant shadow-xl space-y-4">
+        {/* Form Settings Card (7 cols on desktop) */}
+        <div className="xl:col-span-7 bg-surface-container-low p-6 rounded-2xl border border-outline-variant shadow-xl space-y-5">
           <h3 className="text-sm font-bold text-on-surface border-b border-outline-variant pb-3 flex items-center justify-between">
-            <span>Import Configuration</span>
+            <span className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-primary text-base">tune</span>
+              <span>Import Configuration</span>
+            </span>
             {isAuthenticated && accountStatus === 'connected' && connectedAccount && (
               <div className="flex items-center gap-2">
                 <span className="text-xs text-primary font-mono font-medium">● Connected: {connectedAccount.username}</span>
@@ -320,93 +362,120 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
             </p>
           )}
 
-          {/* Username Input */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold font-mono text-on-surface-variant">
-              Chess.com Username
-            </label>
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="e.g. Hikaru"
-              disabled={
-                sessionStatus === 'loading' ||
-                sessionStatus === 'error' ||
-                (isAuthenticated && accountStatus === 'loading')
-              }
-              className="w-full px-3.5 py-2.5 bg-surface-container-lowest border border-outline-variant focus:border-primary rounded-xl text-sm font-medium text-on-surface outline-none transition font-sans"
-            />
-          </div>
+          {/* Account Container */}
+          <div className="bg-surface-container-lowest border border-outline-variant rounded-xl p-4 space-y-3">
+            <div className="space-y-1.5">
+              <label htmlFor="chess-com-username" className="text-xs font-semibold font-mono text-on-surface-variant flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-sm" aria-hidden="true">person</span>
+                Chess.com Username
+              </label>
+              <input
+                id="chess-com-username"
+                aria-label="Chess.com Username"
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="e.g. Hikaru"
+                disabled={
+                  sessionStatus === 'loading' ||
+                  sessionStatus === 'error' ||
+                  (isAuthenticated && accountStatus === 'loading')
+                }
+                className="w-full px-3.5 py-2.5 bg-surface-container-lowest border border-outline-variant focus:border-primary rounded-xl text-sm font-medium text-on-surface outline-none transition font-sans"
+              />
+            </div>
 
-          {isAuthenticated && (
-            <div className="space-y-2" aria-live="polite">
-              {accountStatus === 'loading' && (
-                <p role="status" className="text-xs font-mono text-on-surface-variant">
-                  Loading your connected Chess.com account…
-                </p>
-              )}
-              {accountStatus === 'connected' && connectedAccount && (
-                <p role="status" className="text-xs font-mono text-primary">
-                  Connected Chess.com account: {connectedAccount.username}
-                </p>
-              )}
-              {accountStatus === 'unconnected' && (
-                <p role="status" className="text-xs font-mono text-on-surface-variant">
-                  No Chess.com account connected. Connect an account before importing.
-                </p>
-              )}
-              {accountStatus === 'error' && (
-                <div role="alert" className="rounded-lg border border-error-container bg-error-container/20 p-2.5 space-y-2 text-xs font-mono text-error">
-                  <p>Unable to load your connected account. {accountError}</p>
-                  {onRetryAccountLoad && (
+            {isAuthenticated && (
+              <div className="space-y-2 pt-1 border-t border-outline-variant" aria-live="polite">
+                {accountStatus === 'loading' && (
+                  <p role="status" className="text-xs font-mono text-on-surface-variant">
+                    Loading your connected Chess.com account…
+                  </p>
+                )}
+                {accountStatus === 'connected' && connectedAccount && (
+                  <div className="flex items-center justify-between">
+                    <p role="status" className="text-xs font-mono text-primary flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-sm text-primary">check_circle</span>
+                      <span>Connected Chess.com account: {connectedAccount.username}</span>
+                    </p>
+                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-primary/10 text-primary border border-primary/20">
+                      Active &amp; Verified
+                    </span>
+                  </div>
+                )}
+                {accountStatus === 'unconnected' && (
+                  <p role="status" className="text-xs font-mono text-on-surface-variant">
+                    No Chess.com account connected. Connect an account before importing.
+                  </p>
+                )}
+                {accountStatus === 'error' && (
+                  <div role="alert" className="rounded-lg border border-error-container bg-error-container/20 p-2.5 space-y-2 text-xs font-mono text-error">
+                    <p>Unable to load your connected account. {accountError}</p>
+                    {onRetryAccountLoad && (
+                      <button
+                        type="button"
+                        onClick={onRetryAccountLoad}
+                        className="font-mono font-semibold underline cursor-pointer"
+                      >
+                        Retry account loading
+                      </button>
+                    )}
+                  </div>
+                )}
+                {(accountStatus === 'connected' || accountStatus === 'unconnected') && (
+                  <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={onRetryAccountLoad}
-                      className="font-mono font-semibold underline cursor-pointer"
+                      onClick={handleConnectAccount}
+                      disabled={!username.trim() || isAssociating}
+                      className="inline-flex items-center gap-1.5 text-xs font-mono font-semibold text-primary hover:underline disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
                     >
-                      Retry account loading
+                      <span className="material-symbols-outlined text-sm">link</span>
+                      <span>{isAssociating ? 'Connecting account…' : 'Connect Chess.com account'}</span>
                     </button>
-                  )}
-                </div>
-              )}
-              {(accountStatus === 'connected' || accountStatus === 'unconnected') && (
-                <button
-                  type="button"
-                  onClick={handleConnectAccount}
-                  disabled={!username.trim() || isAssociating}
-                  className="text-xs font-mono font-semibold text-primary hover:underline disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
-                >
-                  {isAssociating ? 'Connecting account…' : 'Connect Chess.com account'}
-                </button>
-              )}
-              {associationError && (
-                <p role="alert" className="rounded-lg border border-error-container bg-error-container/20 p-2.5 text-xs font-mono text-error">
-                  {associationError}
-                </p>
-              )}
-              {isAuthenticated && accountStatus === 'connected' && !usernameMatchesAccount && (
-                <p role="status" className="text-xs font-mono text-amber-accent">
-                  Connect this username before importing it.
-                </p>
-              )}
-            </div>
-          )}
+                    {accountStatus === 'connected' && onDisconnect && (
+                      <button
+                        type="button"
+                        onClick={onDisconnect}
+                        disabled={isDisconnecting}
+                        className="inline-flex items-center gap-1 text-xs font-mono font-semibold text-on-surface-variant hover:text-error disabled:opacity-50 cursor-pointer disabled:cursor-not-allowed"
+                      >
+                        <span className="material-symbols-outlined text-sm">link_off</span>
+                        <span>Disconnect</span>
+                      </button>
+                    )}
+                  </div>
+                )}
+                {associationError && (
+                  <p role="alert" className="rounded-lg border border-error-container bg-error-container/20 p-2.5 text-xs font-mono text-error">
+                    {associationError}
+                  </p>
+                )}
+                {isAuthenticated && accountStatus === 'connected' && !usernameMatchesAccount && (
+                  <p role="status" className="text-xs font-mono text-amber-accent">
+                    Connect this username before importing it.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
 
-          {/* Multi-Select Time Controls (Order: Blitz, Rapid, Bullet, Classical) */}
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold font-mono text-on-surface-variant flex items-center justify-between">
-              <span>Time Controls (Select one or more)</span>
-              <span className="text-[11px] text-primary font-mono font-normal">
-                {timeControls.length} selected
+          {/* Multi-Select Time Controls */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold font-mono text-on-surface-variant">
+                Time Controls (Select one or more)
+              </label>
+              <span className="text-[11px] text-primary font-mono font-medium">
+                Selected: {timeControls.length} of 4
               </span>
-            </label>
-            <div className="grid grid-cols-2 gap-2">
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
               {[
-                { id: 'BLITZ', label: '⚡ Blitz' },
-                { id: 'RAPID', label: '⏱️ Rapid' },
-                { id: 'BULLET', label: '🚀 Bullet' },
-                { id: 'CLASSICAL', label: '♟️ Classical' },
+                { id: 'BULLET', label: '🚀 Bullet', sub: '< 3 mins', icon: 'bolt' },
+                { id: 'BLITZ', label: '⚡ Blitz', sub: '3 – 5 mins', icon: 'timer' },
+                { id: 'RAPID', label: '⏱️ Rapid', sub: '10 – 30 mins', icon: 'schedule' },
+                { id: 'CLASSICAL', label: '♟️ Classical', sub: '> 30 mins', icon: 'hourglass_empty' },
               ].map((tc) => {
                 const isSelected = timeControls.includes(tc.id);
                 return (
@@ -414,19 +483,26 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                     type="button"
                     key={tc.id}
                     onClick={() => handleTimeControlToggle(tc.id)}
-                    className={`flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold border transition cursor-pointer ${
+                    className={`flex flex-col justify-between p-3 rounded-xl border text-left transition cursor-pointer ${
                       isSelected
-                        ? 'bg-primary/10 border-primary text-primary'
+                        ? 'bg-primary/10 border-primary text-primary font-bold shadow-sm'
                         : 'bg-surface-container-lowest border-outline-variant text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high'
                     }`}
                   >
-                    <span>{tc.label}</span>
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      readOnly
-                      className="accent-primary pointer-events-none"
-                    />
+                    <div className="flex items-center justify-between w-full">
+                      <span className="material-symbols-outlined text-base">{tc.icon}</span>
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        readOnly
+                        aria-label={`Toggle ${tc.id}`}
+                        className="accent-primary pointer-events-none w-3.5 h-3.5"
+                      />
+                    </div>
+                    <div className="mt-2">
+                      <div className="text-xs font-semibold">{tc.label}</div>
+                      <div className="text-[10px] opacity-75 font-mono">{tc.sub}</div>
+                    </div>
                   </button>
                 );
               })}
@@ -439,28 +515,32 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
               Player Color
             </label>
             <div className="grid grid-cols-3 gap-2 bg-surface-container-lowest p-1 rounded-xl border border-outline-variant">
-              {(['WHITE', 'BLACK', 'BOTH'] as const).map((color) => (
+              {(['BOTH', 'WHITE', 'BLACK'] as const).map((color) => (
                 <button
                   type="button"
                   key={color}
+                  aria-label={color}
                   onClick={() => setPlayerColor(color)}
-                  className={`py-1.5 text-xs font-bold rounded-lg uppercase tracking-wider transition cursor-pointer font-mono ${
+                  className={`py-2 text-xs font-bold rounded-lg uppercase tracking-wider transition cursor-pointer font-mono flex items-center justify-center gap-1.5 ${
                     playerColor === color
                       ? 'bg-primary-container text-on-primary-container shadow-sm'
                       : 'text-on-surface-variant hover:text-on-surface'
                   }`}
                 >
-                  {color}
+                  {color === 'BOTH' && <span className="material-symbols-outlined text-sm" aria-hidden="true">contrast</span>}
+                  {color === 'WHITE' && <span className="w-2.5 h-2.5 rounded-full bg-white border border-gray-400" aria-hidden="true" />}
+                  {color === 'BLACK' && <span className="w-2.5 h-2.5 rounded-full bg-gray-900 border border-gray-600" aria-hidden="true" />}
+                  <span>{color}</span>
                 </button>
               ))}
             </div>
           </div>
 
-          {/* Advanced Date Range Controls (Optional) */}
+          {/* Advanced Date Range Controls */}
           <div className="pt-2 border-t border-outline-variant space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2 text-xs font-bold font-mono text-on-surface">
-                <Calendar className="w-3.5 h-3.5 text-primary" />
+                <span className="material-symbols-outlined text-primary text-sm">calendar_month</span>
                 <span>Advanced Date Range</span>
               </div>
               <span className="text-[11px] font-mono text-on-surface-variant">Optional date bounds</span>
@@ -480,54 +560,77 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
           </div>
 
           {errorMessage && (
-            <div role="alert" className="p-3.5 bg-error-container/20 border border-error-container rounded-xl text-xs font-mono font-semibold text-error whitespace-pre-line">
-              ⚠️ {errorMessage}
+            <div role="alert" className="p-3.5 bg-error-container/20 border border-error-container rounded-xl text-xs font-mono font-semibold text-error whitespace-pre-line flex items-center gap-2">
+              <span className="material-symbols-outlined text-base">warning</span>
+              <span>{errorMessage}</span>
             </div>
           )}
 
           {/* Submit Action Button */}
-          <button
-            type="button"
-            onClick={handleStartImport}
-            disabled={!canStartImport || activeJob?.status === 'QUEUED' || activeJob?.status === 'PROCESSING'}
-            className="w-full py-3 bg-primary-container hover:bg-primary disabled:opacity-50 text-on-primary-container font-bold font-mono text-sm rounded-xl transition shadow-sm flex items-center justify-center space-x-2 cursor-pointer disabled:cursor-not-allowed"
-          >
-            <Play className="w-4 h-4 fill-current" />
-            <span>
-              {activeJob?.status === 'QUEUED' || activeJob?.status === 'PROCESSING'
-                ? 'Import Job Active...'
-                : 'Start Import & Engine Analysis'}
-            </span>
-          </button>
+          <div className="space-y-2 pt-2">
+            <button
+              type="button"
+              onClick={handleStartImport}
+              disabled={!canStartImport || activeJob?.status === 'QUEUED' || activeJob?.status === 'PROCESSING'}
+              className="w-full py-3.5 bg-primary-container hover:bg-primary disabled:opacity-50 text-on-primary-container font-bold font-mono text-sm rounded-xl transition shadow-sm flex items-center justify-center space-x-2 cursor-pointer disabled:cursor-not-allowed"
+            >
+              <span className="material-symbols-outlined text-lg">rocket_launch</span>
+              <span>
+                {activeJob?.status === 'QUEUED' || activeJob?.status === 'PROCESSING'
+                  ? 'Import Job Active...'
+                  : 'Start Import & Engine Analysis'}
+              </span>
+            </button>
+            <p className="text-[11px] text-center text-on-surface-variant font-mono">
+              Positions are verified and deduplicated by FEN hashes prior to Stockfish depth evaluation.
+            </p>
+          </div>
         </div>
 
-        {/* Live Job Status Monitor Card */}
-        <div className="bg-surface-container-low p-6 rounded-2xl border border-outline-variant shadow-xl flex flex-col justify-between space-y-4">
+        {/* Live Job Status Monitor Card (5 cols on desktop) */}
+        <div className="xl:col-span-5 bg-surface-container-low p-6 rounded-2xl border border-outline-variant shadow-xl flex flex-col justify-between space-y-4">
           <div>
             <h3 className="text-sm font-bold text-on-surface border-b border-outline-variant pb-3 flex items-center justify-between">
-              <span>Live Job Status Monitor</span>
-              <Clock className="w-4 h-4 text-primary" />
+              <span className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary text-base">monitoring</span>
+                <span>Live Job Status Monitor</span>
+              </span>
+              {activeJob && (
+                <span className="text-xs font-mono text-on-surface-variant flex items-center gap-1">
+                  <span className="material-symbols-outlined text-xs">timer</span>
+                  <span>{elapsedSeconds}s</span>
+                </span>
+              )}
             </h3>
 
             {!activeJob ? (
-              <div className="py-8 text-center space-y-2.5">
-                <div className="w-10 h-10 rounded-full bg-surface-container-lowest border border-outline-variant flex items-center justify-center mx-auto text-on-surface-variant">
-                  <Download className="w-5 h-5" />
+              <div className="py-12 text-center space-y-4">
+                <div className="w-16 h-16 rounded-2xl bg-surface-container-lowest border border-outline-variant flex items-center justify-center mx-auto text-on-surface-variant shadow-inner">
+                  <span className="material-symbols-outlined text-3xl">cloud_download</span>
                 </div>
-                <h4 className="text-xs font-semibold font-mono text-on-surface">No Active Import Job</h4>
-                <p className="text-[11px] text-on-surface-variant max-w-xs mx-auto">
-                  Fill in your Chess.com username and click &quot;Start Import &amp; Engine Analysis&quot; to monitor live progress.
-                </p>
+                <div className="space-y-1">
+                  <h4 className="text-sm font-semibold font-mono text-on-surface">No Active Import Job</h4>
+                  <p className="text-xs text-on-surface-variant max-w-xs mx-auto">
+                    Fill in your Chess.com username and click &quot;Start Import &amp; Engine Analysis&quot; to monitor live progress.
+                  </p>
+                </div>
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface-container-lowest border border-outline-variant text-[11px] font-mono text-on-surface-variant">
+                  <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+                  <span>Pipeline queue ready for execution</span>
+                </div>
               </div>
             ) : (
               <div className="space-y-5 pt-3">
                 <div className="flex items-center justify-between text-xs font-bold">
                   <span className="text-on-surface flex items-center gap-2 truncate max-w-[200px] font-mono">
                     {(activeJob.status === 'QUEUED' || activeJob.status === 'PROCESSING') && (
-                      <span className="w-2 h-2 rounded-full bg-amber-accent animate-ping"></span>
+                      <span className="w-2.5 h-2.5 rounded-full bg-amber-accent animate-ping" />
                     )}
                     {activeJob.status === 'COMPLETED' && (
-                      <CheckCircle2 className="w-4 h-4 text-primary" />
+                      <span className="material-symbols-outlined text-primary text-base">task_alt</span>
+                    )}
+                    {activeJob.status === 'FAILED' && (
+                      <span className="material-symbols-outlined text-error text-base">error</span>
                     )}
                     <span>Import Progress</span>
                   </span>
@@ -544,28 +647,42 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                   </span>
                 </div>
 
+                {/* Shimmer activity progress bar */}
+                {(activeJob.status === 'QUEUED' || activeJob.status === 'PROCESSING') && (
+                  <div className="w-full bg-surface-container-lowest h-2 rounded-full overflow-hidden border border-outline-variant relative">
+                    <div className="h-full bg-gradient-to-r from-primary/20 via-primary to-primary/20 animate-pulse w-full" />
+                  </div>
+                )}
+
                 {/* Metrics Grid */}
                 <div className="grid grid-cols-2 gap-3 pt-2 text-center">
-                  <div className="bg-surface-container-lowest p-3 rounded-xl border border-outline-variant">
-                    <span className="text-[10px] font-mono text-on-surface-variant">Imported</span>
-                    <div className="text-sm font-bold text-primary mt-0.5 font-mono">
+                  <div className="bg-surface-container-lowest p-3.5 rounded-xl border border-outline-variant">
+                    <span className="text-[10px] font-mono text-on-surface-variant uppercase tracking-wider">Imported</span>
+                    <div className="text-base font-bold text-primary mt-1 font-mono">
                       {activeJob.gamesImported.toLocaleString()}
                     </div>
                   </div>
 
-                  <div className="bg-surface-container-lowest p-3 rounded-xl border border-outline-variant">
-                    <span className="text-[10px] font-mono text-on-surface-variant">Already imported</span>
-                    <div className="text-sm font-bold text-on-surface mt-0.5 font-mono">
+                  <div className="bg-surface-container-lowest p-3.5 rounded-xl border border-outline-variant">
+                    <span className="text-[10px] font-mono text-on-surface-variant uppercase tracking-wider">Already imported</span>
+                    <div className="text-base font-bold text-on-surface mt-1 font-mono">
                       {activeJob.gamesSkipped.toLocaleString()}
                     </div>
                   </div>
-
                 </div>
+
+                {/* Engine Analysis Indicator */}
+                {activeJob.analysisStatus === 'ANALYZING' && (
+                  <div className="p-3 bg-primary/10 border border-primary/30 rounded-xl flex items-center gap-2.5 text-xs font-mono text-primary">
+                    <span className="material-symbols-outlined animate-spin text-base">sync</span>
+                    <span>Stockfish 16.1 engine analysis active in background...</span>
+                  </div>
+                )}
 
                 {activeJob.status === 'COMPLETED' && (
                   <div className="p-4 bg-surface-container border border-primary/40 rounded-xl space-y-3">
                     <div className="text-xs font-bold font-mono text-primary flex items-center gap-1.5">
-                      <CheckCircle2 className="w-4 h-4 text-primary" />
+                      <span className="material-symbols-outlined text-primary text-base">task_alt</span>
                       <span>Import Completed Successfully!</span>
                     </div>
                     <div className="text-[11px] text-on-surface-variant">
@@ -595,7 +712,7 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                             onNavigateTab('puzzles');
                           }
                         }}
-                        className="px-3 py-1.5 bg-primary-container hover:bg-primary text-on-primary-container font-mono font-bold text-xs rounded-lg transition shadow-sm cursor-pointer"
+                        className="px-3.5 py-2 bg-primary-container hover:bg-primary text-on-primary-container font-mono font-bold text-xs rounded-lg transition shadow-sm cursor-pointer"
                       >
                         Practice Puzzles
                       </button>
@@ -610,7 +727,7 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                             onNavigateTab('weaknesses');
                           }
                         }}
-                        className="px-3 py-1.5 bg-surface-container-high hover:bg-surface-container-highest text-on-surface font-mono font-bold text-xs rounded-lg transition shadow-sm border border-outline-variant cursor-pointer"
+                        className="px-3.5 py-2 bg-surface-container-high hover:bg-surface-container-highest text-on-surface font-mono font-bold text-xs rounded-lg transition shadow-sm border border-outline-variant cursor-pointer"
                       >
                         View Weaknesses
                       </button>
@@ -618,7 +735,26 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
                   </div>
                 )}
 
-                {activeJob.errorMessage && (
+                {activeJob.status === 'FAILED' && (
+                  <div className="p-4 bg-error-container/10 border border-error/40 rounded-xl space-y-3">
+                    <div className="text-xs font-bold font-mono text-error flex items-center gap-1.5">
+                      <span className="material-symbols-outlined text-error text-base">error</span>
+                      <span>Import Job Failed</span>
+                    </div>
+                    <p className="text-xs text-on-surface-variant font-mono">
+                      {activeJob.errorMessage || 'An error occurred during game ingestion.'}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={handleStartImport}
+                      className="px-3.5 py-1.5 bg-error-container hover:bg-error text-on-error font-mono font-bold text-xs rounded-lg transition cursor-pointer"
+                    >
+                      Retry Import
+                    </button>
+                  </div>
+                )}
+
+                {activeJob.errorMessage && activeJob.status !== 'FAILED' && (
                   <div role="alert" className="bg-error-container/20 p-3 rounded-xl border border-error-container text-xs font-mono text-error whitespace-pre-line">
                     Error: {activeJob.errorMessage}
                   </div>
@@ -632,7 +768,6 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
               </div>
             )}
           </div>
-
         </div>
       </div>
     </div>
