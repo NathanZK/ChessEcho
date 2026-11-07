@@ -1,12 +1,9 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { ChessBoardView } from './ChessBoardView';
-import { ExternalGameLink } from './ExternalGameLink';
-import { PositionCard } from './PositionCard';
+import React, { useState, useEffect, useRef } from 'react';
 import { StatusBanner } from './StatusBanner';
 import { SectionHeader } from './SectionHeader';
-import { Search, AlertCircle, RefreshCw } from 'lucide-react';
+import { SimilarPositionCard } from './SimilarPositionCard';
 import {
   type AccountSummary,
   type SimilarPositionResult,
@@ -30,17 +27,6 @@ export interface SimilarPositionsViewProps {
   onExplorePosition: (position: PositionExplorationStart) => void;
   onSnapshotChange?: (snapshot: SimilarPositionsReturnSnapshot | null) => void;
   initialSnapshot?: SimilarPositionsReturnSnapshot | null;
-}
-
-function getResultColorClass(result: string): string {
-  const normalized = result.trim().toLowerCase();
-  if (normalized === 'win' || normalized.startsWith('won')) {
-    return 'text-emerald-400';
-  }
-  if (normalized === 'loss' || normalized.startsWith('lost') || normalized === 'checkmated') {
-    return 'text-rose-400';
-  }
-  return 'text-amber-400';
 }
 
 const SAMPLE_POSITIONS = [
@@ -88,13 +74,14 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
   );
 
   const activeAccountIdentifier = connectedAccount?.id ?? guestUsername ?? null;
+  const requestVersionRef = useRef<number>(0);
 
-  const onSnapshotChangeRef = React.useRef(onSnapshotChange);
+  const onSnapshotChangeRef = useRef(onSnapshotChange);
   useEffect(() => {
     onSnapshotChangeRef.current = onSnapshotChange;
   }, [onSnapshotChange]);
 
-  const latestSnapshotRef = React.useRef<SimilarPositionsReturnSnapshot>({
+  const latestSnapshotRef = useRef<SimilarPositionsReturnSnapshot>({
     queryFen: initialSnapshot?.queryFen ?? '',
     fenInput: initialSnapshot?.fenInput ?? '',
     results: initialSnapshot?.results ?? [],
@@ -116,12 +103,14 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
 
   const handleFenChange = (value: string) => {
     setFenInput(value);
-    if (inputError) {
-      setInputError(null);
-    }
-    if (incompletePiecePlacement) {
-      setIncompletePiecePlacement(null);
-    }
+    if (inputError) setInputError(null);
+    if (incompletePiecePlacement) setIncompletePiecePlacement(null);
+  };
+
+  const handleClearFen = () => {
+    setFenInput('');
+    setInputError(null);
+    setIncompletePiecePlacement(null);
   };
 
   const handleSampleClick = (fen: string) => {
@@ -136,6 +125,7 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
       return;
     }
 
+    const currentVersion = ++requestVersionRef.current;
     setInputError(null);
     setSearchError(null);
     setIncompletePiecePlacement(null);
@@ -148,6 +138,8 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
         username: !connectedAccount ? guestUsername : undefined,
         limit: searchLimit,
       });
+
+      if (currentVersion !== requestVersionRef.current) return;
 
       setQueryFen(data.queryFen);
       setResults(data.results);
@@ -168,10 +160,13 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
       latestSnapshotRef.current = newSnapshot;
       onSnapshotChangeRef.current?.(newSnapshot);
     } catch (err: unknown) {
+      if (currentVersion !== requestVersionRef.current) return;
       const message = err instanceof Error ? err.message : 'Failed to search similar positions';
       setSearchError(message);
     } finally {
-      setIsLoading(false);
+      if (currentVersion === requestVersionRef.current) {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -226,24 +221,24 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
   const isAccountAvailable = Boolean(connectedAccount || guestUsername);
 
   return (
-    <div className="mx-auto w-full max-w-[1536px] p-4 sm:p-6 lg:p-8 space-y-6">
+    <div className="mx-auto w-full max-w-[1536px] p-4 sm:p-6 lg:p-8 space-y-6 text-on-surface">
       {/* Header & Overview */}
       <SectionHeader
         title="Find Similar Personal Positions"
         description="Enter an arbitrary FEN to retrieve positions from your personal games matching static pawn structures and piece relationship patterns."
         actions={
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="text-slate-400">Target account:</span>
+            <span className="text-on-surface-variant font-mono">Target account:</span>
             {connectedAccount ? (
-              <span className="rounded-md bg-emerald-950/60 border border-emerald-800/60 px-2.5 py-1 text-emerald-300 font-medium">
+              <span className="rounded-md bg-primary/10 border border-primary/30 px-2.5 py-1 text-primary font-mono font-medium">
                 Connected: {connectedAccount.username} ({connectedAccount.platform})
               </span>
             ) : guestUsername ? (
-              <span className="rounded-md bg-sky-950/60 border border-sky-800/60 px-2.5 py-1 text-sky-300 font-medium">
+              <span className="rounded-md bg-surface-container border border-outline-variant px-2.5 py-1 text-on-surface font-mono font-medium">
                 Guest: {guestUsername} (Chess.com)
               </span>
             ) : (
-              <span className="rounded-md bg-amber-950/60 border border-amber-800/60 px-2.5 py-1 text-amber-300 font-medium">
+              <span className="rounded-md bg-amber-accent/15 border border-amber-accent/30 px-2.5 py-1 text-amber-accent font-mono font-medium">
                 No account selected
               </span>
             )}
@@ -254,80 +249,99 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
       {/* Search Controls */}
       <form
         onSubmit={handleSearch}
-        className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 space-y-4 backdrop-blur"
+        className="rounded-2xl border border-outline-variant bg-surface-container-low p-6 space-y-4 shadow-xl"
       >
         <div className="space-y-2">
-          <label htmlFor="fen-input" className="block text-sm font-semibold text-slate-200">
-            FEN Position
+          <label htmlFor="fen-input" className="block text-sm font-semibold font-mono text-on-surface flex items-center gap-2">
+            <span className="material-symbols-outlined text-primary text-base" aria-hidden="true">hub</span>
+            <span>FEN Position</span>
           </label>
-          <div className="flex gap-2">
-            <input
-              id="fen-input"
-              type="text"
-              value={fenInput}
-              onChange={(e) => handleFenChange(e.target.value)}
-              placeholder="e.g. r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/3P1N2/PPP2PPP/RNBQK2R w KQkq - 1 5"
-              className={`flex-1 rounded-xl border bg-slate-950 px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 ${
-                inputError
-                  ? 'border-red-500 focus:border-red-500 focus:ring-red-500/20'
-                  : 'border-slate-800 focus:border-emerald-500 focus:ring-emerald-500/20'
-              }`}
-            />
-            <label htmlFor="limit-select" className="sr-only">
-              Results limit
-            </label>
-            <select
-              id="limit-select"
-              aria-label="Results limit"
-              value={limit}
-              onChange={(e) => handleLimitChange(Number(e.target.value))}
-              disabled={isLoading}
-              className="bg-surface-container border border-outline-variant rounded-lg text-xs font-mono px-3 py-2.5 text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 cursor-pointer disabled:opacity-50"
-            >
-              {SUPPORTED_LIMITS.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-            <button
-              type="submit"
-              disabled={isLoading || !fenInput.trim() || !isAccountAvailable}
-              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed transition"
-            >
-              {isLoading ? (
-                <>
-                  <RefreshCw className="h-4 w-4 animate-spin" />
-                  Searching...
-                </>
-              ) : (
-                <>
-                  <Search className="h-4 w-4" />
-                  Search
-                </>
+          <div className="flex flex-col sm:flex-row gap-2.5">
+            <div className="relative flex-1 flex items-center">
+              <input
+                id="fen-input"
+                aria-label="FEN Position"
+                type="text"
+                value={fenInput}
+                onChange={(e) => handleFenChange(e.target.value)}
+                placeholder="e.g. r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/3P1N2/PPP2PPP/RNBQK2R w KQkq - 1 5"
+                className={`w-full rounded-xl border bg-surface-container-lowest px-4 py-2.5 pr-10 text-sm font-mono text-on-surface placeholder:text-on-surface-variant/60 focus:outline-none transition ${
+                  inputError
+                    ? 'border-error focus:border-error'
+                    : 'border-outline-variant focus:border-primary'
+                }`}
+              />
+              {fenInput && (
+                <button
+                  type="button"
+                  onClick={handleClearFen}
+                  aria-label="Clear FEN input"
+                  className="absolute right-3 text-on-surface-variant hover:text-on-surface cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-sm">close</span>
+                </button>
               )}
-            </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <label htmlFor="limit-select" className="sr-only">
+                Results limit
+              </label>
+              <select
+                id="limit-select"
+                aria-label="Results limit"
+                value={limit}
+                onChange={(e) => handleLimitChange(Number(e.target.value))}
+                disabled={isLoading}
+                className="bg-surface-container border border-outline-variant rounded-xl text-xs font-mono px-3 py-2.5 text-on-surface focus:outline-none focus:border-primary cursor-pointer disabled:opacity-50"
+              >
+                {SUPPORTED_LIMITS.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+
+              <button
+                type="submit"
+                disabled={isLoading || !fenInput.trim() || !isAccountAvailable}
+                className="inline-flex items-center gap-2 rounded-xl bg-primary-container hover:bg-primary px-5 py-2.5 text-sm font-semibold font-mono text-on-primary-container shadow-sm disabled:opacity-50 disabled:cursor-not-allowed transition cursor-pointer"
+              >
+                {isLoading ? (
+                  <>
+                    <span className="material-symbols-outlined text-base animate-spin">sync</span>
+                    <span>Searching...</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="material-symbols-outlined text-base">search</span>
+                    <span>Search</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
+
           {inputError && (
             <div className="space-y-2 mt-1">
-              <p className="text-xs text-red-400 flex items-center gap-1">
-                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                {inputError}
+              <p className="text-xs text-error font-mono flex items-center gap-1.5">
+                <span className="material-symbols-outlined text-sm">warning</span>
+                <span>{inputError}</span>
               </p>
               {incompletePiecePlacement && (
                 <div className="flex items-center gap-2 pt-1">
-                  <span className="text-xs text-slate-300">Set active color:</span>
+                  <span className="text-xs font-mono text-on-surface-variant">Set active color:</span>
                   <button
                     type="button"
                     onClick={() => handleSelectActiveColor('w')}
-                    className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1 text-xs font-medium text-slate-100 hover:bg-slate-700 hover:border-slate-600 transition"
+                    className="rounded-lg border border-outline-variant bg-surface-container px-3 py-1 text-xs font-mono font-medium text-on-surface hover:border-primary transition cursor-pointer"
                   >
                     White to move
                   </button>
                   <button
                     type="button"
                     onClick={() => handleSelectActiveColor('b')}
-                    className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1 text-xs font-medium text-slate-100 hover:bg-slate-700 hover:border-slate-600 transition"
+                    className="rounded-lg border border-outline-variant bg-surface-container px-3 py-1 text-xs font-mono font-medium text-on-surface hover:border-primary transition cursor-pointer"
                   >
                     Black to move
                   </button>
@@ -338,15 +352,15 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
         </div>
 
         {/* Starter Sample Triggers */}
-        <div className="space-y-1.5">
-          <span className="text-xs font-medium text-slate-400">Quick sample positions:</span>
+        <div className="space-y-1.5 pt-1">
+          <span className="text-xs font-mono text-on-surface-variant">Quick sample positions:</span>
           <div className="flex flex-wrap gap-2">
             {SAMPLE_POSITIONS.map((sample) => (
               <button
                 key={sample.name}
                 type="button"
                 onClick={() => handleSampleClick(sample.fen)}
-                className="rounded-lg border border-slate-800 bg-slate-950/80 px-2.5 py-1 text-xs text-slate-300 hover:border-slate-700 hover:text-white transition"
+                className="rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-1.5 text-xs font-mono text-on-surface-variant hover:text-on-surface hover:border-primary/50 transition cursor-pointer"
               >
                 {sample.name}
               </button>
@@ -357,20 +371,20 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
 
       {/* Global Search Error */}
       {searchError && (
-        <div className="rounded-2xl border border-red-900/50 bg-red-950/30 p-4 text-sm text-red-300 flex items-start gap-3">
-          <AlertCircle className="h-5 w-5 shrink-0 text-red-400 mt-0.5" />
+        <div role="alert" className="rounded-2xl border border-error-container bg-error-container/20 p-4 text-sm text-error flex items-start gap-3">
+          <span className="material-symbols-outlined text-base text-error mt-0.5">error</span>
           <div>
-            <p className="font-semibold text-red-200">Retrieval Error</p>
-            <p className="mt-1 text-xs">{searchError}</p>
+            <p className="font-semibold font-mono">Retrieval Error</p>
+            <p className="mt-1 text-xs font-mono">{searchError}</p>
           </div>
         </div>
       )}
 
       {/* Account Missing State */}
       {!isAccountAvailable && (
-        <div className="rounded-2xl border border-slate-800 bg-slate-900/40 p-8 text-center space-y-3">
-          <p className="text-base font-semibold text-slate-200">No Target Account Selected</p>
-          <p className="text-sm text-slate-400 max-w-md mx-auto">
+        <div className="rounded-2xl border border-outline-variant bg-surface-container-low p-8 text-center space-y-3">
+          <p className="text-base font-semibold text-on-surface">No Target Account Selected</p>
+          <p className="text-sm text-on-surface-variant max-w-md mx-auto">
             Connect your Chess.com account or specify a guest username to search for similar positions in
             your games.
           </p>
@@ -381,10 +395,13 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
       {isAccountAvailable && (
         <div className="space-y-4">
           {hasSearched && (
-            <div className="text-xs text-slate-400 px-1">
-              <span>
-                Found <strong className="text-slate-200">{results.length}</strong> matching position
-                {results.length === 1 ? '' : 's'}
+            <div className="flex items-center justify-between px-1">
+              <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-surface-container border border-outline-variant text-xs font-mono text-on-surface">
+                <span className="w-1.5 h-1.5 rounded-full bg-primary" />
+                <span>Found <strong className="text-primary font-bold">{results.length}</strong> matching position{results.length === 1 ? '' : 's'}</span>
+              </span>
+              <span className="text-xs font-mono text-on-surface-variant hidden sm:inline">
+                Matches sorted by similarity to query FEN
               </span>
             </div>
           )}
@@ -398,102 +415,14 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
           )}
 
           {results.length > 0 && (
-            <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2">
-              {results.map((result) => {
-                const primaryOccurrence = result.occurrences?.[0];
-                return (
-                  <PositionCard
-                    key={result.positionId}
-                    className="flex flex-col gap-4"
-                  >
-                    <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
-                      <div>
-                        <span className="text-xs font-semibold uppercase tracking-wider text-emerald-400">
-                          Similar Position
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleExplore(result.fen)}
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600/20 border border-emerald-500/40 px-3 py-1.5 text-xs font-medium text-emerald-300 hover:bg-emerald-600/30 transition"
-                      >
-                        Explore this position
-                      </button>
-                    </div>
-
-                    <div className="grid gap-4 sm:grid-cols-[160px_1fr]">
-                      <div className="aspect-square w-full max-w-[160px] overflow-hidden rounded-xl border border-slate-700 mx-auto">
-                        <ChessBoardView
-                          fen={result.fen}
-                          boardOrientation={primaryOccurrence?.playerColor ?? 'white'}
-                          allowDragging={false}
-                          containerClassName="w-full h-full"
-                          frameClassName="w-full h-full"
-                        />
-                      </div>
-
-                      <div className="flex flex-col justify-between text-xs space-y-2 min-w-0">
-                        {primaryOccurrence ? (
-                          <div className="space-y-1.5">
-                            <p className="text-slate-300">
-                              Played move:{' '}
-                              <strong className="text-white font-mono text-sm">
-                                {primaryOccurrence.playedMove}
-                              </strong>{' '}
-                              <span className="text-slate-400">
-                                (ply {primaryOccurrence.plyNumber}, {primaryOccurrence.playerColor.toLowerCase()})
-                              </span>
-                            </p>
-                            {primaryOccurrence.opponentUsername && (
-                              <p className="text-slate-400 truncate">
-                                Opponent: <span className="text-slate-200">{primaryOccurrence.opponentUsername}</span>
-                              </p>
-                            )}
-                            {primaryOccurrence.timeControl && (
-                              <p className="text-slate-400">
-                                Time control: <span className="text-slate-200">{primaryOccurrence.timeControl}</span>
-                              </p>
-                            )}
-                            {primaryOccurrence.gameResult && (
-                              <p className="text-slate-400">
-                                Result:{' '}
-                                <span
-                                  className={`font-medium ${getResultColorClass(
-                                    primaryOccurrence.gameResult
-                                  )}`}
-                                >
-                                  {primaryOccurrence.gameResult}
-                                </span>
-                              </p>
-                            )}
-                            {primaryOccurrence.playedAt && (
-                              <p className="text-slate-500">
-                                Date: {new Date(primaryOccurrence.playedAt).toLocaleDateString()}
-                              </p>
-                            )}
-                          </div>
-                        ) : (
-                          <p className="text-slate-500 italic">No occurrence details available</p>
-                        )}
-
-                        <div className="pt-2 border-t border-slate-800/80">
-                          {primaryOccurrence?.chessComUrl ? (
-                            <ExternalGameLink
-                              url={primaryOccurrence.chessComUrl}
-                              label="View move on Chess.com"
-                              platform="chesscom"
-                            />
-                          ) : (
-                            <span className="text-slate-500 italic">
-                              Chess.com link unavailable
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </PositionCard>
-                );
-              })}
+            <div className="grid gap-5 grid-cols-1 xl:grid-cols-2">
+              {results.map((result) => (
+                <SimilarPositionCard
+                  key={result.positionId}
+                  result={result}
+                  onExplore={handleExplore}
+                />
+              ))}
             </div>
           )}
         </div>

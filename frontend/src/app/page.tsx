@@ -48,6 +48,7 @@ export default function Home() {
     playerColor: 'WHITE' | 'BLACK';
     minEvalLoss: number;
     accountId?: string;
+    ecoCode?: string;
   } | null>(null);
 
   const [hasLongDecisionReturnContext, setHasLongDecisionReturnContext] = useState(false);
@@ -246,17 +247,8 @@ export default function Home() {
         />
 
         {/* TAB 2: WEAKNESSES LIBRARY */}
-        {activeTab === 'weaknesses' &&
-          (selectedProgress ? (
-            <PositionProgressView
-              positionId={selectedProgress.positionId}
-              playerColor={selectedProgress.playerColor}
-              minEvalLoss={selectedProgress.minEvalLoss}
-              accountId={selectedProgress.accountId}
-              sessionStatus={session.sessionStatus}
-              onBack={() => setSelectedProgress(null)}
-            />
-          ) : (
+        {activeTab === 'weaknesses' && (
+          <>
             <WeaknessesList
               accountId={session.sessionGateOpen ? session.connectedAccount?.id : undefined}
               username={session.sessionGateOpen ? session.weaknessDisplayUsername : undefined}
@@ -267,12 +259,13 @@ export default function Home() {
               onSelectPractice={handleSelectPracticeFromLibrary}
               onViewProgress={
                 session.sessionStatus === 'unauthenticated' || session.connectedAccount?.id
-                  ? (positionId, playerColor, minEvalLossVal) =>
+                  ? (positionId, playerColor, minEvalLossVal, ecoCode) =>
                       setSelectedProgress({
                         positionId,
                         playerColor,
                         minEvalLoss: minEvalLossVal,
                         accountId: session.connectedAccount?.id,
+                        ecoCode,
                       })
                   : undefined
               }
@@ -284,7 +277,21 @@ export default function Home() {
               }
               refreshKey={weaknessRefreshKey}
             />
-          ))}
+
+            {selectedProgress && (
+              <PositionProgressView
+                positionId={selectedProgress.positionId}
+                playerColor={selectedProgress.playerColor}
+                minEvalLoss={selectedProgress.minEvalLoss}
+                accountId={selectedProgress.accountId}
+                ecoCode={selectedProgress.ecoCode}
+                sessionStatus={session.sessionStatus}
+                onBack={() => setSelectedProgress(null)}
+                onClose={() => setSelectedProgress(null)}
+              />
+            )}
+          </>
+        )}
 
         {(activeTab === 'long-decisions' || hasLongDecisionReturnContext) && (
           <div hidden={activeTab !== 'long-decisions'}>
