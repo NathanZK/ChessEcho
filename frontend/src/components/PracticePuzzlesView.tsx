@@ -100,7 +100,7 @@ export type PracticePuzzlesViewHandle = {
   ) => boolean;
   exploreLongDecision: (occurrenceOrFen: LongDecisionOccurrence | string) => boolean;
   exploreSimilarPositions: (position: PositionExplorationStart, metadata?: SimilarPositionContext) => boolean;
-  selectPracticeFromLibrary: (puzzle: Puzzle, fullList?: Puzzle[]) => void;
+  selectPracticeFromLibrary: (puzzle: Puzzle, fullList?: Puzzle[], originatingTab?: TabType) => void;
   clearAccountUiState: () => void;
   invalidatePuzzleRequests: () => void;
 };
@@ -781,7 +781,7 @@ export function PracticePuzzlesView({
   );
 
   const handleSelectPractice = React.useCallback(
-    (puzzle: Puzzle, fullList?: Puzzle[]) => {
+    (puzzle: Puzzle, fullList?: Puzzle[], originatingTab?: TabType) => {
       let targetList = puzzlesList;
       let targetIdx = -1;
 
@@ -822,10 +822,21 @@ export function PracticePuzzlesView({
       if (typeof window !== 'undefined' && selectedPuzzle) {
         localStorage.setItem('chessecho_puzzle_id', selectedPuzzle.puzzleId);
       }
+      if (originatingTab) {
+        longDecisionReturnSnapshotRef.current = captureExplorationReturnSnapshot(originatingTab);
+        setActiveOriginatingTab(originatingTab);
+      }
       setViewMode('practice');
       onNavigateTab('puzzles');
     },
-    [lineExploration, onNavigateTab, puzzleContextKey, puzzlesList, resetPuzzleInteractionState]
+    [
+      captureExplorationReturnSnapshot,
+      lineExploration,
+      onNavigateTab,
+      puzzleContextKey,
+      puzzlesList,
+      resetPuzzleInteractionState,
+    ]
   );
 
   const handleStartPractice = React.useCallback(
@@ -1441,11 +1452,11 @@ export function PracticePuzzlesView({
   return (
     <div
       hidden={hidden}
-      className={`max-w-[1536px] w-full mx-auto px-4 lg:px-8 2xl:max-w-none 2xl:px-4 flex-1 flex flex-col justify-center min-h-0 ${
+      className={`max-w-[1536px] w-full mx-auto px-4 lg:px-8 2xl:max-w-none 2xl:px-4 flex-1 flex flex-col justify-start min-h-0 ${
         hidden ? 'hidden' : ''
       }`}
     >
-      <div className="flex-1 flex flex-col justify-center min-h-0">
+      <div className="flex-1 flex flex-col justify-start min-h-0">
         {isLoadingPuzzles ? (
           <div className="flex-1 flex items-center justify-center py-16">
             <div className="flex items-center space-x-3 text-primary bg-surface-container-low px-5 py-3 rounded-2xl border border-outline-variant shadow-lg">

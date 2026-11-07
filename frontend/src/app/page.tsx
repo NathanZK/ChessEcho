@@ -187,7 +187,7 @@ export default function Home() {
 
   const handleSelectPracticeFromLibrary = (puzzle: Puzzle, fullList?: Puzzle[]) => {
     changeTab('puzzles');
-    practiceActionsRef.current?.selectPracticeFromLibrary(puzzle, fullList);
+    practiceActionsRef.current?.selectPracticeFromLibrary(puzzle, fullList, 'weaknesses');
   };
 
   const handleSimilarPositionsSnapshotChange = React.useCallback(
