@@ -6,37 +6,46 @@ import {
   createInitialContext,
 } from './practiceModel';
 
-export interface GeneratedPath {
-  targetState: PracticeAbstractState;
-  actions: PracticeAction[];
-  states: PracticeAbstractState[];
+export interface AbstractGeneratedPath<TState, TAction> {
+  targetState: TState;
+  actions: TAction[];
+  states: TState[];
 }
 
-export interface BfsExplorationResult {
-  reachableStates: Set<PracticeAbstractState>;
-  paths: GeneratedPath[];
+export interface AbstractBfsResult<TState, TAction> {
+  reachableStates: Set<TState>;
+  paths: AbstractGeneratedPath<TState, TAction>[];
   transitionsCovered: Set<string>;
 }
 
-interface BfsQueueNode {
-  state: PracticeAbstractState;
-  context: PracticeModelContext;
-  actions: PracticeAction[];
-  states: PracticeAbstractState[];
+export interface AbstractTransitionRule<TState, TAction, TContext> {
+  from: TState;
+  action: TAction;
+  to: TState;
+  guard?: (context: TContext) => boolean;
+  effect?: (context: TContext) => TContext;
+}
+
+interface BfsQueueNode<TState, TAction, TContext> {
+  state: TState;
+  context: TContext;
+  actions: TAction[];
+  states: TState[];
   depth: number;
 }
 
-export function explorePracticeStates(
-  initialState: PracticeAbstractState = 'DISCOVERY',
-  transitions: TransitionRule[],
+export function exploreAbstractStates<TState, TAction, TContext>(
+  initialState: TState,
+  transitions: AbstractTransitionRule<TState, TAction, TContext>[],
   maxDepth = 4,
-  initialContext: PracticeModelContext = createInitialContext()
-): BfsExplorationResult {
-  const reachableStates = new Set<PracticeAbstractState>([initialState]);
-  const paths: GeneratedPath[] = [];
+  initialContext: TContext,
+  contextSignatureFn?: (state: TState, context: TContext) => string
+): AbstractBfsResult<TState, TAction> {
+  const reachableStates = new Set<TState>([initialState]);
+  const paths: AbstractGeneratedPath<TState, TAction>[] = [];
   const transitionsCovered = new Set<string>();
 
-  const queue: BfsQueueNode[] = [
+  const queue: BfsQueueNode<TState, TAction, TContext>[] = [
     {
       state: initialState,
       context: initialContext,
@@ -75,11 +84,13 @@ export function explorePracticeStates(
 
       const nextContext = rule.effect ? rule.effect(current.context) : { ...current.context };
       const nextState = rule.to;
-      const transitionSignature = `${current.state}->${rule.action}->${nextState}`;
+      const transitionSignature = `${String(current.state)}->${String(rule.action)}->${String(nextState)}`;
       transitionsCovered.add(transitionSignature);
 
       // Cycle prevention: avoid repeating identical state+context in the same branch
-      const branchKey = `${nextState}:${nextContext.puzzleLoaded}:${nextContext.inExploration}`;
+      const branchKey = contextSignatureFn
+        ? contextSignatureFn(nextState, nextContext)
+        : `${String(nextState)}:${JSON.stringify(nextContext)}`;
       const previousDepth = visitedSignatures.get(branchKey);
 
       // Only enqueue if not visited or reached at a shallower/equal depth
@@ -101,4 +112,22 @@ export function explorePracticeStates(
     paths,
     transitionsCovered,
   };
+}
+
+export type GeneratedPath = AbstractGeneratedPath<PracticeAbstractState, PracticeAction>;
+export type BfsExplorationResult = AbstractBfsResult<PracticeAbstractState, PracticeAction>;
+
+export function explorePracticeStates(
+  initialState: PracticeAbstractState = 'DISCOVERY',
+  transitions: TransitionRule[],
+  maxDepth = 4,
+  initialContext: PracticeModelContext = createInitialContext()
+): BfsExplorationResult {
+  return exploreAbstractStates(
+    initialState,
+    transitions,
+    maxDepth,
+    initialContext,
+    (state, ctx) => `${state}:${ctx.puzzleLoaded}:${ctx.inExploration}`
+  );
 }
