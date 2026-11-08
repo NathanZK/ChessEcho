@@ -34,17 +34,10 @@ interface PositionClusterSnapshotRepository : JpaRepository<PositionClusterSnaps
         @Param("clusterType") clusterType: ClusterType,
     ): Int
 
-    @Query("SELECT COALESCE(MAX(s.snapshotVersion), 0) FROM PositionClusterSnapshot s WHERE s.accountId = :accountId")
-    fun findMaxVersionByAccountId(
-        @Param("accountId") accountId: UUID,
-    ): Int
-
     fun findByAccountIdAndClusterTypeOrderBySnapshotVersionDesc(
         accountId: UUID,
         clusterType: ClusterType,
     ): List<PositionClusterSnapshot>
-
-    fun findByAccountIdOrderBySnapshotVersionDesc(accountId: UUID): List<PositionClusterSnapshot>
 
     @Modifying
     @Query(
@@ -58,17 +51,6 @@ interface PositionClusterSnapshotRepository : JpaRepository<PositionClusterSnaps
         @Param("oldStatus") oldStatus: PositionClusterSnapshotStatus,
         @Param("newStatus") newStatus: PositionClusterSnapshotStatus,
         @Param("currentVersion") currentVersion: Int,
-    ): Int
-
-    @Modifying
-    @Query(
-        "UPDATE PositionClusterSnapshot s SET s.status = :newStatus " +
-            "WHERE s.accountId = :accountId AND s.status = :oldStatus",
-    )
-    fun updateStatusForAccount(
-        @Param("accountId") accountId: UUID,
-        @Param("oldStatus") oldStatus: PositionClusterSnapshotStatus,
-        @Param("newStatus") newStatus: PositionClusterSnapshotStatus,
     ): Int
 }
 
