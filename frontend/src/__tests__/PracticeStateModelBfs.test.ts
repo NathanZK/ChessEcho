@@ -8,7 +8,7 @@ import {
   createInitialContext,
   STATE_ORACLES,
 } from '../../journeys/model/practiceModel';
-import { explorePracticeStates } from '../../journeys/model/bfsExplorer';
+import { explorePracticeStates, exploreAbstractStates } from '../../journeys/model/bfsExplorer';
 import { selectHighRiskPaths } from '../../journeys/model/pathSelector';
 
 describe('Practice State Model & Invariants', () => {
@@ -135,6 +135,43 @@ describe('Practice State Model & Invariants', () => {
       const exploreReturnPath = selected.find((p) => p.riskCategory === 'mode-boundary-exploration');
       expect(exploreReturnPath).toBeDefined();
       expect(exploreReturnPath?.actions).toContain('CONTINUE_EXPLORATION');
+    });
+
+    it('generic exploreAbstractStates explores domain-agnostic models with custom context signature', () => {
+      type CustomState = 'INIT' | 'RUNNING' | 'DONE';
+      type CustomAction = 'START' | 'FINISH';
+      interface CustomContext { count: number }
+
+      const transitions = [
+        {
+          from: 'INIT' as CustomState,
+          action: 'START' as CustomAction,
+          to: 'RUNNING' as CustomState,
+          effect: (ctx: CustomContext) => ({ count: ctx.count + 1 }),
+        },
+        {
+          from: 'RUNNING' as CustomState,
+          action: 'FINISH' as CustomAction,
+          to: 'DONE' as CustomState,
+          guard: (ctx: CustomContext) => ctx.count > 0,
+        },
+      ];
+
+      const signatureFn = (state: CustomState, ctx: CustomContext) => `${state}:${ctx.count}`;
+      const result = exploreAbstractStates<CustomState, CustomAction, CustomContext>(
+        'INIT',
+        transitions,
+        3,
+        { count: 0 },
+        signatureFn
+      );
+
+      expect(result.reachableStates.has('INIT')).toBe(true);
+      expect(result.reachableStates.has('RUNNING')).toBe(true);
+      expect(result.reachableStates.has('DONE')).toBe(true);
+      expect(result.paths.length).toBe(2);
+      expect(result.transitionsCovered.has('INIT->START->RUNNING')).toBe(true);
+      expect(result.transitionsCovered.has('RUNNING->FINISH->DONE')).toBe(true);
     });
   });
 });
