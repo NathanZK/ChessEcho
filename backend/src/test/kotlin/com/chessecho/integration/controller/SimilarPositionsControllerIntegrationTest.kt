@@ -26,6 +26,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
+import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.whenever
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
@@ -78,7 +79,7 @@ class SimilarPositionsControllerIntegrationTest {
 
     @BeforeEach
     fun setUpStockfish() {
-        whenever(stockfishService.batchResolveContinuations(any(), any(), any())).thenAnswer { invocation ->
+        val batchAnswer: (org.mockito.invocation.InvocationOnMock) -> BatchContinuationResult = { invocation ->
             val candidates = invocation.getArgument<List<Pair<UUID, String>>>(1)
             val queryPv = PrincipalVariation(rank = 1, moves = listOf("g1f3"), achievedDepth = 8)
             val queryResult = ContinuationResult(SearchStatus.COMPLETED, 8, listOf(queryPv))
@@ -100,6 +101,8 @@ class SimilarPositionsControllerIntegrationTest {
                 engineCompletedCount = candidates.size,
             )
         }
+        whenever(stockfishService.batchResolveContinuations(any(), any(), any())).thenAnswer(batchAnswer)
+        whenever(stockfishService.batchResolveContinuations(any(), any(), any(), anyOrNull())).thenAnswer(batchAnswer)
     }
 
     @AfterEach

@@ -59,6 +59,7 @@ chess:
   similarity:
     dynamic:
       max-concurrent-sessions: ${CHESS_SIMILARITY_DYNAMIC_MAX_CONCURRENT_SESSIONS:2}
+      candidate-budget: ${CHESS_SIMILARITY_DYNAMIC_CANDIDATE_BUDGET:100}
   pubapi:
     user-agent-username: ${CHESS_PUBAPI_USERNAME:}
     contact: ${CHESS_PUBAPI_CONTACT:}

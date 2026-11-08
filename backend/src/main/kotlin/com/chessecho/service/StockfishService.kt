@@ -136,13 +136,20 @@ class StockfishService(
         queryFen: String,
         candidates: List<Pair<java.util.UUID, String>>,
         options: DynamicAnalysisOptions = DynamicAnalysisOptions(),
+    ): BatchContinuationResult = batchResolveContinuations(queryFen, candidates, options, null)
+
+    fun batchResolveContinuations(
+        queryFen: String,
+        candidates: List<Pair<java.util.UUID, String>>,
+        options: DynamicAnalysisOptions,
+        knownQueryResult: ContinuationResult?,
     ): BatchContinuationResult {
         val session =
             initBatchSession(options.multiPv)
                 ?: return emptyBatchFallback("ENGINE_UNRESPONSIVE", candidates.size)
 
         return try {
-            executeBatch(session, queryFen, candidates, options)
+            executeBatch(session, queryFen, candidates, options, knownQueryResult)
         } finally {
             session.close()
         }
@@ -171,8 +178,9 @@ class StockfishService(
         queryFen: String,
         candidates: List<Pair<java.util.UUID, String>>,
         options: DynamicAnalysisOptions,
+        knownQueryResult: ContinuationResult? = null,
     ): BatchContinuationResult {
-        val queryResult = session.searchPosition(queryFen, options)
+        val queryResult = knownQueryResult ?: session.searchPosition(queryFen, options)
         if (queryResult.status != SearchStatus.COMPLETED) {
             val reason = if (session.isAlive()) "QUERY_ANALYSIS_FAILED" else "ENGINE_UNRESPONSIVE"
             return BatchContinuationResult(
