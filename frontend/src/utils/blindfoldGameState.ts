@@ -42,7 +42,7 @@ export interface BlindfoldGameState {
 export type BlindfoldMoveResult = BlindfoldGameState | { error: string };
 
 const illegalMove = (error: unknown): { error: string } => ({
-  error: `Illegal move: ${error instanceof Error ? error.message : 'invalid notation'}`,
+  error: `Illegal move: ${typeof error === 'string' ? error : error instanceof Error ? error.message : 'invalid notation'}`,
 });
 
 function applyMove(
