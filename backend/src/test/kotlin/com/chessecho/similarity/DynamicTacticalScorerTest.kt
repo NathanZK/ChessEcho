@@ -183,6 +183,51 @@ class DynamicTacticalScorerTest {
     }
 
     @Test
+    fun `deterministic tie-breaker orders by positionId ASC when scores staticRank and canonicalFen are tied`() {
+        val queryFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        val queryMoves = listOf("e2e4")
+
+        val idSmaller = UUID.fromString("00000000-0000-0000-0000-000000000001")
+        val idLarger = UUID.fromString("00000000-0000-0000-0000-000000000002")
+
+        val cand1 =
+            CandidateContinuation(
+                positionId = idSmaller,
+                fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
+                canonicalFen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq -",
+                staticRank = 1,
+                staticScore = 5.0,
+                continuationResult =
+                    ContinuationResult(
+                        status = SearchStatus.COMPLETED,
+                        achievedDepth = 8,
+                        principalVariations = listOf(PrincipalVariation(1, listOf("e7e5"), 8)),
+                    ),
+            )
+
+        val cand2 =
+            CandidateContinuation(
+                positionId = idLarger,
+                fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
+                canonicalFen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq -",
+                staticRank = 1,
+                staticScore = 5.0,
+                continuationResult =
+                    ContinuationResult(
+                        status = SearchStatus.COMPLETED,
+                        achievedDepth = 8,
+                        principalVariations = listOf(PrincipalVariation(1, listOf("e7e5"), 8)),
+                    ),
+            )
+
+        // Pass cand2 (larger UUID) first
+        val ranked = scorer.rank(queryFen, queryMoves, listOf(cand2, cand1))
+        assertEquals(2, ranked.size)
+        assertEquals(idSmaller, ranked[0].positionId, "Smaller UUID must rank first on tie")
+        assertEquals(idLarger, ranked[1].positionId, "Larger UUID must rank second on tie")
+    }
+
+    @Test
     fun `invalid FEN or illegal moves throw IllegalArgumentException`() {
         assertThrows(IllegalArgumentException::class.java) {
             scorer.extractDynamicTokens("invalid fen", listOf("e2e4"))

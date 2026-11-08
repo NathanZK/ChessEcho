@@ -1,20 +1,27 @@
 package com.chessecho.service.similarity
 
 import com.chessecho.domain.ChessAccount
+import com.chessecho.domain.EngineAnalysis
 import com.chessecho.domain.PositionOccurrence
 import com.chessecho.domain.SimilarityRetrievalMode
+import com.chessecho.repository.EngineAnalysisRepository
 import com.chessecho.repository.PositionOccurrenceRepository
+import com.chessecho.service.ContinuationResult
+import com.chessecho.service.DynamicAnalysisOptions
 import com.chessecho.service.GameOutcomeNormalizer
 import com.chessecho.service.PrincipalVariation
 import com.chessecho.service.SearchStatus
 import com.chessecho.service.StockfishService
+import com.chessecho.similarity.CandidateContinuation
 import com.chessecho.similarity.DynamicInvertedIndex
 import com.chessecho.similarity.DynamicTacticalScorer
 import com.chessecho.similarity.PositionInvertedIndex
 import com.chessecho.similarity.PositionSimilarityScorer
 import com.chessecho.similarity.PositionTokenExtractor
+import com.chessecho.similarity.RankedDynamicMatch
 import com.chessecho.similarity.RankedPositionMatch
 import com.chessecho.similarity.ScoredCandidate
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.Instant
@@ -101,6 +108,9 @@ class PositionSimilarityService(
     private val gameOutcomeNormalizer: GameOutcomeNormalizer,
     private val dynamicCache: DynamicSimilarityCache,
     private val personalDynamicCorpusProvider: PersonalDynamicCorpusProvider,
+    private val engineAnalysisRepository: EngineAnalysisRepository,
+    @Value("\${chess.similarity.dynamic.candidate-budget:100}")
+    private val candidateBudget: Int = MAX_ENGINE_SHORTLIST,
 ) {
     @Transactional(readOnly = true)
     fun findSimilarPositions(
@@ -204,8 +214,8 @@ class PositionSimilarityService(
         depth: Int,
         multiPv: Int,
     ): SimilarPositionsResult {
-        val engineDepth = maxOf(depth, 10)
-        val queryFeatures = resolveDynamicQueryFeatures(validFen, engineDepth)
+        val targetDepth = maxOf(depth, DYNAMIC_TARGET_DEPTH)
+        val queryFeatures = resolveDynamicQueryFeatures(validFen, targetDepth)
         if (queryFeatures.failure != null) {
             return emptyDynamicResult(
                 queryFen = validFen,
@@ -225,7 +235,7 @@ class PositionSimilarityService(
             dynamicIndex.retrieveCandidates(
                 queryTerms = queryFeatures.tokens.keys,
                 activeTurn = activeTurn,
-                maxCandidates = MAX_ENGINE_SHORTLIST,
+                maxCandidates = candidateBudget,
             )
 
         val qualifyingMatches = qualifyDynamicCandidates(account.id, scoredCandidates, expectedColor)
@@ -233,26 +243,244 @@ class PositionSimilarityService(
             return emptyDynamicResult(
                 queryFen = validFen,
                 queryStatus = SearchStatus.COMPLETED,
-                queryAchievedDepth = engineDepth,
+                queryAchievedDepth = targetDepth,
                 queryPrincipalVariations = queryFeatures.principalVariations,
             )
         }
 
-        val shortlisted = qualifyingMatches.take(limit)
-        val results = mapDynamicMatches(shortlisted, engineDepth)
+        val queryContinuation =
+            ContinuationResult(
+                status = SearchStatus.COMPLETED,
+                achievedDepth = targetDepth,
+                principalVariations = queryFeatures.principalVariations,
+            )
+        val resolution = resolveCandidateContinuations(validFen, qualifyingMatches, targetDepth, queryContinuation)
+        if (resolution.fallbackReason != null) {
+            return buildDynamicFallbackResult(
+                validFen = validFen,
+                totalScored = scoredCandidates.size,
+                qualifyingMatches = qualifyingMatches,
+                resolution = resolution,
+                queryPvs = queryFeatures.principalVariations,
+                limit = limit,
+            )
+        }
+
+        return buildRerankedDynamicResult(
+            validFen = validFen,
+            totalScored = scoredCandidates.size,
+            qualifyingMatches = qualifyingMatches,
+            resolution = resolution,
+            queryFeatures = queryFeatures,
+            targetDepth = targetDepth,
+            limit = limit,
+        )
+    }
+
+    private fun buildDynamicFallbackResult(
+        validFen: String,
+        totalScored: Int,
+        qualifyingMatches: List<Pair<ScoredCandidate, List<PositionOccurrence>>>,
+        resolution: CandidateContinuationsResolution,
+        queryPvs: List<PrincipalVariation>,
+        limit: Int,
+    ): SimilarPositionsResult {
+        val fallbackMatches = qualifyingMatches.take(limit)
+        val fallbackResults =
+            mapDynamicMatches(
+                shortlisted = fallbackMatches,
+                engineDepth = 10,
+                searchStatus = resolution.queryStatus ?: SearchStatus.INTERRUPTED,
+            )
+        return SimilarPositionsResult(
+            queryFen = validFen,
+            candidatesEvaluated = totalScored,
+            shortlistedCandidatesCount = fallbackMatches.size,
+            engineCompletedCount = 1 + resolution.engineCompletedCount,
+            dynamicSimilarityApplied = true,
+            fallbackReason = resolution.fallbackReason,
+            queryStatus = resolution.queryStatus ?: SearchStatus.INTERRUPTED,
+            queryAchievedDepth = 10,
+            queryPrincipalVariations = queryPvs,
+            results = fallbackResults,
+            mode = "DYNAMIC",
+        )
+    }
+
+    private fun buildRerankedDynamicResult(
+        validFen: String,
+        totalScored: Int,
+        qualifyingMatches: List<Pair<ScoredCandidate, List<PositionOccurrence>>>,
+        resolution: CandidateContinuationsResolution,
+        queryFeatures: DynamicQueryResolution,
+        targetDepth: Int,
+        limit: Int,
+    ): SimilarPositionsResult {
+        val queryMoves =
+            queryFeatures
+                .principalVariations
+                .firstOrNull()
+                ?.moves
+                .orEmpty()
+        val candidateContinuations =
+            qualifyingMatches.map { (cand, _) ->
+                CandidateContinuation(
+                    positionId = cand.positionId,
+                    fen = cand.canonicalFen,
+                    canonicalFen = cand.canonicalFen,
+                    staticRank = 0,
+                    staticScore = 0.0,
+                    continuationResult =
+                        resolution.continuations[cand.positionId]
+                            ?: ContinuationResult(SearchStatus.FAILED, 0, emptyList()),
+                )
+            }
+
+        val rankedMatches = dynamicScorer.rank(validFen, queryMoves, candidateContinuations)
+        val rankedMap = rankedMatches.associateBy { it.positionId }
+
+        val sortedQualifying =
+            qualifyingMatches.sortedWith(
+                compareBy<Pair<ScoredCandidate, List<PositionOccurrence>>> { (cand, _) ->
+                    rankedMap[cand.positionId]?.rank ?: Int.MAX_VALUE
+                }.thenBy { it.first.canonicalFen }
+                    .thenBy { it.first.positionId },
+            )
+
+        val shortlisted = sortedQualifying.take(limit)
+        val results = mapRerankedMatches(shortlisted, rankedMap, resolution, targetDepth)
 
         return SimilarPositionsResult(
             queryFen = validFen,
-            candidatesEvaluated = scoredCandidates.size,
+            candidatesEvaluated = totalScored,
             shortlistedCandidatesCount = shortlisted.size,
-            engineCompletedCount = 1,
+            engineCompletedCount = 1 + resolution.engineCompletedCount,
             dynamicSimilarityApplied = true,
             fallbackReason = null,
             queryStatus = SearchStatus.COMPLETED,
-            queryAchievedDepth = engineDepth,
+            queryAchievedDepth = targetDepth,
             queryPrincipalVariations = queryFeatures.principalVariations,
             results = results,
             mode = "DYNAMIC",
+        )
+    }
+
+    private fun mapRerankedMatches(
+        shortlisted: List<Pair<ScoredCandidate, List<PositionOccurrence>>>,
+        rankedMap: Map<UUID, RankedDynamicMatch>,
+        resolution: CandidateContinuationsResolution,
+        targetDepth: Int,
+    ): List<SimilarPositionMatch> =
+        shortlisted.mapIndexed { index, (candidate, occs) ->
+            val rankedMatch = rankedMap[candidate.positionId]
+            val candContinuation = resolution.continuations[candidate.positionId]
+            SimilarPositionMatch(
+                rank = index + 1,
+                score = rankedMatch?.dynamicScore ?: 0.0,
+                staticScore = 0.0,
+                dynamicScore = rankedMatch?.dynamicScore ?: 0.0,
+                positionId = candidate.positionId,
+                fen = candidate.canonicalFen,
+                canonicalFen = candidate.canonicalFen,
+                searchStatus = candContinuation?.status ?: SearchStatus.COMPLETED,
+                achievedDepth = candContinuation?.achievedDepth ?: targetDepth,
+                principalVariations = candContinuation?.principalVariations.orEmpty(),
+                occurrences = occs.map { mapOccurrence(it) },
+            )
+        }
+
+    private data class CandidateContinuationsResolution(
+        val continuations: Map<UUID, ContinuationResult>,
+        val fallbackReason: String? = null,
+        val queryStatus: SearchStatus? = null,
+        val engineCompletedCount: Int = 0,
+    )
+
+    private fun fetchExistingAnalyses(positionIds: Set<UUID>): Map<UUID, EngineAnalysis> =
+        try {
+            engineAnalysisRepository
+                .findByPositionIdInWithMoveEvaluations(positionIds)
+                .associateBy { it.position.id }
+        } catch (_: Exception) {
+            emptyMap()
+        }
+
+    private fun partitionCandidateAnalyses(
+        candidates: List<Pair<ScoredCandidate, List<PositionOccurrence>>>,
+        existingAnalyses: Map<UUID, EngineAnalysis>,
+        targetDepth: Int,
+    ): Pair<MutableMap<UUID, ContinuationResult>, List<Pair<UUID, String>>> {
+        val cachedResults = mutableMapOf<UUID, ContinuationResult>()
+        val uncachedPairs = mutableListOf<Pair<UUID, String>>()
+        for ((candidate, _) in candidates) {
+            val analysis = existingAnalyses[candidate.positionId]
+            if (analysis != null && analysis.depth >= targetDepth && !analysis.bestMove.isNullOrBlank()) {
+                cachedResults[candidate.positionId] =
+                    ContinuationResult(
+                        status = SearchStatus.COMPLETED,
+                        achievedDepth = analysis.depth,
+                        principalVariations = listOf(PrincipalVariation(1, listOf(analysis.bestMove!!), analysis.depth)),
+                    )
+            } else {
+                uncachedPairs.add(candidate.positionId to candidate.canonicalFen)
+            }
+        }
+        return cachedResults to uncachedPairs
+    }
+
+    private fun resolveCandidateContinuations(
+        validFen: String,
+        candidates: List<Pair<ScoredCandidate, List<PositionOccurrence>>>,
+        targetDepth: Int,
+        queryContinuation: ContinuationResult? = null,
+    ): CandidateContinuationsResolution {
+        val candidatePositionIds = candidates.map { it.first.positionId }.toSet()
+        val existingAnalyses = fetchExistingAnalyses(candidatePositionIds)
+        val (cachedResults, uncachedPairs) = partitionCandidateAnalyses(candidates, existingAnalyses, targetDepth)
+
+        if (uncachedPairs.isEmpty()) {
+            return CandidateContinuationsResolution(
+                continuations = cachedResults,
+                engineCompletedCount = 0,
+            )
+        }
+
+        val batchResult =
+            try {
+                stockfishService.batchResolveContinuations(
+                    queryFen = validFen,
+                    candidates = uncachedPairs,
+                    options =
+                        DynamicAnalysisOptions(
+                            depth = targetDepth,
+                            multiPv = 1,
+                            watchdogTimeoutMs = BATCH_WATCHDOG_TIMEOUT_MS,
+                        ),
+                    knownQueryResult = queryContinuation,
+                )
+            } catch (_: Exception) {
+                return CandidateContinuationsResolution(
+                    continuations = cachedResults,
+                    fallbackReason = "ENGINE_FAILED",
+                    queryStatus = SearchStatus.FAILED,
+                )
+            }
+
+        if (batchResult.fallbackReason != null) {
+            return CandidateContinuationsResolution(
+                continuations = cachedResults,
+                fallbackReason = batchResult.fallbackReason,
+                queryStatus = batchResult.queryResult.status,
+                engineCompletedCount = batchResult.engineCompletedCount,
+            )
+        }
+
+        val mergedContinuations = cachedResults.toMutableMap()
+        mergedContinuations.putAll(batchResult.candidateResults)
+
+        return CandidateContinuationsResolution(
+            continuations = mergedContinuations,
+            engineCompletedCount = batchResult.engineCompletedCount,
         )
     }
 
@@ -303,6 +531,7 @@ class PositionSimilarityService(
     private fun mapDynamicMatches(
         shortlisted: List<Pair<ScoredCandidate, List<PositionOccurrence>>>,
         engineDepth: Int,
+        searchStatus: SearchStatus = SearchStatus.COMPLETED,
     ): List<SimilarPositionMatch> =
         shortlisted.mapIndexed { index, (candidate, occs) ->
             SimilarPositionMatch(
@@ -313,7 +542,7 @@ class PositionSimilarityService(
                 positionId = candidate.positionId,
                 fen = candidate.canonicalFen,
                 canonicalFen = candidate.canonicalFen,
-                searchStatus = SearchStatus.COMPLETED,
+                searchStatus = searchStatus,
                 achievedDepth = engineDepth,
                 principalVariations = emptyList(),
                 occurrences = occs.map { mapOccurrence(it) },
@@ -459,5 +688,7 @@ class PositionSimilarityService(
         const val MAX_ENGINE_SHORTLIST = 100
         const val DEFAULT_DEPTH = 8
         const val DEFAULT_MULTI_PV = 1
+        const val DYNAMIC_TARGET_DEPTH = 16
+        const val BATCH_WATCHDOG_TIMEOUT_MS = 5000L
     }
 }

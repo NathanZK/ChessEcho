@@ -454,6 +454,44 @@ class StockfishServiceBatchTest {
         assertTrue(p2.isDestroyed.get(), "Replacement process p2 must be destroyed on cleanup")
     }
 
+    @Test
+    fun `batchResolveContinuations skips query position search when knownQueryResult is provided`() {
+        val queryFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        val candidateFen = "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2"
+        val candA = UUID.randomUUID() to candidateFen
+        val searches = mutableListOf<String>()
+        val proc =
+            createFakeProcess { cmd, out ->
+                if (cmd == "uci") {
+                    out.println("id name FakeStockfish")
+                    out.println("uciok")
+                } else if (cmd == "isready") {
+                    out.println("readyok")
+                } else if (cmd.startsWith("position fen ")) {
+                    searches.add(cmd.removePrefix("position fen "))
+                } else if (cmd.startsWith("go ")) {
+                    out.println("info depth 16 multipv 1 score cp 20 pv g1f3")
+                    out.println("bestmove g1f3")
+                }
+            }
+        val service = StockfishService(processStarter = { proc })
+        val knownQuery = ContinuationResult(SearchStatus.COMPLETED, 16, listOf(PrincipalVariation(1, listOf("e2e4"), 16)))
+
+        val result =
+            service.batchResolveContinuations(
+                queryFen = queryFen,
+                candidates = listOf(candA),
+                options = DynamicAnalysisOptions(depth = 16),
+                knownQueryResult = knownQuery,
+            )
+
+        assertNull(result.fallbackReason)
+        assertEquals(knownQuery, result.queryResult)
+        assertEquals(1, searches.size)
+        assertEquals(candidateFen, searches[0])
+        assertFalse(searches.contains(queryFen), "Query FEN must not be searched by the engine when knownQueryResult is provided")
+    }
+
     private fun createFakeProcess(handler: FakeProcess.(String, PrintWriter) -> Unit): FakeProcess {
         val inPipe = PipedInputStream()
         val outPipe = PipedOutputStream(inPipe)

@@ -84,7 +84,8 @@ class DynamicTacticalScorer {
             .sortedWith(
                 compareByDescending<RankedDynamicMatch> { it.dynamicScore }
                     .thenBy { it.staticRank }
-                    .thenBy { it.canonicalFen },
+                    .thenBy { it.canonicalFen }
+                    .thenBy { it.positionId },
             ).mapIndexed { index, match -> match.copy(rank = index + 1) }
     }
 
@@ -308,11 +309,17 @@ class DynamicTacticalScorer {
     }
 
     private fun parseBoard(fen: String): Board {
-        val tokens = fen.trim().split(Regex("\\s+"))
-        require(tokens.size == 6) { "FEN must contain 6 fields: $fen" }
+        val trimmed = fen.trim()
+        val tokens = trimmed.split(Regex("\\s+"))
+        val normalized =
+            when (tokens.size) {
+                4 -> "$trimmed 0 1"
+                6 -> trimmed
+                else -> throw IllegalArgumentException("FEN must contain 4 or 6 fields: $fen")
+            }
         val board = Board()
         try {
-            board.loadFromFen(fen.trim())
+            board.loadFromFen(normalized)
             return board
         } catch (e: Exception) {
             throw IllegalArgumentException("Malformed FEN: $fen", e)

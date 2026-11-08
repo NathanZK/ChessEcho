@@ -13,12 +13,13 @@ The dynamic FEN similarity subsystem extends arbitrary-FEN similarity retrieval 
    - Clamps the pre-qualified shortlist to at most 100 candidates.
 
 2. **Stage 2: Stockfish Batch Session & Dynamic BM25 Scoring**
-   - Acquires a concurrency permit via `SimilarityConcurrencyManager`.
-   - Starts a single Stockfish subprocess session for the entire batch.
-   - Evaluates the query FEN and shortlisted candidate FENs using `go depth <depth>`.
+   - Resolves candidates cache-first via `EngineAnalysisRepository.findByPositionIdInWithMoveEvaluations`; candidates already evaluated at depth $\ge 16$ with non-blank best move bypass engine batch analysis.
+   - For remaining uncached candidates, acquires a concurrency permit via `SimilarityConcurrencyManager`.
+   - Starts a bounded Stockfish batch session targeting Depth 16 MultiPV 1 (`DYNAMIC_TARGET_DEPTH = 16`).
    - Tracks MultiPV variations across iterative-deepening lines, recording `achievedDepth` per rank.
    - Evaluates continuations at ply 0 using `DynamicTacticalScorer` and BM25 token matching on rank 1 PV.
-   - Reranks candidates: dynamic score descending, static rank ascending, and `canonicalFen` ascending.
+   - Reranks candidates deterministically: dynamic score descending, static rank ascending, `canonicalFen` ascending, and `positionId` ascending.
+   - On batch timeout, engine failure, or capacity exhaustion, falls back cleanly to Stage-1 candidates directly.
 
 ## Concurrency Control
 
