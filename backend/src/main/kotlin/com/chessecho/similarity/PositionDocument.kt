@@ -17,5 +17,14 @@ data class PositionDocument(
                 .split("\\s+".toRegex())
                 .getOrElse(1) { "w" }
                 .lowercase()
+
+        fun canonicalizeFen(fen: String): String {
+            val fields = fen.trim().split("\\s+".toRegex())
+            return if (fields.size >= 4) {
+                "${fields[0]} ${fields[1]} ${fields[2]} ${fields[3]}"
+            } else {
+                fen.trim()
+            }
+        }
     }
 }
