@@ -23,6 +23,7 @@ export interface MonkeyRunOptions {
   actionBudget: number;
   initialState?: PracticeAbstractState;
   initialContext?: PracticeModelContext;
+  stepOffset?: number;
   screenshotOnFailure?: boolean;
   stepHook?: (step: number, state: PracticeAbstractState) => Promise<void>;
 }
@@ -89,6 +90,7 @@ export async function executeConcreteAction(page: Page, action: PracticeAction):
       const to = page.locator('[data-square="d4"]');
       await from.waitFor({ state: 'visible', timeout: 5000 });
       await from.click();
+      await page.waitForTimeout(60);
       await to.click();
       break;
     }
@@ -99,6 +101,7 @@ export async function executeConcreteAction(page: Page, action: PracticeAction):
       const to = page.locator('[data-square="a3"]');
       await from.waitFor({ state: 'visible', timeout: 5000 });
       await from.click();
+      await page.waitForTimeout(60);
       await to.click();
       break;
     }
@@ -109,6 +112,7 @@ export async function executeConcreteAction(page: Page, action: PracticeAction):
       const to = page.locator('[data-square="h4"]');
       await from.waitFor({ state: 'visible', timeout: 5000 });
       await from.click();
+      await page.waitForTimeout(60);
       await to.click();
       break;
     }
@@ -120,6 +124,7 @@ export async function executeConcreteAction(page: Page, action: PracticeAction):
       if (await resetButton.isVisible().catch(() => false)) {
         await resetButton.click();
       }
+      await page.waitForTimeout(100);
       break;
     }
 
@@ -129,6 +134,7 @@ export async function executeConcreteAction(page: Page, action: PracticeAction):
       if (await resetButton.isVisible().catch(() => false)) {
         await resetButton.click();
       }
+      await page.waitForTimeout(100);
       break;
     }
 
@@ -168,6 +174,7 @@ export async function runConstrainedMonkey(options: MonkeyRunOptions): Promise<M
     actionBudget,
     initialState = 'DISCOVERY',
     initialContext = createInitialContext(),
+    stepOffset = 0,
     screenshotOnFailure = true,
   } = options;
 
@@ -200,7 +207,8 @@ export async function runConstrainedMonkey(options: MonkeyRunOptions): Promise<M
   }
 
   try {
-    for (let step = 1; step <= actionBudget; step++) {
+    for (let i = 1; i <= actionBudget; i++) {
+      const step = stepOffset + i;
       if (options.stepHook) {
         await options.stepHook(step, currentState);
       }
