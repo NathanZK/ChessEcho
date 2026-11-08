@@ -7,6 +7,7 @@ import {
   PRACTICE_TRANSITIONS,
   createInitialContext,
   findMatchingTransition,
+  ensureDiscoveryState,
 } from './practiceModel';
 import { explorePracticeStates } from './bfsExplorer';
 import {
@@ -151,10 +152,7 @@ export async function executeBfsPath(
 
   // Align UI with initial state if starting in DISCOVERY
   if (initialState === 'DISCOVERY') {
-    const backBtn = page.getByRole('button', { name: /Back to Puzzles/i });
-    if (await backBtn.isVisible().catch(() => false)) {
-      await backBtn.click();
-    }
+    await ensureDiscoveryState(page);
   }
 
   for (let i = 0; i < actions.length; i++) {

@@ -6,6 +6,7 @@ import {
   type PracticeModelContext,
   createInitialContext,
   getNextState,
+  ensureDiscoveryState,
 } from './practiceModel';
 import { createPrng } from './prng';
 import { selectConstrainedAction } from './monkeySelector';
@@ -200,10 +201,7 @@ export async function runConstrainedMonkey(options: MonkeyRunOptions): Promise<M
 
   // Align UI with initial state if starting in DISCOVERY but currently on interactive board
   if (initialState === 'DISCOVERY') {
-    const backBtn = page.getByRole('button', { name: /Back to Puzzles/i });
-    if (await backBtn.isVisible().catch(() => false)) {
-      await backBtn.click();
-    }
+    await ensureDiscoveryState(page);
   }
 
   try {
