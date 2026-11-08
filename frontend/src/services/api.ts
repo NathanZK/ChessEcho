@@ -985,3 +985,128 @@ export async function fetchSimilarPositions(params: {
 
   return await response.json();
 }
+
+export interface RecurringDiscoveryRequest {
+  accountId?: string;
+  username?: string;
+  timeControls?: string[];
+  minEvalLoss?: number;
+  fromDate?: string;
+  toDate?: string;
+}
+
+export type DiscoveryJobStatus = 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+
+export interface RecurringDiscoveryJobResponse {
+  jobId: string;
+  accountId: string;
+  status: DiscoveryJobStatus;
+  progressPercent: number;
+  stage: string;
+  errorMessage?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RecurringWeaknessResponse {
+  clusterId: string;
+  representativeFen: string;
+  memberPositionCount: number;
+  totalOccurrences: number;
+  distinctGamesCount: number;
+  mistakeCount: number;
+  mistakeFrequency: number;
+  blunderRate: number;
+  evalLossDistribution: Record<string, number>;
+  evalLossPercentages: Record<string, number>;
+  timingProfile: Record<string, number>;
+  formatBreakdown: Record<string, number>;
+  practiceContinuationUrl: string;
+}
+
+export async function triggerRecurringDiscovery(
+  request: RecurringDiscoveryRequest
+): Promise<RecurringDiscoveryJobResponse> {
+  const response = await fetch(`${API_BASE_URL}/weaknesses/recurring/discover`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: jsonHeaders(),
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const errBody = await response.json().catch(() => ({}));
+    const message = errBody.error || errBody.message || `Failed to trigger discovery: ${response.status}`;
+    throw new Error(message);
+  }
+
+  return await response.json();
+}
+
+export async function getRecurringDiscoveryJobStatus(
+  jobId: string
+): Promise<RecurringDiscoveryJobResponse> {
+  const response = await fetch(`${API_BASE_URL}/weaknesses/recurring/jobs/${encodeURIComponent(jobId)}`, {
+    method: 'GET',
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    const errBody = await response.json().catch(() => ({}));
+    const message = errBody.error || errBody.message || `Failed to get job status: ${response.status}`;
+    throw new Error(message);
+  }
+
+  return await response.json();
+}
+
+export async function cancelRecurringDiscoveryJob(
+  jobId: string,
+  accountId?: string,
+  username?: string
+): Promise<RecurringDiscoveryJobResponse> {
+  const queryParams = new URLSearchParams();
+  if (accountId) queryParams.set('accountId', accountId);
+  if (username) queryParams.set('username', username);
+  const queryString = queryParams.toString() ? `?${queryParams.toString()}` : '';
+
+  const response = await fetch(
+    `${API_BASE_URL}/weaknesses/recurring/jobs/${encodeURIComponent(jobId)}/cancel${queryString}`,
+    {
+      method: 'POST',
+      credentials: 'include',
+      headers: jsonHeaders(),
+    }
+  );
+
+  if (!response.ok) {
+    const errBody = await response.json().catch(() => ({}));
+    const message = errBody.error || errBody.message || `Failed to cancel discovery job: ${response.status}`;
+    throw new Error(message);
+  }
+
+  return await response.json();
+}
+
+export async function fetchRecurringWeaknesses(
+  accountId?: string,
+  username?: string
+): Promise<RecurringWeaknessResponse[]> {
+  const queryParams = new URLSearchParams();
+  if (accountId) queryParams.set('accountId', accountId);
+  if (username) queryParams.set('username', username);
+  const queryString = queryParams.toString() ? `?${queryParams.toString()}` : '';
+
+  const response = await fetch(`${API_BASE_URL}/weaknesses/recurring${queryString}`, {
+    method: 'GET',
+    credentials: 'include',
+  });
+
+  if (!response || !response.ok) {
+    const errBody = (await response?.json?.().catch(() => ({}))) || {};
+    const message = errBody.error || errBody.message || `Failed to fetch recurring weaknesses: ${response?.status ?? 'network error'}`;
+    throw new Error(message);
+  }
+
+  return await response.json();
+}

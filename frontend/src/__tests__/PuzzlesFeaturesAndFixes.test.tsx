@@ -108,7 +108,7 @@ function expectWideTopHeader() {
     'z-50',
   ]);
   const navButtons = Array.from(nav.querySelectorAll('button'));
-  expect(navButtons).toHaveLength(5);
+  expect(navButtons).toHaveLength(4);
 }
 
 describe('Puzzles Tab Features and Fixes', () => {
@@ -674,7 +674,7 @@ describe('Puzzles Tab Features and Fixes', () => {
       expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('ChessProbe');
 
       const navButtons = Array.from(nav.querySelectorAll('button'));
-      expect(navButtons).toHaveLength(5);
+      expect(navButtons).toHaveLength(4);
 
       const settingsButton = screen.getByRole('button', { name: /Puzzle Settings/i });
       expect(settingsButton).toBeInTheDocument();
@@ -764,7 +764,7 @@ describe('Puzzles Tab Features and Fixes', () => {
         'bg-surface-container-lowest',
       ]);
       const navButtons = Array.from(nav.querySelectorAll('button'));
-      expect(navButtons).toHaveLength(5);
+      expect(navButtons).toHaveLength(4);
       expect(screen.getByRole('button', { name: /^Sign out$/i })).toBeInTheDocument();
 
       resolvePuzzles!(mockPuzzles);
@@ -785,7 +785,7 @@ describe('Puzzles Tab Features and Fixes', () => {
         'bg-surface-container-lowest',
       ]);
       const navButtons = Array.from(nav.querySelectorAll('button'));
-      expect(navButtons).toHaveLength(5);
+      expect(navButtons).toHaveLength(4);
     });
   });
 

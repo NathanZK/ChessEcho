@@ -23,6 +23,7 @@ vi.mock('../services/api', async () => {
   return {
     ...actual,
     fetchWeaknesses: vi.fn(),
+    fetchRecurringWeaknesses: vi.fn().mockResolvedValue([]),
   };
 });
 
@@ -52,6 +53,7 @@ describe('Weaknesses Tab MVP', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     vi.mocked(api.fetchWeaknesses).mockResolvedValue([mockWeaknessItem]);
+    vi.mocked(api.fetchRecurringWeaknesses).mockResolvedValue([]);
   });
 
   afterEach(() => {

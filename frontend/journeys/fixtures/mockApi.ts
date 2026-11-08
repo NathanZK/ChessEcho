@@ -369,6 +369,14 @@ export async function setupJourneyApiMocks(
     });
   });
 
+  await page.route('**/api/weaknesses/recurring*', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([]),
+    });
+  });
+
   return {
     setAuthenticated: (val: boolean) => {
       currentAuthenticated = val;
