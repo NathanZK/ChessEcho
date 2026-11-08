@@ -6,6 +6,8 @@ export interface MockOptions {
   accounts?: Array<{ id: string; platform: string; username: string }>;
   weaknesses?: Array<Record<string, unknown>>;
   puzzles?: Array<Record<string, unknown>>;
+  importConflict?: boolean;
+  jobStatusSequence?: Array<Record<string, unknown>>;
 }
 
 export const DEFAULT_MOCK_ACCOUNT = {
@@ -52,23 +54,63 @@ export const DEFAULT_MOCK_PUZZLE = {
   evalCp: 40,
 };
 
-export async function setupJourneyApiMocks(page: Page, options: MockOptions = {}): Promise<void> {
+export interface JourneyMockHandle {
+  setAuthenticated: (val: boolean) => void;
+  getPollCount: () => number;
+}
+
+export async function setupJourneyApiMocks(
+  page: Page,
+  options: MockOptions = {}
+): Promise<JourneyMockHandle> {
   const {
     authenticated = false,
     user = { userId: 'user-1', email: 'player@example.com' },
     accounts = authenticated ? [DEFAULT_MOCK_ACCOUNT] : [],
     weaknesses = [DEFAULT_MOCK_WEAKNESS],
     puzzles = [DEFAULT_MOCK_PUZZLE],
+    importConflict = false,
+    jobStatusSequence,
   } = options;
+
+  let currentAuthenticated = authenticated;
+  let currentUser = { ...user };
+  const currentAccounts = [...accounts];
+
+  try {
+    await page.context().addCookies([
+      {
+        name: 'XSRF-TOKEN',
+        value: 'mock-csrf-token',
+        domain: 'localhost',
+        path: '/',
+      },
+    ]);
+  } catch {
+    // Context may already be initialized or handled
+  }
+
+  const checkCsrf = async (route: import('@playwright/test').Route): Promise<boolean> => {
+    const token = route.request().headers()['x-xsrf-token'];
+    if (token !== 'mock-csrf-token') {
+      await route.fulfill({
+        status: 403,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'CSRF_VALIDATION_FAILED' }),
+      });
+      return false;
+    }
+    return true;
+  };
 
   let attemptCount = { solvedCount: 0, failedCount: 0 };
 
   await page.route('**/api/me', async (route) => {
-    if (authenticated) {
+    if (currentAuthenticated) {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify(user),
+        body: JSON.stringify(currentUser),
       });
     } else {
       await route.fulfill({
@@ -80,10 +122,160 @@ export async function setupJourneyApiMocks(page: Page, options: MockOptions = {}
   });
 
   await page.route('**/api/accounts', async (route) => {
+    if (!currentAuthenticated) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify([]),
+      });
+      return;
+    }
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(accounts),
+      body: JSON.stringify(currentAccounts),
+    });
+  });
+
+  await page.route('**/api/register', async (route) => {
+    if (!(await checkCsrf(route))) return;
+    let data: { email?: string; password?: string } = {};
+    try {
+      data = route.request().postDataJSON() || {};
+    } catch {
+      // ignore
+    }
+    if (!data.email || !data.password || data.password.length < 8) {
+      await route.fulfill({
+        status: 400,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'Password must be at least 8 characters' }),
+      });
+      return;
+    }
+    currentAuthenticated = true;
+    currentUser = { userId: user.userId, email: data.email };
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(currentUser),
+    });
+  });
+
+  await page.route('**/api/login', async (route) => {
+    if (!(await checkCsrf(route))) return;
+    let data: { email?: string; password?: string } = {};
+    try {
+      data = route.request().postDataJSON() || {};
+    } catch {
+      // ignore
+    }
+    if (data.email === 'invalid@example.com' || data.password === 'wrongpass') {
+      await route.fulfill({
+        status: 401,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'Invalid email or password.' }),
+      });
+      return;
+    }
+    currentAuthenticated = true;
+    currentUser = { userId: user.userId, email: data.email || user.email };
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(currentUser),
+    });
+  });
+
+  await page.route('**/api/logout', async (route) => {
+    if (!(await checkCsrf(route))) return;
+    currentAuthenticated = false;
+    await route.fulfill({
+      status: 204,
+    });
+  });
+
+  await page.route('**/api/games/import', async (route) => {
+    if (!(await checkCsrf(route))) return;
+    if (importConflict) {
+      await route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          error: 'CONFLICT',
+          details: ['Active import job already in progress for this account.'],
+        }),
+      });
+      return;
+    }
+    let data: Record<string, unknown> = {};
+    try {
+      data = route.request().postDataJSON() || {};
+    } catch {
+      // ignore
+    }
+    if (currentAuthenticated && !data.accountId) {
+      await route.fulfill({
+        status: 400,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'MISSING_ACCOUNT_ID', details: ['Missing account identifier for authenticated import'] }),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        jobId: 'mock-import-job-1',
+        status: 'QUEUED',
+        gamesImported: 0,
+        gamesSkipped: 0,
+        platform: data.platform || 'CHESS_COM',
+        username: data.username || 'carlsen',
+        timeControls: data.timeControls || ['BLITZ', 'RAPID'],
+        playerColor: data.playerColor || 'BOTH',
+        fromDate: data.fromDate || null,
+        toDate: data.toDate || null,
+        configurationState: 'READY',
+      }),
+    });
+  });
+
+  let pollCount = 0;
+  let pollIndex = 0;
+  const defaultJobSequence = [
+    {
+      jobId: 'mock-import-job-1',
+      status: 'PROCESSING',
+      gamesImported: 5,
+      gamesSkipped: 0,
+      analysisStatus: 'NOT_STARTED',
+    },
+    {
+      jobId: 'mock-import-job-1',
+      status: 'COMPLETED',
+      gamesImported: 12,
+      gamesSkipped: 1,
+      analysisStatus: 'ANALYZING',
+    },
+    {
+      jobId: 'mock-import-job-1',
+      status: 'COMPLETED',
+      gamesImported: 12,
+      gamesSkipped: 1,
+      analysisStatus: 'COMPLETED',
+    },
+  ];
+  const sequence = jobStatusSequence || defaultJobSequence;
+
+  await page.route('**/api/jobs/*', async (route) => {
+    pollCount++;
+    const status = sequence[Math.min(pollIndex, sequence.length - 1)];
+    pollIndex++;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(status),
     });
   });
 
@@ -176,4 +368,11 @@ export async function setupJourneyApiMocks(page: Page, options: MockOptions = {}
       body: JSON.stringify(puzzles),
     });
   });
+
+  return {
+    setAuthenticated: (val: boolean) => {
+      currentAuthenticated = val;
+    },
+    getPollCount: () => pollCount,
+  };
 }
