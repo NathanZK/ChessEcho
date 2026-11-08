@@ -10,6 +10,7 @@
     "knip": "knip",
     "test": "vitest run",
     "test:journeys": "playwright test",
+    "test:monkey": "PLAYWRIGHT_INCLUDE_MONKEY=1 playwright test journeys/*-monkey.spec.ts",
     "test:mutation": "stryker run"
   },
   "dependencies": {

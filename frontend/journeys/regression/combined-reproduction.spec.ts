@@ -4,7 +4,7 @@ import {
   DEFAULT_MOCK_ACCOUNT,
   DEFAULT_MOCK_PUZZLE,
 } from '../fixtures/mockApi';
-import { STATE_ORACLES } from '../model/practiceModel';
+import { STATE_ORACLES, ensureDiscoveryState } from '../model/practiceModel';
 import { runCombinedBfsMonkey } from '../model/combinedRunner';
 
 /**
@@ -66,10 +66,7 @@ test.describe('Phase 5 Regression: Combined BFS-Monkey Deterministic Reproductio
     await page.goto('/#puzzles');
 
     // [BFS Preamble Step 0] Ensure Discovery state
-    const backToPuzzlesButton = page.getByRole('button', { name: /Back to Puzzles/i });
-    if (await backToPuzzlesButton.isVisible().catch(() => false)) {
-      await backToPuzzlesButton.click();
-    }
+    await ensureDiscoveryState(page);
     await STATE_ORACLES.DISCOVERY.assert(page, expect);
 
     // [BFS Preamble Step 1] SELECT_PUZZLE: DISCOVERY -> PRACTICE_IDLE

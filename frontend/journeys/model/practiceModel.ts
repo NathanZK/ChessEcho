@@ -280,3 +280,20 @@ export const STATE_ORACLES: Record<PracticeAbstractState, StateOracleDefinition>
     },
   },
 };
+
+/**
+ * Reliably transitions the application into DISCOVERY state from an initial page load.
+ * Avoids race conditions on cold loads where the practice board or catalog has not yet mounted.
+ */
+export async function ensureDiscoveryState(page: Page): Promise<void> {
+  const startPracticeBtn = page.getByRole('button', { name: /Start Practice/i });
+  const backBtn = page.getByRole('button', { name: /Back to Puzzles/i });
+
+  await backBtn.or(startPracticeBtn).first().waitFor({ state: 'visible', timeout: 10000 });
+
+  if (await backBtn.isVisible()) {
+    await backBtn.click();
+    await startPracticeBtn.waitFor({ state: 'visible', timeout: 10000 });
+  }
+}
+

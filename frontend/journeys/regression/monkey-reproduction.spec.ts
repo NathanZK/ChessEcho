@@ -4,7 +4,7 @@ import {
   DEFAULT_MOCK_ACCOUNT,
   DEFAULT_MOCK_PUZZLE,
 } from '../fixtures/mockApi';
-import { STATE_ORACLES } from '../model/practiceModel';
+import { STATE_ORACLES, ensureDiscoveryState } from '../model/practiceModel';
 
 /**
  * Phase 4 Regression Demonstration (Issue #715)
@@ -45,11 +45,7 @@ test.describe('Phase 4 Regression: Monkey-Discovered Sequence Conversion', () =>
     await page.goto('/#puzzles');
 
     // [Step 1] DISCOVERY -> PRACTICE_IDLE
-    // If the interactive board loads immediately, navigate back to discovery catalog
-    const backToPuzzlesButton = page.getByRole('button', { name: /Back to Puzzles/i });
-    if (await backToPuzzlesButton.isVisible().catch(() => false)) {
-      await backToPuzzlesButton.click();
-    }
+    await ensureDiscoveryState(page);
     await STATE_ORACLES.DISCOVERY.assert(page, expect);
     const startPracticeButton = page.getByRole('button', { name: /Start Practice/i });
     await startPracticeButton.click();
