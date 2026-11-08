@@ -271,6 +271,16 @@ class PositionClusteringServiceIntegrationTest {
         assertNotNull(structStillActive)
         assertEquals(structSnap1.id, structStillActive!!.id)
         assertEquals(PositionClusterSnapshotStatus.ACTIVE, structStillActive.status)
+
+        // 5. Verify snapshot histories are strictly isolated and ordered by version descending per cluster type
+        val dynHistory = snapshotRepository.findByAccountIdAndClusterTypeOrderBySnapshotVersionDesc(account.id, ClusterType.DYNAMIC)
+        assertEquals(2, dynHistory.size)
+        assertEquals(2, dynHistory[0].snapshotVersion)
+        assertEquals(1, dynHistory[1].snapshotVersion)
+
+        val structHistory = snapshotRepository.findByAccountIdAndClusterTypeOrderBySnapshotVersionDesc(account.id, ClusterType.STRUCTURAL)
+        assertEquals(1, structHistory.size)
+        assertEquals(1, structHistory[0].snapshotVersion)
     }
 
     @Test

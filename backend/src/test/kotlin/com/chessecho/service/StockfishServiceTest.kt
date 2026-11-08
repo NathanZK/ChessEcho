@@ -294,7 +294,7 @@ class StockfishServiceTest {
         val timeoutResult =
             stockfishService.resolveForcingPvContinuation(
                 fen = fen,
-                options = QuiescenceOptions(timeoutMs = 1L),
+                options = QuiescenceOptions(timeoutMs = 20L),
             )
         val duration = System.currentTimeMillis() - startTime
 

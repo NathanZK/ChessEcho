@@ -629,10 +629,17 @@ class StockfishService(
         }
 
         val context = SubprocessContext(processStarter)
+        try {
+            context.start()
+        } catch (e: Exception) {
+            logger.warn("Forcing PV search failed to start process for FEN {}", fen, e)
+            context.close()
+            return buildFallbackResult(fen, TerminationReason.ENGINE_ERROR)
+        }
+
         val task =
             engineExecutor.submit<PvContinuationResult> {
                 try {
-                    context.start()
                     val output = executeSearchWithOutput(context, fen, options)
                     replayForcingPv(board, fen, output.pvMoves, output.score, options, output.nodeLimitReached)
                 } finally {
