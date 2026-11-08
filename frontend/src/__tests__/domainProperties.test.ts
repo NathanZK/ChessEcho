@@ -2,7 +2,14 @@ import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { Chess } from 'chess.js';
 import { areMovesEqual, toCanonicalMove, type CanonicalMove } from '../utils/chessMove';
-import { parseFenInput } from '../utils/positionImport';
+import { parseFenInput, parsePgnMainLine } from '../utils/positionImport';
+import {
+  applyPlayerMove,
+  applyChessEchoMove,
+  createBlinfoldGameState,
+  rebuildPositionFromHistory,
+  type BlindfoldGameState,
+} from '../utils/blindfoldGameState';
 import { computeDurationComparison, evaluateDecisionTimingComparison } from '../utils/decisionTimingComparison';
 import { formatPawnLoss, formatScoreRate, formatTimerMs } from '../utils/formatters';
 
@@ -183,6 +190,127 @@ describe('FEN Parsing & Active Color Partition Properties (positionImport.ts)', 
   });
 });
 
+const BENCHMARK_PGNS = [
+  '1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 Nf6 5. O-O Be7',
+  '1. d4 d5 2. c4 e6 3. Nc3 Nf6 4. Bg5 Be7 5. e3 O-O',
+  '1. c4 e5 2. Nc3 Nf6 3. g3 d5 4. cxd5 Nxd5 5. Bg2 Nb6',
+  '1. e4 c5 2. Nf3 d6 3. d4 cxd4 4. Nxd4 Nf6 5. Nc3 a6',
+  '1. d4 Nf6 2. c4 g6 3. Nc3 Bg7 4. e4 d6 5. Nf3 O-O',
+  '[SetUp "1"]\n[FEN "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2"]\n\n2. Nf3 Nc6',
+  '[SetUp "1"]\n[FEN "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"]\n\n1... e5 2. Nf3',
+];
+
+describe('PGN Parsing & Move Attribution Properties (positionImport.ts)', () => {
+  it('Mainline Invariants: Continuity, transition consistency, and label parity hold for orthodox and setup games', () => {
+    const pgnArb = fc.constantFrom(...BENCHMARK_PGNS);
+    const headerArb = fc.constantFrom(
+      '',
+      '[Event "Casual Game"]\n[Site "ChessEcho"]\n\n',
+      '[Event "FIDE Grand Prix"]\n[White "Player1"]\n[Black "Player2"]\n[Result "*"]\n\n',
+    );
+
+    fc.assert(
+      fc.property(
+        pgnArb,
+        headerArb,
+        WHITESPACE_ARB,
+        (pgnBody, headers, padding) => {
+          const fullPgn = `${padding}${headers}${pgnBody}${padding}`;
+          const result = parsePgnMainLine(fullPgn);
+
+          expect(result.ok).toBe(true);
+          if (!result.ok) return;
+
+          expect(typeof result.startFen).toBe('string');
+          expect(result.plies.length).toBeGreaterThan(1);
+
+          // Ply 0 is always the Start ply
+          const startPly = result.plies[0];
+          expect(startPly.ply).toBe(0);
+          expect(startPly.san).toBe('');
+          expect(startPly.sanHistory).toEqual([]);
+          expect(startPly.label).toBe('Start');
+          expect(startPly.fen).toBe(result.startFen);
+
+          const initialColor = startPly.color;
+
+          for (let i = 1; i < result.plies.length; i++) {
+            const ply = result.plies[i];
+            const prevPly = result.plies[i - 1];
+
+            // 1. Move History Continuity
+            expect(ply.ply).toBe(i);
+            expect(ply.sanHistory.length).toBe(i);
+            expect(ply.sanHistory[i - 1]).toBe(ply.san);
+            expect(ply.sanHistory.slice(0, i - 1)).toEqual(prevPly.sanHistory);
+
+            // 2. Legal Transition Consistency
+            const chess = new Chess(prevPly.fen);
+            const moveResult = chess.move(ply.san);
+            expect(moveResult).not.toBeNull();
+            expect(chess.fen()).toBe(ply.fen);
+
+            // 3. Color & Notation Label Parity (alternates from initial active color)
+            const expectedColor = initialColor === 'w'
+              ? (i % 2 === 1 ? 'w' : 'b')
+              : (i % 2 === 1 ? 'b' : 'w');
+            expect(ply.color).toBe(expectedColor);
+            const expectedLabel = `${ply.moveNumber}${ply.color === 'b' ? '...' : '.'} ${ply.san}`;
+            expect(ply.label).toBe(expectedLabel);
+          }
+        },
+      ),
+      { numRuns: 30 },
+    );
+  });
+
+  it('Deterministic Error Rejection: Variations and unclosed comments are deterministically rejected', () => {
+    const basePgnArb = fc.constantFrom('1. e4 e5', '1. d4 d5 2. c4', '1. Nf3 d5');
+    const variationArb = fc.constantFrom('(1... c5)', '(2. Nf3)', '(1. d4 d5)');
+    const unclosedCommentArb = fc.constantFrom(
+      '{ this comment has no closing brace',
+      '{ analysis in progress...',
+      '{ note: 1. e4',
+    );
+
+    // Variation rejection
+    fc.assert(
+      fc.property(
+        basePgnArb,
+        variationArb,
+        (basePgn, variation) => {
+          const pgnWithVariation = `${basePgn} ${variation}`;
+          const result = parsePgnMainLine(pgnWithVariation);
+
+          expect(result.ok).toBe(false);
+          if (!result.ok) {
+            expect(result.error).toBe("PGN variations aren't supported — paste just the main line.");
+          }
+        },
+      ),
+      { numRuns: 20 },
+    );
+
+    // Unclosed comment rejection
+    fc.assert(
+      fc.property(
+        basePgnArb,
+        unclosedCommentArb,
+        (basePgn, unclosed) => {
+          const pgnWithUnclosed = `${basePgn} ${unclosed}`;
+          const result = parsePgnMainLine(pgnWithUnclosed);
+
+          expect(result.ok).toBe(false);
+          if (!result.ok) {
+            expect(result.error).toBe("Couldn't read that PGN — check the move text.");
+          }
+        },
+      ),
+      { numRuns: 20 },
+    );
+  });
+});
+
 describe('Decision Timing & Formatters Properties (decisionTimingComparison.ts, formatters.ts)', () => {
   it('formatTimerMs Invariant: Produces zero-padded m:ss for realistic durations, clamps negatives to 0:00, handles NaN/Infinity', () => {
     // Up to 1000 hours in milliseconds, plus negative, zero, and special float values
@@ -305,6 +433,96 @@ describe('Decision Timing & Formatters Properties (decisionTimingComparison.ts, 
         },
       ),
       { numRuns: 100 },
+    );
+  });
+});
+
+describe('Blindfold State Transition & Reversibility Properties (blindfoldGameState.ts)', () => {
+  it('Terminal & Empty Notation Barriers: Completed games and empty notations return explicit string error barriers', () => {
+    const initialState = createBlinfoldGameState(BENCHMARK_FENS[0]);
+
+    // Empty notation error
+    const emptyResult = applyPlayerMove(initialState, '   ', BENCHMARK_FENS[0]);
+    expect(emptyResult).toEqual({ error: 'Illegal move: notation is empty' });
+
+    // Terminal barrier error
+    const terminalState: BlindfoldGameState = {
+      ...initialState,
+      isTerminal: true,
+      terminalReason: 'CHECKMATE',
+      winner: 'PLAYER',
+    };
+    const afterTerminalResult = applyPlayerMove(terminalState, 'e4', BENCHMARK_FENS[0]);
+    expect(afterTerminalResult).toEqual({ error: 'Illegal move: game is complete' });
+
+    const afterTerminalEngineResult = applyChessEchoMove(terminalState, 'e4', BENCHMARK_FENS[0]);
+    expect(afterTerminalEngineResult).toEqual({ error: 'Illegal move: game is complete' });
+  });
+
+  it('Reconstruction & Prefix Consistency: Legal move sequences preserve complete history reconstruction, prefix slices, monotonicity, and turn alternation', () => {
+    // Array of move choice indices determining path through legal move tree
+    const moveChoiceArb = fc.array(fc.integer({ min: 0, max: 100 }), { minLength: 1, maxLength: 8 });
+    const fenArb = fc.constantFrom(BENCHMARK_FENS[0], BENCHMARK_FENS[1], BENCHMARK_FENS[2]);
+
+    fc.assert(
+      fc.property(fenArb, moveChoiceArb, (startFen, choices) => {
+        let state: BlindfoldGameState = createBlinfoldGameState(startFen);
+        const chess = new Chess(startFen);
+        let expectedTurn: 'PLAYER' | 'CHESSECHO' = 'PLAYER';
+
+        for (const choice of choices) {
+          if (state.isTerminal) break;
+
+          const legalMoves = chess.moves();
+          if (legalMoves.length === 0) break;
+
+          const san = legalMoves[choice % legalMoves.length];
+          chess.move(san);
+
+          if (expectedTurn === 'PLAYER') {
+            const result = applyPlayerMove(state, san, state.currentFen);
+            expect('error' in result).toBe(false);
+            if ('error' in result) return;
+            state = result;
+            expectedTurn = 'CHESSECHO';
+          } else {
+            const result = applyChessEchoMove(state, san, state.currentFen);
+            expect('error' in result).toBe(false);
+            if ('error' in result) return;
+            state = result;
+            expectedTurn = 'PLAYER';
+          }
+
+          if (!state.isTerminal) {
+            expect(state.currentTurn).toBe(expectedTurn);
+          }
+        }
+
+        // 1. Move Count Monotonicity
+        expect(state.moveCount).toBe(state.moveHistory.length);
+
+        // 2. Complete History Reconstruction
+        const reconstructedFen = rebuildPositionFromHistory(startFen, state.moveHistory);
+        expect(reconstructedFen).toBe(state.currentFen);
+
+        // 3. Prefix Consistency: For all 1 <= k <= history.length
+        for (let k = 1; k <= state.moveHistory.length; k++) {
+          const prefixSlice = state.moveHistory.slice(0, k);
+          const prefixFen = rebuildPositionFromHistory(startFen, prefixSlice);
+          expect(prefixFen).toBe(state.moveHistory[k - 1].fen);
+        }
+
+        // 4. Terminal Barrier Rejection
+        if (state.isTerminal) {
+          expect(applyPlayerMove(state, 'e4', state.currentFen)).toEqual({
+            error: 'Illegal move: game is complete',
+          });
+          expect(applyChessEchoMove(state, 'e4', state.currentFen)).toEqual({
+            error: 'Illegal move: game is complete',
+          });
+        }
+      }),
+      { numRuns: 25 },
     );
   });
 });
