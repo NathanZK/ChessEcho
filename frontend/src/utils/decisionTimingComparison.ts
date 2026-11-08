@@ -158,7 +158,7 @@ function getComparisonFeedback(params: {
   }
 }
 
-function computeDurationComparison(
+export function computeDurationComparison(
   attemptElapsedMs?: number | null,
   decisionTimeMs?: number | null,
 ): string | undefined {

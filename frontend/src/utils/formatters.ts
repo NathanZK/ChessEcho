@@ -44,7 +44,8 @@ export function formatScoreRate(
  * Clamps negative milliseconds to 0.
  */
 export function formatTimerMs(ms: number): string {
-  const clamped = Math.max(0, Math.round(ms));
+  const safeMs = typeof ms === 'number' && Number.isFinite(ms) ? ms : 0;
+  const clamped = Math.max(0, Math.round(safeMs));
   const totalSeconds = Math.floor(clamped / 1000);
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
