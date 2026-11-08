@@ -15,11 +15,12 @@ interface PositionOccurrenceRepository : JpaRepository<PositionOccurrence, UUID>
     @Query(
         value = """
             INSERT INTO position_occurrence
-              (id, game_id, position_id, chess_account_id, ply_number, move_played, player_color, decision_time_ms, created_at)
+              (id, game_id, position_id, chess_account_id, ply_number, move_played, player_color, decision_time_ms, remaining_clock_ms, created_at)
             VALUES
-              (:id, :gameId, :positionId, :chessAccountId, :plyNumber, :movePlayed, :playerColor, :decisionTimeMs, :createdAt)
+              (:id, :gameId, :positionId, :chessAccountId, :plyNumber, :movePlayed, :playerColor, :decisionTimeMs, :remainingClockMs, :createdAt)
             ON CONFLICT (game_id, position_id, ply_number, player_color)
-            DO UPDATE SET decision_time_ms = EXCLUDED.decision_time_ms
+            DO UPDATE SET decision_time_ms = EXCLUDED.decision_time_ms,
+                          remaining_clock_ms = EXCLUDED.remaining_clock_ms
         """,
         nativeQuery = true,
     )
@@ -32,6 +33,7 @@ interface PositionOccurrenceRepository : JpaRepository<PositionOccurrence, UUID>
         @Param("movePlayed") movePlayed: String,
         @Param("playerColor") playerColor: String,
         @Param("decisionTimeMs") decisionTimeMs: Long?,
+        @Param("remainingClockMs") remainingClockMs: Long? = null,
         @Param("createdAt") createdAt: Instant,
     ): Int
 
@@ -75,7 +77,8 @@ interface PositionOccurrenceRepository : JpaRepository<PositionOccurrence, UUID>
     @Query(
         """
         UPDATE PositionOccurrence po
-        SET po.decisionTimeMs = :decisionTimeMs
+        SET po.decisionTimeMs = :decisionTimeMs,
+            po.remainingClockMs = :remainingClockMs
         WHERE po.game.id = :gameId
           AND po.position.id = :positionId
           AND po.plyNumber = :plyNumber
@@ -88,6 +91,7 @@ interface PositionOccurrenceRepository : JpaRepository<PositionOccurrence, UUID>
         @Param("plyNumber") plyNumber: Int,
         @Param("playerColor") playerColor: String,
         @Param("decisionTimeMs") decisionTimeMs: Long?,
+        @Param("remainingClockMs") remainingClockMs: Long? = null,
     ): Int
 
     fun findByPositionId(positionId: UUID): List<PositionOccurrence>

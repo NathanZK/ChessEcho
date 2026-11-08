@@ -1,5 +1,6 @@
 package com.chessecho.service
 
+import com.chessecho.domain.PositionWeaknessSeverity
 import kotlin.math.abs
 
 /**
@@ -37,6 +38,20 @@ object EvaluationLossPolicy {
             bestMoveEvalCp?.let { EvalScore(it, null) },
             moveEvalCp?.let { EvalScore(it, null) },
         )
+
+    /**
+     * Classifies a pawn evaluation loss into PositionWeaknessSeverity.
+     */
+    fun classifySeverity(evalLoss: Double?): PositionWeaknessSeverity {
+        if (evalLoss == null || evalLoss.isNaN() || evalLoss < 0.30) {
+            return PositionWeaknessSeverity.NO_CONCERN
+        }
+        return when {
+            evalLoss >= 2.00 -> PositionWeaknessSeverity.CRITICAL
+            evalLoss >= 0.80 -> PositionWeaknessSeverity.SIGNIFICANT
+            else -> PositionWeaknessSeverity.MINOR
+        }
+    }
 
     private fun dispatchLossScenario(
         best: EvalScore,

@@ -52,6 +52,9 @@ chessecho:
     top1-threshold: ${CHESSECHO_CLUSTERING_TOP1_THRESHOLD:0.65}
     rb-resolution: ${CHESSECHO_CLUSTERING_RB_RESOLUTION:1.25}
     centroid-threshold: ${CHESSECHO_CLUSTERING_CENTROID_THRESHOLD:0.38}
+  weakness:
+    community:
+      min-size: ${CHESSECHO_WEAKNESS_COMMUNITY_MIN_SIZE:10}
 
 chess:
   stockfish:

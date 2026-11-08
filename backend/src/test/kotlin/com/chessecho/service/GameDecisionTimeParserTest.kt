@@ -177,6 +177,7 @@ class GameDecisionTimeParserTest {
             existing[0].plyNumber,
             existing[0].playerColor,
             1_500L,
+            60_500L,
         )
 
         val clearedPgn = updatedPgn.replace("{[%clk 0:01:01.2]}", "")
@@ -188,6 +189,7 @@ class GameDecisionTimeParserTest {
             org.mockito.kotlin.any(),
             org.mockito.kotlin.any(),
             org.mockito.kotlin.isNull(),
+            org.mockito.kotlin.anyOrNull(),
         )
     }
 

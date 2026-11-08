@@ -1,5 +1,6 @@
 package com.chessecho.service
 
+import com.chessecho.domain.PositionWeaknessSeverity
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
@@ -122,5 +123,26 @@ class EvaluationLossPolicyTest {
         assertNull(EvaluationLossPolicy.calculateEvalLoss(EvalScore(100, null), EvalScore(null, 0)))
         // Semantic equality: mate takes precedence over cp
         assertEquals(0.0, EvaluationLossPolicy.calculateEvalLoss(EvalScore(500, 2), EvalScore(100, 2)))
+    }
+
+    @Test
+    fun `classifySeverity classifies evaluation loss into PositionWeaknessSeverity`() {
+        assertEquals(PositionWeaknessSeverity.NO_CONCERN, EvaluationLossPolicy.classifySeverity(null))
+        assertEquals(PositionWeaknessSeverity.NO_CONCERN, EvaluationLossPolicy.classifySeverity(Double.NaN))
+        assertEquals(PositionWeaknessSeverity.NO_CONCERN, EvaluationLossPolicy.classifySeverity(-0.5))
+        assertEquals(PositionWeaknessSeverity.NO_CONCERN, EvaluationLossPolicy.classifySeverity(0.0))
+        assertEquals(PositionWeaknessSeverity.NO_CONCERN, EvaluationLossPolicy.classifySeverity(0.29))
+
+        assertEquals(PositionWeaknessSeverity.MINOR, EvaluationLossPolicy.classifySeverity(0.30))
+        assertEquals(PositionWeaknessSeverity.MINOR, EvaluationLossPolicy.classifySeverity(0.50))
+        assertEquals(PositionWeaknessSeverity.MINOR, EvaluationLossPolicy.classifySeverity(0.79))
+
+        assertEquals(PositionWeaknessSeverity.SIGNIFICANT, EvaluationLossPolicy.classifySeverity(0.80))
+        assertEquals(PositionWeaknessSeverity.SIGNIFICANT, EvaluationLossPolicy.classifySeverity(1.50))
+        assertEquals(PositionWeaknessSeverity.SIGNIFICANT, EvaluationLossPolicy.classifySeverity(1.99))
+
+        assertEquals(PositionWeaknessSeverity.CRITICAL, EvaluationLossPolicy.classifySeverity(2.00))
+        assertEquals(PositionWeaknessSeverity.CRITICAL, EvaluationLossPolicy.classifySeverity(5.00))
+        assertEquals(PositionWeaknessSeverity.CRITICAL, EvaluationLossPolicy.classifySeverity(20.0))
     }
 }

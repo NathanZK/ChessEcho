@@ -76,6 +76,61 @@ class PositionOccurrenceRepositoryTest {
         assertEquals(2L, resultZeroThreshold[0].mistakeCount)
     }
 
+    @Test
+    fun `remaining_clock_ms persists, retrieves, and updates on conflict`() {
+        val account = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = "clock_user"))
+        val game =
+            gameRepository.save(
+                Game(
+                    chessAccount = account,
+                    platformGameId = "game_clock",
+                    pgn = "1. e4",
+                    timeControl = "blitz",
+                    playedAt = Instant.now(),
+                    result = "win",
+                    whiteUsername = "clock_user",
+                    blackUsername = "opp",
+                ),
+            )
+        val position =
+            positionRepository.save(
+                Position(hash = "clock_pos", fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"),
+            )
+
+        val occ =
+            positionOccurrenceRepository.saveAndFlush(
+                PositionOccurrence(
+                    game = game,
+                    position = position,
+                    chessAccount = account,
+                    plyNumber = 1,
+                    movePlayed = "e4",
+                    playerColor = "WHITE",
+                    decisionTimeMs = 2500L,
+                    remainingClockMs = 175000L,
+                ),
+            )
+
+        val retrieved = positionOccurrenceRepository.findById(occ.id).orElseThrow()
+        assertEquals(175000L, retrieved.remainingClockMs)
+
+        // JPQL update
+        val updatedRows =
+            positionOccurrenceRepository.updateDecisionTime(
+                gameId = game.id,
+                positionId = position.id,
+                plyNumber = 1,
+                playerColor = "WHITE",
+                decisionTimeMs = 3000L,
+                remainingClockMs = 170000L,
+            )
+        assertEquals(1, updatedRows)
+
+        val refreshed = positionOccurrenceRepository.findById(occ.id).orElseThrow()
+        assertEquals(3000L, refreshed.decisionTimeMs)
+        assertEquals(170000L, refreshed.remainingClockMs)
+    }
+
     private fun setupMateBlunderAnalysis(position: Position) {
         val analysis =
             EngineAnalysis(
