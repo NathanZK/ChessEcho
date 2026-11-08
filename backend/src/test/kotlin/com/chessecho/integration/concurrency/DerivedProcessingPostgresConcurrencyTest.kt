@@ -217,7 +217,8 @@ class DerivedProcessingPostgresConcurrencyTest : PostgresMigrationTestFixture() 
         statement.setString(6, "Nf3")
         statement.setString(7, "WHITE")
         statement.setLong(8, decisionTimeMs)
-        statement.setObject(9, java.sql.Timestamp.from(Instant.now()))
+        statement.setObject(9, null)
+        statement.setObject(10, java.sql.Timestamp.from(Instant.now()))
     }
 
     private fun bindProcessing(

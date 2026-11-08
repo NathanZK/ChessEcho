@@ -55,6 +55,8 @@ class PositionOccurrence(
     val playerColor: String,
     @Column(name = "decision_time_ms")
     val decisionTimeMs: Long? = null,
+    @Column(name = "remaining_clock_ms")
+    val remainingClockMs: Long? = null,
     @Column(name = "created_at", nullable = false)
     val createdAt: Instant = Instant.now(),
 )

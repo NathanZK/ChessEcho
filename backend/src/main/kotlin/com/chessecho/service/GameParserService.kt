@@ -93,6 +93,7 @@ class GameParserService(
         val moves = chesslibGame.halfMoves
         val userColor = determineUserColor(dbGame, chesslibGame) ?: return
 
+        val comments = chesslibGame.comments.orEmpty()
         val decisionTimes =
             deriveDecisionTimes(
                 pgn = dbGame.pgn,
@@ -100,8 +101,9 @@ class GameParserService(
                 moves = moves,
                 playerColor = userColor,
             )
+        val remainingClocks = deriveRemainingClocks(comments, moves, userColor)
 
-        traverseGameMoves(dbGame, moves, userColor, decisionTimes, allPositions, occurrences)
+        traverseGameMoves(dbGame, moves, userColor, decisionTimes, remainingClocks, allPositions, occurrences)
     }
 
     private fun determineUserColor(
@@ -139,6 +141,7 @@ class GameParserService(
         moves: MoveList,
         userColor: String,
         decisionTimes: Map<Int, Long>,
+        remainingClocks: Map<Int, Long>,
         allPositions: MutableMap<String, Position>,
         occurrences: MutableList<PositionOccurrence>,
     ) {
@@ -161,6 +164,7 @@ class GameParserService(
                         movePlayed = move.san,
                         playerColor = userColor,
                         decisionTimeMs = decisionTimes[index + 1],
+                        remainingClockMs = remainingClocks[index + 1],
                     ),
                 )
             }
@@ -220,6 +224,7 @@ class GameParserService(
                 movePlayed = occurrence.movePlayed,
                 playerColor = occurrence.playerColor,
                 decisionTimeMs = occurrence.decisionTimeMs,
+                remainingClockMs = occurrence.remainingClockMs,
             )
         }
 
@@ -248,6 +253,7 @@ class GameParserService(
                     occurrence.movePlayed,
                     occurrence.playerColor,
                     occurrence.decisionTimeMs,
+                    occurrence.remainingClockMs,
                     occurrence.createdAt,
                 )
             }
@@ -272,6 +278,7 @@ class GameParserService(
                     occurrence.plyNumber,
                     occurrence.playerColor,
                     occurrence.decisionTimeMs,
+                    occurrence.remainingClockMs,
                 )
             } else {
                 newOccurrences.add(occurrence)
@@ -303,6 +310,35 @@ class GameParserService(
         if (!validateClockCounts(pgn, comments)) return emptyMap()
 
         return calculatePlyDecisionTimes(moves, playerColor, comments, clockConfig) ?: emptyMap()
+    }
+
+    private fun deriveRemainingClocks(
+        comments: Map<Int, String>,
+        moves: MoveList,
+        playerColor: String,
+    ): Map<Int, Long> {
+        if (comments.isEmpty()) return emptyMap()
+        val result = mutableMapOf<Int, Long>()
+        for ((index, _) in moves.withIndex()) {
+            val isPlayerMove = (index % 2 == 0 && playerColor == "WHITE") || (index % 2 != 0 && playerColor == "BLACK")
+            if (!isPlayerMove) continue
+            val plyNumber = index + 1
+            val clockMs = parsePlyRemainingClock(comments[plyNumber]) ?: continue
+            result[plyNumber] = clockMs
+        }
+        return result
+    }
+
+    private fun parsePlyRemainingClock(comment: String?): Long? {
+        if (comment == null) return null
+        val clocks =
+            CLOCK_TAG_PATTERN
+                .findAll(comment)
+                .map { it.groupValues[1].trim() }
+                .toList()
+        if (clocks.size != 1) return null
+        val clockMs = parseClockMs(clocks.single()) ?: return null
+        return if (clockMs >= 0) clockMs else null
     }
 
     private data class ClockConfig(

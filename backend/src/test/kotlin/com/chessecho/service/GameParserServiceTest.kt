@@ -41,6 +41,7 @@ import javax.sql.DataSource
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class GameParserServiceTest {
@@ -283,7 +284,18 @@ class GameParserServiceTest {
         whenever(positionRepository.findByHash(any())).thenReturn(null)
         whenever(positionRepository.insertIfAbsent(any(), any(), any(), any())).thenReturn(1)
         whenever(
-            positionOccurrenceRepository.insertOrRefreshDecisionTime(any(), any(), any(), any(), any(), any(), any(), anyOrNull(), any()),
+            positionOccurrenceRepository.insertOrRefreshDecisionTime(
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                anyOrNull(),
+                anyOrNull(),
+                any(),
+            ),
         ).thenReturn(1)
         val nativeParser = GameParserService(positionRepository, positionOccurrenceRepository, postgresqlMetadataDataSource())
 
@@ -317,7 +329,7 @@ class GameParserServiceTest {
         h2Parser.parseAndSavePositions(listOf(sampleGame("h2-game")))
 
         verify(positionOccurrenceRepository, never())
-            .insertOrRefreshDecisionTime(any(), any(), any(), any(), any(), any(), any(), anyOrNull(), any())
+            .insertOrRefreshDecisionTime(any(), any(), any(), any(), any(), any(), any(), anyOrNull(), anyOrNull(), any())
         verify(positionRepository, never()).insertIfAbsent(any(), any(), any(), any())
         verify(positionOccurrenceRepository).saveAll(any<List<PositionOccurrence>>())
     }
@@ -328,7 +340,18 @@ class GameParserServiceTest {
         whenever(positionRepository.findByHash(any())).thenReturn(null)
         whenever(positionRepository.insertIfAbsent(any(), any(), any(), any())).thenReturn(1)
         whenever(
-            positionOccurrenceRepository.insertOrRefreshDecisionTime(any(), any(), any(), any(), any(), any(), any(), anyOrNull(), any()),
+            positionOccurrenceRepository.insertOrRefreshDecisionTime(
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                any(),
+                anyOrNull(),
+                anyOrNull(),
+                any(),
+            ),
         ).thenReturn(1)
         val postgresParser =
             GameParserService(positionRepository, positionOccurrenceRepository, metadataDataSource("PostgreSQL"))
@@ -336,7 +359,7 @@ class GameParserServiceTest {
         postgresParser.parseAndSavePositions(listOf(sampleGame("pg-game")))
 
         verify(positionOccurrenceRepository, atLeastOnce())
-            .insertOrRefreshDecisionTime(any(), any(), any(), any(), any(), any(), any(), anyOrNull(), any())
+            .insertOrRefreshDecisionTime(any(), any(), any(), any(), any(), any(), any(), anyOrNull(), anyOrNull(), any())
         verify(positionOccurrenceRepository, never()).saveAll(any<List<PositionOccurrence>>())
     }
 
@@ -559,6 +582,72 @@ class GameParserServiceTest {
         assertEquals(10_000L, captured[0].decisionTimeMs)
         // Ply 3: starting 7,190,000ms - 1:59:40.500 (7,180,500ms) = 9,500ms
         assertEquals(9_500L, captured[1].decisionTimeMs)
+    }
+
+    @Test
+    fun `parseAndSavePositions preserves remainingClockMs from clk annotations and defaults to null when absent`() {
+        whenever(positionRepository.findByHashIn(any())).thenReturn(emptyList())
+        whenever(positionRepository.saveAll(any<List<Position>>())).thenAnswer { it.getArgument<List<Position>>(0) }
+
+        val account = ChessAccount(platform = "CHESS_COM", username = "clocktester")
+        val gameWithClocks =
+            Game(
+                chessAccount = account,
+                platformGameId = "clk-game-1",
+                whiteUsername = "clocktester",
+                blackUsername = "opponent",
+                pgn =
+                    """
+                    [Event "Live Chess"]
+                    [Site "Chess.com"]
+                    [Date "2024.01.01"]
+                    [White "clocktester"]
+                    [Black "opponent"]
+                    [Result "1/2-1/2"]
+                    [TimeControl "180+2"]
+
+                    1. e4 {[%clk 0:03:01.5]} 1... e5 {[%clk 0:03:00.0]} 2. Nf3 {[%clk 0:02:55]} 1/2-1/2
+                    """.trimIndent(),
+                timeControl = "180+2",
+                playedAt = Instant.now(),
+            )
+        val gameWithoutClocks =
+            Game(
+                chessAccount = account,
+                platformGameId = "clk-game-2",
+                whiteUsername = "clocktester",
+                blackUsername = "opponent",
+                pgn =
+                    """
+                    [Event "Live Chess"]
+                    [Site "Chess.com"]
+                    [Date "2024.01.01"]
+                    [White "clocktester"]
+                    [Black "opponent"]
+                    [Result "1/2-1/2"]
+
+                    1. d4 d5 2. c4 1/2-1/2
+                    """.trimIndent(),
+                timeControl = "300",
+                playedAt = Instant.now(),
+            )
+
+        gameParserService.parseAndSavePositions(listOf(gameWithClocks, gameWithoutClocks))
+
+        val occurrences = argumentCaptor<List<PositionOccurrence>>()
+        verify(positionOccurrenceRepository).saveAll(occurrences.capture())
+        val captured = occurrences.firstValue
+        assertEquals(4, captured.size)
+
+        // gameWithClocks:
+        // Ply 1: 0:03:01.5 = 181.5s = 181500ms
+        assertEquals(181500L, captured[0].remainingClockMs)
+        // Ply 3: 0:02:55 = 175s = 175000ms
+        assertEquals(175000L, captured[1].remainingClockMs)
+
+        // gameWithoutClocks:
+        assertNull(captured[2].remainingClockMs)
+        assertNull(captured[3].remainingClockMs)
     }
 
     @Test
