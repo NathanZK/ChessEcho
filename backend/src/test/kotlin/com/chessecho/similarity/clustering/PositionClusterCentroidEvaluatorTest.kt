@@ -129,4 +129,29 @@ class PositionClusterCentroidEvaluatorTest {
         assertNull(isolateAssignment.clusterIndex)
         assertNull(isolateAssignment.centroidSimilarity)
     }
+
+    @Test
+    fun `assigns member when centroid similarity is exactly equal to threshold`() {
+        val v1 = createVector("fen_a", mapOf("P(e4)" to 1.0, "N(f3)" to 1.0))
+        val v2 = createVector("fen_b", mapOf("P(e4)" to 1.0, "N(f3)" to 1.0))
+
+        val simResult =
+            evaluator.evaluateClusters(
+                vectors = listOf(v1, v2),
+                communityAssignments = mapOf(v1.positionId to 0, v2.positionId to 0),
+                centroidThreshold = 0.0,
+            )
+        val actualSim = simResult.assignments[0].centroidSimilarity!!
+
+        val boundaryResult =
+            evaluator.evaluateClusters(
+                vectors = listOf(v1, v2),
+                communityAssignments = mapOf(v1.positionId to 0, v2.positionId to 0),
+                centroidThreshold = actualSim,
+            )
+
+        val a1 = boundaryResult.assignments.first { it.positionId == v1.positionId }
+        assertEquals(ClusterAssignmentStatus.ASSIGNED, a1.status)
+        assertEquals(0, a1.clusterIndex)
+    }
 }

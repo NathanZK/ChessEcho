@@ -15,6 +15,11 @@ import java.io.Serializable
 import java.time.Instant
 import java.util.UUID
 
+enum class ClusterType {
+    STRUCTURAL,
+    DYNAMIC,
+}
+
 enum class PositionClusterSnapshotStatus {
     GENERATING,
     ACTIVE,
@@ -34,8 +39,8 @@ enum class PositionClusterAssignmentStatus {
     name = "position_cluster_snapshot",
     uniqueConstraints = [
         UniqueConstraint(
-            name = "uk_position_cluster_snapshot_account_version",
-            columnNames = ["account_id", "snapshot_version"],
+            name = "uk_position_cluster_snapshot_account_type_version",
+            columnNames = ["account_id", "cluster_type", "snapshot_version"],
         ),
     ],
 )
@@ -46,6 +51,9 @@ class PositionClusterSnapshot(
     val accountId: UUID,
     @Column(name = "snapshot_version", nullable = false)
     val snapshotVersion: Int,
+    @Enumerated(EnumType.STRING)
+    @Column(name = "cluster_type", nullable = false)
+    val clusterType: ClusterType = ClusterType.STRUCTURAL,
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false)
     var status: PositionClusterSnapshotStatus = PositionClusterSnapshotStatus.GENERATING,

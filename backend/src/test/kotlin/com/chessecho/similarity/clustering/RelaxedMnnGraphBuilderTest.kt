@@ -206,4 +206,73 @@ class RelaxedMnnGraphBuilderTest {
             }
         assertEquals(0, isolateEdges.size)
     }
+
+    @Test
+    fun `creates mutual top-k edge when similarity is exactly equal to floor threshold`() {
+        val mockScorer = org.mockito.Mockito.mock(PositionClusterSimilarityScorer::class.java)
+        val customBuilder = RelaxedMnnGraphBuilder(mockScorer)
+        val v1 = createVector("fen_a", mapOf("P(e4)" to 1.0))
+        val v2 = createVector("fen_b", mapOf("P(e4)" to 1.0))
+
+        org.mockito.Mockito
+            .`when`(mockScorer.cosineSimilarity(v1, v2))
+            .thenReturn(0.40)
+        org.mockito.Mockito
+            .`when`(mockScorer.cosineSimilarity(v2, v1))
+            .thenReturn(0.40)
+
+        val graph =
+            customBuilder.buildGraph(
+                vectors = listOf(v1, v2),
+                topK = 5,
+                floorThreshold = 0.40,
+                top1Threshold = 0.65,
+            )
+
+        assertEquals(1, graph.edges.size)
+        assertEquals(0.40, graph.edges[0].weight, 1e-6)
+    }
+
+    @Test
+    fun `creates asymmetric edge when similarity is exactly equal to top-1 threshold`() {
+        val mockScorer = org.mockito.Mockito.mock(PositionClusterSimilarityScorer::class.java)
+        val customBuilder = RelaxedMnnGraphBuilder(mockScorer)
+        val v1 = createVector("fen_a", mapOf("P(e4)" to 1.0))
+        val v2 = createVector("fen_b", mapOf("P(e4)" to 1.0))
+        val v3 = createVector("fen_c", mapOf("P(e4)" to 1.0))
+
+        org.mockito.Mockito
+            .`when`(mockScorer.cosineSimilarity(v1, v2))
+            .thenReturn(0.65)
+        org.mockito.Mockito
+            .`when`(mockScorer.cosineSimilarity(v2, v1))
+            .thenReturn(0.35)
+        org.mockito.Mockito
+            .`when`(mockScorer.cosineSimilarity(v1, v3))
+            .thenReturn(0.10)
+        org.mockito.Mockito
+            .`when`(mockScorer.cosineSimilarity(v3, v1))
+            .thenReturn(0.10)
+        org.mockito.Mockito
+            .`when`(mockScorer.cosineSimilarity(v2, v3))
+            .thenReturn(0.90)
+        org.mockito.Mockito
+            .`when`(mockScorer.cosineSimilarity(v3, v2))
+            .thenReturn(0.90)
+
+        val graph =
+            customBuilder.buildGraph(
+                vectors = listOf(v1, v2, v3),
+                topK = 1,
+                floorThreshold = 0.40,
+                top1Threshold = 0.65,
+            )
+
+        val v1v2Edge =
+            graph.edges.find {
+                (it.sourceId == v1.positionId && it.targetId == v2.positionId) ||
+                    (it.sourceId == v2.positionId && it.targetId == v1.positionId)
+            }
+        assertTrue(v1v2Edge != null, "Asymmetric edge at exactly top-1 threshold must be included")
+    }
 }

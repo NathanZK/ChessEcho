@@ -1,6 +1,7 @@
 package com.chessecho.service.clustering
 
 import com.chessecho.config.PositionClusteringProperties
+import com.chessecho.domain.clustering.ClusterType
 import com.chessecho.domain.clustering.PositionCluster
 import com.chessecho.domain.clustering.PositionClusterAssignment
 import com.chessecho.domain.clustering.PositionClusterAssignmentId
@@ -11,12 +12,15 @@ import com.chessecho.repository.ChessAccountRepository
 import com.chessecho.repository.clustering.PositionClusterAssignmentRepository
 import com.chessecho.repository.clustering.PositionClusterRepository
 import com.chessecho.repository.clustering.PositionClusterSnapshotRepository
+import com.chessecho.service.similarity.PersonalDynamicCorpusProvider
 import com.chessecho.service.similarity.PersonalPositionCorpusProvider
+import com.chessecho.similarity.DynamicInvertedIndex
 import com.chessecho.similarity.PositionDocument
 import com.chessecho.similarity.PositionInvertedIndex
 import com.chessecho.similarity.clustering.ClusterEvaluationResult
 import com.chessecho.similarity.clustering.PositionClusterCentroidEvaluator
 import com.chessecho.similarity.clustering.PositionClusterSimilarityScorer
+import com.chessecho.similarity.clustering.PositionClusterVector
 import com.chessecho.similarity.clustering.PositionLeidenCommunityDetector
 import com.chessecho.similarity.clustering.RelaxedMnnGraphBuilder
 import com.fasterxml.jackson.databind.ObjectMapper
@@ -28,6 +32,7 @@ import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.ln
+import kotlin.math.sqrt
 
 @Service
 class PositionClusteringService(
@@ -36,11 +41,17 @@ class PositionClusteringService(
     private val assignmentRepository: PositionClusterAssignmentRepository,
     private val accountRepository: ChessAccountRepository,
     private val corpusProvider: PersonalPositionCorpusProvider,
+    private val dynamicCorpusProvider: PersonalDynamicCorpusProvider,
     private val properties: PositionClusteringProperties,
     private val objectMapper: ObjectMapper,
     private val transactionManager: PlatformTransactionManager,
 ) {
-    private val activeAccountLocks = ConcurrentHashMap.newKeySet<UUID>()
+    private data class AccountLockKey(
+        val accountId: UUID,
+        val clusterType: ClusterType,
+    )
+
+    private val activeAccountLocks = ConcurrentHashMap.newKeySet<AccountLockKey>()
     private val scorer = PositionClusterSimilarityScorer()
     private val graphBuilder = RelaxedMnnGraphBuilder(scorer)
     private val communityDetector = PositionLeidenCommunityDetector()
@@ -57,30 +68,46 @@ class PositionClusteringService(
 
     fun <T> withAccountLock(
         accountId: UUID,
+        clusterType: ClusterType = ClusterType.STRUCTURAL,
         block: () -> T,
     ): T {
-        if (!activeAccountLocks.add(accountId)) {
-            throw IllegalStateException("Clustering generation already in progress for account $accountId")
+        val key = AccountLockKey(accountId, clusterType)
+        if (!activeAccountLocks.add(key)) {
+            throw IllegalStateException(
+                "Clustering generation already in progress for account $accountId and cluster type $clusterType",
+            )
         }
         return try {
             block()
         } finally {
-            activeAccountLocks.remove(accountId)
+            activeAccountLocks.remove(key)
         }
     }
 
+    fun <T> withAccountLock(
+        accountId: UUID,
+        block: () -> T,
+    ): T = withAccountLock(accountId, ClusterType.STRUCTURAL, block)
+
     fun generateClusterSnapshot(
         accountId: UUID,
+        clusterType: ClusterType = ClusterType.STRUCTURAL,
         promoteToActive: Boolean = true,
     ): CompletableFuture<PositionClusterSnapshot> =
         CompletableFuture.supplyAsync {
-            withAccountLock(accountId) {
-                executePipeline(accountId, promoteToActive)
+            withAccountLock(accountId, clusterType) {
+                executePipeline(accountId, clusterType, promoteToActive)
             }
         }
 
+    fun generateClusterSnapshot(
+        accountId: UUID,
+        promoteToActive: Boolean,
+    ): CompletableFuture<PositionClusterSnapshot> = generateClusterSnapshot(accountId, ClusterType.STRUCTURAL, promoteToActive)
+
     private fun executePipeline(
         accountId: UUID,
+        clusterType: ClusterType,
         promoteToActive: Boolean,
     ): PositionClusterSnapshot {
         val account =
@@ -91,11 +118,15 @@ class PositionClusteringService(
         val txTemplate = TransactionTemplate(transactionManager)
         val snapshot =
             txTemplate.execute {
-                createInitialSnapshot(accountId)
+                createInitialSnapshot(accountId, clusterType)
             } ?: throw IllegalStateException("Failed to initialize snapshot")
 
         return try {
-            val positions = corpusProvider.loadPersonalPositions(account)
+            val positions =
+                when (clusterType) {
+                    ClusterType.STRUCTURAL -> corpusProvider.loadPersonalPositions(account)
+                    ClusterType.DYNAMIC -> dynamicCorpusProvider.loadPersonalDynamicPositions(account)
+                }
             if (positions.isEmpty()) {
                 txTemplate.execute {
                     publishEmptySnapshot(snapshot.id, accountId, promoteToActive)
@@ -114,12 +145,16 @@ class PositionClusteringService(
         }
     }
 
-    private fun createInitialSnapshot(accountId: UUID): PositionClusterSnapshot {
-        val maxVersion = snapshotRepository.findMaxVersionByAccountId(accountId)
+    private fun createInitialSnapshot(
+        accountId: UUID,
+        clusterType: ClusterType,
+    ): PositionClusterSnapshot {
+        val maxVersion = snapshotRepository.findMaxVersionByAccountIdAndClusterType(accountId, clusterType)
         val snapshot =
             PositionClusterSnapshot(
                 accountId = accountId,
                 snapshotVersion = maxVersion + 1,
+                clusterType = clusterType,
                 status = PositionClusterSnapshotStatus.GENERATING,
                 alpha = properties.alpha,
                 topK = properties.topK,
@@ -138,10 +173,12 @@ class PositionClusteringService(
     ): PositionClusterSnapshot {
         val snapshot = snapshotRepository.findById(snapshotId).orElseThrow()
         if (promoteToActive) {
-            snapshotRepository.updateStatusForAccount(
-                accountId,
-                PositionClusterSnapshotStatus.ACTIVE,
-                PositionClusterSnapshotStatus.SUPERSEDED,
+            snapshotRepository.updateStatusForAccountAndClusterType(
+                accountId = accountId,
+                clusterType = snapshot.clusterType,
+                oldStatus = PositionClusterSnapshotStatus.ACTIVE,
+                newStatus = PositionClusterSnapshotStatus.SUPERSEDED,
+                currentVersion = snapshot.snapshotVersion,
             )
             snapshot.status = PositionClusterSnapshotStatus.ACTIVE
         } else {
@@ -154,7 +191,16 @@ class PositionClusteringService(
         return snapshotRepository.save(snapshot)
     }
 
-    private fun computeClustering(positions: List<PositionDocument>): ClusterEvaluationResult {
+    fun computeClustering(
+        positions: List<PositionDocument>,
+        clusterType: ClusterType = ClusterType.STRUCTURAL,
+    ): ClusterEvaluationResult =
+        when (clusterType) {
+            ClusterType.STRUCTURAL -> computeStructuralClustering(positions)
+            ClusterType.DYNAMIC -> computeDynamicClustering(positions)
+        }
+
+    private fun computeStructuralClustering(positions: List<PositionDocument>): ClusterEvaluationResult {
         val totalDocs = positions.size
         val dfMap = mutableMapOf<String, Int>()
         positions.forEach { p ->
@@ -213,6 +259,114 @@ class PositionClusteringService(
         )
     }
 
+    private fun computeDynamicClustering(positions: List<PositionDocument>): ClusterEvaluationResult {
+        val vectors = buildDynamicVectors(positions)
+        val candidateMap = buildDynamicCandidateMap(positions)
+
+        val graph =
+            graphBuilder.buildGraph(
+                vectors = vectors,
+                candidateMap = candidateMap,
+                topK = properties.topK,
+                floorThreshold = properties.floorThreshold,
+                top1Threshold = properties.top1Threshold,
+            )
+
+        val detectionResult =
+            communityDetector.detectCommunities(
+                graph = graph,
+                rbResolution = properties.rbResolution,
+            )
+
+        return centroidEvaluator.evaluateClusters(
+            vectors = vectors,
+            communityAssignments = detectionResult.assignments,
+            centroidThreshold = properties.centroidThreshold,
+        )
+    }
+
+    fun buildDynamicVectors(positions: List<PositionDocument>): List<PositionClusterVector> {
+        val evaluatedPositions = positions.filter { it.terms.isNotEmpty() }
+        val totalDocs = evaluatedPositions.size
+        val dfMap = mutableMapOf<String, Int>()
+        evaluatedPositions.forEach { p ->
+            p.terms.keys.forEach { t -> dfMap.merge(t, 1, Int::plus) }
+        }
+        val idfMap =
+            dfMap.mapValues { (_, df) ->
+                ln(1.0 + ((totalDocs - df + 0.5) / (df + 0.5)))
+            }
+
+        return positions.map { doc ->
+            buildSingleDynamicVector(doc, idfMap)
+        }
+    }
+
+    private fun buildSingleDynamicVector(
+        doc: PositionDocument,
+        idfMap: Map<String, Double>,
+    ): PositionClusterVector {
+        if (doc.terms.isEmpty()) {
+            return PositionClusterVector(
+                positionId = doc.positionId,
+                canonicalFen = doc.canonicalFen,
+                rawTerms = emptyMap(),
+                weightedTerms = emptyMap(),
+                pawnSubvectorNorm = 0.0,
+                pieceSubvectorNorm = 0.0,
+                totalNorm = 0.0,
+            )
+        }
+        val weighted = mutableMapOf<String, Double>()
+        doc.terms.forEach { (term, tf) ->
+            val idf = idfMap[term] ?: 0.0
+            val w = tf * idf
+            if (w > 0.0) weighted[term] = w
+        }
+        val rawNorm = sqrt(weighted.values.sumOf { it * it })
+        if (rawNorm == 0.0) {
+            return PositionClusterVector(
+                positionId = doc.positionId,
+                canonicalFen = doc.canonicalFen,
+                rawTerms = doc.terms,
+                weightedTerms = emptyMap(),
+                pawnSubvectorNorm = 0.0,
+                pieceSubvectorNorm = 0.0,
+                totalNorm = 0.0,
+            )
+        }
+        val normalized = weighted.mapValues { (_, w) -> w / rawNorm }
+        return PositionClusterVector(
+            positionId = doc.positionId,
+            canonicalFen = doc.canonicalFen,
+            rawTerms = doc.terms,
+            weightedTerms = normalized,
+            pawnSubvectorNorm = 0.0,
+            pieceSubvectorNorm = 1.0,
+            totalNorm = 1.0,
+        )
+    }
+
+    private fun buildDynamicCandidateMap(positions: List<PositionDocument>): Map<UUID, List<UUID>> {
+        val evaluatedDocs = positions.filter { it.terms.isNotEmpty() }
+        if (evaluatedDocs.isEmpty()) return emptyMap()
+
+        val dynamicIndex = DynamicInvertedIndex(evaluatedDocs)
+        return positions.associate { doc ->
+            if (doc.terms.isEmpty()) {
+                doc.positionId to emptyList()
+            } else {
+                val candidates =
+                    dynamicIndex.retrieveCandidates(
+                        queryTerms = doc.terms.keys,
+                        activeTurn = doc.sideToMove,
+                        maxCandidates = properties.candidateLimit,
+                    )
+                doc.positionId to candidates.map { it.positionId }
+            }
+        }
+    }
+
     private fun publishCompletedSnapshot(
         snapshotId: UUID,
         accountId: UUID,
@@ -248,10 +402,12 @@ class PositionClusteringService(
 
         val snapshot = snapshotRepository.findById(snapshotId).orElseThrow()
         if (promoteToActive) {
-            snapshotRepository.updateStatusForAccount(
-                accountId,
-                PositionClusterSnapshotStatus.ACTIVE,
-                PositionClusterSnapshotStatus.SUPERSEDED,
+            snapshotRepository.updateStatusForAccountAndClusterType(
+                accountId = accountId,
+                clusterType = snapshot.clusterType,
+                oldStatus = PositionClusterSnapshotStatus.ACTIVE,
+                newStatus = PositionClusterSnapshotStatus.SUPERSEDED,
+                currentVersion = snapshot.snapshotVersion,
             )
             snapshot.status = PositionClusterSnapshotStatus.ACTIVE
         } else {
@@ -282,8 +438,17 @@ class PositionClusteringService(
         return snapshotRepository.save(snapshot)
     }
 
-    fun getActiveSnapshot(accountId: UUID): PositionClusterSnapshot? =
-        snapshotRepository.findByAccountIdAndStatus(accountId, PositionClusterSnapshotStatus.ACTIVE)
+    fun getActiveSnapshot(
+        accountId: UUID,
+        clusterType: ClusterType = ClusterType.STRUCTURAL,
+    ): PositionClusterSnapshot? =
+        snapshotRepository.findByAccountIdAndClusterTypeAndStatus(
+            accountId,
+            clusterType,
+            PositionClusterSnapshotStatus.ACTIVE,
+        )
+
+    fun getActiveSnapshot(accountId: UUID): PositionClusterSnapshot? = getActiveSnapshot(accountId, ClusterType.STRUCTURAL)
 
     fun getClustersForSnapshot(snapshotId: UUID): List<PositionCluster> {
         val snapshot = snapshotRepository.findById(snapshotId).orElse(null) ?: return emptyList()
