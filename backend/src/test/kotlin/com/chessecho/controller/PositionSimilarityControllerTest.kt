@@ -2,6 +2,7 @@ package com.chessecho.controller
 
 import com.chessecho.domain.ChessAccount
 import com.chessecho.domain.Platform
+import com.chessecho.domain.SimilarityRetrievalMode
 import com.chessecho.service.AccountOwnershipService
 import com.chessecho.service.PrincipalVariation
 import com.chessecho.service.SearchStatus
@@ -109,6 +110,7 @@ class PositionSimilarityControllerTest {
                 limit = eq(20),
                 depth = eq(8),
                 multiPv = eq(2),
+                mode = eq(SimilarityRetrievalMode.STRUCTURAL),
             ),
         ).thenReturn(mockResult)
 
@@ -141,6 +143,59 @@ class PositionSimilarityControllerTest {
             limit = eq(20),
             depth = eq(8),
             multiPv = eq(2),
+            mode = eq(SimilarityRetrievalMode.STRUCTURAL),
+        )
+    }
+
+    @Test
+    fun `rejects invalid retrieval mode with 400 bad request`() {
+        whenever(accountOwnershipService.resolvePrivateRead(eq(Platform.CHESS_COM), eq("testuser"), anyOrNull()))
+            .thenReturn(testAccount)
+
+        mockMvc
+            .perform(
+                get("/api/positions/similar")
+                    .param("fen", queryFen)
+                    .param("username", "testuser")
+                    .param("mode", "UNKNOWN_MODE"),
+            ).andExpect(status().isBadRequest)
+    }
+
+    @Test
+    fun `accepts lowercase dynamic mode and forwards parsed enum`() {
+        val posId = UUID.randomUUID()
+        val mockResult = buildMockResult(posId).copy(mode = "DYNAMIC")
+        whenever(accountOwnershipService.resolvePrivateRead(eq(Platform.CHESS_COM), eq("testuser"), anyOrNull()))
+            .thenReturn(testAccount)
+        whenever(
+            positionSimilarityService.findSimilarPositions(
+                queryFen = eq(queryFen),
+                account = eq(testAccount),
+                minScore = eq(0.0),
+                limit = eq(20),
+                depth = eq(8),
+                multiPv = eq(1),
+                mode = eq(SimilarityRetrievalMode.DYNAMIC),
+            ),
+        ).thenReturn(mockResult)
+
+        mockMvc
+            .perform(
+                get("/api/positions/similar")
+                    .param("fen", queryFen)
+                    .param("username", "testuser")
+                    .param("mode", "dynamic"),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.mode").value("DYNAMIC"))
+
+        verify(positionSimilarityService).findSimilarPositions(
+            queryFen = eq(queryFen),
+            account = eq(testAccount),
+            minScore = eq(0.0),
+            limit = eq(20),
+            depth = eq(8),
+            multiPv = eq(1),
+            mode = eq(SimilarityRetrievalMode.DYNAMIC),
         )
     }
 

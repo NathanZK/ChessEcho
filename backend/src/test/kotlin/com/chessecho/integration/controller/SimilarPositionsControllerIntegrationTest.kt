@@ -292,19 +292,7 @@ class SimilarPositionsControllerIntegrationTest {
     }
 
     @Test
-    fun `authenticated user receives 200 with static fallback when dynamic similarity engine fails`() {
-        whenever(stockfishService.batchResolveContinuations(any(), any(), any())).thenAnswer { invocation ->
-            val candidates = invocation.getArgument<List<Pair<UUID, String>>>(1)
-            BatchContinuationResult(
-                queryResult = ContinuationResult(SearchStatus.FAILED, 0, emptyList()),
-                candidateResults = emptyMap(),
-                fallbackReason = "ENGINE_UNRESPONSIVE",
-                shortlistedCount = candidates.size,
-                engineAttemptedCount = 0,
-                engineCompletedCount = 0,
-            )
-        }
-
+    fun `authenticated user receives 200 with structural results without invoking engine`() {
         val userSession = createSession("owner-${UUID.randomUUID()}")
         val account = createAccount("owner-user-${UUID.randomUUID()}")
         connectAccount(userSession.principal.appUserId, account)
@@ -320,12 +308,40 @@ class SimilarPositionsControllerIntegrationTest {
 
         val body = objectMapper.readValue(response.body, SimilarPositionsResponse::class.java)
         assertEquals(queryFen, body.queryFen)
+        assertEquals("STRUCTURAL", body.mode)
         assertEquals(false, body.dynamicSimilarityApplied)
-        assertEquals("ENGINE_UNRESPONSIVE", body.fallbackReason)
+        assertEquals(null, body.fallbackReason)
         assertEquals(1, body.results.size)
         assertEquals(1, body.results[0].rank)
         assertEquals(0.0, body.results[0].dynamicScore)
         assertTrue(body.results[0].score > 0.0)
+    }
+
+    @Test
+    fun `authenticated user receives clean failure in dynamic mode when engine fails`() {
+        whenever(stockfishService.analyzeMultiPv(any(), any(), any())).thenThrow(
+            RuntimeException("Stockfish process crashed"),
+        )
+
+        val userSession = createSession("owner-${UUID.randomUUID()}")
+        val account = createAccount("owner-user-${UUID.randomUUID()}")
+        connectAccount(userSession.principal.appUserId, account)
+
+        val game = createGame(account, "https://www.chess.com/game/live/123456789")
+        val posFen = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3"
+        val position = createPosition(posFen)
+        createOccurrence(game, position, 4, "Nf3")
+
+        val queryFen = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/2N5/PPPP1PPP/R1BQKBNR w KQkq - 2 3"
+        val response = get(buildUrl(queryFen, accountId = account.id, mode = "DYNAMIC"), userSession.rawSecret)
+        assertEquals(HttpStatus.OK, response.statusCode)
+
+        val body = objectMapper.readValue(response.body, SimilarPositionsResponse::class.java)
+        assertEquals(queryFen, body.queryFen)
+        assertEquals("DYNAMIC", body.mode)
+        assertEquals(true, body.dynamicSimilarityApplied)
+        assertEquals("ENGINE_FAILED", body.fallbackReason)
+        assertTrue(body.results.isEmpty())
     }
 
     private fun buildUrl(
@@ -334,6 +350,7 @@ class SimilarPositionsControllerIntegrationTest {
         username: String? = null,
         minScore: Double? = null,
         limit: Int? = null,
+        mode: String? = null,
     ): java.net.URI {
         val builder =
             UriComponentsBuilder
@@ -343,6 +360,7 @@ class SimilarPositionsControllerIntegrationTest {
         if (username != null) builder.queryParam("username", username)
         if (minScore != null) builder.queryParam("minScore", minScore)
         if (limit != null) builder.queryParam("limit", limit)
+        if (mode != null) builder.queryParam("mode", mode)
         return builder.build().toUri()
     }
 

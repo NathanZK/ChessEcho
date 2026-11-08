@@ -1,15 +1,19 @@
 package com.chessecho.service.similarity
 
 import com.chessecho.domain.ChessAccount
+import com.chessecho.domain.SimilarityRetrievalMode
 import com.chessecho.repository.PositionOccurrenceRepository
 import com.chessecho.service.BatchContinuationResult
 import com.chessecho.service.ContinuationResult
+import com.chessecho.service.EngineCandidate
+import com.chessecho.service.EvalScore
 import com.chessecho.service.GameOutcomeNormalizer
 import com.chessecho.service.PgnHeaderTagReader
 import com.chessecho.service.PrincipalVariation
 import com.chessecho.service.SearchStatus
 import com.chessecho.service.StockfishService
 import com.chessecho.similarity.DynamicTacticalScorer
+import com.chessecho.similarity.PositionDocument
 import com.chessecho.similarity.PositionSimilarityScorer
 import com.chessecho.similarity.RelationalPawnTokenExtractor
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -18,8 +22,10 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.verifyNoInteractions
 import org.mockito.kotlin.any
 import org.mockito.kotlin.eq
+import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import java.util.UUID
 
@@ -35,6 +41,8 @@ class PositionSimilarityServiceTest {
     private val concurrencyManager = SimilarityConcurrencyManager(maxConcurrentSessions = 2)
     private val dynamicScorer = DynamicTacticalScorer()
     private val gameOutcomeNormalizer = GameOutcomeNormalizer(PgnHeaderTagReader())
+    private val dynamicCache = DynamicSimilarityCache()
+    private val personalDynamicCorpusProvider: PersonalDynamicCorpusProvider = mock()
 
     private lateinit var service: PositionSimilarityService
 
@@ -86,6 +94,8 @@ class PositionSimilarityServiceTest {
                 concurrencyManager = concurrencyManager,
                 dynamicScorer = dynamicScorer,
                 gameOutcomeNormalizer = gameOutcomeNormalizer,
+                dynamicCache = dynamicCache,
+                personalDynamicCorpusProvider = personalDynamicCorpusProvider,
             )
     }
 
@@ -440,208 +450,196 @@ class PositionSimilarityServiceTest {
     }
 
     @Test
-    fun `1 candidates with mismatched playerColor and activeTurn never reach Stockfish`() {
+    fun `structural mode never invokes Stockfish or dynamic cache`() {
         val posId1 = UUID.randomUUID()
-        val posId2 = UUID.randomUUID()
-
         val doc1 = tokenExtractor.extractDocument(posId1, candidateFen1, includeReachability = true)
-        val doc2 = tokenExtractor.extractDocument(posId2, candidateFen2, includeReachability = true)
-        whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(listOf(doc1, doc2))
+        whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(listOf(doc1))
+
+        val game = createTestGame(account)
+        val occ = createTestOccurrence(account, game, posId1, candidateFen1, playerColor = "WHITE", movePlayed = "Nf3", plyNumber = 3)
+        whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
+            .thenReturn(listOf(occ))
+
+        val result =
+            service.findSimilarPositions(
+                queryFen = queryFen,
+                account = account,
+                mode = SimilarityRetrievalMode.STRUCTURAL,
+            )
+
+        assertEquals("STRUCTURAL", result.mode)
+        assertFalse(result.dynamicSimilarityApplied)
+        assertEquals(1, result.results.size)
+        assertEquals(0.0, result.results[0].dynamicScore)
+        assertEquals(result.results[0].score, result.results[0].staticScore)
+
+        verifyNoInteractions(stockfishService)
+        verifyNoInteractions(personalDynamicCorpusProvider)
+    }
+
+    @Test
+    fun `dynamic mode invokes Stockfish at D10 MultiPV 1, retrieves from DynamicSimilarityCache and qualifies candidates`() {
+        val posId = UUID.randomUUID()
+        val dynTokens = dynamicScorer.extractDynamicTokens(queryFen, listOf("e2e4"))
+        val dynDoc =
+            PositionDocument(
+                positionId = posId,
+                fen = candidateFen1,
+                canonicalFen = PositionDocument.canonicalizeFen(candidateFen1),
+                sideToMove = "w",
+                terms = dynTokens,
+            )
+        whenever(personalDynamicCorpusProvider.loadPersonalDynamicPositions(account))
+            .thenReturn(listOf(dynDoc))
+
+        whenever(stockfishService.analyzeMultiPv(eq(queryFen), eq(10), eq(1)))
+            .thenReturn(listOf(EngineCandidate(move = "e2e4", score = EvalScore(cp = 50, mate = null))))
+
+        val game = createTestGame(account)
+        val occ = createTestOccurrence(account, game, posId, candidateFen1, playerColor = "WHITE", movePlayed = "e4", plyNumber = 1)
+        whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
+            .thenReturn(listOf(occ))
+
+        val result =
+            service.findSimilarPositions(
+                queryFen = queryFen,
+                account = account,
+                mode = SimilarityRetrievalMode.DYNAMIC,
+            )
+
+        assertEquals("DYNAMIC", result.mode)
+        assertTrue(result.dynamicSimilarityApplied)
+        assertEquals(1, result.results.size)
+        assertEquals(posId, result.results[0].positionId)
+        assertEquals(1, result.results[0].rank)
+        assertTrue(result.results[0].dynamicScore > 0.0)
+        verify(stockfishService).analyzeMultiPv(eq(queryFen), eq(10), eq(1))
+        verify(personalDynamicCorpusProvider).loadPersonalDynamicPositions(account)
+    }
+
+    @Test
+    fun `dynamic mode candidate qualification filters out mismatched playerColor`() {
+        val posId1 = UUID.randomUUID()
+        val dynTokens = dynamicScorer.extractDynamicTokens(queryFen, listOf("e2e4"))
+        val dynDoc1 =
+            PositionDocument(
+                positionId = posId1,
+                fen = candidateFen1,
+                canonicalFen = PositionDocument.canonicalizeFen(candidateFen1),
+                sideToMove = "w",
+                terms = dynTokens,
+            )
+        whenever(personalDynamicCorpusProvider.loadPersonalDynamicPositions(account))
+            .thenReturn(listOf(dynDoc1))
+
+        whenever(stockfishService.analyzeMultiPv(eq(queryFen), eq(10), eq(1)))
+            .thenReturn(listOf(EngineCandidate(move = "e2e4", score = EvalScore(cp = 50, mate = null))))
 
         val game = createTestGame(account)
         val occ1 = createTestOccurrence(account, game, posId1, candidateFen1, playerColor = "BLACK", movePlayed = "c5", plyNumber = 3)
-        val occ2 = createTestOccurrence(account, game, posId2, candidateFen2, playerColor = "WHITE", movePlayed = "f3", plyNumber = 40)
         whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
-            .thenReturn(listOf(occ1, occ2))
+            .thenReturn(listOf(occ1))
 
-        service.findSimilarPositions(queryFen, account)
+        val result =
+            service.findSimilarPositions(
+                queryFen = queryFen,
+                account = account,
+                mode = SimilarityRetrievalMode.DYNAMIC,
+            )
 
-        val captor = org.mockito.kotlin.argumentCaptor<List<Pair<UUID, String>>>()
-        org.mockito.Mockito
-            .verify(stockfishService)
-            .batchResolveContinuations(eq(queryFen), captor.capture(), any())
-
-        val submittedIds = captor.firstValue.map { it.first }
-        assertFalse(submittedIds.contains(posId1), "Mismatched playerColor must never reach Stockfish")
-        assertTrue(submittedIds.contains(posId2), "Matching candidate must reach Stockfish")
+        assertEquals("DYNAMIC", result.mode)
+        assertTrue(result.results.isEmpty(), "Mismatched playerColor must be filtered out in dynamic mode")
     }
 
     @Test
-    fun `2 candidates without personal occurrences never reach Stockfish`() {
+    fun `dynamic mode candidate qualification filters out positions without occurrences`() {
         val posId1 = UUID.randomUUID()
-        val posId2 = UUID.randomUUID()
+        val dynTokens = dynamicScorer.extractDynamicTokens(queryFen, listOf("e2e4"))
+        val dynDoc1 =
+            PositionDocument(
+                positionId = posId1,
+                fen = candidateFen1,
+                canonicalFen = PositionDocument.canonicalizeFen(candidateFen1),
+                sideToMove = "w",
+                terms = dynTokens,
+            )
+        whenever(personalDynamicCorpusProvider.loadPersonalDynamicPositions(account))
+            .thenReturn(listOf(dynDoc1))
 
-        val doc1 = tokenExtractor.extractDocument(posId1, candidateFen1, includeReachability = true)
-        val doc2 = tokenExtractor.extractDocument(posId2, candidateFen2, includeReachability = true)
-        whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(listOf(doc1, doc2))
+        whenever(stockfishService.analyzeMultiPv(eq(queryFen), eq(10), eq(1)))
+            .thenReturn(listOf(EngineCandidate(move = "e2e4", score = EvalScore(cp = 50, mate = null))))
 
-        val game = createTestGame(account)
-        val occ2 = createTestOccurrence(account, game, posId2, candidateFen2)
         whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
-            .thenReturn(listOf(occ2))
+            .thenReturn(emptyList())
 
-        service.findSimilarPositions(queryFen, account)
+        val result =
+            service.findSimilarPositions(
+                queryFen = queryFen,
+                account = account,
+                mode = SimilarityRetrievalMode.DYNAMIC,
+            )
 
-        val captor = org.mockito.kotlin.argumentCaptor<List<Pair<UUID, String>>>()
-        org.mockito.Mockito
-            .verify(stockfishService)
-            .batchResolveContinuations(eq(queryFen), captor.capture(), any())
-
-        val submittedIds = captor.firstValue.map { it.first }
-        assertFalse(submittedIds.contains(posId1), "Candidate without occurrences must never reach Stockfish")
-        assertTrue(submittedIds.contains(posId2), "Candidate with occurrences must reach Stockfish")
+        assertEquals("DYNAMIC", result.mode)
+        assertTrue(result.results.isEmpty(), "Candidates without occurrences must be filtered out")
     }
 
     @Test
-    fun `3 the qualified engine shortlist never exceeds 100 candidates`() {
-        val fens = generateCandidateFens(105)
-        val docs =
-            fens.map { fen ->
-                tokenExtractor.extractDocument(UUID.randomUUID(), fen, includeReachability = true)
-            }
-        whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(docs)
+    fun `dynamic mode engine failure returns clean fallbackReason without running structural search`() {
+        whenever(stockfishService.analyzeMultiPv(eq(queryFen), any(), eq(1)))
+            .thenThrow(RuntimeException("Stockfish process crashed"))
 
-        val game = createTestGame(account)
-        val occs = docs.map { createTestOccurrence(account, game, it.positionId, it.fen) }
-        whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
-            .thenReturn(occs)
+        val result =
+            service.findSimilarPositions(
+                queryFen = queryFen,
+                account = account,
+                mode = SimilarityRetrievalMode.DYNAMIC,
+            )
 
-        val result = service.findSimilarPositions(queryFen, account)
-
-        val captor = org.mockito.kotlin.argumentCaptor<List<Pair<UUID, String>>>()
-        org.mockito.Mockito
-            .verify(stockfishService)
-            .batchResolveContinuations(eq(queryFen), captor.capture(), any())
-
-        assertEquals(100, captor.firstValue.size, "Engine shortlist must never exceed 100")
-        assertEquals(100, result.shortlistedCandidatesCount)
+        assertEquals("DYNAMIC", result.mode)
+        assertTrue(result.dynamicSimilarityApplied)
+        assertEquals("ENGINE_FAILED", result.fallbackReason)
+        assertEquals(SearchStatus.FAILED, result.queryStatus)
+        assertTrue(result.results.isEmpty())
+        verifyNoInteractions(corpusProvider)
     }
 
     @Test
-    fun `4 interrupted candidates receive dynamic score 0 0 and retain their static rank`() {
-        val posId1 = UUID.randomUUID()
-        val posId2 = UUID.randomUUID()
-        val posId3 = UUID.randomUUID()
+    fun `dynamic mode concurrency capacity exceeded returns clean fallbackReason without structural fallback`() {
+        val saturatingManager = SimilarityConcurrencyManager(maxConcurrentSessions = 1)
+        val constrainedService =
+            PositionSimilarityService(
+                corpusProvider = corpusProvider,
+                occurrenceRepository = occurrenceRepository,
+                tokenExtractor = tokenExtractor,
+                scorer = scorer,
+                urlBuilder = urlBuilder,
+                validator = validator,
+                cache = cache,
+                stockfishService = stockfishService,
+                concurrencyManager = saturatingManager,
+                dynamicScorer = dynamicScorer,
+                gameOutcomeNormalizer = gameOutcomeNormalizer,
+                dynamicCache = dynamicCache,
+                personalDynamicCorpusProvider = personalDynamicCorpusProvider,
+            )
 
-        val doc1 = tokenExtractor.extractDocument(posId1, candidateFen1, includeReachability = true)
-        val doc2 = tokenExtractor.extractDocument(posId2, candidateFen2, includeReachability = true)
-        val fen3 = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3"
-        val doc3 = tokenExtractor.extractDocument(posId3, fen3, includeReachability = true)
-        whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(listOf(doc1, doc2, doc3))
+        saturatingManager.withPermitOrFallback(
+            onPermitAcquired = {
+                val result =
+                    constrainedService.findSimilarPositions(
+                        queryFen = queryFen,
+                        account = account,
+                        mode = SimilarityRetrievalMode.DYNAMIC,
+                    )
 
-        val game = createTestGame(account)
-        val occs = listOf(doc1, doc2, doc3).map { createTestOccurrence(account, game, it.positionId, it.fen) }
-        whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
-            .thenReturn(occs)
-
-        whenever(stockfishService.batchResolveContinuations(any(), any(), any())).thenReturn(
-            BatchContinuationResult(
-                queryResult = completedContinuation(8, listOf("e2e4")),
-                candidateResults =
-                    mapOf(
-                        posId1 to completedContinuation(8, listOf("d2d4")),
-                        posId2 to interruptedContinuation(4),
-                        posId3 to interruptedContinuation(3),
-                    ),
-                fallbackReason = null,
-                shortlistedCount = 3,
-                engineAttemptedCount = 3,
-                engineCompletedCount = 1,
-            ),
+                assertEquals("DYNAMIC", result.mode)
+                assertTrue(result.dynamicSimilarityApplied)
+                assertEquals("CAPACITY_EXCEEDED", result.fallbackReason)
+                assertTrue(result.results.isEmpty())
+                verifyNoInteractions(stockfishService)
+                verifyNoInteractions(corpusProvider)
+            },
+            onCapacityExceeded = { error("Should acquire first permit") },
         )
-
-        val result = service.findSimilarPositions(queryFen, account)
-
-        assertEquals(3, result.results.size)
-        assertEquals(posId1, result.results[0].positionId)
-        assertEquals(SearchStatus.COMPLETED, result.results[0].searchStatus)
-        assertTrue(result.results[0].dynamicScore > 0.0)
-
-        assertEquals(posId3, result.results[1].positionId)
-        assertEquals(SearchStatus.INTERRUPTED, result.results[1].searchStatus)
-        assertEquals(0.0, result.results[1].dynamicScore)
-
-        assertEquals(posId2, result.results[2].positionId)
-        assertEquals(SearchStatus.INTERRUPTED, result.results[2].searchStatus)
-        assertEquals(0.0, result.results[2].dynamicScore)
-    }
-
-    @Test
-    fun `5 unrecoverable engine failure returns the original static ordering`() {
-        val posId1 = UUID.randomUUID()
-        val posId2 = UUID.randomUUID()
-
-        val doc1 = tokenExtractor.extractDocument(posId1, candidateFen1, includeReachability = true)
-        val doc2 = tokenExtractor.extractDocument(posId2, candidateFen2, includeReachability = true)
-        whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(listOf(doc1, doc2))
-
-        val game = createTestGame(account)
-        val occs = listOf(doc1, doc2).map { createTestOccurrence(account, game, it.positionId, it.fen) }
-        whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
-            .thenReturn(occs)
-
-        whenever(stockfishService.batchResolveContinuations(any(), any(), any())).thenReturn(
-            BatchContinuationResult(
-                queryResult = ContinuationResult(SearchStatus.FAILED, 0, emptyList()),
-                candidateResults = emptyMap(),
-                fallbackReason = "ENGINE_UNRESPONSIVE",
-                shortlistedCount = 2,
-                engineAttemptedCount = 0,
-                engineCompletedCount = 0,
-            ),
-        )
-
-        val result = service.findSimilarPositions(queryFen, account)
-
-        assertFalse(result.dynamicSimilarityApplied)
-        assertEquals("ENGINE_UNRESPONSIVE", result.fallbackReason)
-        assertEquals(2, result.results.size)
-        assertEquals(posId1, result.results[0].positionId)
-        assertEquals(1, result.results[0].rank)
-        assertEquals(posId2, result.results[1].positionId)
-        assertEquals(2, result.results[1].rank)
-        result.results.forEachIndexed { i, match ->
-            assertEquals(i + 1, match.rank, "Fallback match at index $i must have 1-based rank ${i + 1}")
-        }
-        assertTrue(result.results[0].score >= result.results[1].score)
-        assertEquals(result.results[0].score, result.results[0].staticScore)
-    }
-
-    @Test
-    fun `6 deterministic tie-breaking uses dynamic score descending static rank ascending then canonical FEN`() {
-        val posId1 = UUID.randomUUID()
-        val posId2 = UUID.randomUUID()
-
-        val doc1 = tokenExtractor.extractDocument(posId1, candidateFen1, includeReachability = true)
-        val doc2 = tokenExtractor.extractDocument(posId2, candidateFen2, includeReachability = true)
-        whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(listOf(doc1, doc2))
-
-        val game = createTestGame(account)
-        val occs = listOf(doc1, doc2).map { createTestOccurrence(account, game, it.positionId, it.fen) }
-        whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
-            .thenReturn(occs)
-
-        whenever(stockfishService.batchResolveContinuations(any(), any(), any())).thenReturn(
-            BatchContinuationResult(
-                queryResult = completedContinuation(8, listOf("e2e4")),
-                candidateResults =
-                    mapOf(
-                        posId1 to completedContinuation(8, emptyList()),
-                        posId2 to completedContinuation(8, emptyList()),
-                    ),
-                fallbackReason = null,
-                shortlistedCount = 2,
-                engineAttemptedCount = 2,
-                engineCompletedCount = 2,
-            ),
-        )
-
-        val result = service.findSimilarPositions(queryFen, account)
-
-        assertEquals(2, result.results.size)
-        assertEquals(0.0, result.results[0].dynamicScore)
-        assertEquals(0.0, result.results[1].dynamicScore)
-        assertEquals(posId1, result.results[0].positionId)
-        assertEquals(posId2, result.results[1].positionId)
     }
 }

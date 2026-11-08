@@ -2,6 +2,7 @@ package com.chessecho.controller
 
 import com.chessecho.domain.ChessAccount
 import com.chessecho.domain.Platform
+import com.chessecho.domain.SimilarityRetrievalMode
 import com.chessecho.dto.PrincipalVariationDto
 import com.chessecho.dto.SimilarPositionOccurrenceDto
 import com.chessecho.dto.SimilarPositionResult
@@ -38,10 +39,12 @@ class PositionSimilarityController(
         @RequestParam(defaultValue = "20") limit: Int,
         @RequestParam(defaultValue = "8") depth: Int,
         @RequestParam(defaultValue = "1") multiPv: Int,
+        @RequestParam(defaultValue = "STRUCTURAL") mode: String,
         @OptionalAuthenticatedPrincipal
         @RequestAttribute(name = SessionAuthenticationFilter.PRINCIPAL_ATTRIBUTE, required = false)
         principal: AuthenticatedPrincipal?,
     ): SimilarPositionsResponse {
+        val parsedMode = parseRetrievalMode(mode)
         if (minScore != null && minScore < 0.0) {
             throw IllegalArgumentException("minScore must be non-negative: $minScore")
         }
@@ -63,10 +66,18 @@ class PositionSimilarityController(
                 limit = resolvedLimit,
                 depth = depth,
                 multiPv = multiPv,
+                mode = parsedMode,
             )
 
         return toResponse(result)
     }
+
+    private fun parseRetrievalMode(mode: String): SimilarityRetrievalMode =
+        try {
+            SimilarityRetrievalMode.valueOf(mode.trim().uppercase())
+        } catch (_: IllegalArgumentException) {
+            throw IllegalArgumentException("Invalid retrieval mode: $mode")
+        }
 
     private fun resolveAccount(
         accountId: UUID?,
@@ -146,5 +157,6 @@ class PositionSimilarityController(
                             },
                     )
                 },
+            mode = result.mode,
         )
 }

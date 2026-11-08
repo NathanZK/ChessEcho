@@ -14,6 +14,7 @@ data class SimilarPositionsResponse(
     val queryAchievedDepth: Int,
     val queryPrincipalVariations: List<PrincipalVariationDto>,
     val results: List<SimilarPositionResult>,
+    val mode: String = "STRUCTURAL",
 )
 
 data class PrincipalVariationDto(
