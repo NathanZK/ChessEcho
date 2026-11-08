@@ -1076,6 +1076,7 @@ CREATE TABLE position_cluster_snapshot (
     id                  UUID PRIMARY KEY,
     account_id          UUID NOT NULL REFERENCES chess_account(id) ON DELETE CASCADE,
     snapshot_version    INT NOT NULL,
+    cluster_type        VARCHAR(20) NOT NULL DEFAULT 'STRUCTURAL' CHECK (cluster_type IN ('STRUCTURAL', 'DYNAMIC')),
     status              VARCHAR(20) NOT NULL CHECK (status IN ('GENERATING', 'ACTIVE', 'SUPERSEDED', 'FAILED', 'EXPERIMENTAL')),
     alpha               DOUBLE PRECISION NOT NULL DEFAULT 0.60 CHECK (alpha >= 0.0 AND alpha <= 1.0),
     top_k               INT NOT NULL CHECK (top_k >= 1),
@@ -1089,11 +1090,11 @@ CREATE TABLE position_cluster_snapshot (
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at        TIMESTAMPTZ,
     error_message       TEXT,
-    CONSTRAINT uk_position_cluster_snapshot_account_version UNIQUE (account_id, snapshot_version)
+    CONSTRAINT uk_position_cluster_snapshot_account_type_version UNIQUE (account_id, cluster_type, snapshot_version)
 );
 
-CREATE UNIQUE INDEX uk_position_cluster_snapshot_active_account ON position_cluster_snapshot (account_id) WHERE (status = 'ACTIVE');
-CREATE INDEX idx_position_cluster_snapshot_account ON position_cluster_snapshot (account_id);
+CREATE UNIQUE INDEX uk_position_cluster_snapshot_active_account ON position_cluster_snapshot (account_id, cluster_type) WHERE (status = 'ACTIVE');
+CREATE INDEX idx_position_cluster_snapshot_account_type ON position_cluster_snapshot (account_id, cluster_type);
 
 CREATE TABLE position_cluster (
     id                  UUID PRIMARY KEY,

@@ -1,5 +1,6 @@
 package com.chessecho.repository.clustering
 
+import com.chessecho.domain.clustering.ClusterType
 import com.chessecho.domain.clustering.PositionCluster
 import com.chessecho.domain.clustering.PositionClusterAssignment
 import com.chessecho.domain.clustering.PositionClusterAssignmentId
@@ -13,17 +14,51 @@ import org.springframework.data.repository.query.Param
 import java.util.UUID
 
 interface PositionClusterSnapshotRepository : JpaRepository<PositionClusterSnapshot, UUID> {
+    fun findByAccountIdAndClusterTypeAndStatus(
+        accountId: UUID,
+        clusterType: ClusterType,
+        status: PositionClusterSnapshotStatus,
+    ): PositionClusterSnapshot?
+
     fun findByAccountIdAndStatus(
         accountId: UUID,
         status: PositionClusterSnapshotStatus,
-    ): PositionClusterSnapshot?
+    ): PositionClusterSnapshot? = findByAccountIdAndClusterTypeAndStatus(accountId, ClusterType.STRUCTURAL, status)
+
+    @Query(
+        "SELECT COALESCE(MAX(s.snapshotVersion), 0) FROM PositionClusterSnapshot s " +
+            "WHERE s.accountId = :accountId AND s.clusterType = :clusterType",
+    )
+    fun findMaxVersionByAccountIdAndClusterType(
+        @Param("accountId") accountId: UUID,
+        @Param("clusterType") clusterType: ClusterType,
+    ): Int
 
     @Query("SELECT COALESCE(MAX(s.snapshotVersion), 0) FROM PositionClusterSnapshot s WHERE s.accountId = :accountId")
     fun findMaxVersionByAccountId(
         @Param("accountId") accountId: UUID,
     ): Int
 
+    fun findByAccountIdAndClusterTypeOrderBySnapshotVersionDesc(
+        accountId: UUID,
+        clusterType: ClusterType,
+    ): List<PositionClusterSnapshot>
+
     fun findByAccountIdOrderBySnapshotVersionDesc(accountId: UUID): List<PositionClusterSnapshot>
+
+    @Modifying
+    @Query(
+        "UPDATE PositionClusterSnapshot s SET s.status = :newStatus " +
+            "WHERE s.accountId = :accountId AND s.clusterType = :clusterType AND s.status = :oldStatus " +
+            "AND s.snapshotVersion < :currentVersion",
+    )
+    fun updateStatusForAccountAndClusterType(
+        @Param("accountId") accountId: UUID,
+        @Param("clusterType") clusterType: ClusterType,
+        @Param("oldStatus") oldStatus: PositionClusterSnapshotStatus,
+        @Param("newStatus") newStatus: PositionClusterSnapshotStatus,
+        @Param("currentVersion") currentVersion: Int,
+    ): Int
 
     @Modifying
     @Query(
