@@ -41,7 +41,9 @@ export const DEFAULT_MOCK_PUZZLE = {
   targetMove: 'd4',
   openingTitle: 'Ruy Lopez / Italian Game',
   acceptableMoves: [{ move: 'Bc4', evalLoss: 0.05 }],
-  movesPlayed: [],
+  movesPlayed: [
+    { move: 'h4', timesPlayed: 2, averageLoss: 2.1 },
+  ],
   priority: 1.0,
   timesReached: 5,
   mistakeCount: 1,

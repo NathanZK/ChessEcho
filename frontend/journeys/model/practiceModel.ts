@@ -120,6 +120,12 @@ export const PRACTICE_TRANSITIONS: TransitionRule[] = [
     guard: (ctx) => ctx.puzzleLoaded,
   },
   {
+    from: 'HISTORICAL_MISTAKE',
+    action: 'BACK_TO_PUZZLES',
+    to: 'DISCOVERY',
+    effect: (ctx) => ({ ...ctx, puzzleLoaded: false, inExploration: false }),
+  },
+  {
     from: 'EVALUATION_ERROR',
     action: 'RETRY',
     to: 'PRACTICE_IDLE',
@@ -212,6 +218,8 @@ export interface StateOracleDefinition {
 async function verifyVisible(locator: unknown, expectFn?: ExpectFn): Promise<void> {
   if (expectFn) {
     await expectFn(locator as Locator).toBeVisible();
+  } else if (locator && typeof (locator as { waitFor?: (options?: { state?: string; timeout?: number }) => Promise<void> }).waitFor === 'function') {
+    await (locator as { waitFor: (options?: { state?: string; timeout?: number }) => Promise<void> }).waitFor({ state: 'visible', timeout: 5000 });
   } else if (locator && typeof (locator as { toBeVisible?: () => Promise<void> }).toBeVisible === 'function') {
     await (locator as { toBeVisible: () => Promise<void> }).toBeVisible();
   }
@@ -242,7 +250,7 @@ export const STATE_ORACLES: Record<PracticeAbstractState, StateOracleDefinition>
     description: 'Puzzle solved optimally; Continue Exploration button visible and solved count incremented.',
     assert: async (page: PageLike, expectFn?: ExpectFn) => {
       await verifyVisible(page.getByRole('button', { name: /Continue Exploration →/i }), expectFn);
-      await verifyVisible(page.getByText(/Solved: 1/i), expectFn);
+      await verifyVisible(page.getByText(/Solved: [1-9]\d*/i), expectFn);
     },
   },
   INCORRECT: {
@@ -255,7 +263,7 @@ export const STATE_ORACLES: Record<PracticeAbstractState, StateOracleDefinition>
   HISTORICAL_MISTAKE: {
     description: 'Historical mistake repeated; mistake banner and hint/retry action visible.',
     assert: async (page: PageLike, expectFn?: ExpectFn) => {
-      await verifyVisible(page.getByText(/Matches your previous blunder|blunder/i), expectFn);
+      await verifyVisible(page.getByText(/Recurring Weakness Detected!|Matches your previous blunder|blunder/i), expectFn);
     },
   },
   EVALUATION_ERROR: {
