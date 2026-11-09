@@ -184,4 +184,61 @@ class PositionOccurrenceRepositoryTest {
             )
         positionOccurrenceRepository.saveAllAndFlush(listOf(occ1, occ2, occ3))
     }
+
+    @Test
+    fun `findAllByGameIdOrderByPlyNumberAsc returns all occurrences for game ordered by ply number`() {
+        val account = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = "order_test"))
+        val game1 =
+            gameRepository.save(
+                Game(
+                    chessAccount = account,
+                    platformGameId = "game_order_1",
+                    pgn = "1. e4 e5",
+                    timeControl = "blitz",
+                    playedAt = Instant.now(),
+                    result = "win",
+                    whiteUsername = "order_test",
+                    blackUsername = "opponent",
+                ),
+            )
+        val pos1 =
+            positionRepository.save(
+                Position(
+                    hash = "order_pos_1",
+                    fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
+                ),
+            )
+        val pos2 =
+            positionRepository.save(
+                Position(
+                    hash = "order_pos_2",
+                    fen = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2",
+                ),
+            )
+
+        val occ2 =
+            PositionOccurrence(
+                game = game1,
+                position = pos2,
+                chessAccount = account,
+                plyNumber = 2,
+                movePlayed = "e5",
+                playerColor = "BLACK",
+            )
+        val occ1 =
+            PositionOccurrence(
+                game = game1,
+                position = pos1,
+                chessAccount = account,
+                plyNumber = 1,
+                movePlayed = "e4",
+                playerColor = "WHITE",
+            )
+        positionOccurrenceRepository.saveAllAndFlush(listOf(occ2, occ1))
+
+        val results = positionOccurrenceRepository.findAllByGameIdOrderByPlyNumberAsc(game1.id)
+        assertEquals(2, results.size)
+        assertEquals(1, results[0].plyNumber)
+        assertEquals(2, results[1].plyNumber)
+    }
 }

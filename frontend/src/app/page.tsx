@@ -15,13 +15,21 @@ import {
 } from '@/components/SimilarPositionsView';
 import { PositionProgressView } from '@/components/PositionProgressView';
 import { ImportGamesView } from '@/components/ImportGamesView';
+import { GameAnalysisView } from '@/components/GameAnalysisView';
 import { Puzzle } from '@/types/puzzle';
-import { JobStatusResponse, type LongDecisionOccurrence } from '@/services/api';
+import {
+  JobStatusResponse,
+  type LongDecisionOccurrence,
+  type GameAnalysisResponse,
+  type AnalyzedPly,
+} from '@/services/api';
 import { useAccountSession } from '@/hooks/useAccountSession';
 import {
   activeTabStore,
   activeJobStore,
   puzzleSettingsStore,
+  gameAnalysisReturnStore,
+  type GameAnalysisReturnSnapshot,
 } from '@/utils/browserStores';
 
 export default function Home() {
@@ -53,7 +61,9 @@ export default function Home() {
 
   const [hasLongDecisionReturnContext, setHasLongDecisionReturnContext] = useState(false);
   const [hasSimilarPositionsReturnContext, setHasSimilarPositionsReturnContext] = useState(false);
+  const [hasGameAnalysisReturnContext, setHasGameAnalysisReturnContext] = useState(false);
   const [similarPositionsSnapshot, setSimilarPositionsSnapshot] = useState<SimilarPositionsReturnSnapshot | null>(null);
+  const [gameAnalysisSnapshot, setGameAnalysisSnapshot] = useState<GameAnalysisReturnSnapshot | null>(null);
   const [isSourceNeutralExploration, setIsSourceNeutralExploration] = useState(false);
 
   const onClearAccountState = React.useCallback(() => {
@@ -64,7 +74,10 @@ export default function Home() {
     setSelectedProgress(null);
     setHasLongDecisionReturnContext(false);
     setHasSimilarPositionsReturnContext(false);
+    setHasGameAnalysisReturnContext(false);
     setSimilarPositionsSnapshot(null);
+    setGameAnalysisSnapshot(null);
+    gameAnalysisReturnStore.set(null);
     setWeaknessRefreshKey((key) => key + 1);
   }, [clearLiveJobState]);
 
@@ -104,6 +117,7 @@ export default function Home() {
     if (tab !== 'puzzles') {
       setHasLongDecisionReturnContext(false);
       setHasSimilarPositionsReturnContext(false);
+      setHasGameAnalysisReturnContext(false);
     }
   }, []);
 
@@ -198,6 +212,45 @@ export default function Home() {
     []
   );
 
+  const handleGameAnalysisPracticeMistake = (
+    ply: AnalyzedPly,
+    analysis: GameAnalysisResponse
+  ) => {
+    const bestMove = ply.bestMove || '';
+    const synthesizedPuzzle: Puzzle = {
+      puzzleId: `game-analysis-${analysis.gameId}-ply-${ply.plyNumber}`,
+      source: 'weakness',
+      fen: ply.preMoveFen,
+      playerColor: ply.playerColor,
+      targetMove: bestMove,
+      openingTitle: `Game Mistake (Move ${Math.ceil(ply.plyNumber / 2)})`,
+      acceptableMoves: bestMove ? [{ move: bestMove, evalLoss: 0 }] : [],
+      movesPlayed: [], // Concealed: user must find the move without seeing the mistake
+      priority: 1,
+      timesReached: 1,
+      mistakeCount: 1,
+      mistakeRate: 1.0,
+      evalCp: ply.evalCp ?? undefined,
+    };
+
+    setHasGameAnalysisReturnContext(true);
+    const returnSnapshot: GameAnalysisReturnSnapshot = {
+      gameId: analysis.gameId,
+      plyNumber: ply.plyNumber,
+      evalLossThreshold: 0.8,
+      timingFilters: ['All'],
+    };
+    setGameAnalysisSnapshot(returnSnapshot);
+    gameAnalysisReturnStore.set(returnSnapshot);
+
+    changeTab('puzzles');
+    practiceActionsRef.current?.selectPracticeFromLibrary(
+      synthesizedPuzzle,
+      [synthesizedPuzzle],
+      'game-analysis'
+    );
+  };
+
   const showingPositionProgress = activeTab === 'weaknesses' && selectedProgress !== null;
 
   return (
@@ -244,6 +297,7 @@ export default function Home() {
           onReturnToTab={changeTab}
           hasLongDecisionReturnContext={hasLongDecisionReturnContext}
           hasSimilarPositionsReturnContext={hasSimilarPositionsReturnContext}
+          hasGameAnalysisReturnContext={hasGameAnalysisReturnContext}
         />
 
         {/* TAB 2: WEAKNESSES LIBRARY */}
@@ -318,6 +372,18 @@ export default function Home() {
               onExplorePosition={handleSimilarPositionsExplorePosition}
               initialSnapshot={similarPositionsSnapshot}
               onSnapshotChange={handleSimilarPositionsSnapshotChange}
+            />
+          </div>
+        )}
+
+        {(activeTab === 'game-analysis' || hasGameAnalysisReturnContext) && (
+          <div hidden={activeTab !== 'game-analysis'}>
+            <GameAnalysisView
+              initialGameId={gameAnalysisSnapshot?.gameId}
+              initialPlyNumber={gameAnalysisSnapshot?.plyNumber}
+              initialThreshold={gameAnalysisSnapshot?.evalLossThreshold}
+              initialTimingFilters={gameAnalysisSnapshot?.timingFilters}
+              onPracticeMistake={handleGameAnalysisPracticeMistake}
             />
           </div>
         )}
