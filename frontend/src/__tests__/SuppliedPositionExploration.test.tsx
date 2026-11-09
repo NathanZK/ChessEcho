@@ -117,10 +117,15 @@ describe('user-supplied position exploration', () => {
     });
   });
 
+  function openExploreModal() {
+    fireEvent.click(screen.getByRole('button', { name: 'Explore / Tools' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Explore a position' }));
+  }
+
   it('opens Header Explore Position in Practice Puzzles shell in IDLE, evaluates moves dynamically, and enters Line Exploration', async () => {
     render(<Home />);
     await waitFor(() => expect(screen.getByText('No Practice Puzzles Available')).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: 'Explore a position' }));
+    openExploreModal();
     const dialog = screen.getByRole('dialog');
     fireEvent.change(within(dialog).getByLabelText('FEN'), { target: { value: START_FEN } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Continue from FEN' }));
@@ -372,7 +377,7 @@ describe('user-supplied position exploration', () => {
   it('starts from the selected PGN ply into the Practice Puzzles shell and allows Line Exploration', async () => {
     render(<Home />);
     await waitFor(() => expect(screen.getByText('No Practice Puzzles Available')).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: 'Explore a position' }));
+    openExploreModal();
     const dialog = screen.getByRole('dialog');
     fireEvent.click(within(dialog).getByRole('tab', { name: 'PGN' }));
     fireEvent.change(within(dialog).getByLabelText('PGN'), {
@@ -418,7 +423,7 @@ describe('user-supplied position exploration', () => {
     expect(getVisibleBoard()).toHaveAttribute('data-position', START_FEN);
 
     // Open Header Explore Position
-    fireEvent.click(screen.getByRole('button', { name: 'Explore a position' }));
+    openExploreModal();
     const dialog = screen.getByRole('dialog');
     fireEvent.change(within(dialog).getByLabelText('FEN'), { target: { value: AFTER_D4_FEN } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Continue from FEN' }));
@@ -453,7 +458,7 @@ describe('user-supplied position exploration', () => {
 
     render(<Home />);
     await waitFor(() => expect(screen.getByText('No Practice Puzzles Available')).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: 'Explore a position' }));
+    openExploreModal();
     const dialog = screen.getByRole('dialog');
     fireEvent.change(within(dialog).getByLabelText('FEN'), { target: { value: START_FEN } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Continue from FEN' }));
@@ -483,7 +488,7 @@ describe('user-supplied position exploration', () => {
 
     render(<Home />);
     await waitFor(() => expect(screen.getByText('No Practice Puzzles Available')).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: 'Explore a position' }));
+    openExploreModal();
     const dialog = screen.getByRole('dialog');
     fireEvent.change(within(dialog).getByLabelText('FEN'), { target: { value: START_FEN } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Continue from FEN' }));
@@ -513,7 +518,7 @@ describe('user-supplied position exploration', () => {
 
     render(<Home />);
     await waitFor(() => expect(screen.getByText('No Practice Puzzles Available')).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: 'Explore a position' }));
+    openExploreModal();
     const dialog = screen.getByRole('dialog');
     fireEvent.change(within(dialog).getByLabelText('FEN'), { target: { value: START_FEN } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Continue from FEN' }));
@@ -537,7 +542,7 @@ describe('user-supplied position exploration', () => {
 
     render(<Home />);
     await waitFor(() => expect(screen.getByText('No Practice Puzzles Available')).toBeInTheDocument());
-    fireEvent.click(screen.getByRole('button', { name: 'Explore a position' }));
+    openExploreModal();
     const dialog = screen.getByRole('dialog');
     fireEvent.change(within(dialog).getByLabelText('FEN'), { target: { value: START_FEN } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Continue from FEN' }));

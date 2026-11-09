@@ -16,12 +16,16 @@ vi.mock('next/navigation', () => ({
   }),
 }));
 
-vi.mock('../services/api', () => ({
-  fetchWeaknesses: vi.fn(),
-  fetchPositionProgress: vi.fn(),
-  fetchPuzzles: vi.fn(),
-  fetchRecurringWeaknesses: vi.fn().mockResolvedValue([]),
-}));
+vi.mock('../services/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/api')>();
+  return {
+    ...actual,
+    fetchWeaknesses: vi.fn(),
+    fetchPositionProgress: vi.fn(),
+    fetchPuzzles: vi.fn(),
+    fetchRecurringWeaknesses: vi.fn().mockResolvedValue([]),
+  };
+});
 
 const mockWeakness: WeaknessResponse = {
   positionId: 'mut-pos-1',
@@ -99,7 +103,7 @@ describe('Targeted Mutation & Invariant Guards', () => {
 
       // Confirm core navigation items and tools dropdown render with their labels and icons
       expect(screen.getByRole('button', { name: /practice puzzles/i })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /weaknesses library/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /recurring weaknesses/i })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /import games/i })).toBeInTheDocument();
 
       const toolsBtn = screen.getByRole('button', { name: /explore \/ tools/i });
@@ -228,6 +232,97 @@ describe('Targeted Mutation & Invariant Guards', () => {
 
       expect(await screen.findByTestId('weakness-grid-container')).toBeInTheDocument();
       expect(screen.queryByTestId('weakness-list-container')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('6. Navigation Deduplication & Mobile Parity Mutants (#759)', () => {
+    it('kills mutant: Standalone desktop Explore button is eliminated and aria-label is updated to Recurring Weaknesses', () => {
+      render(
+        <Header
+          activeTab="weaknesses"
+          setActiveTab={vi.fn()}
+          accountStatus="unconnected"
+        />
+      );
+
+      // Standalone button must not exist
+      expect(screen.queryByRole('button', { name: 'Explore a position' })).not.toBeInTheDocument();
+
+      // Recurring Weaknesses aria-label must be present and legacy label absent
+      expect(screen.getByRole('button', { name: 'Recurring Weaknesses' })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Position Weaknesses (Weaknesses Library)' })).not.toBeInTheDocument();
+    });
+
+    it('kills mutant: Mobile navigation menu exposes all 3 primary tabs and all secondary tools with active highlights', () => {
+      const setActiveTab = vi.fn();
+      render(
+        <Header
+          activeTab="weaknesses"
+          setActiveTab={setActiveTab}
+          accountStatus="unconnected"
+          weaknessCount={3}
+        />
+      );
+
+      const menuBtn = screen.getByRole('button', { name: /Mobile navigation menu/i });
+      fireEvent.click(menuBtn);
+
+      const weaknessesItem = screen.getByRole('menuitem', { name: /Recurring Weaknesses/i });
+      const puzzlesItem = screen.getByRole('menuitem', { name: /Practice Puzzles/i });
+      const importItem = screen.getByRole('menuitem', { name: /Import Games/i });
+      const exploreItem = screen.getByRole('menuitem', { name: /Explore a position/i });
+      const dtItem = screen.getByRole('menuitem', { name: /Decision Timing/i });
+      const spItem = screen.getByRole('menuitem', { name: /Similar Positions/i });
+
+      expect(weaknessesItem).toBeInTheDocument();
+      expect(weaknessesItem).toHaveClass('text-primary');
+      expect(weaknessesItem).toHaveTextContent('3');
+
+      expect(puzzlesItem).toBeInTheDocument();
+      expect(importItem).toBeInTheDocument();
+      expect(exploreItem).toBeInTheDocument();
+      expect(dtItem).toBeInTheDocument();
+      expect(spItem).toBeInTheDocument();
+
+      // Clicking navigation item closes menu and calls setActiveTab
+      fireEvent.click(importItem);
+      expect(setActiveTab).toHaveBeenCalledWith('import');
+      expect(screen.queryByRole('menuitem', { name: /Import Games/i })).not.toBeInTheDocument();
+    });
+  });
+
+  describe('7. Similarity Mode Dispatch Mutants (#759)', () => {
+    it('kills mutant: fetchSimilarPositions serializes mode parameter into query string', async () => {
+      const originalFetch = global.fetch;
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ results: [] }),
+      });
+      global.fetch = mockFetch;
+
+      try {
+        await api.fetchSimilarPositions({
+          fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+          mode: 'DYNAMIC',
+        });
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining('mode=DYNAMIC'),
+          expect.anything()
+        );
+
+        await api.fetchSimilarPositions({
+          fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+          mode: 'STRUCTURAL',
+        });
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining('mode=STRUCTURAL'),
+          expect.anything()
+        );
+      } finally {
+        global.fetch = originalFetch;
+      }
     });
   });
 });

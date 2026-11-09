@@ -19,6 +19,7 @@ export interface SimilarPositionsReturnSnapshot {
   selectedOccurrenceId: string | null;
   activeAccountId: string | null;
   limit?: number;
+  mode?: 'STRUCTURAL' | 'DYNAMIC';
 }
 
 export interface SimilarPositionsViewProps {
@@ -65,6 +66,9 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
     initialSnapshot?.selectedOccurrenceId ?? null
   );
   const [limit, setLimit] = useState<number>(initialSnapshot?.limit ?? DEFAULT_LIMIT);
+  const [retrievalMode, setRetrievalMode] = useState<'STRUCTURAL' | 'DYNAMIC'>(
+    initialSnapshot?.mode ?? 'STRUCTURAL'
+  );
   const [inputError, setInputError] = useState<string | null>(null);
   const [incompletePiecePlacement, setIncompletePiecePlacement] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
@@ -119,7 +123,11 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
     setIncompletePiecePlacement(null);
   };
 
-  const executeSearch = async (validFenString: string, searchLimit: number = limit) => {
+  const executeSearch = async (
+    validFenString: string,
+    searchLimit: number = limit,
+    searchMode: 'STRUCTURAL' | 'DYNAMIC' = retrievalMode
+  ) => {
     if (!connectedAccount && !guestUsername) {
       setSearchError('Connect a Chess.com account or specify a guest username to search.');
       return;
@@ -137,6 +145,7 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
         accountId: connectedAccount?.id,
         username: !connectedAccount ? guestUsername : undefined,
         limit: searchLimit,
+        mode: searchMode,
       });
 
       if (currentVersion !== requestVersionRef.current) return;
@@ -156,6 +165,7 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
         selectedOccurrenceId: selectedId,
         activeAccountId: activeAccountIdentifier,
         limit: searchLimit,
+        mode: searchMode,
       };
       latestSnapshotRef.current = newSnapshot;
       onSnapshotChangeRef.current?.(newSnapshot);
@@ -167,6 +177,21 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
       if (currentVersion === requestVersionRef.current) {
         setIsLoading(false);
       }
+    }
+  };
+
+  const handleModeChange = (newMode: 'STRUCTURAL' | 'DYNAMIC') => {
+    if (newMode === retrievalMode) return;
+    setRetrievalMode(newMode);
+    const updatedSnapshot: SimilarPositionsReturnSnapshot = {
+      ...latestSnapshotRef.current,
+      mode: newMode,
+    };
+    latestSnapshotRef.current = updatedSnapshot;
+    onSnapshotChangeRef.current?.(updatedSnapshot);
+
+    if (hasSearched && queryFen) {
+      void executeSearch(queryFen, limit, newMode);
     }
   };
 
@@ -283,7 +308,38 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
               )}
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <div
+                className="flex items-center rounded-xl bg-surface-container border border-outline-variant p-0.5 text-xs font-mono"
+                role="group"
+                aria-label="Retrieval Mode"
+              >
+                <button
+                  type="button"
+                  aria-pressed={retrievalMode === 'STRUCTURAL'}
+                  onClick={() => handleModeChange('STRUCTURAL')}
+                  className={`px-3 py-1.5 rounded-lg font-medium transition cursor-pointer ${
+                    retrievalMode === 'STRUCTURAL'
+                      ? 'bg-surface-container-high text-primary font-semibold shadow-sm'
+                      : 'text-on-surface-variant hover:text-on-surface'
+                  }`}
+                >
+                  Structural
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={retrievalMode === 'DYNAMIC'}
+                  onClick={() => handleModeChange('DYNAMIC')}
+                  className={`px-3 py-1.5 rounded-lg font-medium transition cursor-pointer ${
+                    retrievalMode === 'DYNAMIC'
+                      ? 'bg-surface-container-high text-primary font-semibold shadow-sm'
+                      : 'text-on-surface-variant hover:text-on-surface'
+                  }`}
+                >
+                  Dynamic
+                </button>
+              </div>
+
               <label htmlFor="limit-select" className="sr-only">
                 Results limit
               </label>

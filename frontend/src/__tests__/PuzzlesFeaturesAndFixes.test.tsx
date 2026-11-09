@@ -615,7 +615,7 @@ describe('Puzzles Tab Features and Fixes', () => {
       });
 
       // Navigate to Weaknesses Library tab
-      const weaknessesTabBtn = screen.getByRole('button', { name: /Weaknesses Library/i });
+      const weaknessesTabBtn = screen.getByRole('button', { name: /^(Recurring Weaknesses|Weaknesses Library)$/i });
       fireEvent.click(weaknessesTabBtn);
 
       // Verify Practice Position button is rendered for the weakness
@@ -720,7 +720,7 @@ describe('Puzzles Tab Features and Fixes', () => {
 
       expectWideTopHeader();
 
-      fireEvent.click(screen.getByRole('button', { name: /Weaknesses Library/i }));
+      fireEvent.click(screen.getByRole('button', { name: /^(Recurring Weaknesses|Weaknesses Library)$/i }));
       await waitFor(() => {
         expect(screen.getByRole('heading', { name: /Recurring Weakness Library/i })).toBeInTheDocument();
         expect(window.location.hash).toBe('#weaknesses');

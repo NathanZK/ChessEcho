@@ -958,6 +958,7 @@ export async function fetchSimilarPositions(params: {
   limit?: number;
   depth?: number;
   multiPv?: number;
+  mode?: 'STRUCTURAL' | 'DYNAMIC';
 }): Promise<SimilarPositionsResponse> {
   const queryParams = new URLSearchParams();
   queryParams.set('fen', params.fen);
@@ -967,6 +968,7 @@ export async function fetchSimilarPositions(params: {
   if (params.limit !== undefined) queryParams.set('limit', params.limit.toString());
   if (params.depth !== undefined) queryParams.set('depth', params.depth.toString());
   if (params.multiPv !== undefined) queryParams.set('multiPv', params.multiPv.toString());
+  if (params.mode) queryParams.set('mode', params.mode);
 
   const response = await fetch(`${API_BASE_URL}/positions/similar?${queryParams.toString()}`, {
     credentials: 'include',

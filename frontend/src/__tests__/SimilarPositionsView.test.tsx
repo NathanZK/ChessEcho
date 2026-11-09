@@ -129,6 +129,49 @@ describe('SimilarPositionsView', () => {
     expect(screen.getByText('Italian Game')).toBeInTheDocument();
     expect(screen.getByText('Sicilian Defense')).toBeInTheDocument();
     expect(screen.queryByLabelText(/Min BM25 Score/i)).not.toBeInTheDocument();
+
+    const structuralBtn = screen.getByRole('button', { name: 'Structural' });
+    const dynamicBtn = screen.getByRole('button', { name: 'Dynamic' });
+    expect(structuralBtn).toBeInTheDocument();
+    expect(dynamicBtn).toBeInTheDocument();
+    expect(structuralBtn).toHaveAttribute('aria-pressed', 'true');
+    expect(dynamicBtn).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('passes mode to fetchSimilarPositions when searching and switching modes', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.fetchSimilarPositions).mockResolvedValue(mockResponse);
+
+    render(
+      <SimilarPositionsView
+        connectedAccount={mockConnectedAccount}
+        onExplorePosition={vi.fn()}
+      />
+    );
+
+    await user.type(screen.getByLabelText(/FEN Position/i), validFen);
+    await user.click(screen.getByRole('button', { name: /Search/i }));
+
+    expect(api.fetchSimilarPositions).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fen: validFen,
+        limit: 20,
+        mode: 'STRUCTURAL',
+      })
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Dynamic' }));
+
+    expect(screen.getByRole('button', { name: 'Dynamic' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Structural' })).toHaveAttribute('aria-pressed', 'false');
+
+    expect(api.fetchSimilarPositions).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        fen: validFen,
+        limit: 20,
+        mode: 'DYNAMIC',
+      })
+    );
   });
 
   it('populates FEN input when clicking a sample position', async () => {
@@ -186,6 +229,7 @@ describe('SimilarPositionsView', () => {
         username: undefined,
         minScore: undefined,
         limit: 20,
+        mode: 'STRUCTURAL',
       });
     });
 
@@ -323,6 +367,7 @@ describe('SimilarPositionsView', () => {
         username: undefined,
         minScore: undefined,
         limit: 20,
+        mode: 'STRUCTURAL',
       });
     });
 
@@ -337,6 +382,7 @@ describe('SimilarPositionsView', () => {
         username: undefined,
         minScore: undefined,
         limit: 10,
+        mode: 'STRUCTURAL',
       });
     });
   });
@@ -384,6 +430,7 @@ describe('SimilarPositionsView', () => {
         username: undefined,
         minScore: undefined,
         limit: 40,
+        mode: 'STRUCTURAL',
       });
     });
 

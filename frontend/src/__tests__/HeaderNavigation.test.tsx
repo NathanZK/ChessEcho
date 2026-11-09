@@ -14,8 +14,8 @@ describe('Header Navigation Redesign (#735)', () => {
   it('renders 3 core primary tabs on desktop', () => {
     render(<Header {...defaultProps} />);
 
-    // Recurring Weaknesses tab (must satisfy both visible text and backward-compatible aria label)
-    const weaknessTab = screen.getByRole('button', { name: /Position Weaknesses|Weaknesses Library/i });
+    // Recurring Weaknesses tab
+    const weaknessTab = screen.getByRole('button', { name: 'Recurring Weaknesses' });
     expect(weaknessTab).toBeInTheDocument();
     expect(weaknessTab).toHaveTextContent(/Recurring Weaknesses/i);
 
@@ -93,5 +93,41 @@ describe('Header Navigation Redesign (#735)', () => {
 
     const toolsTrigger = screen.getByRole('button', { name: 'Explore / Tools' });
     expect(toolsTrigger.className).toMatch(/border-primary|text-primary/);
+  });
+
+  it('eliminates redundant standalone desktop Explore button', () => {
+    render(<Header {...defaultProps} />);
+    // The standalone button outside the dropdown should not exist
+    expect(screen.queryByRole('button', { name: 'Explore a position' })).not.toBeInTheDocument();
+  });
+
+  it('provides complete mobile navigation exposing all primary and secondary views', () => {
+    const setActiveTab = vi.fn();
+    render(<Header {...defaultProps} setActiveTab={setActiveTab} weaknessCount={5} />);
+
+    const mobileMenuTrigger = screen.getByRole('button', { name: /Mobile navigation/i });
+    expect(mobileMenuTrigger).toBeInTheDocument();
+
+    fireEvent.click(mobileMenuTrigger);
+
+    // Primary tabs accessible in mobile menu
+    const mobileWeaknesses = screen.getByRole('menuitem', { name: /Recurring Weaknesses/i });
+    const mobilePuzzles = screen.getByRole('menuitem', { name: /Practice Puzzles/i });
+    const mobileImport = screen.getByRole('menuitem', { name: /Import Games/i });
+
+    expect(mobileWeaknesses).toBeInTheDocument();
+    expect(mobileWeaknesses).toHaveTextContent('5'); // badge
+    expect(mobilePuzzles).toBeInTheDocument();
+    expect(mobileImport).toBeInTheDocument();
+
+    // Secondary tools accessible in mobile menu
+    expect(screen.getByRole('menuitem', { name: /Explore a position/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /Decision Timing/i })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: /Similar Positions/i })).toBeInTheDocument();
+
+    // Clicking a primary tab closes menu and activates view
+    fireEvent.click(mobilePuzzles);
+    expect(setActiveTab).toHaveBeenCalledWith('puzzles');
+    expect(screen.queryByRole('menuitem', { name: /Practice Puzzles/i })).not.toBeInTheDocument();
   });
 });
