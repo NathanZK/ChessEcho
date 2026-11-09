@@ -1,61 +1,50 @@
 import { test, expect } from '@playwright/test';
 import { setupJourneyApiMocks, DEFAULT_MOCK_ACCOUNT } from './fixtures/mockApi';
 import {
-  SESSION_TRANSITIONS,
   SESSION_STATE_ORACLES,
-  createInitialSessionContext,
-  SessionAbstractState,
-  SessionAction,
-  SessionModelContext,
+  SessionModel,
 } from './model/sessionModel';
-import { exploreAbstractStates } from './model/bfsExplorer';
+import { findBfsPath, executeModelPath } from './model/modelRunner';
 
 test.describe('Model-Based Testing: Session Authentication & Lifecycle', () => {
   test('BFS exploration finds shortest paths across authentication lifecycle', () => {
-    const exploration = exploreAbstractStates<SessionAbstractState, SessionAction, SessionModelContext>(
-      'GUEST',
-      SESSION_TRANSITIONS,
-      4,
-      createInitialSessionContext(),
-      (state, ctx) => `${state}:${ctx.authenticated}:${ctx.hasError}`
-    );
-
-    expect(exploration.reachableStates.has('AUTH_ERROR')).toBe(true);
-    expect(exploration.reachableStates.has('AUTHENTICATED')).toBe(true);
-    expect(exploration.reachableStates.has('GUEST')).toBe(true);
-
-    const errorPath = exploration.paths.find((p) => p.targetState === 'AUTH_ERROR');
+    const errorPath = findBfsPath(SessionModel, 'AUTH_ERROR');
     expect(errorPath).toBeDefined();
-    expect(errorPath?.actions).toEqual(['START_AUTH', 'AUTH_FAILURE']);
+    expect(errorPath).toEqual(['SUBMIT_INVALID_CREDENTIALS']);
 
-    const authPath = exploration.paths.find((p) => p.targetState === 'AUTHENTICATED');
+    const authPath = findBfsPath(SessionModel, 'AUTHENTICATED');
     expect(authPath).toBeDefined();
-    expect(authPath?.actions).toEqual(['START_AUTH', 'AUTH_SUCCESS']);
+    expect(authPath).toEqual(['SUBMIT_VALID_CREDENTIALS']);
+
+    const guestPath = findBfsPath(SessionModel, 'GUEST', 'AUTHENTICATED', { authenticated: true, hasError: false });
+    expect(guestPath).toBeDefined();
+    expect(guestPath).toEqual(['LOGOUT']);
   });
 
   test('Path 1: Credential authentication failure and recovery to authenticated session', async ({ page }) => {
     await setupJourneyApiMocks(page, { authenticated: false });
 
-    await page.goto('/');
-    await SESSION_STATE_ORACLES.GUEST.assert(page, expect);
+    // Step 1: Execute navigation and invalid credentials submission to reach AUTH_ERROR
+    const failureResult = await executeModelPath(page, SessionModel, [
+      'NAVIGATE_LOGIN',
+      'SUBMIT_INVALID_CREDENTIALS',
+    ]);
 
-    await page.goto('/login');
-    await SESSION_STATE_ORACLES.AUTHENTICATING.assert(page, expect);
-
-    // Invalid credential submission
-    await page.getByLabel(/Email/i).fill('invalid@example.com');
-    await page.getByLabel(/^Password/i).fill('wrongpass');
-    await page.getByRole('button', { name: /Sign in/i }).click();
-
-    await SESSION_STATE_ORACLES.AUTH_ERROR.assert(page, expect);
+    expect(failureResult.success).toBe(true);
+    expect(failureResult.finalState).toBe('AUTH_ERROR');
+    expect(failureResult.visitedStates.has('AUTH_ERROR')).toBe(true);
     await expect(page.locator('p[role="alert"]')).toContainText('Invalid email or password');
 
-    // Valid credential recovery
-    await page.getByLabel(/Email/i).fill('player@example.com');
-    await page.getByLabel(/^Password/i).fill('password123');
-    await page.getByRole('button', { name: /Sign in/i }).click();
+    // Step 2: Recover session by submitting valid credentials from AUTH_ERROR state
+    const recoveryResult = await executeModelPath(page, SessionModel, ['SUBMIT_VALID_CREDENTIALS'], {
+      initialState: failureResult.finalState,
+      initialContext: failureResult.finalContext,
+      stepOffset: failureResult.actionLog.length,
+    });
 
-    await page.waitForURL('/');
+    expect(recoveryResult.success).toBe(true);
+    expect(recoveryResult.finalState).toBe('AUTHENTICATED');
+    expect(recoveryResult.visitedStates.has('AUTHENTICATED')).toBe(true);
     await SESSION_STATE_ORACLES.AUTHENTICATED.assert(page, expect);
   });
 
@@ -68,10 +57,19 @@ test.describe('Model-Based Testing: Session Authentication & Lifecycle', () => {
     await page.goto('/');
     await SESSION_STATE_ORACLES.AUTHENTICATED.assert(page, expect);
 
-    const signOutButton = page.getByRole('button', { name: /Sign out/i });
-    await expect(signOutButton).toBeVisible();
-    await signOutButton.click();
+    const logoutPath = findBfsPath(SessionModel, 'GUEST', 'AUTHENTICATED', {
+      authenticated: true,
+      hasError: false,
+    })!;
 
+    const result = await executeModelPath(page, SessionModel, logoutPath, {
+      initialState: 'AUTHENTICATED',
+      initialContext: { authenticated: true, hasError: false },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.finalState).toBe('GUEST');
+    expect(result.visitedStates.has('GUEST')).toBe(true);
     await SESSION_STATE_ORACLES.GUEST.assert(page, expect);
   });
 });

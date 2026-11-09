@@ -52,3 +52,45 @@ Failing combined runs yield actionable reproduction logs formatted as:
 `[Step N] <fromState> --(<action>)--> <toState>`
 
 These traces are converted directly into deterministic Playwright regression tests in `frontend/journeys/regression/combined-reproduction.spec.ts`, securing regression boundaries without ongoing stochastic fuzzer flakiness.
+
+---
+
+## 5. Local Execution & Failure Reproduction
+
+### CLI Command & Prerequisites
+
+Constrained monkey testing is strictly exploratory and executed locally (never in CI):
+
+```bash
+cd frontend
+npm run test:monkey
+```
+
+- **Working Directory**: `frontend/`
+- **Prerequisites**:
+  - Local dependencies installed (`npm ci`).
+  - Next.js development server running on `http://localhost:3000` (`npm run dev`) or containerized environment, with Playwright browsers installed (`npx playwright install chromium`).
+
+### Failure Reproduction Procedure
+
+When a stochastic run discovers an invariant failure:
+
+1. **Extract Seed & Step Log**: Read the terminal failure output containing the deterministic PRNG seed, action budget, and failing transition:
+   ```text
+   [Monkey Runner Failure] Seed: 424242, Step: 7, Target: INCORRECT
+   Sequence:
+   [Step 1] DISCOVERY --(SELECT_PUZZLE)--> PRACTICE_IDLE
+   [Step 2] PRACTICE_IDLE --(SUBMIT_MISTAKE)--> INCORRECT
+   ...
+   ```
+2. **Inspect Diagnostic Artifacts**:
+   - Screenshot: `test-results/model-failure-*.png`
+   - Playwright trace archive: `test-results/*.zip` (inspect via `npx playwright show-trace <trace-file>`)
+3. **Replay Deterministically**:
+   - Run focused reproduction test with the exact seed:
+     ```bash
+     cd frontend
+     npx playwright test frontend/journeys/regression/combined-reproduction.spec.ts
+     ```
+   - Add a permanent regression scenario to `frontend/journeys/regression/combined-reproduction.spec.ts` using the minimal failing action sequence.
+

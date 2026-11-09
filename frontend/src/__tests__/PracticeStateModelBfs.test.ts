@@ -8,7 +8,7 @@ import {
   createInitialContext,
   STATE_ORACLES,
 } from '../../journeys/model/practiceModel';
-import { explorePracticeStates, exploreAbstractStates } from '../../journeys/model/bfsExplorer';
+import { explorePracticeStates, exploreAbstractStates, type BfsExplorationResult } from '../../journeys/model/bfsExplorer';
 import { selectHighRiskPaths } from '../../journeys/model/pathSelector';
 
 describe('Practice State Model & Invariants', () => {
@@ -135,6 +135,18 @@ describe('Practice State Model & Invariants', () => {
       const exploreReturnPath = selected.find((p) => p.riskCategory === 'mode-boundary-exploration');
       expect(exploreReturnPath).toBeDefined();
       expect(exploreReturnPath?.actions).toContain('CONTINUE_EXPLORATION');
+    });
+
+    it('throws explicit diagnostic Error when BFS exploration fails to discover required paths', () => {
+      const emptyExploration: BfsExplorationResult = {
+        reachableStates: new Set(['DISCOVERY']),
+        paths: [],
+        transitionsCovered: new Set(),
+      };
+
+      expect(() => selectHighRiskPaths(emptyExploration, PRACTICE_TRANSITIONS)).toThrow(
+        /\[PathSelector Error\] BFS exploration failed to discover required path/
+      );
     });
 
     it('generic exploreAbstractStates explores domain-agnostic models with custom context signature', () => {

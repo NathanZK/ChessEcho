@@ -128,6 +128,6 @@ export function explorePracticeStates(
     transitions,
     maxDepth,
     initialContext,
-    (state, ctx) => `${state}:${ctx.puzzleLoaded}:${ctx.inExploration}`
+    (state, ctx) => `${state}:${ctx.puzzleLoaded}:${ctx.inExploration}:${ctx.attemptCount}:${ctx.solved}`
   );
 }

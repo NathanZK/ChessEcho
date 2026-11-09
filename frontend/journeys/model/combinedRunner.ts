@@ -4,20 +4,16 @@ import {
   type PracticeAbstractState,
   type PracticeAction,
   type PracticeModelContext,
-  PRACTICE_TRANSITIONS,
   createInitialContext,
-  findMatchingTransition,
-  ensureDiscoveryState,
+  PracticeModel,
 } from './practiceModel';
-import { explorePracticeStates } from './bfsExplorer';
+import { findBfsPath, executeModelPath } from './modelRunner';
 import {
   type ActionLogEntry,
   InvariantErrorObserver,
   NetworkActivityMonitor,
-  assertInvariantOracles,
 } from './monkeyOracles';
 import {
-  executeConcreteAction,
   runConstrainedMonkey,
 } from './monkeyRunner';
 
@@ -105,20 +101,13 @@ export function findBfsPathToState(
   initialState: PracticeAbstractState = 'DISCOVERY',
   initialContext?: PracticeModelContext
 ): PracticeAction[] | null {
-  if (targetState === initialState) {
-    return [];
-  }
-
   const context: PracticeModelContext = initialContext ?? {
     puzzleLoaded: initialState !== 'DISCOVERY',
     attemptCount: 0,
     inExploration: initialState === 'EXPLORING',
   };
 
-  const exploration = explorePracticeStates(initialState, PRACTICE_TRANSITIONS, 6, context);
-  const candidate = exploration.paths.find((p) => p.targetState === targetState);
-
-  return candidate ? [...candidate.actions] : null;
+  return findBfsPath(PracticeModel, targetState, initialState, context, 6);
 }
 
 /**
@@ -135,78 +124,13 @@ export async function executeBfsPath(
     stepOffset?: number;
   }
 ): Promise<BfsExecutionResult> {
-  const {
-    initialState = 'DISCOVERY',
-    initialContext = createInitialContext(),
-    observer,
-    stepOffset = 0,
-  } = options ?? {};
-
-  let currentState = initialState;
-  let currentContext = { ...initialContext };
-  const actionLog: ActionLogEntry[] = [];
-  const activeObserver = observer ?? new InvariantErrorObserver();
-  if (!observer) {
-    activeObserver.attach(page);
-  }
-
-  // Align UI with initial state if starting in DISCOVERY
-  if (initialState === 'DISCOVERY') {
-    await ensureDiscoveryState(page);
-  }
-
-  for (let i = 0; i < actions.length; i++) {
-    const action = actions[i];
-    const globalStep = stepOffset + i + 1;
-    const rule = findMatchingTransition(currentState, action, currentContext);
-
-    if (!rule) {
-      const error = new Error(
-        `[BFS Path Execution Error] Forbidden or unguarded action ${action} from state ${currentState} at step ${globalStep}.`
-      );
-      return {
-        success: false,
-        finalState: currentState,
-        finalContext: currentContext,
-        actionLog,
-        error,
-      };
-    }
-
-    const nextState = rule.to;
-    const nextContext = rule.effect ? rule.effect(currentContext) : { ...currentContext };
-    const stepStartTime = Date.now();
-
-    actionLog.push({
-      step: globalStep,
-      fromState: currentState,
-      action,
-      toState: nextState,
-      timestamp: stepStartTime,
-    });
-
-    try {
-      await executeConcreteAction(page, action);
-      await assertInvariantOracles(page, nextState, activeObserver, globalStep);
-    } catch (err) {
-      return {
-        success: false,
-        finalState: currentState,
-        finalContext: currentContext,
-        actionLog,
-        error: err as Error,
-      };
-    }
-
-    currentState = nextState;
-    currentContext = nextContext;
-  }
-
+  const result = await executeModelPath(page, PracticeModel, actions, options);
   return {
-    success: true,
-    finalState: currentState,
-    finalContext: currentContext,
-    actionLog,
+    success: result.success,
+    finalState: result.finalState,
+    finalContext: result.finalContext,
+    actionLog: result.actionLog,
+    error: result.error,
   };
 }
 

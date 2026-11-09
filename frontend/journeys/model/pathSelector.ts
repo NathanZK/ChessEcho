@@ -32,11 +32,13 @@ export function selectHighRiskPaths(
       p.actions.includes('SUBMIT_MISTAKE') &&
       p.actions.includes('RETRY') &&
       p.targetState === 'PRACTICE_IDLE'
-  ) || {
-    targetState: 'PRACTICE_IDLE',
-    actions: ['SELECT_PUZZLE', 'SUBMIT_MISTAKE', 'RETRY'],
-    states: ['DISCOVERY', 'PRACTICE_IDLE', 'INCORRECT', 'PRACTICE_IDLE'],
-  };
+  );
+
+  if (!retryCandidate) {
+    throw new Error(
+      '[PathSelector Error] BFS exploration failed to discover required path for Evaluation Mistake and Board Retry (actions SUBMIT_MISTAKE and RETRY returning to PRACTICE_IDLE).'
+    );
+  }
 
   selected.push({
     id: 'path-01-eval-retry',
@@ -53,11 +55,13 @@ export function selectHighRiskPaths(
     (p) =>
       p.actions.includes('CONTINUE_EXPLORATION') &&
       p.actions.includes('EXIT_EXPLORATION')
-  ) || {
-    targetState: 'PRACTICE_IDLE',
-    actions: ['SELECT_PUZZLE', 'SUBMIT_OPTIMAL', 'CONTINUE_EXPLORATION', 'EXIT_EXPLORATION'],
-    states: ['DISCOVERY', 'PRACTICE_IDLE', 'CORRECT', 'EXPLORING', 'PRACTICE_IDLE'],
-  };
+  );
+
+  if (!exploreCandidate) {
+    throw new Error(
+      '[PathSelector Error] BFS exploration failed to discover required path for Mode Boundary Crossing (actions CONTINUE_EXPLORATION and EXIT_EXPLORATION).'
+    );
+  }
 
   selected.push({
     id: 'path-02-mode-boundary-exploration',

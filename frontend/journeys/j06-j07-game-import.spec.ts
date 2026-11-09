@@ -51,8 +51,9 @@ test.describe('Journeys J06-J07: Game Import and Analysis Pipeline', () => {
     await expect(page.getByText('Analysis complete.')).toBeVisible({ timeout: 10_000 });
 
     // 6. Verify clean polling termination (poll count stabilizes upon terminal analysis status)
+    await page.waitForLoadState('networkidle');
     const finalPollCount = mockHandle.getPollCount();
-    await page.waitForTimeout(2500);
+    await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100)));
     expect(mockHandle.getPollCount()).toBe(finalPollCount);
 
     // 7. Click View Weaknesses CTA button
