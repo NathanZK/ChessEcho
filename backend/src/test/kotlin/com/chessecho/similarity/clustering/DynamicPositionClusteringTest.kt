@@ -1,8 +1,11 @@
 package com.chessecho.similarity.clustering
 
 import com.chessecho.config.PositionClusteringProperties
+import com.chessecho.domain.ChessAccount
 import com.chessecho.domain.clustering.ClusterType
+import com.chessecho.domain.clustering.PositionCluster
 import com.chessecho.domain.clustering.PositionClusterAssignmentStatus
+import com.chessecho.domain.clustering.PositionClusterSnapshot
 import com.chessecho.repository.ChessAccountRepository
 import com.chessecho.repository.clustering.PositionClusterAssignmentRepository
 import com.chessecho.repository.clustering.PositionClusterRepository
@@ -14,27 +17,40 @@ import com.chessecho.similarity.PositionDocument
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import org.mockito.Mockito.mock
+import org.mockito.kotlin.any
+import org.mockito.kotlin.eq
+import org.mockito.kotlin.mock
+import org.mockito.kotlin.whenever
 import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.SimpleTransactionStatus
+import java.util.Optional
 import java.util.UUID
 
 class DynamicPositionClusteringTest {
     private lateinit var service: PositionClusteringService
+    private lateinit var snapshotRepository: PositionClusterSnapshotRepository
+    private lateinit var clusterRepository: PositionClusterRepository
+    private lateinit var assignmentRepository: PositionClusterAssignmentRepository
+    private lateinit var accountRepository: ChessAccountRepository
+    private lateinit var corpusProvider: PersonalPositionCorpusProvider
+    private lateinit var dynamicCorpusProvider: PersonalDynamicCorpusProvider
+    private lateinit var transactionManager: PlatformTransactionManager
     private val scorer = PositionClusterSimilarityScorer()
 
     @BeforeEach
     fun setUp() {
-        val snapshotRepository = mock(PositionClusterSnapshotRepository::class.java)
-        val clusterRepository = mock(PositionClusterRepository::class.java)
-        val assignmentRepository = mock(PositionClusterAssignmentRepository::class.java)
-        val accountRepository = mock(ChessAccountRepository::class.java)
-        val corpusProvider = mock(PersonalPositionCorpusProvider::class.java)
-        val dynamicCorpusProvider = mock(PersonalDynamicCorpusProvider::class.java)
+        snapshotRepository = mock()
+        clusterRepository = mock()
+        assignmentRepository = mock()
+        accountRepository = mock()
+        corpusProvider = mock()
+        dynamicCorpusProvider = mock()
         val properties = PositionClusteringProperties()
         val objectMapper = ObjectMapper()
-        val transactionManager = mock(PlatformTransactionManager::class.java)
+        transactionManager = mock()
 
         service =
             PositionClusteringService(
@@ -142,5 +158,56 @@ class DynamicPositionClusteringTest {
         assertEquals(PositionClusterAssignmentStatus.ISOLATE, unEvalAssignment.status)
         assertNull(unEvalAssignment.clusterIndex)
         assertNull(unEvalAssignment.centroidSimilarity)
+    }
+
+    private fun createDynamicDoc(
+        id: UUID,
+        square: String,
+    ): PositionDocument =
+        PositionDocument(
+            positionId = id,
+            fen = "8/8/8/$square/8/8/8/8 w - - 0 1",
+            canonicalFen = "8/8/8/$square/8/8/8/8 w - -",
+            terms = mapOf("M:e7e5" to 1.0, "A:N->Q" to 1.0),
+        )
+
+    @Test
+    fun `generateClusterSnapshot with DYNAMIC clusterType dispatches computeDynamicClustering and detects clusters`() {
+        val accountId = UUID.randomUUID()
+        val account = ChessAccount(id = accountId, platform = "CHESS_COM", username = "testuser")
+        whenever(accountRepository.findById(accountId)).thenReturn(Optional.of(account))
+        whenever(transactionManager.getTransaction(any())).thenReturn(SimpleTransactionStatus())
+
+        val docs = listOf("3n4", "4n3", "5n2").map { createDynamicDoc(UUID.randomUUID(), it) }
+        whenever(dynamicCorpusProvider.loadPersonalDynamicPositions(account)).thenReturn(docs)
+
+        val snapshotMap = mutableMapOf<UUID, PositionClusterSnapshot>()
+        whenever(snapshotRepository.save(any())).thenAnswer {
+            val s = it.getArgument<PositionClusterSnapshot>(0)
+            snapshotMap[s.id] = s
+            s
+        }
+        whenever(snapshotRepository.findById(any())).thenAnswer {
+            val id = it.getArgument<UUID>(0)
+            Optional.ofNullable(snapshotMap[id])
+        }
+        whenever(snapshotRepository.findMaxVersionByAccountIdAndClusterType(eq(accountId), eq(ClusterType.DYNAMIC))).thenReturn(0)
+        whenever(clusterRepository.save(any())).thenAnswer {
+            val c = it.getArgument<PositionCluster>(0)
+            PositionCluster(
+                id = UUID.randomUUID(),
+                snapshotId = c.snapshotId,
+                clusterIndex = c.clusterIndex,
+                size = c.size,
+                centroidVector = c.centroidVector,
+            )
+        }
+
+        val snapshotFuture = service.generateClusterSnapshot(accountId, ClusterType.DYNAMIC, promoteToActive = true)
+        val resultSnapshot = snapshotFuture.join()
+
+        assertEquals(ClusterType.DYNAMIC, resultSnapshot.clusterType)
+        assertEquals(3, resultSnapshot.totalPositions)
+        assertTrue(resultSnapshot.clusterCount >= 1, "Dynamic clustering must produce at least 1 cluster from matching terms")
     }
 }

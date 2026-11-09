@@ -132,7 +132,7 @@ class PositionClusteringService(
                     publishEmptySnapshot(snapshot.id, accountId, promoteToActive)
                 } ?: throw IllegalStateException("Failed to publish empty snapshot")
             } else {
-                val evaluation = computeClustering(positions)
+                val evaluation = computeClustering(positions, clusterType)
                 txTemplate.execute {
                     publishCompletedSnapshot(snapshot.id, accountId, promoteToActive, positions, evaluation)
                 } ?: throw IllegalStateException("Failed to publish completed snapshot")
@@ -449,6 +449,13 @@ class PositionClusteringService(
         )
 
     fun getActiveSnapshot(accountId: UUID): PositionClusterSnapshot? = getActiveSnapshot(accountId, ClusterType.STRUCTURAL)
+
+    fun getOrGenerateActiveSnapshot(
+        accountId: UUID,
+        clusterType: ClusterType = ClusterType.STRUCTURAL,
+    ): PositionClusterSnapshot =
+        getActiveSnapshot(accountId, clusterType)
+            ?: generateClusterSnapshot(accountId, clusterType, promoteToActive = true).join()
 
     fun getClustersForSnapshot(snapshotId: UUID): List<PositionCluster> {
         val snapshot = snapshotRepository.findById(snapshotId).orElse(null) ?: return emptyList()
