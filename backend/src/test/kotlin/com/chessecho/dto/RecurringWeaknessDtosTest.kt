@@ -2,6 +2,7 @@ package com.chessecho.dto
 
 import com.chessecho.domain.DiscoveryJobStatus
 import com.chessecho.domain.DiscoveryStage
+import com.chessecho.domain.clustering.ClusterType
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -85,6 +86,8 @@ class RecurringWeaknessDtosTest {
         val dto =
             RecurringWeaknessResponse(
                 clusterId = clusterId,
+                clusterType = ClusterType.STRUCTURAL,
+                recommendationPriority = 20.0,
                 representativeFen = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",
                 memberPositionCount = 12,
                 totalOccurrences = 15,
@@ -92,11 +95,12 @@ class RecurringWeaknessDtosTest {
                 mistakeCount = 10,
                 mistakeFrequency = 66.67,
                 blunderRate = 20.0,
+                evaluatedOccurrences = 12,
+                unevaluatedOccurrences = 3,
                 evalLossDistribution = mapOf("CRITICAL" to 3, "SIGNIFICANT" to 7),
                 evalLossPercentages = mapOf("CRITICAL" to 20.0, "SIGNIFICANT" to 46.67),
                 timingProfile = mapOf("RAPID_DECISION" to 5),
                 formatBreakdown = mapOf("BLITZ" to 15),
-                practiceContinuationUrl = "/api/puzzles/practice?fen=testFen",
             )
 
         val json = objectMapper.writeValueAsString(dto)

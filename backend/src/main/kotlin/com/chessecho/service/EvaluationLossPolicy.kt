@@ -1,5 +1,6 @@
 package com.chessecho.service
 
+import com.chessecho.domain.MistakeSeverity
 import com.chessecho.domain.PositionWeaknessSeverity
 import kotlin.math.abs
 
@@ -50,6 +51,29 @@ object EvaluationLossPolicy {
             evalLoss >= 2.00 -> PositionWeaknessSeverity.CRITICAL
             evalLoss >= 0.80 -> PositionWeaknessSeverity.SIGNIFICANT
             else -> PositionWeaknessSeverity.MINOR
+        }
+    }
+
+    // Provisional calibration boundaries for pawn evaluation loss classification (in pawns).
+    const val THRESHOLD_NO_CONCERN = 0.30
+    const val THRESHOLD_MINOR = 0.80
+    const val THRESHOLD_MODERATE = 1.50
+    const val THRESHOLD_SIGNIFICANT = 3.00
+
+    /**
+     * Classifies a pawn evaluation loss into the dedicated MistakeSeverity domain taxonomy.
+     * Missing (null), non-finite (NaN, Infinite), or negative evaluation losses are explicitly classified as UNEVALUATED.
+     */
+    fun classifyMistakeSeverity(evalLoss: Double?): MistakeSeverity {
+        if (evalLoss == null || !evalLoss.isFinite() || evalLoss < 0.0) {
+            return MistakeSeverity.UNEVALUATED
+        }
+        return when {
+            evalLoss < THRESHOLD_NO_CONCERN -> MistakeSeverity.NO_CONCERN
+            evalLoss < THRESHOLD_MINOR -> MistakeSeverity.MINOR
+            evalLoss < THRESHOLD_MODERATE -> MistakeSeverity.MODERATE
+            evalLoss < THRESHOLD_SIGNIFICANT -> MistakeSeverity.SIGNIFICANT
+            else -> MistakeSeverity.SEVERE
         }
     }
 

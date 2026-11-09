@@ -1,5 +1,6 @@
 package com.chessecho.service
 
+import com.chessecho.domain.MistakeSeverity
 import com.chessecho.domain.PositionWeaknessSeverity
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -144,5 +145,41 @@ class EvaluationLossPolicyTest {
         assertEquals(PositionWeaknessSeverity.CRITICAL, EvaluationLossPolicy.classifySeverity(2.00))
         assertEquals(PositionWeaknessSeverity.CRITICAL, EvaluationLossPolicy.classifySeverity(5.00))
         assertEquals(PositionWeaknessSeverity.CRITICAL, EvaluationLossPolicy.classifySeverity(20.0))
+    }
+
+    @Test
+    fun `classifyMistakeSeverity classifies evaluation loss into dedicated MistakeSeverity domain taxonomy`() {
+        // Missing, non-finite, or negative evaluations strictly map to UNEVALUATED
+        assertEquals(MistakeSeverity.UNEVALUATED, EvaluationLossPolicy.classifyMistakeSeverity(null))
+        assertEquals(MistakeSeverity.UNEVALUATED, EvaluationLossPolicy.classifyMistakeSeverity(Double.NaN))
+        assertEquals(MistakeSeverity.UNEVALUATED, EvaluationLossPolicy.classifyMistakeSeverity(Double.POSITIVE_INFINITY))
+        assertEquals(MistakeSeverity.UNEVALUATED, EvaluationLossPolicy.classifyMistakeSeverity(Double.NEGATIVE_INFINITY))
+        assertEquals(MistakeSeverity.UNEVALUATED, EvaluationLossPolicy.classifyMistakeSeverity(-0.01))
+        assertEquals(MistakeSeverity.UNEVALUATED, EvaluationLossPolicy.classifyMistakeSeverity(-1.5))
+
+        // Sub-threshold moves are NO_CONCERN
+        assertEquals(MistakeSeverity.NO_CONCERN, EvaluationLossPolicy.classifyMistakeSeverity(0.0))
+        assertEquals(MistakeSeverity.NO_CONCERN, EvaluationLossPolicy.classifyMistakeSeverity(0.15))
+        assertEquals(MistakeSeverity.NO_CONCERN, EvaluationLossPolicy.classifyMistakeSeverity(0.29))
+
+        // Minor loss [0.30, 0.80)
+        assertEquals(MistakeSeverity.MINOR, EvaluationLossPolicy.classifyMistakeSeverity(0.30))
+        assertEquals(MistakeSeverity.MINOR, EvaluationLossPolicy.classifyMistakeSeverity(0.55))
+        assertEquals(MistakeSeverity.MINOR, EvaluationLossPolicy.classifyMistakeSeverity(0.79))
+
+        // Moderate loss [0.80, 1.50)
+        assertEquals(MistakeSeverity.MODERATE, EvaluationLossPolicy.classifyMistakeSeverity(0.80))
+        assertEquals(MistakeSeverity.MODERATE, EvaluationLossPolicy.classifyMistakeSeverity(1.10))
+        assertEquals(MistakeSeverity.MODERATE, EvaluationLossPolicy.classifyMistakeSeverity(1.49))
+
+        // Significant loss [1.50, 3.00)
+        assertEquals(MistakeSeverity.SIGNIFICANT, EvaluationLossPolicy.classifyMistakeSeverity(1.50))
+        assertEquals(MistakeSeverity.SIGNIFICANT, EvaluationLossPolicy.classifyMistakeSeverity(2.20))
+        assertEquals(MistakeSeverity.SIGNIFICANT, EvaluationLossPolicy.classifyMistakeSeverity(2.99))
+
+        // Severe loss [3.00, +inf)
+        assertEquals(MistakeSeverity.SEVERE, EvaluationLossPolicy.classifyMistakeSeverity(3.00))
+        assertEquals(MistakeSeverity.SEVERE, EvaluationLossPolicy.classifyMistakeSeverity(5.00))
+        assertEquals(MistakeSeverity.SEVERE, EvaluationLossPolicy.classifyMistakeSeverity(20.0))
     }
 }

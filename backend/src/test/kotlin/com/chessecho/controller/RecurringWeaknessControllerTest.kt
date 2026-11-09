@@ -4,6 +4,7 @@ import com.chessecho.domain.ChessAccount
 import com.chessecho.domain.DiscoveryJobStatus
 import com.chessecho.domain.DiscoveryStage
 import com.chessecho.domain.Platform
+import com.chessecho.domain.clustering.ClusterType
 import com.chessecho.dto.RecurringDiscoveryJobResponse
 import com.chessecho.dto.RecurringDiscoveryRequest
 import com.chessecho.dto.RecurringWeaknessResponse
@@ -133,6 +134,8 @@ class RecurringWeaknessControllerTest {
         val weakness =
             RecurringWeaknessResponse(
                 clusterId = UUID.randomUUID(),
+                clusterType = ClusterType.STRUCTURAL,
+                recommendationPriority = 13.3,
                 representativeFen = "fen1",
                 memberPositionCount = 12,
                 totalOccurrences = 15,
@@ -140,11 +143,12 @@ class RecurringWeaknessControllerTest {
                 mistakeCount = 5,
                 mistakeFrequency = 33.3,
                 blunderRate = 13.3,
+                evaluatedOccurrences = 15,
+                unevaluatedOccurrences = 0,
                 evalLossDistribution = mapOf("CRITICAL" to 2),
                 evalLossPercentages = mapOf("CRITICAL" to 13.3),
                 timingProfile = mapOf("BLITZ_DECISION" to 15),
                 formatBreakdown = mapOf("BLITZ" to 15),
-                practiceContinuationUrl = "/api/puzzles/practice?fen=fen1",
             )
         `when`(discoveryService.getLatestRecurringWeaknesses(testAccount)).thenReturn(listOf(weakness))
 

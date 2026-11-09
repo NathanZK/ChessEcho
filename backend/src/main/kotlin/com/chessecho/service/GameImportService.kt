@@ -24,6 +24,7 @@ import com.chessecho.repository.UserPositionWeaknessRepository
 import com.chessecho.service.auth.AuthenticatedPrincipal
 import com.chessecho.service.similarity.DynamicSimilarityCache
 import com.chessecho.service.similarity.PositionSimilarityCache
+import com.chessecho.service.weakness.RecurringWeaknessDiscoveryService
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.scheduling.annotation.Async
@@ -61,6 +62,8 @@ class GameImportService(
     private val positionSimilarityCache: PositionSimilarityCache? = null,
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private val dynamicSimilarityCache: DynamicSimilarityCache? = null,
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private val recurringWeaknessDiscoveryService: RecurringWeaknessDiscoveryService? = null,
     @Value("\${chessecho.import.derived-game-batch-size:1000}")
     private val derivedGameBatchSize: Int = DerivedProcessingCoordinator.DEFAULT_DERIVED_GAME_BATCH_SIZE,
     userPositionStatsBatchService: UserPositionStatsBatchService? = null,
@@ -523,6 +526,7 @@ class GameImportService(
         if (affected.isNotEmpty()) {
             positionSimilarityCache?.invalidate(account.id)
             dynamicSimilarityCache?.invalidate(account.id)
+            recurringWeaknessDiscoveryService?.clearCache(account.id)
         }
         return affected
     }

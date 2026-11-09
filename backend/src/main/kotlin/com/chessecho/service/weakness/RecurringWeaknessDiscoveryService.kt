@@ -4,6 +4,7 @@ import com.chessecho.domain.ChessAccount
 import com.chessecho.domain.CommunityPatternClassification
 import com.chessecho.domain.DiscoveryJobStatus
 import com.chessecho.domain.DiscoveryStage
+import com.chessecho.domain.MistakeSeverity
 import com.chessecho.domain.PositionOccurrence
 import com.chessecho.domain.clustering.ClusterType
 import com.chessecho.domain.clustering.PositionCluster
@@ -18,10 +19,13 @@ import com.chessecho.repository.clustering.PositionClusterAssignmentRepository
 import com.chessecho.repository.clustering.PositionClusterRepository
 import com.chessecho.repository.clustering.PositionClusterSnapshotRepository
 import com.chessecho.service.ForbiddenAccountException
+import com.chessecho.service.ObjectiveEvidenceState
+import com.chessecho.service.WeaknessPriorityPolicy
 import com.chessecho.service.clustering.CommunityWeaknessProfile
 import com.chessecho.service.clustering.CommunityWeaknessService
 import com.chessecho.service.clustering.PositionClusteringService
 import com.chessecho.service.similarity.SimilarityConcurrencyManager
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import java.time.Instant
 import java.util.UUID
@@ -55,6 +59,7 @@ class RecurringWeaknessDiscoveryService(
     private val communityWeaknessService: CommunityWeaknessService,
     private val concurrencyManager: SimilarityConcurrencyManager,
     private val clusteringService: PositionClusteringService? = null,
+    private val weaknessPriorityPolicy: WeaknessPriorityPolicy? = null,
     private val executor: ExecutorService = Executors.newCachedThreadPool(),
 ) {
     private val jobs = ConcurrentHashMap<UUID, DiscoveryJobState>()
@@ -111,36 +116,40 @@ class RecurringWeaknessDiscoveryService(
 
     fun getLatestRecurringWeaknesses(account: ChessAccount): List<RecurringWeaknessResponse> = cachedWeaknesses[account.id].orEmpty()
 
+    fun clearCache(accountId: UUID) {
+        cachedWeaknesses.remove(accountId)
+    }
+
     private fun runPipeline(
         jobState: DiscoveryJobState,
         account: ChessAccount,
         request: RecurringDiscoveryRequest,
     ) {
         try {
-            transition(jobState, DiscoveryJobStatus.PROCESSING, DiscoveryStage.INITIALIZING, 5)
+            transition(jobState, DiscoveryJobStatus.PROCESSING, DiscoveryStage.INITIALIZING, 10)
             if (isCancelled(jobState)) return
 
-            val snapshot = resolveActiveSnapshot(account.id)
-            if (snapshot == null) {
+            val (snapshots, onDemandRan) = resolveSnapshots(jobState, account.id, request.clusterType)
+            if (isCancelled(jobState)) return
+            if (snapshots.isEmpty()) {
                 completeJob(jobState, account.id, emptyList())
                 return
             }
 
-            transition(jobState, DiscoveryJobStatus.PROCESSING, DiscoveryStage.INGESTION, 15)
+            transition(jobState, DiscoveryJobStatus.PROCESSING, DiscoveryStage.INGESTION, if (onDemandRan) 50 else 30)
             if (isCancelled(jobState)) return
 
-            val candidateClusters = loadCandidateClusters(snapshot.id)
+            val candidateClusters =
+                snapshots.flatMap { snapshot ->
+                    loadCandidateClusters(snapshot.id).map { cluster -> cluster to snapshot.clusterType }
+                }
             if (candidateClusters.isEmpty()) {
                 completeJob(jobState, account.id, emptyList())
                 return
             }
 
-            transition(jobState, DiscoveryJobStatus.PROCESSING, DiscoveryStage.EVALUATION, 40)
-            if (isCancelled(jobState)) return
-
-            val results = executeEvaluationAndClustering(jobState, account, candidateClusters, request)
+            val results = executeEvaluationAndClustering(jobState, account, candidateClusters, request, onDemandRan)
             if (results != null && !isCancelled(jobState)) {
-                transition(jobState, DiscoveryJobStatus.PROCESSING, DiscoveryStage.PROFILING, 90)
                 completeJob(jobState, account.id, results)
             }
         } catch (e: Exception) {
@@ -148,16 +157,55 @@ class RecurringWeaknessDiscoveryService(
         }
     }
 
-    private fun resolveActiveSnapshot(accountId: UUID): PositionClusterSnapshot? =
-        snapshotRepository.findByAccountIdAndClusterTypeAndStatus(
-            accountId = accountId,
-            clusterType = ClusterType.STRUCTURAL,
-            status = PositionClusterSnapshotStatus.ACTIVE,
-        ) ?: snapshotRepository.findByAccountIdAndClusterTypeAndStatus(
-            accountId = accountId,
-            clusterType = ClusterType.DYNAMIC,
-            status = PositionClusterSnapshotStatus.ACTIVE,
-        ) ?: clusteringService?.getOrGenerateActiveSnapshot(accountId, ClusterType.STRUCTURAL)
+    private fun resolveSnapshots(
+        jobState: DiscoveryJobState,
+        accountId: UUID,
+        requestedType: ClusterType?,
+    ): Pair<List<PositionClusterSnapshot>, Boolean> {
+        val targetTypes =
+            if (requestedType != null) {
+                listOf(requestedType)
+            } else {
+                listOf(ClusterType.STRUCTURAL, ClusterType.DYNAMIC)
+            }
+
+        val snapshots = mutableListOf<PositionClusterSnapshot>()
+        var onDemandClusteringRan = false
+
+        for ((index, type) in targetTypes.withIndex()) {
+            if (isCancelled(jobState)) break
+            val existing =
+                snapshotRepository.findByAccountIdAndClusterTypeAndStatus(
+                    accountId = accountId,
+                    clusterType = type,
+                    status = PositionClusterSnapshotStatus.ACTIVE,
+                )
+            if (existing != null) {
+                snapshots.add(existing)
+            } else {
+                onDemandClusteringRan = true
+                val progress = if (index == 0) 15 else 35
+                transition(jobState, DiscoveryJobStatus.PROCESSING, DiscoveryStage.CLUSTERING, progress)
+                generateSnapshotSafely(accountId, type)?.let { snapshots.add(it) }
+            }
+        }
+        return Pair(snapshots, onDemandClusteringRan)
+    }
+
+    private fun generateSnapshotSafely(
+        accountId: UUID,
+        type: ClusterType,
+    ): PositionClusterSnapshot? =
+        try {
+            val generated = clusteringService?.getOrGenerateActiveSnapshot(accountId, type)
+            if (generated == null) {
+                logger.warn("On-demand snapshot generation returned null for account {} and type {}", accountId, type)
+            }
+            generated
+        } catch (e: Exception) {
+            logger.warn("On-demand snapshot generation failed for account {} and type {}", accountId, type, e)
+            null
+        }
 
     private fun loadCandidateClusters(snapshotId: UUID): List<PositionCluster> =
         clusterRepository
@@ -167,20 +215,19 @@ class RecurringWeaknessDiscoveryService(
     private fun executeEvaluationAndClustering(
         jobState: DiscoveryJobState,
         account: ChessAccount,
-        candidateClusters: List<PositionCluster>,
+        candidateClusters: List<Pair<PositionCluster, ClusterType>>,
         request: RecurringDiscoveryRequest,
+        onDemandRan: Boolean,
     ): List<RecurringWeaknessResponse>? {
-        val recurringResults = mutableListOf<RecurringWeaknessResponse>()
+        var results: List<RecurringWeaknessResponse>? = null
         val executed =
             executeWithPermitBackoff {
                 if (isCancelled(jobState)) return@executeWithPermitBackoff
-                transition(jobState, DiscoveryJobStatus.PROCESSING, DiscoveryStage.CLUSTERING, 60)
-                for (cluster in candidateClusters) {
-                    if (isCancelled(jobState)) break
-                    val response = processCluster(cluster, account.id, request)
-                    if (response != null) {
-                        recurringResults.add(response)
-                    }
+                transition(jobState, DiscoveryJobStatus.PROCESSING, DiscoveryStage.EVALUATION, if (onDemandRan) 70 else 60)
+                val processed = evaluateClusters(jobState, account.id, candidateClusters, request)
+                if (!isCancelled(jobState)) {
+                    transition(jobState, DiscoveryJobStatus.PROCESSING, DiscoveryStage.PROFILING, if (onDemandRan) 90 else 85)
+                    results = sortWeaknesses(processed)
                 }
             }
 
@@ -188,11 +235,34 @@ class RecurringWeaknessDiscoveryService(
             failJob(jobState, account.id, "CAPACITY_EXCEEDED")
             return null
         }
+        return results
+    }
+
+    private fun evaluateClusters(
+        jobState: DiscoveryJobState,
+        accountId: UUID,
+        candidateClusters: List<Pair<PositionCluster, ClusterType>>,
+        request: RecurringDiscoveryRequest,
+    ): List<RecurringWeaknessResponse> {
+        val recurringResults = mutableListOf<RecurringWeaknessResponse>()
+        for ((cluster, clusterType) in candidateClusters) {
+            if (isCancelled(jobState)) break
+            processCluster(cluster, clusterType, accountId, request)?.let { recurringResults.add(it) }
+        }
         return recurringResults
     }
 
+    private fun sortWeaknesses(results: List<RecurringWeaknessResponse>): List<RecurringWeaknessResponse> =
+        results.sortedWith(
+            compareByDescending<RecurringWeaknessResponse> { it.recommendationPriority }
+                .thenByDescending { it.mistakeCount }
+                .thenByDescending { it.memberPositionCount }
+                .thenBy { it.clusterId },
+        )
+
     private fun processCluster(
         cluster: PositionCluster,
+        clusterType: ClusterType,
         accountId: UUID,
         request: RecurringDiscoveryRequest,
     ): RecurringWeaknessResponse? {
@@ -222,16 +292,82 @@ class RecurringWeaknessDiscoveryService(
             return null
         }
 
+        if (!matchesFilterCriteria(profile, evalLossMap, request)) {
+            return null
+        }
+
         val repFen = occurrences.firstOrNull()?.position?.fen ?: ""
-        return toWeaknessResponse(profile, repFen)
+        val recommendationPriority = computeRecommendationPriority(profile)
+
+        return toWeaknessResponse(
+            profile = profile,
+            repFen = repFen,
+            clusterType = clusterType,
+            recommendationPriority = recommendationPriority,
+        )
     }
+
+    private fun computeRecommendationPriority(profile: CommunityWeaknessProfile): Double {
+        val objectivePriority = profile.blunderRate
+        val decision =
+            weaknessPriorityPolicy?.evaluate(
+                ObjectiveEvidenceState.INACCURATE,
+                objectivePriority,
+                null,
+            )
+        return decision?.recommendationPriority ?: objectivePriority
+    }
+
+    private fun matchesFilterCriteria(
+        profile: CommunityWeaknessProfile,
+        evalLossMap: Map<UUID, Double?>,
+        request: RecurringDiscoveryRequest,
+    ): Boolean {
+        val severityMatches = request.minMistakeSeverity == null || matchesMinMistakeSeverity(profile, request.minMistakeSeverity)
+        val evalLossMatches = request.minEvalLoss == null || matchesMinEvalLoss(evalLossMap, request.minEvalLoss)
+        return severityMatches && evalLossMatches
+    }
+
+    private fun matchesMinMistakeSeverity(
+        profile: CommunityWeaknessProfile,
+        minSeverity: MistakeSeverity,
+    ): Boolean {
+        if (minSeverity == MistakeSeverity.UNEVALUATED) {
+            return (profile.evalLossDistribution[MistakeSeverity.UNEVALUATED] ?: 0) >= 1
+        }
+        val targetRank = severityRank(minSeverity)
+        val qualifyingCount =
+            profile.evalLossDistribution.entries
+                .filter { (sev, _) -> sev != MistakeSeverity.UNEVALUATED && severityRank(sev) >= targetRank }
+                .sumOf { it.value }
+        return qualifyingCount >= 1
+    }
+
+    private fun matchesMinEvalLoss(
+        evalLossMap: Map<UUID, Double?>,
+        minEvalLoss: Double,
+    ): Boolean = evalLossMap.values.any { it != null && it >= minEvalLoss }
+
+    private fun severityRank(severity: MistakeSeverity): Int =
+        when (severity) {
+            MistakeSeverity.NO_CONCERN -> 0
+            MistakeSeverity.MINOR -> 1
+            MistakeSeverity.MODERATE -> 2
+            MistakeSeverity.SIGNIFICANT -> 3
+            MistakeSeverity.SEVERE -> 4
+            MistakeSeverity.UNEVALUATED -> -1
+        }
 
     private fun toWeaknessResponse(
         profile: CommunityWeaknessProfile,
         repFen: String,
+        clusterType: ClusterType = ClusterType.STRUCTURAL,
+        recommendationPriority: Double = profile.blunderRate,
     ): RecurringWeaknessResponse =
         RecurringWeaknessResponse(
             clusterId = profile.clusterId,
+            clusterType = clusterType,
+            recommendationPriority = recommendationPriority,
             representativeFen = repFen,
             memberPositionCount = profile.memberPositionCount,
             totalOccurrences = profile.totalOccurrences,
@@ -239,11 +375,12 @@ class RecurringWeaknessDiscoveryService(
             mistakeCount = profile.mistakeCount,
             mistakeFrequency = profile.mistakeFrequency,
             blunderRate = profile.blunderRate,
+            evaluatedOccurrences = profile.evaluatedOccurrences,
+            unevaluatedOccurrences = profile.unevaluatedOccurrences,
             evalLossDistribution = profile.evalLossDistribution.mapKeys { it.key.name },
             evalLossPercentages = profile.evalLossPercentages.mapKeys { it.key.name },
             timingProfile = profile.timingProfile.mapKeys { it.key.name },
             formatBreakdown = profile.formatBreakdown,
-            practiceContinuationUrl = "/api/puzzles/practice?fen=$repFen&clusterId=${profile.clusterId}",
         )
 
     private fun executeWithPermitBackoff(action: () -> Unit): Boolean {
@@ -300,7 +437,7 @@ class RecurringWeaknessDiscoveryService(
     ) {
         jobState.status = status
         jobState.stage = stage
-        jobState.progressPercent = progress
+        jobState.progressPercent = maxOf(jobState.progressPercent, progress)
         jobState.updatedAt = Instant.now()
     }
 
@@ -383,6 +520,7 @@ class RecurringWeaknessDiscoveryService(
     }
 
     companion object {
+        private val logger = LoggerFactory.getLogger(RecurringWeaknessDiscoveryService::class.java)
         private const val MIN_COMMUNITY_SIZE = 10
         private const val MAX_PERMIT_RETRIES = 3
         private const val BACKOFF_MS = 50L

@@ -4,9 +4,9 @@ import com.chessecho.domain.ChessAccount
 import com.chessecho.domain.CommunityPatternClassification
 import com.chessecho.domain.DecisionSeverity
 import com.chessecho.domain.Game
+import com.chessecho.domain.MistakeSeverity
 import com.chessecho.domain.Position
 import com.chessecho.domain.PositionOccurrence
-import com.chessecho.domain.PositionWeaknessSeverity
 import com.chessecho.domain.clustering.PositionCluster
 import com.chessecho.service.DecisionTimingPolicy
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -90,10 +90,10 @@ class CommunityWeaknessServiceTest {
         val occurrences = listOf(occ1, occ2, occ3, occ4, occ5)
         val evaluations =
             mapOf(
-                occ1.id to 2.50,
-                occ2.id to 0.90,
-                occ3.id to 0.40,
-                occ4.id to 0.10,
+                occ1.id to 3.50,
+                occ2.id to 1.80,
+                occ3.id to 0.90,
+                occ4.id to 0.40,
                 occ5.id to null,
             )
 
@@ -106,22 +106,27 @@ class CommunityWeaknessServiceTest {
         assertEquals(4, p.distinctGamesCount)
         assertEquals(CommunityPatternClassification.RECURRING_WEAKNESS, p.classification)
 
-        // Dimension 1: Loss distribution and percentages
-        assertEquals(1, p.evalLossDistribution[PositionWeaknessSeverity.CRITICAL])
-        assertEquals(1, p.evalLossDistribution[PositionWeaknessSeverity.SIGNIFICANT])
-        assertEquals(1, p.evalLossDistribution[PositionWeaknessSeverity.MINOR])
-        assertEquals(2, p.evalLossDistribution[PositionWeaknessSeverity.NO_CONCERN])
+        // Dimension 1: Loss distribution and percentages across MistakeSeverity
+        assertEquals(1, p.evalLossDistribution[MistakeSeverity.SEVERE])
+        assertEquals(1, p.evalLossDistribution[MistakeSeverity.SIGNIFICANT])
+        assertEquals(1, p.evalLossDistribution[MistakeSeverity.MODERATE])
+        assertEquals(1, p.evalLossDistribution[MistakeSeverity.MINOR])
+        assertEquals(0, p.evalLossDistribution[MistakeSeverity.NO_CONCERN])
+        assertEquals(1, p.evalLossDistribution[MistakeSeverity.UNEVALUATED])
 
-        assertEquals(20.0, p.evalLossPercentages[PositionWeaknessSeverity.CRITICAL])
-        assertEquals(20.0, p.evalLossPercentages[PositionWeaknessSeverity.SIGNIFICANT])
-        assertEquals(20.0, p.evalLossPercentages[PositionWeaknessSeverity.MINOR])
-        assertEquals(40.0, p.evalLossPercentages[PositionWeaknessSeverity.NO_CONCERN])
+        assertEquals(20.0, p.evalLossPercentages[MistakeSeverity.SEVERE])
+        assertEquals(20.0, p.evalLossPercentages[MistakeSeverity.SIGNIFICANT])
+        assertEquals(20.0, p.evalLossPercentages[MistakeSeverity.MODERATE])
+        assertEquals(20.0, p.evalLossPercentages[MistakeSeverity.MINOR])
+        assertEquals(0.0, p.evalLossPercentages[MistakeSeverity.NO_CONCERN])
+        assertEquals(20.0, p.evalLossPercentages[MistakeSeverity.UNEVALUATED])
 
-        // Dimension 2: Mistake frequency and blunder rate
-        // mistakeCount = 3 (1 critical + 1 significant + 1 minor)
-        assertEquals(3, p.mistakeCount)
-        assertEquals(60.0, p.mistakeFrequency) // 3 / 5 = 60.0%
-        assertEquals(20.0, p.blunderRate) // 1 critical / 5 = 20.0%
+        // Dimension 2: Evaluated vs unevaluated counts and undiluted frequencies
+        assertEquals(4, p.evaluatedOccurrences)
+        assertEquals(1, p.unevaluatedOccurrences)
+        assertEquals(4, p.mistakeCount)
+        assertEquals(100.0, p.mistakeFrequency) // 4 mistakes / 4 evaluated occurrences = 100.0%
+        assertEquals(25.0, p.blunderRate) // 1 severe / 4 evaluated occurrences = 25.0%
 
         // Dimension 3: Timing profile (across DecisionSeverity)
         assertEquals(1, p.timingProfile[DecisionSeverity.CRITICAL]) // 65s Blitz -> CRITICAL
@@ -134,6 +139,33 @@ class CommunityWeaknessServiceTest {
         assertEquals(3, p.formatBreakdown["BLITZ"])
         assertEquals(1, p.formatBreakdown["RAPID"])
         assertEquals(1, p.formatBreakdown["UNKNOWN"])
+    }
+
+    @Test
+    fun `profileCommunity guards against zero evaluated occurrences when all moves are unevaluated`() {
+        val cluster = createCluster(size = 10)
+        val game1 = createGame(timeControl = "BLITZ")
+        val game2 = createGame(timeControl = "BLITZ")
+        val occ1 = createOccurrence(game1, createPosition(), plyNumber = 1)
+        val occ2 = createOccurrence(game2, createPosition(), plyNumber = 3)
+        val occurrences = listOf(occ1, occ2)
+
+        // All evaluations null
+        val evaluations = mapOf<UUID, Double?>(occ1.id to null, occ2.id to null)
+
+        val profile = communityWeaknessService.profileCommunity(cluster, occurrences, evaluations)
+        assertNotNull(profile)
+        val p = profile!!
+
+        assertEquals(0, p.evaluatedOccurrences)
+        assertEquals(2, p.unevaluatedOccurrences)
+        assertEquals(0, p.mistakeCount)
+        assertEquals(0.0, p.mistakeFrequency)
+        assertEquals(0.0, p.blunderRate)
+        assertEquals(2, p.evalLossDistribution[MistakeSeverity.UNEVALUATED])
+        assertEquals(100.0, p.evalLossPercentages[MistakeSeverity.UNEVALUATED])
+        assertEquals(0.0, p.evalLossPercentages[MistakeSeverity.NO_CONCERN])
+        assertEquals(0.0, p.evalLossPercentages[MistakeSeverity.SEVERE])
     }
 
     private fun createCluster(size: Int): PositionCluster =
