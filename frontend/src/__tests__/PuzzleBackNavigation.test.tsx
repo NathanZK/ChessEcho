@@ -42,7 +42,7 @@ describe('Task 3 — Puzzle Back Navigation Regression Test', () => {
     });
 
     // 1. Navigate from Import tab to Weaknesses tab via header button
-    const weaknessesTabBtn = screen.getByRole('button', { name: /Weaknesses Library/i });
+    const weaknessesTabBtn = screen.getByRole('button', { name: /^(Recurring Weaknesses|Weaknesses Library)$/i });
     await act(async () => {
       fireEvent.click(weaknessesTabBtn);
     });

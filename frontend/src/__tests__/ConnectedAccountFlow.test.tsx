@@ -245,7 +245,7 @@ describe('connected Chess.com account flow', () => {
     ]);
 
     render(<Home />);
-    fireEvent.click(await screen.findByRole('button', { name: /Weaknesses Library/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^(Recurring Weaknesses|Weaknesses Library)$/i }));
 
     const weaknessesList = await screen.findByTestId('weaknesses-list');
     expect(weaknessesList).toHaveAttribute('data-username', chessUsername);
@@ -461,7 +461,7 @@ describe('connected Chess.com account flow', () => {
     vi.mocked(api.fetchCurrentSession).mockResolvedValueOnce({ status: 'unauthenticated' });
 
     render(<Home />);
-    fireEvent.click(await screen.findByRole('button', { name: /Weaknesses Library/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^(Recurring Weaknesses|Weaknesses Library)$/i }));
 
     const progressButton = await screen.findByRole('button', { name: /view account progress/i });
     await waitFor(() => {
@@ -533,7 +533,7 @@ describe('connected Chess.com account flow', () => {
       username: serverAccount.username,
     });
 
-    fireEvent.click(screen.getByRole('button', { name: /weaknesses library/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^(Recurring Weaknesses|Weaknesses Library)$/i }));
     fireEvent.click(await screen.findByRole('button', { name: /view account progress/i }));
     expect(await screen.findByText('Retained account history is available.')).toBeInTheDocument();
     expect(api.fetchPositionProgress).toHaveBeenCalledWith('position-1', 'BLACK', serverAccount.id, 0.3);

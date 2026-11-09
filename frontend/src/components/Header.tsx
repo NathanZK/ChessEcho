@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Compass, Swords, Target, Download, User, Clock3, ChevronDown } from 'lucide-react';
+import { Compass, Swords, Target, Download, User, Clock3, ChevronDown, Menu } from 'lucide-react';
 import type { AccountSummary } from '../services/api';
 import { ExplorePositionModal, type PositionExplorationStart } from './ExplorePositionModal';
 import { AccountMenu } from './AccountMenu';
@@ -110,7 +110,7 @@ export const Header: React.FC<HeaderProps> = ({
             {/* Core Tab 1: Recurring Weaknesses (central hub) */}
             <button
               type="button"
-              aria-label="Position Weaknesses (Weaknesses Library)"
+              aria-label="Recurring Weaknesses"
               onClick={() => setActiveTab('weaknesses')}
               className={`transition cursor-pointer whitespace-nowrap flex items-center gap-2 pb-1 ${
                 activeTab === 'weaknesses'
@@ -230,35 +230,86 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Right: Actions & Account Status */}
         <div className="flex items-center space-x-3 shrink-0">
-          <button
-            type="button"
-            onClick={() => setIsExplorePositionOpen(true)}
-            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-outline-variant hover:border-primary/40 text-xs font-mono text-on-surface-variant hover:text-primary transition shrink-0 cursor-pointer"
-          >
-            <Compass className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Explore a position</span>
-          </button>
-
-          {/* Mobile Secondary Tools Trigger */}
+          {/* Mobile Navigation Menu Trigger */}
           <div className="relative md:hidden" ref={mobileToolsDropdownRef}>
             <button
               type="button"
-              aria-label="Mobile navigation tools"
+              aria-label="Mobile navigation menu"
               aria-haspopup="true"
               aria-expanded={isMobileToolsOpen}
               onClick={() => setIsMobileToolsOpen((prev) => !prev)}
               className={`flex items-center justify-center w-9 h-9 rounded-lg border border-outline-variant hover:border-primary/40 text-on-surface-variant hover:text-primary transition shrink-0 cursor-pointer ${
-                isSecondaryActive ? 'border-primary text-primary' : ''
+                isMobileToolsOpen || isSecondaryActive ? 'border-primary text-primary' : ''
               }`}
             >
-              <Compass className="w-4 h-4" />
+              <Menu className="w-4 h-4" />
             </button>
 
             {isMobileToolsOpen && (
               <div
                 role="menu"
-                className="absolute right-0 top-[42px] w-48 py-1 bg-surface-container-high border border-outline-variant rounded-md shadow-lg z-50 text-xs font-mono"
+                className="absolute right-0 top-[42px] w-56 py-1 bg-surface-container-high border border-outline-variant rounded-md shadow-lg z-50 text-xs font-mono"
               >
+                {/* Primary Core Tabs */}
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setIsMobileToolsOpen(false);
+                    setActiveTab('weaknesses');
+                  }}
+                  className={`w-full text-left px-3 py-2 flex items-center justify-between hover:bg-surface-bright transition cursor-pointer ${
+                    activeTab === 'weaknesses'
+                      ? 'text-primary font-semibold bg-surface-container'
+                      : 'text-on-surface-variant hover:text-on-surface'
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    <Target className="w-3.5 h-3.5 shrink-0 text-primary" />
+                    <span>Recurring Weaknesses</span>
+                  </span>
+                  {weaknessCount > 0 && (
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-primary/20 text-primary border border-primary/30">
+                      {weaknessCount}
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setIsMobileToolsOpen(false);
+                    setActiveTab('puzzles');
+                  }}
+                  className={`w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-surface-bright transition cursor-pointer ${
+                    activeTab === 'puzzles'
+                      ? 'text-primary font-semibold bg-surface-container'
+                      : 'text-on-surface-variant hover:text-on-surface'
+                  }`}
+                >
+                  <Swords className="w-3.5 h-3.5 shrink-0 text-primary" />
+                  <span>{isSourceNeutralExploration ? 'Line Exploration' : 'Practice Puzzles'}</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setIsMobileToolsOpen(false);
+                    setActiveTab('import');
+                  }}
+                  className={`w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-surface-bright transition cursor-pointer ${
+                    activeTab === 'import'
+                      ? 'text-primary font-semibold bg-surface-container'
+                      : 'text-on-surface-variant hover:text-on-surface'
+                  }`}
+                >
+                  <Download className="w-3.5 h-3.5 shrink-0 text-primary" />
+                  <span>Import Games</span>
+                </button>
+
+                <div className="my-1 border-t border-outline-variant/50" role="separator" />
+
+                {/* Secondary Tools */}
                 <button
                   type="button"
                   role="menuitem"
@@ -278,7 +329,11 @@ export const Header: React.FC<HeaderProps> = ({
                     setIsMobileToolsOpen(false);
                     setActiveTab('long-decisions');
                   }}
-                  className="w-full text-left px-3 py-2 flex items-center gap-2 text-on-surface-variant hover:text-on-surface hover:bg-surface-bright transition cursor-pointer"
+                  className={`w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-surface-bright transition cursor-pointer ${
+                    activeTab === 'long-decisions'
+                      ? 'text-primary font-semibold bg-surface-container'
+                      : 'text-on-surface-variant hover:text-on-surface'
+                  }`}
                 >
                   <Clock3 className="w-3.5 h-3.5 shrink-0 text-primary" />
                   <span>Decision Timing</span>
@@ -290,7 +345,11 @@ export const Header: React.FC<HeaderProps> = ({
                     setIsMobileToolsOpen(false);
                     setActiveTab('similar-positions');
                   }}
-                  className="w-full text-left px-3 py-2 flex items-center gap-2 text-on-surface-variant hover:text-on-surface hover:bg-surface-bright transition cursor-pointer"
+                  className={`w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-surface-bright transition cursor-pointer ${
+                    activeTab === 'similar-positions'
+                      ? 'text-primary font-semibold bg-surface-container'
+                      : 'text-on-surface-variant hover:text-on-surface'
+                  }`}
                 >
                   <Compass className="w-3.5 h-3.5 shrink-0 text-primary" />
                   <span>Similar Positions</span>

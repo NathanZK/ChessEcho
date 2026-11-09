@@ -19,18 +19,28 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe('shared Explore a position entry', () => {
-  it.each([375, 1280])('is available at %i pixels wide', (width) => {
-    Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
-    renderHeader();
+function openExploreModal() {
+  fireEvent.click(screen.getByRole('button', { name: 'Explore / Tools' }));
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Explore a position' }));
+}
 
-    expect(screen.getByRole('button', { name: 'Explore a position' })).toBeInTheDocument();
+describe('shared Explore a position entry', () => {
+  it('is accessible via secondary tools dropdown on desktop and mobile drawer', () => {
+    renderHeader();
+    // Desktop:
+    fireEvent.click(screen.getByRole('button', { name: 'Explore / Tools' }));
+    expect(screen.getByRole('menuitem', { name: 'Explore a position' })).toBeInTheDocument();
+
+    // Mobile menu trigger:
+    fireEvent.click(screen.getByRole('button', { name: /Mobile navigation/i }));
+    const mobileMenuItems = screen.getAllByRole('menuitem', { name: 'Explore a position' });
+    expect(mobileMenuItems.length).toBeGreaterThanOrEqual(1);
   });
 
   it('opens the position form from a non-puzzle tab and submits a valid FEN', () => {
     renderHeader('import');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Explore a position' }));
+    openExploreModal();
     const dialog = screen.getByRole('dialog', { name: 'Explore a position' });
     fireEvent.change(within(dialog).getByLabelText('FEN'), {
       target: { value: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1' },
@@ -46,7 +56,7 @@ describe('shared Explore a position entry', () => {
 
   it('displays an actionable error and does not submit an invalid FEN', () => {
     renderHeader();
-    fireEvent.click(screen.getByRole('button', { name: 'Explore a position' }));
+    openExploreModal();
     const dialog = screen.getByRole('dialog');
     fireEvent.change(within(dialog).getByLabelText('FEN'), {
       target: { value: 'not a FEN' },
@@ -59,7 +69,7 @@ describe('shared Explore a position entry', () => {
 
   it('submits the selected PGN ply with its move history', () => {
     renderHeader();
-    fireEvent.click(screen.getByRole('button', { name: 'Explore a position' }));
+    openExploreModal();
     const dialog = screen.getByRole('dialog');
     fireEvent.click(within(dialog).getByRole('tab', { name: 'PGN' }));
     fireEvent.change(within(dialog).getByLabelText('PGN'), {
@@ -80,7 +90,7 @@ describe('shared Explore a position entry', () => {
 
   it('displays a PGN error without submitting a position', () => {
     renderHeader();
-    fireEvent.click(screen.getByRole('button', { name: 'Explore a position' }));
+    openExploreModal();
     const dialog = screen.getByRole('dialog');
     fireEvent.click(within(dialog).getByRole('tab', { name: 'PGN' }));
     fireEvent.change(within(dialog).getByLabelText('PGN'), {
@@ -94,7 +104,7 @@ describe('shared Explore a position entry', () => {
 
   it('closes without changing the position session', () => {
     renderHeader();
-    fireEvent.click(screen.getByRole('button', { name: 'Explore a position' }));
+    openExploreModal();
     fireEvent.click(screen.getByRole('button', { name: 'Close dialog' }));
 
     expect(onExplorePosition).not.toHaveBeenCalled();

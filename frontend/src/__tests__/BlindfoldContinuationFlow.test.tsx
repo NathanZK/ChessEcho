@@ -376,7 +376,7 @@ describe('Blindfold continuation flow', () => {
     await solve();
     await enterBlindfold();
 
-    fireEvent.click(screen.getByRole('button', { name: /Weaknesses Library/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^(Recurring Weaknesses|Weaknesses Library)$/i }));
     fireEvent.click(await screen.findByRole('button', { name: /Practice Position/i }));
 
     await waitFor(() => expect(board().dataset.position).toBe(whitePuzzle.fen));
