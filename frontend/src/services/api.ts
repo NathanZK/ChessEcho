@@ -1,5 +1,8 @@
 import { Puzzle } from '@/types/puzzle';
 
+import { AnalyzedPly } from '../utils/gameAnalysisFilters';
+export type { AnalyzedPly };
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api';
 
 /**
@@ -1114,6 +1117,81 @@ export async function fetchRecurringWeaknesses(
   if (!response || !response.ok) {
     const errBody = (await response?.json?.().catch(() => ({}))) || {};
     const message = errBody.error || errBody.message || `Failed to fetch recurring weaknesses: ${response?.status ?? 'network error'}`;
+    throw new Error(message);
+  }
+
+  return await response.json();
+}
+
+export interface GameSummary {
+  id: string;
+  platformGameId: string;
+  timeControl?: string | null;
+  playedAt?: string | null;
+  result?: string | null;
+  whiteUsername: string;
+  blackUsername: string;
+  pgn?: string | null;
+}
+
+export interface GamePageResponse {
+  content: GameSummary[];
+  totalElements: number;
+  totalPages: number;
+  number: number;
+  size: number;
+}
+
+export interface GameAnalysisResponse {
+  gameId: string;
+  whiteUsername: string;
+  blackUsername: string;
+  timeControl?: string | null;
+  playedAt?: string | null;
+  result?: string | null;
+  analysisStatus: 'COMPLETE' | 'CAPACITY_EXCEEDED';
+  plies: AnalyzedPly[];
+}
+
+export async function fetchGames(params?: {
+  username?: string;
+  platform?: string;
+  accountId?: string;
+  page?: number;
+  size?: number;
+}): Promise<GamePageResponse> {
+  const queryParams = new URLSearchParams();
+  if (params?.username) queryParams.set('username', params.username);
+  if (params?.platform) queryParams.set('platform', params.platform);
+  if (params?.accountId) queryParams.set('accountId', params.accountId);
+  if (params?.page !== undefined) queryParams.set('page', params.page.toString());
+  if (params?.size !== undefined) queryParams.set('size', params.size.toString());
+  const queryString = queryParams.toString() ? `?${queryParams.toString()}` : '';
+
+  const response = await fetch(`${API_BASE_URL}/games${queryString}`, {
+    method: 'GET',
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    const errBody = (await response.json().catch(() => ({}))) || {};
+    const message = errBody.error || errBody.message || `Failed to fetch games: ${response.status}`;
+    throw new Error(message);
+  }
+
+  return await response.json();
+}
+
+export async function analyzeGame(gameId: string): Promise<GameAnalysisResponse> {
+  const response = await fetch(`${API_BASE_URL}/games/${gameId}/analyze`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: jsonHeaders(),
+  });
+
+  if (!response.ok && response.status !== 429) {
+    const errBody = (await response.json().catch(() => ({}))) || {};
+    const message = errBody.error || errBody.message || `Failed to analyze game: ${response.status}`;
     throw new Error(message);
   }
 

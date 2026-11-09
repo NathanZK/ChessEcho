@@ -39,6 +39,8 @@ interface PositionOccurrenceRepository : JpaRepository<PositionOccurrence, UUID>
 
     fun findByGameIdIn(gameIds: Collection<UUID>): List<PositionOccurrence>
 
+    fun findAllByGameIdOrderByPlyNumberAsc(gameId: UUID): List<PositionOccurrence>
+
     @Query(
         value = """
             SELECT po FROM PositionOccurrence po

@@ -120,6 +120,7 @@ export type PracticePuzzlesViewProps = {
   onReturnToTab?: (tab: TabType) => void;
   hasLongDecisionReturnContext?: boolean;
   hasSimilarPositionsReturnContext?: boolean;
+  hasGameAnalysisReturnContext?: boolean;
 };
 
 export function PracticePuzzlesView({
@@ -137,6 +138,7 @@ export function PracticePuzzlesView({
   onReturnToTab,
   hasLongDecisionReturnContext = false,
   hasSimilarPositionsReturnContext = false,
+  hasGameAnalysisReturnContext = false,
 }: PracticePuzzlesViewProps) {
   const [puzzlesList, setPuzzlesList] = useState<Puzzle[]>([]);
   const [currentPuzzleIndex, setCurrentPuzzleIndex] = useState<number>(0);
@@ -602,6 +604,10 @@ export function PracticePuzzlesView({
         onReturnToTab?.('long-decisions');
         return;
       }
+      if (hasGameAnalysisReturnContext) {
+        onReturnToTab?.('game-analysis');
+        return;
+      }
       if (
         activePuzzle?.source === 'supplied' ||
         activePuzzle?.source === 'long-decision' ||
@@ -622,6 +628,7 @@ export function PracticePuzzlesView({
     },
     [
       activePuzzle,
+      hasGameAnalysisReturnContext,
       hasLongDecisionReturnContext,
       hasSimilarPositionsReturnContext,
       onReturnToTab,
@@ -876,9 +883,14 @@ export function PracticePuzzlesView({
       onReturnToTab?.('long-decisions');
       return;
     }
+    if (hasGameAnalysisReturnContext) {
+      onReturnToTab?.('game-analysis');
+      return;
+    }
     setActiveOriginatingTab(null);
     setViewMode('discovery');
   }, [
+    hasGameAnalysisReturnContext,
     hasLongDecisionReturnContext,
     hasSimilarPositionsReturnContext,
     onReturnToTab,
@@ -1744,10 +1756,14 @@ export function PracticePuzzlesView({
                             ? 'Weaknesses'
                             : activeOriginatingTab === 'similar-positions'
                             ? 'Similar Positions'
+                            : activeOriginatingTab === 'game-analysis'
+                            ? 'Game Analysis'
                             : 'Decision Timing'
                         }`
                       : hasSimilarPositionsReturnContext
                       ? 'Back to Similar Positions'
+                      : hasGameAnalysisReturnContext
+                      ? 'Back to Game Analysis'
                       : 'Back to Puzzles'}
                   </span>
                 </button>

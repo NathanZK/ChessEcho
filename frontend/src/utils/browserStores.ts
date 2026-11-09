@@ -82,7 +82,13 @@ export function createStore<T>(definition: StoreDefinition<T>): BrowserStore<T> 
   };
 }
 
-export type TabValue = 'puzzles' | 'weaknesses' | 'long-decisions' | 'similar-positions' | 'import';
+export type TabValue =
+  | 'puzzles'
+  | 'weaknesses'
+  | 'long-decisions'
+  | 'similar-positions'
+  | 'import'
+  | 'game-analysis';
 
 const TAB_KEY = 'chessecho_active_tab';
 const USERNAME_KEY = 'chessecho_username';
@@ -95,7 +101,8 @@ const isTab = (value: string | null): value is TabValue =>
   value === 'weaknesses' ||
   value === 'long-decisions' ||
   value === 'similar-positions' ||
-  value === 'import';
+  value === 'import' ||
+  value === 'game-analysis';
 
 const readHashTab = (): TabValue | null => {
   const hash = window.location.hash.replace('#', '');
@@ -268,4 +275,33 @@ export const puzzleSettingsStore = createStore<PuzzleSettings>({
     };
   },
   fallback: () => DEFAULT_PUZZLE_SETTINGS,
+});
+
+export interface GameAnalysisReturnSnapshot {
+  gameId: string;
+  plyNumber: number;
+  evalLossThreshold: number;
+  timingFilters: ('All' | 'Minor' | 'Significant' | 'Critical' | 'None')[];
+}
+
+const GAME_ANALYSIS_RETURN_KEY = 'chessecho_game_analysis_return';
+
+export const gameAnalysisReturnStore = createStore<GameAnalysisReturnSnapshot | null>({
+  read: () => {
+    const raw = window.sessionStorage.getItem(GAME_ANALYSIS_RETURN_KEY);
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  },
+  fallback: () => null,
+  persist: (value) => {
+    if (value) {
+      window.sessionStorage.setItem(GAME_ANALYSIS_RETURN_KEY, JSON.stringify(value));
+    } else {
+      window.sessionStorage.removeItem(GAME_ANALYSIS_RETURN_KEY);
+    }
+  },
 });

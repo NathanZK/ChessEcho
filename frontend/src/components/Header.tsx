@@ -1,12 +1,12 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Compass, Swords, Target, Download, User, Clock3, ChevronDown, Menu } from 'lucide-react';
+import { Compass, Swords, Target, Download, User, Clock3, ChevronDown, Menu, Search } from 'lucide-react';
 import type { AccountSummary } from '../services/api';
 import { ExplorePositionModal, type PositionExplorationStart } from './ExplorePositionModal';
 import { AccountMenu } from './AccountMenu';
 
-export type TabType = 'puzzles' | 'weaknesses' | 'long-decisions' | 'similar-positions' | 'import';
+export type TabType = 'puzzles' | 'weaknesses' | 'long-decisions' | 'similar-positions' | 'import' | 'game-analysis';
 
 export type HeaderSessionStatus = 'loading' | 'authenticated' | 'unauthenticated' | 'error';
 export type HeaderAccountStatus = 'loading' | 'connected' | 'unconnected' | 'error';
@@ -85,7 +85,10 @@ export const Header: React.FC<HeaderProps> = ({
           ? 'Unable to load Chess.com connection'
           : 'Connected Chess.com account unavailable';
   const accountUsername = showConnected ? connectedAccount?.username : username;
-  const isSecondaryActive = activeTab === 'long-decisions' || activeTab === 'similar-positions';
+  const isSecondaryActive =
+    activeTab === 'long-decisions' ||
+    activeTab === 'similar-positions' ||
+    activeTab === 'game-analysis';
 
   return (
     <header className="w-full h-[60px] px-6 md:px-10 border-b border-outline-variant bg-surface-container-lowest sticky top-0 z-50 flex items-center justify-between">
@@ -222,6 +225,22 @@ export const Header: React.FC<HeaderProps> = ({
                     <Compass className="w-3.5 h-3.5 shrink-0 text-primary" />
                     <span>Similar Positions</span>
                   </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setIsToolsMenuOpen(false);
+                      setActiveTab('game-analysis');
+                    }}
+                    className={`w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-surface-bright transition cursor-pointer ${
+                      activeTab === 'game-analysis'
+                        ? 'text-primary font-semibold bg-surface-container'
+                        : 'text-on-surface-variant hover:text-on-surface'
+                    }`}
+                  >
+                    <Search className="w-3.5 h-3.5 shrink-0 text-primary" />
+                    <span>Game Analysis</span>
+                  </button>
                 </div>
               )}
             </div>
@@ -353,6 +372,22 @@ export const Header: React.FC<HeaderProps> = ({
                 >
                   <Compass className="w-3.5 h-3.5 shrink-0 text-primary" />
                   <span>Similar Positions</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setIsMobileToolsOpen(false);
+                    setActiveTab('game-analysis');
+                  }}
+                  className={`w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-surface-bright transition cursor-pointer ${
+                    activeTab === 'game-analysis'
+                      ? 'text-primary font-semibold bg-surface-container'
+                      : 'text-on-surface-variant hover:text-on-surface'
+                  }`}
+                >
+                  <Search className="w-3.5 h-3.5 shrink-0 text-primary" />
+                  <span>Game Analysis</span>
                 </button>
               </div>
             )}
