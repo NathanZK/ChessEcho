@@ -6,10 +6,10 @@ import com.chessecho.domain.DiscoveryJobStatus
 import com.chessecho.domain.DiscoveryStage
 import com.chessecho.domain.EngineAnalysis
 import com.chessecho.domain.Game
+import com.chessecho.domain.MistakeSeverity
 import com.chessecho.domain.MoveEvaluation
 import com.chessecho.domain.Position
 import com.chessecho.domain.PositionOccurrence
-import com.chessecho.domain.PositionWeaknessSeverity
 import com.chessecho.domain.clustering.ClusterType
 import com.chessecho.domain.clustering.PositionCluster
 import com.chessecho.domain.clustering.PositionClusterAssignment
@@ -195,8 +195,8 @@ class RecurringWeaknessDiscoveryServiceTest {
                 mistakeCount = 2,
                 mistakeFrequency = 100.0,
                 blunderRate = 50.0,
-                evalLossDistribution = mapOf(PositionWeaknessSeverity.CRITICAL to 1),
-                evalLossPercentages = mapOf(PositionWeaknessSeverity.CRITICAL to 50.0),
+                evalLossDistribution = mapOf(MistakeSeverity.SEVERE to 1),
+                evalLossPercentages = mapOf(MistakeSeverity.SEVERE to 50.0),
                 timingProfile = emptyMap(),
                 formatBreakdown = mapOf("RAPID" to 2),
             )
@@ -684,5 +684,25 @@ class RecurringWeaknessDiscoveryServiceTest {
         assertEquals(DiscoveryJobStatus.COMPLETED.name, job!!.status)
         val weaknesses = service.getLatestRecurringWeaknesses(testAccount)
         assertEquals(1, weaknesses.size)
+    }
+
+    @Test
+    fun `clearCache invalidates cached weaknesses for account`() {
+        val snapshotId = UUID.randomUUID()
+        val clusterId = UUID.randomUUID()
+        val posId = UUID.randomUUID()
+
+        val cluster = mockSnapshotAndCluster(snapshotId, clusterId, posId)
+        val occurrences = mockOccurrences(posId)
+        mockConcurrencyAndProfile(cluster, occurrences)
+
+        val response = service.triggerDiscovery(testAccount, RecurringDiscoveryRequest(timeControls = listOf("RAPID")))
+        service.awaitJobCompletion(response.jobId, timeoutMs = 5000)
+
+        assertFalse(service.getLatestRecurringWeaknesses(testAccount).isEmpty())
+
+        service.clearCache(testAccount.id)
+
+        assertTrue(service.getLatestRecurringWeaknesses(testAccount).isEmpty())
     }
 }

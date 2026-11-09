@@ -26,6 +26,8 @@ describe('Thematic Weakness Clusters & Practice Bridge (#735)', () => {
 
   const mockCluster: api.RecurringWeaknessResponse = {
     clusterId: 'cluster-uuid-1',
+    clusterType: 'STRUCTURAL',
+    recommendationPriority: 0.3,
     representativeFen: 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3',
     memberPositionCount: 4,
     totalOccurrences: 18,
@@ -33,11 +35,12 @@ describe('Thematic Weakness Clusters & Practice Bridge (#735)', () => {
     mistakeCount: 10,
     mistakeFrequency: 0.55,
     blunderRate: 0.3,
+    evaluatedOccurrences: 18,
+    unevaluatedOccurrences: 0,
     evalLossDistribution: { '0.8-1.5': 6, '1.5-3.0': 4 },
     evalLossPercentages: { '0.8-1.5': 60, '1.5-3.0': 40 },
     timingProfile: { FAST: 2, NORMAL: 9, SLOW: 7 },
     formatBreakdown: { RAPID: 10, BLITZ: 8 },
-    practiceContinuationUrl: '/api/puzzles/continuation?clusterId=cluster-uuid-1',
   };
 
   beforeEach(() => {

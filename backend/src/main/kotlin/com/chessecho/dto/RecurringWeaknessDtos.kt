@@ -1,5 +1,7 @@
 package com.chessecho.dto
 
+import com.chessecho.domain.MistakeSeverity
+import com.chessecho.domain.clustering.ClusterType
 import java.time.Instant
 import java.time.LocalDate
 import java.time.YearMonth
@@ -9,8 +11,10 @@ import java.util.UUID
 data class RecurringDiscoveryRequest(
     val accountId: UUID? = null,
     val username: String? = null,
+    val clusterType: ClusterType? = null,
     val timeControls: List<String> = listOf("RAPID", "BLITZ", "BULLET"),
-    val minEvalLoss: Double? = 0.8,
+    val minMistakeSeverity: MistakeSeverity? = null,
+    val minEvalLoss: Double? = null,
     val fromDate: String? = null,
     val toDate: String? = null,
 ) {
@@ -88,6 +92,8 @@ data class RecurringDiscoveryJobResponse(
 
 data class RecurringWeaknessResponse(
     val clusterId: UUID,
+    val clusterType: ClusterType,
+    val recommendationPriority: Double,
     val representativeFen: String,
     val memberPositionCount: Int,
     val totalOccurrences: Int,
@@ -95,9 +101,10 @@ data class RecurringWeaknessResponse(
     val mistakeCount: Int,
     val mistakeFrequency: Double,
     val blunderRate: Double,
+    val evaluatedOccurrences: Int,
+    val unevaluatedOccurrences: Int,
     val evalLossDistribution: Map<String, Int>,
     val evalLossPercentages: Map<String, Double>,
     val timingProfile: Map<String, Int>,
     val formatBreakdown: Map<String, Int>,
-    val practiceContinuationUrl: String,
 )

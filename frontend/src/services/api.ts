@@ -988,10 +988,14 @@ export async function fetchSimilarPositions(params: {
   return await response.json();
 }
 
+export type ClusterType = 'STRUCTURAL' | 'DYNAMIC';
+
 export interface RecurringDiscoveryRequest {
   accountId?: string;
   username?: string;
+  clusterType?: ClusterType;
   timeControls?: string[];
+  minMistakeSeverity?: string;
   minEvalLoss?: number;
   fromDate?: string;
   toDate?: string;
@@ -1012,6 +1016,8 @@ export interface RecurringDiscoveryJobResponse {
 
 export interface RecurringWeaknessResponse {
   clusterId: string;
+  clusterType: ClusterType;
+  recommendationPriority: number;
   representativeFen: string;
   memberPositionCount: number;
   totalOccurrences: number;
@@ -1019,11 +1025,12 @@ export interface RecurringWeaknessResponse {
   mistakeCount: number;
   mistakeFrequency: number;
   blunderRate: number;
+  evaluatedOccurrences: number;
+  unevaluatedOccurrences: number;
   evalLossDistribution: Record<string, number>;
   evalLossPercentages: Record<string, number>;
   timingProfile: Record<string, number>;
   formatBreakdown: Record<string, number>;
-  practiceContinuationUrl: string;
 }
 
 export async function triggerRecurringDiscovery(

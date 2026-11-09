@@ -2,8 +2,8 @@ package com.chessecho.service.clustering
 
 import com.chessecho.domain.CommunityPatternClassification
 import com.chessecho.domain.DecisionSeverity
+import com.chessecho.domain.MistakeSeverity
 import com.chessecho.domain.PositionOccurrence
-import com.chessecho.domain.PositionWeaknessSeverity
 import com.chessecho.domain.TimeControl
 import com.chessecho.domain.clustering.PositionCluster
 import com.chessecho.service.DecisionTimingPolicy
@@ -22,10 +22,12 @@ data class CommunityWeaknessProfile(
     val mistakeCount: Int,
     val mistakeFrequency: Double,
     val blunderRate: Double,
-    val evalLossDistribution: Map<PositionWeaknessSeverity, Int>,
-    val evalLossPercentages: Map<PositionWeaknessSeverity, Double>,
-    val timingProfile: Map<DecisionSeverity, Int>,
-    val formatBreakdown: Map<String, Int>,
+    val evaluatedOccurrences: Int = totalOccurrences,
+    val unevaluatedOccurrences: Int = 0,
+    val evalLossDistribution: Map<MistakeSeverity, Int> = emptyMap(),
+    val evalLossPercentages: Map<MistakeSeverity, Double> = emptyMap(),
+    val timingProfile: Map<DecisionSeverity, Int> = emptyMap(),
+    val formatBreakdown: Map<String, Int> = emptyMap(),
 )
 
 @Service
@@ -65,6 +67,8 @@ class CommunityWeaknessService(
             mistakeCount = lossMetrics.mistakeCount,
             mistakeFrequency = lossMetrics.mistakeFrequency,
             blunderRate = lossMetrics.blunderRate,
+            evaluatedOccurrences = lossMetrics.evaluatedOccurrences,
+            unevaluatedOccurrences = lossMetrics.unevaluatedOccurrences,
             evalLossDistribution = lossMetrics.distribution,
             evalLossPercentages = lossMetrics.percentages,
             timingProfile = timingProfile,
@@ -76,8 +80,10 @@ class CommunityWeaknessService(
         val mistakeCount: Int,
         val mistakeFrequency: Double,
         val blunderRate: Double,
-        val distribution: Map<PositionWeaknessSeverity, Int>,
-        val percentages: Map<PositionWeaknessSeverity, Double>,
+        val evaluatedOccurrences: Int,
+        val unevaluatedOccurrences: Int,
+        val distribution: Map<MistakeSeverity, Int>,
+        val percentages: Map<MistakeSeverity, Double>,
     )
 
     private fun computeLossMetrics(
@@ -85,34 +91,45 @@ class CommunityWeaknessService(
         occurrenceEvaluations: Map<UUID, Double?>,
         totalOccurrences: Int,
     ): LossMetrics {
-        val distribution = PositionWeaknessSeverity.entries.associateWith { 0 }.toMutableMap()
-        var mistakeCount = 0
-        var criticalCount = 0
-
-        for (occ in memberOccurrences) {
-            val evalLoss = occurrenceEvaluations[occ.id]
-            val severity = EvaluationLossPolicy.classifySeverity(evalLoss)
-            distribution[severity] = (distribution[severity] ?: 0) + 1
-            if (severity != PositionWeaknessSeverity.NO_CONCERN) {
-                mistakeCount++
+        val severities =
+            memberOccurrences.map { occ ->
+                EvaluationLossPolicy.classifyMistakeSeverity(occurrenceEvaluations[occ.id])
             }
-            if (severity == PositionWeaknessSeverity.CRITICAL) {
-                criticalCount++
-            }
-        }
+        val distribution = MistakeSeverity.entries.associateWith { s -> severities.count { it == s } }
+        val unevaluatedOccurrences = distribution[MistakeSeverity.UNEVALUATED] ?: 0
+        val evaluatedOccurrences = totalOccurrences - unevaluatedOccurrences
+        val severeCount = distribution[MistakeSeverity.SEVERE] ?: 0
+        val mistakeCount = evaluatedOccurrences - (distribution[MistakeSeverity.NO_CONCERN] ?: 0)
 
         val percentages =
-            distribution.mapValues { (_, count) ->
-                round((count.toDouble() / totalOccurrences) * 10000.0) / 100.0
+            if (totalOccurrences > 0) {
+                distribution.mapValues { (_, count) ->
+                    round((count.toDouble() / totalOccurrences) * 10000.0) / 100.0
+                }
+            } else {
+                distribution.mapValues { 0.0 }
             }
 
-        val mistakeFrequency = round((mistakeCount.toDouble() / totalOccurrences) * 10000.0) / 100.0
-        val blunderRate = round((criticalCount.toDouble() / totalOccurrences) * 10000.0) / 100.0
+        val mistakeFrequency =
+            if (evaluatedOccurrences > 0) {
+                round((mistakeCount.toDouble() / evaluatedOccurrences) * 10000.0) / 100.0
+            } else {
+                0.0
+            }
+
+        val blunderRate =
+            if (evaluatedOccurrences > 0) {
+                round((severeCount.toDouble() / evaluatedOccurrences) * 10000.0) / 100.0
+            } else {
+                0.0
+            }
 
         return LossMetrics(
             mistakeCount = mistakeCount,
             mistakeFrequency = mistakeFrequency,
             blunderRate = blunderRate,
+            evaluatedOccurrences = evaluatedOccurrences,
+            unevaluatedOccurrences = unevaluatedOccurrences,
             distribution = distribution,
             percentages = percentages,
         )

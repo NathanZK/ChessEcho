@@ -14,6 +14,7 @@ import com.chessecho.repository.clustering.PositionClusterRepository
 import com.chessecho.repository.clustering.PositionClusterSnapshotRepository
 import com.chessecho.service.similarity.PersonalDynamicCorpusProvider
 import com.chessecho.service.similarity.PersonalPositionCorpusProvider
+import com.chessecho.service.weakness.RecurringWeaknessDiscoveryService
 import com.chessecho.similarity.DynamicInvertedIndex
 import com.chessecho.similarity.PositionDocument
 import com.chessecho.similarity.PositionInvertedIndex
@@ -24,6 +25,7 @@ import com.chessecho.similarity.clustering.PositionClusterVector
 import com.chessecho.similarity.clustering.PositionLeidenCommunityDetector
 import com.chessecho.similarity.clustering.RelaxedMnnGraphBuilder
 import com.fasterxml.jackson.databind.ObjectMapper
+import org.springframework.context.annotation.Lazy
 import org.springframework.stereotype.Service
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.support.TransactionTemplate
@@ -45,6 +47,9 @@ class PositionClusteringService(
     private val properties: PositionClusteringProperties,
     private val objectMapper: ObjectMapper,
     private val transactionManager: PlatformTransactionManager,
+    @Lazy
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private val recurringWeaknessDiscoveryService: RecurringWeaknessDiscoveryService? = null,
 ) {
     private data class AccountLockKey(
         val accountId: UUID,
@@ -181,6 +186,7 @@ class PositionClusteringService(
                 currentVersion = snapshot.snapshotVersion,
             )
             snapshot.status = PositionClusterSnapshotStatus.ACTIVE
+            recurringWeaknessDiscoveryService?.clearCache(accountId)
         } else {
             snapshot.status = PositionClusterSnapshotStatus.EXPERIMENTAL
         }
@@ -410,6 +416,7 @@ class PositionClusteringService(
                 currentVersion = snapshot.snapshotVersion,
             )
             snapshot.status = PositionClusterSnapshotStatus.ACTIVE
+            recurringWeaknessDiscoveryService?.clearCache(accountId)
         } else {
             snapshot.status = PositionClusterSnapshotStatus.EXPERIMENTAL
         }

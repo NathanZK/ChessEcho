@@ -27,6 +27,8 @@ describe('Recurring Weakness API client', () => {
 
   const mockWeakness: RecurringWeaknessResponse = {
     clusterId: 'c1111111-2222-3333-4444-555555555555',
+    clusterType: 'STRUCTURAL',
+    recommendationPriority: 0.25,
     representativeFen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1',
     memberPositionCount: 5,
     totalOccurrences: 20,
@@ -34,11 +36,12 @@ describe('Recurring Weakness API client', () => {
     mistakeCount: 12,
     mistakeFrequency: 0.6,
     blunderRate: 0.25,
+    evaluatedOccurrences: 20,
+    unevaluatedOccurrences: 0,
     evalLossDistribution: { '0.8-1.5': 8, '1.5-3.0': 4 },
     evalLossPercentages: { '0.8-1.5': 66.7, '1.5-3.0': 33.3 },
     timingProfile: { 'FAST': 3, 'NORMAL': 10, 'SLOW': 7 },
     formatBreakdown: { 'RAPID': 12, 'BLITZ': 8 },
-    practiceContinuationUrl: '/api/puzzles/continuation?clusterId=c1111111',
   };
 
   it('triggers recurring discovery with request payload and double-submit CSRF headers', async () => {
