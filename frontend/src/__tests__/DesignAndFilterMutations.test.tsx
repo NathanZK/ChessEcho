@@ -20,6 +20,7 @@ vi.mock('../services/api', () => ({
   fetchWeaknesses: vi.fn(),
   fetchPositionProgress: vi.fn(),
   fetchPuzzles: vi.fn(),
+  fetchRecurringWeaknesses: vi.fn().mockResolvedValue([]),
 }));
 
 const mockWeakness: WeaknessResponse = {
@@ -96,12 +97,16 @@ describe('Targeted Mutation & Invariant Guards', () => {
       expect(header).toHaveClass('h-[60px]', 'border-b');
       expect(header).not.toHaveClass('2xl:w-[280px]', '2xl:h-screen', '2xl:border-r');
 
-      // Confirm all navigation items render with their labels and icons
+      // Confirm core navigation items and tools dropdown render with their labels and icons
       expect(screen.getByRole('button', { name: /practice puzzles/i })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /weaknesses library/i })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /long decisions/i })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /similar positions/i })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /import games/i })).toBeInTheDocument();
+
+      const toolsBtn = screen.getByRole('button', { name: /explore \/ tools/i });
+      expect(toolsBtn).toBeInTheDocument();
+      fireEvent.click(toolsBtn);
+      expect(screen.getByRole('menuitem', { name: /decision timing/i })).toBeInTheDocument();
+      expect(screen.getByRole('menuitem', { name: /similar positions/i })).toBeInTheDocument();
     });
 
     it('kills mutant: Non-puzzles views enforce 60px top header and omit 2xl sidebar tokens', () => {

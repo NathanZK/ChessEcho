@@ -439,7 +439,7 @@ describe('connected Chess.com account flow', () => {
 
     openImportView();
     expect(await screen.findByText('Not Connected')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Sign In' })).toHaveAttribute('href', '/login');
+    expect(await screen.findByRole('link', { name: 'Sign In' })).toHaveAttribute('href', '/login');
     expect(screen.getByRole('link', { name: 'Register' })).toHaveAttribute('href', '/register');
     fireEvent.change(await screen.findByPlaceholderText(/e\.g\. Hikaru/i), {
       target: { value: 'guest-player' },
@@ -748,7 +748,7 @@ describe('connected Chess.com account flow', () => {
     fireEvent.click(screen.getByRole('button', { name: /^disconnect$/i }));
 
     await waitFor(() => expect(api.disconnectAccount).toHaveBeenCalledWith(serverAccount.id));
-    expect(screen.getByRole('alert')).toHaveTextContent(error.message);
+    expect(await screen.findByRole('alert')).toHaveTextContent(error.message);
     expect(screen.getByText('Chess.com Connected')).toBeInTheDocument();
     expect(api.fetchAccounts).toHaveBeenCalledTimes(1);
     expect(JSON.parse(localStorage.getItem('chessecho_active_account') ?? '{}')).toMatchObject({

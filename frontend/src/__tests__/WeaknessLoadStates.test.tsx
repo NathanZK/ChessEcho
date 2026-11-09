@@ -57,6 +57,7 @@ vi.mock('../services/api', async () => {
   return {
     ...actual,
     fetchWeaknesses: vi.fn(),
+    fetchRecurringWeaknesses: vi.fn().mockResolvedValue([]),
   };
 });
 

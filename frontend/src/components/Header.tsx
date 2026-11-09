@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState } from 'react';
-import { Compass, Swords, Target, Download, User, Clock3 } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Compass, Swords, Target, Download, User, Clock3, ChevronDown } from 'lucide-react';
 import type { AccountSummary } from '../services/api';
 import { ExplorePositionModal, type PositionExplorationStart } from './ExplorePositionModal';
 import { AccountMenu } from './AccountMenu';
@@ -37,6 +37,42 @@ export const Header: React.FC<HeaderProps> = ({
   isSourceNeutralExploration = false,
 }) => {
   const [isExplorePositionOpen, setIsExplorePositionOpen] = useState(false);
+  const [isToolsMenuOpen, setIsToolsMenuOpen] = useState(false);
+  const [isMobileToolsOpen, setIsMobileToolsOpen] = useState(false);
+  const toolsDropdownRef = useRef<HTMLDivElement | null>(null);
+  const mobileToolsDropdownRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        toolsDropdownRef.current &&
+        !toolsDropdownRef.current.contains(event.target as Node)
+      ) {
+        setIsToolsMenuOpen(false);
+      }
+      if (
+        mobileToolsDropdownRef.current &&
+        !mobileToolsDropdownRef.current.contains(event.target as Node)
+      ) {
+        setIsMobileToolsOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsToolsMenuOpen(false);
+        setIsMobileToolsOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
   const showConnected = sessionStatus === 'authenticated' && !!connectedAccount;
   const showGuestSelection = sessionStatus === 'unauthenticated' && !!username;
   const showAccount = showConnected || showGuestSelection;
@@ -49,6 +85,7 @@ export const Header: React.FC<HeaderProps> = ({
           ? 'Unable to load Chess.com connection'
           : 'Connected Chess.com account unavailable';
   const accountUsername = showConnected ? connectedAccount?.username : username;
+  const isSecondaryActive = activeTab === 'long-decisions' || activeTab === 'similar-positions';
 
   return (
     <header className="w-full h-[60px] px-6 md:px-10 border-b border-outline-variant bg-surface-container-lowest sticky top-0 z-50 flex items-center justify-between">
@@ -58,7 +95,7 @@ export const Header: React.FC<HeaderProps> = ({
           {/* Exact Prototype ChessProbe Brand Logo */}
           <div
             className="flex items-center space-x-2.5 font-bold tracking-tight text-primary text-lg cursor-pointer shrink-0"
-            onClick={() => setActiveTab('puzzles')}
+            onClick={() => setActiveTab('weaknesses')}
           >
             <span className="w-8 h-8 rounded bg-surface-container-high border border-outline-variant flex items-center justify-center text-primary shadow-inner shrink-0">
               <svg className="w-4 h-4 fill-current text-primary" viewBox="0 0 24 24" aria-hidden="true">
@@ -70,6 +107,27 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Primary Navigation Tabs */}
           <nav className="hidden md:flex space-x-6 h-full items-center text-xs font-mono">
+            {/* Core Tab 1: Recurring Weaknesses (central hub) */}
+            <button
+              type="button"
+              aria-label="Position Weaknesses (Weaknesses Library)"
+              onClick={() => setActiveTab('weaknesses')}
+              className={`transition cursor-pointer whitespace-nowrap flex items-center gap-2 pb-1 ${
+                activeTab === 'weaknesses'
+                  ? 'border-b-2 border-primary text-primary font-semibold'
+                  : 'text-on-surface-variant hover:text-on-surface'
+              }`}
+            >
+              <Target className="w-3.5 h-3.5 shrink-0" />
+              <span>Recurring Weaknesses</span>
+              {weaknessCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-primary/20 text-primary border border-primary/30">
+                  {weaknessCount}
+                </span>
+              )}
+            </button>
+
+            {/* Core Tab 2: Practice Puzzles */}
             <button
               type="button"
               onClick={() => setActiveTab('puzzles')}
@@ -83,52 +141,7 @@ export const Header: React.FC<HeaderProps> = ({
               <span>{isSourceNeutralExploration ? 'Line Exploration' : 'Practice Puzzles'}</span>
             </button>
 
-            <button
-              type="button"
-              aria-label="Position Weaknesses (Weaknesses Library)"
-              onClick={() => setActiveTab('weaknesses')}
-              className={`transition cursor-pointer whitespace-nowrap flex items-center gap-2 pb-1 ${
-                activeTab === 'weaknesses'
-                  ? 'border-b-2 border-primary text-primary font-semibold'
-                  : 'text-on-surface-variant hover:text-on-surface'
-              }`}
-            >
-              <Target className="w-3.5 h-3.5 shrink-0" />
-              <span>Position Weaknesses</span>
-              {weaknessCount > 0 && (
-                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-primary/20 text-primary border border-primary/30">
-                  {weaknessCount}
-                </span>
-              )}
-            </button>
-
-            <button
-              type="button"
-              aria-label="Decision Timing (Long Decisions)"
-              onClick={() => setActiveTab('long-decisions')}
-              className={`transition cursor-pointer whitespace-nowrap flex items-center gap-2 pb-1 ${
-                activeTab === 'long-decisions'
-                  ? 'border-b-2 border-primary text-primary font-semibold'
-                  : 'text-on-surface-variant hover:text-on-surface'
-              }`}
-            >
-              <Clock3 className="w-3.5 h-3.5 shrink-0" />
-              <span>Decision Timing</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setActiveTab('similar-positions')}
-              className={`transition cursor-pointer whitespace-nowrap flex items-center gap-2 pb-1 ${
-                activeTab === 'similar-positions'
-                  ? 'border-b-2 border-primary text-primary font-semibold'
-                  : 'text-on-surface-variant hover:text-on-surface'
-              }`}
-            >
-              <Compass className="w-3.5 h-3.5 shrink-0" />
-              <span>Similar Positions</span>
-            </button>
-
+            {/* Core Tab 3: Import Games */}
             <button
               type="button"
               onClick={() => setActiveTab('import')}
@@ -141,6 +154,77 @@ export const Header: React.FC<HeaderProps> = ({
               <Download className="w-3.5 h-3.5 shrink-0" />
               <span>Import Games</span>
             </button>
+
+            {/* Secondary Tools Dropdown */}
+            <div className="relative h-full flex items-center" ref={toolsDropdownRef}>
+              <button
+                type="button"
+                aria-haspopup="true"
+                aria-expanded={isToolsMenuOpen}
+                onClick={() => setIsToolsMenuOpen((prev) => !prev)}
+                className={`transition cursor-pointer whitespace-nowrap flex items-center gap-1.5 pb-1 ${
+                  isSecondaryActive
+                    ? 'border-b-2 border-primary text-primary font-semibold'
+                    : 'text-on-surface-variant hover:text-on-surface'
+                }`}
+              >
+                <Compass className="w-3.5 h-3.5 shrink-0" />
+                <span>Explore / Tools</span>
+                <ChevronDown className={`w-3 h-3 transition-transform ${isToolsMenuOpen ? 'rotate-180' : ''}`} />
+              </button>
+
+              {isToolsMenuOpen && (
+                <div
+                  role="menu"
+                  className="absolute left-0 top-[48px] w-48 py-1 bg-surface-container-high border border-outline-variant rounded-md shadow-lg z-50 text-xs font-mono"
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setIsToolsMenuOpen(false);
+                      setIsExplorePositionOpen(true);
+                    }}
+                    className="w-full text-left px-3 py-2 flex items-center gap-2 text-on-surface-variant hover:text-on-surface hover:bg-surface-bright transition cursor-pointer"
+                  >
+                    <Compass className="w-3.5 h-3.5 shrink-0 text-primary" />
+                    <span>Explore a position</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setIsToolsMenuOpen(false);
+                      setActiveTab('long-decisions');
+                    }}
+                    className={`w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-surface-bright transition cursor-pointer ${
+                      activeTab === 'long-decisions'
+                        ? 'text-primary font-semibold bg-surface-container'
+                        : 'text-on-surface-variant hover:text-on-surface'
+                    }`}
+                  >
+                    <Clock3 className="w-3.5 h-3.5 shrink-0 text-primary" />
+                    <span>Decision Timing</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setIsToolsMenuOpen(false);
+                      setActiveTab('similar-positions');
+                    }}
+                    className={`w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-surface-bright transition cursor-pointer ${
+                      activeTab === 'similar-positions'
+                        ? 'text-primary font-semibold bg-surface-container'
+                        : 'text-on-surface-variant hover:text-on-surface'
+                    }`}
+                  >
+                    <Compass className="w-3.5 h-3.5 shrink-0 text-primary" />
+                    <span>Similar Positions</span>
+                  </button>
+                </div>
+              )}
+            </div>
           </nav>
         </div>
 
@@ -149,11 +233,71 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             type="button"
             onClick={() => setIsExplorePositionOpen(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-outline-variant hover:border-primary/40 text-xs font-mono text-on-surface-variant hover:text-primary transition shrink-0 cursor-pointer"
+            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-outline-variant hover:border-primary/40 text-xs font-mono text-on-surface-variant hover:text-primary transition shrink-0 cursor-pointer"
           >
             <Compass className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Explore a position</span>
           </button>
+
+          {/* Mobile Secondary Tools Trigger */}
+          <div className="relative md:hidden" ref={mobileToolsDropdownRef}>
+            <button
+              type="button"
+              aria-label="Mobile navigation tools"
+              aria-haspopup="true"
+              aria-expanded={isMobileToolsOpen}
+              onClick={() => setIsMobileToolsOpen((prev) => !prev)}
+              className={`flex items-center justify-center w-9 h-9 rounded-lg border border-outline-variant hover:border-primary/40 text-on-surface-variant hover:text-primary transition shrink-0 cursor-pointer ${
+                isSecondaryActive ? 'border-primary text-primary' : ''
+              }`}
+            >
+              <Compass className="w-4 h-4" />
+            </button>
+
+            {isMobileToolsOpen && (
+              <div
+                role="menu"
+                className="absolute right-0 top-[42px] w-48 py-1 bg-surface-container-high border border-outline-variant rounded-md shadow-lg z-50 text-xs font-mono"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setIsMobileToolsOpen(false);
+                    setIsExplorePositionOpen(true);
+                  }}
+                  className="w-full text-left px-3 py-2 flex items-center gap-2 text-on-surface-variant hover:text-on-surface hover:bg-surface-bright transition cursor-pointer"
+                >
+                  <Compass className="w-3.5 h-3.5 shrink-0 text-primary" />
+                  <span>Explore a position</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setIsMobileToolsOpen(false);
+                    setActiveTab('long-decisions');
+                  }}
+                  className="w-full text-left px-3 py-2 flex items-center gap-2 text-on-surface-variant hover:text-on-surface hover:bg-surface-bright transition cursor-pointer"
+                >
+                  <Clock3 className="w-3.5 h-3.5 shrink-0 text-primary" />
+                  <span>Decision Timing</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setIsMobileToolsOpen(false);
+                    setActiveTab('similar-positions');
+                  }}
+                  className="w-full text-left px-3 py-2 flex items-center gap-2 text-on-surface-variant hover:text-on-surface hover:bg-surface-bright transition cursor-pointer"
+                >
+                  <Compass className="w-3.5 h-3.5 shrink-0 text-primary" />
+                  <span>Similar Positions</span>
+                </button>
+              </div>
+            )}
+          </div>
 
           {sessionStatus === 'authenticated' && (
             <div className="md:hidden">
@@ -218,11 +362,11 @@ export const Header: React.FC<HeaderProps> = ({
                   <span className="text-outline">·</span>
                   <span className="text-outline">{accountConnectionLabel}</span>
                 </div>
-              ) : (
+              ) : sessionStatus === 'unauthenticated' ? (
                 <span className="text-outline text-xs font-mono hidden sm:inline">
                   Not Connected
                 </span>
-              )}
+              ) : null}
               {sessionStatus === 'authenticated' && onDisconnect && (
                 <button
                   type="button"

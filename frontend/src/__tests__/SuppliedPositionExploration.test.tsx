@@ -60,6 +60,8 @@ vi.mock('../services/api', async () => {
     fetchPuzzleContinuation: vi.fn(),
     evaluateMove: vi.fn(),
     recordPuzzleEvent: vi.fn(),
+    fetchRecurringWeaknesses: vi.fn().mockResolvedValue([]),
+    fetchWeaknesses: vi.fn().mockResolvedValue([]),
   };
 });
 
@@ -273,7 +275,8 @@ describe('user-supplied position exploration', () => {
     await waitFor(() => expect(api.recordPuzzleEvent).toHaveBeenCalledTimes(1));
     const recordedPuzzleAttempts = vi.mocked(api.recordPuzzleEvent).mock.calls.length;
 
-    fireEvent.click(screen.getByRole('button', { name: /Decision Timing|Long Decisions/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Explore \/ Tools/i }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Decision Timing|Long Decisions/i }));
     await screen.findByText('e5');
     fireEvent.click(screen.getByRole('button', { name: 'Explore this position' }));
     expect(pauseStopwatch).toHaveBeenCalledTimes(1);
@@ -349,7 +352,8 @@ describe('user-supplied position exploration', () => {
     fireEvent.click(screen.getByTestId('play-d4'));
     await screen.findByText('Not the Recommended Move');
 
-    fireEvent.click(screen.getByRole('button', { name: /Decision Timing|Long Decisions/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Explore \/ Tools/i }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Decision Timing|Long Decisions/i }));
     await screen.findByText('e5');
     fireEvent.click(screen.getByRole('button', { name: 'Explore this position' }));
 

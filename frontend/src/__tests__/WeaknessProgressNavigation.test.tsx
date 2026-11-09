@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   fetchPuzzles: vi.fn(),
   fetchWeaknesses: vi.fn(),
   fetchPositionProgress: vi.fn(),
+  fetchRecurringWeaknesses: vi.fn(),
   logout: vi.fn(),
 }));
 
@@ -22,6 +23,7 @@ vi.mock('@/services/api', async () => {
     fetchPuzzles: mocks.fetchPuzzles,
     fetchWeaknesses: mocks.fetchWeaknesses,
     fetchPositionProgress: mocks.fetchPositionProgress,
+    fetchRecurringWeaknesses: mocks.fetchRecurringWeaknesses,
     logout: mocks.logout,
   };
 });
@@ -96,6 +98,7 @@ describe('Weakness progress navigation', () => {
     mocks.fetchAccounts.mockResolvedValue([account]);
     mocks.fetchPuzzles.mockResolvedValue([]);
     mocks.fetchWeaknesses.mockResolvedValue([weakness]);
+    mocks.fetchRecurringWeaknesses.mockResolvedValue([]);
     mocks.fetchPositionProgress.mockResolvedValue(progress);
     mocks.logout.mockResolvedValue(undefined);
   });

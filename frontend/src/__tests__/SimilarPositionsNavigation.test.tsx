@@ -43,6 +43,8 @@ vi.mock('../services/api', async () => {
     fetchAccounts: vi.fn(),
     fetchLongDecisions: vi.fn(),
     fetchSimilarPositions: vi.fn(),
+    fetchRecurringWeaknesses: vi.fn().mockResolvedValue([]),
+    fetchWeaknesses: vi.fn().mockResolvedValue([]),
     fetchPuzzleContinuation: vi.fn(),
     evaluateMove: vi.fn(),
   };
@@ -114,12 +116,16 @@ describe('SimilarPositions navigation and exploration bridge', () => {
     vi.mocked(api.fetchAccounts).mockResolvedValue([mockAccount]);
     vi.mocked(api.fetchPuzzles).mockResolvedValue([]);
     vi.mocked(api.fetchSimilarPositions).mockResolvedValue(mockSimilarResponse);
+    vi.mocked(api.fetchRecurringWeaknesses).mockResolvedValue([]);
+    vi.mocked(api.fetchWeaknesses).mockResolvedValue([]);
   });
 
   it('switches to Similar Positions tab and displays search view', async () => {
     render(<Home />);
 
-    const similarTabBtn = await screen.findByRole('button', { name: /Similar Positions/i });
+    const toolsBtn = await screen.findByRole('button', { name: /Explore \/ Tools/i });
+    fireEvent.click(toolsBtn);
+    const similarTabBtn = await screen.findByRole('menuitem', { name: /Similar Positions/i });
     fireEvent.click(similarTabBtn);
 
     expect(await screen.findByRole('heading', { name: /Find Similar Personal Positions/i })).toBeInTheDocument();
@@ -130,7 +136,9 @@ describe('SimilarPositions navigation and exploration bridge', () => {
     render(<Home />);
 
     // 1. Navigate to Similar Positions tab
-    const similarTabBtn = await screen.findByRole('button', { name: /Similar Positions/i });
+    const toolsBtn = await screen.findByRole('button', { name: /Explore \/ Tools/i });
+    fireEvent.click(toolsBtn);
+    const similarTabBtn = await screen.findByRole('menuitem', { name: /Similar Positions/i });
     fireEvent.click(similarTabBtn);
 
     // 2. Perform search
@@ -185,7 +193,9 @@ describe('SimilarPositions navigation and exploration bridge', () => {
     render(<Home />);
 
     // 1. Navigate to Similar Positions tab and search
-    const similarTabBtn = await screen.findByRole('button', { name: /Similar Positions/i });
+    const toolsBtn = await screen.findByRole('button', { name: /Explore \/ Tools/i });
+    fireEvent.click(toolsBtn);
+    const similarTabBtn = await screen.findByRole('menuitem', { name: /Similar Positions/i });
     fireEvent.click(similarTabBtn);
 
     const fenInput = screen.getByLabelText(/FEN Position/i);
