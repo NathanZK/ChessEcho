@@ -1,15 +1,21 @@
 package com.chessecho.controller
 
 import com.chessecho.domain.ChessAccount
+import com.chessecho.domain.DecisionSeverity
 import com.chessecho.domain.DiscoveryJobStatus
 import com.chessecho.domain.DiscoveryStage
+import com.chessecho.domain.MistakeSeverity
 import com.chessecho.domain.Platform
 import com.chessecho.domain.clustering.ClusterType
+import com.chessecho.dto.ClusterMemberPositionDto
+import com.chessecho.dto.ClusterMemberPositionsResponse
 import com.chessecho.dto.RecurringDiscoveryJobResponse
 import com.chessecho.dto.RecurringDiscoveryRequest
 import com.chessecho.dto.RecurringWeaknessResponse
 import com.chessecho.service.AccountOwnershipService
+import com.chessecho.service.auth.AuthenticatedPrincipal
 import com.chessecho.service.weakness.RecurringWeaknessDiscoveryService
+import com.chessecho.web.UnauthenticatedException
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -17,6 +23,7 @@ import org.junit.jupiter.api.assertThrows
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.`when`
 import org.springframework.http.HttpStatus
+import org.springframework.web.server.ResponseStatusException
 import java.time.Instant
 import java.util.UUID
 
@@ -156,5 +163,118 @@ class RecurringWeaknessControllerTest {
         assertEquals(HttpStatus.OK, response.statusCode)
         assertEquals(1, response.body?.size)
         assertEquals(weakness.clusterId, response.body?.get(0)?.clusterId)
+    }
+
+    @Test
+    fun `GET cluster positions returns 200 OK with positions for authenticated caller`() {
+        val clusterId = UUID.randomUUID()
+        val principal = AuthenticatedPrincipal(appUserId = UUID.randomUUID(), devPrincipal = false)
+        val expectedResponse =
+            ClusterMemberPositionsResponse(
+                page = 0,
+                size = 20,
+                totalElements = 1L,
+                totalPages = 1,
+                hasNext = false,
+                positions =
+                    listOf(
+                        ClusterMemberPositionDto(
+                            positionId = UUID.randomUUID(),
+                            fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
+                            playerColor = "BLACK",
+                            movePlayed = "e5",
+                            targetMove = "c5",
+                            evalLoss = 0.5,
+                            mistakeSeverity = MistakeSeverity.MINOR,
+                            decisionTimeMs = 4500L,
+                            decisionSeverity = DecisionSeverity.NO_CONCERN,
+                            timeControl = "BLITZ",
+                            gameId = UUID.randomUUID(),
+                            platformGameId = "chesscom_12345",
+                            plyNumber = 2,
+                            moveNumber = 1,
+                        ),
+                    ),
+            )
+
+        `when`(discoveryService.getClusterAccountId(clusterId)).thenReturn(testAccount.id)
+        `when`(accountOwnershipService.resolvePrivateRead(testAccount.id, principal)).thenReturn(testAccount)
+        `when`(discoveryService.getClusterPositions(clusterId, testAccount, 0, 20, false)).thenReturn(expectedResponse)
+
+        val response = controller.getClusterPositions(clusterId, 0, 20, false, null, principal)
+        assertEquals(HttpStatus.OK, response.statusCode)
+        val body = response.body
+        assertEquals(1L, body?.totalElements)
+        assertEquals("e5", body?.positions?.firstOrNull()?.movePlayed)
+    }
+
+    @Test
+    fun `GET cluster positions throws UnauthenticatedException when unauthenticated`() {
+        val clusterId = UUID.randomUUID()
+
+        assertThrows<UnauthenticatedException> {
+            controller.getClusterPositions(clusterId, 0, 20, false, null, null)
+        }
+    }
+
+    @Test
+    fun `GET cluster positions throws ResponseStatusException with 400 when page or size is invalid`() {
+        val clusterId = UUID.randomUUID()
+        val principal = AuthenticatedPrincipal(appUserId = UUID.randomUUID(), devPrincipal = false)
+
+        val exNegativePage =
+            assertThrows<ResponseStatusException> {
+                controller.getClusterPositions(clusterId, -1, 20, false, null, principal)
+            }
+        assertEquals(HttpStatus.BAD_REQUEST, exNegativePage.statusCode)
+
+        val exZeroSize =
+            assertThrows<ResponseStatusException> {
+                controller.getClusterPositions(clusterId, 0, 0, false, null, principal)
+            }
+        assertEquals(HttpStatus.BAD_REQUEST, exZeroSize.statusCode)
+
+        val exOversize =
+            assertThrows<ResponseStatusException> {
+                controller.getClusterPositions(clusterId, 0, 101, false, null, principal)
+            }
+        assertEquals(HttpStatus.BAD_REQUEST, exOversize.statusCode)
+    }
+
+    @Test
+    fun `GET cluster positions throws ResponseStatusException with 404 when cluster not found`() {
+        val clusterId = UUID.randomUUID()
+        val principal = AuthenticatedPrincipal(appUserId = UUID.randomUUID(), devPrincipal = false)
+
+        `when`(discoveryService.getClusterAccountId(clusterId)).thenReturn(null)
+
+        val ex =
+            assertThrows<ResponseStatusException> {
+                controller.getClusterPositions(clusterId, 0, 20, false, null, principal)
+            }
+        assertEquals(HttpStatus.NOT_FOUND, ex.statusCode)
+    }
+
+    @Test
+    fun `GET cluster positions forwards playableOnly parameter`() {
+        val clusterId = UUID.randomUUID()
+        val principal = AuthenticatedPrincipal(appUserId = UUID.randomUUID(), devPrincipal = false)
+        val expectedResponse =
+            ClusterMemberPositionsResponse(
+                page = 0,
+                size = 100,
+                totalElements = 0L,
+                totalPages = 0,
+                hasNext = false,
+                positions = emptyList(),
+            )
+
+        `when`(discoveryService.getClusterAccountId(clusterId)).thenReturn(testAccount.id)
+        `when`(accountOwnershipService.resolvePrivateRead(testAccount.id, principal)).thenReturn(testAccount)
+        `when`(discoveryService.getClusterPositions(clusterId, testAccount, 0, 100, true)).thenReturn(expectedResponse)
+
+        val response = controller.getClusterPositions(clusterId, 0, 100, true, null, principal)
+        assertEquals(HttpStatus.OK, response.statusCode)
+        assertEquals(0L, response.body?.totalElements)
     }
 }

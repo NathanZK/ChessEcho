@@ -14,12 +14,14 @@ vi.mock('react-chessboard', () => ({
     };
   }) => (
     <div data-testid="mock-board" data-position={options?.position}>
-      <button
-        data-testid="play-nc6-drop"
-        onClick={() => options?.onPieceDrop?.({ sourceSquare: 'b8', targetSquare: 'c6' })}
-      >
-        Play Nc6
-      </button>
+      {options?.onPieceDrop && (
+        <button
+          data-testid="play-nc6-drop"
+          onClick={() => options?.onPieceDrop?.({ sourceSquare: 'b8', targetSquare: 'c6' })}
+        >
+          Play Nc6
+        </button>
+      )}
     </div>
   ),
 }));

@@ -2,14 +2,20 @@ package com.chessecho.service.weakness
 
 import com.chessecho.domain.ChessAccount
 import com.chessecho.domain.CommunityPatternClassification
+import com.chessecho.domain.DecisionSeverity
 import com.chessecho.domain.DiscoveryJobStatus
 import com.chessecho.domain.DiscoveryStage
+import com.chessecho.domain.EngineAnalysis
 import com.chessecho.domain.MistakeSeverity
 import com.chessecho.domain.PositionOccurrence
+import com.chessecho.domain.TimeControl
 import com.chessecho.domain.clustering.ClusterType
 import com.chessecho.domain.clustering.PositionCluster
 import com.chessecho.domain.clustering.PositionClusterSnapshot
 import com.chessecho.domain.clustering.PositionClusterSnapshotStatus
+import com.chessecho.dto.AcceptableMove
+import com.chessecho.dto.ClusterMemberPositionDto
+import com.chessecho.dto.ClusterMemberPositionsResponse
 import com.chessecho.dto.RecurringDiscoveryJobResponse
 import com.chessecho.dto.RecurringDiscoveryRequest
 import com.chessecho.dto.RecurringWeaknessResponse
@@ -18,6 +24,8 @@ import com.chessecho.repository.PositionOccurrenceRepository
 import com.chessecho.repository.clustering.PositionClusterAssignmentRepository
 import com.chessecho.repository.clustering.PositionClusterRepository
 import com.chessecho.repository.clustering.PositionClusterSnapshotRepository
+import com.chessecho.service.DecisionTimingPolicy
+import com.chessecho.service.EvaluationLossPolicy
 import com.chessecho.service.ForbiddenAccountException
 import com.chessecho.service.ObjectiveEvidenceState
 import com.chessecho.service.WeaknessPriorityPolicy
@@ -26,7 +34,9 @@ import com.chessecho.service.clustering.CommunityWeaknessService
 import com.chessecho.service.clustering.PositionClusteringService
 import com.chessecho.service.similarity.SimilarityConcurrencyManager
 import org.slf4j.LoggerFactory
+import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
+import org.springframework.web.server.ResponseStatusException
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -60,6 +70,7 @@ class RecurringWeaknessDiscoveryService(
     private val concurrencyManager: SimilarityConcurrencyManager,
     private val clusteringService: PositionClusteringService? = null,
     private val weaknessPriorityPolicy: WeaknessPriorityPolicy? = null,
+    private val decisionTimingPolicy: DecisionTimingPolicy = DecisionTimingPolicy(),
     private val executor: ExecutorService = Executors.newCachedThreadPool(),
 ) {
     private val jobs = ConcurrentHashMap<UUID, DiscoveryJobState>()
@@ -118,6 +129,133 @@ class RecurringWeaknessDiscoveryService(
 
     fun clearCache(accountId: UUID) {
         cachedWeaknesses.remove(accountId)
+    }
+
+    fun getClusterAccountId(clusterId: UUID): UUID? {
+        val cluster = clusterRepository.findById(clusterId).orElse(null) ?: return null
+        val snapshot = snapshotRepository.findById(cluster.snapshotId).orElse(null) ?: return null
+        return snapshot.accountId
+    }
+
+    fun getClusterPositions(
+        clusterId: UUID,
+        account: ChessAccount,
+        page: Int = 0,
+        size: Int = 20,
+        playableOnly: Boolean = false,
+    ): ClusterMemberPositionsResponse {
+        val cluster =
+            clusterRepository.findById(clusterId).orElse(null)
+                ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Cluster $clusterId not found")
+        val snapshot =
+            snapshotRepository.findById(cluster.snapshotId).orElse(null)
+                ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Cluster snapshot not found")
+
+        if (snapshot.accountId != account.id) {
+            throw ResponseStatusException(HttpStatus.NOT_FOUND, "Cluster $clusterId not found for account ${account.id}")
+        }
+
+        val assignments = assignmentRepository.findByClusterId(clusterId)
+        val positionIds = assignments.map { it.positionId }.distinct()
+        if (positionIds.isEmpty()) {
+            return emptyClusterPositionsResponse(page, size)
+        }
+
+        val occurrences = occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(account.id, positionIds)
+        val analyses =
+            engineAnalysisRepository
+                .findByPositionIdInWithMoveEvaluations(positionIds.toSet())
+                .associateBy { it.position.id }
+
+        val allItems =
+            occurrences.mapNotNull { occ ->
+                toMemberPositionDto(occ, analyses[occ.position.id], playableOnly)
+            }
+
+        return paginatePositions(allItems, page, size)
+    }
+
+    private fun toMemberPositionDto(
+        occ: PositionOccurrence,
+        analysis: EngineAnalysis?,
+        playableOnly: Boolean,
+    ): ClusterMemberPositionDto? {
+        val hasAnalysis = !analysis?.bestMove.isNullOrBlank()
+        if (playableOnly && !hasAnalysis) return null
+
+        val moveEval = analysis?.moveEvaluations?.firstOrNull { it.move == occ.movePlayed }
+        val evalLoss = moveEval?.evalLossFromBest
+        val mistakeSeverity = if (hasAnalysis) EvaluationLossPolicy.classifyMistakeSeverity(evalLoss) else null
+        val acceptableMoves =
+            if (hasAnalysis) {
+                analysis
+                    ?.moveEvaluations
+                    ?.filter { (it.evalLossFromBest ?: Double.MAX_VALUE) <= 0.80 }
+                    ?.map { AcceptableMove(it.move, it.evalLossFromBest ?: 0.0) }
+            } else {
+                null
+            }
+
+        val timeControlEnum = occ.game.timeControl?.let { TimeControl.fromExternal(it) }
+        val decisionSeverity =
+            if (occ.decisionTimeMs != null) {
+                decisionTimingPolicy.classify(timeControlEnum, occ.decisionTimeMs)
+            } else {
+                DecisionSeverity.UNKNOWN
+            }
+
+        return ClusterMemberPositionDto(
+            positionId = occ.position.id,
+            fen = occ.position.fen,
+            playerColor = occ.playerColor,
+            movePlayed = occ.movePlayed,
+            targetMove = analysis?.bestMove,
+            acceptableMoves = acceptableMoves,
+            evalLoss = evalLoss,
+            mistakeSeverity = mistakeSeverity,
+            decisionTimeMs = occ.decisionTimeMs,
+            decisionSeverity = decisionSeverity,
+            timeControl = occ.game.timeControl?.uppercase(),
+            gameId = occ.game.id,
+            platformGameId = occ.game.platformGameId,
+            plyNumber = occ.plyNumber,
+            moveNumber = (occ.plyNumber + 1) / 2,
+        )
+    }
+
+    private fun emptyClusterPositionsResponse(
+        page: Int,
+        size: Int,
+    ): ClusterMemberPositionsResponse =
+        ClusterMemberPositionsResponse(
+            page = page,
+            size = size,
+            totalElements = 0L,
+            totalPages = 0,
+            hasNext = false,
+            positions = emptyList(),
+        )
+
+    private fun paginatePositions(
+        items: List<ClusterMemberPositionDto>,
+        page: Int,
+        size: Int,
+    ): ClusterMemberPositionsResponse {
+        val totalElements = items.size.toLong()
+        val totalPages = if (size == 0) 0 else ((totalElements + size - 1) / size).toInt()
+        val fromIndex = (page * size).coerceAtMost(items.size)
+        val toIndex = ((page + 1) * size).coerceAtMost(items.size)
+        val pagedPositions = if (fromIndex < toIndex) items.subList(fromIndex, toIndex) else emptyList()
+        val hasNext = toIndex < items.size
+
+        return ClusterMemberPositionsResponse(
+            page = page,
+            size = size,
+            totalElements = totalElements,
+            totalPages = totalPages,
+            hasNext = hasNext,
+            positions = pagedPositions,
+        )
     }
 
     private fun runPipeline(

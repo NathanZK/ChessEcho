@@ -1,4 +1,4 @@
-import { Puzzle } from '@/types/puzzle';
+import { Puzzle, AcceptableMove } from '@/types/puzzle';
 
 import { AnalyzedPly } from '../utils/gameAnalysisFilters';
 export type { AnalyzedPly };
@@ -1192,6 +1192,69 @@ export async function analyzeGame(gameId: string): Promise<GameAnalysisResponse>
   if (!response.ok && response.status !== 429) {
     const errBody = (await response.json().catch(() => ({}))) || {};
     const message = errBody.error || errBody.message || `Failed to analyze game: ${response.status}`;
+    throw new Error(message);
+  }
+
+  return await response.json();
+}
+
+export interface ClusterMemberPosition {
+  positionId: string;
+  fen: string;
+  playerColor: 'WHITE' | 'BLACK';
+  movePlayed: string;
+  targetMove?: string | null;
+  acceptableMoves?: AcceptableMove[] | null;
+  evalLoss?: number | null;
+  mistakeSeverity?: 'NO_CONCERN' | 'MINOR' | 'MODERATE' | 'SIGNIFICANT' | 'SEVERE' | 'UNEVALUATED' | null;
+  decisionTimeMs?: number | null;
+  decisionSeverity: 'NO_CONCERN' | 'MINOR' | 'SIGNIFICANT' | 'CRITICAL' | 'UNKNOWN';
+  timeControl?: string | null;
+  gameId: string;
+  platformGameId: string;
+  plyNumber: number;
+  moveNumber: number;
+}
+
+export interface ClusterMemberPositionsResponse {
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+  hasNext: boolean;
+  positions: ClusterMemberPosition[];
+}
+
+export async function getClusterPositions(
+  clusterId: string,
+  params?: {
+    page?: number;
+    size?: number;
+    playableOnly?: boolean;
+    accountId?: string;
+  }
+): Promise<ClusterMemberPositionsResponse> {
+  const queryParams = new URLSearchParams();
+  if (params?.page !== undefined) queryParams.set('page', params.page.toString());
+  if (params?.size !== undefined) queryParams.set('size', params.size.toString());
+  if (params?.playableOnly !== undefined) queryParams.set('playableOnly', params.playableOnly.toString());
+  if (params?.accountId) queryParams.set('accountId', params.accountId);
+  const queryString = queryParams.toString() ? `?${queryParams.toString()}` : '';
+
+  const response = await fetch(
+    `${API_BASE_URL}/weaknesses/recurring/${encodeURIComponent(clusterId)}/positions${queryString}`,
+    {
+      method: 'GET',
+      credentials: 'include',
+    }
+  );
+
+  if (!response || !response.ok) {
+    const errBody = (await response?.json?.().catch(() => ({}))) || {};
+    const message =
+      errBody.error ||
+      errBody.message ||
+      `Failed to fetch cluster positions: ${response?.status ?? 'network error'}`;
     throw new Error(message);
   }
 

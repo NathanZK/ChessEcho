@@ -1,5 +1,6 @@
 package com.chessecho.dto
 
+import com.chessecho.domain.DecisionSeverity
 import com.chessecho.domain.MistakeSeverity
 import com.chessecho.domain.clustering.ClusterType
 import java.time.Instant
@@ -107,4 +108,31 @@ data class RecurringWeaknessResponse(
     val evalLossPercentages: Map<String, Double>,
     val timingProfile: Map<String, Int>,
     val formatBreakdown: Map<String, Int>,
+)
+
+data class ClusterMemberPositionDto(
+    val positionId: UUID,
+    val fen: String,
+    val playerColor: String,
+    val movePlayed: String,
+    val targetMove: String? = null,
+    val acceptableMoves: List<AcceptableMove>? = null,
+    val evalLoss: Double? = null,
+    val mistakeSeverity: MistakeSeverity? = null,
+    val decisionTimeMs: Long? = null,
+    val decisionSeverity: DecisionSeverity = DecisionSeverity.UNKNOWN,
+    val timeControl: String? = null,
+    val gameId: UUID,
+    val platformGameId: String,
+    val plyNumber: Int,
+    val moveNumber: Int = (plyNumber + 1) / 2,
+)
+
+data class ClusterMemberPositionsResponse(
+    val page: Int,
+    val size: Int,
+    val totalElements: Long,
+    val totalPages: Int,
+    val hasNext: Boolean,
+    val positions: List<ClusterMemberPositionDto>,
 )

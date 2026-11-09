@@ -117,7 +117,7 @@ const evaluation = (fen: string, move: string): api.MoveEvaluationResponse => ({
   acceptable: true,
 });
 
-const board = () => screen.getByTestId('mock-chessboard');
+const board = () => screen.getAllByTestId('mock-chessboard')[0];
 const blindfoldEntry = () => screen.getByRole('button', { name: /train blindfold/i });
 const notationInput = () => screen.getByRole('textbox', { name: 'Move notation' });
 

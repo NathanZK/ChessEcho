@@ -2,6 +2,7 @@ package com.chessecho.service.weakness
 
 import com.chessecho.domain.ChessAccount
 import com.chessecho.domain.CommunityPatternClassification
+import com.chessecho.domain.DecisionSeverity
 import com.chessecho.domain.EngineAnalysis
 import com.chessecho.domain.Game
 import com.chessecho.domain.MistakeSeverity
@@ -26,11 +27,16 @@ import com.chessecho.service.clustering.CommunityWeaknessService
 import com.chessecho.service.clustering.PositionClusteringService
 import com.chessecho.service.similarity.SimilarityConcurrencyManager
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.`when`
+import org.springframework.http.HttpStatus
+import org.springframework.web.server.ResponseStatusException
+import java.util.Optional
 import java.util.UUID
 
 class RecurringWeaknessDiscoveryFilteringAndRankingTest {
@@ -400,4 +406,199 @@ class RecurringWeaknessDiscoveryFilteringAndRankingTest {
             movePlayed = "Nf3",
             playerColor = "WHITE",
         )
+
+    @Test
+    fun `getClusterPositions returns paginated positions with evaluations and decision timing`() {
+        val snapshotId = UUID.randomUUID()
+        val clusterId = UUID.randomUUID()
+        val posId1 = UUID.randomUUID()
+        val posId2 = UUID.randomUUID()
+
+        setupClusterWithAssignments(snapshotId, clusterId, listOf(posId1, posId2))
+
+        val g1 = Game(id = UUID.randomUUID(), chessAccount = testAccount, platformGameId = "game_1", pgn = "", timeControl = "RAPID")
+        val g2 = Game(id = UUID.randomUUID(), chessAccount = testAccount, platformGameId = "game_2", pgn = "", timeControl = "BLITZ")
+        val p1 = Position(id = posId1, hash = "h1", fen = "fen1")
+        val p2 = Position(id = posId2, hash = "h2", fen = "fen2")
+
+        val occ1 =
+            PositionOccurrence(
+                id = UUID.randomUUID(),
+                game = g1,
+                position = p1,
+                chessAccount = testAccount,
+                plyNumber = 5,
+                movePlayed = "e5",
+                playerColor = "BLACK",
+                decisionTimeMs = 4500L,
+            )
+        val occ2 =
+            PositionOccurrence(
+                id = UUID.randomUUID(),
+                game = g2,
+                position = p2,
+                chessAccount = testAccount,
+                plyNumber = 4,
+                movePlayed = "d5",
+                playerColor = "WHITE",
+                decisionTimeMs = null,
+            )
+
+        `when`(
+            occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(testAccount.id, listOf(posId1, posId2)),
+        ).thenReturn(listOf(occ1, occ2))
+
+        val ea1 =
+            EngineAnalysis(position = p1, depth = 16, bestMove = "c5").apply {
+                moveEvaluations.add(MoveEvaluation(engineAnalysis = this, move = "e5", evalLossFromBest = 1.20))
+                moveEvaluations.add(MoveEvaluation(engineAnalysis = this, move = "c5", evalLossFromBest = 0.0))
+            }
+        `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(setOf(posId1, posId2))).thenReturn(listOf(ea1))
+
+        val response = service.getClusterPositions(clusterId, testAccount, page = 0, size = 10, playableOnly = false)
+
+        assertEquals(0, response.page)
+        assertEquals(10, response.size)
+        assertEquals(2L, response.totalElements)
+        assertEquals(1, response.totalPages)
+        assertEquals(false, response.hasNext)
+        assertEquals(2, response.positions.size)
+
+        assertEvaluatedPosition(response.positions[0], posId1)
+        assertUnevaluatedPosition(response.positions[1], posId2)
+    }
+
+    @Test
+    fun `getClusterPositions with playableOnly=true filters out unevaluated positions`() {
+        val snapshotId = UUID.randomUUID()
+        val clusterId = UUID.randomUUID()
+        val posId1 = UUID.randomUUID()
+        val posId2 = UUID.randomUUID()
+
+        setupClusterWithAssignments(snapshotId, clusterId, listOf(posId1, posId2))
+
+        val g1 = Game(id = UUID.randomUUID(), chessAccount = testAccount, platformGameId = "game_1", pgn = "", timeControl = "RAPID")
+        val p1 = Position(id = posId1, hash = "h1", fen = "fen1")
+        val p2 = Position(id = posId2, hash = "h2", fen = "fen2")
+        val occ1 =
+            PositionOccurrence(
+                id = UUID.randomUUID(),
+                game = g1,
+                position = p1,
+                chessAccount = testAccount,
+                plyNumber = 5,
+                movePlayed = "e5",
+                playerColor = "BLACK",
+            )
+        val occ2 =
+            PositionOccurrence(
+                id = UUID.randomUUID(),
+                game = g1,
+                position = p2,
+                chessAccount = testAccount,
+                plyNumber = 4,
+                movePlayed = "d5",
+                playerColor = "WHITE",
+            )
+
+        `when`(
+            occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(testAccount.id, listOf(posId1, posId2)),
+        ).thenReturn(listOf(occ1, occ2))
+
+        val ea1 = EngineAnalysis(position = p1, depth = 16, bestMove = "c5")
+        `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(setOf(posId1, posId2))).thenReturn(listOf(ea1))
+
+        val response = service.getClusterPositions(clusterId, testAccount, page = 0, size = 10, playableOnly = true)
+
+        assertEquals(1L, response.totalElements)
+        assertEquals(1, response.positions.size)
+        assertEquals(posId1, response.positions[0].positionId)
+    }
+
+    @Test
+    fun `getClusterPositions throws ResponseStatusException with 404 when cluster belongs to another account`() {
+        val snapshotId = UUID.randomUUID()
+        val clusterId = UUID.randomUUID()
+        val otherAccountId = UUID.randomUUID()
+
+        setupClusterWithAssignments(snapshotId, clusterId, listOf(UUID.randomUUID()), otherAccountId)
+
+        val ex =
+            assertThrows<ResponseStatusException> {
+                service.getClusterPositions(clusterId, testAccount, page = 0, size = 10, playableOnly = false)
+            }
+        assertEquals(HttpStatus.NOT_FOUND, ex.statusCode)
+    }
+
+    private fun setupClusterWithAssignments(
+        snapshotId: UUID,
+        clusterId: UUID,
+        posIds: List<UUID>,
+        accountId: UUID = testAccount.id,
+    ): Pair<PositionClusterSnapshot, PositionCluster> {
+        val snapshot =
+            PositionClusterSnapshot(
+                id = snapshotId,
+                accountId = accountId,
+                snapshotVersion = 1,
+                clusterType = ClusterType.STRUCTURAL,
+                status = PositionClusterSnapshotStatus.ACTIVE,
+            )
+        val cluster =
+            PositionCluster(
+                id = clusterId,
+                snapshotId = snapshotId,
+                clusterIndex = 0,
+                size = posIds.size,
+                centroidVector = "{}",
+            )
+        `when`(clusterRepository.findById(clusterId)).thenReturn(Optional.of(cluster))
+        `when`(snapshotRepository.findById(snapshotId)).thenReturn(Optional.of(snapshot))
+
+        val assignments =
+            posIds.map { posId ->
+                PositionClusterAssignment(
+                    id = PositionClusterAssignmentId(snapshotId = snapshotId, positionId = posId),
+                    clusterId = clusterId,
+                    assignmentStatus = PositionClusterAssignmentStatus.ASSIGNED,
+                )
+            }
+        `when`(assignmentRepository.findByClusterId(clusterId)).thenReturn(assignments)
+        return snapshot to cluster
+    }
+
+    private fun assertEvaluatedPosition(
+        item: com.chessecho.dto.ClusterMemberPositionDto,
+        expectedPosId: UUID,
+    ) {
+        assertEquals(expectedPosId, item.positionId)
+        assertEquals("BLACK", item.playerColor)
+        assertEquals("e5", item.movePlayed)
+        assertEquals("c5", item.targetMove)
+        assertEquals(1.20, item.evalLoss)
+        assertEquals(MistakeSeverity.MODERATE, item.mistakeSeverity)
+        assertEquals(4500L, item.decisionTimeMs)
+        assertEquals(DecisionSeverity.NO_CONCERN, item.decisionSeverity)
+        assertEquals("RAPID", item.timeControl)
+        assertEquals(3, item.moveNumber)
+        assertEquals(5, item.plyNumber)
+        assertEquals(1, item.acceptableMoves?.size)
+        assertEquals("c5", item.acceptableMoves?.firstOrNull()?.move)
+    }
+
+    private fun assertUnevaluatedPosition(
+        item: com.chessecho.dto.ClusterMemberPositionDto,
+        expectedPosId: UUID,
+    ) {
+        assertEquals(expectedPosId, item.positionId)
+        assertEquals("WHITE", item.playerColor)
+        assertEquals("d5", item.movePlayed)
+        assertNull(item.targetMove)
+        assertNull(item.evalLoss)
+        assertNull(item.mistakeSeverity)
+        assertNull(item.decisionTimeMs)
+        assertEquals(DecisionSeverity.UNKNOWN, item.decisionSeverity)
+        assertEquals("BLITZ", item.timeControl)
+        assertEquals(2, item.moveNumber)
+    }
 }
