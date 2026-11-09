@@ -10,6 +10,7 @@ vi.mock('../services/api', async (importOriginal) => {
     ...actual,
     fetchWeaknesses: vi.fn().mockResolvedValue([]),
     fetchRecurringWeaknesses: vi.fn(),
+    getClusterPositions: vi.fn(),
     triggerRecurringDiscovery: vi.fn(),
     getRecurringDiscoveryJobStatus: vi.fn(),
     cancelRecurringDiscoveryJob: vi.fn(),
@@ -60,8 +61,34 @@ describe('Thematic Weakness Clusters & Practice Bridge (#735)', () => {
     });
   });
 
-  it('triggers onSelectPractice when "Practice This Weakness" is clicked on a cluster card', async () => {
+  it('triggers onSelectPractice with playable playlist when "Practice This Weakness" is clicked on a cluster card', async () => {
     vi.mocked(api.fetchRecurringWeaknesses).mockResolvedValueOnce([mockCluster]);
+    vi.mocked(api.getClusterPositions).mockResolvedValueOnce({
+      page: 0,
+      size: 100,
+      totalElements: 1,
+      totalPages: 1,
+      hasNext: false,
+      positions: [
+        {
+          positionId: 'pos-123',
+          fen: 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3',
+          playerColor: 'WHITE',
+          movePlayed: 'Bc4',
+          targetMove: 'Bb5',
+          acceptableMoves: [{ move: 'Bb5', evalLoss: 0.0 }],
+          evalLoss: 0.85,
+          mistakeSeverity: 'MINOR',
+          decisionTimeMs: 3200,
+          decisionSeverity: 'NO_CONCERN',
+          timeControl: 'RAPID',
+          gameId: 'game-1',
+          platformGameId: 'chesscom_1',
+          plyNumber: 5,
+          moveNumber: 3,
+        },
+      ],
+    });
 
     render(<WeaknessesList {...defaultProps} />);
 
@@ -70,14 +97,63 @@ describe('Thematic Weakness Clusters & Practice Bridge (#735)', () => {
 
     fireEvent.click(practiceBtn);
 
-    expect(onSelectPractice).toHaveBeenCalledWith(
-      expect.objectContaining({
-        puzzleId: 'cluster-uuid-1',
-        fen: mockCluster.representativeFen,
-        timesReached: 18,
-        mistakeCount: 10,
-      })
-    );
+    await waitFor(() => {
+      expect(api.getClusterPositions).toHaveBeenCalledWith(
+        'cluster-uuid-1',
+        expect.objectContaining({ playableOnly: true, size: 100, accountId: 'test-account-uuid' })
+      );
+      expect(onSelectPractice).toHaveBeenCalledWith(
+        expect.objectContaining({
+          puzzleId: 'pos-123',
+          targetMove: 'Bb5',
+          openingTitle: 'Cluster Weakness: Move 3',
+          movesPlayed: [expect.objectContaining({ move: 'Bc4' })],
+        }),
+        expect.arrayContaining([
+          expect.objectContaining({
+            puzzleId: 'pos-123',
+            targetMove: 'Bb5',
+          }),
+        ])
+      );
+    });
+  });
+
+  it('renders inline alert when cluster contains zero playable positions', async () => {
+    vi.mocked(api.fetchRecurringWeaknesses).mockResolvedValueOnce([mockCluster]);
+    vi.mocked(api.getClusterPositions).mockResolvedValueOnce({
+      page: 0,
+      size: 100,
+      totalElements: 0,
+      totalPages: 0,
+      hasNext: false,
+      positions: [],
+    });
+
+    render(<WeaknessesList {...defaultProps} />);
+
+    const practiceBtn = await screen.findByRole('button', { name: /Practice This Weakness/i });
+    fireEvent.click(practiceBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText(/No verified engine solutions available to practice for this cluster/i)).toBeInTheDocument();
+      expect(onSelectPractice).not.toHaveBeenCalled();
+    });
+  });
+
+  it('renders inline alert when practice playlist retrieval fails', async () => {
+    vi.mocked(api.fetchRecurringWeaknesses).mockResolvedValueOnce([mockCluster]);
+    vi.mocked(api.getClusterPositions).mockRejectedValueOnce(new Error('Network error on practice'));
+
+    render(<WeaknessesList {...defaultProps} />);
+
+    const practiceBtn = await screen.findByRole('button', { name: /Practice This Weakness/i });
+    fireEvent.click(practiceBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Network error on practice/i)).toBeInTheDocument();
+      expect(onSelectPractice).not.toHaveBeenCalled();
+    });
   });
 
   it('allows toggling between Thematic Clusters and All Positions views', async () => {

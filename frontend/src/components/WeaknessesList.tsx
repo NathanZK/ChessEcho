@@ -29,11 +29,13 @@ import {
   getRecurringDiscoveryJobStatus,
   cancelRecurringDiscoveryJob,
   fetchRecurringWeaknesses,
+  getClusterPositions,
   type RecurringDiscoveryJobResponse,
   type RecurringWeaknessResponse,
 } from '../services/api';
 import { Puzzle } from '@/types/puzzle';
 import { HistoricalGamesModal } from './HistoricalGamesModal';
+import { ClusterEvidenceModal } from './ClusterEvidenceModal';
 import {
   formatDecimal,
   formatPawnLoss,
@@ -217,6 +219,9 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
   const [recurringClusters, setRecurringClusters] = useState<RecurringWeaknessResponse[]>([]);
   const [isLoadingClusters, setIsLoadingClusters] = useState(false);
   const [clusterError, setClusterError] = useState<string | null>(null);
+  const [practiceError, setPracticeError] = useState<string | null>(null);
+  const [loadingPracticeClusterId, setLoadingPracticeClusterId] = useState<string | null>(null);
+  const [inspectingCluster, setInspectingCluster] = useState<RecurringWeaknessResponse | null>(null);
 
   const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -821,6 +826,23 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
       {/* Main Content Area */}
       {clusterViewMode === 'CLUSTERS' ? (
         <div className="space-y-4">
+          {practiceError && (
+            <div
+              role="alert"
+              className="p-4 rounded-xl border border-error/30 bg-error/10 text-error text-xs font-mono flex items-center justify-between shadow-sm"
+            >
+              <span>{practiceError}</span>
+              <button
+                type="button"
+                onClick={() => setPracticeError(null)}
+                className="text-error hover:text-error/80 cursor-pointer p-1"
+                aria-label="Dismiss error"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
           {isLoadingClusters ? (
             <StatusBanner
               variant="loading"
@@ -854,22 +876,60 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                 const mistakeFreqPercent = Math.round(cluster.mistakeFrequency * 100);
                 const blunderRatePercent = Math.round(cluster.blunderRate * 100);
 
-                const handlePracticeCluster = () => {
-                  const puzzle: Puzzle = {
-                    puzzleId: cluster.clusterId,
-                    source: 'weakness',
-                    fen: cluster.representativeFen,
-                    playerColor: activeColorInFen === 'b' ? 'BLACK' : 'WHITE',
-                    targetMove: '',
-                    openingTitle: `Thematic Cluster (${cluster.memberPositionCount} variations)`,
-                    acceptableMoves: [],
-                    movesPlayed: [],
-                    priority: cluster.mistakeCount,
-                    timesReached: cluster.totalOccurrences,
-                    mistakeCount: cluster.mistakeCount,
-                    mistakeRate: cluster.mistakeFrequency * 100,
-                  };
-                  onSelectPractice(puzzle);
+                const handlePracticeCluster = async () => {
+                  setPracticeError(null);
+                  setLoadingPracticeClusterId(cluster.clusterId);
+                  try {
+                    const data = await getClusterPositions(cluster.clusterId, {
+                      playableOnly: true,
+                      size: 100,
+                      accountId,
+                    });
+                    const positions = data.positions || [];
+                    const playablePositions = positions.filter(
+                      (pos) => typeof pos.targetMove === 'string' && pos.targetMove.trim().length > 0
+                    );
+                    const playablePuzzles: Puzzle[] = playablePositions.map((pos) => {
+                      const fenTurn = pos.fen ? pos.fen.split(' ')[1] : undefined;
+                      const playerColor: 'WHITE' | 'BLACK' =
+                        pos.playerColor === 'WHITE' || pos.playerColor === 'BLACK'
+                          ? pos.playerColor
+                          : (fenTurn === 'b' ? 'BLACK' : 'WHITE');
+
+                      return {
+                        puzzleId: pos.positionId,
+                        source: 'weakness',
+                        fen: pos.fen,
+                        playerColor,
+                        targetMove: pos.targetMove || '',
+                        acceptableMoves: pos.acceptableMoves || [],
+                        openingTitle: `Cluster Weakness: Move ${pos.moveNumber}`,
+                        movesPlayed: [
+                          {
+                            move: pos.movePlayed,
+                            timesPlayed: 1,
+                            averageLoss: pos.evalLoss ?? 1.0,
+                          },
+                        ],
+                        priority: Math.round((pos.evalLoss ?? 1.0) * 100),
+                        timesReached: 1,
+                        mistakeCount: 1,
+                        mistakeRate: 100,
+                      };
+                    });
+
+                    if (playablePuzzles.length === 0) {
+                      setPracticeError('No verified engine solutions available to practice for this cluster.');
+                      return;
+                    }
+
+                    onSelectPractice(playablePuzzles[0], playablePuzzles);
+                  } catch (err: unknown) {
+                    const msg = err instanceof Error ? err.message : 'Failed to launch practice for this cluster.';
+                    setPracticeError(msg);
+                  } finally {
+                    setLoadingPracticeClusterId(null);
+                  }
                 };
 
                 return (
@@ -918,13 +978,26 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                       )}
                     </div>
 
-                    <div className="p-3 bg-surface-container-lowest border-t border-outline-variant flex items-center justify-between">
+                    <div className="p-3 bg-surface-container-lowest border-t border-outline-variant flex items-center justify-between gap-2">
                       <button
                         type="button"
-                        onClick={handlePracticeCluster}
-                        className="w-full py-2 bg-primary hover:bg-primary/90 text-on-primary text-xs font-mono font-bold rounded-xl transition flex items-center justify-center gap-2 shadow-sm cursor-pointer"
+                        onClick={() => setInspectingCluster(cluster)}
+                        className="w-1/2 py-2 bg-surface-container hover:bg-surface-container-high border border-outline-variant text-on-surface text-xs font-mono font-bold rounded-xl transition flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
                       >
-                        <Swords className="w-3.5 h-3.5" />
+                        <List className="w-3.5 h-3.5" />
+                        <span>Inspect Evidence</span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={loadingPracticeClusterId === cluster.clusterId}
+                        onClick={() => { void handlePracticeCluster(); }}
+                        className="w-1/2 py-2 bg-primary hover:bg-primary/90 disabled:opacity-50 text-on-primary text-xs font-mono font-bold rounded-xl transition flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                      >
+                        {loadingPracticeClusterId === cluster.clusterId ? (
+                          <div className="w-3.5 h-3.5 border-2 border-on-primary border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <Swords className="w-3.5 h-3.5" />
+                        )}
                         <span>Practice This Weakness</span>
                       </button>
                     </div>
@@ -1472,6 +1545,16 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
           urls={activeGameModalUrls}
           onClose={() => setActiveGameModalUrls(null)}
           username={username}
+        />
+      )}
+
+      {/* Cluster Evidence Modal (#758) */}
+      {inspectingCluster && (
+        <ClusterEvidenceModal
+          cluster={inspectingCluster}
+          accountId={accountId}
+          onClose={() => setInspectingCluster(null)}
+          onSelectPractice={onSelectPractice}
         />
       )}
 

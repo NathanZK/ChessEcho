@@ -2,6 +2,7 @@ package com.chessecho.controller
 
 import com.chessecho.domain.ChessAccount
 import com.chessecho.domain.Platform
+import com.chessecho.dto.ClusterMemberPositionsResponse
 import com.chessecho.dto.RecurringDiscoveryJobResponse
 import com.chessecho.dto.RecurringDiscoveryRequest
 import com.chessecho.dto.RecurringWeaknessResponse
@@ -22,6 +23,7 @@ import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
+import org.springframework.web.server.ResponseStatusException
 import java.util.UUID
 
 @RestController
@@ -83,6 +85,49 @@ class RecurringWeaknessController(
         val account = resolveAccount(accountId, username, principal)
         val weaknesses = discoveryService.getLatestRecurringWeaknesses(account)
         return ResponseEntity.ok(weaknesses)
+    }
+
+    @GetMapping("/{clusterId}/positions")
+    fun getClusterPositions(
+        @PathVariable clusterId: UUID,
+        @RequestParam(defaultValue = "0") page: Int,
+        @RequestParam(defaultValue = "20") size: Int,
+        @RequestParam(defaultValue = "false") playableOnly: Boolean,
+        @RequestParam(required = false) accountId: UUID?,
+        @OptionalAuthenticatedPrincipal
+        @RequestAttribute(name = SessionAuthenticationFilter.PRINCIPAL_ATTRIBUTE, required = false)
+        principal: AuthenticatedPrincipal?,
+    ): ResponseEntity<ClusterMemberPositionsResponse> {
+        if (principal == null) {
+            throw UnauthenticatedException("Authentication required to access cluster member positions")
+        }
+        if (page < 0) {
+            throw ResponseStatusException(HttpStatus.BAD_REQUEST, "page must be non-negative: $page")
+        }
+        if (size < 1 || size > 100) {
+            throw ResponseStatusException(HttpStatus.BAD_REQUEST, "size must be between 1 and 100: $size")
+        }
+
+        val targetAccountId =
+            accountId ?: discoveryService.getClusterAccountId(clusterId)
+                ?: throw ResponseStatusException(HttpStatus.NOT_FOUND, "Cluster $clusterId not found")
+
+        val account =
+            try {
+                accountOwnershipService.resolvePrivateRead(targetAccountId, principal)
+            } catch (_: Exception) {
+                throw ResponseStatusException(HttpStatus.NOT_FOUND, "Cluster $clusterId not found")
+            }
+
+        val response =
+            discoveryService.getClusterPositions(
+                clusterId = clusterId,
+                account = account,
+                page = page,
+                size = size,
+                playableOnly = playableOnly,
+            )
+        return ResponseEntity.ok(response)
     }
 
     private fun resolveAccount(

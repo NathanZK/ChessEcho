@@ -28,6 +28,14 @@ vi.mock('../services/api', async () => {
     ...actual,
     fetchWeaknesses: vi.fn(),
     fetchRecurringWeaknesses: vi.fn().mockResolvedValue([]),
+    getClusterPositions: vi.fn().mockResolvedValue({
+      page: 0,
+      size: 10,
+      totalElements: 0,
+      totalPages: 0,
+      hasNext: false,
+      positions: [],
+    }),
   };
 });
 
@@ -1052,6 +1060,80 @@ describe('Weaknesses Tab MVP', () => {
       fireEvent.click(progressBtn);
 
       expect(onViewProgress).toHaveBeenCalledWith('progress-test-item', 'BLACK', 0.8);
+    });
+  });
+
+  describe('Cluster Evidence Inspection Modal (#758)', () => {
+    const mockCluster: api.RecurringWeaknessResponse = {
+      clusterId: 'c-100',
+      clusterType: 'STRUCTURAL',
+      recommendationPriority: 0.5,
+      representativeFen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2',
+      memberPositionCount: 3,
+      totalOccurrences: 12,
+      distinctGamesCount: 10,
+      mistakeCount: 8,
+      mistakeFrequency: 0.67,
+      blunderRate: 0.25,
+      evaluatedOccurrences: 10,
+      unevaluatedOccurrences: 2,
+      evalLossDistribution: { MINOR: 4, MODERATE: 3, SIGNIFICANT: 2, SEVERE: 1, UNEVALUATED: 2 },
+      evalLossPercentages: { MINOR: 33, MODERATE: 25, SIGNIFICANT: 17, SEVERE: 8, UNEVALUATED: 17 },
+      timingProfile: { FAST: 1, NORMAL: 5, SLOW: 6 },
+      formatBreakdown: { RAPID: 8, BLITZ: 4 },
+    };
+
+    it('opens cluster evidence inspection modal when "Inspect Evidence" is clicked and closes on close button', async () => {
+      vi.mocked(api.fetchRecurringWeaknesses).mockResolvedValue([mockCluster]);
+      vi.mocked(api.getClusterPositions).mockResolvedValue({
+        page: 0,
+        size: 10,
+        totalElements: 1,
+        totalPages: 1,
+        hasNext: false,
+        positions: [
+          {
+            positionId: 'pos-abc',
+            fen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2',
+            playerColor: 'BLACK',
+            movePlayed: 'Nc6',
+            targetMove: 'Nf6',
+            acceptableMoves: [{ move: 'Nf6', evalLoss: 0.0 }],
+            evalLoss: 0.45,
+            mistakeSeverity: 'MINOR',
+            decisionTimeMs: 2500,
+            decisionSeverity: 'NO_CONCERN',
+            timeControl: 'RAPID',
+            gameId: 'game-1',
+            platformGameId: 'chesscom_123',
+            plyNumber: 4,
+            moveNumber: 2,
+          },
+        ],
+      });
+
+      render(<WeaknessesList accountId="test-account" username="hikaru" onSelectPractice={vi.fn()} />);
+
+      const inspectBtn = await screen.findByRole('button', { name: /Inspect Evidence/i });
+      expect(inspectBtn).toBeInTheDocument();
+
+      fireEvent.click(inspectBtn);
+
+      const modal = await screen.findByRole('dialog');
+      expect(modal).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: /Cluster Evidence Inspection/i })).toBeInTheDocument();
+
+      // Check position details rendered in modal
+      expect(await screen.findByText('Nc6')).toBeInTheDocument();
+      expect(screen.getByText('Nf6')).toBeInTheDocument();
+
+      // Close modal
+      const closeBtn = screen.getByRole('button', { name: /close dialog/i });
+      fireEvent.click(closeBtn);
+
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      });
     });
   });
 });
