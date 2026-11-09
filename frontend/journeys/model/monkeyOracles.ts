@@ -1,11 +1,11 @@
-import type { Page } from '@playwright/test';
+import type { Page, ConsoleMessage } from '@playwright/test';
 import { type PracticeAbstractState, STATE_ORACLES } from './practiceModel';
 
-export interface ActionLogEntry {
+export interface ActionLogEntry<TState = PracticeAbstractState> {
   step: number;
-  fromState: PracticeAbstractState;
+  fromState: TState;
   action: string;
-  toState: PracticeAbstractState;
+  toState: TState;
   timestamp: number;
 }
 
@@ -22,24 +22,59 @@ export interface MonkeyErrorRecord {
  */
 export class InvariantErrorObserver {
   private errors: MonkeyErrorRecord[] = [];
+  private attachedPage: Page | null = null;
+  private pageErrorHandler: ((err: Error) => void) | null = null;
+  private consoleHandler: ((msg: ConsoleMessage) => void) | null = null;
 
   attach(page: Page): void {
-    page.on('pageerror', (err) => {
+    this.attachedPage = page;
+    this.pageErrorHandler = (err: Error) => {
       this.errors.push({
         type: 'pageerror',
         message: err.message,
         stack: err.stack,
       });
-    });
+    };
 
-    page.on('console', (msg) => {
+    this.consoleHandler = (msg: ConsoleMessage) => {
       if (msg.type() === 'error') {
+        const text = msg.text();
+        // Ignore expected HTTP error responses logged automatically by Chromium
+        if (text.includes('Failed to load resource: the server responded with a status of')) {
+          return;
+        }
         this.errors.push({
           type: 'console_error',
-          message: msg.text(),
+          message: text,
         });
       }
-    });
+    };
+
+    page.on('pageerror', this.pageErrorHandler);
+    page.on('console', this.consoleHandler);
+  }
+
+  detach(): void {
+    if (this.attachedPage) {
+      if (this.pageErrorHandler) {
+        this.attachedPage.off('pageerror', this.pageErrorHandler);
+        this.pageErrorHandler = null;
+      }
+      if (this.consoleHandler) {
+        this.attachedPage.off('console', this.consoleHandler);
+        this.consoleHandler = null;
+      }
+      this.attachedPage = null;
+    }
+  }
+
+  assertNoErrors(step?: number, state?: string): void {
+    if (this.hasErrors()) {
+      const errorDetails = this.getErrors()
+        .map((e) => `[${e.type}] ${e.message}`)
+        .join('\n');
+      throw new Error(`[Unhandled Page Error] at step ${step ?? 'unknown'} in state ${state ?? 'unknown'}:\n${errorDetails}`);
+    }
   }
 
   getErrors(): MonkeyErrorRecord[] {

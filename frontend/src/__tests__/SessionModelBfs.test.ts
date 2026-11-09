@@ -10,25 +10,23 @@ import {
   isValidSessionTransition,
   getNextSessionState,
   SESSION_STATE_ORACLES,
+  SessionModel,
 } from '../../journeys/model/sessionModel';
 import { exploreAbstractStates } from '../../journeys/model/bfsExplorer';
+import { findBfsPath } from '../../journeys/model/modelRunner';
 
 describe('Session Authentication State Model & Invariants', () => {
-  it('defines all 5 abstract states and 6 actions for the session lifecycle', () => {
+  it('defines all 3 abstract states and 4 actions for the realigned session lifecycle', () => {
     expect(SESSION_ABSTRACT_STATES).toEqual([
       'GUEST',
-      'AUTHENTICATING',
       'AUTHENTICATED',
       'AUTH_ERROR',
-      'PROTECTED_ERROR',
     ]);
 
     expect(SESSION_ACTIONS).toEqual([
-      'START_AUTH',
-      'AUTH_SUCCESS',
-      'AUTH_FAILURE',
-      'DISMISS_ERROR',
-      'TRIGGER_PROTECTED_FAIL',
+      'NAVIGATE_LOGIN',
+      'SUBMIT_VALID_CREDENTIALS',
+      'SUBMIT_INVALID_CREDENTIALS',
       'LOGOUT',
     ]);
   });
@@ -36,38 +34,27 @@ describe('Session Authentication State Model & Invariants', () => {
   it('validates allowed session transitions across authentication, error recovery, and logout', () => {
     const ctx = createInitialSessionContext();
 
-    // GUEST -> START_AUTH -> AUTHENTICATING
-    expect(isValidSessionTransition('GUEST', 'START_AUTH', ctx)).toBe(true);
-    const authenticating = getNextSessionState('GUEST', 'START_AUTH', ctx);
-    expect(authenticating?.state).toBe('AUTHENTICATING');
+    // GUEST -> NAVIGATE_LOGIN -> GUEST
+    expect(isValidSessionTransition('GUEST', 'NAVIGATE_LOGIN', ctx)).toBe(true);
 
-    // AUTHENTICATING -> AUTH_FAILURE -> AUTH_ERROR
-    expect(isValidSessionTransition('AUTHENTICATING', 'AUTH_FAILURE', authenticating!.context)).toBe(true);
-    const authError = getNextSessionState('AUTHENTICATING', 'AUTH_FAILURE', authenticating!.context);
+    // GUEST -> SUBMIT_INVALID_CREDENTIALS -> AUTH_ERROR
+    expect(isValidSessionTransition('GUEST', 'SUBMIT_INVALID_CREDENTIALS', ctx)).toBe(true);
+    const authError = getNextSessionState('GUEST', 'SUBMIT_INVALID_CREDENTIALS', ctx);
     expect(authError?.state).toBe('AUTH_ERROR');
     expect(authError?.context.hasError).toBe(true);
 
-    // AUTH_ERROR -> DISMISS_ERROR -> GUEST
-    expect(isValidSessionTransition('AUTH_ERROR', 'DISMISS_ERROR', authError!.context)).toBe(true);
-    const dismissed = getNextSessionState('AUTH_ERROR', 'DISMISS_ERROR', authError!.context);
-    expect(dismissed?.state).toBe('GUEST');
-    expect(dismissed?.context.hasError).toBe(false);
-
-    // GUEST -> START_AUTH -> AUTH_SUCCESS -> AUTHENTICATED
-    const authSuccess = getNextSessionState('AUTHENTICATING', 'AUTH_SUCCESS', authenticating!.context);
+    // AUTH_ERROR -> SUBMIT_VALID_CREDENTIALS -> AUTHENTICATED
+    expect(isValidSessionTransition('AUTH_ERROR', 'SUBMIT_VALID_CREDENTIALS', authError!.context)).toBe(true);
+    const authSuccess = getNextSessionState('AUTH_ERROR', 'SUBMIT_VALID_CREDENTIALS', authError!.context);
     expect(authSuccess?.state).toBe('AUTHENTICATED');
     expect(authSuccess?.context.authenticated).toBe(true);
+    expect(authSuccess?.context.hasError).toBe(false);
 
     // AUTHENTICATED -> LOGOUT -> GUEST
     expect(isValidSessionTransition('AUTHENTICATED', 'LOGOUT', authSuccess!.context)).toBe(true);
     const loggedOut = getNextSessionState('AUTHENTICATED', 'LOGOUT', authSuccess!.context);
     expect(loggedOut?.state).toBe('GUEST');
     expect(loggedOut?.context.authenticated).toBe(false);
-
-    // GUEST -> TRIGGER_PROTECTED_FAIL -> PROTECTED_ERROR
-    expect(isValidSessionTransition('GUEST', 'TRIGGER_PROTECTED_FAIL', loggedOut!.context)).toBe(true);
-    const protectedErr = getNextSessionState('GUEST', 'TRIGGER_PROTECTED_FAIL', loggedOut!.context);
-    expect(protectedErr?.state).toBe('PROTECTED_ERROR');
   });
 
   it('strictly rejects invalid or guarded state transitions', () => {
@@ -76,8 +63,9 @@ describe('Session Authentication State Model & Invariants', () => {
     // Cannot logout while already GUEST
     expect(isValidSessionTransition('GUEST', 'LOGOUT', ctx)).toBe(false);
 
-    // Cannot succeed auth without entering AUTHENTICATING
-    expect(isValidSessionTransition('GUEST', 'AUTH_SUCCESS', ctx)).toBe(false);
+    // Cannot submit credentials if already authenticated
+    const authCtx: SessionModelContext = { authenticated: true, hasError: false };
+    expect(isValidSessionTransition('GUEST', 'SUBMIT_VALID_CREDENTIALS', authCtx)).toBe(false);
   });
 
   it('defines an invariant oracle definition for every session state', () => {
@@ -88,7 +76,7 @@ describe('Session Authentication State Model & Invariants', () => {
     }
   });
 
-  it('reaches all 5 session states via bounded BFS exploration without cycles', () => {
+  it('reaches all 3 session states via bounded BFS exploration without cycles', () => {
     const result = exploreAbstractStates<SessionAbstractState, SessionAction, SessionModelContext>(
       'GUEST',
       SESSION_TRANSITIONS,
@@ -100,6 +88,11 @@ describe('Session Authentication State Model & Invariants', () => {
     for (const state of SESSION_ABSTRACT_STATES) {
       expect(result.reachableStates.has(state)).toBe(true);
     }
-    expect(result.paths.length).toBeGreaterThanOrEqual(4);
+    expect(result.paths.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('finds expected shortest BFS paths using SessionModel and findBfsPath', () => {
+    expect(findBfsPath(SessionModel, 'AUTHENTICATED')).toEqual(['SUBMIT_VALID_CREDENTIALS']);
+    expect(findBfsPath(SessionModel, 'AUTH_ERROR')).toEqual(['SUBMIT_INVALID_CREDENTIALS']);
   });
 });

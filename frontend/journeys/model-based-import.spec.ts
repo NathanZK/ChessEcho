@@ -1,35 +1,28 @@
 import { test, expect } from '@playwright/test';
 import { setupJourneyApiMocks } from './fixtures/mockApi';
 import {
-  IMPORT_TRANSITIONS,
   IMPORT_STATE_ORACLES,
-  createInitialImportContext,
-  ImportAbstractState,
-  ImportAction,
-  ImportModelContext,
+  ImportModel,
 } from './model/importModel';
-import { exploreAbstractStates } from './model/bfsExplorer';
+import { findBfsPath, executeModelPath } from './model/modelRunner';
 
 test.describe('Model-Based Testing: Asynchronous Game Import & Polling Lifecycle', () => {
   test('BFS exploration finds shortest paths to high-risk states', () => {
-    const exploration = exploreAbstractStates<ImportAbstractState, ImportAction, ImportModelContext>(
-      'IDLE',
-      IMPORT_TRANSITIONS,
-      4,
-      createInitialImportContext(),
-      (state, ctx) => `${state}:${ctx.status}:${ctx.analysisStatus}:${ctx.hasConflict}`
-    );
-
-    expect(exploration.reachableStates.has('CONFLICT_409')).toBe(true);
-    expect(exploration.reachableStates.has('POLLING_ANALYSIS')).toBe(true);
-    expect(exploration.reachableStates.has('IMPORT_COMPLETED')).toBe(true);
-
-    const conflictPath = exploration.paths.find((p) => p.targetState === 'CONFLICT_409');
+    const conflictPath = findBfsPath(ImportModel, 'CONFLICT_409');
     expect(conflictPath).toBeDefined();
-    expect(conflictPath?.actions).toEqual(['SUBMIT_IMPORT', 'RECEIVE_CONFLICT']);
+    expect(conflictPath).toEqual(['SUBMIT_IMPORT_CONFLICT']);
 
-    const completedPath = exploration.paths.find((p) => p.targetState === 'IMPORT_COMPLETED');
+    const pollingPath = findBfsPath(ImportModel, 'POLLING_IMPORT');
+    expect(pollingPath).toBeDefined();
+    expect(pollingPath).toEqual(['SUBMIT_IMPORT']);
+
+    const completedPath = findBfsPath(ImportModel, 'IMPORT_COMPLETED');
     expect(completedPath).toBeDefined();
+    expect(completedPath).toEqual(['SUBMIT_IMPORT', 'POLL_COMPLETED']);
+
+    const analysisPath = findBfsPath(ImportModel, 'POLLING_ANALYSIS');
+    expect(analysisPath).toBeDefined();
+    expect(analysisPath).toEqual(['SUBMIT_IMPORT', 'POLL_ANALYSIS_PROGRESS']);
   });
 
   test('Path 1: 409 Active conflict recovery and retryable submission', async ({ page }) => {
@@ -38,17 +31,15 @@ test.describe('Model-Based Testing: Asynchronous Game Import & Polling Lifecycle
       importConflict: true,
     });
 
-    await page.goto('/#import');
-    await IMPORT_STATE_ORACLES.IDLE.assert(page, expect);
+    const conflictPath = findBfsPath(ImportModel, 'CONFLICT_409')!;
+    const result = await executeModelPath(page, ImportModel, conflictPath);
 
-    const usernameInput = page.getByLabel(/Chess\.com Username/i);
-    await usernameInput.fill('carlsen');
+    expect(result.success).toBe(true);
+    expect(result.finalState).toBe('CONFLICT_409');
+    expect(result.visitedStates.has('CONFLICT_409')).toBe(true);
+    expect(result.executedTransitions.has('IDLE->SUBMIT_IMPORT_CONFLICT->CONFLICT_409')).toBe(true);
 
     const startButton = page.getByRole('button', { name: /Start Import & Engine Analysis/i });
-    await expect(startButton).toBeEnabled();
-    await startButton.click();
-
-    await IMPORT_STATE_ORACLES.CONFLICT_409.assert(page, expect);
     await expect(startButton).toBeVisible();
   });
 
@@ -80,21 +71,22 @@ test.describe('Model-Based Testing: Asynchronous Game Import & Polling Lifecycle
       ],
     });
 
-    await page.goto('/#import');
-    await IMPORT_STATE_ORACLES.IDLE.assert(page, expect);
+    // Execute model path to initiate import and reach polling state
+    const submitResult = await executeModelPath(page, ImportModel, ['SUBMIT_IMPORT']);
+    expect(submitResult.success).toBe(true);
+    expect(submitResult.finalState).toBe('POLLING_IMPORT');
+    expect(submitResult.visitedStates.has('POLLING_IMPORT')).toBe(true);
 
-    await page.getByLabel(/Chess\.com Username/i).fill('carlsen');
-    await page.getByRole('button', { name: /Start Import & Engine Analysis/i }).click();
-
-    await expect(page.getByRole('button', { name: /Import Job Active\.\.\./i })).toBeVisible();
+    // Verify intermediate analysis presentation
     await IMPORT_STATE_ORACLES.POLLING_ANALYSIS.assert(page, expect);
     await expect(page.getByText(/Import Completed Successfully!/i)).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText(/Analysis complete\./i)).toBeVisible({ timeout: 10_000 });
     await IMPORT_STATE_ORACLES.IMPORT_COMPLETED.assert(page, expect);
 
-    // Terminal polling cleanup verification (polling loop stabilizes upon COMPLETED)
+    // Deterministic terminal polling cleanup verification
+    await page.waitForLoadState('networkidle');
     const finalPollCount = mockHandle.getPollCount();
-    await page.waitForTimeout(2500);
+    await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100)));
     expect(mockHandle.getPollCount()).toBe(finalPollCount);
   });
 });

@@ -1,3 +1,5 @@
+import type { StateModel, StateOracle } from './stateModel';
+
 export type PracticeAbstractState =
   | 'DISCOVERY'
   | 'PRACTICE_IDLE'
@@ -46,6 +48,7 @@ export interface PracticeModelContext {
   puzzleLoaded: boolean;
   attemptCount: number;
   inExploration: boolean;
+  solved?: boolean;
 }
 
 export function createInitialContext(): PracticeModelContext {
@@ -53,6 +56,7 @@ export function createInitialContext(): PracticeModelContext {
     puzzleLoaded: false,
     attemptCount: 0,
     inExploration: false,
+    solved: false,
   };
 }
 
@@ -78,7 +82,7 @@ export const PRACTICE_TRANSITIONS: TransitionRule[] = [
     action: 'SUBMIT_OPTIMAL',
     to: 'CORRECT',
     guard: (ctx) => ctx.puzzleLoaded,
-    effect: (ctx) => ({ ...ctx, attemptCount: ctx.attemptCount + 1 }),
+    effect: (ctx) => ({ ...ctx, attemptCount: ctx.attemptCount + 1, solved: true }),
   },
   {
     from: 'PRACTICE_IDLE',
@@ -212,71 +216,78 @@ export type PageLike = Pick<Page, 'getByRole' | 'getByText' | 'locator'>;
 
 export interface StateOracleDefinition {
   description: string;
-  assert: (page: PageLike, expectFn?: ExpectFn) => Promise<void>;
+  assert: (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => Promise<void>;
 }
 
-async function verifyVisible(locator: unknown, expectFn?: ExpectFn): Promise<void> {
+async function verifyVisible(locator: unknown, arg1?: unknown, arg2?: unknown): Promise<void> {
+  const expectFn = typeof arg1 === 'function' ? (arg1 as ExpectFn) : (typeof arg2 === 'function' ? (arg2 as ExpectFn) : undefined);
   if (expectFn) {
-    await expectFn(locator as Locator).toBeVisible();
-  } else if (locator && typeof (locator as { waitFor?: (options?: { state?: string; timeout?: number }) => Promise<void> }).waitFor === 'function') {
-    await (locator as { waitFor: (options?: { state?: string; timeout?: number }) => Promise<void> }).waitFor({ state: 'visible', timeout: 5000 });
-  } else if (locator && typeof (locator as { toBeVisible?: () => Promise<void> }).toBeVisible === 'function') {
-    await (locator as { toBeVisible: () => Promise<void> }).toBeVisible();
+    await expectFn(locator as Locator).toBeVisible({ timeout: 10_000 });
+    return;
+  }
+  const loc = locator as {
+    waitFor?: (options?: { state?: string; timeout?: number }) => Promise<void>;
+    toBeVisible?: () => Promise<boolean>;
+  } | null | undefined;
+  if (loc && typeof loc.waitFor === 'function') {
+    await loc.waitFor({ state: 'visible', timeout: 10_000 });
+  } else if (loc && typeof loc.toBeVisible === 'function') {
+    await loc.toBeVisible();
   }
 }
 
 export const STATE_ORACLES: Record<PracticeAbstractState, StateOracleDefinition> = {
   DISCOVERY: {
     description: 'Catalog view is active; Start Practice button and catalog description are visible.',
-    assert: async (page: PageLike, expectFn?: ExpectFn) => {
-      await verifyVisible(page.getByRole('button', { name: /Start Practice/i }), expectFn);
-      await verifyVisible(page.getByText(/Strengthen your play by solving recurring mistake positions/i), expectFn);
+    assert: async (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => {
+      await verifyVisible(page.getByRole('button', { name: /Start Practice/i }), contextOrExpect, maybeExpectFn);
+      await verifyVisible(page.getByText(/Strengthen your play by solving recurring mistake positions/i), contextOrExpect, maybeExpectFn);
     },
   },
   PRACTICE_IDLE: {
     description: 'Interactive board is ready; square d2 is visible and Back to Puzzles is interactive.',
-    assert: async (page: PageLike, expectFn?: ExpectFn) => {
-      await verifyVisible(page.locator('[data-square="d2"]'), expectFn);
-      await verifyVisible(page.getByRole('button', { name: /Back to Puzzles/i }), expectFn);
+    assert: async (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => {
+      await verifyVisible(page.locator('[data-square="d2"]'), contextOrExpect, maybeExpectFn);
+      await verifyVisible(page.getByRole('button', { name: /Back to Puzzles/i }), contextOrExpect, maybeExpectFn);
     },
   },
   EVALUATING: {
     description: 'Move evaluation is in-flight; evaluating indicator is active.',
-    assert: async (page: PageLike, expectFn?: ExpectFn) => {
-      await verifyVisible(page.getByText(/Evaluating move/i), expectFn);
+    assert: async (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => {
+      await verifyVisible(page.getByText(/Evaluating move/i), contextOrExpect, maybeExpectFn);
     },
   },
   CORRECT: {
     description: 'Puzzle solved optimally; Continue Exploration button visible and solved count incremented.',
-    assert: async (page: PageLike, expectFn?: ExpectFn) => {
-      await verifyVisible(page.getByRole('button', { name: /Continue Exploration →/i }), expectFn);
-      await verifyVisible(page.getByText(/Solved: [1-9]\d*/i), expectFn);
+    assert: async (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => {
+      await verifyVisible(page.getByRole('button', { name: /Continue Exploration →/i }), contextOrExpect, maybeExpectFn);
+      await verifyVisible(page.getByText(/Solved: [1-9]\d*/i), contextOrExpect, maybeExpectFn);
     },
   },
   INCORRECT: {
     description: 'Inaccurate move played; rollback to baseline FEN and Not the Recommended Move banner visible.',
-    assert: async (page: PageLike, expectFn?: ExpectFn) => {
-      await verifyVisible(page.getByRole('heading', { name: /Not the Recommended Move/i }), expectFn);
-      await verifyVisible(page.locator('[data-square="d2"]'), expectFn);
+    assert: async (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => {
+      await verifyVisible(page.getByRole('heading', { name: /Not the Recommended Move/i }), contextOrExpect, maybeExpectFn);
+      await verifyVisible(page.locator('[data-square="d2"]'), contextOrExpect, maybeExpectFn);
     },
   },
   HISTORICAL_MISTAKE: {
     description: 'Historical mistake repeated; mistake banner and hint/retry action visible.',
-    assert: async (page: PageLike, expectFn?: ExpectFn) => {
-      await verifyVisible(page.getByText(/Recurring Weakness Detected!|Matches your previous blunder|blunder/i), expectFn);
+    assert: async (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => {
+      await verifyVisible(page.getByText(/Recurring Weakness Detected!|Matches your previous blunder|blunder/i), contextOrExpect, maybeExpectFn);
     },
   },
   EVALUATION_ERROR: {
     description: 'Evaluation failed or timed out; error banner visible.',
-    assert: async (page: PageLike, expectFn?: ExpectFn) => {
-      await verifyVisible(page.getByText(/Evaluation service returned an empty response|Error/i), expectFn);
+    assert: async (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => {
+      await verifyVisible(page.getByText(/Evaluation service returned an empty response|Error/i), contextOrExpect, maybeExpectFn);
     },
   },
   EXPLORING: {
     description: 'Line exploration mode active; exploration controls and Exit Exploration visible.',
-    assert: async (page: PageLike, expectFn?: ExpectFn) => {
-      await verifyVisible(page.getByText(/Line Exploration/i), expectFn);
-      await verifyVisible(page.getByRole('button', { name: /^Exit$|Exit Exploration/i }), expectFn);
+    assert: async (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => {
+      await verifyVisible(page.getByText(/Line Exploration/i), contextOrExpect, maybeExpectFn);
+      await verifyVisible(page.getByRole('button', { name: /^Exit$|Exit Exploration/i }), contextOrExpect, maybeExpectFn);
     },
   },
 };
@@ -296,4 +307,114 @@ export async function ensureDiscoveryState(page: Page): Promise<void> {
     await startPracticeBtn.waitFor({ state: 'visible', timeout: 10000 });
   }
 }
+
+/**
+ * Translates a high-level practice model action into concrete Playwright DOM interactions.
+ */
+export async function executeConcreteAction(page: Page, action: PracticeAction): Promise<void> {
+  switch (action) {
+    case 'SELECT_PUZZLE': {
+      const button = page.getByRole('button', { name: /Start Practice/i });
+      await button.waitFor({ state: 'visible', timeout: 5000 });
+      await button.click();
+      break;
+    }
+
+    case 'SUBMIT_OPTIMAL': {
+      // White optimal first move: d2 -> d4
+      const from = page.locator('[data-square="d2"]');
+      const to = page.locator('[data-square="d4"]');
+      await from.waitFor({ state: 'visible', timeout: 5000 });
+      await from.click();
+      await page.waitForTimeout(60);
+      await to.click();
+      break;
+    }
+
+    case 'SUBMIT_MISTAKE': {
+      // Inaccurate move: a2 -> a3
+      const from = page.locator('[data-square="a2"]');
+      const to = page.locator('[data-square="a3"]');
+      await from.waitFor({ state: 'visible', timeout: 5000 });
+      await from.click();
+      await page.waitForTimeout(60);
+      await to.click();
+      break;
+    }
+
+    case 'SUBMIT_BLUNDER': {
+      // Severe mistake: h2 -> h4
+      const from = page.locator('[data-square="h2"]');
+      const to = page.locator('[data-square="h4"]');
+      await from.waitFor({ state: 'visible', timeout: 5000 });
+      await from.click();
+      await page.waitForTimeout(60);
+      await to.click();
+      break;
+    }
+
+    case 'RETRY': {
+      // Board is automatically rolled back to baseline FEN upon incorrect move.
+      // If Reset button is available, click it to clear selection without touching board pieces.
+      const resetButton = page.getByRole('button', { name: /Reset Board|Reset/i });
+      if (await resetButton.isVisible().catch(() => false)) {
+        await resetButton.click();
+      }
+      await page.waitForTimeout(100);
+      break;
+    }
+
+    case 'RESET': {
+      // Resets board to baseline FEN
+      const resetButton = page.getByRole('button', { name: /Reset Board|Reset/i });
+      if (await resetButton.isVisible().catch(() => false)) {
+        await resetButton.click();
+      }
+      await page.waitForTimeout(100);
+      break;
+    }
+
+    case 'CONTINUE_EXPLORATION': {
+      const continueBtn = page.getByRole('button', { name: /Continue Exploration →/i });
+      await continueBtn.waitFor({ state: 'visible', timeout: 5000 });
+      await continueBtn.click();
+      break;
+    }
+
+    case 'EXIT_EXPLORATION': {
+      const exitBtn = page.getByRole('button', { name: /^Exit$|Exit Exploration/i });
+      await exitBtn.waitFor({ state: 'visible', timeout: 5000 });
+      await exitBtn.click();
+      break;
+    }
+
+    case 'BACK_TO_PUZZLES': {
+      const backBtn = page.getByRole('button', { name: /Back to Puzzles/i });
+      await backBtn.waitFor({ state: 'visible', timeout: 5000 });
+      await backBtn.click();
+      break;
+    }
+
+    default:
+      throw new Error(`Unsupported practice action: ${action}`);
+  }
+}
+
+/**
+ * StateModel implementation for Practice Puzzles.
+ */
+export const PracticeModel: StateModel<
+  PracticeAbstractState,
+  PracticeAction,
+  PracticeModelContext
+> = {
+  domain: 'practice',
+  initialState: 'DISCOVERY',
+  createInitialContext,
+  transitions: PRACTICE_TRANSITIONS,
+  oracles: STATE_ORACLES as Record<PracticeAbstractState, StateOracle<PracticeModelContext>>,
+  executeAction: executeConcreteAction,
+  contextSignature: (ctx) => `${ctx.puzzleLoaded}:${ctx.inExploration}:${ctx.attemptCount}:${ctx.solved}`,
+  ensureInitialState: ensureDiscoveryState,
+};
 

@@ -7,7 +7,10 @@ import {
   createInitialContext,
   getNextState,
   ensureDiscoveryState,
+  executeConcreteAction,
 } from './practiceModel';
+
+export { executeConcreteAction };
 import { createPrng } from './prng';
 import { selectConstrainedAction } from './monkeySelector';
 import {
@@ -73,97 +76,6 @@ export function diagnoseTransitionFailure(
   return `[State Transition Timeout] Transition to ${nextState} timed out after action ${action}: ${originalError.message}`;
 }
 
-/**
- * Translates a high-level model action into concrete Playwright DOM interactions.
- */
-export async function executeConcreteAction(page: Page, action: PracticeAction): Promise<void> {
-  switch (action) {
-    case 'SELECT_PUZZLE': {
-      const button = page.getByRole('button', { name: /Start Practice/i });
-      await button.waitFor({ state: 'visible', timeout: 5000 });
-      await button.click();
-      break;
-    }
-
-    case 'SUBMIT_OPTIMAL': {
-      // White optimal first move: d2 -> d4
-      const from = page.locator('[data-square="d2"]');
-      const to = page.locator('[data-square="d4"]');
-      await from.waitFor({ state: 'visible', timeout: 5000 });
-      await from.click();
-      await page.waitForTimeout(60);
-      await to.click();
-      break;
-    }
-
-    case 'SUBMIT_MISTAKE': {
-      // Inaccurate move: a2 -> a3
-      const from = page.locator('[data-square="a2"]');
-      const to = page.locator('[data-square="a3"]');
-      await from.waitFor({ state: 'visible', timeout: 5000 });
-      await from.click();
-      await page.waitForTimeout(60);
-      await to.click();
-      break;
-    }
-
-    case 'SUBMIT_BLUNDER': {
-      // Severe mistake: h2 -> h4
-      const from = page.locator('[data-square="h2"]');
-      const to = page.locator('[data-square="h4"]');
-      await from.waitFor({ state: 'visible', timeout: 5000 });
-      await from.click();
-      await page.waitForTimeout(60);
-      await to.click();
-      break;
-    }
-
-    case 'RETRY': {
-      // Board is automatically rolled back to baseline FEN upon incorrect move.
-      // If Reset button is available, click it to clear selection without touching board pieces.
-      const resetButton = page.getByRole('button', { name: /Reset Board|Reset/i });
-      if (await resetButton.isVisible().catch(() => false)) {
-        await resetButton.click();
-      }
-      await page.waitForTimeout(100);
-      break;
-    }
-
-    case 'RESET': {
-      // Resets board to baseline FEN
-      const resetButton = page.getByRole('button', { name: /Reset Board|Reset/i });
-      if (await resetButton.isVisible().catch(() => false)) {
-        await resetButton.click();
-      }
-      await page.waitForTimeout(100);
-      break;
-    }
-
-    case 'CONTINUE_EXPLORATION': {
-      const continueBtn = page.getByRole('button', { name: /Continue Exploration →/i });
-      await continueBtn.waitFor({ state: 'visible', timeout: 5000 });
-      await continueBtn.click();
-      break;
-    }
-
-    case 'EXIT_EXPLORATION': {
-      const exitBtn = page.getByRole('button', { name: /^Exit$|Exit Exploration/i });
-      await exitBtn.waitFor({ state: 'visible', timeout: 5000 });
-      await exitBtn.click();
-      break;
-    }
-
-    case 'BACK_TO_PUZZLES': {
-      const backBtn = page.getByRole('button', { name: /Back to Puzzles/i });
-      await backBtn.waitFor({ state: 'visible', timeout: 5000 });
-      await backBtn.click();
-      break;
-    }
-
-    default:
-      throw new Error(`Unsupported monkey action: ${action}`);
-  }
-}
 
 /**
  * Runs a bounded, state-constrained monkey test sequence using a deterministic seed.

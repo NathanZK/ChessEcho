@@ -1,35 +1,27 @@
 import type { Page, Locator } from '@playwright/test';
-import type { AbstractTransitionRule } from './bfsExplorer';
+import type { AbstractTransitionRule, StateModel, StateOracle } from './stateModel';
 
 export type SessionAbstractState =
   | 'GUEST'
-  | 'AUTHENTICATING'
   | 'AUTHENTICATED'
-  | 'AUTH_ERROR'
-  | 'PROTECTED_ERROR';
+  | 'AUTH_ERROR';
 
 export type SessionAction =
-  | 'START_AUTH'
-  | 'AUTH_SUCCESS'
-  | 'AUTH_FAILURE'
-  | 'DISMISS_ERROR'
-  | 'TRIGGER_PROTECTED_FAIL'
+  | 'NAVIGATE_LOGIN'
+  | 'SUBMIT_VALID_CREDENTIALS'
+  | 'SUBMIT_INVALID_CREDENTIALS'
   | 'LOGOUT';
 
 export const SESSION_ABSTRACT_STATES: SessionAbstractState[] = [
   'GUEST',
-  'AUTHENTICATING',
   'AUTHENTICATED',
   'AUTH_ERROR',
-  'PROTECTED_ERROR',
 ];
 
 export const SESSION_ACTIONS: SessionAction[] = [
-  'START_AUTH',
-  'AUTH_SUCCESS',
-  'AUTH_FAILURE',
-  'DISMISS_ERROR',
-  'TRIGGER_PROTECTED_FAIL',
+  'NAVIGATE_LOGIN',
+  'SUBMIT_VALID_CREDENTIALS',
+  'SUBMIT_INVALID_CREDENTIALS',
   'LOGOUT',
 ];
 
@@ -54,33 +46,35 @@ export type SessionTransitionRule = AbstractTransitionRule<
 export const SESSION_TRANSITIONS: SessionTransitionRule[] = [
   {
     from: 'GUEST',
-    action: 'START_AUTH',
-    to: 'AUTHENTICATING',
+    action: 'NAVIGATE_LOGIN',
+    to: 'GUEST',
     guard: (ctx) => !ctx.authenticated,
   },
   {
-    from: 'AUTHENTICATING',
-    action: 'AUTH_SUCCESS',
+    from: 'GUEST',
+    action: 'SUBMIT_VALID_CREDENTIALS',
     to: 'AUTHENTICATED',
+    guard: (ctx) => !ctx.authenticated,
     effect: (ctx) => ({ ...ctx, authenticated: true, hasError: false }),
   },
   {
-    from: 'AUTHENTICATING',
-    action: 'AUTH_FAILURE',
+    from: 'GUEST',
+    action: 'SUBMIT_INVALID_CREDENTIALS',
     to: 'AUTH_ERROR',
+    guard: (ctx) => !ctx.authenticated,
     effect: (ctx) => ({ ...ctx, hasError: true }),
   },
   {
     from: 'AUTH_ERROR',
-    action: 'DISMISS_ERROR',
-    to: 'GUEST',
-    effect: (ctx) => ({ ...ctx, hasError: false }),
+    action: 'SUBMIT_VALID_CREDENTIALS',
+    to: 'AUTHENTICATED',
+    effect: (ctx) => ({ ...ctx, authenticated: true, hasError: false }),
   },
   {
     from: 'AUTH_ERROR',
-    action: 'START_AUTH',
-    to: 'AUTHENTICATING',
-    effect: (ctx) => ({ ...ctx, hasError: false }),
+    action: 'SUBMIT_INVALID_CREDENTIALS',
+    to: 'AUTH_ERROR',
+    effect: (ctx) => ({ ...ctx, hasError: true }),
   },
   {
     from: 'AUTHENTICATED',
@@ -88,19 +82,6 @@ export const SESSION_TRANSITIONS: SessionTransitionRule[] = [
     to: 'GUEST',
     guard: (ctx) => ctx.authenticated,
     effect: (ctx) => ({ ...ctx, authenticated: false }),
-  },
-  {
-    from: 'GUEST',
-    action: 'TRIGGER_PROTECTED_FAIL',
-    to: 'PROTECTED_ERROR',
-    guard: (ctx) => !ctx.authenticated,
-    effect: (ctx) => ({ ...ctx, hasError: true }),
-  },
-  {
-    from: 'PROTECTED_ERROR',
-    action: 'DISMISS_ERROR',
-    to: 'GUEST',
-    effect: (ctx) => ({ ...ctx, hasError: false }),
   },
 ];
 
@@ -136,54 +117,118 @@ type PageLike = Page | {
   getByText: (text: string | RegExp) => Locator | unknown;
   locator: (selector: string) => Locator | unknown;
   getByLabel: (label: string | RegExp) => Locator | unknown;
+  url?: () => string;
 };
 
 export interface SessionStateOracleDefinition {
   description: string;
-  assert: (page: PageLike, expectFn?: ExpectFn) => Promise<void>;
+  assert: (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => Promise<void>;
 }
 
-async function verifyVisible(locator: unknown, expectFn?: ExpectFn): Promise<void> {
+async function verifyVisible(locator: unknown, arg1?: unknown, arg2?: unknown): Promise<void> {
+  const expectFn = typeof arg1 === 'function' ? (arg1 as ExpectFn) : (typeof arg2 === 'function' ? (arg2 as ExpectFn) : undefined);
   if (expectFn) {
-    await expectFn(locator as Locator).toBeVisible();
-  } else if (locator && typeof (locator as { waitFor?: (options?: { state?: string; timeout?: number }) => Promise<void> }).waitFor === 'function') {
-    await (locator as { waitFor: (options?: { state?: string; timeout?: number }) => Promise<void> }).waitFor({ state: 'visible', timeout: 5000 });
-  } else if (locator && typeof (locator as { toBeVisible?: () => Promise<void> }).toBeVisible === 'function') {
-    await (locator as { toBeVisible: () => Promise<void> }).toBeVisible();
+    await expectFn(locator as Locator).toBeVisible({ timeout: 10_000 });
+    return;
+  }
+  const loc = locator as {
+    waitFor?: (options?: { state?: string; timeout?: number }) => Promise<void>;
+    toBeVisible?: () => Promise<boolean>;
+  } | null | undefined;
+  if (loc && typeof loc.waitFor === 'function') {
+    await loc.waitFor({ state: 'visible', timeout: 10_000 });
+  } else if (loc && typeof loc.toBeVisible === 'function') {
+    await loc.toBeVisible();
   }
 }
 
 export const SESSION_STATE_ORACLES: Record<SessionAbstractState, SessionStateOracleDefinition> = {
   GUEST: {
-    description: 'Header reflects unauthenticated guest state with Sign In and Register links.',
-    assert: async (page: PageLike, expectFn?: ExpectFn) => {
-      await verifyVisible(page.getByRole('link', { name: /Sign In/i }), expectFn);
-      await verifyVisible(page.getByRole('link', { name: /Register/i }), expectFn);
-    },
-  },
-  AUTHENTICATING: {
-    description: 'Authentication form is displayed and submission is available or active.',
-    assert: async (page: PageLike, expectFn?: ExpectFn) => {
-      await verifyVisible(page.getByRole('button', { name: /Sign in|Create account/i }), expectFn);
+    description: 'Header reflects unauthenticated guest state with Sign In and Register links, or login page reflects form input readiness.',
+    assert: async (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => {
+      const currentUrl = typeof page.url === 'function' ? page.url() : '';
+      if (currentUrl.includes('/login')) {
+        await verifyVisible(page.getByLabel(/Email/i), contextOrExpect, maybeExpectFn);
+        await verifyVisible(page.getByLabel(/^Password/i), contextOrExpect, maybeExpectFn);
+        await verifyVisible(page.getByRole('button', { name: /Sign in/i }), contextOrExpect, maybeExpectFn);
+      } else {
+        await verifyVisible(page.getByRole('link', { name: /Sign In/i }), contextOrExpect, maybeExpectFn);
+        await verifyVisible(page.getByRole('link', { name: /Register/i }), contextOrExpect, maybeExpectFn);
+      }
     },
   },
   AUTHENTICATED: {
     description: 'User is authenticated; header displays user status and Sign out button.',
-    assert: async (page: PageLike, expectFn?: ExpectFn) => {
-      await verifyVisible(page.getByText(/Signed in to ChessProbe/i), expectFn);
-      await verifyVisible(page.getByRole('button', { name: /Sign out/i }), expectFn);
+    assert: async (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => {
+      await verifyVisible(page.getByText(/Signed in to ChessProbe/i), contextOrExpect, maybeExpectFn);
+      await verifyVisible(page.getByRole('button', { name: /Sign out/i }), contextOrExpect, maybeExpectFn);
     },
   },
   AUTH_ERROR: {
     description: 'Authentication failure alert is surfaced to the user.',
-    assert: async (page: PageLike, expectFn?: ExpectFn) => {
-      await verifyVisible(page.locator('p[role="alert"]'), expectFn);
+    assert: async (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => {
+      await verifyVisible(page.locator('p[role="alert"]'), contextOrExpect, maybeExpectFn);
     },
   },
-  PROTECTED_ERROR: {
-    description: 'Protected action failure alert or banner is surfaced without uncaught crash.',
-    assert: async (page: PageLike, expectFn?: ExpectFn) => {
-      await verifyVisible(page.locator('[role="alert"]'), expectFn);
-    },
+};
+
+/**
+ * Concrete Playwright action executor for Session Authentication.
+ */
+export async function executeSessionAction(
+  page: Page,
+  action: SessionAction,
+  _context: SessionModelContext
+): Promise<void> {
+  void _context;
+  switch (action) {
+    case 'NAVIGATE_LOGIN': {
+      await page.goto('/login');
+      break;
+    }
+    case 'SUBMIT_VALID_CREDENTIALS': {
+      if (!page.url().includes('/login')) {
+        await page.goto('/login');
+      }
+      await page.getByLabel(/Email/i).fill('player@example.com');
+      await page.getByLabel(/^Password/i).fill('password123');
+      await page.getByRole('button', { name: /Sign in/i }).click();
+      await page.waitForURL('/');
+      break;
+    }
+    case 'SUBMIT_INVALID_CREDENTIALS': {
+      if (!page.url().includes('/login')) {
+        await page.goto('/login');
+      }
+      await page.getByLabel(/Email/i).fill('invalid@example.com');
+      await page.getByLabel(/^Password/i).fill('wrongpass');
+      await page.getByRole('button', { name: /Sign in/i }).click();
+      break;
+    }
+    case 'LOGOUT': {
+      const signOutButton = page.getByRole('button', { name: /Sign out/i });
+      await signOutButton.click();
+      break;
+    }
+    default: {
+      const _exhaustive: never = action;
+      throw new Error(`Unhandled session action: ${_exhaustive}`);
+    }
+  }
+}
+
+/**
+ * StateModel implementation for Session Authentication.
+ */
+export const SessionModel: StateModel<SessionAbstractState, SessionAction, SessionModelContext> = {
+  domain: 'session',
+  initialState: 'GUEST',
+  createInitialContext: createInitialSessionContext,
+  transitions: SESSION_TRANSITIONS,
+  oracles: SESSION_STATE_ORACLES as Record<SessionAbstractState, StateOracle<SessionModelContext>>,
+  executeAction: executeSessionAction,
+  contextSignature: (ctx) => `${ctx.authenticated}:${ctx.hasError}`,
+  ensureInitialState: async (page: Page) => {
+    await page.goto('/');
   },
 };

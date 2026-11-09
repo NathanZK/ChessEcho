@@ -459,7 +459,9 @@ Backend tests use H2 in-memory and require neither PostgreSQL nor Stockfish. The
 
 ```bash
 cd frontend
-npm run test           # vitest run
+npm run test           # vitest run (unit and model BFS suites)
+npm run test:journeys  # deterministic Playwright user journeys and model-based specs
+npm run test:monkey    # exploratory constrained monkey testing (local only, not in CI)
 npx tsc --noEmit       # type-check
 npm run lint           # eslint
 npm run build          # production build
