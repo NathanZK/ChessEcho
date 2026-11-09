@@ -1,7 +1,10 @@
 package com.chessecho.service.clustering
 
 import com.chessecho.config.PositionClusteringProperties
+import com.chessecho.domain.ChessAccount
 import com.chessecho.domain.clustering.ClusterType
+import com.chessecho.domain.clustering.PositionClusterSnapshot
+import com.chessecho.domain.clustering.PositionClusterSnapshotStatus
 import com.chessecho.repository.ChessAccountRepository
 import com.chessecho.repository.clustering.PositionClusterAssignmentRepository
 import com.chessecho.repository.clustering.PositionClusterRepository
@@ -14,8 +17,13 @@ import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import org.mockito.Mockito.mock
+import org.mockito.kotlin.any
+import org.mockito.kotlin.eq
+import org.mockito.kotlin.mock
+import org.mockito.kotlin.whenever
 import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.SimpleTransactionStatus
+import java.util.Optional
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -23,18 +31,25 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class PositionClusteringServiceLockTest {
     private lateinit var service: PositionClusteringService
+    private lateinit var snapshotRepository: PositionClusterSnapshotRepository
+    private lateinit var clusterRepository: PositionClusterRepository
+    private lateinit var assignmentRepository: PositionClusterAssignmentRepository
+    private lateinit var accountRepository: ChessAccountRepository
+    private lateinit var corpusProvider: PersonalPositionCorpusProvider
+    private lateinit var dynamicCorpusProvider: PersonalDynamicCorpusProvider
+    private lateinit var transactionManager: PlatformTransactionManager
 
     @BeforeEach
     fun setUp() {
-        val snapshotRepository = mock(PositionClusterSnapshotRepository::class.java)
-        val clusterRepository = mock(PositionClusterRepository::class.java)
-        val assignmentRepository = mock(PositionClusterAssignmentRepository::class.java)
-        val accountRepository = mock(ChessAccountRepository::class.java)
-        val corpusProvider = mock(PersonalPositionCorpusProvider::class.java)
-        val dynamicCorpusProvider = mock(PersonalDynamicCorpusProvider::class.java)
+        snapshotRepository = mock()
+        clusterRepository = mock()
+        assignmentRepository = mock()
+        accountRepository = mock()
+        corpusProvider = mock()
+        dynamicCorpusProvider = mock()
         val properties = PositionClusteringProperties()
         val objectMapper = ObjectMapper()
-        val transactionManager = mock(PlatformTransactionManager::class.java)
+        transactionManager = mock()
 
         service =
             PositionClusteringService(
@@ -119,5 +134,60 @@ class PositionClusteringServiceLockTest {
         // After completion, acquiring the lock again succeeds
         val ran = service.withAccountLock(accountId, ClusterType.STRUCTURAL) { "ok" }
         assertEquals("ok", ran)
+    }
+
+    @Test
+    fun `getOrGenerateActiveSnapshot returns existing active snapshot without generating`() {
+        val accountId = UUID.randomUUID()
+        val existing =
+            PositionClusterSnapshot(
+                id = UUID.randomUUID(),
+                accountId = accountId,
+                snapshotVersion = 1,
+                clusterType = ClusterType.STRUCTURAL,
+                status = PositionClusterSnapshotStatus.ACTIVE,
+            )
+        whenever(
+            snapshotRepository.findByAccountIdAndClusterTypeAndStatus(
+                accountId,
+                ClusterType.STRUCTURAL,
+                PositionClusterSnapshotStatus.ACTIVE,
+            ),
+        ).thenReturn(existing)
+
+        val result = service.getOrGenerateActiveSnapshot(accountId, ClusterType.STRUCTURAL)
+        assertEquals(existing.id, result.id)
+    }
+
+    @Test
+    fun `getOrGenerateActiveSnapshot generates new active snapshot when absent`() {
+        val accountId = UUID.randomUUID()
+        val account = ChessAccount(id = accountId, platform = "CHESS_COM", username = "testuser")
+        whenever(
+            snapshotRepository.findByAccountIdAndClusterTypeAndStatus(
+                accountId,
+                ClusterType.STRUCTURAL,
+                PositionClusterSnapshotStatus.ACTIVE,
+            ),
+        ).thenReturn(null)
+        whenever(accountRepository.findById(accountId)).thenReturn(Optional.of(account))
+        whenever(transactionManager.getTransaction(any())).thenReturn(SimpleTransactionStatus())
+        whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(emptyList())
+
+        val snapshotMap = mutableMapOf<UUID, PositionClusterSnapshot>()
+        whenever(snapshotRepository.save(any())).thenAnswer {
+            val s = it.getArgument<PositionClusterSnapshot>(0)
+            snapshotMap[s.id] = s
+            s
+        }
+        whenever(snapshotRepository.findById(any())).thenAnswer {
+            val id = it.getArgument<UUID>(0)
+            Optional.ofNullable(snapshotMap[id])
+        }
+        whenever(snapshotRepository.findMaxVersionByAccountIdAndClusterType(eq(accountId), eq(ClusterType.STRUCTURAL))).thenReturn(0)
+
+        val result = service.getOrGenerateActiveSnapshot(accountId, ClusterType.STRUCTURAL)
+        assertEquals(PositionClusterSnapshotStatus.ACTIVE, result.status)
+        assertEquals(ClusterType.STRUCTURAL, result.clusterType)
     }
 }

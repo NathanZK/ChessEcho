@@ -26,6 +26,7 @@ import com.chessecho.repository.clustering.PositionClusterSnapshotRepository
 import com.chessecho.service.ForbiddenAccountException
 import com.chessecho.service.clustering.CommunityWeaknessProfile
 import com.chessecho.service.clustering.CommunityWeaknessService
+import com.chessecho.service.clustering.PositionClusteringService
 import com.chessecho.service.similarity.SimilarityConcurrencyManager
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -36,6 +37,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.verify
 import org.mockito.Mockito.`when`
 import java.util.UUID
 
@@ -47,6 +49,7 @@ class RecurringWeaknessDiscoveryServiceTest {
     private val assignmentRepository = mock(PositionClusterAssignmentRepository::class.java)
     private val communityWeaknessService = mock(CommunityWeaknessService::class.java)
     private val concurrencyManager = mock(SimilarityConcurrencyManager::class.java)
+    private val clusteringService = mock(PositionClusteringService::class.java)
 
     private lateinit var service: RecurringWeaknessDiscoveryService
     private val testAccount =
@@ -67,6 +70,7 @@ class RecurringWeaknessDiscoveryServiceTest {
                 assignmentRepository = assignmentRepository,
                 communityWeaknessService = communityWeaknessService,
                 concurrencyManager = concurrencyManager,
+                clusteringService = clusteringService,
             )
     }
 
@@ -324,6 +328,7 @@ class RecurringWeaknessDiscoveryServiceTest {
                 PositionClusterSnapshotStatus.ACTIVE,
             ),
         ).thenReturn(null)
+        `when`(clusteringService.getOrGenerateActiveSnapshot(testAccount.id, ClusterType.STRUCTURAL)).thenReturn(null)
 
         val response = service.triggerDiscovery(testAccount, RecurringDiscoveryRequest())
         service.awaitJobCompletion(response.jobId, timeoutMs = 5000)
@@ -334,6 +339,45 @@ class RecurringWeaknessDiscoveryServiceTest {
         assertEquals(DiscoveryStage.COMPLETE.name, job.stage)
         assertEquals(100, job.progressPercent)
         assertTrue(service.getLatestRecurringWeaknesses(testAccount).isEmpty())
+    }
+
+    @Test
+    fun `discovery triggers on-demand snapshot generation when active snapshots are absent`() {
+        val snapshotId = UUID.randomUUID()
+        `when`(
+            snapshotRepository.findByAccountIdAndClusterTypeAndStatus(
+                testAccount.id,
+                ClusterType.STRUCTURAL,
+                PositionClusterSnapshotStatus.ACTIVE,
+            ),
+        ).thenReturn(null)
+        `when`(
+            snapshotRepository.findByAccountIdAndClusterTypeAndStatus(
+                testAccount.id,
+                ClusterType.DYNAMIC,
+                PositionClusterSnapshotStatus.ACTIVE,
+            ),
+        ).thenReturn(null)
+
+        val onDemandSnapshot =
+            PositionClusterSnapshot(
+                id = snapshotId,
+                accountId = testAccount.id,
+                snapshotVersion = 1,
+                clusterType = ClusterType.STRUCTURAL,
+                status = PositionClusterSnapshotStatus.ACTIVE,
+            )
+        `when`(clusteringService.getOrGenerateActiveSnapshot(testAccount.id, ClusterType.STRUCTURAL))
+            .thenReturn(onDemandSnapshot)
+        `when`(clusterRepository.findBySnapshotIdOrderByClusterIndexAsc(snapshotId)).thenReturn(emptyList())
+
+        val response = service.triggerDiscovery(testAccount, RecurringDiscoveryRequest())
+        service.awaitJobCompletion(response.jobId, timeoutMs = 5000)
+
+        verify(clusteringService).getOrGenerateActiveSnapshot(testAccount.id, ClusterType.STRUCTURAL)
+        val job = service.getJob(response.jobId)
+        assertNotNull(job)
+        assertEquals(DiscoveryJobStatus.COMPLETED.name, job!!.status)
     }
 
     @Test

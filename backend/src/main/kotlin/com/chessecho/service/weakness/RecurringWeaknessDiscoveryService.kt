@@ -20,6 +20,7 @@ import com.chessecho.repository.clustering.PositionClusterSnapshotRepository
 import com.chessecho.service.ForbiddenAccountException
 import com.chessecho.service.clustering.CommunityWeaknessProfile
 import com.chessecho.service.clustering.CommunityWeaknessService
+import com.chessecho.service.clustering.PositionClusteringService
 import com.chessecho.service.similarity.SimilarityConcurrencyManager
 import org.springframework.stereotype.Service
 import java.time.Instant
@@ -53,6 +54,7 @@ class RecurringWeaknessDiscoveryService(
     private val assignmentRepository: PositionClusterAssignmentRepository,
     private val communityWeaknessService: CommunityWeaknessService,
     private val concurrencyManager: SimilarityConcurrencyManager,
+    private val clusteringService: PositionClusteringService? = null,
     private val executor: ExecutorService = Executors.newCachedThreadPool(),
 ) {
     private val jobs = ConcurrentHashMap<UUID, DiscoveryJobState>()
@@ -155,7 +157,7 @@ class RecurringWeaknessDiscoveryService(
             accountId = accountId,
             clusterType = ClusterType.DYNAMIC,
             status = PositionClusterSnapshotStatus.ACTIVE,
-        )
+        ) ?: clusteringService?.getOrGenerateActiveSnapshot(accountId, ClusterType.STRUCTURAL)
 
     private fun loadCandidateClusters(snapshotId: UUID): List<PositionCluster> =
         clusterRepository
