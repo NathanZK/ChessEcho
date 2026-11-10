@@ -1,4 +1,7 @@
+import { Chess, type Square } from 'chess.js';
 import type { StateModel, StateOracle } from './stateModel';
+
+export const DEFAULT_PRACTICE_FEN = 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3';
 
 export type PracticeAbstractState =
   | 'DISCOVERY'
@@ -49,6 +52,12 @@ export interface PracticeModelContext {
   attemptCount: number;
   inExploration: boolean;
   solved?: boolean;
+  expectedFen?: string;
+  expectedHistory?: string[];
+  expectedSideToMove?: 'white' | 'black';
+  expectedSolvedCount?: number;
+  expectedFailedCount?: number;
+  lastMoveSan?: string;
 }
 
 export function createInitialContext(): PracticeModelContext {
@@ -57,6 +66,10 @@ export function createInitialContext(): PracticeModelContext {
     attemptCount: 0,
     inExploration: false,
     solved: false,
+    expectedSolvedCount: 0,
+    expectedFailedCount: 0,
+    expectedHistory: [],
+    expectedSideToMove: 'white',
   };
 }
 
@@ -68,13 +81,65 @@ export interface TransitionRule {
   effect?: (context: PracticeModelContext) => PracticeModelContext;
 }
 
+function deriveMoveState(
+  ctx: PracticeModelContext,
+  san: string,
+  resultType: 'CORRECT' | 'INCORRECT' | 'HISTORICAL_MISTAKE'
+): PracticeModelContext {
+  const currentFen = ctx.expectedFen ?? DEFAULT_PRACTICE_FEN;
+  const chess = new Chess(currentFen);
+  try {
+    chess.move(san);
+  } catch {
+    const fallback = new Chess(DEFAULT_PRACTICE_FEN);
+    fallback.move(san);
+    chess.load(fallback.fen());
+  }
+  const nextFen = chess.fen();
+  const nextSide = chess.turn() === 'w' ? 'white' : 'black';
+
+  if (resultType === 'CORRECT') {
+    return {
+      ...ctx,
+      attemptCount: ctx.attemptCount + 1,
+      solved: true,
+      expectedSolvedCount: (ctx.expectedSolvedCount ?? 0) + 1,
+      expectedFen: nextFen,
+      expectedHistory: [...(ctx.expectedHistory ?? []), san],
+      expectedSideToMove: nextSide,
+      lastMoveSan: san,
+    };
+  }
+
+  return {
+    ...ctx,
+    attemptCount: ctx.attemptCount + 1,
+    expectedFailedCount: (ctx.expectedFailedCount ?? 0) + 1,
+    expectedFen: nextFen,
+    expectedHistory: [...(ctx.expectedHistory ?? []), san],
+    expectedSideToMove: nextSide,
+    lastMoveSan: san,
+  };
+}
+
 export const PRACTICE_TRANSITIONS: TransitionRule[] = [
   // Discovery to Practice
   {
     from: 'DISCOVERY',
     action: 'SELECT_PUZZLE',
     to: 'PRACTICE_IDLE',
-    effect: (ctx) => ({ ...ctx, puzzleLoaded: true, attemptCount: 0, inExploration: false }),
+    effect: (ctx) => ({
+      ...ctx,
+      puzzleLoaded: true,
+      attemptCount: 0,
+      inExploration: false,
+      expectedFen: DEFAULT_PRACTICE_FEN,
+      expectedHistory: [],
+      expectedSideToMove: 'white',
+      expectedSolvedCount: ctx.expectedSolvedCount ?? 0,
+      expectedFailedCount: ctx.expectedFailedCount ?? 0,
+      lastMoveSan: undefined,
+    }),
   },
   // Submitting moves from Idle
   {
@@ -82,27 +147,33 @@ export const PRACTICE_TRANSITIONS: TransitionRule[] = [
     action: 'SUBMIT_OPTIMAL',
     to: 'CORRECT',
     guard: (ctx) => ctx.puzzleLoaded,
-    effect: (ctx) => ({ ...ctx, attemptCount: ctx.attemptCount + 1, solved: true }),
+    effect: (ctx) => deriveMoveState(ctx, 'd4', 'CORRECT'),
   },
   {
     from: 'PRACTICE_IDLE',
     action: 'SUBMIT_MISTAKE',
     to: 'INCORRECT',
     guard: (ctx) => ctx.puzzleLoaded,
-    effect: (ctx) => ({ ...ctx, attemptCount: ctx.attemptCount + 1 }),
+    effect: (ctx) => deriveMoveState(ctx, 'a3', 'INCORRECT'),
   },
   {
     from: 'PRACTICE_IDLE',
     action: 'SUBMIT_BLUNDER',
     to: 'HISTORICAL_MISTAKE',
     guard: (ctx) => ctx.puzzleLoaded,
-    effect: (ctx) => ({ ...ctx, attemptCount: ctx.attemptCount + 1 }),
+    effect: (ctx) => deriveMoveState(ctx, 'h4', 'HISTORICAL_MISTAKE'),
   },
   {
     from: 'PRACTICE_IDLE',
     action: 'RESET',
     to: 'PRACTICE_IDLE',
     guard: (ctx) => ctx.puzzleLoaded,
+    effect: (ctx) => ({
+      ...ctx,
+      expectedFen: DEFAULT_PRACTICE_FEN,
+      expectedHistory: [],
+      expectedSideToMove: 'white',
+    }),
   },
   {
     from: 'PRACTICE_IDLE',
@@ -116,12 +187,22 @@ export const PRACTICE_TRANSITIONS: TransitionRule[] = [
     action: 'RETRY',
     to: 'PRACTICE_IDLE',
     guard: (ctx) => ctx.puzzleLoaded,
+    effect: (ctx) => ({
+      ...ctx,
+      expectedFen: DEFAULT_PRACTICE_FEN,
+      expectedSideToMove: 'white',
+    }),
   },
   {
     from: 'HISTORICAL_MISTAKE',
     action: 'RETRY',
     to: 'PRACTICE_IDLE',
     guard: (ctx) => ctx.puzzleLoaded,
+    effect: (ctx) => ({
+      ...ctx,
+      expectedFen: DEFAULT_PRACTICE_FEN,
+      expectedSideToMove: 'white',
+    }),
   },
   {
     from: 'HISTORICAL_MISTAKE',
@@ -161,7 +242,12 @@ export const PRACTICE_TRANSITIONS: TransitionRule[] = [
     action: 'EXIT_EXPLORATION',
     to: 'PRACTICE_IDLE',
     guard: (ctx) => ctx.inExploration,
-    effect: (ctx) => ({ ...ctx, inExploration: false }),
+    effect: (ctx) => ({
+      ...ctx,
+      inExploration: false,
+      expectedFen: DEFAULT_PRACTICE_FEN,
+      expectedSideToMove: 'white',
+    }),
   },
   {
     from: 'EXPLORING',
@@ -210,13 +296,43 @@ export function getNextState(
 
 import type { Page, Expect, Locator } from '@playwright/test';
 
-export type ExpectFn = Expect;
+export interface LocatorAssertion {
+  toBeVisible: (options?: { timeout?: number }) => Promise<void>;
+  [key: string]: unknown;
+}
 
-export type PageLike = Pick<Page, 'getByRole' | 'getByText' | 'locator'>;
+export type ExpectFn = Expect | ((actual: unknown) => LocatorAssertion);
+
+export interface InspectableLocator {
+  waitFor?: (options?: { state?: 'visible' | 'attached' | 'detached' | 'hidden'; timeout?: number }) => Promise<void>;
+  isVisible?: () => Promise<boolean>;
+  toBeVisible?: () => Promise<boolean>;
+  textContent?: () => Promise<string | null>;
+  getAttribute?: (name: string) => Promise<string | null>;
+  count?: () => Promise<number>;
+}
+
+export interface PageLike {
+  getByRole: (role: Parameters<Page['getByRole']>[0], options?: { name?: string | RegExp }) => unknown;
+  getByText: (text: string | RegExp) => unknown;
+  locator: (selector: string) => unknown;
+}
 
 export interface StateOracleDefinition {
   description: string;
   assert: (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => Promise<void>;
+}
+
+export function resolveArgs(arg1?: unknown, arg2?: unknown): {
+  context?: PracticeModelContext;
+  expectFn?: ExpectFn;
+} {
+  if (typeof arg1 === 'function') {
+    return { expectFn: arg1 as ExpectFn };
+  }
+  const ctx = arg1 && typeof arg1 === 'object' ? (arg1 as PracticeModelContext) : undefined;
+  const exp = typeof arg2 === 'function' ? (arg2 as ExpectFn) : undefined;
+  return { context: ctx, expectFn: exp };
 }
 
 async function verifyVisible(locator: unknown, arg1?: unknown, arg2?: unknown): Promise<void> {
@@ -236,58 +352,296 @@ async function verifyVisible(locator: unknown, arg1?: unknown, arg2?: unknown): 
   }
 }
 
+export async function verifyBoardPosition(
+  page: PageLike,
+  expectedFen: string,
+  expectFn?: ExpectFn
+): Promise<void> {
+  const chess = new Chess(expectedFen);
+  const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+
+  for (let r = 1; r <= 8; r++) {
+    for (const f of files) {
+      const sq = `${f}${r}` as Square;
+      const piece = chess.get(sq);
+      const pieceLocator = page.locator(`[data-square="${sq}"] [data-piece]`) as InspectableLocator;
+
+      if (piece) {
+        const expectedCode = `${piece.color}${piece.type.toUpperCase()}`;
+        const exactPieceLocator = page.locator(`[data-square="${sq}"] [data-piece="${expectedCode}"]`);
+
+        if (typeof pieceLocator.getAttribute === 'function') {
+          const actualCode = await pieceLocator.getAttribute('data-piece');
+          if (actualCode && actualCode !== expectedCode) {
+            throw new Error(
+              `[PIECE_TOPOLOGY_MISMATCH] Square "${sq}" expected piece "${expectedCode}" in position "${expectedFen}", but found "${actualCode}".`
+            );
+          }
+        }
+
+        try {
+          await verifyVisible(exactPieceLocator, expectFn);
+        } catch (err) {
+          throw new Error(
+            `[PIECE_TOPOLOGY_MISMATCH] Square "${sq}" expected piece "${expectedCode}" in position "${expectedFen}", but piece was not visible: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      } else {
+        if (typeof pieceLocator.waitFor === 'function') {
+          await pieceLocator.waitFor({ state: 'hidden', timeout: 500 }).catch(() => {});
+        }
+        if (typeof pieceLocator.count === 'function') {
+          const count = await pieceLocator.count();
+          if (count > 0) {
+            let actualCode = 'unknown';
+            if (typeof pieceLocator.getAttribute === 'function') {
+              actualCode = (await pieceLocator.getAttribute('data-piece')) ?? 'unknown';
+            }
+            throw new Error(
+              `[PIECE_TOPOLOGY_MISMATCH] Square "${sq}" expected to be empty in position "${expectedFen}", but found piece "${actualCode}".`
+            );
+          }
+        }
+      }
+    }
+  }
+}
+
+export async function verifyAttemptCounters(
+  page: PageLike,
+  failed: number,
+  solved: number,
+  expectFn?: ExpectFn
+): Promise<void> {
+  const anyFailed = page.getByText(/Failed:\s*\d+/i) as InspectableLocator;
+  if (typeof anyFailed.textContent === 'function') {
+    const text = await anyFailed.textContent().catch(() => null);
+    if (text && !new RegExp(`Failed:\\s*${failed}\\b`, 'i').test(text)) {
+      throw new Error(
+        `[COUNTER_DESYNCHRONIZATION] Expected "Failed: ${failed}", but UI rendered "${text}".`
+      );
+    }
+  }
+
+  const anySolved = page.getByText(/Solved:\s*\d+/i) as InspectableLocator;
+  if (typeof anySolved.textContent === 'function') {
+    const text = await anySolved.textContent().catch(() => null);
+    if (text && !new RegExp(`Solved:\\s*${solved}\\b`, 'i').test(text)) {
+      throw new Error(
+        `[COUNTER_DESYNCHRONIZATION] Expected "Solved: ${solved}", but UI rendered "${text}".`
+      );
+    }
+  }
+
+  const failedLocator = page.getByText(new RegExp(`Failed:\\s*${failed}`, 'i'));
+  const solvedLocator = page.getByText(new RegExp(`Solved:\\s*${solved}`, 'i'));
+  await verifyVisible(failedLocator, expectFn);
+  await verifyVisible(solvedLocator, expectFn);
+}
+
+export async function verifyTurnState(
+  page: PageLike,
+  expectedTurn: 'white' | 'black',
+  isExploration?: boolean,
+  expectFn?: ExpectFn
+): Promise<void> {
+  if (!isExploration) return;
+  const opposingTurnText = expectedTurn === 'white' ? /Black to move/i : /White to move/i;
+  const opposingLocator = page.getByText(opposingTurnText) as InspectableLocator;
+
+  const checkVisible = opposingLocator.isVisible ?? opposingLocator.toBeVisible;
+  if (typeof checkVisible === 'function') {
+    const isOpposingVisible = await checkVisible.call(opposingLocator).catch(() => false);
+    if (isOpposingVisible) {
+      throw new Error(
+        `[TURN_MISMATCH] Expected side to move "${expectedTurn}", but UI rendered opposing turn indicator.`
+      );
+    }
+  }
+
+  const turnText = expectedTurn === 'white' ? /White to move/i : /Black to move/i;
+  const turnLocator = page.getByText(turnText) as InspectableLocator;
+  const checkTurnVisible = turnLocator.isVisible ?? turnLocator.toBeVisible;
+  if (typeof checkTurnVisible === 'function') {
+    const isTurnVisible = await checkTurnVisible.call(turnLocator).catch(() => false);
+    if (isTurnVisible) {
+      await verifyVisible(turnLocator, expectFn);
+    }
+  }
+}
+
+export async function verifyMoveFeedback(
+  page: PageLike,
+  state: PracticeAbstractState,
+  lastMoveSan?: string,
+  expectFn?: ExpectFn
+): Promise<void> {
+  if (!lastMoveSan) return;
+  if (state === 'CORRECT') {
+    const moveFeedback = page.getByText(new RegExp(`${lastMoveSan}\\s+is\\s+(?:the best|an acceptable)`, 'i'));
+    await verifyVisible(moveFeedback, expectFn);
+  } else if (state === 'INCORRECT') {
+    const heading = page.getByRole('heading', { name: /Not the Recommended Move/i });
+    await verifyVisible(heading, expectFn);
+    const moveFeedback = page.getByText(new RegExp(`${lastMoveSan}\\s+is not the recommended move`, 'i'));
+    await verifyVisible(moveFeedback, expectFn);
+  } else if (state === 'HISTORICAL_MISTAKE') {
+    const blunderBanner = page.getByText(/Recurring Weakness Detected!|Matches your previous blunder|blunder/i);
+    await verifyVisible(blunderBanner, expectFn);
+  }
+}
+
+export async function verifyMoveHistory(
+  page: PageLike,
+  expectedHistory: string[],
+  expectFn?: ExpectFn
+): Promise<void> {
+  if (!expectedHistory || expectedHistory.length === 0) return;
+  for (const moveSan of expectedHistory) {
+    const moveLocator = page.getByText(new RegExp(`(?:^|\\b|from\\s+)${moveSan}(?:\\b|$)`)) as InspectableLocator;
+    const checkVisible = moveLocator.isVisible ?? moveLocator.toBeVisible;
+    if (typeof checkVisible === 'function') {
+      const isVisible = await checkVisible.call(moveLocator).catch(() => false);
+      if (!isVisible) {
+        throw new Error(
+          `[MOVE_HISTORY_MISMATCH] Expected move log entry "${moveSan}" from sequence [${expectedHistory.join(', ')}] was not found in rendered move history.`
+        );
+      }
+    }
+    try {
+      await verifyVisible(moveLocator, expectFn);
+    } catch (err) {
+      throw new Error(
+        `[MOVE_HISTORY_MISMATCH] Expected move log entry "${moveSan}" from sequence [${expectedHistory.join(', ')}] was not found in rendered move history: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+}
+
 export const STATE_ORACLES: Record<PracticeAbstractState, StateOracleDefinition> = {
   DISCOVERY: {
     description: 'Catalog view is active; Start Practice button and catalog description are visible.',
     assert: async (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => {
-      await verifyVisible(page.getByRole('button', { name: /Start Practice/i }), contextOrExpect, maybeExpectFn);
-      await verifyVisible(page.getByText(/Strengthen your play by solving recurring mistake positions/i), contextOrExpect, maybeExpectFn);
+      const { expectFn } = resolveArgs(contextOrExpect, maybeExpectFn);
+      await verifyVisible(page.getByRole('button', { name: /Start Practice/i }), expectFn);
+      await verifyVisible(page.getByText(/Strengthen your play by solving recurring mistake positions/i), expectFn);
     },
   },
   PRACTICE_IDLE: {
     description: 'Interactive board is ready; square d2 is visible and Back to Puzzles is interactive.',
     assert: async (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => {
-      await verifyVisible(page.locator('[data-square="d2"]'), contextOrExpect, maybeExpectFn);
-      await verifyVisible(page.getByRole('button', { name: /Back to Puzzles/i }), contextOrExpect, maybeExpectFn);
+      const { context, expectFn } = resolveArgs(contextOrExpect, maybeExpectFn);
+      await verifyVisible(page.locator('[data-square="d2"]'), expectFn);
+      await verifyVisible(page.getByRole('button', { name: /Back to Puzzles/i }), expectFn);
+
+      if (context?.puzzleLoaded) {
+        if (context.expectedFen) {
+          await verifyBoardPosition(page, context.expectedFen, expectFn);
+        }
+        if (context.expectedFailedCount !== undefined && context.expectedSolvedCount !== undefined) {
+          await verifyAttemptCounters(page, context.expectedFailedCount, context.expectedSolvedCount, expectFn);
+        }
+      }
     },
   },
   EVALUATING: {
     description: 'Move evaluation is in-flight; evaluating indicator is active.',
     assert: async (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => {
-      await verifyVisible(page.getByText(/Evaluating move/i), contextOrExpect, maybeExpectFn);
+      const { expectFn } = resolveArgs(contextOrExpect, maybeExpectFn);
+      await verifyVisible(page.getByText(/Evaluating move/i), expectFn);
     },
   },
   CORRECT: {
     description: 'Puzzle solved optimally; Continue Exploration button visible and solved count incremented.',
     assert: async (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => {
-      await verifyVisible(page.getByRole('button', { name: /Continue Exploration →/i }), contextOrExpect, maybeExpectFn);
-      await verifyVisible(page.getByText(/Solved: [1-9]\d*/i), contextOrExpect, maybeExpectFn);
+      const { context, expectFn } = resolveArgs(contextOrExpect, maybeExpectFn);
+      await verifyVisible(page.getByRole('button', { name: /Continue Exploration →/i }), expectFn);
+      await verifyVisible(page.getByText(/Solved: [1-9]\d*/i), expectFn);
+
+      if (context) {
+        if (context.expectedFen) {
+          await verifyBoardPosition(page, context.expectedFen, expectFn);
+        }
+        if (context.expectedFailedCount !== undefined && context.expectedSolvedCount !== undefined) {
+          await verifyAttemptCounters(page, context.expectedFailedCount, context.expectedSolvedCount, expectFn);
+        }
+        if (context.lastMoveSan) {
+          await verifyMoveFeedback(page, 'CORRECT', context.lastMoveSan, expectFn);
+        }
+        if (context.expectedHistory && context.expectedHistory.length > 0) {
+          await verifyMoveHistory(page, context.expectedHistory, expectFn);
+        }
+      }
     },
   },
   INCORRECT: {
     description: 'Inaccurate move played; rollback to baseline FEN and Not the Recommended Move banner visible.',
     assert: async (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => {
-      await verifyVisible(page.getByRole('heading', { name: /Not the Recommended Move/i }), contextOrExpect, maybeExpectFn);
-      await verifyVisible(page.locator('[data-square="d2"]'), contextOrExpect, maybeExpectFn);
+      const { context, expectFn } = resolveArgs(contextOrExpect, maybeExpectFn);
+      await verifyVisible(page.getByRole('heading', { name: /Not the Recommended Move/i }), expectFn);
+      await verifyVisible(page.locator('[data-square="d2"]'), expectFn);
+
+      if (context) {
+        if (context.expectedFen) {
+          await verifyBoardPosition(page, context.expectedFen, expectFn);
+        }
+        if (context.expectedFailedCount !== undefined && context.expectedSolvedCount !== undefined) {
+          await verifyAttemptCounters(page, context.expectedFailedCount, context.expectedSolvedCount, expectFn);
+        }
+        if (context.lastMoveSan) {
+          await verifyMoveFeedback(page, 'INCORRECT', context.lastMoveSan, expectFn);
+        }
+      }
     },
   },
   HISTORICAL_MISTAKE: {
     description: 'Historical mistake repeated; mistake banner and hint/retry action visible.',
     assert: async (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => {
-      await verifyVisible(page.getByText(/Recurring Weakness Detected!|Matches your previous blunder|blunder/i), contextOrExpect, maybeExpectFn);
+      const { context, expectFn } = resolveArgs(contextOrExpect, maybeExpectFn);
+      await verifyVisible(page.getByText(/Recurring Weakness Detected!|Matches your previous blunder|blunder/i), expectFn);
+
+      if (context) {
+        if (context.expectedFen) {
+          await verifyBoardPosition(page, context.expectedFen, expectFn);
+        }
+        if (context.expectedFailedCount !== undefined && context.expectedSolvedCount !== undefined) {
+          await verifyAttemptCounters(page, context.expectedFailedCount, context.expectedSolvedCount, expectFn);
+        }
+        if (context.lastMoveSan) {
+          await verifyMoveFeedback(page, 'HISTORICAL_MISTAKE', context.lastMoveSan, expectFn);
+        }
+      }
     },
   },
   EVALUATION_ERROR: {
     description: 'Evaluation failed or timed out; error banner visible.',
     assert: async (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => {
-      await verifyVisible(page.getByText(/Evaluation service returned an empty response|Error/i), contextOrExpect, maybeExpectFn);
+      const { expectFn } = resolveArgs(contextOrExpect, maybeExpectFn);
+      await verifyVisible(page.getByText(/Evaluation service returned an empty response|Error/i), expectFn);
     },
   },
   EXPLORING: {
     description: 'Line exploration mode active; exploration controls and Exit Exploration visible.',
     assert: async (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => {
-      await verifyVisible(page.getByText(/Line Exploration/i), contextOrExpect, maybeExpectFn);
-      await verifyVisible(page.getByRole('button', { name: /^Exit$|Exit Exploration/i }), contextOrExpect, maybeExpectFn);
+      const { context, expectFn } = resolveArgs(contextOrExpect, maybeExpectFn);
+      await verifyVisible(page.getByText(/Line Exploration/i), expectFn);
+      await verifyVisible(page.getByRole('button', { name: /^Exit$|Exit Exploration/i }), expectFn);
+
+      if (context) {
+        if (context.expectedFen) {
+          await verifyBoardPosition(page, context.expectedFen, expectFn);
+        }
+        if (context.expectedSideToMove) {
+          await verifyTurnState(page, context.expectedSideToMove, true, expectFn);
+        }
+        if (context.expectedHistory && context.expectedHistory.length > 0) {
+          const decisionBanner = page.getByText(/Line Exploration\s*\(from/i) as InspectableLocator;
+          const checkVisible = decisionBanner.isVisible ?? decisionBanner.toBeVisible;
+          if (typeof checkVisible === 'function' && (await checkVisible.call(decisionBanner).catch(() => false))) {
+            await verifyMoveHistory(page, context.expectedHistory, expectFn);
+          }
+        }
+      }
     },
   },
 };
