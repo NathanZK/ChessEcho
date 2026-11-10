@@ -12,7 +12,7 @@ import { explorePracticeStates, exploreAbstractStates, type BfsExplorationResult
 import { selectHighRiskPaths } from '../../journeys/model/pathSelector';
 
 describe('Practice State Model & Invariants', () => {
-  it('defines all 8 Core Practice Lifecycle abstract states and 18 action vocabulary entries', () => {
+  it('defines all 8 Core Practice Lifecycle abstract states and 19 action vocabulary entries', () => {
     expect(PRACTICE_TRANSITIONS.length).toBeGreaterThan(0);
     expect(PRACTICE_ABSTRACT_STATES).toEqual([
       'DISCOVERY',
@@ -29,6 +29,7 @@ describe('Practice State Model & Invariants', () => {
     expect(PRACTICE_ACTIONS).toContain('SUBMIT_OPTIMAL');
     expect(PRACTICE_ACTIONS).toContain('SUBMIT_MISTAKE');
     expect(PRACTICE_ACTIONS).toContain('SUBMIT_BLUNDER');
+    expect(PRACTICE_ACTIONS).toContain('SUBMIT_FAULT');
     expect(PRACTICE_ACTIONS).toContain('RETRY');
     expect(PRACTICE_ACTIONS).toContain('RESET');
     expect(PRACTICE_ACTIONS).toContain('CONTINUE_EXPLORATION');
@@ -45,7 +46,7 @@ describe('Practice State Model & Invariants', () => {
     expect(PRACTICE_ACTIONS).toContain('NAVIGATE_HISTORY_PREV');
     expect(PRACTICE_ACTIONS).toContain('NAVIGATE_HISTORY_NEXT');
     expect(PRACTICE_ACTIONS).toContain('TOGGLE_TIMER_MODE');
-    expect(PRACTICE_ACTIONS.length).toBe(18);
+    expect(PRACTICE_ACTIONS.length).toBe(19);
   });
 
   it('initializes context with default orthogonal UI control values', () => {
@@ -61,6 +62,7 @@ describe('Practice State Model & Invariants', () => {
     expect(ctx.historyIndex).toBe(0);
     expect(ctx.historyLength).toBe(0);
     expect(ctx.timerMode).toBeNull();
+    expect(ctx.faultInjectionEnabled).toBe(false);
   });
 
   it('validates transitions and guards for newly introduced controls', () => {
@@ -188,6 +190,21 @@ describe('Practice State Model & Invariants', () => {
     const blunder = getNextState('PRACTICE_IDLE', 'SUBMIT_BLUNDER', practiceCtx);
     expect(blunder?.state).toBe('HISTORICAL_MISTAKE');
 
+    // Practice to Fault State (guarded by faultInjectionEnabled)
+    expect(isValidTransition('PRACTICE_IDLE', 'SUBMIT_FAULT', practiceCtx)).toBe(false);
+    const faultEnabledCtx = { ...practiceCtx, faultInjectionEnabled: true };
+    expect(isValidTransition('PRACTICE_IDLE', 'SUBMIT_FAULT', faultEnabledCtx)).toBe(true);
+    const fault = getNextState('PRACTICE_IDLE', 'SUBMIT_FAULT', faultEnabledCtx);
+    expect(fault?.state).toBe('EVALUATION_ERROR');
+
+    // Evaluation Error to Retry / Recovery
+    expect(isValidTransition('EVALUATION_ERROR', 'RETRY', fault!.context)).toBe(true);
+    expect(getNextState('EVALUATION_ERROR', 'RETRY', fault!.context)?.state).toBe('PRACTICE_IDLE');
+
+    // Evaluation Error back to Discovery
+    expect(isValidTransition('EVALUATION_ERROR', 'BACK_TO_PUZZLES', fault!.context)).toBe(true);
+    expect(getNextState('EVALUATION_ERROR', 'BACK_TO_PUZZLES', fault!.context)?.state).toBe('DISCOVERY');
+
     // Incorrect to Retry
     expect(isValidTransition('INCORRECT', 'RETRY', mistake!.context)).toBe(true);
     expect(getNextState('INCORRECT', 'RETRY', mistake!.context)?.state).toBe('PRACTICE_IDLE');
@@ -297,6 +314,12 @@ describe('Practice State Model & Invariants', () => {
       expect(result.reachableStates.has('INCORRECT')).toBe(true);
       expect(result.reachableStates.has('HISTORICAL_MISTAKE')).toBe(true);
       expect(result.reachableStates.has('EXPLORING')).toBe(true);
+
+      const faultResult = explorePracticeStates('DISCOVERY', PRACTICE_TRANSITIONS, 4, {
+        ...createInitialContext(),
+        faultInjectionEnabled: true,
+      });
+      expect(faultResult.reachableStates.has('EVALUATION_ERROR')).toBe(true);
 
       expect(result.paths.length).toBeGreaterThan(5);
       expect(result.transitionsCovered.size).toBeGreaterThan(5);

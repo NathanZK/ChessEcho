@@ -19,7 +19,7 @@ The state model represents the core practice puzzle lifecycle without importing 
 | `EVALUATION_ERROR` | Subprocess engine error / timeout | Evaluation error banner displayed; resubmission unlocked |
 | `EXPLORING` | Free line exploration mode | Line Exploration header visible; `Exit` exploration button interactive |
 
-**Actions**: `SELECT_PUZZLE`, `SUBMIT_OPTIMAL`, `SUBMIT_MISTAKE`, `SUBMIT_BLUNDER`, `RETRY`, `RESET`, `CONTINUE_EXPLORATION`, `EXIT_EXPLORATION`, `BACK_TO_PUZZLES`.
+**Actions**: `SELECT_PUZZLE`, `SUBMIT_OPTIMAL`, `SUBMIT_MISTAKE`, `SUBMIT_BLUNDER`, `SUBMIT_FAULT`, `RETRY`, `RESET`, `CONTINUE_EXPLORATION`, `EXIT_EXPLORATION`, `BACK_TO_PUZZLES`.
 
 ---
 
@@ -31,11 +31,13 @@ The state model represents the core practice puzzle lifecycle without importing 
 | `PRACTICE_IDLE` | `SUBMIT_OPTIMAL` | `puzzleLoaded` | `CORRECT` | `attemptCount += 1` |
 | `PRACTICE_IDLE` | `SUBMIT_MISTAKE` | `puzzleLoaded` | `INCORRECT` | `attemptCount += 1` |
 | `PRACTICE_IDLE` | `SUBMIT_BLUNDER` | `puzzleLoaded` | `HISTORICAL_MISTAKE` | `attemptCount += 1` |
+| `PRACTICE_IDLE` | `SUBMIT_FAULT` | `puzzleLoaded && faultInjectionEnabled` | `EVALUATION_ERROR` | Error banner displayed |
 | `PRACTICE_IDLE` | `RESET` | `puzzleLoaded` | `PRACTICE_IDLE` | Baseline FEN restored |
 | `PRACTICE_IDLE` | `BACK_TO_PUZZLES` | None | `DISCOVERY` | `puzzleLoaded = false` |
 | `INCORRECT` | `RETRY` | `puzzleLoaded` | `PRACTICE_IDLE` | Baseline FEN restored |
 | `HISTORICAL_MISTAKE` | `RETRY` | `puzzleLoaded` | `PRACTICE_IDLE` | Baseline FEN restored |
 | `EVALUATION_ERROR` | `RETRY` | `puzzleLoaded` | `PRACTICE_IDLE` | Board unlocked for resubmission |
+| `EVALUATION_ERROR` | `BACK_TO_PUZZLES` | None | `DISCOVERY` | `puzzleLoaded = false, inExploration = false` |
 | `CORRECT` | `CONTINUE_EXPLORATION` | `puzzleLoaded` | `EXPLORING` | `inExploration = true` |
 | `CORRECT` | `BACK_TO_PUZZLES` | None | `DISCOVERY` | `puzzleLoaded = false` |
 | `EXPLORING` | `EXIT_EXPLORATION` | `inExploration` | `PRACTICE_IDLE` | `inExploration = false` |

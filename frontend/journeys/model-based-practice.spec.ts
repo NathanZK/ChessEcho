@@ -3,6 +3,8 @@ import {
   setupJourneyApiMocks,
   DEFAULT_MOCK_ACCOUNT,
   DEFAULT_MOCK_PUZZLE,
+  BLACK_TO_MOVE_MOCK_PUZZLE,
+  DYNAMIC_EVAL_MOCK_PUZZLE,
 } from './fixtures/mockApi';
 import {
   PRACTICE_TRANSITIONS,
@@ -206,5 +208,97 @@ test.describe('Phase 2 Model-Based Testing: Bounded BFS Exploration & High-Risk 
     await STATE_ORACLES.PRACTICE_IDLE.assert(page, expect);
     await executeConcreteAction(page, 'BACK_TO_PUZZLES');
     await STATE_ORACLES.DISCOVERY.assert(page, expect);
+  });
+
+  test('Path 5: Deterministic network failure injection (HTTP 500), observable EVALUATION_ERROR banner, and retry recovery', async ({ page }) => {
+    // 1. Setup mocked API with initial HTTP 500 failure on evaluate-move
+    const mockHandle = await setupJourneyApiMocks(page, {
+      authenticated: true,
+      accounts: [DEFAULT_MOCK_ACCOUNT],
+      puzzles: [DYNAMIC_EVAL_MOCK_PUZZLE],
+      evaluateMoveFault: { fault: 'server_error_500' },
+    });
+
+    // 2. Load application on Practice Puzzles tab
+    await page.goto('/#puzzles');
+    await STATE_ORACLES.PRACTICE_IDLE.assert(page, expect);
+
+    // 3. Submit move: d2 -> d4 under failing route
+    const d2Square = page.locator('[data-square="d2"]');
+    const d4Square = page.locator('[data-square="d4"]');
+    await expect(d2Square).toBeVisible();
+    await d2Square.click();
+    await d4Square.click();
+
+    // 4. Assert EVALUATION_ERROR oracle (error banner is visible and retry button exists)
+    await STATE_ORACLES.EVALUATION_ERROR.assert(page, expect);
+    const retryButton = page.getByRole('button', { name: /Retry evaluation/i });
+    await expect(retryButton).toBeVisible();
+
+    // 5. Clear the fault dynamically and click Reset/Retry to restore PRACTICE_IDLE
+    mockHandle.setEvaluateMoveFault(undefined);
+    const resetButton = page.getByRole('button', { name: /Reset Position|Reset/i });
+    await expect(resetButton).toBeVisible();
+    await resetButton.click();
+
+    // 6. Assert restored interactive PRACTICE_IDLE state
+    await STATE_ORACLES.PRACTICE_IDLE.assert(page, expect);
+  });
+
+  test('Path 6: Evaluation error recovery via navigation back to Discovery (BACK_TO_PUZZLES)', async ({ page }) => {
+    // 1. Setup mocked API with malformed JSON response body
+    await setupJourneyApiMocks(page, {
+      authenticated: true,
+      accounts: [DEFAULT_MOCK_ACCOUNT],
+      puzzles: [DYNAMIC_EVAL_MOCK_PUZZLE],
+      evaluateMoveFault: { fault: 'malformed_json' },
+    });
+
+    // 2. Load application on Practice Puzzles tab
+    await page.goto('/#puzzles');
+    await STATE_ORACLES.PRACTICE_IDLE.assert(page, expect);
+
+    // 3. Submit move: d2 -> d4 under malformed JSON response route
+    const d2Square = page.locator('[data-square="d2"]');
+    const d4Square = page.locator('[data-square="d4"]');
+    await expect(d2Square).toBeVisible();
+    await d2Square.click();
+    await d4Square.click();
+
+    // 4. Assert EVALUATION_ERROR oracle
+    await STATE_ORACLES.EVALUATION_ERROR.assert(page, expect);
+
+    // 5. Navigate back to Discovery
+    const backButton = page.getByRole('button', { name: /Back to Puzzles/i });
+    await expect(backButton).toBeVisible();
+    await backButton.click();
+
+    // 6. Assert Discovery view is stable
+    await STATE_ORACLES.DISCOVERY.assert(page, expect);
+  });
+
+  test('Path 7: Multi-Position Puzzle Corpus - Black to move puzzle loading and board orientation', async ({ page }) => {
+    // 1. Setup mocked API with BLACK_TO_MOVE_MOCK_PUZZLE
+    await setupJourneyApiMocks(page, {
+      authenticated: true,
+      accounts: [DEFAULT_MOCK_ACCOUNT],
+      puzzles: [BLACK_TO_MOVE_MOCK_PUZZLE],
+    });
+
+    // 2. Load application on Practice Puzzles tab
+    await page.goto('/#puzzles');
+
+    // 3. Assert board is rendered with Black orientation (rank 7 at bottom, rank 2 at top)
+    const d2Square = page.locator('[data-square="d2"]');
+    const d7Square = page.locator('[data-square="d7"]');
+    await expect(d7Square).toBeVisible({ timeout: 10000 });
+    const d2Box = await d2Square.boundingBox();
+    const d7Box = await d7Square.boundingBox();
+    expect(d2Box).not.toBeNull();
+    expect(d7Box).not.toBeNull();
+    expect(d7Box!.y).toBeGreaterThan(d2Box!.y);
+
+    const backButton = page.getByRole('button', { name: /Back to Puzzles/i });
+    await expect(backButton).toBeVisible();
   });
 });

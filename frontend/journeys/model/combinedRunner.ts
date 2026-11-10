@@ -105,6 +105,7 @@ export function findBfsPathToState(
     puzzleLoaded: initialState !== 'DISCOVERY',
     attemptCount: 0,
     inExploration: initialState === 'EXPLORING',
+    faultInjectionEnabled: targetState === 'EVALUATION_ERROR',
   };
 
   return findBfsPath(PracticeModel, targetState, initialState, context, 6);

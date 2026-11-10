@@ -37,9 +37,14 @@ describe('Combined Model-Based BFS and Monkey Runner (Phase 5)', () => {
       expect(path).toEqual(['RETRY']);
     });
 
-    it('returns null for unreachable states or states with no valid outgoing transitions', () => {
-      // EVALUATION_ERROR has no inbound transitions in static PRACTICE_TRANSITIONS
+    it('resolves the shortest path from DISCOVERY to EVALUATION_ERROR', () => {
       const path = findBfsPathToState('EVALUATION_ERROR');
+      expect(path).toEqual(['SELECT_PUZZLE', 'SUBMIT_FAULT']);
+    });
+
+    it('returns null for unreachable states or states with no valid incoming transitions', () => {
+      // EVALUATING has no inbound transitions in static PRACTICE_TRANSITIONS
+      const path = findBfsPathToState('EVALUATING');
       expect(path).toBeNull();
     });
 
