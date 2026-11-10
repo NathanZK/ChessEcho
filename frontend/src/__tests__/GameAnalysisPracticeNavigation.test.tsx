@@ -158,7 +158,7 @@ describe('Game Analysis Navigation and Practice Bridging', () => {
 
     expect(activeTabStore.getSnapshot()).toBe('game-analysis');
     expect(await screen.findByRole('heading', { name: /My Games/i })).toBeInTheDocument();
-    expect(screen.getByText('RivalPlayer')).toBeInTheDocument();
+    expect(await screen.findByText('RivalPlayer')).toBeInTheDocument();
   });
 
   it('analyzes game, practices mistake with concealed blunder move, and returns with context preserved', async () => {
