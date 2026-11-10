@@ -27,6 +27,7 @@ let workers = 1;
 let startingState = 'DISCOVERY';
 let timeoutMs = 30000;
 let trace = 'failures-only';
+let strategy = 'uniform';
 
 for (const arg of argv) {
   if (arg.startsWith('--seed=')) {
@@ -43,6 +44,8 @@ for (const arg of argv) {
     timeoutMs = Number(arg.slice('--timeout='.length));
   } else if (arg.startsWith('--trace=')) {
     trace = arg.slice('--trace='.length);
+  } else if (arg.startsWith('--strategy=')) {
+    strategy = arg.slice('--strategy='.length);
   }
 }
 
@@ -53,6 +56,7 @@ const config = {
   startingState,
   timeoutMs,
   trace,
+  strategy,
 };
 
 const metricsDir = 'test-results/campaign-metrics';
@@ -101,6 +105,8 @@ child.on('exit', (code) => {
       let totalDurationMs = 0;
       const statesSet = new Set();
       const transitionsSet = new Set();
+      const stateActionsSet = new Set();
+      const transitionPairsSet = new Set();
       const failedSeeds = [];
       const replayCommands = [];
 
@@ -110,8 +116,9 @@ child.on('exit', (code) => {
         } else {
           failedRuns++;
           failedSeeds.push(m.seed);
+          const stratArg = config.strategy && config.strategy !== 'uniform' ? ` --strategy=${config.strategy}` : '';
           replayCommands.push(
-            `npm run test:monkey:campaign -- --seed=${m.seed} --budget=${budget} --startingState=${startingState} --workers=1`
+            `npm run test:monkey:campaign -- --seed=${m.seed} --budget=${budget} --startingState=${startingState} --workers=1${stratArg}`
           );
         }
         totalActions += m.executedSteps || 0;
@@ -123,6 +130,12 @@ child.on('exit', (code) => {
         if (Array.isArray(m.transitions)) {
           for (const t of m.transitions) transitionsSet.add(t);
         }
+        if (Array.isArray(m.stateActions)) {
+          for (const sa of m.stateActions) stateActionsSet.add(sa);
+        }
+        if (Array.isArray(m.transitionPairs)) {
+          for (const tp of m.transitionPairs) transitionPairsSet.add(tp);
+        }
       }
 
       const actionsPerSecond =
@@ -132,6 +145,7 @@ child.on('exit', (code) => {
         '==================================================',
         '          Exploration Campaign Summary            ',
         '==================================================',
+        `Strategy:            ${config.strategy}`,
         `Total Runs:          ${metrics.length}`,
         `Passed Runs:         ${passedRuns}`,
         `Failed Runs:         ${failedRuns}`,
@@ -140,6 +154,8 @@ child.on('exit', (code) => {
         `Action Throughput:   ${actionsPerSecond} actions/sec`,
         `States Visited:      ${Array.from(statesSet).join(', ') || 'None'}`,
         `Transitions Count:   ${transitionsSet.size}`,
+        `State-Actions:       ${stateActionsSet.size}`,
+        `Transition Pairs:    ${transitionPairsSet.size}`,
       ];
 
       if (failedSeeds.length > 0) {

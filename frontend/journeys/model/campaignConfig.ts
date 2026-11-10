@@ -13,6 +13,14 @@ export const VALID_PRACTICE_STATES: readonly PracticeAbstractState[] = [
 
 export type CampaignTraceMode = 'failures-only' | 'all' | 'off';
 
+export type MonkeySelectionStrategy = 'uniform' | 'least-used-transition' | 'rare-state-bias';
+
+export const VALID_SELECTION_STRATEGIES: readonly MonkeySelectionStrategy[] = [
+  'uniform',
+  'least-used-transition',
+  'rare-state-bias',
+] as const;
+
 export interface CampaignConfig {
   seeds: number[];
   budget: number;
@@ -20,6 +28,7 @@ export interface CampaignConfig {
   startingState: PracticeAbstractState;
   timeoutMs: number;
   trace: CampaignTraceMode;
+  strategy: MonkeySelectionStrategy;
 }
 
 /**
@@ -125,6 +134,7 @@ export function parseCampaignArgs(argv: string[]): CampaignConfig {
   let startingState: PracticeAbstractState = 'DISCOVERY';
   let timeoutMs = 30_000;
   let trace: CampaignTraceMode = 'failures-only';
+  let strategy: MonkeySelectionStrategy = 'uniform';
 
   for (const arg of argv) {
     if (arg.startsWith('--seed=')) {
@@ -168,6 +178,14 @@ export function parseCampaignArgs(argv: string[]): CampaignConfig {
         throw new Error(`Invalid trace mode "${val}". Allowed: failures-only, all, off`);
       }
       trace = val;
+    } else if (arg.startsWith('--strategy=')) {
+      const val = arg.slice('--strategy='.length) as MonkeySelectionStrategy;
+      if (!VALID_SELECTION_STRATEGIES.includes(val)) {
+        throw new Error(
+          `Invalid selection strategy "${val}". Allowed: ${VALID_SELECTION_STRATEGIES.join(', ')}`
+        );
+      }
+      strategy = val;
     }
   }
 
@@ -178,5 +196,6 @@ export function parseCampaignArgs(argv: string[]): CampaignConfig {
     startingState,
     timeoutMs,
     trace,
+    strategy,
   };
 }

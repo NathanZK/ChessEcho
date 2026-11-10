@@ -1,12 +1,16 @@
 import type { PracticeAbstractState } from './practiceModel';
+import type { MonkeySelectionStrategy } from './campaignConfig';
 
 export interface CampaignRunMetric {
   seed: number;
+  strategy?: MonkeySelectionStrategy;
   success: boolean;
   executedSteps: number;
   durationMs: number;
   uniqueStates: Set<PracticeAbstractState>;
   transitions: Set<string>;
+  stateActions?: Set<string>;
+  transitionPairs?: Set<string>;
   error?: Error;
   heapUsedBytes?: number;
   chromiumHeapBytes?: number;
@@ -15,6 +19,7 @@ export interface CampaignRunMetric {
 }
 
 export interface CampaignSummary {
+  strategy?: MonkeySelectionStrategy;
   totalRuns: number;
   passedRuns: number;
   failedRuns: number;
@@ -23,6 +28,8 @@ export interface CampaignSummary {
   actionsPerSecond: number;
   uniqueStatesVisited: PracticeAbstractState[];
   uniqueTransitionsExercised: string[];
+  uniqueStateActionsCovered: string[];
+  uniqueTransitionPairsCovered: string[];
   failedSeeds: number[];
   replayCommands: string[];
 }
@@ -30,15 +37,18 @@ export interface CampaignSummary {
 export function formatReplayCommand(
   seed: number,
   budget: number,
-  startingState: PracticeAbstractState
+  startingState: PracticeAbstractState,
+  strategy?: MonkeySelectionStrategy,
 ): string {
-  return `npm run test:monkey:campaign -- --seed=${seed} --budget=${budget} --startingState=${startingState} --workers=1`;
+  const strategyFlag = strategy && strategy !== 'uniform' ? ` --strategy=${strategy}` : '';
+  return `npm run test:monkey:campaign -- --seed=${seed} --budget=${budget} --startingState=${startingState} --workers=1${strategyFlag}`;
 }
 
 export function aggregateCampaignMetrics(
   runs: CampaignRunMetric[],
   budget: number,
-  startingState: PracticeAbstractState
+  startingState: PracticeAbstractState,
+  strategy: MonkeySelectionStrategy = 'uniform',
 ): CampaignSummary {
   let passedRuns = 0;
   let failedRuns = 0;
@@ -46,6 +56,8 @@ export function aggregateCampaignMetrics(
   let totalDurationMs = 0;
   const statesSet = new Set<PracticeAbstractState>();
   const transitionsSet = new Set<string>();
+  const stateActionsSet = new Set<string>();
+  const transitionPairsSet = new Set<string>();
   const failedSeeds: number[] = [];
   const replayCommands: string[] = [];
 
@@ -55,7 +67,7 @@ export function aggregateCampaignMetrics(
     } else {
       failedRuns++;
       failedSeeds.push(run.seed);
-      replayCommands.push(formatReplayCommand(run.seed, budget, startingState));
+      replayCommands.push(formatReplayCommand(run.seed, budget, startingState, strategy));
     }
 
     totalActions += run.executedSteps;
@@ -67,12 +79,23 @@ export function aggregateCampaignMetrics(
     for (const transition of run.transitions) {
       transitionsSet.add(transition);
     }
+    if (run.stateActions) {
+      for (const sa of run.stateActions) {
+        stateActionsSet.add(sa);
+      }
+    }
+    if (run.transitionPairs) {
+      for (const tp of run.transitionPairs) {
+        transitionPairsSet.add(tp);
+      }
+    }
   }
 
   const actionsPerSecond =
     totalDurationMs > 0 ? Number(((totalActions / totalDurationMs) * 1000).toFixed(2)) : 0;
 
   return {
+    strategy,
     totalRuns: runs.length,
     passedRuns,
     failedRuns,
@@ -81,6 +104,8 @@ export function aggregateCampaignMetrics(
     actionsPerSecond,
     uniqueStatesVisited: Array.from(statesSet),
     uniqueTransitionsExercised: Array.from(transitionsSet),
+    uniqueStateActionsCovered: Array.from(stateActionsSet),
+    uniqueTransitionPairsCovered: Array.from(transitionPairsSet),
     failedSeeds,
     replayCommands,
   };
@@ -91,6 +116,7 @@ export function formatCampaignSummaryTable(summary: CampaignSummary): string {
     '==================================================',
     '          Exploration Campaign Summary            ',
     '==================================================',
+    `Strategy:            ${summary.strategy || 'uniform'}`,
     `Total Runs:          ${summary.totalRuns}`,
     `Passed Runs:         ${summary.passedRuns}`,
     `Failed Runs:         ${summary.failedRuns}`,
@@ -99,6 +125,8 @@ export function formatCampaignSummaryTable(summary: CampaignSummary): string {
     `Action Throughput:   ${summary.actionsPerSecond} actions/sec`,
     `States Visited:      ${summary.uniqueStatesVisited.join(', ') || 'None'}`,
     `Transitions Count:   ${summary.uniqueTransitionsExercised.length}`,
+    `State-Actions:       ${summary.uniqueStateActionsCovered.length}`,
+    `Transition Pairs:    ${summary.uniqueTransitionPairsCovered.length}`,
   ];
 
   if (summary.failedSeeds.length > 0) {
