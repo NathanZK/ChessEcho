@@ -251,7 +251,7 @@ describe('Issue 98 — persisted state store and page hydration', () => {
   });
 
   it('T6 — the persisted tab is applied in the first committed render and a valid hash wins', () => {
-    localStorage.setItem('chessecho_active_tab', 'import');
+    localStorage.setItem('chessprobe_active_tab', 'import');
 
     const persistedOnly = render(<Home />);
     expect(headerRenders.length).toBeGreaterThan(0);
@@ -303,7 +303,7 @@ describe('Issue 98 — persisted state store and page hydration', () => {
     });
 
     expect(lastHeaderRender().activeTab).toBe('weaknesses');
-    expect(localStorage.getItem('chessecho_active_tab')).toBe('weaknesses');
+    expect(localStorage.getItem('chessprobe_active_tab')).toBe('weaknesses');
 
     await act(async () => {
       window.location.hash = '#import';
@@ -311,7 +311,7 @@ describe('Issue 98 — persisted state store and page hydration', () => {
     });
 
     expect(lastHeaderRender().activeTab).toBe('import');
-    expect(localStorage.getItem('chessecho_active_tab')).toBe('import');
+    expect(localStorage.getItem('chessprobe_active_tab')).toBe('import');
 
     await act(async () => {
       window.location.hash = '#nonsense';
@@ -319,7 +319,7 @@ describe('Issue 98 — persisted state store and page hydration', () => {
     });
 
     expect(lastHeaderRender().activeTab).toBe('import');
-    expect(localStorage.getItem('chessecho_active_tab')).toBe('import');
+    expect(localStorage.getItem('chessprobe_active_tab')).toBe('import');
   });
 
   it('T9 — disconnecting clears the account context, the puzzle state and both persisted keys', async () => {

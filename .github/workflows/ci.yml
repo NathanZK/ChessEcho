@@ -102,15 +102,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build backend Docker image
-        run: docker build -t chessecho-backend:test backend
+        run: docker build -t chessprobe-backend:test backend
       - name: Smoke check container runtime and app.jar
         run: |
-          docker run --rm --entrypoint java chessecho-backend:test -version
-          docker run --rm --entrypoint test chessecho-backend:test -s /app/app.jar
+          docker run --rm --entrypoint java chessprobe-backend:test -version
+          docker run --rm --entrypoint test chessprobe-backend:test -s /app/app.jar
       - name: Smoke check Stockfish UCI handshake
         run: |
           set -eo pipefail
-          output=$(printf "uci\nquit\n" | timeout 15s docker run --rm -i --entrypoint stockfish chessecho-backend:test)
+          output=$(printf "uci\nquit\n" | timeout 15s docker run --rm -i --entrypoint stockfish chessprobe-backend:test)
           echo "$output"
           echo "$output" | grep -q "uciok"
       - name: Log in to Docker Hub
@@ -122,10 +122,10 @@ jobs:
       - name: Publish backend Docker image
         if: github.repository == 'NathanZK/ChessEcho' && github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
-          docker tag chessecho-backend:test nathanzk/chessecho-backend:sha-${{ github.sha }}
-          docker tag chessecho-backend:test nathanzk/chessecho-backend:latest
-          docker push nathanzk/chessecho-backend:sha-${{ github.sha }}
-          docker push nathanzk/chessecho-backend:latest
+          docker tag chessprobe-backend:test nathanzk/chessprobe-backend:sha-${{ github.sha }}
+          docker tag chessprobe-backend:test nathanzk/chessprobe-backend:latest
+          docker push nathanzk/chessprobe-backend:sha-${{ github.sha }}
+          docker push nathanzk/chessprobe-backend:latest
 
   ci-gate:
     name: CI Gate

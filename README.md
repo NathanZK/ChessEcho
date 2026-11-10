@@ -1,22 +1,22 @@
-# ChessEcho ♟️
+# ChessProbe ♟️
 
 > Find not just what went wrong in a game — but what keeps going wrong across hundreds of them.
 
-![ChessEcho demo](docs/assets/chessEcho_demo.gif)
+![ChessProbe demo](docs/assets/chessEcho_demo.gif)
 
-Traditional chess analysis tools show you every engine blunder across every game separately. ChessEcho takes a different approach: it finds **recurring board positions** where you repeatedly make sub-optimal decisions, analyzes them with Stockfish, and turns the highest-priority patterns into interactive personalized puzzles.
+Traditional chess analysis tools show you every engine blunder across every game separately. ChessProbe takes a different approach: it finds **recurring board positions** where you repeatedly make sub-optimal decisions, analyzes them with Stockfish, and turns the highest-priority patterns into interactive personalized puzzles.
 
 A single mistake may be accidental. A mistake you repeat across fifty games is a habit worth fixing.
 
 ---
 
-## Why ChessEcho?
+## Why ChessProbe?
 
 Most post-game analysis tools answer: *"What went wrong in this game?"*
 
-ChessEcho answers: *"Which positions do I repeatedly reach, and where do I keep making weaker decisions?"*
+ChessProbe answers: *"Which positions do I repeatedly reach, and where do I keep making weaker decisions?"*
 
-The difference matters in practice. Suppose you reach a particular opening position 40 times over a year. You play Bf5 in 30 of those games, losing an average of 1.1 pawns each time. A standard analysis engine would show you 30 separate blunders. ChessEcho recognizes the same recurring decision and presents it as one weakness to fix.
+The difference matters in practice. Suppose you reach a particular opening position 40 times over a year. You play Bf5 in 30 of those games, losing an average of 1.1 pawns each time. A standard analysis engine would show you 30 separate blunders. ChessProbe recognizes the same recurring decision and presents it as one weakness to fix.
 
 The goal is to change habits, not to memorize engine lines.
 
@@ -72,8 +72,8 @@ The goal is to change habits, not to memorize engine lines.
 ### 1. Clone
 
 ```bash
-git clone https://github.com/<your-username>/ChessEcho.git
-cd ChessEcho
+git clone https://github.com/<your-username>/ChessProbe.git
+cd ChessProbe
 ```
 
 ### 2. Install Stockfish
@@ -105,7 +105,7 @@ make db-up
 This starts a PostgreSQL 16 container (`chessecho-postgres`) on port `5432` with:
 - Database: `chessecho`
 - User: `chessecho`
-- Password: `chessecho_pass`
+- Password: `chessprobe_pass`
 
 Data is persisted in a named Docker volume (`postgres_data`).
 
@@ -123,11 +123,11 @@ CHESS_PUBAPI_USERNAME=your_chesscom_username \
 CHESS_PUBAPI_CONTACT=your_email@example.com \
 SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5432/chessecho \
 SPRING_DATASOURCE_USERNAME=chessecho \
-SPRING_DATASOURCE_PASSWORD=chessecho_pass \
+SPRING_DATASOURCE_PASSWORD=chessprobe_pass \
 ./gradlew bootRun
 ```
 
-> **Note:** The [Chess.com PubAPI](https://support.chess.com/en/articles/9650547-what-is-the-pubapi-and-how-do-i-use-it) requires outbound API requests to declare a custom `User-Agent` header (`ChessEcho/1.0 (username: <username>; contact: <email>)`). Before running ChessEcho, set `CHESS_PUBAPI_USERNAME` to your operator Chess.com username (e.g., `your_chesscom_username`) and `CHESS_PUBAPI_CONTACT` to your contact email address.
+> **Note:** The [Chess.com PubAPI](https://support.chess.com/en/articles/9650547-what-is-the-pubapi-and-how-do-i-use-it) requires outbound API requests to declare a custom `User-Agent` header (`ChessProbe/1.0 (username: <username>; contact: <email>)`). Before running ChessProbe, set `CHESS_PUBAPI_USERNAME` to your operator Chess.com username (e.g., `your_chesscom_username`) and `CHESS_PUBAPI_CONTACT` to your contact email address.
 >
 > **Note:** The default `SPRING_DATASOURCE_URL` in `application.yml` points to `postgres:5432` (the Docker Compose hostname). When running the backend outside Docker, you must override the URL to `localhost:5432` as shown above.
 
@@ -180,7 +180,7 @@ Runs the published backend container alongside PostgreSQL without needing to clo
      -p 5432:5432 \
      -e POSTGRES_DB=chessecho \
      -e POSTGRES_USER=chessecho \
-     -e POSTGRES_PASSWORD=chessecho_pass \
+     -e POSTGRES_PASSWORD=chessprobe_pass \
      -v postgres_data:/var/lib/postgresql/data \
      postgres:16-alpine
    ```
@@ -193,7 +193,7 @@ Runs the published backend container alongside PostgreSQL without needing to clo
      -p 8080:8080 \
      -e SPRING_DATASOURCE_URL=jdbc:postgresql://chessecho-postgres:5432/chessecho \
      -e SPRING_DATASOURCE_USERNAME=chessecho \
-     -e SPRING_DATASOURCE_PASSWORD=chessecho_pass \
+     -e SPRING_DATASOURCE_PASSWORD=chessprobe_pass \
      -e STOCKFISH_PATH=stockfish \
      -e CHESS_PUBAPI_USERNAME=your_chesscom_username \
      -e CHESS_PUBAPI_CONTACT=your_email@example.com \
@@ -269,9 +269,9 @@ Rank recurring weaknesses and serve as personalized puzzles
 
 ### Why Recurring Positions?
 
-Rather than collecting every individual engine blunder, ChessEcho focuses on positions you reach repeatedly. A single bad move in a game you will never see again is not worth drilling. A bad habit you repeat across 20 games is worth treating.
+Rather than collecting every individual engine blunder, ChessProbe focuses on positions you reach repeatedly. A single bad move in a game you will never see again is not worth drilling. A bad habit you repeat across 20 games is worth treating.
 
-Filtering by recurrence means ChessEcho surfaces decisions you will likely encounter again — and gives you the opportunity to change the outcome.
+Filtering by recurrence means ChessProbe surfaces decisions you will likely encounter again — and gives you the opportunity to change the outcome.
 
 ### How Position Identity Is Defined
 
@@ -288,7 +288,7 @@ Move-order transpositions that produce legally identical positions are grouped t
 
 ## Architecture
 
-![ChessEcho Architecture and Data Flow Pipeline](docs/assets/architecture-data-flow.svg)
+![ChessProbe Architecture and Data Flow Pipeline](docs/assets/architecture-data-flow.svg)
 
 ### Components
 
@@ -347,7 +347,7 @@ UserPositionStats   (aggregated reach counts per account/position/color)
 
 ### Important Limitation: Exact Position Matching
 
-ChessEcho currently works with **exact recurring positions**. It identifies games where the identical board state was reached, not games that share a broader strategic theme.
+ChessProbe currently works with **exact recurring positions**. It identifies games where the identical board state was reached, not games that share a broader strategic theme.
 
 It does not currently recognize abstract patterns such as:
 - *"You frequently push pawns in front of your castled king"*
@@ -359,7 +359,7 @@ These are future research directions. The current system identifies concrete, fr
 
 ## Current Status
 
-ChessEcho is a **functional MVP**. The core pipeline works end-to-end:
+ChessProbe is a **functional MVP**. The core pipeline works end-to-end:
 
 **Import → Engine Analysis → Weakness Detection → Personalized Puzzle Practice**
 

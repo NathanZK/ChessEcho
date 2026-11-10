@@ -1,6 +1,6 @@
 ---
 name: Product issue
-about: Minimal, reusable structure for a ChessEcho product change
+about: Minimal, reusable structure for a ChessProbe product change
 title: ""
 labels: []
 assignees: []
@@ -34,7 +34,7 @@ acceptance criteria, validation/testing, mitigations, or implementation steps.
 ## Repository constraints
 
 - Deployment state: <!-- Default: pre-deployment. Only add a line here if
-  ChessEcho (or the relevant environment) is already deployed; see
+  ChessProbe (or the relevant environment) is already deployed; see
   docs/engineering/repository-conventions.md for what this changes. -->
 - Any other repository-specific constraints this issue must respect (for
   example, an existing architectural boundary that must not be redesigned).

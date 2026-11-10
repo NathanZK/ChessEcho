@@ -6,7 +6,7 @@
 
 export type SoundType = 'correct' | 'incorrect' | 'completion' | 'move';
 
-const SOUND_STORAGE_KEY = 'chessecho_sound_enabled';
+const SOUND_STORAGE_KEY = 'chessprobe_sound_enabled';
 
 const SOUND_PATHS: Record<SoundType, string> = {
   correct: '/sounds/correct.wav',

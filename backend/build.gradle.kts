@@ -9,7 +9,7 @@ plugins {
     id("io.gitlab.arturbosch.detekt") version "1.23.7"
 }
 
-group = "com.chessecho"
+group = "com.chessprobe"
 version = "0.0.1-SNAPSHOT"
 
 // Spring Boot's dependency-management BOM pins org.testcontainers artifacts to an
@@ -118,8 +118,8 @@ pitest {
             }
             parsedClasses to parsedTests
         } else {
-            listOf("com.chessecho.service.AdaptivePuzzleSchedulingPolicy*") to
-                listOf("com.chessecho.service.AdaptivePuzzleSchedulingPolicyTest*")
+            listOf("com.chessprobe.service.AdaptivePuzzleSchedulingPolicy*") to
+                listOf("com.chessprobe.service.AdaptivePuzzleSchedulingPolicyTest*")
         }
 
     targetClasses.set(effectiveTargetClasses)

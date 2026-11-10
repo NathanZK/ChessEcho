@@ -68,7 +68,7 @@ canonical FEN.
 ## Verification (bounded, always performed before trust)
 
 Every export, verify, and import request is checked against configurable
-bounds (`chessecho.corpus.*`, see below) before any bytes are fully expanded
+bounds (`chessprobe.corpus.*`, see below) before any bytes are fully expanded
 or any row is written: overall archive size, per-entry expanded size, total
 game/observation counts, and per-NDJSON-record byte size. A trusted
 `expectedDigest` must be supplied and independently recomputed; a mismatch is

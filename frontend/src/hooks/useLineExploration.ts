@@ -124,7 +124,7 @@ export function useLineExploration({
     return currentBoardFen.split(' ')[1] === 'w' ? 'White' : 'Black';
   }, [currentBoardFen, activePuzzle]);
 
-  const continuationSelectionPolicy = explorationPlayMode === 'CHESSECHO'
+  const continuationSelectionPolicy = explorationPlayMode === 'CHESSPROBE'
     ? chessEchoSelectionPolicy
     : deterministicSelectionPolicy;
   const continuation = usePuzzleContinuation(
@@ -167,7 +167,7 @@ export function useLineExploration({
       currentEvalCp,
     });
 
-    if (isExplorationActive && explorationPlayMode === 'CHESSECHO' && !continuation.loading) {
+    if (isExplorationActive && explorationPlayMode === 'CHESSPROBE' && !continuation.loading) {
       if (
         continuation.response?.fen === requestedContinuationFen &&
         currentBoardFen === requestedContinuationFen &&
@@ -317,7 +317,7 @@ export function useLineExploration({
     nextFen: string,
     feedback?: { isBest: boolean; loss: number; evalCp?: number | null; fromFen?: string; bestMove?: string }
   ) => {
-    if (explorationPlayMode === 'CHESSECHO') {
+    if (explorationPlayMode === 'CHESSPROBE') {
       setRequestedContinuationFen(nextFen);
       setLastContinuationCandidates(null);
     } else {
@@ -391,7 +391,7 @@ export function useLineExploration({
     }
     setExplorationEvalMap(initialMap);
 
-    if (initialMode === 'CHESSECHO') {
+    if (initialMode === 'CHESSPROBE') {
       setRequestedContinuationFen(baselineFen);
     } else {
       setRequestedContinuationFen(undefined);

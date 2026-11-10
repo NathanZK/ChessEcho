@@ -1,0 +1,49 @@
+package com.chessprobe.controller
+
+import com.chessprobe.domain.DecisionSeverity
+import com.chessprobe.domain.TimeControl
+import com.chessprobe.dto.LongDecisionPageResponse
+import com.chessprobe.service.LongDecisionService
+import com.chessprobe.service.auth.AuthenticatedPrincipal
+import org.springframework.http.HttpStatus
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
+import org.springframework.web.bind.annotation.RestController
+import org.springframework.web.server.ResponseStatusException
+import java.util.UUID
+
+@RestController
+@RequestMapping("/api/positions")
+class LongDecisionController(
+    private val longDecisionService: LongDecisionService,
+) {
+    @GetMapping("/long-decisions")
+    fun getLongDecisions(
+        @RequestParam accountId: UUID,
+        @RequestParam timeControl: TimeControl,
+        @RequestParam(required = false) minDurationSeconds: Int?,
+        @RequestParam(required = false) thresholdSeconds: Int?,
+        @RequestParam(required = false) severity: DecisionSeverity?,
+        @RequestParam(defaultValue = "0") page: Int,
+        @RequestParam(defaultValue = "20") size: Int,
+        principal: AuthenticatedPrincipal,
+    ): LongDecisionPageResponse {
+        if (minDurationSeconds == null && thresholdSeconds == null && severity == null) {
+            throw ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                "At least one of severity, minDurationSeconds, or thresholdSeconds is required",
+            )
+        }
+        return longDecisionService.findLongDecisions(
+            accountId = accountId,
+            timeControl = timeControl,
+            minDurationSeconds = minDurationSeconds,
+            thresholdSeconds = thresholdSeconds,
+            severity = severity,
+            page = page,
+            size = size,
+            principal = principal,
+        )
+    }
+}

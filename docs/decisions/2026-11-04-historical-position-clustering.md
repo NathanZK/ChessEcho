@@ -4,7 +4,7 @@
 **Context**: Issue [#702](https://github.com/NathanZK/ChessEcho/issues/702) (incorporating research from [#701](https://github.com/NathanZK/ChessEcho/issues/701))
 
 ## Context
-ChessEcho required an account-scoped offline position clustering capability to identify cohesive thematic position families from an account's historical games. The solution needed an internal experimental weighting parameter $\alpha \in [0.0, 1.0]$ between pawn structure and piece placement tokens, high candidate retrieval recall, graph construction via Relaxed MNN, CWTS Leiden community detection with Reichardt-Bornholdt modularity parity, centroid cohesion pruning, and immutable snapshot lifecycle persistence.
+ChessProbe required an account-scoped offline position clustering capability to identify cohesive thematic position families from an account's historical games. The solution needed an internal experimental weighting parameter $\alpha \in [0.0, 1.0]$ between pawn structure and piece placement tokens, high candidate retrieval recall, graph construction via Relaxed MNN, CWTS Leiden community detection with Reichardt-Bornholdt modularity parity, centroid cohesion pruning, and immutable snapshot lifecycle persistence.
 
 ## Choice
 1. **Configurable Internal Parameter $\alpha$**: Default $\alpha = 0.60$ preserved. Supported across $[0.0, 1.0]$. Inverted-index score accumulation is normalized by active query term counts per family ($\frac{\alpha}{|q_P|}$ and $\frac{1-\alpha}{|q_{Pc}|}$) to eliminate piece-term volume imbalance, achieving 100% Recall@1 and Recall@10 across all $\alpha \in \{0.0, 0.60, 1.0\}$.

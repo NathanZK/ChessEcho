@@ -2,9 +2,9 @@ spring:
   application:
     name: chess-echo
   datasource:
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://postgres:5432/chessecho}
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://postgres:5432/chessprobe}
     username: ${SPRING_DATASOURCE_USERNAME:chessecho}
-    password: ${SPRING_DATASOURCE_PASSWORD:chessecho_pass}
+    password: ${SPRING_DATASOURCE_PASSWORD:chessprobe_pass}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
@@ -19,42 +19,42 @@ spring:
   servlet:
     multipart:
       file-size-threshold: 0B
-      max-file-size: ${CHESSECHO_CORPUS_MULTIPART_MAX_FILE_SIZE:2GB}
-      max-request-size: ${CHESSECHO_CORPUS_MULTIPART_MAX_REQUEST_SIZE:3GB}
+      max-file-size: ${CHESSPROBE_CORPUS_MULTIPART_MAX_FILE_SIZE:2GB}
+      max-request-size: ${CHESSPROBE_CORPUS_MULTIPART_MAX_REQUEST_SIZE:3GB}
 
 chessecho:
   auth:
     cookie:
-      name: CHESSECHO_SESSION
-      secure: ${CHESSECHO_AUTH_COOKIE_SECURE:true}
-      same-site: ${CHESSECHO_AUTH_COOKIE_SAME_SITE:Lax}
+      name: CHESSPROBE_SESSION
+      secure: ${CHESSPROBE_AUTH_COOKIE_SECURE:true}
+      same-site: ${CHESSPROBE_AUTH_COOKIE_SAME_SITE:Lax}
       path: /
     csrf:
       cookie-name: XSRF-TOKEN
       header-name: X-XSRF-TOKEN
     session:
-      idle-timeout: ${CHESSECHO_AUTH_SESSION_IDLE_TIMEOUT:PT30M}
-      absolute-timeout: ${CHESSECHO_AUTH_SESSION_ABSOLUTE_TIMEOUT:P30D}
+      idle-timeout: ${CHESSPROBE_AUTH_SESSION_IDLE_TIMEOUT:PT30M}
+      absolute-timeout: ${CHESSPROBE_AUTH_SESSION_ABSOLUTE_TIMEOUT:P30D}
     dev-mode:
-      enabled: ${CHESSECHO_AUTH_DEV_MODE_ENABLED:false}
+      enabled: ${CHESSPROBE_AUTH_DEV_MODE_ENABLED:false}
   corpus:
-    archive-root: ${CHESSECHO_CORPUS_ARCHIVE_ROOT:/var/lib/chessecho/corpus-archive}
-    max-archive-bytes: ${CHESSECHO_CORPUS_MAX_ARCHIVE_BYTES:2147483648}
-    max-expanded-bytes: ${CHESSECHO_CORPUS_MAX_EXPANDED_BYTES:4294967296}
-    max-games: ${CHESSECHO_CORPUS_MAX_GAMES:100000}
-    max-observations: ${CHESSECHO_CORPUS_MAX_OBSERVATIONS:10000000}
-    max-record-bytes: ${CHESSECHO_CORPUS_MAX_RECORD_BYTES:4194304}
+    archive-root: ${CHESSPROBE_CORPUS_ARCHIVE_ROOT:/var/lib/chessecho/corpus-archive}
+    max-archive-bytes: ${CHESSPROBE_CORPUS_MAX_ARCHIVE_BYTES:2147483648}
+    max-expanded-bytes: ${CHESSPROBE_CORPUS_MAX_EXPANDED_BYTES:4294967296}
+    max-games: ${CHESSPROBE_CORPUS_MAX_GAMES:100000}
+    max-observations: ${CHESSPROBE_CORPUS_MAX_OBSERVATIONS:10000000}
+    max-record-bytes: ${CHESSPROBE_CORPUS_MAX_RECORD_BYTES:4194304}
   clustering:
-    alpha: ${CHESSECHO_CLUSTERING_ALPHA:0.60}
-    top-k: ${CHESSECHO_CLUSTERING_TOP_K:30}
-    candidate-limit: ${CHESSECHO_CLUSTERING_CANDIDATE_LIMIT:200}
-    floor-threshold: ${CHESSECHO_CLUSTERING_FLOOR_THRESHOLD:0.40}
-    top1-threshold: ${CHESSECHO_CLUSTERING_TOP1_THRESHOLD:0.65}
-    rb-resolution: ${CHESSECHO_CLUSTERING_RB_RESOLUTION:1.25}
-    centroid-threshold: ${CHESSECHO_CLUSTERING_CENTROID_THRESHOLD:0.38}
+    alpha: ${CHESSPROBE_CLUSTERING_ALPHA:0.60}
+    top-k: ${CHESSPROBE_CLUSTERING_TOP_K:30}
+    candidate-limit: ${CHESSPROBE_CLUSTERING_CANDIDATE_LIMIT:200}
+    floor-threshold: ${CHESSPROBE_CLUSTERING_FLOOR_THRESHOLD:0.40}
+    top1-threshold: ${CHESSPROBE_CLUSTERING_TOP1_THRESHOLD:0.65}
+    rb-resolution: ${CHESSPROBE_CLUSTERING_RB_RESOLUTION:1.25}
+    centroid-threshold: ${CHESSPROBE_CLUSTERING_CENTROID_THRESHOLD:0.38}
   weakness:
     community:
-      min-size: ${CHESSECHO_WEAKNESS_COMMUNITY_MIN_SIZE:10}
+      min-size: ${CHESSPROBE_WEAKNESS_COMMUNITY_MIN_SIZE:10}
 
 chess:
   stockfish:

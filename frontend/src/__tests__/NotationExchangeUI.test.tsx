@@ -80,7 +80,7 @@ describe('NotationExchangeUI', () => {
   it('renders ChessProbe responding and checkmate terminal messages', () => {
     const respondingState = {
       ...createBlinfoldGameState(START_FEN, 'WHITE'),
-      currentTurn: 'CHESSECHO' as const,
+      currentTurn: 'CHESSPROBE' as const,
     };
 
     const { rerender } = render(
@@ -97,7 +97,7 @@ describe('NotationExchangeUI', () => {
     const wonState = {
       ...createBlinfoldGameState(START_FEN, 'WHITE'),
       isTerminal: true,
-      winner: 'CHESSECHO' as const,
+      winner: 'CHESSPROBE' as const,
       terminalReason: 'CHECKMATE' as const,
     };
 

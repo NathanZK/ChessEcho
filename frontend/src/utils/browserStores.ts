@@ -90,7 +90,7 @@ export type TabValue =
   | 'import'
   | 'game-analysis';
 
-const TAB_KEY = 'chessecho_active_tab';
+const TAB_KEY = 'chessprobe_active_tab';
 const USERNAME_KEY = 'chessecho_username';
 const ACCOUNT_KEY = 'chessecho_active_account';
 const JOB_KEY = 'chessecho_active_job';

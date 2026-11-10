@@ -1854,7 +1854,7 @@ export function PracticePuzzlesView({
                       isExplorationActive={lineExploration.isExplorationActive}
                       onUnacceptableMove={lineExploration.handleUnacceptableMove}
                       onUserExplorationMove={lineExploration.handleUserExplorationMove}
-                      onChessEchoExplorationMove={lineExploration.handleChessEchoExplorationMove}
+                      onChessProbeExplorationMove={lineExploration.handleChessEchoExplorationMove}
                       alternativeContinuationToApply={lineExploration.alternativeContinuationToApply}
                       onAlternativeContinuationApplied={() =>
                         lineExploration.setAlternativeContinuationToApply(null)

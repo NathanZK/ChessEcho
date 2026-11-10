@@ -1,6 +1,6 @@
 # Opt-in Mutation Testing with StrykerJS
 
-This guide documents the opt-in StrykerJS mutation testing integration for ChessEcho's Next.js/TypeScript frontend codebase (`frontend/`). Mutation testing evaluates unit test effectiveness by introducing synthetic faults (mutants) into source TypeScript code and checking whether existing Vitest suites fail (kill the mutant).
+This guide documents the opt-in StrykerJS mutation testing integration for ChessProbe's Next.js/TypeScript frontend codebase (`frontend/`). Mutation testing evaluates unit test effectiveness by introducing synthetic faults (mutants) into source TypeScript code and checking whether existing Vitest suites fail (kill the mutant).
 
 StrykerJS is integrated strictly as an on-demand, local developer tool. It is completely isolated from default build and test lifecycles (`npm test`, `npm run lint`, `npx tsc --noEmit`, `npm run build`) and is never run in CI.
 
@@ -88,7 +88,7 @@ Runtime for frontend mutation testing is determined by:
 
 Do **not** evaluate mutation testing results by chasing an arbitrary percentage score (e.g. "must achieve 80% mutation coverage"). Surviving mutants must be inspected qualitatively based on the specific mutation and intended behavior.
 
-ChessEcho classifies frontend mutants into the following structured taxonomy:
+ChessProbe classifies frontend mutants into the following structured taxonomy:
 
 ### 1. Actionable test gaps (Defects to Fix)
 - **Description**: The mutant altered business logic or validation checks, but the test suite passed because of missing assertions, incomplete input boundaries, or missing scenarios.
@@ -112,7 +112,7 @@ ChessEcho classifies frontend mutants into the following structured taxonomy:
 - **Action**: Cannot be killed without violating black-box contract principles; accept as unkillable.
 
 ### Strict Score Policy
-- **No minimum score threshold**: No mutation coverage threshold is mandated or enforced in ChessEcho frontend.
+- **No minimum score threshold**: No mutation coverage threshold is mandated or enforced in ChessProbe frontend.
 - **No brittle over-assertion**: Never introduce brittle assertions or modify production application code solely to raise mutation scores.
 
 ---

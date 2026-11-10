@@ -5,7 +5,7 @@ import { areMovesEqual, toCanonicalMove, type CanonicalMove } from '../utils/che
 import { parseFenInput, parsePgnMainLine } from '../utils/positionImport';
 import {
   applyPlayerMove,
-  applyChessEchoMove,
+  applyChessProbeMove,
   createBlinfoldGameState,
   rebuildPositionFromHistory,
   type BlindfoldGameState,
@@ -455,7 +455,7 @@ describe('Blindfold State Transition & Reversibility Properties (blindfoldGameSt
     const afterTerminalResult = applyPlayerMove(terminalState, 'e4', BENCHMARK_FENS[0]);
     expect(afterTerminalResult).toEqual({ error: 'Illegal move: game is complete' });
 
-    const afterTerminalEngineResult = applyChessEchoMove(terminalState, 'e4', BENCHMARK_FENS[0]);
+    const afterTerminalEngineResult = applyChessProbeMove(terminalState, 'e4', BENCHMARK_FENS[0]);
     expect(afterTerminalEngineResult).toEqual({ error: 'Illegal move: game is complete' });
   });
 
@@ -468,7 +468,7 @@ describe('Blindfold State Transition & Reversibility Properties (blindfoldGameSt
       fc.property(fenArb, moveChoiceArb, (startFen, choices) => {
         let state: BlindfoldGameState = createBlinfoldGameState(startFen);
         const chess = new Chess(startFen);
-        let expectedTurn: 'PLAYER' | 'CHESSECHO' = 'PLAYER';
+        let expectedTurn: 'PLAYER' | 'CHESSPROBE' = 'PLAYER';
 
         for (const choice of choices) {
           if (state.isTerminal) break;
@@ -484,9 +484,9 @@ describe('Blindfold State Transition & Reversibility Properties (blindfoldGameSt
             expect('error' in result).toBe(false);
             if ('error' in result) return;
             state = result;
-            expectedTurn = 'CHESSECHO';
+            expectedTurn = 'CHESSPROBE';
           } else {
-            const result = applyChessEchoMove(state, san, state.currentFen);
+            const result = applyChessProbeMove(state, san, state.currentFen);
             expect('error' in result).toBe(false);
             if ('error' in result) return;
             state = result;
@@ -517,7 +517,7 @@ describe('Blindfold State Transition & Reversibility Properties (blindfoldGameSt
           expect(applyPlayerMove(state, 'e4', state.currentFen)).toEqual({
             error: 'Illegal move: game is complete',
           });
-          expect(applyChessEchoMove(state, 'e4', state.currentFen)).toEqual({
+          expect(applyChessProbeMove(state, 'e4', state.currentFen)).toEqual({
             error: 'Illegal move: game is complete',
           });
         }

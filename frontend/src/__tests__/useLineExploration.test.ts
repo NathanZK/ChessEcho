@@ -52,11 +52,11 @@ describe('useLineExploration', () => {
     expect(result.current.isExplorationActive).toBe(false);
 
     act(() => {
-      result.current.handleEnterExploration('CHESSECHO');
+      result.current.handleEnterExploration('CHESSPROBE');
     });
 
     expect(result.current.isExplorationActive).toBe(true);
-    expect(result.current.explorationPlayMode).toBe('CHESSECHO');
+    expect(result.current.explorationPlayMode).toBe('CHESSPROBE');
     expect(onFeedbackChange).toHaveBeenCalledWith({ status: 'EXPLORING' });
   });
 
@@ -116,7 +116,7 @@ describe('useLineExploration', () => {
     );
 
     act(() => {
-      result.current.handleEnterExploration('CHESSECHO');
+      result.current.handleEnterExploration('CHESSPROBE');
     });
     expect(result.current.isExplorationActive).toBe(true);
 

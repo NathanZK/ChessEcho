@@ -90,7 +90,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
         onMinMistakeCountChange={() => {}}
         onApplySettings={() => {}}
         isExplorationActive={true}
-        explorationPlayMode="CHESSECHO"
+        explorationPlayMode="CHESSPROBE"
         onEnterExploration={handleEnterExploration}
         onExitExploration={handleExitExploration}
         continuationCandidate={{
@@ -120,7 +120,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
         onMinMistakeCountChange={() => {}}
         onApplySettings={() => {}}
         isExplorationActive={true}
-        explorationPlayMode="CHESSECHO"
+        explorationPlayMode="CHESSPROBE"
         unacceptableMoveMessage="That move is outside the acceptable range."
       />
     );
@@ -153,7 +153,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
           pendingContinuationCandidate={null}
           onContinuationApplied={handleContinuationApplied}
           isExplorationActive={true}
-        explorationPlayMode="CHESSECHO"
+        explorationPlayMode="CHESSPROBE"
         />
       );
     });
@@ -169,7 +169,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
         onNextPuzzle={() => {}}
         onFenChange={handleFenChange}
         isExplorationActive={true}
-        explorationPlayMode="CHESSECHO"
+        explorationPlayMode="CHESSPROBE"
       />
     );
     rerenderBox.fn = rerender;
@@ -190,7 +190,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
         pendingContinuationCandidate={candidate}
         onContinuationApplied={handleContinuationApplied}
         isExplorationActive={true}
-        explorationPlayMode="CHESSECHO"
+        explorationPlayMode="CHESSPROBE"
       />
     );
 
@@ -217,7 +217,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
         onMinMistakeCountChange={() => {}}
         onApplySettings={() => {}}
         isExplorationActive={true}
-        explorationPlayMode="CHESSECHO"
+        explorationPlayMode="CHESSPROBE"
         onExitExploration={handleExitExploration}
       />
     );
@@ -263,13 +263,13 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
 
     // A lightweight wrapper replicating page.tsx's state machine for exploration
     function TestOrchestrator() {
-      const [explorationTurn, setExplorationTurn] = React.useState<'USER' | 'CHESSECHO' | 'OFF'>('OFF');
+      const [explorationTurn, setExplorationTurn] = React.useState<'USER' | 'CHESSPROBE' | 'OFF'>('OFF');
       const [currentBoardFen, setCurrentBoardFen] = React.useState(mockPuzzle.fen);
       const [pendingContinuationCandidate, setPendingContinuationCandidate] = React.useState<api.ContinuationCandidate | null>(null);
 
       // Simulate the usePuzzleContinuation hook effect inside page.tsx
       React.useEffect(() => {
-        if (explorationTurn === 'CHESSECHO') {
+        if (explorationTurn === 'CHESSPROBE') {
           api.fetchPuzzleContinuation(currentBoardFen, 'ENGINE').then(res => {
             if (res && res.candidates && res.candidates.length > 0) {
               setPendingContinuationCandidate(res.candidates[0]);
@@ -294,9 +294,9 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
             onMinMistakeCountChange={() => {}}
             onApplySettings={() => {}}
             isExplorationActive={isExplorationActive}
-            isContinuationLoading={explorationTurn === 'CHESSECHO'}
-            explorationPlayMode="CHESSECHO"
-            onEnterExploration={() => setExplorationTurn('CHESSECHO')}
+            isContinuationLoading={explorationTurn === 'CHESSPROBE'}
+            explorationPlayMode="CHESSPROBE"
+            onEnterExploration={() => setExplorationTurn('CHESSPROBE')}
             onExitExploration={() => setExplorationTurn('OFF')}
           />
           <ChessBoardArea
@@ -310,10 +310,10 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
             onFenChange={(fen) => setCurrentBoardFen(fen)}
             isExplorationActive={isExplorationActive}
             onUserExplorationMove={() => {
-              // Emulate user making a move -> transition to CHESSECHO turn
-              setExplorationTurn('CHESSECHO');
+              // Emulate user making a move -> transition to CHESSPROBE turn
+              setExplorationTurn('CHESSPROBE');
             }}
-            onChessEchoExplorationMove={() => {
+            onChessProbeExplorationMove={() => {
               // Transition to USER turn
               setExplorationTurn('USER');
             }}
@@ -389,7 +389,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
         onNextPuzzle={() => {}}
         onFenChange={handleFenChange}
         isExplorationActive={true}
-        explorationPlayMode="CHESSECHO"
+        explorationPlayMode="CHESSPROBE"
         onUserExplorationMove={handleUserExplorationMove}
         onUnacceptableMove={handleUnacceptableMove}
       />
@@ -480,7 +480,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
         onMinMistakeCountChange={() => {}}
         onApplySettings={() => {}}
         isExplorationActive={true}
-        explorationPlayMode="CHESSECHO"
+        explorationPlayMode="CHESSPROBE"
         lastContinuationCandidates={{
           parentFen: 'r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4',
           selected: selectedCandidate,
@@ -532,7 +532,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
         onMinMistakeCountChange={() => {}}
         onApplySettings={() => {}}
         isExplorationActive={true}
-        explorationPlayMode="CHESSECHO"
+        explorationPlayMode="CHESSPROBE"
         lastContinuationCandidates={{
           parentFen: 'r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4',
           selected: altCandidateMultiPly,
@@ -558,7 +558,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
         onMinMistakeCountChange={() => {}}
         onApplySettings={() => {}}
         isExplorationActive={true}
-        explorationPlayMode="CHESSECHO"
+        explorationPlayMode="CHESSPROBE"
         lastContinuationCandidates={{
           parentFen: 'r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4',
           selected: selectedCandidate,
@@ -571,7 +571,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
   });
 
   it('7b. Candidate badge boundary conditions, null fallbacks, optional callbacks, and mode isolation', () => {
-    // 1. Non-CHESSECHO mode suppression: candidate cards must not render in BOTH_SIDES even when lastContinuationCandidates exists
+    // 1. Non-CHESSPROBE mode suppression: candidate cards must not render in BOTH_SIDES even when lastContinuationCandidates exists
     const candidateA: api.ContinuationCandidate = {
       move: 'Ba4',
       resultingFen: 'r1bqkbnr/1ppp1ppp/p1n5/4p3/B3P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 1 4',
@@ -648,7 +648,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
     );
     expect(screen.queryByText(/ChessProbe played/i)).not.toBeInTheDocument();
 
-    // Rerender in CHESSECHO mode with null evalLoss, fallback plies, and omitted onAlternativeSelected prop
+    // Rerender in CHESSPROBE mode with null evalLoss, fallback plies, and omitted onAlternativeSelected prop
     rerender(
       <PuzzleFeedbackPanel
         puzzle={mockPuzzle}
@@ -662,7 +662,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
         onMinMistakeCountChange={() => {}}
         onApplySettings={() => {}}
         isExplorationActive={true}
-        explorationPlayMode="CHESSECHO"
+        explorationPlayMode="CHESSPROBE"
         lastContinuationCandidates={{
           parentFen: 'r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4',
           selected: candidateA,
@@ -710,7 +710,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
         onMinMistakeCountChange={() => {}}
         onApplySettings={() => {}}
         isExplorationActive={true}
-        explorationPlayMode="CHESSECHO"
+        explorationPlayMode="CHESSPROBE"
         lastContinuationCandidates={{
           parentFen: 'r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4',
           selected: selectedPliesNoSan,
@@ -734,7 +734,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
         onMinMistakeCountChange={() => {}}
         onApplySettings={() => {}}
         isExplorationActive={true}
-        explorationPlayMode="CHESSECHO"
+        explorationPlayMode="CHESSPROBE"
         lastContinuationCandidates={{
           parentFen: 'r1bqkbnr/1ppp1ppp/p1n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4',
           selected: candidateQuiet,
@@ -777,7 +777,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
         onNextPuzzle={() => {}}
         onFenChange={handleFenChange}
         isExplorationActive={true}
-        explorationPlayMode="CHESSECHO"
+        explorationPlayMode="CHESSPROBE"
       />
     );
 
@@ -796,7 +796,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
         onNextPuzzle={() => {}}
         onFenChange={handleFenChange}
         isExplorationActive={true}
-        explorationPlayMode="CHESSECHO"
+        explorationPlayMode="CHESSPROBE"
         alternativeContinuationToApply={{
           parentFen,
           candidate: altCandidate,
@@ -849,7 +849,7 @@ describe('Frontend Turn-Based Puzzle Line Exploration Integration', () => {
         onNextPuzzle={() => {}}
         onFenChange={handleFenChange}
         isExplorationActive={true}
-        explorationPlayMode="CHESSECHO"
+        explorationPlayMode="CHESSPROBE"
         alternativeContinuationToApply={{
           parentFen,
           candidate: brokenCandidate,

@@ -1,12 +1,12 @@
-# ChessEcho repository conventions
+# ChessProbe repository conventions
 
 This document is the single source of truth for the small conventions that
 repeatedly caused friction across recent product issues. It is intentionally
 short: it records defaults, not a full repository policy.
 
-## Default: ChessEcho is pre-deployment
+## Default: ChessProbe is pre-deployment
 
-ChessEcho is assumed to be **pre-deployment** unless an issue explicitly
+ChessProbe is assumed to be **pre-deployment** unless an issue explicitly
 states otherwise. "Pre-deployment" means there is no production install with
 data that must be preserved across a schema change, so there is no deployed
 migration history that implementations must treat as immutable.
@@ -31,7 +31,7 @@ instead of being preserved as a synthetic, never-deployed version ladder
 this pattern: schema changes needed for that feature were consolidated into
 the baseline rather than added as a new versioned migration.
 
-Once an issue's "Deployment state" line establishes that ChessEcho (or the
+Once an issue's "Deployment state" line establishes that ChessProbe (or the
 relevant environment) is deployed, this convention no longer applies for that
 work: new schema changes must be added as new, additive, versioned Flyway
 migrations, and the existing baseline must not be rewritten.

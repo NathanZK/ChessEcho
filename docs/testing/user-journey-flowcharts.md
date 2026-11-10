@@ -326,7 +326,7 @@ flowchart TD
 **Key Security & Auth Details (J08/J09/J10):**
 - **Guest State First**: Initial HTTP 401 on `GET /api/me` is not an error; it establishes guest session state and sets the readable double-submit `XSRF-TOKEN` cookie.
 - **Credentials & Registration**: Canonical lowercased email, salted PBKDF2 hash, constant-time validation. Duplicate registrations return `409 REGISTRATION_CONFLICT`.
-- **Session Duration**: HttpOnly Secure `CHESSECHO_SESSION` cookie with sliding 30-minute inactivity timeout and 30-day absolute expiration cap. Explicit logout revokes the server session row immediately.
+- **Session Duration**: HttpOnly Secure `CHESSPROBE_SESSION` cookie with sliding 30-minute inactivity timeout and 30-day absolute expiration cap. Explicit logout revokes the server session row immediately.
 
 ---
 
