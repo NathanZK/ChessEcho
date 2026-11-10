@@ -11,6 +11,7 @@
     "test": "vitest run",
     "test:journeys": "playwright test",
     "test:monkey": "PLAYWRIGHT_INCLUDE_MONKEY=1 playwright test journeys/*-monkey.spec.ts",
+    "test:monkey:campaign": "node scripts/run-campaign.mjs",
     "test:mutation": "stryker run"
   },
   "dependencies": {

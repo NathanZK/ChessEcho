@@ -30,6 +30,7 @@ export interface MonkeyRunOptions {
   stepOffset?: number;
   screenshotOnFailure?: boolean;
   stepHook?: (step: number, state: PracticeAbstractState) => Promise<void>;
+  traceMode?: 'failures-only' | 'all' | 'off';
 }
 
 export interface MonkeyRunResult {
@@ -89,6 +90,7 @@ export async function runConstrainedMonkey(options: MonkeyRunOptions): Promise<M
     initialContext = createInitialContext(),
     stepOffset = 0,
     screenshotOnFailure = true,
+    traceMode = 'failures-only',
   } = options;
 
   const prng = createPrng(seed);
@@ -100,11 +102,13 @@ export async function runConstrainedMonkey(options: MonkeyRunOptions): Promise<M
 
   const context = page.context();
   let tracingActive = false;
-  try {
-    await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
-    tracingActive = true;
-  } catch {
-    // Tracing already active in outer runner or unsupported
+  if (traceMode !== 'off') {
+    try {
+      await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
+      tracingActive = true;
+    } catch {
+      // Tracing already active in outer runner or unsupported
+    }
   }
 
   let currentState = initialState;
@@ -204,6 +208,14 @@ export async function runConstrainedMonkey(options: MonkeyRunOptions): Promise<M
       currentContext = nextContext;
     }
 
+    let tracePath: string | undefined;
+    if (tracingActive && traceMode === 'all') {
+      fs.mkdirSync('test-results/monkey-traces', { recursive: true });
+      tracePath = `test-results/monkey-traces/trace-seed-${seed}.zip`;
+      await context.tracing.stop({ path: tracePath }).catch(() => {});
+      tracingActive = false;
+    }
+
     return {
       seed,
       executedSteps: actionLog.length,
@@ -211,6 +223,7 @@ export async function runConstrainedMonkey(options: MonkeyRunOptions): Promise<M
       finalState: currentState,
       finalContext: currentContext,
       success: true,
+      tracePath,
     };
   } finally {
     // If execution succeeded, stop tracing without path to release resources cleanly
