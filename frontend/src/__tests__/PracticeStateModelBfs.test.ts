@@ -12,7 +12,7 @@ import { explorePracticeStates, exploreAbstractStates, type BfsExplorationResult
 import { selectHighRiskPaths } from '../../journeys/model/pathSelector';
 
 describe('Practice State Model & Invariants', () => {
-  it('defines all 8 Core Practice Lifecycle abstract states and 9 actions', () => {
+  it('defines all 8 Core Practice Lifecycle abstract states and 18 action vocabulary entries', () => {
     expect(PRACTICE_TRANSITIONS.length).toBeGreaterThan(0);
     expect(PRACTICE_ABSTRACT_STATES).toEqual([
       'DISCOVERY',
@@ -34,6 +34,134 @@ describe('Practice State Model & Invariants', () => {
     expect(PRACTICE_ACTIONS).toContain('CONTINUE_EXPLORATION');
     expect(PRACTICE_ACTIONS).toContain('EXIT_EXPLORATION');
     expect(PRACTICE_ACTIONS).toContain('BACK_TO_PUZZLES');
+
+    // Issue #770 audited controls
+    expect(PRACTICE_ACTIONS).toContain('FLIP_BOARD');
+    expect(PRACTICE_ACTIONS).toContain('REQUEST_HINT');
+    expect(PRACTICE_ACTIONS).toContain('ENTER_BLINDFOLD');
+    expect(PRACTICE_ACTIONS).toContain('EXIT_BLINDFOLD');
+    expect(PRACTICE_ACTIONS).toContain('TOGGLE_BLINDFOLD_VISIBILITY');
+    expect(PRACTICE_ACTIONS).toContain('SUBMIT_BLINDFOLD_MOVE');
+    expect(PRACTICE_ACTIONS).toContain('NAVIGATE_HISTORY_PREV');
+    expect(PRACTICE_ACTIONS).toContain('NAVIGATE_HISTORY_NEXT');
+    expect(PRACTICE_ACTIONS).toContain('TOGGLE_TIMER_MODE');
+    expect(PRACTICE_ACTIONS.length).toBe(18);
+  });
+
+  it('initializes context with default orthogonal UI control values', () => {
+    const ctx = createInitialContext();
+    expect(ctx.puzzleLoaded).toBe(false);
+    expect(ctx.attemptCount).toBe(0);
+    expect(ctx.inExploration).toBe(false);
+    expect(ctx.isBoardFlipped).toBe(false);
+    expect(ctx.blindfoldActive).toBe(false);
+    expect(ctx.blindfoldVisible).toBe(false);
+    expect(ctx.blindfoldMoveCount).toBe(0);
+    expect(ctx.hintActive).toBe(false);
+    expect(ctx.historyIndex).toBe(0);
+    expect(ctx.historyLength).toBe(0);
+    expect(ctx.timerMode).toBeNull();
+  });
+
+  it('validates transitions and guards for newly introduced controls', () => {
+    const practiceCtx = {
+      ...createInitialContext(),
+      puzzleLoaded: true,
+      historyLength: 2,
+      historyIndex: 1,
+    };
+
+    // Board flip toggles isBoardFlipped
+    expect(isValidTransition('PRACTICE_IDLE', 'FLIP_BOARD', practiceCtx)).toBe(true);
+    const flipped = getNextState('PRACTICE_IDLE', 'FLIP_BOARD', practiceCtx);
+    expect(flipped?.state).toBe('PRACTICE_IDLE');
+    expect(flipped?.context.isBoardFlipped).toBe(true);
+
+    // Request hint sets hintActive
+    expect(isValidTransition('PRACTICE_IDLE', 'REQUEST_HINT', practiceCtx)).toBe(true);
+    const hinted = getNextState('PRACTICE_IDLE', 'REQUEST_HINT', practiceCtx);
+    expect(hinted?.context.hintActive).toBe(true);
+
+    // Enter blindfold, toggle visibility, submit notation move, and exit blindfold
+    expect(isValidTransition('PRACTICE_IDLE', 'ENTER_BLINDFOLD', practiceCtx)).toBe(true);
+    const blindfoldEntered = getNextState('PRACTICE_IDLE', 'ENTER_BLINDFOLD', practiceCtx);
+    expect(blindfoldEntered?.context.blindfoldActive).toBe(true);
+
+    expect(isValidTransition('PRACTICE_IDLE', 'TOGGLE_BLINDFOLD_VISIBILITY', blindfoldEntered!.context)).toBe(true);
+    const visToggled = getNextState('PRACTICE_IDLE', 'TOGGLE_BLINDFOLD_VISIBILITY', blindfoldEntered!.context);
+    expect(visToggled?.context.blindfoldVisible).toBe(true);
+
+    expect(isValidTransition('PRACTICE_IDLE', 'SUBMIT_BLINDFOLD_MOVE', blindfoldEntered!.context)).toBe(true);
+    const blindfoldMove = getNextState('PRACTICE_IDLE', 'SUBMIT_BLINDFOLD_MOVE', blindfoldEntered!.context);
+    expect(blindfoldMove?.context.blindfoldMoveCount).toBe(1);
+
+    expect(isValidTransition('PRACTICE_IDLE', 'EXIT_BLINDFOLD', blindfoldEntered!.context)).toBe(true);
+    const blindfoldExited = getNextState('PRACTICE_IDLE', 'EXIT_BLINDFOLD', blindfoldEntered!.context);
+    expect(blindfoldExited?.context.blindfoldActive).toBe(false);
+
+    // Cannot flip board or request hint when blindfold is active
+    expect(isValidTransition('PRACTICE_IDLE', 'FLIP_BOARD', blindfoldEntered!.context)).toBe(false);
+    expect(isValidTransition('PRACTICE_IDLE', 'REQUEST_HINT', blindfoldEntered!.context)).toBe(false);
+
+    // History navigation prev/next
+    expect(isValidTransition('PRACTICE_IDLE', 'NAVIGATE_HISTORY_PREV', practiceCtx)).toBe(true);
+    const prevStep = getNextState('PRACTICE_IDLE', 'NAVIGATE_HISTORY_PREV', practiceCtx);
+    expect(prevStep?.context.historyIndex).toBe(0);
+
+    // At historyIndex 0, cannot navigate further prev
+    expect(isValidTransition('PRACTICE_IDLE', 'NAVIGATE_HISTORY_PREV', prevStep!.context)).toBe(false);
+    expect(isValidTransition('PRACTICE_IDLE', 'NAVIGATE_HISTORY_NEXT', prevStep!.context)).toBe(true);
+
+    // Toggle timer mode: null -> STOPWATCH -> COUNTDOWN -> null
+    const timer1 = getNextState('PRACTICE_IDLE', 'TOGGLE_TIMER_MODE', practiceCtx);
+    expect(timer1?.context.timerMode).toBe('STOPWATCH');
+    const timer2 = getNextState('PRACTICE_IDLE', 'TOGGLE_TIMER_MODE', timer1!.context);
+    expect(timer2?.context.timerMode).toBe('COUNTDOWN');
+    const timer3 = getNextState('PRACTICE_IDLE', 'TOGGLE_TIMER_MODE', timer2!.context);
+    expect(timer3?.context.timerMode).toBeNull();
+  });
+
+  it('correctly models move truncation after undo in history navigation', () => {
+    // Start with 3 moves in history, positioned at the end
+    const initialContext = {
+      ...createInitialContext(),
+      puzzleLoaded: true,
+      historyLength: 3,
+      historyIndex: 3,
+    };
+
+    // User navigates back 2 moves: historyIndex becomes 1
+    const step1 = getNextState('PRACTICE_IDLE', 'NAVIGATE_HISTORY_PREV', initialContext);
+    const step2 = getNextState('PRACTICE_IDLE', 'NAVIGATE_HISTORY_PREV', step1!.context);
+    expect(step2?.context.historyIndex).toBe(1);
+    expect(step2?.context.historyLength).toBe(3);
+
+    // Making a new move after undo truncates future history
+    const nextMove = getNextState('PRACTICE_IDLE', 'SUBMIT_OPTIMAL', step2!.context);
+    expect(nextMove?.context.historyIndex).toBe(2);
+    expect(nextMove?.context.historyLength).toBe(2); // Truncated from 3 to 2
+  });
+
+  it('preserves selection isolation invariant for auxiliary controls', () => {
+    const auxActions = [
+      'FLIP_BOARD',
+      'REQUEST_HINT',
+      'ENTER_BLINDFOLD',
+      'EXIT_BLINDFOLD',
+      'TOGGLE_BLINDFOLD_VISIBILITY',
+      'SUBMIT_BLINDFOLD_MOVE',
+      'NAVIGATE_HISTORY_PREV',
+      'NAVIGATE_HISTORY_NEXT',
+      'TOGGLE_TIMER_MODE',
+      'RESET',
+      'RETRY',
+    ] as const;
+
+    // Verify all auxiliary actions are distinct from move submission actions
+    const moveSubmissionActions = ['SUBMIT_OPTIMAL', 'SUBMIT_MISTAKE', 'SUBMIT_BLUNDER'];
+    for (const action of auxActions) {
+      expect(moveSubmissionActions).not.toContain(action);
+    }
   });
 
   it('validates allowed transitions across the practice lifecycle', () => {

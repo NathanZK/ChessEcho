@@ -7,6 +7,7 @@ import {
 import {
   PRACTICE_TRANSITIONS,
   STATE_ORACLES,
+  executeConcreteAction,
 } from './model/practiceModel';
 import { explorePracticeStates } from './model/bfsExplorer';
 import { selectHighRiskPaths } from './model/pathSelector';
@@ -149,6 +150,61 @@ test.describe('Phase 2 Model-Based Testing: Bounded BFS Exploration & High-Risk 
     // 7. Release deferred network route and verify Discovery remains intact with zero unhandled errors
     releaseEvaluation();
     await page.waitForTimeout(150);
+    await STATE_ORACLES.DISCOVERY.assert(page, expect);
+  });
+
+  test('Path 4: Interactive control operations (flip, hint, timer, blindfold, and history navigation)', async ({ page }) => {
+    // 1. Setup mocked API boundary
+    await setupJourneyApiMocks(page, {
+      authenticated: true,
+      accounts: [DEFAULT_MOCK_ACCOUNT],
+      puzzles: [DEFAULT_MOCK_PUZZLE],
+    });
+
+    // 2. Load application on Practice Puzzles tab
+    await page.goto('/#puzzles');
+    await STATE_ORACLES.PRACTICE_IDLE.assert(page, expect);
+
+    // 3. Action: FLIP_BOARD
+    await executeConcreteAction(page, 'FLIP_BOARD');
+    await page.waitForTimeout(60);
+
+    // 4. Action: REQUEST_HINT (highlights hint square)
+    await executeConcreteAction(page, 'REQUEST_HINT');
+    await page.waitForTimeout(60);
+
+    // 5. Action: TOGGLE_TIMER_MODE
+    await executeConcreteAction(page, 'TOGGLE_TIMER_MODE');
+    await page.waitForTimeout(60);
+
+    // 6. Action: ENTER_BLINDFOLD, TOGGLE_BLINDFOLD_VISIBILITY, SUBMIT_BLINDFOLD_MOVE & EXIT_BLINDFOLD
+    await executeConcreteAction(page, 'ENTER_BLINDFOLD');
+    await page.waitForTimeout(100);
+    await executeConcreteAction(page, 'TOGGLE_BLINDFOLD_VISIBILITY');
+    await page.waitForTimeout(60);
+    await executeConcreteAction(page, 'SUBMIT_BLINDFOLD_MOVE');
+    await page.waitForTimeout(100);
+    await executeConcreteAction(page, 'EXIT_BLINDFOLD');
+    await page.waitForTimeout(100);
+
+    // 7. Action: SUBMIT_OPTIMAL -> CORRECT
+    await executeConcreteAction(page, 'SUBMIT_OPTIMAL');
+    await STATE_ORACLES.CORRECT.assert(page, expect);
+
+    // 8. Action: CONTINUE_EXPLORATION -> EXPLORING
+    await executeConcreteAction(page, 'CONTINUE_EXPLORATION');
+    await STATE_ORACLES.EXPLORING.assert(page, expect);
+
+    // 9. In exploration, navigate history back and forward
+    await executeConcreteAction(page, 'NAVIGATE_HISTORY_PREV');
+    await page.waitForTimeout(60);
+    await executeConcreteAction(page, 'NAVIGATE_HISTORY_NEXT');
+    await page.waitForTimeout(60);
+
+    // 10. Exit exploration back to idle, then back to discovery
+    await executeConcreteAction(page, 'EXIT_EXPLORATION');
+    await STATE_ORACLES.PRACTICE_IDLE.assert(page, expect);
+    await executeConcreteAction(page, 'BACK_TO_PUZZLES');
     await STATE_ORACLES.DISCOVERY.assert(page, expect);
   });
 });

@@ -128,6 +128,7 @@ export function explorePracticeStates(
     transitions,
     maxDepth,
     initialContext,
-    (state, ctx) => `${state}:${ctx.puzzleLoaded}:${ctx.inExploration}:${ctx.attemptCount}:${ctx.solved}`
+    (state, ctx) =>
+      `${state}:${ctx.puzzleLoaded}:${ctx.inExploration}:${ctx.attemptCount}:${ctx.solved}:${ctx.isBoardFlipped}:${ctx.blindfoldActive}:${ctx.blindfoldVisible}:${ctx.hintActive}:${Math.min(ctx.historyIndex ?? 0, 2)}:${ctx.timerMode}`
   );
 }
