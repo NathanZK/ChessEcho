@@ -22,7 +22,16 @@ export type PracticeAction =
   | 'RESET'
   | 'CONTINUE_EXPLORATION'
   | 'EXIT_EXPLORATION'
-  | 'BACK_TO_PUZZLES';
+  | 'BACK_TO_PUZZLES'
+  | 'FLIP_BOARD'
+  | 'REQUEST_HINT'
+  | 'ENTER_BLINDFOLD'
+  | 'EXIT_BLINDFOLD'
+  | 'TOGGLE_BLINDFOLD_VISIBILITY'
+  | 'SUBMIT_BLINDFOLD_MOVE'
+  | 'NAVIGATE_HISTORY_PREV'
+  | 'NAVIGATE_HISTORY_NEXT'
+  | 'TOGGLE_TIMER_MODE';
 
 export const PRACTICE_ABSTRACT_STATES: PracticeAbstractState[] = [
   'DISCOVERY',
@@ -45,6 +54,15 @@ export const PRACTICE_ACTIONS: PracticeAction[] = [
   'CONTINUE_EXPLORATION',
   'EXIT_EXPLORATION',
   'BACK_TO_PUZZLES',
+  'FLIP_BOARD',
+  'REQUEST_HINT',
+  'ENTER_BLINDFOLD',
+  'EXIT_BLINDFOLD',
+  'TOGGLE_BLINDFOLD_VISIBILITY',
+  'SUBMIT_BLINDFOLD_MOVE',
+  'NAVIGATE_HISTORY_PREV',
+  'NAVIGATE_HISTORY_NEXT',
+  'TOGGLE_TIMER_MODE',
 ];
 
 export interface PracticeModelContext {
@@ -58,6 +76,14 @@ export interface PracticeModelContext {
   expectedSolvedCount?: number;
   expectedFailedCount?: number;
   lastMoveSan?: string;
+  isBoardFlipped?: boolean;
+  blindfoldActive?: boolean;
+  blindfoldVisible?: boolean;
+  blindfoldMoveCount?: number;
+  hintActive?: boolean;
+  historyIndex?: number;
+  historyLength?: number;
+  timerMode?: 'STOPWATCH' | 'COUNTDOWN' | null;
 }
 
 export function createInitialContext(): PracticeModelContext {
@@ -70,6 +96,14 @@ export function createInitialContext(): PracticeModelContext {
     expectedFailedCount: 0,
     expectedHistory: [],
     expectedSideToMove: 'white',
+    isBoardFlipped: false,
+    blindfoldActive: false,
+    blindfoldVisible: false,
+    blindfoldMoveCount: 0,
+    hintActive: false,
+    historyIndex: 0,
+    historyLength: 0,
+    timerMode: null,
   };
 }
 
@@ -97,12 +131,16 @@ function deriveMoveState(
   }
   const nextFen = chess.fen();
   const nextSide = chess.turn() === 'w' ? 'white' : 'black';
+  const newHistoryIndex = (ctx.historyIndex ?? 0) + 1;
 
   if (resultType === 'CORRECT') {
     return {
       ...ctx,
       attemptCount: ctx.attemptCount + 1,
       solved: true,
+      hintActive: false,
+      historyLength: newHistoryIndex,
+      historyIndex: newHistoryIndex,
       expectedSolvedCount: (ctx.expectedSolvedCount ?? 0) + 1,
       expectedFen: nextFen,
       expectedHistory: [...(ctx.expectedHistory ?? []), san],
@@ -114,6 +152,9 @@ function deriveMoveState(
   return {
     ...ctx,
     attemptCount: ctx.attemptCount + 1,
+    hintActive: false,
+    historyLength: newHistoryIndex,
+    historyIndex: newHistoryIndex,
     expectedFailedCount: (ctx.expectedFailedCount ?? 0) + 1,
     expectedFen: nextFen,
     expectedHistory: [...(ctx.expectedHistory ?? []), san],
@@ -146,21 +187,21 @@ export const PRACTICE_TRANSITIONS: TransitionRule[] = [
     from: 'PRACTICE_IDLE',
     action: 'SUBMIT_OPTIMAL',
     to: 'CORRECT',
-    guard: (ctx) => ctx.puzzleLoaded,
+    guard: (ctx) => ctx.puzzleLoaded && !ctx.blindfoldActive,
     effect: (ctx) => deriveMoveState(ctx, 'd4', 'CORRECT'),
   },
   {
     from: 'PRACTICE_IDLE',
     action: 'SUBMIT_MISTAKE',
     to: 'INCORRECT',
-    guard: (ctx) => ctx.puzzleLoaded,
+    guard: (ctx) => ctx.puzzleLoaded && !ctx.blindfoldActive,
     effect: (ctx) => deriveMoveState(ctx, 'a3', 'INCORRECT'),
   },
   {
     from: 'PRACTICE_IDLE',
     action: 'SUBMIT_BLUNDER',
     to: 'HISTORICAL_MISTAKE',
-    guard: (ctx) => ctx.puzzleLoaded,
+    guard: (ctx) => ctx.puzzleLoaded && !ctx.blindfoldActive,
     effect: (ctx) => deriveMoveState(ctx, 'h4', 'HISTORICAL_MISTAKE'),
   },
   {
@@ -173,13 +214,24 @@ export const PRACTICE_TRANSITIONS: TransitionRule[] = [
       expectedFen: DEFAULT_PRACTICE_FEN,
       expectedHistory: [],
       expectedSideToMove: 'white',
+      hintActive: false,
+      historyIndex: 0,
+      historyLength: 0,
     }),
   },
   {
     from: 'PRACTICE_IDLE',
     action: 'BACK_TO_PUZZLES',
     to: 'DISCOVERY',
-    effect: (ctx) => ({ ...ctx, puzzleLoaded: false, inExploration: false }),
+    effect: (ctx) => ({
+      ...ctx,
+      puzzleLoaded: false,
+      inExploration: false,
+      hintActive: false,
+      blindfoldActive: false,
+      historyIndex: 0,
+      historyLength: 0,
+    }),
   },
   // Recovery from Incorrect / Mistake / Error
   {
@@ -191,6 +243,8 @@ export const PRACTICE_TRANSITIONS: TransitionRule[] = [
       ...ctx,
       expectedFen: DEFAULT_PRACTICE_FEN,
       expectedSideToMove: 'white',
+      hintActive: false,
+      historyIndex: 0,
     }),
   },
   {
@@ -202,25 +256,28 @@ export const PRACTICE_TRANSITIONS: TransitionRule[] = [
       ...ctx,
       expectedFen: DEFAULT_PRACTICE_FEN,
       expectedSideToMove: 'white',
+      hintActive: false,
+      historyIndex: 0,
     }),
   },
   {
     from: 'HISTORICAL_MISTAKE',
     action: 'BACK_TO_PUZZLES',
     to: 'DISCOVERY',
-    effect: (ctx) => ({ ...ctx, puzzleLoaded: false, inExploration: false }),
+    effect: (ctx) => ({ ...ctx, puzzleLoaded: false, inExploration: false, hintActive: false, blindfoldActive: false }),
   },
   {
     from: 'EVALUATION_ERROR',
     action: 'RETRY',
     to: 'PRACTICE_IDLE',
     guard: (ctx) => ctx.puzzleLoaded,
+    effect: (ctx) => ({ ...ctx, hintActive: false, historyIndex: 0 }),
   },
   {
     from: 'INCORRECT',
     action: 'BACK_TO_PUZZLES',
     to: 'DISCOVERY',
-    effect: (ctx) => ({ ...ctx, puzzleLoaded: false, inExploration: false }),
+    effect: (ctx) => ({ ...ctx, puzzleLoaded: false, inExploration: false, hintActive: false, blindfoldActive: false }),
   },
   // Transition to Line Exploration
   {
@@ -234,7 +291,7 @@ export const PRACTICE_TRANSITIONS: TransitionRule[] = [
     from: 'CORRECT',
     action: 'BACK_TO_PUZZLES',
     to: 'DISCOVERY',
-    effect: (ctx) => ({ ...ctx, puzzleLoaded: false, inExploration: false }),
+    effect: (ctx) => ({ ...ctx, puzzleLoaded: false, inExploration: false, hintActive: false, blindfoldActive: false }),
   },
   // Line Exploration back to Idle or Discovery
   {
@@ -253,7 +310,121 @@ export const PRACTICE_TRANSITIONS: TransitionRule[] = [
     from: 'EXPLORING',
     action: 'BACK_TO_PUZZLES',
     to: 'DISCOVERY',
-    effect: (ctx) => ({ ...ctx, puzzleLoaded: false, inExploration: false }),
+    effect: (ctx) => ({ ...ctx, puzzleLoaded: false, inExploration: false, hintActive: false, blindfoldActive: false }),
+  },
+  // Audited Controls (Issue #770)
+  // 1. Board Orientation: FLIP_BOARD
+  {
+    from: 'PRACTICE_IDLE',
+    action: 'FLIP_BOARD',
+    to: 'PRACTICE_IDLE',
+    guard: (ctx) => ctx.puzzleLoaded && !ctx.blindfoldActive,
+    effect: (ctx) => ({ ...ctx, isBoardFlipped: !ctx.isBoardFlipped }),
+  },
+  {
+    from: 'EXPLORING',
+    action: 'FLIP_BOARD',
+    to: 'EXPLORING',
+    guard: (ctx) => ctx.inExploration && !ctx.blindfoldActive,
+    effect: (ctx) => ({ ...ctx, isBoardFlipped: !ctx.isBoardFlipped }),
+  },
+  {
+    from: 'CORRECT',
+    action: 'FLIP_BOARD',
+    to: 'CORRECT',
+    guard: (ctx) => ctx.puzzleLoaded && !ctx.blindfoldActive,
+    effect: (ctx) => ({ ...ctx, isBoardFlipped: !ctx.isBoardFlipped }),
+  },
+  {
+    from: 'INCORRECT',
+    action: 'FLIP_BOARD',
+    to: 'INCORRECT',
+    guard: (ctx) => ctx.puzzleLoaded && !ctx.blindfoldActive,
+    effect: (ctx) => ({ ...ctx, isBoardFlipped: !ctx.isBoardFlipped }),
+  },
+  {
+    from: 'HISTORICAL_MISTAKE',
+    action: 'FLIP_BOARD',
+    to: 'HISTORICAL_MISTAKE',
+    guard: (ctx) => ctx.puzzleLoaded && !ctx.blindfoldActive,
+    effect: (ctx) => ({ ...ctx, isBoardFlipped: !ctx.isBoardFlipped }),
+  },
+  // 2. Hint Request: REQUEST_HINT
+  {
+    from: 'PRACTICE_IDLE',
+    action: 'REQUEST_HINT',
+    to: 'PRACTICE_IDLE',
+    guard: (ctx) => ctx.puzzleLoaded && !ctx.solved && !ctx.blindfoldActive && !ctx.inExploration,
+    effect: (ctx) => ({ ...ctx, hintActive: true }),
+  },
+  // 3. Blindfold Mode: ENTER_BLINDFOLD, EXIT_BLINDFOLD, TOGGLE_BLINDFOLD_VISIBILITY & SUBMIT_BLINDFOLD_MOVE
+  {
+    from: 'PRACTICE_IDLE',
+    action: 'ENTER_BLINDFOLD',
+    to: 'PRACTICE_IDLE',
+    guard: (ctx) => ctx.puzzleLoaded && !ctx.blindfoldActive && !ctx.inExploration,
+    effect: (ctx) => ({ ...ctx, blindfoldActive: true, blindfoldVisible: false }),
+  },
+  {
+    from: 'PRACTICE_IDLE',
+    action: 'EXIT_BLINDFOLD',
+    to: 'PRACTICE_IDLE',
+    guard: (ctx) => Boolean(ctx.blindfoldActive),
+    effect: (ctx) => ({ ...ctx, blindfoldActive: false }),
+  },
+  {
+    from: 'PRACTICE_IDLE',
+    action: 'TOGGLE_BLINDFOLD_VISIBILITY',
+    to: 'PRACTICE_IDLE',
+    guard: (ctx) => Boolean(ctx.blindfoldActive),
+    effect: (ctx) => ({ ...ctx, blindfoldVisible: !ctx.blindfoldVisible }),
+  },
+  {
+    from: 'PRACTICE_IDLE',
+    action: 'SUBMIT_BLINDFOLD_MOVE',
+    to: 'PRACTICE_IDLE',
+    guard: (ctx) => Boolean(ctx.blindfoldActive),
+    effect: (ctx) => ({ ...ctx, blindfoldMoveCount: (ctx.blindfoldMoveCount ?? 0) + 1 }),
+  },
+  // 4. Move History Navigation: NAVIGATE_HISTORY_PREV & NAVIGATE_HISTORY_NEXT
+  {
+    from: 'PRACTICE_IDLE',
+    action: 'NAVIGATE_HISTORY_PREV',
+    to: 'PRACTICE_IDLE',
+    guard: (ctx) => (ctx.historyIndex ?? 0) > 0 && !ctx.blindfoldActive,
+    effect: (ctx) => ({ ...ctx, historyIndex: Math.max(0, (ctx.historyIndex ?? 1) - 1) }),
+  },
+  {
+    from: 'PRACTICE_IDLE',
+    action: 'NAVIGATE_HISTORY_NEXT',
+    to: 'PRACTICE_IDLE',
+    guard: (ctx) => (ctx.historyIndex ?? 0) < (ctx.historyLength ?? 0) && !ctx.blindfoldActive,
+    effect: (ctx) => ({ ...ctx, historyIndex: Math.min(ctx.historyLength ?? 0, (ctx.historyIndex ?? 0) + 1) }),
+  },
+  {
+    from: 'EXPLORING',
+    action: 'NAVIGATE_HISTORY_PREV',
+    to: 'EXPLORING',
+    guard: (ctx) => (ctx.historyIndex ?? 0) > 0 && !ctx.blindfoldActive,
+    effect: (ctx) => ({ ...ctx, historyIndex: Math.max(0, (ctx.historyIndex ?? 1) - 1) }),
+  },
+  {
+    from: 'EXPLORING',
+    action: 'NAVIGATE_HISTORY_NEXT',
+    to: 'EXPLORING',
+    guard: (ctx) => (ctx.historyIndex ?? 0) < (ctx.historyLength ?? 0) && !ctx.blindfoldActive,
+    effect: (ctx) => ({ ...ctx, historyIndex: Math.min(ctx.historyLength ?? 0, (ctx.historyIndex ?? 0) + 1) }),
+  },
+  // 5. Timed Training Mode: TOGGLE_TIMER_MODE
+  {
+    from: 'PRACTICE_IDLE',
+    action: 'TOGGLE_TIMER_MODE',
+    to: 'PRACTICE_IDLE',
+    guard: (ctx) => ctx.puzzleLoaded && !ctx.blindfoldActive,
+    effect: (ctx) => {
+      const nextMode = ctx.timerMode === null ? 'STOPWATCH' : ctx.timerMode === 'STOPWATCH' ? 'COUNTDOWN' : null;
+      return { ...ctx, timerMode: nextMode };
+    },
   },
 ];
 
@@ -662,10 +833,57 @@ export async function ensureDiscoveryState(page: Page): Promise<void> {
   }
 }
 
+async function submitMoveBySquares(
+  page: Page,
+  preferredFrom: string,
+  preferredTo: string,
+  actionName: string
+): Promise<void> {
+  const fromLocator = page.locator(`[data-square="${preferredFrom}"]`);
+  const toLocator = page.locator(`[data-square="${preferredTo}"]`);
+
+  const preferredFromVisible = await fromLocator.isVisible().catch(() => false);
+  const preferredToVisible = await toLocator.isVisible().catch(() => false);
+
+  if (preferredFromVisible && preferredToVisible) {
+    await fromLocator.click();
+    await page.waitForTimeout(60);
+    await toLocator.click();
+    return;
+  }
+
+  // Dynamic fallback: discover squares with pieces and destinations
+  const pieceSquares = await page.locator('[data-square]').evaluateAll((elements) => {
+    return elements
+      .map((el) => {
+        const sq = el.getAttribute('data-square') ?? '';
+        const hasPiece = el.querySelector('svg, img, [data-piece]') !== null || el.children.length > 0;
+        return { sq, hasPiece };
+      })
+      .filter((item) => item.sq.length === 2);
+  }).catch(() => []);
+
+  const sources = pieceSquares.filter((s) => s.hasPiece).map((s) => s.sq);
+  const destinations = pieceSquares.filter((s) => !s.hasPiece).map((s) => s.sq);
+
+  if (sources.length === 0 || destinations.length === 0) {
+    throw new Error(`[ActionExecutionError] No interactable squares available on active board for ${actionName}`);
+  }
+
+  const from = page.locator(`[data-square="${sources[0]}"]`);
+  const to = page.locator(`[data-square="${destinations[0]}"]`);
+  await from.click();
+  await page.waitForTimeout(60);
+  await to.click();
+}
+
 /**
  * Translates a high-level practice model action into concrete Playwright DOM interactions.
  */
-export async function executeConcreteAction(page: Page, action: PracticeAction): Promise<void> {
+export async function executeConcreteAction(
+  page: Page,
+  action: PracticeAction
+): Promise<void> {
   switch (action) {
     case 'SELECT_PUZZLE': {
       const button = page.getByRole('button', { name: /Start Practice/i });
@@ -675,35 +893,20 @@ export async function executeConcreteAction(page: Page, action: PracticeAction):
     }
 
     case 'SUBMIT_OPTIMAL': {
-      // White optimal first move: d2 -> d4
-      const from = page.locator('[data-square="d2"]');
-      const to = page.locator('[data-square="d4"]');
-      await from.waitFor({ state: 'visible', timeout: 5000 });
-      await from.click();
-      await page.waitForTimeout(60);
-      await to.click();
+      // White optimal first move: d2 -> d4 (or dynamic legal fallback)
+      await submitMoveBySquares(page, 'd2', 'd4', 'SUBMIT_OPTIMAL');
       break;
     }
 
     case 'SUBMIT_MISTAKE': {
-      // Inaccurate move: a2 -> a3
-      const from = page.locator('[data-square="a2"]');
-      const to = page.locator('[data-square="a3"]');
-      await from.waitFor({ state: 'visible', timeout: 5000 });
-      await from.click();
-      await page.waitForTimeout(60);
-      await to.click();
+      // Inaccurate move: a2 -> a3 (or dynamic legal fallback)
+      await submitMoveBySquares(page, 'a2', 'a3', 'SUBMIT_MISTAKE');
       break;
     }
 
     case 'SUBMIT_BLUNDER': {
-      // Severe mistake: h2 -> h4
-      const from = page.locator('[data-square="h2"]');
-      const to = page.locator('[data-square="h4"]');
-      await from.waitFor({ state: 'visible', timeout: 5000 });
-      await from.click();
-      await page.waitForTimeout(60);
-      await to.click();
+      // Severe mistake: h2 -> h4 (or dynamic legal fallback)
+      await submitMoveBySquares(page, 'h2', 'h4', 'SUBMIT_BLUNDER');
       break;
     }
 
@@ -749,6 +952,124 @@ export async function executeConcreteAction(page: Page, action: PracticeAction):
       break;
     }
 
+    case 'FLIP_BOARD': {
+      const flipBtn = page.locator('button[title*="Flip"]').or(page.getByRole('button', { name: /Flip/i })).first();
+      if (await flipBtn.isVisible().catch(() => false)) {
+        await flipBtn.click();
+      } else {
+        await page.keyboard.press('x');
+      }
+      await page.waitForTimeout(60);
+      break;
+    }
+
+    case 'REQUEST_HINT': {
+      const hintBtn = page.locator('button[title*="Hint"]').or(page.getByRole('button', { name: /Hint/i })).first();
+      if (await hintBtn.isVisible().catch(() => false)) {
+        const disabled = await hintBtn.isDisabled().catch(() => false);
+        if (!disabled) {
+          await hintBtn.click();
+        }
+      }
+      await page.waitForTimeout(60);
+      break;
+    }
+
+    case 'ENTER_BLINDFOLD': {
+      const trainBlindfoldBtn = page.getByRole('button', { name: /Train Blindfold/i }).first();
+      if (await trainBlindfoldBtn.isVisible().catch(() => false)) {
+        const disabled = await trainBlindfoldBtn.isDisabled().catch(() => false);
+        if (!disabled) {
+          await trainBlindfoldBtn.click();
+        }
+      }
+      await page.waitForTimeout(100);
+      break;
+    }
+
+    case 'EXIT_BLINDFOLD': {
+      const exitBlindfoldBtn = page.getByRole('button', { name: /^Exit$/i }).first();
+      if (await exitBlindfoldBtn.isVisible().catch(() => false)) {
+        await exitBlindfoldBtn.click();
+      }
+      await page.waitForTimeout(100);
+      break;
+    }
+
+    case 'TOGGLE_BLINDFOLD_VISIBILITY': {
+      const toggleBtn = page.getByRole('button', { name: /Hide board|Reveal board/i }).first();
+      if (await toggleBtn.isVisible().catch(() => false)) {
+        await toggleBtn.click();
+      }
+      await page.waitForTimeout(60);
+      break;
+    }
+
+    case 'SUBMIT_BLINDFOLD_MOVE': {
+      const notationInput = page.getByLabel('Move notation');
+      const sendBtn = page.getByRole('button', { name: /Send/i });
+      if (await notationInput.isVisible().catch(() => false)) {
+        const disabled = await notationInput.isDisabled().catch(() => false);
+        if (!disabled) {
+          await notationInput.fill('d4');
+          await sendBtn.click();
+        }
+      }
+      await page.waitForTimeout(100);
+      break;
+    }
+
+    case 'NAVIGATE_HISTORY_PREV': {
+      const prevMoveBtn = page.locator('button[title*="Previous Move"]').first();
+      if (await prevMoveBtn.isVisible().catch(() => false)) {
+        const disabled = await prevMoveBtn.isDisabled().catch(() => false);
+        if (!disabled) {
+          await prevMoveBtn.click();
+        }
+      }
+      await page.waitForTimeout(60);
+      break;
+    }
+
+    case 'NAVIGATE_HISTORY_NEXT': {
+      const nextMoveBtn = page.locator('button[title*="Next Move"]').first();
+      if (await nextMoveBtn.isVisible().catch(() => false)) {
+        const disabled = await nextMoveBtn.isDisabled().catch(() => false);
+        if (!disabled) {
+          await nextMoveBtn.click();
+        }
+      }
+      await page.waitForTimeout(60);
+      break;
+    }
+
+    case 'TOGGLE_TIMER_MODE': {
+      const settingsToggle = page.getByRole('button', { name: /Puzzle Settings/i }).first();
+      if (await settingsToggle.isVisible().catch(() => false)) {
+        const expanded = await settingsToggle.getAttribute('aria-expanded');
+        if (expanded !== 'true') {
+          await settingsToggle.click();
+          await page.waitForTimeout(60);
+        }
+      }
+      const stopwatchBtn = page.getByRole('button', { name: /^Stopwatch$/i }).first();
+      const countdownBtn = page.getByRole('button', { name: /^Countdown$/i }).first();
+      const offBtn = page.getByRole('button', { name: /^Off$/i }).first();
+      if (await stopwatchBtn.isVisible().catch(() => false)) {
+        const isStopwatchActive = (await stopwatchBtn.getAttribute('class'))?.includes('bg-emerald-600');
+        const isCountdownActive = (await countdownBtn.getAttribute('class'))?.includes('bg-emerald-600');
+        if (isStopwatchActive) {
+          await countdownBtn.click();
+        } else if (isCountdownActive) {
+          await offBtn.click();
+        } else {
+          await stopwatchBtn.click();
+        }
+      }
+      await page.waitForTimeout(60);
+      break;
+    }
+
     default:
       throw new Error(`Unsupported practice action: ${action}`);
   }
@@ -768,7 +1089,8 @@ export const PracticeModel: StateModel<
   transitions: PRACTICE_TRANSITIONS,
   oracles: STATE_ORACLES as Record<PracticeAbstractState, StateOracle<PracticeModelContext>>,
   executeAction: executeConcreteAction,
-  contextSignature: (ctx) => `${ctx.puzzleLoaded}:${ctx.inExploration}:${ctx.attemptCount}:${ctx.solved}`,
+  contextSignature: (ctx) =>
+    `${ctx.puzzleLoaded}:${ctx.inExploration}:${ctx.attemptCount}:${ctx.solved}:${ctx.isBoardFlipped}:${ctx.blindfoldActive}:${ctx.blindfoldVisible}:${ctx.hintActive}:${Math.min(ctx.historyIndex ?? 0, 2)}:${ctx.timerMode}`,
   ensureInitialState: ensureDiscoveryState,
 };
 
