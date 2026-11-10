@@ -30,6 +30,7 @@ import {
   cancelRecurringDiscoveryJob,
   fetchRecurringWeaknesses,
   getClusterPositions,
+  type ClusterMemberPosition,
   type RecurringDiscoveryJobResponse,
   type RecurringWeaknessResponse,
 } from '../services/api';
@@ -689,6 +690,34 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
         </div>
       )}
 
+      {/* Discovery Job Failure Banner */}
+      {activeDiscoveryJob && activeDiscoveryJob.status === 'FAILED' && (
+        <StatusBanner
+          variant="error"
+          title="Discovery Failed"
+          message={activeDiscoveryJob.errorMessage || 'Discovery job failed.'}
+          action={{
+            label: 'Retry Discovery',
+            onClick: () => {
+              void handleStartDiscovery();
+            },
+          }}
+          onDismiss={() => setActiveDiscoveryJob(null)}
+        />
+      )}
+
+      {/* Discovery Partial Success Warning Banner */}
+      {activeDiscoveryJob && activeDiscoveryJob.status === 'COMPLETED' && Boolean(activeDiscoveryJob.warningMessage) && (
+        <StatusBanner
+          variant="warning"
+          title="Partial Discovery Results"
+          message={activeDiscoveryJob.warningMessage || ''}
+          onDismiss={() => {
+            setActiveDiscoveryJob((prev) => (prev ? { ...prev, warningMessage: null } : null));
+          }}
+        />
+      )}
+
       {/* Cluster Load Error Banner */}
       {clusterError && !error && (
         <StatusBanner
@@ -880,13 +909,41 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
                   setPracticeError(null);
                   setLoadingPracticeClusterId(cluster.clusterId);
                   try {
-                    const data = await getClusterPositions(cluster.clusterId, {
-                      playableOnly: true,
-                      size: 100,
-                      accountId,
-                    });
-                    const positions = data.positions || [];
-                    const playablePositions = positions.filter(
+                    let currentPage = 0;
+                    let allPositions: ClusterMemberPosition[] = [];
+                    let hasNext = true;
+                    let expectedTotal: number | null = null;
+                    let expectedPages: number | null = null;
+                    while (hasNext) {
+                      const data = await getClusterPositions(cluster.clusterId, {
+                        playableOnly: true,
+                        size: 100,
+                        page: currentPage,
+                        accountId,
+                      });
+                      const batch = data.positions || [];
+                      if (data.hasNext && batch.length === 0) {
+                        throw new Error('Inconsistent pagination metadata: empty page received with hasNext=true');
+                      }
+                      if (typeof data.totalElements === 'number' && expectedTotal === null) {
+                        expectedTotal = data.totalElements;
+                      }
+                      if (typeof data.totalPages === 'number' && expectedPages === null) {
+                        expectedPages = data.totalPages;
+                      }
+                      allPositions = [...allPositions, ...batch];
+                      hasNext = Boolean(data.hasNext);
+                      currentPage++;
+                    }
+
+                    if (expectedTotal !== null && allPositions.length < expectedTotal) {
+                      throw new Error(`Incomplete playlist: retrieved ${allPositions.length} of ${expectedTotal} positions`);
+                    }
+                    if (expectedPages !== null && currentPage < expectedPages) {
+                      throw new Error(`Incomplete playlist: retrieved ${currentPage} of ${expectedPages} pages`);
+                    }
+
+                    const playablePositions = allPositions.filter(
                       (pos) => typeof pos.targetMove === 'string' && pos.targetMove.trim().length > 0
                     );
                     const playablePuzzles: Puzzle[] = playablePositions.map((pos) => {

@@ -87,6 +87,7 @@ data class RecurringDiscoveryJobResponse(
     val progressPercent: Int,
     val stage: String,
     val errorMessage: String? = null,
+    val warningMessage: String? = null,
     val createdAt: Instant,
     val updatedAt: Instant,
 )

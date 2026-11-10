@@ -58,7 +58,7 @@ class RecurringWeaknessDtosTest {
     }
 
     @Test
-    fun `RecurringDiscoveryJobResponse serialization round-trip`() {
+    fun `RecurringDiscoveryJobResponse serialization round-trip with warningMessage`() {
         val now = Instant.parse("2026-11-09T00:00:00Z")
         val id = UUID.randomUUID()
         val accountId = UUID.randomUUID()
@@ -66,10 +66,11 @@ class RecurringWeaknessDtosTest {
             RecurringDiscoveryJobResponse(
                 jobId = id,
                 accountId = accountId,
-                status = DiscoveryJobStatus.PROCESSING.name,
-                progressPercent = 45,
-                stage = DiscoveryStage.EVALUATION.name,
+                status = DiscoveryJobStatus.COMPLETED.name,
+                progressPercent = 100,
+                stage = DiscoveryStage.COMPLETE.name,
                 errorMessage = null,
+                warningMessage = "Partial discovery: structural clustering failed; dynamic clusters refreshed.",
                 createdAt = now,
                 updatedAt = now,
             )
@@ -78,6 +79,7 @@ class RecurringWeaknessDtosTest {
         val deserialized = objectMapper.readValue<RecurringDiscoveryJobResponse>(json)
 
         assertEquals(dto, deserialized)
+        assertEquals("Partial discovery: structural clustering failed; dynamic clusters refreshed.", deserialized.warningMessage)
     }
 
     @Test

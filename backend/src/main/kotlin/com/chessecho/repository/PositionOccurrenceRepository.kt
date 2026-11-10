@@ -145,7 +145,7 @@ interface PositionOccurrenceRepository : JpaRepository<PositionOccurrence, UUID>
         JOIN FETCH po.position
         WHERE po.chessAccount.id = :chessAccountId
           AND po.position.id IN :positionIds
-        ORDER BY po.game.playedAt DESC NULLS LAST, po.plyNumber ASC
+        ORDER BY po.game.playedAt DESC NULLS LAST, po.plyNumber ASC, po.id ASC
         """,
     )
     fun findAllByChessAccountIdAndPositionIdIn(

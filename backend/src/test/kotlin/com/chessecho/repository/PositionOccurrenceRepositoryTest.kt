@@ -241,4 +241,65 @@ class PositionOccurrenceRepositoryTest {
         assertEquals(1, results[0].plyNumber)
         assertEquals(2, results[1].plyNumber)
     }
+
+    @Test
+    fun `findAllByChessAccountIdAndPositionIdIn breaks timestamp and ply ties deterministically by id ASC`() {
+        val account = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = "tie_breaker_user"))
+        val now = Instant.now()
+        val game =
+            gameRepository.save(
+                Game(
+                    chessAccount = account,
+                    platformGameId = "game_tie",
+                    pgn = "1. e4 e5",
+                    timeControl = "blitz",
+                    playedAt = now,
+                    result = "win",
+                    whiteUsername = "tie_breaker_user",
+                    blackUsername = "opponent",
+                ),
+            )
+        val pos1 = positionRepository.save(Position(hash = "tie_pos_1", fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"))
+        val pos2 =
+            positionRepository.save(
+                Position(hash = "tie_pos_2", fen = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2"),
+            )
+
+        val occ1 =
+            positionOccurrenceRepository.save(
+                PositionOccurrence(
+                    game = game,
+                    position = pos1,
+                    chessAccount = account,
+                    plyNumber = 1,
+                    movePlayed = "e4",
+                    playerColor = "WHITE",
+                ),
+            )
+        val occ2 =
+            positionOccurrenceRepository.save(
+                PositionOccurrence(
+                    game = game,
+                    position = pos2,
+                    chessAccount = account,
+                    plyNumber = 1,
+                    movePlayed = "e4",
+                    playerColor = "WHITE",
+                ),
+            )
+        positionOccurrenceRepository.flush()
+
+        val expectedFirst = if (occ1.id.toString() < occ2.id.toString()) occ1.id else occ2.id
+        val expectedSecond = if (occ1.id.toString() < occ2.id.toString()) occ2.id else occ1.id
+
+        val results =
+            positionOccurrenceRepository.findAllByChessAccountIdAndPositionIdIn(
+                account.id,
+                listOf(pos1.id, pos2.id),
+            )
+
+        assertEquals(2, results.size)
+        assertEquals(expectedFirst, results[0].id)
+        assertEquals(expectedSecond, results[1].id)
+    }
 }

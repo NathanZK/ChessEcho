@@ -53,10 +53,30 @@ data class DiscoveryJobState(
     @Volatile var stage: DiscoveryStage = DiscoveryStage.INITIALIZING,
     @Volatile var progressPercent: Int = 0,
     @Volatile var errorMessage: String? = null,
+    @Volatile var warningMessage: String? = null,
     val cancellationRequested: AtomicBoolean = AtomicBoolean(false),
     val completionLatch: CountDownLatch = CountDownLatch(1),
     val createdAt: Instant = Instant.now(),
     @Volatile var updatedAt: Instant = Instant.now(),
+)
+
+private sealed class SnapshotGenerationResult {
+    data class Success(
+        val snapshot: PositionClusterSnapshot,
+    ) : SnapshotGenerationResult()
+
+    data object Unavailable : SnapshotGenerationResult()
+
+    data class Failed(
+        val exception: Exception,
+    ) : SnapshotGenerationResult()
+}
+
+private data class ResolvedSnapshotsResult(
+    val snapshots: List<PositionClusterSnapshot>,
+    val onDemandRan: Boolean,
+    val failedTypes: List<Pair<ClusterType, Exception>>,
+    val unavailableTypes: List<ClusterType>,
 )
 
 @Service
@@ -111,16 +131,18 @@ class RecurringWeaknessDiscoveryService(
         if (jobState.accountId != account.id) {
             throw ForbiddenAccountException("Job does not belong to account ${account.id}")
         }
-        if (jobState.status.isTerminal()) {
-            throw IllegalStateException("Cannot cancel job in terminal state ${jobState.status}")
-        }
+        synchronized(jobState) {
+            if (jobState.status.isTerminal()) {
+                throw IllegalStateException("Cannot cancel job in terminal state ${jobState.status}")
+            }
 
-        jobState.cancellationRequested.set(true)
-        jobState.status = DiscoveryJobStatus.CANCELLED
-        jobState.stage = DiscoveryStage.CANCELLED
-        jobState.updatedAt = Instant.now()
-        activeAccountJobs.remove(account.id, jobId)
-        jobState.completionLatch.countDown()
+            jobState.cancellationRequested.set(true)
+            jobState.status = DiscoveryJobStatus.CANCELLED
+            jobState.stage = DiscoveryStage.CANCELLED
+            jobState.updatedAt = Instant.now()
+            activeAccountJobs.remove(account.id, jobId)
+            jobState.completionLatch.countDown()
+        }
 
         return toResponse(jobState)
     }
@@ -223,75 +245,66 @@ class RecurringWeaknessDiscoveryService(
         )
     }
 
-    private fun emptyClusterPositionsResponse(
-        page: Int,
-        size: Int,
-    ): ClusterMemberPositionsResponse =
-        ClusterMemberPositionsResponse(
-            page = page,
-            size = size,
-            totalElements = 0L,
-            totalPages = 0,
-            hasNext = false,
-            positions = emptyList(),
-        )
-
-    private fun paginatePositions(
-        items: List<ClusterMemberPositionDto>,
-        page: Int,
-        size: Int,
-    ): ClusterMemberPositionsResponse {
-        val totalElements = items.size.toLong()
-        val totalPages = if (size == 0) 0 else ((totalElements + size - 1) / size).toInt()
-        val fromIndex = (page * size).coerceAtMost(items.size)
-        val toIndex = ((page + 1) * size).coerceAtMost(items.size)
-        val pagedPositions = if (fromIndex < toIndex) items.subList(fromIndex, toIndex) else emptyList()
-        val hasNext = toIndex < items.size
-
-        return ClusterMemberPositionsResponse(
-            page = page,
-            size = size,
-            totalElements = totalElements,
-            totalPages = totalPages,
-            hasNext = hasNext,
-            positions = pagedPositions,
-        )
-    }
-
     private fun runPipeline(
         jobState: DiscoveryJobState,
         account: ChessAccount,
         request: RecurringDiscoveryRequest,
     ) {
         try {
-            transition(jobState, DiscoveryJobStatus.PROCESSING, DiscoveryStage.INITIALIZING, 10)
+            if (!transition(jobState, DiscoveryJobStatus.PROCESSING, DiscoveryStage.INITIALIZING, 10)) return
             if (isCancelled(jobState)) return
 
-            val (snapshots, onDemandRan) = resolveSnapshots(jobState, account.id, request.clusterType)
+            val resolved = resolveSnapshots(jobState, account.id, request.clusterType)
             if (isCancelled(jobState)) return
-            if (snapshots.isEmpty()) {
-                completeJob(jobState, account.id, emptyList())
+
+            if (resolved.snapshots.isEmpty()) {
+                handleEmptySnapshots(jobState, account.id, resolved)
                 return
             }
 
-            transition(jobState, DiscoveryJobStatus.PROCESSING, DiscoveryStage.INGESTION, if (onDemandRan) 50 else 30)
+            if (!transition(jobState, DiscoveryJobStatus.PROCESSING, DiscoveryStage.INGESTION, if (resolved.onDemandRan) 50 else 30)) return
             if (isCancelled(jobState)) return
 
-            val candidateClusters =
-                snapshots.flatMap { snapshot ->
-                    loadCandidateClusters(snapshot.id).map { cluster -> cluster to snapshot.clusterType }
-                }
+            val candidateClusters = loadCandidateClustersForSnapshots(resolved.snapshots)
             if (candidateClusters.isEmpty()) {
-                completeJob(jobState, account.id, emptyList())
+                completeJob(jobState, account.id, emptyList(), buildPartialWarning(resolved))
                 return
             }
 
-            val results = executeEvaluationAndClustering(jobState, account, candidateClusters, request, onDemandRan)
-            if (results != null && !isCancelled(jobState)) {
-                completeJob(jobState, account.id, results)
-            }
+            processPipelineEvaluation(jobState, account, candidateClusters, request, resolved)
         } catch (e: Exception) {
             failJob(jobState, account.id, e.message ?: "Unknown error")
+        }
+    }
+
+    private fun handleEmptySnapshots(
+        jobState: DiscoveryJobState,
+        accountId: UUID,
+        resolved: ResolvedSnapshotsResult,
+    ) {
+        if (resolved.failedTypes.isNotEmpty()) {
+            val reasons = resolved.failedTypes.joinToString("; ") { "${it.first}: ${it.second.message ?: "clustering failed"}" }
+            failJob(jobState, accountId, "Clustering generation failed: $reasons")
+        } else {
+            completeJob(jobState, accountId, emptyList())
+        }
+    }
+
+    private fun loadCandidateClustersForSnapshots(snapshots: List<PositionClusterSnapshot>): List<Pair<PositionCluster, ClusterType>> =
+        snapshots.flatMap { snapshot ->
+            loadCandidateClusters(snapshot.id).map { cluster -> cluster to snapshot.clusterType }
+        }
+
+    private fun processPipelineEvaluation(
+        jobState: DiscoveryJobState,
+        account: ChessAccount,
+        candidateClusters: List<Pair<PositionCluster, ClusterType>>,
+        request: RecurringDiscoveryRequest,
+        resolved: ResolvedSnapshotsResult,
+    ) {
+        val results = executeEvaluationAndClustering(jobState, account, candidateClusters, request, resolved.onDemandRan)
+        if (results != null && !isCancelled(jobState)) {
+            completeJob(jobState, account.id, results, buildPartialWarning(resolved))
         }
     }
 
@@ -299,7 +312,7 @@ class RecurringWeaknessDiscoveryService(
         jobState: DiscoveryJobState,
         accountId: UUID,
         requestedType: ClusterType?,
-    ): Pair<List<PositionClusterSnapshot>, Boolean> {
+    ): ResolvedSnapshotsResult {
         val targetTypes =
             if (requestedType != null) {
                 listOf(requestedType)
@@ -308,41 +321,85 @@ class RecurringWeaknessDiscoveryService(
             }
 
         val snapshots = mutableListOf<PositionClusterSnapshot>()
+        val failedTypes = mutableListOf<Pair<ClusterType, Exception>>()
+        val unavailableTypes = mutableListOf<ClusterType>()
         var onDemandClusteringRan = false
 
         for ((index, type) in targetTypes.withIndex()) {
             if (isCancelled(jobState)) break
-            val existing =
-                snapshotRepository.findByAccountIdAndClusterTypeAndStatus(
-                    accountId = accountId,
-                    clusterType = type,
-                    status = PositionClusterSnapshotStatus.ACTIVE,
-                )
-            if (existing != null) {
-                snapshots.add(existing)
-            } else {
+            val progress = if (index == 0) 15 else 35
+            val triggered =
+                resolveSnapshotForType(
+                    jobState,
+                    accountId,
+                    type,
+                    progress,
+                    snapshots,
+                    failedTypes,
+                    unavailableTypes,
+                ) ?: break
+            if (triggered) {
                 onDemandClusteringRan = true
-                val progress = if (index == 0) 15 else 35
-                transition(jobState, DiscoveryJobStatus.PROCESSING, DiscoveryStage.CLUSTERING, progress)
-                generateSnapshotSafely(accountId, type)?.let { snapshots.add(it) }
             }
         }
-        return Pair(snapshots, onDemandClusteringRan)
+        return ResolvedSnapshotsResult(snapshots, onDemandClusteringRan, failedTypes, unavailableTypes)
+    }
+
+    private fun resolveSnapshotForType(
+        jobState: DiscoveryJobState,
+        accountId: UUID,
+        type: ClusterType,
+        progress: Int,
+        snapshots: MutableList<PositionClusterSnapshot>,
+        failedTypes: MutableList<Pair<ClusterType, Exception>>,
+        unavailableTypes: MutableList<ClusterType>,
+    ): Boolean? {
+        val existing =
+            snapshotRepository.findByAccountIdAndClusterTypeAndStatus(
+                accountId = accountId,
+                clusterType = type,
+                status = PositionClusterSnapshotStatus.ACTIVE,
+            )
+        if (existing != null) {
+            snapshots.add(existing)
+            return false
+        }
+        if (!transition(jobState, DiscoveryJobStatus.PROCESSING, DiscoveryStage.CLUSTERING, progress)) {
+            return null
+        }
+        collectGeneratedSnapshot(accountId, type, snapshots, failedTypes, unavailableTypes)
+        return true
+    }
+
+    private fun collectGeneratedSnapshot(
+        accountId: UUID,
+        type: ClusterType,
+        snapshots: MutableList<PositionClusterSnapshot>,
+        failedTypes: MutableList<Pair<ClusterType, Exception>>,
+        unavailableTypes: MutableList<ClusterType>,
+    ) {
+        when (val result = generateSnapshotSafely(accountId, type)) {
+            is SnapshotGenerationResult.Success -> snapshots.add(result.snapshot)
+            is SnapshotGenerationResult.Failed -> failedTypes.add(type to result.exception)
+            is SnapshotGenerationResult.Unavailable -> unavailableTypes.add(type)
+        }
     }
 
     private fun generateSnapshotSafely(
         accountId: UUID,
         type: ClusterType,
-    ): PositionClusterSnapshot? =
+    ): SnapshotGenerationResult =
         try {
             val generated = clusteringService?.getOrGenerateActiveSnapshot(accountId, type)
             if (generated == null) {
                 logger.warn("On-demand snapshot generation returned null for account {} and type {}", accountId, type)
+                SnapshotGenerationResult.Unavailable
+            } else {
+                SnapshotGenerationResult.Success(generated)
             }
-            generated
         } catch (e: Exception) {
             logger.warn("On-demand snapshot generation failed for account {} and type {}", accountId, type, e)
-            null
+            SnapshotGenerationResult.Failed(e)
         }
 
     private fun loadCandidateClusters(snapshotId: UUID): List<PositionCluster> =
@@ -456,71 +513,6 @@ class RecurringWeaknessDiscoveryService(
         return decision?.recommendationPriority ?: objectivePriority
     }
 
-    private fun matchesFilterCriteria(
-        profile: CommunityWeaknessProfile,
-        evalLossMap: Map<UUID, Double?>,
-        request: RecurringDiscoveryRequest,
-    ): Boolean {
-        val severityMatches = request.minMistakeSeverity == null || matchesMinMistakeSeverity(profile, request.minMistakeSeverity)
-        val evalLossMatches = request.minEvalLoss == null || matchesMinEvalLoss(evalLossMap, request.minEvalLoss)
-        return severityMatches && evalLossMatches
-    }
-
-    private fun matchesMinMistakeSeverity(
-        profile: CommunityWeaknessProfile,
-        minSeverity: MistakeSeverity,
-    ): Boolean {
-        if (minSeverity == MistakeSeverity.UNEVALUATED) {
-            return (profile.evalLossDistribution[MistakeSeverity.UNEVALUATED] ?: 0) >= 1
-        }
-        val targetRank = severityRank(minSeverity)
-        val qualifyingCount =
-            profile.evalLossDistribution.entries
-                .filter { (sev, _) -> sev != MistakeSeverity.UNEVALUATED && severityRank(sev) >= targetRank }
-                .sumOf { it.value }
-        return qualifyingCount >= 1
-    }
-
-    private fun matchesMinEvalLoss(
-        evalLossMap: Map<UUID, Double?>,
-        minEvalLoss: Double,
-    ): Boolean = evalLossMap.values.any { it != null && it >= minEvalLoss }
-
-    private fun severityRank(severity: MistakeSeverity): Int =
-        when (severity) {
-            MistakeSeverity.NO_CONCERN -> 0
-            MistakeSeverity.MINOR -> 1
-            MistakeSeverity.MODERATE -> 2
-            MistakeSeverity.SIGNIFICANT -> 3
-            MistakeSeverity.SEVERE -> 4
-            MistakeSeverity.UNEVALUATED -> -1
-        }
-
-    private fun toWeaknessResponse(
-        profile: CommunityWeaknessProfile,
-        repFen: String,
-        clusterType: ClusterType = ClusterType.STRUCTURAL,
-        recommendationPriority: Double = profile.blunderRate,
-    ): RecurringWeaknessResponse =
-        RecurringWeaknessResponse(
-            clusterId = profile.clusterId,
-            clusterType = clusterType,
-            recommendationPriority = recommendationPriority,
-            representativeFen = repFen,
-            memberPositionCount = profile.memberPositionCount,
-            totalOccurrences = profile.totalOccurrences,
-            distinctGamesCount = profile.distinctGamesCount,
-            mistakeCount = profile.mistakeCount,
-            mistakeFrequency = profile.mistakeFrequency,
-            blunderRate = profile.blunderRate,
-            evaluatedOccurrences = profile.evaluatedOccurrences,
-            unevaluatedOccurrences = profile.unevaluatedOccurrences,
-            evalLossDistribution = profile.evalLossDistribution.mapKeys { it.key.name },
-            evalLossPercentages = profile.evalLossPercentages.mapKeys { it.key.name },
-            timingProfile = profile.timingProfile.mapKeys { it.key.name },
-            formatBreakdown = profile.formatBreakdown,
-        )
-
     private fun executeWithPermitBackoff(action: () -> Unit): Boolean {
         var retries = 0
         while (retries < MAX_PERMIT_RETRIES) {
@@ -544,50 +536,40 @@ class RecurringWeaknessDiscoveryService(
         return false
     }
 
-    private fun matchesTimeControl(
-        occ: PositionOccurrence,
-        timeControls: List<String>,
-    ): Boolean {
-        val tc = occ.game.timeControl?.uppercase() ?: return false
-        val canonicalSet = timeControls.map { it.uppercase() }.toSet()
-        return tc in canonicalSet || canonicalSet.any { tc.startsWith(it) }
-    }
-
-    private fun matchesDateRange(
-        occ: PositionOccurrence,
-        fromDate: String?,
-        toDate: String?,
-    ): Boolean {
-        if (fromDate.isNullOrBlank() && toDate.isNullOrBlank()) return true
-        val playedAt = occ.game.playedAt ?: return false
-        val from = fromDate?.let { RecurringDiscoveryRequest.parseDateBoundary(it, false) }
-        val to = toDate?.let { RecurringDiscoveryRequest.parseDateBoundary(it, true) }
-        if (from != null && playedAt.isBefore(from)) return false
-        if (to != null && playedAt.isAfter(to)) return false
-        return true
-    }
-
     private fun transition(
         jobState: DiscoveryJobState,
         status: DiscoveryJobStatus,
         stage: DiscoveryStage,
         progress: Int,
-    ) {
-        jobState.status = status
-        jobState.stage = stage
-        jobState.progressPercent = maxOf(jobState.progressPercent, progress)
-        jobState.updatedAt = Instant.now()
-    }
+    ): Boolean =
+        synchronized(jobState) {
+            if (jobState.status.isTerminal() || isCancelled(jobState)) {
+                return@synchronized false
+            }
+            if (!jobState.status.canTransitionTo(status) && jobState.status != status) {
+                return@synchronized false
+            }
+            jobState.status = status
+            jobState.stage = stage
+            jobState.progressPercent = maxOf(jobState.progressPercent, progress)
+            jobState.updatedAt = Instant.now()
+            true
+        }
 
     private fun completeJob(
         jobState: DiscoveryJobState,
         accountId: UUID,
         results: List<RecurringWeaknessResponse>,
-    ) {
+        warning: String? = null,
+    ) = synchronized(jobState) {
+        if (jobState.status.isTerminal() || isCancelled(jobState)) {
+            return@synchronized
+        }
         cachedWeaknesses[accountId] = results
         jobState.status = DiscoveryJobStatus.COMPLETED
         jobState.stage = DiscoveryStage.COMPLETE
         jobState.progressPercent = 100
+        jobState.warningMessage = warning
         jobState.updatedAt = Instant.now()
         activeAccountJobs.remove(accountId, jobState.jobId)
         jobState.completionLatch.countDown()
@@ -597,7 +579,10 @@ class RecurringWeaknessDiscoveryService(
         jobState: DiscoveryJobState,
         accountId: UUID,
         error: String,
-    ) {
+    ) = synchronized(jobState) {
+        if (jobState.status.isTerminal() || isCancelled(jobState)) {
+            return@synchronized
+        }
         jobState.status = DiscoveryJobStatus.FAILED
         jobState.stage = DiscoveryStage.FAILED
         jobState.errorMessage = error
@@ -608,17 +593,27 @@ class RecurringWeaknessDiscoveryService(
 
     private fun isCancelled(jobState: DiscoveryJobState): Boolean = jobState.cancellationRequested.get()
 
-    private fun toResponse(state: DiscoveryJobState): RecurringDiscoveryJobResponse =
-        RecurringDiscoveryJobResponse(
-            jobId = state.jobId,
-            accountId = state.accountId,
-            status = state.status.name,
-            progressPercent = state.progressPercent,
-            stage = state.stage.name,
-            errorMessage = state.errorMessage,
-            createdAt = state.createdAt,
-            updatedAt = state.updatedAt,
-        )
+    internal fun getJobStateForTesting(jobId: UUID): DiscoveryJobState? = jobs[jobId]
+
+    internal fun tryTransitionForTesting(
+        jobState: DiscoveryJobState,
+        status: DiscoveryJobStatus,
+        stage: DiscoveryStage,
+        progress: Int,
+    ): Boolean = transition(jobState, status, stage, progress)
+
+    internal fun completeJobForTesting(
+        jobState: DiscoveryJobState,
+        accountId: UUID,
+        results: List<RecurringWeaknessResponse>,
+        warning: String? = null,
+    ) = completeJob(jobState, accountId, results, warning)
+
+    internal fun failJobForTesting(
+        jobState: DiscoveryJobState,
+        accountId: UUID,
+        error: String,
+    ) = failJob(jobState, accountId, error)
 
     fun awaitJobCompletion(
         jobId: UUID,
@@ -664,3 +659,150 @@ class RecurringWeaknessDiscoveryService(
         private const val BACKOFF_MS = 50L
     }
 }
+
+private fun emptyClusterPositionsResponse(
+    page: Int,
+    size: Int,
+): ClusterMemberPositionsResponse =
+    ClusterMemberPositionsResponse(
+        page = page,
+        size = size,
+        totalElements = 0L,
+        totalPages = 0,
+        hasNext = false,
+        positions = emptyList(),
+    )
+
+private fun paginatePositions(
+    items: List<ClusterMemberPositionDto>,
+    page: Int,
+    size: Int,
+): ClusterMemberPositionsResponse {
+    val totalElements = items.size.toLong()
+    val totalPages = if (size == 0) 0 else ((totalElements + size - 1) / size).toInt()
+    val fromIndex = (page * size).coerceAtMost(items.size)
+    val toIndex = ((page + 1) * size).coerceAtMost(items.size)
+    val pagedPositions = if (fromIndex < toIndex) items.subList(fromIndex, toIndex) else emptyList()
+    val hasNext = toIndex < items.size
+
+    return ClusterMemberPositionsResponse(
+        page = page,
+        size = size,
+        totalElements = totalElements,
+        totalPages = totalPages,
+        hasNext = hasNext,
+        positions = pagedPositions,
+    )
+}
+
+private fun matchesFilterCriteria(
+    profile: CommunityWeaknessProfile,
+    evalLossMap: Map<UUID, Double?>,
+    request: RecurringDiscoveryRequest,
+): Boolean {
+    val severityMatches = request.minMistakeSeverity == null || matchesMinMistakeSeverity(profile, request.minMistakeSeverity)
+    val evalLossMatches = request.minEvalLoss == null || matchesMinEvalLoss(evalLossMap, request.minEvalLoss)
+    return severityMatches && evalLossMatches
+}
+
+private fun matchesMinMistakeSeverity(
+    profile: CommunityWeaknessProfile,
+    minSeverity: MistakeSeverity,
+): Boolean {
+    if (minSeverity == MistakeSeverity.UNEVALUATED) {
+        return (profile.evalLossDistribution[MistakeSeverity.UNEVALUATED] ?: 0) >= 1
+    }
+    val targetRank = severityRank(minSeverity)
+    val qualifyingCount =
+        profile.evalLossDistribution.entries
+            .filter { (sev, _) -> sev != MistakeSeverity.UNEVALUATED && severityRank(sev) >= targetRank }
+            .sumOf { it.value }
+    return qualifyingCount >= 1
+}
+
+private fun matchesMinEvalLoss(
+    evalLossMap: Map<UUID, Double?>,
+    minEvalLoss: Double,
+): Boolean = evalLossMap.values.any { it != null && it >= minEvalLoss }
+
+private fun severityRank(severity: MistakeSeverity): Int =
+    when (severity) {
+        MistakeSeverity.NO_CONCERN -> 0
+        MistakeSeverity.MINOR -> 1
+        MistakeSeverity.MODERATE -> 2
+        MistakeSeverity.SIGNIFICANT -> 3
+        MistakeSeverity.SEVERE -> 4
+        MistakeSeverity.UNEVALUATED -> -1
+    }
+
+private fun toWeaknessResponse(
+    profile: CommunityWeaknessProfile,
+    repFen: String,
+    clusterType: ClusterType = ClusterType.STRUCTURAL,
+    recommendationPriority: Double = profile.blunderRate,
+): RecurringWeaknessResponse =
+    RecurringWeaknessResponse(
+        clusterId = profile.clusterId,
+        clusterType = clusterType,
+        recommendationPriority = recommendationPriority,
+        representativeFen = repFen,
+        memberPositionCount = profile.memberPositionCount,
+        totalOccurrences = profile.totalOccurrences,
+        distinctGamesCount = profile.distinctGamesCount,
+        mistakeCount = profile.mistakeCount,
+        mistakeFrequency = profile.mistakeFrequency,
+        blunderRate = profile.blunderRate,
+        evaluatedOccurrences = profile.evaluatedOccurrences,
+        unevaluatedOccurrences = profile.unevaluatedOccurrences,
+        evalLossDistribution = profile.evalLossDistribution.mapKeys { it.key.name },
+        evalLossPercentages = profile.evalLossPercentages.mapKeys { it.key.name },
+        timingProfile = profile.timingProfile.mapKeys { it.key.name },
+        formatBreakdown = profile.formatBreakdown,
+    )
+
+private fun matchesTimeControl(
+    occ: PositionOccurrence,
+    timeControls: List<String>,
+): Boolean {
+    val tc = occ.game.timeControl?.uppercase() ?: return false
+    val canonicalSet = timeControls.map { it.uppercase() }.toSet()
+    return tc in canonicalSet || canonicalSet.any { tc.startsWith(it) }
+}
+
+private fun matchesDateRange(
+    occ: PositionOccurrence,
+    fromDate: String?,
+    toDate: String?,
+): Boolean {
+    if (fromDate.isNullOrBlank() && toDate.isNullOrBlank()) return true
+    val playedAt = occ.game.playedAt ?: return false
+    val from = fromDate?.let { RecurringDiscoveryRequest.parseDateBoundary(it, false) }
+    val to = toDate?.let { RecurringDiscoveryRequest.parseDateBoundary(it, true) }
+    if (from != null && playedAt.isBefore(from)) return false
+    if (to != null && playedAt.isAfter(to)) return false
+    return true
+}
+
+private fun buildPartialWarning(resolved: ResolvedSnapshotsResult): String? =
+    if (resolved.failedTypes.isNotEmpty()) {
+        "Partial discovery: ${resolved.failedTypes.joinToString {
+            it.first.name.lowercase()
+        }} clustering failed; ${resolved.snapshots.map {
+            it.clusterType.name.lowercase()
+        }.joinToString()} clusters refreshed."
+    } else {
+        null
+    }
+
+private fun toResponse(state: DiscoveryJobState): RecurringDiscoveryJobResponse =
+    RecurringDiscoveryJobResponse(
+        jobId = state.jobId,
+        accountId = state.accountId,
+        status = state.status.name,
+        progressPercent = state.progressPercent,
+        stage = state.stage.name,
+        errorMessage = state.errorMessage,
+        warningMessage = state.warningMessage,
+        createdAt = state.createdAt,
+        updatedAt = state.updatedAt,
+    )

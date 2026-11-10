@@ -166,4 +166,140 @@ describe('Recurring Weakness Discovery & Polling (#735)', () => {
 
     vi.useRealTimers();
   });
+
+  it('renders error banner with retry button and dismiss when discovery job fails', async () => {
+    const failedJob: api.RecurringDiscoveryJobResponse = {
+      jobId: 'job-fail-1',
+      accountId: 'test-account-uuid',
+      status: 'FAILED',
+      progressPercent: 20,
+      stage: 'FAILED',
+      errorMessage: 'Clustering generation failed: STRUCTURAL: out of memory',
+      createdAt: '2026-11-09T00:00:00Z',
+      updatedAt: '2026-11-09T00:01:00Z',
+    };
+
+    vi.mocked(api.triggerRecurringDiscovery).mockResolvedValueOnce(failedJob);
+
+    render(<WeaknessesList {...defaultProps} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Find Recurring Weaknesses/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Start Discovery/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toBeInTheDocument();
+      expect(screen.getByText('Discovery Failed')).toBeInTheDocument();
+      expect(
+        screen.getByText('Clustering generation failed: STRUCTURAL: out of memory')
+      ).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Retry Discovery/i })).toBeInTheDocument();
+    });
+
+    // Dismiss banner
+    const dismissBtn = screen.getByRole('button', { name: /Dismiss banner/i });
+    fireEvent.click(dismissBtn);
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('clicking retry button on failed discovery banner triggers discovery again', async () => {
+    const failedJob: api.RecurringDiscoveryJobResponse = {
+      jobId: 'job-fail-1',
+      accountId: 'test-account-uuid',
+      status: 'FAILED',
+      progressPercent: 20,
+      stage: 'FAILED',
+      errorMessage: 'Clustering generation failed',
+      createdAt: '2026-11-09T00:00:00Z',
+      updatedAt: '2026-11-09T00:01:00Z',
+    };
+
+    const retriedJob: api.RecurringDiscoveryJobResponse = {
+      jobId: 'job-retry-2',
+      accountId: 'test-account-uuid',
+      status: 'PROCESSING',
+      progressPercent: 10,
+      stage: 'INITIALIZING',
+      createdAt: '2026-11-09T00:02:00Z',
+      updatedAt: '2026-11-09T00:02:00Z',
+    };
+
+    vi.mocked(api.triggerRecurringDiscovery)
+      .mockResolvedValueOnce(failedJob)
+      .mockResolvedValueOnce(retriedJob);
+
+    render(<WeaknessesList {...defaultProps} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Find Recurring Weaknesses/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Start Discovery/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Retry Discovery/i })).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Retry Discovery/i }));
+
+    await waitFor(() => {
+      expect(api.triggerRecurringDiscovery).toHaveBeenCalledTimes(2);
+      expect(screen.getByText(/Discovering Recurring Weaknesses/i)).toBeInTheDocument();
+    });
+  });
+
+  it('renders warning banner with partial results warning when completed with warningMessage', async () => {
+    const partialJob: api.RecurringDiscoveryJobResponse = {
+      jobId: 'job-part-1',
+      accountId: 'test-account-uuid',
+      status: 'COMPLETED',
+      progressPercent: 100,
+      stage: 'COMPLETE',
+      warningMessage: 'Partial discovery: structural clustering failed; dynamic clusters refreshed.',
+      createdAt: '2026-11-09T00:00:00Z',
+      updatedAt: '2026-11-09T00:01:00Z',
+    };
+
+    vi.mocked(api.triggerRecurringDiscovery).mockResolvedValueOnce(partialJob);
+
+    render(<WeaknessesList {...defaultProps} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Find Recurring Weaknesses/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Start Discovery/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Partial Discovery Results')).toBeInTheDocument();
+      expect(
+        screen.getByText('Partial discovery: structural clustering failed; dynamic clusters refreshed.')
+      ).toBeInTheDocument();
+    });
+
+    // Dismiss banner
+    const dismissBtn = screen.getByRole('button', { name: /Dismiss banner/i });
+    fireEvent.click(dismissBtn);
+
+    expect(screen.queryByText('Partial Discovery Results')).not.toBeInTheDocument();
+  });
+
+  it('does not render warning banner when discovery completes without warningMessage', async () => {
+    const successJob: api.RecurringDiscoveryJobResponse = {
+      jobId: 'job-succ-1',
+      accountId: 'test-account-uuid',
+      status: 'COMPLETED',
+      progressPercent: 100,
+      stage: 'COMPLETE',
+      warningMessage: null,
+      createdAt: '2026-11-09T00:00:00Z',
+      updatedAt: '2026-11-09T00:01:00Z',
+    };
+
+    vi.mocked(api.triggerRecurringDiscovery).mockResolvedValueOnce(successJob);
+
+    render(<WeaknessesList {...defaultProps} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Find Recurring Weaknesses/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Start Discovery/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByText('Partial Discovery Results')).not.toBeInTheDocument();
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    });
+  });
 });

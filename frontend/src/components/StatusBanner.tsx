@@ -1,13 +1,14 @@
 import React from 'react';
 
 export interface StatusBannerProps {
-  variant: 'loading' | 'empty' | 'error';
+  variant: 'loading' | 'empty' | 'error' | 'warning';
   message: string;
   title?: string;
   action?: {
     label: string;
     onClick: () => void;
   };
+  onDismiss?: () => void;
   className?: string;
 }
 
@@ -16,6 +17,7 @@ export const StatusBanner: React.FC<StatusBannerProps> = ({
   message,
   title,
   action,
+  onDismiss,
   className = '',
 }) => {
   if (variant === 'loading') {
@@ -52,14 +54,63 @@ export const StatusBanner: React.FC<StatusBannerProps> = ({
     );
   }
 
+  if (variant === 'warning') {
+    return (
+      <div
+        role="status"
+        className={`rounded-2xl border border-amber-900/60 bg-amber-950/30 p-6 text-amber-200 space-y-3 shadow-xl ${className}`}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="space-y-1">
+            {title && <h3 className="text-base font-bold text-amber-100">{title}</h3>}
+            <p className="text-sm leading-relaxed">{message}</p>
+          </div>
+          {onDismiss && (
+            <button
+              type="button"
+              onClick={onDismiss}
+              aria-label="Dismiss banner"
+              className="text-amber-400 hover:text-amber-200 text-xs font-semibold px-2 py-1 rounded transition cursor-pointer"
+            >
+              Dismiss
+            </button>
+          )}
+        </div>
+        {action && (
+          <button
+            type="button"
+            onClick={action.onClick}
+            className="px-4 py-2 bg-amber-800/80 hover:bg-amber-700 text-amber-100 text-xs font-semibold rounded-lg transition cursor-pointer"
+          >
+            {action.label}
+          </button>
+        )}
+      </div>
+    );
+  }
+
   // error variant
   return (
     <div
       role="alert"
       className={`rounded-2xl border border-rose-900/60 bg-rose-950/30 p-6 text-rose-200 space-y-3 shadow-xl ${className}`}
     >
-      {title && <h3 className="text-base font-bold text-rose-100">{title}</h3>}
-      <p className="text-sm leading-relaxed">{message}</p>
+      <div className="flex items-start justify-between gap-3">
+        <div className="space-y-1">
+          {title && <h3 className="text-base font-bold text-rose-100">{title}</h3>}
+          <p className="text-sm leading-relaxed">{message}</p>
+        </div>
+        {onDismiss && (
+          <button
+            type="button"
+            onClick={onDismiss}
+            aria-label="Dismiss banner"
+            className="text-rose-400 hover:text-rose-200 text-xs font-semibold px-2 py-1 rounded transition cursor-pointer"
+          >
+            Dismiss
+          </button>
+        )}
+      </div>
       {action && (
         <button
           type="button"
