@@ -1,5 +1,18 @@
 import type { Page } from '@playwright/test';
 
+export type NetworkFaultType =
+  | 'server_error_500'
+  | 'server_error_504'
+  | 'aborted'
+  | 'malformed_json'
+  | 'empty_body';
+
+export interface RouteFaultConfig {
+  fault?: NetworkFaultType;
+  gate?: Promise<void>;
+  failureCount?: number;
+}
+
 export interface MockOptions {
   authenticated?: boolean;
   user?: { userId: string; email: string };
@@ -15,6 +28,8 @@ export interface MockOptions {
   importConflict?: boolean;
   jobStatusSequence?: Array<Record<string, unknown>>;
   discoveryJob?: Record<string, unknown>;
+  evaluateMoveFault?: RouteFaultConfig;
+  continuationFault?: RouteFaultConfig;
 }
 
 export const DEFAULT_MOCK_ACCOUNT = {
@@ -183,14 +198,208 @@ export const DEFAULT_MOCK_CLUSTER_POSITION = {
   moveNumber: 3,
 };
 
+export const BLACK_TO_MOVE_MOCK_PUZZLE = {
+  puzzleId: 'puzzle-black-1',
+  source: 'puzzle',
+  fen: 'rnbqkbnr/pp1ppppp/8/2p5/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2',
+  playerColor: 'BLACK',
+  targetMove: 'd6',
+  openingTitle: 'Sicilian Defense',
+  acceptableMoves: [
+    { move: 'Nc6', evalLoss: 0.02 },
+    { move: 'e6', evalLoss: 0.08 },
+  ],
+  movesPlayed: [
+    { move: 'a6', timesPlayed: 3, averageLoss: 1.4 },
+  ],
+  priority: 1.5,
+  timesReached: 6,
+  mistakeCount: 2,
+  mistakeRate: 33.3,
+  gameUrls: [],
+  evalCp: -25,
+};
+
+export const TACTICAL_SACRIFICE_MOCK_PUZZLE = {
+  puzzleId: 'puzzle-tactics-1',
+  source: 'puzzle',
+  fen: 'r1bq1rk1/ppp2ppp/2np4/2b1p1N1/2B1P1n1/2NP4/PPP2PPP/R1BQ1RK1 w - - 0 8',
+  playerColor: 'WHITE',
+  targetMove: 'Bxf7+',
+  openingTitle: 'Tactical Bishop Sacrifice',
+  acceptableMoves: [
+    { move: 'h3', evalLoss: 0.1 },
+  ],
+  movesPlayed: [
+    { move: 'd4', timesPlayed: 1, averageLoss: 1.8 },
+  ],
+  priority: 2.0,
+  timesReached: 3,
+  mistakeCount: 1,
+  mistakeRate: 33.3,
+  gameUrls: [],
+  evalCp: 180,
+};
+
+export const MULTI_MOVE_CONTINUATION_MOCK_PUZZLE = {
+  puzzleId: 'puzzle-continuation-1',
+  source: 'puzzle',
+  fen: 'r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2NP1N2/PPP2PPP/R1BQK2R b KQkq - 0 5',
+  playerColor: 'WHITE',
+  targetMove: 'O-O',
+  openingTitle: 'Giuoco Piano Multi-Move Sequence',
+  acceptableMoves: [
+    { move: 'd6', evalLoss: 0.04 },
+  ],
+  movesPlayed: [
+    { move: 'h6', timesPlayed: 2, averageLoss: 1.2 },
+  ],
+  priority: 1.2,
+  timesReached: 4,
+  mistakeCount: 1,
+  mistakeRate: 25.0,
+  gameUrls: [],
+  evalCp: 15,
+};
+
+export const ENDGAME_MOCK_PUZZLE = {
+  puzzleId: 'puzzle-endgame-1',
+  source: 'puzzle',
+  fen: '8/8/4k3/8/4K3/3P4/8/8 w - - 0 1',
+  playerColor: 'WHITE',
+  targetMove: 'Kd4',
+  openingTitle: 'King and Pawn Endgame',
+  acceptableMoves: [
+    { move: 'd4', evalLoss: 0.0 },
+  ],
+  movesPlayed: [
+    { move: 'Kf4', timesPlayed: 1, averageLoss: 3.5 },
+  ],
+  priority: 2.5,
+  timesReached: 2,
+  mistakeCount: 1,
+  mistakeRate: 50.0,
+  gameUrls: [],
+  evalCp: 300,
+};
+
+export const DYNAMIC_EVAL_MOCK_PUZZLE = {
+  puzzleId: 'puzzle-eval-1',
+  source: 'puzzle',
+  fen: 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3',
+  playerColor: 'WHITE',
+  targetMove: '',
+  openingTitle: 'Dynamic Evaluation Practice',
+  acceptableMoves: [],
+  movesPlayed: [],
+  priority: 1.0,
+  timesReached: 1,
+  mistakeCount: 0,
+  mistakeRate: 0.0,
+  gameUrls: [],
+  evalCp: 40,
+};
+
+export const MOCK_PUZZLES = [
+  DEFAULT_MOCK_PUZZLE,
+  BLACK_TO_MOVE_MOCK_PUZZLE,
+  TACTICAL_SACRIFICE_MOCK_PUZZLE,
+  MULTI_MOVE_CONTINUATION_MOCK_PUZZLE,
+  ENDGAME_MOCK_PUZZLE,
+];
+
 export interface JourneyMockHandle {
   setAuthenticated: (val: boolean) => void;
   getPollCount: () => number;
   getDiscoveryPollCount: () => number;
+  setEvaluateMoveFault: (fault?: RouteFaultConfig) => void;
+  setContinuationFault: (fault?: RouteFaultConfig) => void;
+}
+
+async function applyRouteFault(
+  route: import('@playwright/test').Route | JourneyRouteLike,
+  faultConfig?: RouteFaultConfig
+): Promise<boolean> {
+  if (!faultConfig) return false;
+
+  if (faultConfig.gate) {
+    await faultConfig.gate;
+  }
+
+  if (faultConfig.fault) {
+    if (faultConfig.failureCount !== undefined) {
+      if (faultConfig.failureCount <= 0) {
+        return false;
+      }
+      faultConfig.failureCount -= 1;
+    }
+
+    switch (faultConfig.fault) {
+      case 'server_error_500':
+        await route.fulfill({
+          status: 500,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'Internal Server Error' }),
+        });
+        return true;
+      case 'server_error_504':
+        await route.fulfill({
+          status: 504,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'Gateway Timeout' }),
+        });
+        return true;
+      case 'aborted':
+        await route.abort('failed');
+        return true;
+      case 'malformed_json':
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: '<<<NOT_JSON>>>',
+        });
+        return true;
+      case 'empty_body':
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: '',
+        });
+        return true;
+    }
+  }
+
+  return false;
+}
+
+export interface JourneyRouteLike {
+  request: () => {
+    url: () => string;
+    headers: () => Record<string, string>;
+    postDataJSON: () => unknown;
+  };
+  fulfill: (response: {
+    status?: number;
+    contentType?: string;
+    headers?: Record<string, string>;
+    body?: string;
+    json?: unknown;
+  }) => Promise<void>;
+  abort: (errorCode?: string) => Promise<void>;
+}
+
+export interface JourneyRoutablePage {
+  context: () => {
+    addCookies: (cookies: Array<{ name: string; value: string; domain?: string; path?: string }>) => Promise<unknown>;
+  };
+  route: (
+    url: string | RegExp | ((url: URL) => boolean),
+    handler: (route: import('@playwright/test').Route | JourneyRouteLike) => Promise<void> | void
+  ) => Promise<unknown> | void;
 }
 
 export async function setupJourneyApiMocks(
-  page: Page,
+  page: Page | JourneyRoutablePage,
   options: MockOptions = {}
 ): Promise<JourneyMockHandle> {
   const {
@@ -208,11 +417,15 @@ export async function setupJourneyApiMocks(
     importConflict = false,
     jobStatusSequence,
     discoveryJob,
+    evaluateMoveFault,
+    continuationFault,
   } = options;
 
   let currentAuthenticated = authenticated;
   let currentUser = { ...user };
   const currentAccounts = [...accounts];
+  let currentEvaluateMoveFault = evaluateMoveFault ? { ...evaluateMoveFault } : undefined;
+  let currentContinuationFault = continuationFault ? { ...continuationFault } : undefined;
 
   try {
     await page.context().addCookies([
@@ -227,7 +440,7 @@ export async function setupJourneyApiMocks(
     // Context may already be initialized or handled
   }
 
-  const checkCsrf = async (route: import('@playwright/test').Route): Promise<boolean> => {
+  const checkCsrf = async (route: import('@playwright/test').Route | JourneyRouteLike): Promise<boolean> => {
     const token = route.request().headers()['x-xsrf-token'];
     if (token !== 'mock-csrf-token') {
       await route.fulfill({
@@ -425,10 +638,21 @@ export async function setupJourneyApiMocks(
   });
 
   await page.route('**/api/puzzles/evaluate-move*', async (route) => {
+    if (await applyRouteFault(route, currentEvaluateMoveFault)) {
+      return;
+    }
     const url = new URL(route.request().url());
     const move = url.searchParams.get('move') || '';
     const fen = url.searchParams.get('fen') || '';
-    const isTarget = move.toLowerCase() === 'nc6' || move.toLowerCase() === 'd4';
+    const currentPuzzle = puzzles.find((p) => p.fen === fen) || puzzles[0];
+    const target = (currentPuzzle?.targetMove as string) || 'd4';
+    const isTarget =
+      move.toLowerCase() === target.toLowerCase() ||
+      move.toLowerCase() === 'nc6' ||
+      move.toLowerCase() === 'd4' ||
+      move.toLowerCase() === 'd6' ||
+      move.toLowerCase() === 'bxf7+' ||
+      move.toLowerCase() === 'kd4';
 
     await route.fulfill({
       status: 200,
@@ -436,7 +660,7 @@ export async function setupJourneyApiMocks(
       body: JSON.stringify({
         fen,
         move,
-        bestMove: isTarget ? move : 'Nc6',
+        bestMove: isTarget ? move : target,
         bestEvalCp: 40,
         evalCp: isTarget ? 40 : -120,
         evalLoss: isTarget ? 0.0 : 1.6,
@@ -448,6 +672,9 @@ export async function setupJourneyApiMocks(
   });
 
   await page.route('**/api/puzzles/*/continuation*', async (route) => {
+    if (await applyRouteFault(route, currentContinuationFault)) {
+      return;
+    }
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -641,5 +868,11 @@ export async function setupJourneyApiMocks(
     },
     getPollCount: () => pollCount,
     getDiscoveryPollCount: () => discoveryPollCount,
+    setEvaluateMoveFault: (fault?: RouteFaultConfig) => {
+      currentEvaluateMoveFault = fault ? { ...fault } : undefined;
+    },
+    setContinuationFault: (fault?: RouteFaultConfig) => {
+      currentContinuationFault = fault ? { ...fault } : undefined;
+    },
   };
 }

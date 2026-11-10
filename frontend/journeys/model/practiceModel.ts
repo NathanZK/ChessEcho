@@ -18,6 +18,7 @@ export type PracticeAction =
   | 'SUBMIT_OPTIMAL'
   | 'SUBMIT_MISTAKE'
   | 'SUBMIT_BLUNDER'
+  | 'SUBMIT_FAULT'
   | 'RETRY'
   | 'RESET'
   | 'CONTINUE_EXPLORATION'
@@ -49,6 +50,7 @@ export const PRACTICE_ACTIONS: PracticeAction[] = [
   'SUBMIT_OPTIMAL',
   'SUBMIT_MISTAKE',
   'SUBMIT_BLUNDER',
+  'SUBMIT_FAULT',
   'RETRY',
   'RESET',
   'CONTINUE_EXPLORATION',
@@ -84,6 +86,7 @@ export interface PracticeModelContext {
   historyIndex?: number;
   historyLength?: number;
   timerMode?: 'STOPWATCH' | 'COUNTDOWN' | null;
+  faultInjectionEnabled?: boolean;
 }
 
 export function createInitialContext(): PracticeModelContext {
@@ -104,6 +107,7 @@ export function createInitialContext(): PracticeModelContext {
     historyIndex: 0,
     historyLength: 0,
     timerMode: null,
+    faultInjectionEnabled: false,
   };
 }
 
@@ -206,6 +210,12 @@ export const PRACTICE_TRANSITIONS: TransitionRule[] = [
   },
   {
     from: 'PRACTICE_IDLE',
+    action: 'SUBMIT_FAULT',
+    to: 'EVALUATION_ERROR',
+    guard: (ctx) => ctx.puzzleLoaded && !!ctx.faultInjectionEnabled,
+  },
+  {
+    from: 'PRACTICE_IDLE',
     action: 'RESET',
     to: 'PRACTICE_IDLE',
     guard: (ctx) => ctx.puzzleLoaded,
@@ -272,6 +282,12 @@ export const PRACTICE_TRANSITIONS: TransitionRule[] = [
     to: 'PRACTICE_IDLE',
     guard: (ctx) => ctx.puzzleLoaded,
     effect: (ctx) => ({ ...ctx, hintActive: false, historyIndex: 0 }),
+  },
+  {
+    from: 'EVALUATION_ERROR',
+    action: 'BACK_TO_PUZZLES',
+    to: 'DISCOVERY',
+    effect: (ctx) => ({ ...ctx, puzzleLoaded: false, inExploration: false }),
   },
   {
     from: 'INCORRECT',
@@ -788,7 +804,7 @@ export const STATE_ORACLES: Record<PracticeAbstractState, StateOracleDefinition>
     description: 'Evaluation failed or timed out; error banner visible.',
     assert: async (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => {
       const { expectFn } = resolveArgs(contextOrExpect, maybeExpectFn);
-      await verifyVisible(page.getByText(/Evaluation service returned an empty response|Error/i), expectFn);
+      await verifyVisible(page.getByText('Move Evaluation Failed'), expectFn);
     },
   },
   EXPLORING: {
@@ -910,11 +926,25 @@ export async function executeConcreteAction(
       break;
     }
 
+    case 'SUBMIT_FAULT': {
+      // Submit move that triggers evaluation failure under active route fault
+      const from = page.locator('[data-square="d2"]');
+      const to = page.locator('[data-square="d4"]');
+      await from.waitFor({ state: 'visible', timeout: 5000 });
+      await from.click();
+      await page.waitForTimeout(60);
+      await to.click();
+      break;
+    }
+
     case 'RETRY': {
       // Board is automatically rolled back to baseline FEN upon incorrect move.
-      // If Reset button is available, click it to clear selection without touching board pieces.
-      const resetButton = page.getByRole('button', { name: /Reset Board|Reset/i });
-      if (await resetButton.isVisible().catch(() => false)) {
+      // If Retry evaluation button or Reset button is available, click to restore interactive idle.
+      const retryEvalButton = page.getByRole('button', { name: /Retry evaluation/i });
+      const resetButton = page.getByRole('button', { name: /Reset Position|Reset Board|Reset/i });
+      if (await retryEvalButton.isVisible().catch(() => false)) {
+        await retryEvalButton.click();
+      } else if (await resetButton.isVisible().catch(() => false)) {
         await resetButton.click();
       }
       await page.waitForTimeout(100);
