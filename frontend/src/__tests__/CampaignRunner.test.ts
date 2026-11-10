@@ -19,6 +19,7 @@ describe('Campaign CLI Argument Parser (campaignConfig)', () => {
     expect(config.startingState).toBe('DISCOVERY');
     expect(config.timeoutMs).toBe(30_000);
     expect(config.trace).toBe('failures-only');
+    expect(config.strategy).toBe('uniform');
   });
 
   it('parses integer count for seeds (e.g. --seeds=5)', () => {
@@ -68,6 +69,7 @@ describe('Campaign CLI Argument Parser (campaignConfig)', () => {
       '--startingState=PRACTICE_IDLE',
       '--timeout=45000',
       '--trace=all',
+      '--strategy=least-used-transition',
     ];
     const config = parseCampaignArgs(args);
     expect(config.seeds).toEqual([1, 2, 3]);
@@ -76,6 +78,16 @@ describe('Campaign CLI Argument Parser (campaignConfig)', () => {
     expect(config.startingState).toBe('PRACTICE_IDLE');
     expect(config.timeoutMs).toBe(45_000);
     expect(config.trace).toBe('all');
+    expect(config.strategy).toBe('least-used-transition');
+  });
+
+  it('parses rare-state-bias strategy and throws on invalid strategy', () => {
+    const config = parseCampaignArgs(['--strategy=rare-state-bias']);
+    expect(config.strategy).toBe('rare-state-bias');
+
+    expect(() => parseCampaignArgs(['--strategy=bogus'])).toThrow(
+      /Invalid selection strategy "bogus"/,
+    );
   });
 
   it('parses alternative valid trace modes', () => {
@@ -124,6 +136,8 @@ describe('Campaign Metric Aggregator (campaignAggregator)', () => {
         durationMs: 2000,
         uniqueStates: new Set(['DISCOVERY', 'PRACTICE_IDLE']),
         transitions: new Set(['DISCOVERY->PRACTICE_IDLE']),
+        stateActions: new Set(['DISCOVERY:SELECT_PUZZLE']),
+        transitionPairs: new Set(['DISCOVERY->SELECT_PUZZLE->PRACTICE_IDLE']),
       },
       {
         seed: 2,
@@ -132,25 +146,39 @@ describe('Campaign Metric Aggregator (campaignAggregator)', () => {
         durationMs: 3000,
         uniqueStates: new Set(['PRACTICE_IDLE', 'CORRECT']),
         transitions: new Set(['PRACTICE_IDLE->CORRECT']),
+        stateActions: new Set(['PRACTICE_IDLE:SUBMIT_OPTIMAL']),
+        transitionPairs: new Set(['PRACTICE_IDLE->SUBMIT_OPTIMAL->CORRECT']),
       },
     ];
 
-    const summary = aggregateCampaignMetrics(runs, 20, 'DISCOVERY');
+    const summary = aggregateCampaignMetrics(runs, 20, 'DISCOVERY', 'least-used-transition');
     expect(summary.totalRuns).toBe(2);
     expect(summary.passedRuns).toBe(2);
     expect(summary.failedRuns).toBe(0);
     expect(summary.totalActions).toBe(40);
     expect(summary.totalDurationMs).toBe(5000);
     expect(summary.actionsPerSecond).toBe(8.0);
+    expect(summary.strategy).toBe('least-used-transition');
     expect(summary.uniqueStatesVisited.sort()).toEqual(['CORRECT', 'DISCOVERY', 'PRACTICE_IDLE'].sort());
     expect(summary.uniqueTransitionsExercised.sort()).toEqual([
       'DISCOVERY->PRACTICE_IDLE',
       'PRACTICE_IDLE->CORRECT',
     ].sort());
+    expect(summary.uniqueStateActionsCovered.sort()).toEqual([
+      'DISCOVERY:SELECT_PUZZLE',
+      'PRACTICE_IDLE:SUBMIT_OPTIMAL',
+    ].sort());
+    expect(summary.uniqueTransitionPairsCovered.sort()).toEqual([
+      'DISCOVERY->SELECT_PUZZLE->PRACTICE_IDLE',
+      'PRACTICE_IDLE->SUBMIT_OPTIMAL->CORRECT',
+    ].sort());
     expect(summary.failedSeeds).toEqual([]);
     expect(summary.replayCommands).toEqual([]);
 
     const table = formatCampaignSummaryTable(summary);
+    expect(table).toContain('Strategy:            least-used-transition');
+    expect(table).toContain('State-Actions:       2');
+    expect(table).toContain('Transition Pairs:    2');
     expect(table).toContain('Passed Runs:         2');
     expect(table).toContain('Failed Runs:         0');
     expect(table).not.toContain('Replay Commands:');

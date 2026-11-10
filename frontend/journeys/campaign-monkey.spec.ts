@@ -58,6 +58,7 @@ test.describe('Multi-Seed Exploration Campaign Runner', () => {
           actionBudget: config.budget,
           initialState: config.startingState,
           traceMode: config.trace,
+          strategy: config.strategy,
         });
         if (!result.success && result.error) {
           caughtError = result.error;
@@ -98,12 +99,16 @@ test.describe('Multi-Seed Exploration Campaign Runner', () => {
 
       const uniqueStates = new Set<PracticeAbstractState>();
       const transitions = new Set<string>();
+      const stateActions = new Set<string>();
+      const transitionPairs = new Set<string>();
 
       if (result.actionLog) {
         for (const entry of result.actionLog) {
           uniqueStates.add(entry.fromState);
           uniqueStates.add(entry.toState);
           transitions.add(`${entry.fromState}->${entry.toState}`);
+          stateActions.add(`${entry.fromState}:${entry.action}`);
+          transitionPairs.add(`${entry.fromState}->${entry.action}->${entry.toState}`);
         }
       } else {
         uniqueStates.add(config.startingState);
@@ -111,11 +116,14 @@ test.describe('Multi-Seed Exploration Campaign Runner', () => {
 
       const metric: CampaignRunMetric = {
         seed,
+        strategy: config.strategy,
         success: result.success,
         executedSteps: result.executedSteps,
         durationMs,
         uniqueStates,
         transitions,
+        stateActions,
+        transitionPairs,
         error: caughtError,
         heapUsedBytes: Math.max(0, endHeap - startHeap),
         chromiumHeapBytes,
@@ -134,6 +142,8 @@ test.describe('Multi-Seed Exploration Campaign Runner', () => {
             error: metric.error?.message,
             uniqueStates: Array.from(metric.uniqueStates),
             transitions: Array.from(metric.transitions),
+            stateActions: Array.from(metric.stateActions || []),
+            transitionPairs: Array.from(metric.transitionPairs || []),
           })
         );
       } catch {

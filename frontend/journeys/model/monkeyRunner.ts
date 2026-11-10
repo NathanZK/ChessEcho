@@ -13,6 +13,7 @@ import {
 export { executeConcreteAction };
 import { createPrng } from './prng';
 import { selectConstrainedAction } from './monkeySelector';
+import type { MonkeySelectionStrategy } from './campaignConfig';
 import {
   type ActionLogEntry,
   type NetworkRequestRecord,
@@ -31,6 +32,7 @@ export interface MonkeyRunOptions {
   screenshotOnFailure?: boolean;
   stepHook?: (step: number, state: PracticeAbstractState) => Promise<void>;
   traceMode?: 'failures-only' | 'all' | 'off';
+  strategy?: MonkeySelectionStrategy;
 }
 
 export interface MonkeyRunResult {
@@ -114,6 +116,10 @@ export async function runConstrainedMonkey(options: MonkeyRunOptions): Promise<M
   let currentState = initialState;
   let currentContext = { ...initialContext };
   const actionLog: ActionLogEntry[] = [];
+  const strategy = options.strategy ?? 'uniform';
+  const transitionCounts = new Map<string, number>();
+  const stateCounts = new Map<PracticeAbstractState, number>();
+  stateCounts.set(initialState, 1);
 
   // Align UI with initial state if starting in DISCOVERY but currently on interactive board
   if (initialState === 'DISCOVERY') {
@@ -127,7 +133,10 @@ export async function runConstrainedMonkey(options: MonkeyRunOptions): Promise<M
         await options.stepHook(step, currentState);
       }
 
-      const action = selectConstrainedAction(currentState, currentContext, prng);
+      const action = selectConstrainedAction(currentState, currentContext, prng, strategy, {
+        transitionCounts,
+        stateCounts,
+      });
 
       if (!action) {
         // Reached an absorb state or state with no permitted outgoing transitions
@@ -154,6 +163,9 @@ export async function runConstrainedMonkey(options: MonkeyRunOptions): Promise<M
         await executeConcreteAction(page, action);
         // Await expected state-specific oracle to guarantee React has settled
         await assertInvariantOracles(page, nextState, observer, step);
+        const transitionKey = `${currentState}->${action}->${nextState}`;
+        transitionCounts.set(transitionKey, (transitionCounts.get(transitionKey) ?? 0) + 1);
+        stateCounts.set(nextState, (stateCounts.get(nextState) ?? 0) + 1);
       } catch (error) {
         const stepRequests = networkMonitor.getRequestsSince(stepStartTime);
         const diagnosis = diagnoseTransitionFailure(action, nextState, stepRequests, error as Error);
