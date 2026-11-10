@@ -1,0 +1,68 @@
+package com.chessprobe.service
+
+import com.chessprobe.repository.PositionRepository
+import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Value
+import org.springframework.stereotype.Service
+import java.util.UUID
+
+@Service
+class EngineAnalysisOrchestrator(
+    private val positionRepository: PositionRepository,
+    private val engineAnalysisService: EngineAnalysisService,
+    @Value("\${chess.analysis.min-occurrences:5}")
+    private val minOccurrences: Long = DEFAULT_MIN_OCCURRENCES,
+) {
+    private val log = LoggerFactory.getLogger(javaClass)
+
+    companion object {
+        const val DEFAULT_MIN_OCCURRENCES = 5L
+    }
+
+    /**
+     * Determines which affected positions meet the minimum occurrence threshold
+     * using a single batch query, then delegates analysis per position with isolated failure handling.
+     *
+     * @param affectedPositionIds Set of distinct position IDs affected by the game import.
+     */
+    fun analyzeAffectedPositions(affectedPositionIds: Set<UUID>): AnalysisOutcome = analyzeAffectedPositions(affectedPositionIds, null)
+
+    fun analyzeAffectedPositions(
+        affectedPositionIds: Set<UUID>,
+        analysisMultiPv: Int?,
+    ): AnalysisOutcome {
+        if (affectedPositionIds.isEmpty()) return AnalysisOutcome()
+
+        val batchSize = 1000
+        val qualifyingPositions = mutableListOf<com.chessprobe.domain.Position>()
+        for (batch in affectedPositionIds.chunked(batchSize)) {
+            qualifyingPositions.addAll(positionRepository.findQualifyingPositions(batch.toSet(), minOccurrences))
+        }
+
+        if (qualifyingPositions.isEmpty()) {
+            log.info("No affected positions met the minimum occurrence threshold of $minOccurrences")
+            return AnalysisOutcome()
+        }
+
+        log.info("Found ${qualifyingPositions.size} qualifying positions for engine analysis")
+
+        val failedPositionIds = mutableSetOf<UUID>()
+        for (position in qualifyingPositions) {
+            try {
+                if (analysisMultiPv == null) {
+                    engineAnalysisService.analyzePosition(position)
+                } else {
+                    engineAnalysisService.analyzePosition(position, analysisMultiPv)
+                }
+            } catch (ex: Exception) {
+                failedPositionIds += position.id
+                log.error("Failed to perform engine analysis for position ${position.id}", ex)
+            }
+        }
+        return AnalysisOutcome(failedPositionIds)
+    }
+}
+
+data class AnalysisOutcome(
+    val failedPositionIds: Set<UUID> = emptySet(),
+)

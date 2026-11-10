@@ -2,13 +2,13 @@
 set -euo pipefail
 
 # Script: update-graph.sh
-# Purpose: Reproducibly regenerate the ChessEcho / ChessProbe codebase knowledge graph
+# Purpose: Reproducibly regenerate the ChessProbe / ChessProbe codebase knowledge graph
 # and update the persistent HTML visualization in docs/architecture/graphify/.
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$REPO_ROOT"
 
-echo "=== Updating ChessEcho Codebase Architecture Graph ==="
+echo "=== Updating ChessProbe Codebase Architecture Graph ==="
 
 # 1. Resolve local Python environment and Graphify executable
 resolve_shebang_interpreter() {

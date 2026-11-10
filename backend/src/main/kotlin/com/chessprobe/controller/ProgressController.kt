@@ -1,0 +1,35 @@
+package com.chessprobe.controller
+
+import com.chessprobe.domain.PlayerColor
+import com.chessprobe.dto.ProgressResponse
+import com.chessprobe.service.AccountSelectionRequiredException
+import com.chessprobe.service.ProgressService
+import com.chessprobe.service.auth.AuthenticatedPrincipal
+import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PathVariable
+import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
+import org.springframework.web.bind.annotation.RestController
+import java.util.UUID
+
+@RestController
+@RequestMapping("/api/positions")
+class ProgressController(
+    private val progressService: ProgressService,
+) {
+    @GetMapping("/{positionId}/progress")
+    fun getProgress(
+        @PathVariable positionId: UUID,
+        @RequestParam(required = false) accountId: UUID?,
+        @RequestParam playerColor: PlayerColor,
+        @RequestParam minEvalLoss: Double,
+        principal: AuthenticatedPrincipal,
+    ): ProgressResponse =
+        progressService.getProgress(
+            positionId,
+            playerColor,
+            accountId ?: throw AccountSelectionRequiredException(),
+            principal,
+            minEvalLoss,
+        )
+}

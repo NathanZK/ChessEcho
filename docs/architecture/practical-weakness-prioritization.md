@@ -2,7 +2,7 @@
 
 ## Purpose and evidence boundaries
 
-ChessEcho may use two separate evidence dimensions when deciding which recurring
+ChessProbe may use two separate evidence dimensions when deciding which recurring
 weakness a player should train first:
 
 - **Objective evidence** describes move quality relative to engine best play.

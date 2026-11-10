@@ -1,7 +1,7 @@
-# ChessEcho Puzzle Continuation Architecture
+# ChessProbe Puzzle Continuation Architecture
 
 ## Purpose
-ChessEcho allows continuing a puzzle position after the user executes a move or requests the continuation of a line.
+ChessProbe allows continuing a puzzle position after the user executes a move or requests the continuation of a line.
 Because continuation moves can come from multiple sources (engine calculation or actual historical human games), the continuation source architecture is decoupled and replaceable via a provider pattern.
 
 ## Architecture Diagram
@@ -70,7 +70,7 @@ The continuation response explicitly distinguishes between the mode requested by
 
 ## Engine Configuration & Threshold Separation
 
-ChessEcho explicitly separates candidate discovery for engine responses from user move evaluation during interactive line exploration. Both mechanisms use independent, configurable thresholds:
+ChessProbe explicitly separates candidate discovery for engine responses from user move evaluation during interactive line exploration. Both mechanisms use independent, configurable thresholds:
 
 ```yaml
 engine:
@@ -82,10 +82,10 @@ engine:
 ```
 
 ### 1. Continuation Candidate Discovery (`continuation.max-eval-loss: 0.50`)
-> **Question Answered**: *"Which moves may ChessEcho play?"*
+> **Question Answered**: *"Which moves may ChessProbe play?"*
 - Uses Stockfish MultiPV search (default `multi-pv: 5`).
 - Filters engine response candidate moves relative to rank 1 using `max-eval-loss: 0.50`.
-- Returns a list of plausible moves for ChessEcho to respond with.
+- Returns a list of plausible moves for ChessProbe to respond with.
 
 ### 2. User Move Evaluation (`exploration.max-eval-loss: 0.80`)
 > **Question Answered**: *"How much evaluation did the user's move lose, and is that loss acceptable?"*
@@ -97,7 +97,7 @@ engine:
 - If `evalLoss > 0.80`, the move is rejected, the board remains at the pre-move position, and feedback is displayed. No continuation is requested.
 
 ### Threshold Independence & Server Configuration
-- `continuation.max-eval-loss` (0.50) controls which candidate moves ChessEcho may play as an opponent.
+- `continuation.max-eval-loss` (0.50) controls which candidate moves ChessProbe may play as an opponent.
 - `exploration.max-eval-loss` (0.80) controls how much evaluation loss we allow from the user during interactive exploration.
 - The user exploration threshold is server-configured (`engine.exploration.max-eval-loss`) and intentionally **not** accepted as a query parameter so clients cannot override evaluation policy.
 - The evaluation response explicitly returns `maxEvalLoss` (the configured threshold applied) alongside `evalLoss` and `acceptable` for full client transparency.

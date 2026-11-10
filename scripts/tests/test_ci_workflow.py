@@ -54,7 +54,7 @@ class CiWorkflowStructureTest(unittest.TestCase):
 
         docker_steps = docker_job.get("steps", [])
         build_step = next(s for s in docker_steps if "docker build" in s.get("run", ""))
-        self.assertIn("docker build -t chessecho-backend:test backend", build_step.get("run", ""))
+        self.assertIn("docker build -t chessprobe-backend:test backend", build_step.get("run", ""))
 
     def test_ci_gate_job_configuration(self):
         jobs = self.workflow.get("jobs", {})

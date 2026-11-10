@@ -4,7 +4,7 @@ import {
   BlindfoldGameState,
   createBlinfoldGameState,
   applyPlayerMove,
-  applyChessEchoMove,
+  applyChessProbeMove,
   resetBlinfoldGame,
   getAccumulatedPosition,
   rebuildPositionFromHistory,
@@ -24,10 +24,10 @@ describe('BlinfoldVisualizationIntegration', () => {
       // Iteration 1
       let result = applyPlayerMove(state, 'e4', state.currentFen) as BlindfoldGameState;
       expect(result).not.toHaveProperty('error');
-      expect((result as BlindfoldGameState).currentTurn).toBe('CHESSECHO');
+      expect((result as BlindfoldGameState).currentTurn).toBe('CHESSPROBE');
       state = result as BlindfoldGameState;
 
-      result = applyChessEchoMove(state, 'c5', state.currentFen) as BlindfoldGameState;
+      result = applyChessProbeMove(state, 'c5', state.currentFen) as BlindfoldGameState;
       expect(result).not.toHaveProperty('error');
       expect((result as BlindfoldGameState).currentTurn).toBe('PLAYER');
       state = result as BlindfoldGameState;
@@ -37,7 +37,7 @@ describe('BlinfoldVisualizationIntegration', () => {
       expect(result).not.toHaveProperty('error');
       state = result as BlindfoldGameState;
 
-      result = applyChessEchoMove(state, 'cxd4', state.currentFen) as BlindfoldGameState;
+      result = applyChessProbeMove(state, 'cxd4', state.currentFen) as BlindfoldGameState;
       expect(result).not.toHaveProperty('error');
       state = result as BlindfoldGameState;
 
@@ -46,7 +46,7 @@ describe('BlinfoldVisualizationIntegration', () => {
       expect(result).not.toHaveProperty('error');
       state = result as BlindfoldGameState;
 
-      result = applyChessEchoMove(state, 'Nf6', state.currentFen) as BlindfoldGameState;
+      result = applyChessProbeMove(state, 'Nf6', state.currentFen) as BlindfoldGameState;
       expect(result).not.toHaveProperty('error');
       state = result as BlindfoldGameState;
 
@@ -65,7 +65,7 @@ describe('BlinfoldVisualizationIntegration', () => {
       expect(state.lastPlayerMove?.san).toBe('e4');
       expect(state.moveHistory[0].san).toBe('e4');
 
-      result = applyChessEchoMove(state, 'c5', state.currentFen) as BlindfoldGameState;
+      result = applyChessProbeMove(state, 'c5', state.currentFen) as BlindfoldGameState;
       state = result as BlindfoldGameState;
       expect(state.lastChessEchoMove?.san).toBe('c5');
       expect(state.moveHistory.map((m) => m.san)).toEqual(['e4', 'c5']);
@@ -77,7 +77,7 @@ describe('BlinfoldVisualizationIntegration', () => {
       let result = applyPlayerMove(state, 'e4', state.currentFen) as BlindfoldGameState;
       state = result as BlindfoldGameState;
 
-      result = applyChessEchoMove(state, 'c5', state.currentFen) as BlindfoldGameState;
+      result = applyChessProbeMove(state, 'c5', state.currentFen) as BlindfoldGameState;
       state = result as BlindfoldGameState;
 
       result = applyPlayerMove(state, 'd4', state.currentFen) as BlindfoldGameState;
@@ -100,7 +100,7 @@ describe('BlinfoldVisualizationIntegration', () => {
         let result = applyPlayerMove(state, player, state.currentFen) as BlindfoldGameState;
         state = result as BlindfoldGameState;
 
-        result = applyChessEchoMove(state, chessecho, state.currentFen) as BlindfoldGameState;
+        result = applyChessProbeMove(state, chessecho, state.currentFen) as BlindfoldGameState;
         state = result as BlindfoldGameState;
       }
 
@@ -119,7 +119,7 @@ describe('BlinfoldVisualizationIntegration', () => {
         if (state.currentTurn === 'PLAYER') {
           result = applyPlayerMove(state, move, state.currentFen) as BlindfoldGameState;
         } else {
-          result = applyChessEchoMove(state, move, state.currentFen) as BlindfoldGameState;
+          result = applyChessProbeMove(state, move, state.currentFen) as BlindfoldGameState;
         }
         state = result as BlindfoldGameState;
       }
@@ -138,7 +138,7 @@ describe('BlinfoldVisualizationIntegration', () => {
         if (state.currentTurn === 'PLAYER') {
           result = applyPlayerMove(state, move, state.currentFen) as BlindfoldGameState;
         } else {
-          result = applyChessEchoMove(state, move, state.currentFen) as BlindfoldGameState;
+          result = applyChessProbeMove(state, move, state.currentFen) as BlindfoldGameState;
         }
         state = result as BlindfoldGameState;
       }
@@ -156,7 +156,7 @@ describe('BlinfoldVisualizationIntegration', () => {
         if (state.currentTurn === 'PLAYER') {
           result = applyPlayerMove(state, move, state.currentFen) as BlindfoldGameState;
         } else {
-          result = applyChessEchoMove(state, move, state.currentFen) as BlindfoldGameState;
+          result = applyChessProbeMove(state, move, state.currentFen) as BlindfoldGameState;
         }
         state = result as BlindfoldGameState;
       }
@@ -176,7 +176,7 @@ describe('BlinfoldVisualizationIntegration', () => {
         if (state.currentTurn === 'PLAYER') {
           result = applyPlayerMove(state, move, state.currentFen) as BlindfoldGameState;
         } else {
-          result = applyChessEchoMove(state, move, state.currentFen) as BlindfoldGameState;
+          result = applyChessProbeMove(state, move, state.currentFen) as BlindfoldGameState;
         }
         state = result as BlindfoldGameState;
       }
@@ -198,7 +198,7 @@ describe('BlinfoldVisualizationIntegration', () => {
         if (state.currentTurn === 'PLAYER') {
           result = applyPlayerMove(state, move, state.currentFen) as BlindfoldGameState;
         } else {
-          result = applyChessEchoMove(state, move, state.currentFen) as BlindfoldGameState;
+          result = applyChessProbeMove(state, move, state.currentFen) as BlindfoldGameState;
         }
         state = result as BlindfoldGameState;
       }
@@ -230,7 +230,7 @@ describe('BlinfoldVisualizationIntegration', () => {
       let result = applyPlayerMove(state, 'e4', state.currentFen) as BlindfoldGameState;
       state = result as BlindfoldGameState;
 
-      result = applyChessEchoMove(state, 'c5', state.currentFen) as BlindfoldGameState;
+      result = applyChessProbeMove(state, 'c5', state.currentFen) as BlindfoldGameState;
       state = result as BlindfoldGameState;
 
       result = applyPlayerMove(state, 'd4', state.currentFen) as BlindfoldGameState;
@@ -252,7 +252,7 @@ describe('BlinfoldVisualizationIntegration', () => {
         if (state.currentTurn === 'PLAYER') {
           result = applyPlayerMove(state, move, state.currentFen) as BlindfoldGameState;
         } else {
-          result = applyChessEchoMove(state, move, state.currentFen) as BlindfoldGameState;
+          result = applyChessProbeMove(state, move, state.currentFen) as BlindfoldGameState;
         }
         state = result as BlindfoldGameState;
       }
@@ -285,7 +285,7 @@ describe('BlinfoldVisualizationIntegration', () => {
         if (state.currentTurn === 'PLAYER') {
           result = applyPlayerMove(state, move, state.currentFen) as BlindfoldGameState;
         } else {
-          result = applyChessEchoMove(state, move, state.currentFen) as BlindfoldGameState;
+          result = applyChessProbeMove(state, move, state.currentFen) as BlindfoldGameState;
         }
         state = result as BlindfoldGameState;
       }
@@ -306,7 +306,7 @@ describe('BlinfoldVisualizationIntegration', () => {
         if (state.currentTurn === 'PLAYER') {
           result = applyPlayerMove(state, move, state.currentFen) as BlindfoldGameState;
         } else {
-          result = applyChessEchoMove(state, move, state.currentFen) as BlindfoldGameState;
+          result = applyChessProbeMove(state, move, state.currentFen) as BlindfoldGameState;
         }
         state = result as BlindfoldGameState;
       }
@@ -332,7 +332,7 @@ describe('BlinfoldVisualizationIntegration', () => {
         if (state.currentTurn === 'PLAYER') {
           result = applyPlayerMove(state, move, state.currentFen) as BlindfoldGameState;
         } else {
-          result = applyChessEchoMove(state, move, state.currentFen) as BlindfoldGameState;
+          result = applyChessProbeMove(state, move, state.currentFen) as BlindfoldGameState;
         }
 
         if (result && !('error' in result)) {

@@ -1,6 +1,6 @@
-# ChessEcho API Contract
+# ChessProbe API Contract
 
-This document outlines the API contract for all REST endpoints available in ChessEcho.
+This document outlines the API contract for all REST endpoints available in ChessProbe.
 
 ---
 
@@ -14,7 +14,7 @@ credentials.
 
 ### `GET /api/accounts`
 
-Requires a live `CHESSECHO_SESSION` and returns the caller's zero-or-one active
+Requires a live `CHESSPROBE_SESSION` and returns the caller's zero-or-one active
 connections:
 
 ```json
@@ -453,7 +453,7 @@ Chess.com account.
 
 - **Endpoint:** `POST /api/puzzles/events`
 - **Content-Type:** `application/json`
-- **Authentication:** Requires a live `CHESSECHO_SESSION`.
+- **Authentication:** Requires a live `CHESSPROBE_SESSION`.
 
 ### Request Body
 ```json
@@ -615,7 +615,7 @@ Evaluates an arbitrary legal move played from an arbitrary position (FEN) during
 - `move` (string, required): Exact move attempted by the user in SAN notation (e.g. `Nf3`, `Ba4`, `Bxc6`).
 
 ### Behavior & Separation of Concerns
-- **Distinct from Continuation Discovery**: Continuation candidates (`/api/puzzles/continuation`) answer *"Which moves may ChessEcho play?"* (`max-eval-loss: 0.50`). Move evaluation (`/api/puzzles/evaluate-move`) answers *"How much evaluation did the user's move lose, and is that loss acceptable?"* (`max-eval-loss: 0.80`).
+- **Distinct from Continuation Discovery**: Continuation candidates (`/api/puzzles/continuation`) answer *"Which moves may ChessProbe play?"* (`max-eval-loss: 0.50`). Move evaluation (`/api/puzzles/evaluate-move`) answers *"How much evaluation did the user's move lose, and is that loss acceptable?"* (`max-eval-loss: 0.80`).
 - **Server Configured Threshold**: The threshold is configured server-side (`engine.exploration.max-eval-loss: 0.80`) and intentionally **not** accepted as a query parameter. The response explicitly returns `maxEvalLoss` for transparency.
 - **Does NOT Require MultiPV=5**: If the user's move is rank 6+, Stockfish evaluates that specific move independently.
 - **Threshold Rule**: Evaluation loss is computed relative to the position's best move: `evalLoss = max(0.0, (bestEvalCp - userEvalCp) / 100.0)`. The move is `acceptable = true` if `evalLoss <= maxEvalLoss`.
@@ -782,8 +782,8 @@ for the full contract.
 
 ### Cookies
 
-- **`CHESSECHO_SESSION`** — the opaque session secret. `HttpOnly`, `Path=/`,
-  `SameSite` and `Secure` are configurable (`chessecho.auth.cookie.*`). Never
+- **`CHESSPROBE_SESSION`** — the opaque session secret. `HttpOnly`, `Path=/`,
+  `SameSite` and `Secure` are configurable (`chessprobe.auth.cookie.*`). Never
   readable by JavaScript and never returned in a response body.
 - **`XSRF-TOKEN`** — the readable double-submit CSRF token, seeded on safe
   requests. Not `HttpOnly`. The SPA echoes it in the `X-XSRF-TOKEN` header on
@@ -800,7 +800,7 @@ Allowed request headers include `Content-Type` and `X-XSRF-TOKEN`.
 `AppUser` is the sole application identity. A `LocalCredential` is a one-to-one
 password factor attached to that user and stores only an adaptive PBKDF2
 password verifier; it has no email or provider identity field. Successful
-registration and login issue the same opaque `CHESSECHO_SESSION` cookie used by
+registration and login issue the same opaque `CHESSPROBE_SESSION` cookie used by
 the rest of the application. Passwords, hashes, session identifiers, and raw
 session secrets are never returned.
 
@@ -880,7 +880,7 @@ replaying its attributes with `Max-Age=0`.
 
 Establishes a session through the shared identity/session path using a fixed
 development principal. It is a fail-closed allowlist endpoint: present only under
-the `{dev, local}` profile allowlist AND when `chessecho.auth.dev-mode.enabled=true`
+the `{dev, local}` profile allowlist AND when `chessprobe.auth.dev-mode.enabled=true`
 (default off). Under any other profile the endpoint is absent (`404`). If dev mode
 is enabled outside the allowlist, application boot is aborted by a startup guard.
 
@@ -888,6 +888,6 @@ is enabled outside the allowlist, application boot is aborted by a startup guard
 - **CSRF:** required
 
 ### Responses
-- **`200 OK`** — `CurrentUserResponse` plus a `Set-Cookie: CHESSECHO_SESSION` (`HttpOnly`).
+- **`200 OK`** — `CurrentUserResponse` plus a `Set-Cookie: CHESSPROBE_SESSION` (`HttpOnly`).
 - **`404 Not Found`** — outside the `{dev, local}` allowlist or when dev mode is disabled.
 - **`403 Forbidden`** — `{"error": "CSRF_FAILED", ...}`.

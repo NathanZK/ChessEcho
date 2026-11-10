@@ -64,7 +64,7 @@ interface ChessBoardAreaProps {
     nextFen: string,
     feedback?: { isBest: boolean; loss: number; evalCp?: number | null; fromFen?: string; bestMove?: string }
   ) => void;
-  onChessEchoExplorationMove?: (moveSan: string) => void;
+  onChessProbeExplorationMove?: (moveSan: string) => void;
   onReset?: () => void;
   alternativeContinuationToApply?: { parentFen: string; candidate: ContinuationCandidate } | null;
   onAlternativeContinuationApplied?: () => void;
@@ -105,11 +105,11 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   isExplorationActive = false,
   onUnacceptableMove,
   onUserExplorationMove,
-  onChessEchoExplorationMove,
+  onChessProbeExplorationMove,
   onReset,
   alternativeContinuationToApply,
   onAlternativeContinuationApplied,
-  explorationPlayMode = 'CHESSECHO',
+  explorationPlayMode = 'CHESSPROBE',
   onMoveEvaluationPendingChange,
   resetTrigger,
 }) => {
@@ -148,7 +148,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
 
   // Latest-callback refs, declared before every consumer
   const onFenChangeRef = useRef(onFenChange);
-  const onChessEchoExplorationMoveRef = useRef(onChessEchoExplorationMove);
+  const onChessProbeExplorationMoveRef = useRef(onChessProbeExplorationMove);
   const onContinuationAppliedRef = useRef(onContinuationApplied);
   const onAlternativeContinuationAppliedRef = useRef(onAlternativeContinuationApplied);
   const onMoveEvaluationPendingChangeRef = useRef(onMoveEvaluationPendingChange);
@@ -157,7 +157,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
     onMoveEvaluationPendingChangeRef.current = onMoveEvaluationPendingChange;
     blindfoldModeRef.current = blindfoldMode;
     onFenChangeRef.current = onFenChange;
-    onChessEchoExplorationMoveRef.current = onChessEchoExplorationMove;
+    onChessProbeExplorationMoveRef.current = onChessProbeExplorationMove;
     onContinuationAppliedRef.current = onContinuationApplied;
     onAlternativeContinuationAppliedRef.current = onAlternativeContinuationApplied;
   });
@@ -360,8 +360,8 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
       playSound('move');
       onFenChangeRef.current?.(effectuation.fen);
 
-      if (effectuation.move && onChessEchoExplorationMoveRef.current) {
-        onChessEchoExplorationMoveRef.current(effectuation.move);
+      if (effectuation.move && onChessProbeExplorationMoveRef.current) {
+        onChessProbeExplorationMoveRef.current(effectuation.move);
       }
     } catch (e) {
       console.error(message, e);

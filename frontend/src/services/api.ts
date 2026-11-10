@@ -500,7 +500,7 @@ export interface PositionProgressResponse {
 }
 
 export type ContinuationMode = 'ENGINE' | 'HUMAN';
-export type ExplorationPlayMode = 'CHESSECHO' | 'BOTH_SIDES' | 'CHALLENGE';
+export type ExplorationPlayMode = 'CHESSPROBE' | 'BOTH_SIDES' | 'CHALLENGE';
 
 export type TerminationReason =
   | 'QUIET_STOP'

@@ -9,7 +9,7 @@ db-down:
 
 # Application commands
 app-build:
-	docker build -t chess-echo backend
+	docker build -t chess-probe backend
 
 app-up:
 	docker compose up app -d
@@ -33,16 +33,16 @@ app-test:
 
 # Log commands
 app-logs:
-	docker logs chessecho-app -f
+	docker logs chessprobe-app -f
 
 db-logs:
-	docker logs chessecho-postgres -f
+	docker logs chessprobe-postgres -f
 
 app-logs-static:
-	docker logs chessecho-app --tail 50
+	docker logs chessprobe-app --tail 50
 
 db-logs-static:
-	docker logs chessecho-postgres --tail 50
+	docker logs chessprobe-postgres --tail 50
 
 # Full environment
 up: db-up app-up

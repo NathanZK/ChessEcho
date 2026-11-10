@@ -1,0 +1,64 @@
+package com.chessprobe.repository
+
+import com.chessprobe.domain.Position
+import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Modifying
+import org.springframework.data.jpa.repository.Query
+import java.time.Instant
+import java.util.UUID
+
+interface PositionRepository : JpaRepository<Position, UUID> {
+    fun findByHash(hash: String): Position?
+
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query(
+        value = """
+            INSERT INTO position (id, hash, fen, created_at)
+            VALUES (:id, :hash, :fen, :createdAt)
+            ON CONFLICT (hash) DO NOTHING
+        """,
+        nativeQuery = true,
+    )
+    fun insertIfAbsent(
+        id: UUID,
+        hash: String,
+        fen: String,
+        createdAt: Instant,
+    ): Int
+
+    @Query("SELECT p FROM Position p WHERE p.hash IN :hashes")
+    fun findByHashIn(hashes: List<String>): List<Position>
+
+    @Query(
+        """
+        SELECT p FROM Position p
+        WHERE p.id NOT IN (SELECT e.position.id FROM EngineAnalysis e)
+        AND (SELECT COUNT(o) FROM PositionOccurrence o WHERE o.position.id = p.id) >= :minOccurrences
+    """,
+    )
+    fun findUnanalyzedCandidatePositions(
+        minOccurrences: Long,
+        pageable: org.springframework.data.domain.Pageable,
+    ): List<Position>
+
+    /**
+     * Finds Position entities among the provided set that have reached the minimum occurrence threshold,
+     * calculated by aggregating UserPositionStats.timesReached across accounts and colors.
+     */
+    @Query(
+        """
+        SELECT p
+        FROM Position p
+        WHERE p.id IN (
+            SELECT ups.position.id
+            FROM UserPositionStats ups
+            WHERE ups.position.id IN :positionIds
+              AND ups.timesReached >= :minOccurrences
+        )
+        """,
+    )
+    fun findQualifyingPositions(
+        positionIds: Set<UUID>,
+        minOccurrences: Long,
+    ): List<Position>
+}

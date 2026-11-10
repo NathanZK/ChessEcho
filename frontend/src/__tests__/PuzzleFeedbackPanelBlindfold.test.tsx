@@ -92,7 +92,7 @@ describe('PuzzleFeedbackPanel blindfold entry', () => {
 
   it.each([
     ['mode selection', undefined],
-    ['an active mode', 'CHESSECHO' as const],
+    ['an active mode', 'CHESSPROBE' as const],
   ])('places blindfold beside Exit in the Line Exploration header during %s', (_label, mode) => {
     renderPanel({ status: 'CORRECT', isExplorationActive: true, explorationPlayMode: mode });
     const buttons = blindfoldButtons();
@@ -109,7 +109,7 @@ describe('PuzzleFeedbackPanel blindfold entry', () => {
 
   it('disables entry when requested', () => {
     const onEnterBlindfold = vi.fn();
-    renderPanel({ status: 'CORRECT', isExplorationActive: true, explorationPlayMode: 'CHESSECHO', onEnterBlindfold, isBlindfoldEntryDisabled: true });
+    renderPanel({ status: 'CORRECT', isExplorationActive: true, explorationPlayMode: 'CHESSPROBE', onEnterBlindfold, isBlindfoldEntryDisabled: true });
     const [button] = blindfoldButtons();
     expect(button).toBeDisabled();
     fireEvent.click(button);

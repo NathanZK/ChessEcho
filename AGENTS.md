@@ -1,4 +1,4 @@
-# ChessEcho Agent Instructions
+# ChessProbe Agent Instructions
 
 ## Repository conventions
 

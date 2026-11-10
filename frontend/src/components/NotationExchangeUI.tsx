@@ -47,7 +47,7 @@ export const NotationExchangeUI: React.FC<NotationExchangeUIProps> = ({
   if (state.isTerminal) {
     if (state.winner === 'PLAYER') {
       terminalMessage = 'Checkmate! You won.';
-    } else if (state.winner === 'CHESSECHO') {
+    } else if (state.winner === 'CHESSPROBE') {
       terminalMessage = 'Checkmate! ChessProbe won.';
     } else if (state.terminalReason === 'STALEMATE') {
       terminalMessage = 'Draw by stalemate.';

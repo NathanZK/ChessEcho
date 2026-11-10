@@ -171,11 +171,11 @@ describe('Issue 98 — board state derivation', () => {
   it('T18 — a candidate that arrives while exploration is inactive is consumed silently', async () => {
     const onFenChange = vi.fn();
     const onContinuationApplied = vi.fn();
-    const onChessEchoExplorationMove = vi.fn();
+    const onChessProbeExplorationMove = vi.fn();
     const props = boardProps({
       onFenChange,
       onContinuationApplied,
-      onChessEchoExplorationMove,
+      onChessProbeExplorationMove,
       isExplorationActive: false,
       pendingContinuationCandidate: null,
     });
@@ -190,7 +190,7 @@ describe('Issue 98 — board state derivation', () => {
 
     expect(capturedOptions.position).toBe(FEN_A);
     expect(onContinuationApplied).not.toHaveBeenCalled();
-    expect(onChessEchoExplorationMove).not.toHaveBeenCalled();
+    expect(onChessProbeExplorationMove).not.toHaveBeenCalled();
     expect(onFenChange).toHaveBeenCalledTimes(fenCallsAfterMount);
 
     // Re-enabling exploration must not replay the already-consumed candidate.
@@ -206,7 +206,7 @@ describe('Issue 98 — board state derivation', () => {
 
     expect(capturedOptions.position).toBe(FEN_A);
     expect(onContinuationApplied).not.toHaveBeenCalled();
-    expect(onChessEchoExplorationMove).not.toHaveBeenCalled();
+    expect(onChessProbeExplorationMove).not.toHaveBeenCalled();
     expect(onFenChange).toHaveBeenCalledTimes(fenCallsAfterMount);
   });
 
@@ -832,7 +832,7 @@ describe('Issue 98 — board state derivation', () => {
     expect(redoPassedGame.history()).toContain('Bb5');
   });
 
-  it('T34 — Exploration move drops: rejects in CHALLENGE mode, clears styles and returns true in CHESSECHO mode', async () => {
+  it('T34 — Exploration move drops: rejects in CHALLENGE mode, clears styles and returns true in CHESSPROBE mode', async () => {
     vi.mocked(moveEvaluationService.evaluateMove).mockResolvedValue(
       createMoveEvalResponse({
         acceptable: true,
@@ -854,11 +854,11 @@ describe('Issue 98 — board state derivation', () => {
     });
     expect(dropResult).toBe(false);
 
-    // 2. In CHESSECHO mode: clears custom styles, returns true, notifies onFenChange
+    // 2. In CHESSPROBE mode: clears custom styles, returns true, notifies onFenChange
     const onFenChange = vi.fn();
     const chessEchoProps = boardProps({
       isExplorationActive: true,
-      explorationPlayMode: 'CHESSECHO',
+      explorationPlayMode: 'CHESSPROBE',
       onFenChange,
     });
     await act(async () => {
@@ -908,7 +908,7 @@ describe('Issue 98 — board state derivation', () => {
       <ChessBoardArea
         {...boardProps({
           isExplorationActive: true,
-          explorationPlayMode: 'CHESSECHO',
+          explorationPlayMode: 'CHESSPROBE',
           onMoveEvaluationPendingChange: onPendingChange,
         })}
       />
@@ -1009,7 +1009,7 @@ describe('Issue 98 — board state derivation', () => {
     expect(capturedOptions.position).not.toBe(FEN_BB5);
     expect(onUnacceptableMove).toHaveBeenLastCalledWith(null);
 
-    // 3. Inaccurate move in CHESSECHO mode: acceptable: false, evalLoss: 3.50.
+    // 3. Inaccurate move in CHESSPROBE mode: acceptable: false, evalLoss: 3.50.
     // Reset to FEN_A so board is clean and white bishop is on f1
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /Reset/i }));
@@ -1021,7 +1021,7 @@ describe('Issue 98 — board state derivation', () => {
         <ChessBoardArea
           {...boardProps({
             isExplorationActive: true,
-            explorationPlayMode: 'CHESSECHO',
+            explorationPlayMode: 'CHESSPROBE',
             onUnacceptableMove,
             initialMoveHistorySan: ['e4', 'e5', 'Nf3', 'Nc6'],
             initialMoveHistoryStartFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
@@ -1092,7 +1092,7 @@ describe('Issue 98 — board state derivation', () => {
     expect(capturedOptions.position).not.toBe(FEN_BB5);
     expect(onUnacceptableMove).toHaveBeenLastCalledWith(null);
 
-    // 5. Mutant 41: opponent turn in CHESSECHO mode (NOT BOTH_SIDES mode).
+    // 5. Mutant 41: opponent turn in CHESSPROBE mode (NOT BOTH_SIDES mode).
     // strict threshold must only apply when explorationPlayMode === 'BOTH_SIDES'.
     await act(async () => {
       rerender(
@@ -1101,7 +1101,7 @@ describe('Issue 98 — board state derivation', () => {
             playerColor: 'WHITE',
             initialFen: FEN_BB5,
             isExplorationActive: true,
-            explorationPlayMode: 'CHESSECHO',
+            explorationPlayMode: 'CHESSPROBE',
             onUnacceptableMove,
           })}
         />
@@ -1138,7 +1138,7 @@ describe('Issue 98 — board state derivation', () => {
     const onUserExplorationMove = vi.fn();
     const props = boardProps({
       isExplorationActive: true,
-      explorationPlayMode: 'CHESSECHO',
+      explorationPlayMode: 'CHESSPROBE',
       onUserExplorationMove,
       onUnacceptableMove: undefined,
     });
@@ -1196,7 +1196,7 @@ describe('Issue 98 — board state derivation', () => {
         <ChessBoardArea
           {...boardProps({
             isExplorationActive: true,
-            explorationPlayMode: 'CHESSECHO',
+            explorationPlayMode: 'CHESSPROBE',
             onUserExplorationMove: undefined,
             onUnacceptableMove: undefined,
             onFenChange: undefined,
@@ -1332,7 +1332,7 @@ describe('Issue 98 — board state derivation', () => {
         <ChessBoardArea
           {...boardProps({
             isExplorationActive: true,
-            explorationPlayMode: 'CHESSECHO',
+            explorationPlayMode: 'CHESSPROBE',
             onUserExplorationMove: onUserExplorationMoveFn,
             onUnacceptableMove: undefined,
             onFenChange: undefined,
@@ -1368,7 +1368,7 @@ describe('Issue 98 — board state derivation', () => {
       <ChessBoardArea
         {...boardProps({
           isExplorationActive: true,
-          explorationPlayMode: 'CHESSECHO',
+          explorationPlayMode: 'CHESSPROBE',
         })}
       />
     );
@@ -1438,7 +1438,7 @@ describe('Issue 98 — board state derivation', () => {
     const onFenChange = vi.fn();
     const props = boardProps({
       isExplorationActive: true,
-      explorationPlayMode: 'CHESSECHO',
+      explorationPlayMode: 'CHESSPROBE',
       initialMoveHistorySan: ['e4', 'e5', 'Nf3', 'Nc6'],
       initialMoveHistoryStartFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
       onUnacceptableMove,

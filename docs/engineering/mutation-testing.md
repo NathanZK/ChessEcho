@@ -1,6 +1,6 @@
 # Opt-in Mutation Testing with PIT
 
-This guide documents the opt-in PIT (Pitest) mutation testing integration for ChessEcho's backend Kotlin codebase. Mutation testing evaluates unit test effectiveness by introducing synthetic faults (mutants) into compiled bytecode and checking whether existing tests fail (kill the mutant).
+This guide documents the opt-in PIT (Pitest) mutation testing integration for ChessProbe's backend Kotlin codebase. Mutation testing evaluates unit test effectiveness by introducing synthetic faults (mutants) into compiled bytecode and checking whether existing tests fail (kill the mutant).
 
 PIT is integrated strictly as an on-demand, local developer tool. It is completely isolated from default build and test lifecycles (`./gradlew test`, `./gradlew check`, `./gradlew build`) and is never run in CI.
 
@@ -19,8 +19,8 @@ When run without properties, PIT runs against the verified pilot target `Adaptiv
 ```
 
 This defaults to:
-- `targetClasses`: `com.chessecho.service.AdaptivePuzzleSchedulingPolicy*`
-- `targetTests`: `com.chessecho.service.AdaptivePuzzleSchedulingPolicyTest*`
+- `targetClasses`: `com.chessprobe.service.AdaptivePuzzleSchedulingPolicy*`
+- `targetTests`: `com.chessprobe.service.AdaptivePuzzleSchedulingPolicyTest*`
 
 ### Parameterized Targeting
 
@@ -28,16 +28,16 @@ To evaluate another candidate class and its corresponding unit test suite, suppl
 
 ```bash
 ./gradlew pitest \
-  -Ppitest.targetClasses="com.chessecho.service.MyService*" \
-  -Ppitest.targetTests="com.chessecho.service.MyServiceTest*"
+  -Ppitest.targetClasses="com.chessprobe.service.MyService*" \
+  -Ppitest.targetTests="com.chessprobe.service.MyServiceTest*"
 ```
 
 Multiple comma-separated patterns can be supplied:
 
 ```bash
 ./gradlew pitest \
-  -Ppitest.targetClasses="com.chessecho.service.PolicyA*,com.chessecho.service.PolicyB*" \
-  -Ppitest.targetTests="com.chessecho.service.PolicyATest*,com.chessecho.service.PolicyBTest*"
+  -Ppitest.targetClasses="com.chessprobe.service.PolicyA*,com.chessprobe.service.PolicyB*" \
+  -Ppitest.targetTests="com.chessprobe.service.PolicyATest*,com.chessprobe.service.PolicyBTest*"
 ```
 
 > [!IMPORTANT]
@@ -107,7 +107,7 @@ No artificial hard time cutoffs are enforced; developers should assess candidate
 
 Do **not** evaluate mutation testing results by chasing an arbitrary percentage score (e.g., "must achieve 80% mutation coverage"). Surviving mutants must be inspected qualitatively based on the specific mutation and intended behavior.
 
-ChessEcho classifies mutants into the following structured taxonomy:
+ChessProbe classifies mutants into the following structured taxonomy:
 
 ### 1. Actionable test gaps (Defects to Fix)
 - **Description**: The mutant altered business logic or return values, but the test suite passed because of vacuous, weak, or missing assertions.
@@ -133,7 +133,7 @@ ChessEcho classifies mutants into the following structured taxonomy:
 - **Action**: Cannot be killed by valid tests without violating black-box contract principles; accept as unkillable.
 
 ### Strict Score Policy
-- **No minimum score threshold**: No mutation coverage threshold is mandated or enforced in ChessEcho.
+- **No minimum score threshold**: No mutation coverage threshold is mandated or enforced in ChessProbe.
 - **No brittle over-assertion**: Never introduce brittle assertions or modify production application code solely to raise mutation scores.
 
 ---

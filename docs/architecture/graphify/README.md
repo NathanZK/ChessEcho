@@ -1,6 +1,6 @@
-# ChessEcho / ChessProbe Architecture Knowledge Graph
+# ChessProbe / ChessProbe Architecture Knowledge Graph
 
-This directory contains the persistent, standalone HTML knowledge graph visualization of the ChessEcho codebase, generated via [Graphify](https://github.com/Graphify-Labs/graphify).
+This directory contains the persistent, standalone HTML knowledge graph visualization of the ChessProbe codebase, generated via [Graphify](https://github.com/Graphify-Labs/graphify).
 
 ## 1. What the Graph Represents
 
@@ -8,7 +8,7 @@ The architecture graph provides an interactive structural map of the codebase ex
 - **Nodes**: Source files, Kotlin classes, Spring Boot services, controllers, entities, repositories, TypeScript/React components, Next.js routes, utility functions, and test suites.
 - **Edges**: Directed and undirected relationships including class containment, imports, dependency injection references, method invocations, interface implementations, and caller linkages.
 - **Communities**: High-level functional subsystems clustered via Louvain community detection (e.g., `Game Import Service Subsystem`, `Position Occurrence Repository Subsystem`, `Engine Analysis Repository Subsystem`, `Chess Account Domain Subsystem`).
-- **Aggregated View**: For repositories exceeding 5,000 nodes (ChessEcho initial baseline snapshot: 6,178 nodes, 18,410 edges, 298 community clusters; regenerated: 6,331 nodes, 18,839 edges, 291 communities), Graphify automatically renders an aggregated community-level meta-graph for smooth browser canvas rendering.
+- **Aggregated View**: For repositories exceeding 5,000 nodes (ChessProbe initial baseline snapshot: 6,178 nodes, 18,410 edges, 298 community clusters; regenerated: 6,331 nodes, 18,839 edges, 291 communities), Graphify automatically renders an aggregated community-level meta-graph for smooth browser canvas rendering.
 
 ## 2. How to Open the Visualization
 
@@ -82,7 +82,7 @@ graphify affected "GameImportService" --depth 1
 
 Graphify extracts static Tree-sitter AST relationships. In a Kotlin / Spring Boot codebase, understanding edge semantics is essential:
 
-| Relationship & Context | Extraction Mechanism | Meaning in ChessEcho / Kotlin |
+| Relationship & Context | Extraction Mechanism | Meaning in ChessProbe / Kotlin |
 |---|---|---|
 | `calls [context=call]` | Tree-sitter AST call resolution | **Constructor invocations (`ClassName(...)`) and static/companion member calls (`Policy.eval(...)`)**. For example, `GameImportService --calls--> MonthImportCoordinator` represents constructor instantiation at line 99. |
 | `references [context=field]` / `[context=parameter_type]` | AST type references | **Spring Dependency Injection**. For example, `GameImportService --references--> PositionOccurrenceRepository` represents constructor-injected repository dependencies. |

@@ -74,7 +74,7 @@ Lifecycle (all mutations are `@Transactional`):
 - **revoke** — set `revoked_at` (idempotent).
 - **cleanup** — a `@Scheduled` sweep deletes revoked/absolutely-expired rows.
 
-Idle and absolute lifetimes come from `chessecho.auth.session.*` (defaults: idle
+Idle and absolute lifetimes come from `chessprobe.auth.session.*` (defaults: idle
 30 minutes sliding, absolute 30 days).
 
 ## Provider-adapter boundary
@@ -112,11 +112,11 @@ Production runs on the **default** Spring profile (no `prod` profile exists), so
 the dev path is gated as an allowlist rather than a `prod` denylist:
 
 1. `DevSessionController` and `DevIdentityProvider` are annotated
-   `@Profile("dev", "local")` **and** `@ConditionalOnProperty("chessecho.auth.dev-mode.enabled")`
+   `@Profile("dev", "local")` **and** `@ConditionalOnProperty("chessprobe.auth.dev-mode.enabled")`
    (default off). Under the default/production profile the bean is absent, so
    `POST /api/dev/session` returns `404` regardless of the property.
 2. `DevModeStartupGuard` (an always-registered `ApplicationRunner`) aborts boot if
-   `chessecho.auth.dev-mode.enabled=true` while none of `{dev, local}` is active —
+   `chessprobe.auth.dev-mode.enabled=true` while none of `{dev, local}` is active —
    including the default/production profile.
 
 When it does run (explicit `dev`/`local` + property on), the dev principal calls

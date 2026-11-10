@@ -1,6 +1,6 @@
 # Frontend architecture
 
-ChessEcho's frontend is a Next.js client application. `/` owns the Import Games,
+ChessProbe's frontend is a Next.js client application. `/` owns the Import Games,
 Long Decisions, Weaknesses Library, and Practice Puzzles tabs; `/login` and
 `/register` are separate routes. The tabs are views inside the home route, not
 separate pages.
@@ -87,7 +87,7 @@ for example, a job poll clears an unauthorized job, while account, weakness,
 puzzle, and progress reads show their own error/retry states. Logout updates the
 UI immediately and sends `POST /api/logout` with credentials and the CSRF
 header; local state is cleared even if that request fails. Guest account
-context is a Chess.com username, not a connected ChessEcho account. Connecting
+context is a Chess.com username, not a connected ChessProbe account. Connecting
 while signed in calls `POST /api/accounts`; the server-returned account list and
 UUID select the account. `DELETE /api/accounts/{accountId}/connection` confirms a
 disconnect; on failure the current selection is retained, and a 404 triggers an
@@ -299,9 +299,9 @@ Blindfold training continues from the puzzle being studied.
 `PuzzleFeedbackPanel` offers "Train Blindfold" next to the exploration
 actions on the solved, wrong-move, and historical-mistake cards, and in the
 Line Exploration header. A fresh puzzle shows no entry. Entry is disabled while
-a move evaluation or ChessEcho continuation is pending. The session
+a move evaluation or ChessProbe continuation is pending. The session
 (`useBlindfoldSession`) starts from the current board FEN, and the side to move
-plays first. ChessEcho replies come from `GET /api/puzzles/continuation` in
+plays first. ChessProbe replies come from `GET /api/puzzles/continuation` in
 `ENGINE` mode. The puzzle layout stays in place: `ChessBoardArea` stays mounted
 but hidden, and `BlindfoldBoardWrapper` occupies the same board column. It uses
 the shared presentation from `boardPresentation.ts` and the puzzle board's
@@ -366,7 +366,7 @@ Line exploration has three frontend modes:
 ```mermaid
 %%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false}}}%%
 flowchart TB
-  explore["Exploration position"] -->|"ChessEcho or Challenge"| continuation["GET /api/puzzles/continuation"]
+  explore["Exploration position"] -->|"ChessProbe or Challenge"| continuation["GET /api/puzzles/continuation"]
   continuation --> candidates["Candidate list + provider"]
   candidates --> board["Local candidate selection and board update"]
   explore -->|"exploration move · all modes"| evaluate["GET /api/puzzles/evaluate-move"]
@@ -374,7 +374,7 @@ flowchart TB
   bothSides["Both Sides"] -->|"no automatic continuation"| explore
 ```
 
-- **ChessEcho** requests candidates from
+- **ChessProbe** requests candidates from
   `GET /api/puzzles/continuation`; the frontend selects a candidate and applies
   the move to its board state. User exploration moves are evaluated through
   `GET /api/puzzles/evaluate-move`.
@@ -409,7 +409,7 @@ message.
 A development-only service helper is not part of a routed user flow: `devLogin`
 exposes `POST /api/dev/session`, but no route invokes it. All training attempts
 use `services/api.ts` for the active `POST /api/puzzles/attempt` flow. The home
-route does not fetch historical games from ChessEcho; weakness cards use
+route does not fetch historical games from ChessProbe; weakness cards use
 returned game URLs for external links.
 
 Representative tests:

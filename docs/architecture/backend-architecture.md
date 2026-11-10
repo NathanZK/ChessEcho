@@ -1,6 +1,6 @@
 # Backend architecture
 
-This guide is the implementation-oriented entry point for ChessEcho's backend.
+This guide is the implementation-oriented entry point for ChessProbe's backend.
 It covers the controller-backed HTTP surface and the boundaries behind it; the
 frontend-to-API/UI path is tracked separately by [#424](https://github.com/NathanZK/ChessEcho/issues/424).
 The [API contract](../../API_CONTRACT.md) describes external behavior, while
@@ -100,7 +100,7 @@ flowchart TB
 ```
 
 The dev-session route exists only under the `{dev, local}` profile allowlist
-and when `chessecho.auth.dev-mode.enabled=true`; otherwise its controller is
+and when `chessprobe.auth.dev-mode.enabled=true`; otherwise its controller is
 absent. The table records the response and access boundary for each route.
 
 | Method and path | Controller inputs and execution/data path | Response | Access boundary |
@@ -351,9 +351,9 @@ only a URL prefix, not an access control.
 | Chess.com PubAPI | `CHESS_PUBAPI_USERNAME` and `CHESS_PUBAPI_CONTACT` are required to build the User-Agent. `CHESS_PUBAPI_DELAY_MS`, `CHESS_PUBAPI_MAX_RETRIES`, `CHESS_PUBAPI_INITIAL_BACKOFF_MS`, and `CHESS_PUBAPI_MAX_BACKOFF_MS` control pacing/retries. Requests are globally serialized; 429 and selected transient 5xx responses are retried. |
 | Stockfish | `STOCKFISH_PATH` selects the executable. Import analysis uses depth 16 and an occurrence threshold of 5 by default; `ENGINE_ANALYSIS_MULTI_PV` sets candidate breadth. Continuation uses `ENGINE_CONTINUATION_MULTI_PV` and `ENGINE_CONTINUATION_MAX_EVAL_LOSS`; move exploration uses `ENGINE_EXPLORATION_MAX_EVAL_LOSS`. |
 | Human continuation | `human.continuation.min-observations` defaults to 10 observations before a stored human distribution is served; HUMAN mode falls back to ENGINE when the provider has no eligible moves. |
-| Sessions/CSRF | `CHESSECHO_AUTH_COOKIE_SECURE`, `CHESSECHO_AUTH_COOKIE_SAME_SITE`, `CHESSECHO_AUTH_SESSION_IDLE_TIMEOUT`, `CHESSECHO_AUTH_SESSION_ABSOLUTE_TIMEOUT`, and `CHESSECHO_AUTH_DEV_MODE_ENABLED`; defaults are documented in `application.yml`. |
+| Sessions/CSRF | `CHESSPROBE_AUTH_COOKIE_SECURE`, `CHESSPROBE_AUTH_COOKIE_SAME_SITE`, `CHESSPROBE_AUTH_SESSION_IDLE_TIMEOUT`, `CHESSPROBE_AUTH_SESSION_ABSOLUTE_TIMEOUT`, and `CHESSPROBE_AUTH_DEV_MODE_ENABLED`; defaults are documented in `application.yml`. |
 | Practical ranking | `CHESS_WEAKNESS_PRACTICAL_*` settings control enablement, sample floor, comparator/confidence policy, observation window, and policy version. See [practical weakness prioritization](practical-weakness-prioritization.md). |
-| Corpus artifacts | `CHESSECHO_CORPUS_ARCHIVE_ROOT`, `CHESSECHO_CORPUS_MAX_ARCHIVE_BYTES`, `CHESSECHO_CORPUS_MAX_EXPANDED_BYTES`, `CHESSECHO_CORPUS_MAX_GAMES`, `CHESSECHO_CORPUS_MAX_OBSERVATIONS`, `CHESSECHO_CORPUS_MAX_RECORD_BYTES`, `CHESSECHO_CORPUS_MULTIPART_MAX_FILE_SIZE`, and `CHESSECHO_CORPUS_MULTIPART_MAX_REQUEST_SIZE` bound the filesystem and upload boundary. |
+| Corpus artifacts | `CHESSPROBE_CORPUS_ARCHIVE_ROOT`, `CHESSPROBE_CORPUS_MAX_ARCHIVE_BYTES`, `CHESSPROBE_CORPUS_MAX_EXPANDED_BYTES`, `CHESSPROBE_CORPUS_MAX_GAMES`, `CHESSPROBE_CORPUS_MAX_OBSERVATIONS`, `CHESSPROBE_CORPUS_MAX_RECORD_BYTES`, `CHESSPROBE_CORPUS_MULTIPART_MAX_FILE_SIZE`, and `CHESSPROBE_CORPUS_MULTIPART_MAX_REQUEST_SIZE` bound the filesystem and upload boundary. |
 | CORS | `AppConfig` allows credentialed requests from `http://localhost:3000` and `http://127.0.0.1:3000` with the configured API methods and headers. |
 
 Springdoc's generated Swagger UI/OpenAPI endpoints, including `/swagger-ui.html`

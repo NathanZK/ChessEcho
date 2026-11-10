@@ -2,7 +2,7 @@
 
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import {
-  applyChessEchoMove,
+  applyChessProbeMove,
   applyPlayerMove,
   createBlinfoldGameState,
   resetBlinfoldGame,
@@ -61,7 +61,7 @@ export function useBlindfoldSession(requestChessEchoMove: RequestChessEchoMove):
           fail('ChessProbe could not provide a move.');
           return;
         }
-        const result = applyChessEchoMove(from, reply, from.currentFen);
+        const result = applyChessProbeMove(from, reply, from.currentFen);
         if ('error' in result) {
           fail(result.error);
           return;
@@ -74,7 +74,7 @@ export function useBlindfoldSession(requestChessEchoMove: RequestChessEchoMove):
 
   const begin = useCallback((initial: BlindfoldGameState) => {
     sessionTokenRef.current += 1;
-    if (initial.currentTurn === 'CHESSECHO') {
+    if (initial.currentTurn === 'CHESSPROBE') {
       requestReply(initial);
     } else {
       commit(initial);

@@ -1,0 +1,522 @@
+package com.chessprobe.integration.controller
+
+import com.chessprobe.domain.AppUser
+import com.chessprobe.domain.ChessAccount
+import com.chessprobe.domain.EngineAnalysis
+import com.chessprobe.domain.Game
+import com.chessprobe.domain.MoveEvaluation
+import com.chessprobe.domain.Position
+import com.chessprobe.domain.PositionOccurrence
+import com.chessprobe.domain.UserPositionStats
+import com.chessprobe.dto.WeaknessResponse
+import com.chessprobe.repository.AppUserRepository
+import com.chessprobe.repository.AsyncJobRepository
+import com.chessprobe.repository.ChessAccountRepository
+import com.chessprobe.repository.EngineAnalysisRepository
+import com.chessprobe.repository.GameRepository
+import com.chessprobe.repository.PositionOccurrenceRepository
+import com.chessprobe.repository.PositionRepository
+import com.chessprobe.repository.UserPositionStatsRepository
+import com.chessprobe.service.StockfishService
+import com.chessprobe.service.WeaknessCalculationService
+import com.fasterxml.jackson.databind.ObjectMapper
+import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
+import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.boot.test.mock.mockito.MockBean
+import org.springframework.boot.test.web.client.TestRestTemplate
+import org.springframework.core.ParameterizedTypeReference
+import org.springframework.http.HttpMethod
+import org.springframework.http.HttpStatus
+import org.springframework.test.context.ActiveProfiles
+import java.time.Instant
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@ActiveProfiles("test")
+class WeaknessControllerIntegrationTest {
+    @Autowired
+    private lateinit var restTemplate: TestRestTemplate
+
+    @Autowired
+    private lateinit var appUserRepository: AppUserRepository
+
+    @Autowired
+    private lateinit var asyncJobRepository: AsyncJobRepository
+
+    @Autowired
+    private lateinit var chessAccountRepository: ChessAccountRepository
+
+    @Autowired
+    private lateinit var gameRepository: GameRepository
+
+    @Autowired
+    private lateinit var positionRepository: PositionRepository
+
+    @Autowired
+    private lateinit var userPositionStatsRepository: UserPositionStatsRepository
+
+    @Autowired
+    private lateinit var positionOccurrenceRepository: PositionOccurrenceRepository
+
+    @Autowired
+    private lateinit var engineAnalysisRepository: EngineAnalysisRepository
+
+    @Autowired
+    private lateinit var objectMapper: ObjectMapper
+
+    @MockBean
+    private lateinit var stockfishService: StockfishService
+
+    private lateinit var defaultPosition: Position
+
+    @BeforeEach
+    fun setup() {
+        val user = appUserRepository.save(AppUser(email = "integration@test.com"))
+        val account = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = "integrationuser"))
+
+        val game =
+            gameRepository.save(
+                Game(
+                    chessAccount = account,
+                    platformGameId = "game1",
+                    timeControl = "blitz",
+                    pgn = "test pgn",
+                    result = "win",
+                ),
+            )
+
+        defaultPosition =
+            positionRepository.save(
+                Position(hash = "testhash", fen = "rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq e6 0 2"),
+            )
+
+        userPositionStatsRepository.save(
+            UserPositionStats(
+                chessAccount = account,
+                position = defaultPosition,
+                playerColor = "WHITE",
+                timesReached = 5,
+            ),
+        )
+
+        setupDefaultOccurrencesAndEvaluations(game, account)
+    }
+
+    private fun setupDefaultOccurrencesAndEvaluations(
+        game: Game,
+        account: ChessAccount,
+    ) {
+        for (i in 1..5) {
+            positionOccurrenceRepository.save(
+                PositionOccurrence(
+                    game = game,
+                    position = defaultPosition,
+                    chessAccount = account,
+                    plyNumber = i,
+                    movePlayed = if (i <= 3) "Qh5" else "e4",
+                    playerColor = "WHITE",
+                ),
+            )
+        }
+
+        val analysis =
+            engineAnalysisRepository.save(
+                EngineAnalysis(
+                    position = defaultPosition,
+                    depth = 16,
+                    baselineEvalCp = 50,
+                    bestMove = "e4",
+                    bestMoveEvalCp = 50,
+                    analyzedAt = Instant.now(),
+                ),
+            )
+
+        val evalGood = MoveEvaluation(engineAnalysis = analysis, move = "e4", evalCp = 45, evalLossFromBest = 0.05)
+        val evalBad = MoveEvaluation(engineAnalysis = analysis, move = "Qh5", evalCp = -150, evalLossFromBest = 2.0)
+        analysis.moveEvaluations.add(evalGood)
+        analysis.moveEvaluations.add(evalBad)
+        engineAnalysisRepository.save(analysis)
+    }
+
+    @AfterEach
+    fun tearDown() {
+        engineAnalysisRepository.deleteAll()
+        positionOccurrenceRepository.deleteAll()
+        userPositionStatsRepository.deleteAll()
+        asyncJobRepository.deleteAll()
+        positionRepository.deleteAll()
+        gameRepository.deleteAll()
+        chessAccountRepository.deleteAll()
+        appUserRepository.deleteAll()
+    }
+
+    @Test
+    fun `test get weaknesses end to end with dynamic minEvalLoss`() {
+        val response =
+            restTemplate.exchange(
+                "/api/positions/weaknesses?platform=CHESS_COM&username=integrationuser&playerColor=white&minEvalLoss=0.8",
+                HttpMethod.GET,
+                null,
+                object : ParameterizedTypeReference<List<WeaknessResponse>>() {},
+            )
+
+        assertEquals(HttpStatus.OK, response.statusCode)
+        val weaknesses = response.body
+        assertNotNull(weaknesses)
+        assertEquals(1, weaknesses.size)
+
+        val weakness = weaknesses[0]
+        assertEquals("rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq e6 0 2", weakness.fen)
+        assertEquals(5, weakness.timesReached)
+        assertEquals(3, weakness.mistakeCount)
+        assertEquals(60.0, weakness.mistakeRate, 0.01)
+        assertEquals(2.0, weakness.averageLoss)
+        assertEquals("WHITE", weakness.playerColor)
+        assertEquals(weakness.priority, weakness.recommendationPriority)
+        assertEquals("INACCURATE", weakness.objectiveEvidenceState.name)
+        assertEquals(null, weakness.evidenceCombination)
+        assertEquals(false, weakness.practicalEvidence.rankingApplied)
+    }
+
+    @Test
+    fun `guest requests can read weaknesses without a session`() {
+        val response =
+            restTemplate.exchange(
+                "/api/positions/weaknesses?platform=CHESS_COM&username=integrationuser&playerColor=white&minEvalLoss=0.8",
+                HttpMethod.GET,
+                null,
+                object : ParameterizedTypeReference<List<WeaknessResponse>>() {},
+            )
+
+        assertEquals(HttpStatus.OK, response.statusCode)
+    }
+
+    @Test
+    fun `test asymmetric occurrence play frequencies 20 total occurrences 15 for move A and 5 for move B`() {
+        val user = appUserRepository.save(AppUser(email = "asymmetric@test.com"))
+        val account = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = "asymmetricuser"))
+        val game =
+            gameRepository.save(
+                Game(chessAccount = account, platformGameId = "game20", timeControl = "blitz", pgn = "test pgn", result = "win"),
+            )
+        val position =
+            positionRepository.save(
+                Position(hash = "asymmetrichash", fen = "rnbqkbnr/pppp1ppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"),
+            )
+        seedAsymmetricOccurrencesAndAnalysis(account, game, position)
+
+        val response =
+            restTemplate.exchange(
+                "/api/positions/weaknesses?platform=CHESS_COM&username=asymmetricuser&playerColor=white&minEvalLoss=0.8",
+                HttpMethod.GET,
+                null,
+                object : ParameterizedTypeReference<List<WeaknessResponse>>() {},
+            )
+
+        assertEquals(HttpStatus.OK, response.statusCode)
+        val weaknesses = response.body
+        assertNotNull(weaknesses)
+        assertEquals(1, weaknesses.size)
+
+        val weakness = weaknesses[0]
+        assertEquals(20, weakness.timesReached)
+        assertEquals(5, weakness.mistakeCount)
+        assertEquals(25.0, weakness.mistakeRate, 0.01)
+        assertEquals(0.9, weakness.averageLoss, 0.01)
+    }
+
+    private fun seedAsymmetricOccurrencesAndAnalysis(
+        account: ChessAccount,
+        game: Game,
+        position: Position,
+    ) {
+        userPositionStatsRepository.save(
+            UserPositionStats(chessAccount = account, position = position, playerColor = "WHITE", timesReached = 20),
+        )
+        for (i in 1..15) {
+            positionOccurrenceRepository.save(
+                PositionOccurrence(
+                    game = game,
+                    position = position,
+                    chessAccount = account,
+                    plyNumber = i,
+                    movePlayed = "moveA",
+                    playerColor = "WHITE",
+                ),
+            )
+        }
+        for (i in 1..5) {
+            positionOccurrenceRepository.save(
+                PositionOccurrence(
+                    game = game,
+                    position = position,
+                    chessAccount = account,
+                    plyNumber = i + 15,
+                    movePlayed = "moveB",
+                    playerColor = "WHITE",
+                ),
+            )
+        }
+        val analysis =
+            engineAnalysisRepository.save(
+                EngineAnalysis(
+                    position = position,
+                    depth = 16,
+                    baselineEvalCp = 100,
+                    bestMove = "moveA",
+                    bestMoveEvalCp = 100,
+                    analyzedAt = Instant.now(),
+                ),
+            )
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "moveA", evalCp = 90, evalLossFromBest = 0.1))
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "moveB", evalCp = 10, evalLossFromBest = 0.9))
+        engineAnalysisRepository.save(analysis)
+    }
+
+    @Test
+    fun `test playerColor BOTH considers both WHITE and BLACK occurrences`() {
+        val user = appUserRepository.save(AppUser(email = "both@test.com"))
+        val account = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = "bothuser"))
+        val position =
+            positionRepository.save(
+                Position(hash = "bothhash", fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"),
+            )
+        seedBothColorsOccurrences(account, position)
+        seedBothColorsAnalysis(position)
+
+        val response =
+            restTemplate.exchange(
+                "/api/positions/weaknesses?platform=CHESS_COM&username=bothuser&playerColor=BOTH&minEvalLoss=0.8",
+                HttpMethod.GET,
+                null,
+                object : ParameterizedTypeReference<List<WeaknessResponse>>() {},
+            )
+
+        assertEquals(HttpStatus.OK, response.statusCode)
+        val weaknesses = response.body
+        assertNotNull(weaknesses)
+        assertEquals(2, weaknesses.size)
+        assertEquals(setOf("WHITE", "BLACK"), weaknesses.map { it.playerColor }.toSet())
+        weaknesses.forEach { weakness ->
+            assertEquals(WeaknessCalculationService.DEFAULT_MIN_TIMES_REACHED, weakness.mistakeCount)
+            assertEquals(WeaknessCalculationService.DEFAULT_MIN_TIMES_REACHED, weakness.timesReached)
+            assertEquals(WeaknessCalculationService.DEFAULT_MIN_TIMES_REACHED, weakness.practicalEvidence.candidateGames)
+            assertEquals(WeaknessCalculationService.DEFAULT_MIN_TIMES_REACHED, weakness.practicalEvidence.eligibleGames)
+        }
+    }
+
+    private fun seedBothColorsOccurrences(
+        account: ChessAccount,
+        position: Position,
+    ) {
+        userPositionStatsRepository.save(
+            UserPositionStats(
+                chessAccount = account,
+                position = position,
+                playerColor = "WHITE",
+                timesReached = WeaknessCalculationService.DEFAULT_MIN_TIMES_REACHED,
+            ),
+        )
+        userPositionStatsRepository.save(
+            UserPositionStats(
+                chessAccount = account,
+                position = position,
+                playerColor = "BLACK",
+                timesReached = WeaknessCalculationService.DEFAULT_MIN_TIMES_REACHED,
+            ),
+        )
+
+        for (i in 1..WeaknessCalculationService.DEFAULT_MIN_TIMES_REACHED) {
+            saveColorGameAndOccurrence(account, position, "WHITE", "white", i, 1, "a3", "win")
+            saveColorGameAndOccurrence(account, position, "BLACK", "black", i, 2, "a6", "resigned")
+        }
+    }
+
+    private fun saveColorGameAndOccurrence(
+        account: ChessAccount,
+        position: Position,
+        color: String,
+        prefix: String,
+        index: Int,
+        plyNumber: Int,
+        move: String,
+        result: String,
+    ) {
+        val game =
+            gameRepository.save(
+                Game(
+                    chessAccount = account,
+                    platformGameId = "gameboth-$prefix-$index",
+                    timeControl = "blitz",
+                    pgn = "pgn",
+                    result = result,
+                    whiteUsername = if (color == "WHITE") account.username else "opponent-$index",
+                    blackUsername = if (color == "BLACK") account.username else "opponent-$index",
+                ),
+            )
+        positionOccurrenceRepository.save(
+            PositionOccurrence(
+                game = game,
+                position = position,
+                chessAccount = account,
+                plyNumber = plyNumber,
+                movePlayed = move,
+                playerColor = color,
+            ),
+        )
+    }
+
+    private fun seedBothColorsAnalysis(position: Position) {
+        val analysis =
+            engineAnalysisRepository.save(
+                EngineAnalysis(
+                    position = position,
+                    depth = 16,
+                    baselineEvalCp = 0,
+                    bestMove = "e4",
+                    bestMoveEvalCp = 30,
+                    analyzedAt = Instant.now(),
+                ),
+            )
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "a3", evalCp = -100, evalLossFromBest = 1.3))
+        analysis.moveEvaluations.add(MoveEvaluation(engineAnalysis = analysis, move = "a6", evalCp = -120, evalLossFromBest = 1.5))
+        engineAnalysisRepository.save(analysis)
+    }
+
+    @Test
+    fun `additive practical fields preserve the complete legacy objective JSON projection`() {
+        val response =
+            restTemplate.getForEntity(
+                "/api/positions/weaknesses?platform=CHESS_COM&username=integrationuser&playerColor=WHITE&minEvalLoss=0.8",
+                String::class.java,
+            )
+
+        assertEquals(HttpStatus.OK, response.statusCode)
+        val weakness = objectMapper.readTree(response.body).single()
+
+        assertEquals(defaultPosition.id.toString(), weakness["positionId"].textValue())
+        assertEquals("rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq e6 0 2", weakness["fen"].textValue())
+        assertEquals(5, weakness["timesReached"].intValue())
+        assertEquals(3, weakness["mistakeCount"].intValue())
+        assertEquals(60.0, weakness["mistakeRate"].doubleValue(), 0.001)
+        assertEquals(2.0, weakness["averageLoss"].doubleValue(), 0.001)
+        assertEquals(3.6, weakness["priority"].doubleValue(), 0.001)
+        assertEquals("e4", weakness["bestMove"].textValue())
+        assertEquals(1, weakness["acceptableMoves"].size())
+        assertEquals("e4", weakness["acceptableMoves"][0]["move"].textValue())
+        assertEquals(0.05, weakness["acceptableMoves"][0]["evalLoss"].doubleValue(), 0.001)
+        assertEquals(1, weakness["movesPlayed"].size())
+        assertEquals("Qh5", weakness["movesPlayed"][0]["move"].textValue())
+        assertEquals(3, weakness["movesPlayed"][0]["timesPlayed"].intValue())
+        assertEquals(2.0, weakness["movesPlayed"][0]["averageLoss"].doubleValue(), 0.001)
+        assertEquals(listOf("https://www.chess.com/game/live/game1"), weakness["gameUrls"].map { it.textValue() })
+        assertEquals(50, weakness["evalCp"].intValue())
+        kotlin.test.assertTrue(weakness["lastSeenAt"].isTextual)
+    }
+
+    @Test
+    fun `test nonexistent account produces controlled 404 Not Found response`() {
+        val response =
+            restTemplate.exchange(
+                "/api/positions/weaknesses?platform=CHESS_COM&username=nonexistent_user_xyz&playerColor=WHITE",
+                HttpMethod.GET,
+                null,
+                String::class.java,
+            )
+
+        assertEquals(HttpStatus.NOT_FOUND, response.statusCode)
+        assertNotNull(response.body)
+        kotlin.test.assertTrue(response.body!!.contains("NOT_FOUND"))
+    }
+
+    @Test
+    fun `test weaknesses endpoint pagination with page size and priority ordering`() {
+        val user = appUserRepository.save(AppUser(email = "pagination@test.com"))
+        val account = chessAccountRepository.save(ChessAccount(platform = "CHESS_COM", username = "pageuser"))
+        val game =
+            gameRepository.save(
+                Game(chessAccount = account, platformGameId = "pagegame", timeControl = "blitz", pgn = "pgn", result = "win"),
+            )
+        seedPaginationPositions(account, game)
+
+        val defaultList = fetchWeaknesses("page=0&size=20")
+        assertEquals(5, defaultList.size)
+        for (idx in 0 until defaultList.size - 1) {
+            kotlin.test.assertTrue(
+                defaultList[idx].priority >= defaultList[idx + 1].priority,
+                "Results must be sorted descending by priority",
+            )
+        }
+
+        val page0List = fetchWeaknesses("page=0&size=2")
+        assertEquals(2, page0List.size)
+        assertEquals(defaultList[0].positionId, page0List[0].positionId)
+        assertEquals(defaultList[1].positionId, page0List[1].positionId)
+
+        val page1List = fetchWeaknesses("page=1&size=2")
+        assertEquals(2, page1List.size)
+        assertEquals(defaultList[2].positionId, page1List[0].positionId)
+        assertEquals(defaultList[3].positionId, page1List[1].positionId)
+
+        val pageBeyondList = fetchWeaknesses("page=10&size=2")
+        assertEquals(0, pageBeyondList.size)
+    }
+
+    private fun seedPaginationPositions(
+        account: ChessAccount,
+        game: Game,
+    ) {
+        for (i in 1..5) {
+            val position =
+                positionRepository.save(
+                    Position(hash = "pagehash_$i", fen = "rnbqkbnr/pppp1ppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 $i"),
+                )
+            userPositionStatsRepository.save(
+                UserPositionStats(chessAccount = account, position = position, playerColor = "WHITE", timesReached = 10),
+            )
+            for (occ in 1..5) {
+                positionOccurrenceRepository.save(
+                    PositionOccurrence(
+                        game = game,
+                        position = position,
+                        chessAccount = account,
+                        plyNumber = occ,
+                        movePlayed = "badMove",
+                        playerColor = "WHITE",
+                    ),
+                )
+            }
+            val analysis =
+                engineAnalysisRepository.save(
+                    EngineAnalysis(
+                        position = position,
+                        depth = 16,
+                        baselineEvalCp = 100,
+                        bestMove = "goodMove",
+                        bestMoveEvalCp = 100,
+                        analyzedAt = Instant.now(),
+                    ),
+                )
+            analysis.moveEvaluations.add(
+                MoveEvaluation(engineAnalysis = analysis, move = "badMove", evalCp = 100 - (i * 50), evalLossFromBest = 0.5 * i),
+            )
+            engineAnalysisRepository.save(analysis)
+        }
+    }
+
+    private fun fetchWeaknesses(params: String): List<WeaknessResponse> {
+        val resp =
+            restTemplate.exchange(
+                "/api/positions/weaknesses?platform=CHESS_COM&username=pageuser&playerColor=WHITE&minEvalLoss=0.3&$params",
+                HttpMethod.GET,
+                null,
+                object : ParameterizedTypeReference<List<WeaknessResponse>>() {},
+            )
+        assertEquals(HttpStatus.OK, resp.statusCode)
+        return resp.body!!
+    }
+}

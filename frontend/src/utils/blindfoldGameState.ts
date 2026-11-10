@@ -1,12 +1,12 @@
 import { Chess } from 'chess.js';
 
-export type BlindfoldTurn = 'PLAYER' | 'CHESSECHO';
+export type BlindfoldTurn = 'PLAYER' | 'CHESSPROBE';
 
 export type BlindfoldPlayerColor = 'WHITE' | 'BLACK';
 
 export type BlindfoldTerminalReason = 'CHECKMATE' | 'STALEMATE' | 'DRAW';
 
-export type BlindfoldWinner = 'PLAYER' | 'CHESSECHO' | 'DRAW';
+export type BlindfoldWinner = 'PLAYER' | 'CHESSPROBE' | 'DRAW';
 
 export interface BlindfoldMove {
   san: string;
@@ -69,7 +69,7 @@ function applyMove(
       isTerminal = true;
       if (game.isCheckmate()) {
         terminalReason = 'CHECKMATE';
-        winner = turn === 'PLAYER' ? 'PLAYER' : 'CHESSECHO';
+        winner = turn === 'PLAYER' ? 'PLAYER' : 'CHESSPROBE';
       } else if (game.isStalemate()) {
         terminalReason = 'STALEMATE';
         winner = 'DRAW';
@@ -83,11 +83,11 @@ function applyMove(
       ...state,
       currentFen: nextMove.fen,
       moveHistory: [...state.moveHistory, nextMove],
-      currentTurn: isTerminal ? state.currentTurn : (turn === 'PLAYER' ? 'CHESSECHO' : 'PLAYER'),
+      currentTurn: isTerminal ? state.currentTurn : (turn === 'PLAYER' ? 'CHESSPROBE' : 'PLAYER'),
       notationInput: '',
       notationError: null,
       lastPlayerMove: turn === 'PLAYER' ? { san: move.san } : state.lastPlayerMove,
-      lastChessEchoMove: turn === 'CHESSECHO' ? { san: move.san } : state.lastChessEchoMove,
+      lastChessEchoMove: turn === 'CHESSPROBE' ? { san: move.san } : state.lastChessEchoMove,
       moveCount: state.moveCount + 1,
       isFailed: false,
       isTerminal,
@@ -102,7 +102,7 @@ function applyMove(
 function openingTurn(game: Chess, playerColor?: BlindfoldPlayerColor): BlindfoldTurn {
   if (!playerColor) return 'PLAYER';
   const playerSide = playerColor === 'WHITE' ? 'w' : 'b';
-  return game.turn() === playerSide ? 'PLAYER' : 'CHESSECHO';
+  return game.turn() === playerSide ? 'PLAYER' : 'CHESSPROBE';
 }
 
 export function createBlinfoldGameState(
@@ -134,12 +134,12 @@ export function applyPlayerMove(
   return applyMove(state, sanMove, currentFen, 'PLAYER');
 }
 
-export function applyChessEchoMove(
+export function applyChessProbeMove(
   state: BlindfoldGameState,
   sanMove: string,
   currentFen: string,
 ): BlindfoldMoveResult {
-  return applyMove(state, sanMove, currentFen, 'CHESSECHO');
+  return applyMove(state, sanMove, currentFen, 'CHESSPROBE');
 }
 
 export function resetBlinfoldGame(

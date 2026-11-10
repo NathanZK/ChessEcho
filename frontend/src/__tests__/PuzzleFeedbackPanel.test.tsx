@@ -206,13 +206,13 @@ describe('PuzzleFeedbackPanel Unit Tests', () => {
       expect(chessechoTab.className).toContain('text-slate-400');
 
       fireEvent.click(chessechoTab);
-      expect(onExplorationPlayModeChange).toHaveBeenCalledWith('CHESSECHO');
+      expect(onExplorationPlayModeChange).toHaveBeenCalledWith('CHESSPROBE');
     });
 
     it('does not render continuation mode toggle (ENGINE / HUMAN) and defaults to ENGINE', () => {
       renderPanel({
         isExplorationActive: true,
-        explorationPlayMode: 'CHESSECHO',
+        explorationPlayMode: 'CHESSPROBE',
       });
 
       expect(screen.queryByRole('button', { name: 'ENGINE' })).not.toBeInTheDocument();
@@ -241,7 +241,7 @@ describe('PuzzleFeedbackPanel Unit Tests', () => {
 
       const { rerender } = renderPanel({
         isExplorationActive: true,
-        explorationPlayMode: 'CHESSECHO',
+        explorationPlayMode: 'CHESSPROBE',
         lastContinuationCandidates: {
           parentFen: 'some_fen',
           selected: bestMoveCandidate,
@@ -265,7 +265,7 @@ describe('PuzzleFeedbackPanel Unit Tests', () => {
           onMinMistakeCountChange={() => {}}
           onApplySettings={() => {}}
           isExplorationActive={true}
-          explorationPlayMode="CHESSECHO"
+          explorationPlayMode="CHESSPROBE"
           lastContinuationCandidates={{
             parentFen: 'some_fen',
             selected: acceptableCandidate,
@@ -289,7 +289,7 @@ describe('PuzzleFeedbackPanel Unit Tests', () => {
           onMinMistakeCountChange={() => {}}
           onApplySettings={() => {}}
           isExplorationActive={true}
-          explorationPlayMode="CHESSECHO"
+          explorationPlayMode="CHESSPROBE"
           lastContinuationCandidates={{
             parentFen: 'some_fen',
             selected: inaccuracyCandidate,

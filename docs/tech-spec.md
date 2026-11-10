@@ -1,4 +1,4 @@
-# ChessEcho Technical Specification
+# ChessProbe Technical Specification
 
 purpose:      Identify recurring chess weaknesses and individual decisions that consume significant time, then support relevant practice and exploration.
 
@@ -13,7 +13,7 @@ architecture:
   - **Frontend**: Next.js single-page application (`frontend/src/app/page.tsx`) composing `PracticePuzzlesView`, `WeaknessesList`, `LongDecisionsView`, `SimilarPositionsView`, and `ImportGamesView`; separate `login` and `register` routes.
   - **Frontend layers**: `app` routes, `components` UI (`PracticePuzzlesView`), `hooks` state (`useAccountSession`, `useLineExploration`), `services/api.ts` backend client, `utils` helpers; tests in `frontend/src/__tests__`. Current route, state, and API-to-UI traces: [frontend architecture](architecture/frontend.md).
   - **Persistence**: PostgreSQL stores users, accounts, games, positions, occurrences, analysis, jobs, training events, and human-move corpus data.
-  - **Similarity subsystem**: Pure domain indexing and relational BM25 scoring (`com.chessecho.similarity`); static inverted indexing (`PositionInvertedIndex`) and dynamic unigram inverted indexing baseline (`DynamicInvertedIndex`); generation-guarded and capacity-aware in-memory cache lifecycles invalidated on successful game imports (`PositionSimilarityCache`, `DynamicSimilarityCache`). Dynamic continuation reranking architecture: `docs/architecture/dynamic-similarity.md`.
+  - **Similarity subsystem**: Pure domain indexing and relational BM25 scoring (`com.chessprobe.similarity`); static inverted indexing (`PositionInvertedIndex`) and dynamic unigram inverted indexing baseline (`DynamicInvertedIndex`); generation-guarded and capacity-aware in-memory cache lifecycles invalidated on successful game imports (`PositionSimilarityCache`, `DynamicSimilarityCache`). Dynamic continuation reranking architecture: `docs/architecture/dynamic-similarity.md`.
   - **Position clustering subsystem**: Account-scoped historical chess-position clustering with decoupled structural and dynamic clustering pipelines (`ClusterType`), configurable relational subvector weighting ($\alpha \in [0.0, 1.0]$) for structural snapshots, Depth-10 MultiPV-1 dynamic unigram continuation clustering via `DynamicInvertedIndex`, relaxed MNN graph construction, CWTS Leiden community detection with exact Reichardt-Bornholdt modularity parity, centroid cohesion pruning ($\tau_c = 0.38$), and independent versioned snapshot persistence.
   - **Analysis flow**: imported games are replayed; positions use four-field FEN identity; qualifying positions are evaluated by Stockfish; weakness ranking is calculated per account.
   - **Backend modules**: `controller` and `dto` expose HTTP boundaries; `service` implements application behavior; `domain` models persisted concepts; `repository` uses Spring Data JPA; `config` and `web` provide framework and request/security integration.
@@ -43,9 +43,9 @@ contract:
     - `ChessAccount` stores shared identity; `AccountConnection` links users.
     - Multiple users may connect one account; each user may have one active connection.
     - See `API_CONTRACT.md` and `docs/architecture/identity-and-session.md`.
-  - **Authentication/session**: `POST /api/register`, `POST /api/login`, `GET /api/me`, and `POST /api/logout`; session cookie `CHESSECHO_SESSION`. See `docs/architecture/identity-and-session.md`.
+  - **Authentication/session**: `POST /api/register`, `POST /api/login`, `GET /api/me`, and `POST /api/logout`; session cookie `CHESSPROBE_SESSION`. See `docs/architecture/identity-and-session.md`.
   - **Header account state**: The Header distinguishes guests, signed-in users without a connected Chess.com account, and signed-in users with one.
-  - **Development session**: `POST /api/dev/session` exists only under `dev`/`local` profiles with `chessecho.auth.dev-mode.enabled=true`; otherwise it returns 404 (`DevSessionController`).
+  - **Development session**: `POST /api/dev/session` exists only under `dev`/`local` profiles with `chessprobe.auth.dev-mode.enabled=true`; otherwise it returns 404 (`DevSessionController`).
   - **Import and jobs**:
     - Authenticated imports require `accountId` for the caller's current connection.
     - Guests import by username regardless of connection state.
@@ -95,7 +95,7 @@ invariant:
   - Position Progress uses the selected weakness threshold and requires an explicit currently connected account.
   - Decision-time results require complete usable account-player clock data for a game; an ineligible game contributes no decision durations, and move quality does not affect qualification.
   - Inverted index candidate generation filters to $\le 200$ positions and guarantees $\ge 90\%$ recall of top-20 exhaustive candidates.
-  - Core similarity interfaces in `com.chessecho.similarity` have zero dependencies on Spring Data, JPA, or web annotations.
+  - Core similarity interfaces in `com.chessprobe.similarity` have zero dependencies on Spring Data, JPA, or web annotations.
   - Dynamic similarity evaluates continuations starting at ply 0 using rank 1 PV exclusively.
   - Engine-evaluated candidates are strictly bounded to 100 and pre-filtered to matching player turn and verified personal occurrences.
   - Dynamic similarity concurrency is guarded by a configured semaphore (`chess.similarity.dynamic.max-concurrent-sessions` >= 1) with try-finally permit release.

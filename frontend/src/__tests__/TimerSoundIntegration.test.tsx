@@ -47,7 +47,7 @@ async function advance(ms: number) {
 
 async function openTraining(muted = false) {
   localStorage.setItem('chessecho_username', 'timer-fixture');
-  localStorage.setItem('chessecho_sound_enabled', String(!muted));
+  localStorage.setItem('chessprobe_sound_enabled', String(!muted));
   soundService.reset();
   const view = render(<StrictMode><Activity mode="visible"><Home /></Activity></StrictMode>);
   await screen.findByText('Timer fixture 1');

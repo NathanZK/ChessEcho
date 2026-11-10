@@ -1,10 +1,10 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: chessecho-postgres
+    container_name: chessprobe-postgres
     environment:
-      POSTGRES_DB: chessecho
-      POSTGRES_USER: chessecho
+      POSTGRES_DB: chessprobe
+      POSTGRES_USER: chessprobe
       POSTGRES_PASSWORD: chessecho_pass
     ports:
       - "5432:5432"
@@ -13,8 +13,8 @@ services:
 
   app:
     build: ./backend
-    image: chess-echo
-    container_name: chessecho-app
+    image: chess-probe
+    container_name: chessprobe-app
     ports:
       - "8080:8080"
     environment:

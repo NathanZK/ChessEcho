@@ -449,7 +449,7 @@ describe('Puzzles Tab Features and Fixes', () => {
         feedback={{ status: 'CORRECT', lastMove: 'e4' }}
         onNextPuzzle={vi.fn()}
         isExplorationActive={true}
-        explorationPlayMode="CHESSECHO"
+        explorationPlayMode="CHESSPROBE"
         continuationCandidate={{ move: 'Nf3', resultingFen: 'fen_Nf3', providerType: 'ENGINE' }}
       />
     );

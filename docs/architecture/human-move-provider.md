@@ -1,7 +1,7 @@
 # Human Move Provider Architecture
 
 ## 1. Problem Statement
-Within ChessEcho's Line Exploration, users can play against the engine or a simulated human opponent. The goal of the Human Move Provider is to answer: "If I play this move against players around a selected rating, what would they realistically tend to play?" This behavior must come from empirical data observed in real historical games. It must not mean taking Stockfish's second/third-best move and pretending it is human. The user explicitly selects an opponent rating band (e.g., 800–1000, 1000–1200) representing the population they want to practice against, independent of their own rating.
+Within ChessProbe's Line Exploration, users can play against the engine or a simulated human opponent. The goal of the Human Move Provider is to answer: "If I play this move against players around a selected rating, what would they realistically tend to play?" This behavior must come from empirical data observed in real historical games. It must not mean taking Stockfish's second/third-best move and pretending it is human. The user explicitly selects an opponent rating band (e.g., 800–1000, 1000–1200) representing the population they want to practice against, independent of their own rating.
 
 ## 2. Architectural Decisions
 
@@ -16,7 +16,7 @@ The Human Move Provider does not scan a pre-existing complete historical corpus.
 "Seeding a rating band" means actively constructing this corpus.
 
 ### Do Not Persist Seed Games
-Games encountered during the graph traversal are NOT persisted as normal ChessEcho user `Game` records. The **existing user `Game` and `PositionOccurrence` data** serve a distinct purpose (user-specific weakness analysis) and must remain unchanged. 
+Games encountered during the graph traversal are NOT persisted as normal ChessProbe user `Game` records. The **existing user `Game` and `PositionOccurrence` data** serve a distinct purpose (user-specific weakness analysis) and must remain unchanged. 
 
 The human-data seeding pipeline follows this flow:
 `Discovered players -> temporary processing of discovered games -> extract position/move -> aggregate -> persist HumanMoveDistribution -> discard raw game data`
@@ -62,7 +62,7 @@ The architecture preserves the existing continuation contract where `Continuatio
 * Create manufactured/fake records to test against (do NOT build the real seeding algorithm yet).
 * Implement provider logic, including selected rating band support, weighted empirical move selection, and sparse-data fallback.
 * Integrate with the existing `ContinuationService`.
-* Update the frontend just enough to pass the selected rating band from the existing Line Exploration → "Play against ChessEcho" flow (no Challenge Mode redesign).
+* Update the frontend just enough to pass the selected rating band from the existing Line Exploration → "Play against ChessProbe" flow (no Challenge Mode redesign).
 * Thoroughly test and verify the architecture end-to-end.
 
 **PHASE 2 — Historical seeding algorithm**

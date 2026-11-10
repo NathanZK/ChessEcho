@@ -118,7 +118,7 @@ describe('Sound Feedback System', () => {
     it('does not play audio when sound is muted', () => {
       setSoundEnabled(false);
       expect(isSoundEnabled()).toBe(false);
-      expect(localStorage.getItem('chessecho_sound_enabled')).toBe('false');
+      expect(localStorage.getItem('chessprobe_sound_enabled')).toBe('false');
 
       playSound('correct');
       playSound('completion');
@@ -134,12 +134,12 @@ describe('Sound Feedback System', () => {
       const toggledOff = toggleSound();
       expect(toggledOff).toBe(false);
       expect(isSoundEnabled()).toBe(false);
-      expect(localStorage.getItem('chessecho_sound_enabled')).toBe('false');
+      expect(localStorage.getItem('chessprobe_sound_enabled')).toBe('false');
 
       const toggledOn = toggleSound();
       expect(toggledOn).toBe(true);
       expect(isSoundEnabled()).toBe(true);
-      expect(localStorage.getItem('chessecho_sound_enabled')).toBe('true');
+      expect(localStorage.getItem('chessprobe_sound_enabled')).toBe('true');
     });
 
     it('gracefully handles rejected Audio.play() promise without throwing', async () => {

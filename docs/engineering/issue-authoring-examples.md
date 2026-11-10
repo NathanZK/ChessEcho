@@ -247,7 +247,7 @@ symmetry equivalence class and matched controls, measuring Recall@10 and AP@10 a
 
 ## 4. Summary of Authoring Principles
 
-When authoring new ChessEcho product issues:
+When authoring new ChessProbe product issues:
 1. **Focus on Observable Outcomes:** State what behavior or result is expected, what conditions trigger it, and what constitutes failure.
 2. **State Task-Specific Verification:** Include the specific check required (e.g. running UI screenshot, concurrency integration test, targeted mutation audit) without pasting paragraphs of general review philosophy.
 3. **Reference Shared Conventions:** Point to `docs/engineering/repository-conventions.md` for general evidence rules rather than repeating them in every criterion.

@@ -1,8 +1,8 @@
-# ChessEcho — Analysis & Weakness Data Architecture
+# ChessProbe — Analysis & Weakness Data Architecture
 
 ## 1. Purpose
 
-ChessEcho analyzes a player's historical chess games to identify recurring positions, evaluate the moves they played, and generate personalized puzzles.
+ChessProbe analyzes a player's historical chess games to identify recurring positions, evaluate the moves they played, and generate personalized puzzles.
 
 The system should:
 
