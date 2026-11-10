@@ -103,6 +103,62 @@ describe('Practice State Model & Invariants', () => {
     }
   });
 
+  it('independently tracks expected FEN, history, side to move, and attempt counts across transitions', () => {
+    const initialCtx = createInitialContext();
+    expect(initialCtx.expectedSolvedCount).toBe(0);
+    expect(initialCtx.expectedFailedCount).toBe(0);
+    expect(initialCtx.expectedHistory).toEqual([]);
+    expect(initialCtx.expectedSideToMove).toBe('white');
+
+    // SELECT_PUZZLE -> PRACTICE_IDLE
+    const selected = getNextState('DISCOVERY', 'SELECT_PUZZLE', initialCtx);
+    expect(selected).not.toBeNull();
+    const idleCtx = selected!.context;
+    expect(idleCtx.puzzleLoaded).toBe(true);
+    expect(idleCtx.expectedFen).toBeDefined();
+    expect(idleCtx.expectedSolvedCount).toBe(0);
+    expect(idleCtx.expectedFailedCount).toBe(0);
+    expect(idleCtx.expectedSideToMove).toBe('white');
+
+    // SUBMIT_OPTIMAL -> CORRECT
+    const solved = getNextState('PRACTICE_IDLE', 'SUBMIT_OPTIMAL', idleCtx);
+    expect(solved).not.toBeNull();
+    const solvedCtx = solved!.context;
+    expect(solvedCtx.solved).toBe(true);
+    expect(solvedCtx.attemptCount).toBe(1);
+    expect(solvedCtx.expectedSolvedCount).toBe(1);
+    expect(solvedCtx.expectedFailedCount).toBe(0);
+    expect(solvedCtx.lastMoveSan).toBe('d4');
+    expect(solvedCtx.expectedHistory).toEqual(['d4']);
+    expect(solvedCtx.expectedSideToMove).toBe('black');
+    expect(solvedCtx.expectedFen).not.toEqual(idleCtx.expectedFen);
+
+    // SUBMIT_MISTAKE from IDLE -> INCORRECT
+    const mistake = getNextState('PRACTICE_IDLE', 'SUBMIT_MISTAKE', idleCtx);
+    expect(mistake).not.toBeNull();
+    const mistakeCtx = mistake!.context;
+    expect(mistakeCtx.attemptCount).toBe(1);
+    expect(mistakeCtx.expectedSolvedCount).toBe(0);
+    expect(mistakeCtx.expectedFailedCount).toBe(1);
+    expect(mistakeCtx.lastMoveSan).toBe('a3');
+    expect(mistakeCtx.expectedFen).not.toEqual(idleCtx.expectedFen);
+
+    // RETRY from INCORRECT -> PRACTICE_IDLE (resets to baseline position)
+    const retried = getNextState('INCORRECT', 'RETRY', mistakeCtx);
+    expect(retried).not.toBeNull();
+    expect(retried!.context.expectedFen).toEqual(idleCtx.expectedFen);
+
+    // SUBMIT_BLUNDER from IDLE -> HISTORICAL_MISTAKE
+    const blunder = getNextState('PRACTICE_IDLE', 'SUBMIT_BLUNDER', idleCtx);
+    expect(blunder).not.toBeNull();
+    const blunderCtx = blunder!.context;
+    expect(blunderCtx.attemptCount).toBe(1);
+    expect(blunderCtx.expectedSolvedCount).toBe(0);
+    expect(blunderCtx.expectedFailedCount).toBe(1);
+    expect(blunderCtx.lastMoveSan).toBe('h4');
+    expect(blunderCtx.expectedFen).not.toEqual(idleCtx.expectedFen);
+  });
+
   describe('Bounded BFS Explorer & Path Selection', () => {
     it('enumerates reachable states bounded by depth without infinite loops', () => {
       const result = explorePracticeStates('DISCOVERY', PRACTICE_TRANSITIONS, 4);

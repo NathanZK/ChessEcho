@@ -47,7 +47,7 @@ To avoid unconstrained noise and guarantee strict reproducibility, Phase 4 imple
 3. **Multi-Layered Invariant Oracles**:
    - **Oracle 1 (Error Silence)**: Intercepts `page.on('pageerror')` and console errors to catch unhandled JavaScript runtime exceptions.
    - **Oracle 2 (Layout Integrity)**: Asserts the root container (`main`) remains mounted and visible (guarding against white-screen unhandled error boundaries).
-   - **Oracle 3 (State Consistency)**: Verifies that expected action controls and feedback banners match the current abstract state.
+   - **Oracle 3 (State & Behavioral Consistency)**: Verifies that expected action controls, feedback banners, independent FEN piece topology (`verifyBoardPosition`), attempt counter synchronization (`verifyAttemptCounters`), turn consistency (`verifyTurnState`), and move feedback (`verifyMoveFeedback`) match the abstract state without inspecting React internals.
 4. **Action Logging & Regression Conversion**:
    - Every step records `{ step, fromState, action, toState, timestamp }`.
    - On invariant failure, the runner captures full-page screenshots, dumps the formatted sequence trace, and provides immediate guidance for converting the failing seed into a permanent Playwright regression test (`frontend/journeys/regression/`).
