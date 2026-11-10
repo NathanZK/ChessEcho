@@ -1,5 +1,10 @@
 import { test, expect } from '@playwright/test';
-import { setupJourneyApiMocks, DEFAULT_MOCK_WEAKNESS } from './fixtures/mockApi';
+import {
+  setupJourneyApiMocks,
+  DEFAULT_MOCK_WEAKNESS,
+  DEFAULT_MOCK_RECURRING_WEAKNESS,
+  DEFAULT_MOCK_DYNAMIC_RECURRING_WEAKNESS,
+} from './fixtures/mockApi';
 
 test.describe('Journey J01: Weaknesses Library Practice and Exit Return Flow', () => {
   test('user selects weakness, solves puzzle, enters exploration, and exits back to weaknesses tab', async ({ page }) => {
@@ -24,8 +29,8 @@ test.describe('Journey J01: Weaknesses Library Practice and Exit Return Flow', (
 
     // 6. Execute move: Nc6 (b8 -> c6)
     // react-chessboard supports click-to-move or drag
-    const b8Square = page.locator('[data-square="b8"]');
-    const c6Square = page.locator('[data-square="c6"]');
+    const b8Square = page.locator('[data-testid="practice-board-area"] [data-square="b8"]');
+    const c6Square = page.locator('[data-testid="practice-board-area"] [data-square="c6"]');
     await expect(b8Square).toBeVisible();
     await b8Square.click();
     await c6Square.click();
@@ -45,5 +50,54 @@ test.describe('Journey J01: Weaknesses Library Practice and Exit Return Flow', (
     // 10. Verify originating Weaknesses tab is restored
     await expect(page).toHaveURL(/#weaknesses/);
     await expect(page.getByRole('button', { name: /Practice Position/i })).toBeVisible();
+  });
+
+  test('user practices from both structural and dynamic cluster cards with scoped board locator', async ({ page }) => {
+    // 1. Declare and setup mocked API boundary with both structural and dynamic clusters
+    await setupJourneyApiMocks(page, {
+      authenticated: true,
+      weaknesses: [DEFAULT_MOCK_WEAKNESS],
+      recurringWeaknesses: [DEFAULT_MOCK_RECURRING_WEAKNESS, DEFAULT_MOCK_DYNAMIC_RECURRING_WEAKNESS],
+    });
+
+    // 2. Load application
+    await page.goto('/#weaknesses');
+
+    // 3. Verify thematic cluster cards are visible
+    await expect(page.getByText(/Thematic Clusters/i)).toBeVisible();
+    const practiceButtons = page.getByRole('button', { name: /Practice This Weakness/i });
+    await expect(practiceButtons).toHaveCount(2);
+
+    // 4. Click Practice on first (structural) cluster card
+    await practiceButtons.first().click();
+
+    // 5. Verify practice mode mounted on puzzles tab with scoped board locator
+    await expect(page).toHaveURL(/#puzzles/);
+    const boardArea = page.locator('[data-testid="practice-board-area"]');
+    await expect(boardArea).toBeVisible();
+
+    // 6. Exit practice back to weaknesses
+    const exitButton = page.getByRole('button', { name: /Back to Weaknesses/i });
+    await expect(exitButton).toBeVisible();
+    await exitButton.click();
+
+    // 7. Verify return to weaknesses tab with thematic clusters still visible
+    await expect(page).toHaveURL(/#weaknesses/);
+    await expect(page.getByText(/Thematic Clusters/i)).toBeVisible();
+
+    // 8. Click Practice on second (dynamic) cluster card
+    const dynamicPracticeButtons = page.getByRole('button', { name: /Practice This Weakness/i });
+    await expect(dynamicPracticeButtons).toHaveCount(2);
+    await dynamicPracticeButtons.nth(1).click();
+
+    // 9. Verify practice mode mounted again with scoped board
+    await expect(page).toHaveURL(/#puzzles/);
+    await expect(page.locator('[data-testid="practice-board-area"]')).toBeVisible();
+
+    // 10. Exit back to weaknesses
+    const backBtn = page.getByRole('button', { name: /Back to Weaknesses/i });
+    await expect(backBtn).toBeVisible();
+    await backBtn.click();
+    await expect(page).toHaveURL(/#weaknesses/);
   });
 });

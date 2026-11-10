@@ -1807,7 +1807,7 @@ export function PracticePuzzlesView({
                     />
                   </div>
 
-                  <div className="w-full max-w-[680px] shrink-0 flex flex-col space-y-2.5">
+                  <div data-testid="practice-board-area" className="w-full max-w-[680px] shrink-0 flex flex-col space-y-2.5">
                     <ChessBoardArea
                       key={!isWeaknessPlaylist ? activePuzzle.puzzleId : 'puzzle-board'}
                       initialFen={activePuzzle.fen}

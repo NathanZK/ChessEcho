@@ -853,4 +853,63 @@ In accordance with [mutation-testing.md](../mutation-testing.md) and QA Strategy
 - [ ] `com.chessecho.service.EvaluationEvidenceProducerService` (`EvaluationEvidenceProducerServiceTest`) — Deterministic evaluation snapshot producer and verification rules.
 - [ ] `com.chessecho.service.EvaluationEvidenceSnapshotService` (`EvaluationEvidenceSnapshotPostgresIntegrationTest`) — Integration mutation testing for 197 deferred database persistence and reconstruction mutants.
 
+---
+
+## 4. Post-Implementation Hardening & Architectural Verification (Issues #669, #756, #757, #758, #765)
+
+Following the merge of remediation pull requests [#760](https://github.com/NathanZK/ChessEcho/pull/760), [#761](https://github.com/NathanZK/ChessEcho/pull/761), [#762](https://github.com/NathanZK/ChessEcho/pull/762), [#763](https://github.com/NathanZK/ChessEcho/pull/763), and [#764](https://github.com/NathanZK/ChessEcho/pull/764) onto `main` at commit `c02efcd`, an end-to-end post-implementation audit and hardening pass was executed under issue [#765](https://github.com/NathanZK/ChessEcho/issues/765).
+
+### 4.1 Scope and Merged PR Baseline
+
+| Issue | Remediation PR | Merge Commit SHA | Merge Timestamp | Target Subsystems | Audit & Hardening Verdict |
+|---|---|---|---|---|---|
+| [#756](https://github.com/NathanZK/ChessEcho/issues/756) | [#760](https://github.com/NathanZK/ChessEcho/pull/760) | `5cd7472` / `fd334ba` | 2026-11-09 21:56:54 +0300 | Clustering snapshot dispatch, dynamic/structural clustering lifecycle, cache invalidation | **Verified & Hardened**: Snapshot resolution safely isolates total failures from legitimate empty results; terminal states are immutable. |
+| [#757](https://github.com/NathanZK/ChessEcho/issues/757) | [#761](https://github.com/NathanZK/ChessEcho/pull/761) | `34b07eb` / `6e45c38` | 2026-11-09 23:29:12 +0300 | Dual structural/dynamic weakness discovery, evidence modal, aggregate metadata | **Verified & Hardened**: Evidence pagination query orders by `po.game.playedAt DESC NULLS LAST, po.plyNumber ASC, po.id ASC` for total determinism; partial success reports `warningMessage`. |
+| [#758](https://github.com/NathanZK/ChessEcho/issues/758) | [#762](https://github.com/NathanZK/ChessEcho/pull/762) | `3e813ae` / `c02efcd` | 2026-11-10 01:59:16 +0300 | Thematic cluster playlist generation, practice bridge, concealed mistakes | **Verified & Hardened**: Client pre-fetches all pages for clusters $> 100$ positions; answers remain concealed during initial solve. |
+| [#669](https://github.com/NathanZK/ChessEcho/issues/669) | [#763](https://github.com/NathanZK/ChessEcho/pull/763), [#764](https://github.com/NathanZK/ChessEcho/pull/764) | `e19ac57` / `fd5c897` | 2026-11-10 00:17:08 +0300 | Individual game analysis, move detail, independent threshold/timing filters, historical similarity | **Verified & Hardened**: Canonical Playwright journeys J01–J04, recurring weakness discovery, and game analysis exercise genuine routing and return-context preservation. |
+
+### 4.2 Verified Hardening Invariants
+
+1. **Discovery State Machine Atomicity & Immutability**:
+   - `RecurringWeaknessDiscoveryService` uses atomic synchronized transition blocks.
+   - Terminal states (`COMPLETED`, `FAILED`, `CANCELLED`) are strictly immutable and cannot be overwritten by late-finishing background workers or in-flight snapshot generations.
+   - Total snapshot failure transitions to `FAILED` with failure details in `errorMessage`. Legitimate empty results transition to `COMPLETED` with 0 weaknesses. Partial snapshot failure transitions to `COMPLETED` with non-null `warningMessage` informing the user which clustering mode failed while preserving the successful clusters.
+
+2. **Frontend Discovery Presentation**:
+   - `WeaknessesList` renders a retryable `StatusBanner` with `variant="error"` when discovery fails, exposing a one-click "Retry Discovery" action and a dismiss control.
+   - When discovery completes with partial success, a dismissible `StatusBanner` with `variant="warning"` displays the backend warning message.
+
+3. **Deterministic Evidence Pagination**:
+   - `PositionOccurrenceRepository.findAllByChessAccountIdAndPositionIdIn` includes `po.id ASC` as the tie-breaker in its `ORDER BY` clause, preventing record duplication or omissions during pagination across identical game timestamps and plies.
+
+4. **Practice Playlist Completeness**:
+   - `WeaknessesList.handlePracticeCluster` loops through paginated cluster positions until `hasNext` is false, assembling all available playable variations into the playlist before mounting the practice view.
+
+5. **Canonical User Journey Verification**:
+   - Playwright test suite expanded with end-to-end browser coverage for:
+     - `j01-weaknesses-practice.spec.ts`: Weaknesses Library $\to$ Solve Puzzle $\to$ Line Exploration $\to$ Return to Weaknesses.
+     - `j02-decision-timing-practice.spec.ts`: Decision Timing $\to$ Line Exploration $\to$ Return to Decision Timing.
+     - `j03-similar-positions-practice.spec.ts`: Similar Positions Search $\to$ Line Exploration $\to$ Return to Similar Positions (preserved state).
+     - `j04-explore-position-practice.spec.ts`: Tools Menu $\to$ Explore Position Modal $\to$ Line Exploration $\to$ Return.
+     - `recurring-weakness-discovery.spec.ts`: Trigger Discovery $\to$ Progress Tracking $\to$ Thematic Cluster Cards $\to$ Practice Weakness $\to$ Return.
+     - `individual-game-analysis.spec.ts`: My Games $\to$ Analyze Game $\to$ Practice Mistake (concealed answer) $\to$ Return to Game Analysis.
+
+### 4.3 Verification Methodology & Tooling
+
+Verification followed the 4-tier evidence hierarchy (Command Success $\to$ Artifact Creation $\to$ Artifact Inspection $\to$ Criteria Verified):
+- **Static Analysis & Complexity Guardrails**:
+  - Backend: `./gradlew ktlintCheck` (clean format, 0 violations); `./gradlew detektMain detektTest` (0 code smells, class complexity $\le 15$, class length $\le 600$).
+  - Frontend: `npm run lint` (`eslint --max-warnings 0`, 0 warnings); `npx tsc --noEmit` (strict TypeScript validation, 0 type errors); `npm run build` (`next build` production bundle compilation succeeded).
+- **Unit & Slice Tests**:
+  - Backend: `./gradlew test` (comprehensive execution across repository slices, service concurrency models, and DTO mappings).
+  - Frontend: `npm run test` (88 Vitest test suites, 843 tests passing in JSDOM).
+- **Real-Browser Journey Testing**:
+  - Playwright: `npm run test:journeys` executing against headless Chromium DOM with deterministic route-level mocking; 28 tests passing across J01–J04, recurring weakness discovery, and game analysis.
+
+### 4.4 Technical Debt & Hardening Backlog References
+
+1. **Docker-Dependent Integration Tests**: Full-stack Testcontainers PostgreSQL persistence tests require a running Docker daemon; isolated `@DataJpaTest` slices on H2 provide zero-Docker deterministic verification.
+2. **Scroll-Coordinate Restoration**: Exiting practice or exploration restores tab and filter state; pixel-exact scroll position restoration is deferred to future UX polish.
+3. **Mobile Emulation Suite**: Playwright tests currently run against desktop viewports; dedicated mobile touch emulation is deferred to avoid redundant headless runner overhead.
+
 

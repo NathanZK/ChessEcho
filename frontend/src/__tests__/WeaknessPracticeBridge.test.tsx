@@ -119,6 +119,90 @@ describe('Thematic Weakness Clusters & Practice Bridge (#735)', () => {
     });
   });
 
+  it('pre-fetches all pages when cluster contains more than 100 positions and passes all puzzles to onSelectPractice', async () => {
+    vi.mocked(api.fetchRecurringWeaknesses).mockResolvedValueOnce([mockCluster]);
+
+    const page0Positions = Array.from({ length: 100 }, (_, i) => ({
+      positionId: `pos-p0-${i}`,
+      fen: 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3',
+      playerColor: 'WHITE' as const,
+      movePlayed: 'Bc4',
+      targetMove: 'Bb5',
+      acceptableMoves: [{ move: 'Bb5', evalLoss: 0.0 }],
+      evalLoss: 0.85,
+      mistakeSeverity: 'MINOR' as const,
+      decisionTimeMs: 3200,
+      decisionSeverity: 'NO_CONCERN' as const,
+      timeControl: 'RAPID',
+      gameId: `game-p0-${i}`,
+      platformGameId: `chesscom_p0_${i}`,
+      plyNumber: 5,
+      moveNumber: 3,
+    }));
+
+    const page1Positions = Array.from({ length: 20 }, (_, i) => ({
+      positionId: `pos-p1-${i}`,
+      fen: 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3',
+      playerColor: 'WHITE' as const,
+      movePlayed: 'Bc4',
+      targetMove: 'Bb5',
+      acceptableMoves: [{ move: 'Bb5', evalLoss: 0.0 }],
+      evalLoss: 0.90,
+      mistakeSeverity: 'MINOR' as const,
+      decisionTimeMs: 2800,
+      decisionSeverity: 'NO_CONCERN' as const,
+      timeControl: 'RAPID',
+      gameId: `game-p1-${i}`,
+      platformGameId: `chesscom_p1_${i}`,
+      plyNumber: 5,
+      moveNumber: 3,
+    }));
+
+    vi.mocked(api.getClusterPositions)
+      .mockResolvedValueOnce({
+        page: 0,
+        size: 100,
+        totalElements: 120,
+        totalPages: 2,
+        hasNext: true,
+        positions: page0Positions,
+      })
+      .mockResolvedValueOnce({
+        page: 1,
+        size: 100,
+        totalElements: 120,
+        totalPages: 2,
+        hasNext: false,
+        positions: page1Positions,
+      });
+
+    render(<WeaknessesList {...defaultProps} />);
+
+    const practiceBtn = await screen.findByRole('button', { name: /Practice This Weakness/i });
+    fireEvent.click(practiceBtn);
+
+    await waitFor(() => {
+      expect(api.getClusterPositions).toHaveBeenCalledTimes(2);
+      expect(api.getClusterPositions).toHaveBeenNthCalledWith(
+        1,
+        'cluster-uuid-1',
+        expect.objectContaining({ page: 0, size: 100, playableOnly: true })
+      );
+      expect(api.getClusterPositions).toHaveBeenNthCalledWith(
+        2,
+        'cluster-uuid-1',
+        expect.objectContaining({ page: 1, size: 100, playableOnly: true })
+      );
+
+      expect(onSelectPractice).toHaveBeenCalledWith(
+        expect.objectContaining({ puzzleId: 'pos-p0-0' }),
+        expect.any(Array)
+      );
+    });
+
+    expect(onSelectPractice.mock.calls[0][1]).toHaveLength(120);
+  });
+
   it('renders inline alert when cluster contains zero playable positions', async () => {
     vi.mocked(api.fetchRecurringWeaknesses).mockResolvedValueOnce([mockCluster]);
     vi.mocked(api.getClusterPositions).mockResolvedValueOnce({
@@ -183,6 +267,110 @@ describe('Thematic Weakness Clusters & Practice Bridge (#735)', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/Network disconnected/i)).toBeInTheDocument();
+    });
+  });
+
+  it('does not launch practice and displays error when page returns empty positions with hasNext=true', async () => {
+    vi.mocked(api.fetchRecurringWeaknesses).mockResolvedValueOnce([mockCluster]);
+    vi.mocked(api.getClusterPositions).mockResolvedValueOnce({
+      page: 0,
+      size: 100,
+      totalElements: 10,
+      totalPages: 1,
+      hasNext: true,
+      positions: [],
+    });
+
+    render(<WeaknessesList {...defaultProps} />);
+
+    const practiceBtn = await screen.findByRole('button', { name: /Practice This Weakness/i });
+    fireEvent.click(practiceBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Inconsistent pagination metadata: empty page received with hasNext=true/i)).toBeInTheDocument();
+      expect(onSelectPractice).not.toHaveBeenCalled();
+    });
+  });
+
+  it('does not launch practice and displays error when later page fails in multi-page playlist', async () => {
+    vi.mocked(api.fetchRecurringWeaknesses).mockResolvedValueOnce([mockCluster]);
+    vi.mocked(api.getClusterPositions)
+      .mockResolvedValueOnce({
+        page: 0,
+        size: 100,
+        totalElements: 120,
+        totalPages: 2,
+        hasNext: true,
+        positions: [
+          {
+            positionId: 'pos-1',
+            fen: 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3',
+            playerColor: 'WHITE',
+            movePlayed: 'Bc4',
+            targetMove: 'Bb5',
+            acceptableMoves: [{ move: 'Bb5', evalLoss: 0.0 }],
+            evalLoss: 0.85,
+            mistakeSeverity: 'MINOR',
+            decisionTimeMs: 3200,
+            decisionSeverity: 'NO_CONCERN',
+            timeControl: 'RAPID',
+            gameId: 'game-1',
+            platformGameId: 'chesscom_1',
+            plyNumber: 5,
+            moveNumber: 3,
+          },
+        ],
+      })
+      .mockRejectedValueOnce(new Error('Network failure on page 1'));
+
+    render(<WeaknessesList {...defaultProps} />);
+
+    const practiceBtn = await screen.findByRole('button', { name: /Practice This Weakness/i });
+    fireEvent.click(practiceBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Network failure on page 1/i)).toBeInTheDocument();
+      expect(onSelectPractice).not.toHaveBeenCalled();
+    });
+  });
+
+  it('does not launch practice and displays error when pagination metadata is inconsistent with totalElements', async () => {
+    vi.mocked(api.fetchRecurringWeaknesses).mockResolvedValueOnce([mockCluster]);
+    vi.mocked(api.getClusterPositions).mockResolvedValueOnce({
+      page: 0,
+      size: 100,
+      totalElements: 50,
+      totalPages: 1,
+      hasNext: false,
+      positions: [
+        {
+          positionId: 'pos-1',
+          fen: 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3',
+          playerColor: 'WHITE',
+          movePlayed: 'Bc4',
+          targetMove: 'Bb5',
+          acceptableMoves: [{ move: 'Bb5', evalLoss: 0.0 }],
+          evalLoss: 0.85,
+          mistakeSeverity: 'MINOR',
+          decisionTimeMs: 3200,
+          decisionSeverity: 'NO_CONCERN',
+          timeControl: 'RAPID',
+          gameId: 'game-1',
+          platformGameId: 'chesscom_1',
+          plyNumber: 5,
+          moveNumber: 3,
+        },
+      ],
+    });
+
+    render(<WeaknessesList {...defaultProps} />);
+
+    const practiceBtn = await screen.findByRole('button', { name: /Practice This Weakness/i });
+    fireEvent.click(practiceBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Incomplete playlist: retrieved 1 of 50 positions/i)).toBeInTheDocument();
+      expect(onSelectPractice).not.toHaveBeenCalled();
     });
   });
 });

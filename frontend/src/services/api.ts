@@ -1013,6 +1013,7 @@ export interface RecurringDiscoveryJobResponse {
   progressPercent: number;
   stage: string;
   errorMessage?: string | null;
+  warningMessage?: string | null;
   createdAt: string;
   updatedAt: string;
 }

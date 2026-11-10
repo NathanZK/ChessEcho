@@ -6,8 +6,15 @@ export interface MockOptions {
   accounts?: Array<{ id: string; platform: string; username: string }>;
   weaknesses?: Array<Record<string, unknown>>;
   puzzles?: Array<Record<string, unknown>>;
+  recurringWeaknesses?: Array<Record<string, unknown>>;
+  clusterPositions?: Array<Record<string, unknown>>;
+  longDecisions?: Array<Record<string, unknown>>;
+  similarPositions?: Array<Record<string, unknown>>;
+  games?: Array<Record<string, unknown>>;
+  gameAnalysis?: Record<string, unknown>;
   importConflict?: boolean;
   jobStatusSequence?: Array<Record<string, unknown>>;
+  discoveryJob?: Record<string, unknown>;
 }
 
 export const DEFAULT_MOCK_ACCOUNT = {
@@ -54,9 +61,132 @@ export const DEFAULT_MOCK_PUZZLE = {
   evalCp: 40,
 };
 
+export const DEFAULT_MOCK_LONG_DECISION = {
+  id: '6ba7b810-9dad-11d1-80b4-00c04fd430c8',
+  positionId: '6ba7b811-9dad-11d1-80b4-00c04fd430c8',
+  fen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2',
+  playerColor: 'BLACK' as const,
+  plyNumber: 4,
+  movePlayed: 'Nf6',
+  decisionTimeMs: 15400,
+  timeControl: 'RAPID' as const,
+  platformGameId: 'chesscom-1001',
+  playedAt: '2026-11-01T12:00:00Z',
+  opponentUsername: 'opp-grandmaster',
+  chessComUrl: 'https://www.chess.com/game/live/1001',
+  severity: 'CRITICAL' as const,
+};
+
+export const DEFAULT_MOCK_SIMILAR_POSITION = {
+  rank: 1,
+  score: 0.95,
+  staticScore: 0.90,
+  dynamicScore: 0.98,
+  positionId: '6ba7b812-9dad-11d1-80b4-00c04fd430c8',
+  fen: 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3',
+  canonicalFen: 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3',
+  searchStatus: 'COMPLETED',
+  achievedDepth: 16,
+  principalVariations: [],
+  occurrences: [
+    {
+      gameId: 'game-sim-1',
+      platformGameId: 'chesscom-sim-1',
+      playedAt: '2026-11-01T12:00:00Z',
+      plyNumber: 5,
+      movePlayed: 'Bb5',
+      playerColor: 'WHITE',
+    },
+  ],
+};
+
+export const DEFAULT_MOCK_GAME = {
+  id: 'game-101',
+  platformGameId: 'chesscom-101',
+  timeControl: 'RAPID',
+  playedAt: '2026-11-01T12:00:00Z',
+  result: 'win',
+  whiteUsername: 'carlsen',
+  blackUsername: 'nakamura',
+  pgn: '1. e4 e5 2. Nf3 Nc6 3. Bb5 a6',
+};
+
+export const DEFAULT_MOCK_GAME_ANALYSIS = {
+  gameId: 'game-101',
+  whiteUsername: 'carlsen',
+  blackUsername: 'nakamura',
+  timeControl: 'RAPID',
+  playedAt: '2026-11-01T12:00:00Z',
+  result: 'win',
+  analysisStatus: 'COMPLETE',
+  plies: [
+    {
+      plyNumber: 5,
+      movePlayed: 'Bc4',
+      playerColor: 'WHITE',
+      preMoveFen: 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3',
+      postMoveFen: 'r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3',
+      bestMove: 'Bb5',
+      evalCp: 40,
+      evalLoss: 1.25,
+      mistakeSeverity: 'MINOR',
+      decisionTimeMs: 12000,
+      decisionSeverity: 'NO_CONCERN',
+      hasEvaluation: true,
+      hasTiming: true,
+    },
+  ],
+};
+
+export const DEFAULT_MOCK_RECURRING_WEAKNESS = {
+  clusterId: 'cluster-uuid-1',
+  clusterType: 'STRUCTURAL',
+  recommendationPriority: 0.85,
+  representativeFen: 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3',
+  memberPositionCount: 4,
+  totalOccurrences: 18,
+  distinctGamesCount: 14,
+  mistakeCount: 10,
+  mistakeFrequency: 0.55,
+  blunderRate: 0.3,
+  evaluatedOccurrences: 18,
+  unevaluatedOccurrences: 0,
+  evalLossDistribution: { '0.8-1.5': 6, '1.5-3.0': 4 },
+  evalLossPercentages: { '0.8-1.5': 60, '1.5-3.0': 40 },
+  timingProfile: { FAST: 2, NORMAL: 9, SLOW: 7 },
+  formatBreakdown: { RAPID: 10, BLITZ: 8 },
+};
+
+export const DEFAULT_MOCK_DYNAMIC_RECURRING_WEAKNESS = {
+  ...DEFAULT_MOCK_RECURRING_WEAKNESS,
+  clusterId: 'cluster-uuid-2',
+  clusterType: 'DYNAMIC',
+  mistakeFrequency: 0.65,
+  blunderRate: 0.4,
+};
+
+export const DEFAULT_MOCK_CLUSTER_POSITION = {
+  positionId: 'pos-rec-1',
+  fen: 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3',
+  playerColor: 'WHITE',
+  movePlayed: 'Bc4',
+  targetMove: 'Bb5',
+  acceptableMoves: [{ move: 'Bb5', evalLoss: 0.0 }],
+  evalLoss: 0.85,
+  mistakeSeverity: 'MINOR',
+  decisionTimeMs: 3200,
+  decisionSeverity: 'NO_CONCERN',
+  timeControl: 'RAPID',
+  gameId: 'game-rec-1',
+  platformGameId: 'chesscom_rec_1',
+  plyNumber: 5,
+  moveNumber: 3,
+};
+
 export interface JourneyMockHandle {
   setAuthenticated: (val: boolean) => void;
   getPollCount: () => number;
+  getDiscoveryPollCount: () => number;
 }
 
 export async function setupJourneyApiMocks(
@@ -69,8 +199,15 @@ export async function setupJourneyApiMocks(
     accounts = authenticated ? [DEFAULT_MOCK_ACCOUNT] : [],
     weaknesses = [DEFAULT_MOCK_WEAKNESS],
     puzzles = [DEFAULT_MOCK_PUZZLE],
+    recurringWeaknesses = [],
+    clusterPositions = [DEFAULT_MOCK_CLUSTER_POSITION],
+    longDecisions = [DEFAULT_MOCK_LONG_DECISION],
+    similarPositions = [DEFAULT_MOCK_SIMILAR_POSITION],
+    games = [DEFAULT_MOCK_GAME],
+    gameAnalysis = DEFAULT_MOCK_GAME_ANALYSIS,
     importConflict = false,
     jobStatusSequence,
+    discoveryJob,
   } = options;
 
   let currentAuthenticated = authenticated;
@@ -369,11 +506,132 @@ export async function setupJourneyApiMocks(
     });
   });
 
+  // Decision timing endpoint
+  await page.route('**/api/positions/long-decisions*', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        content: longDecisions,
+        page: 0,
+        size: 20,
+        totalElements: longDecisions.length,
+        totalPages: 1,
+        hasNext: false,
+      }),
+    });
+  });
+
+  // Similar positions endpoint
+  await page.route('**/api/positions/similar*', async (route) => {
+    const url = new URL(route.request().url());
+    const fen = url.searchParams.get('fen') || DEFAULT_MOCK_SIMILAR_POSITION.fen;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        queryFen: fen,
+        candidatesEvaluated: 10,
+        shortlistedCandidatesCount: 5,
+        engineCompletedCount: 5,
+        dynamicSimilarityApplied: true,
+        fallbackReason: null,
+        queryStatus: 'COMPLETED',
+        queryAchievedDepth: 16,
+        queryPrincipalVariations: [],
+        results: similarPositions,
+      }),
+    });
+  });
+
+  // Game analysis endpoints
+  await page.route('**/api/games/*/analyze', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(gameAnalysis),
+    });
+  });
+
+  await page.route(/\/api\/games(\?.*)?$/, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        content: games,
+        totalElements: games.length,
+        totalPages: 1,
+        number: 0,
+        size: 20,
+      }),
+    });
+  });
+
+  // Recurring discovery job endpoints
+  let discoveryPollCount = 0;
+  const defaultDiscoveryJob = {
+    jobId: 'discovery-job-1',
+    accountId: DEFAULT_MOCK_ACCOUNT.id,
+    status: 'COMPLETED',
+    progressPercent: 100,
+    stage: 'COMPLETE',
+    errorMessage: null,
+    warningMessage: null,
+    createdAt: '2026-11-09T00:00:00Z',
+    updatedAt: '2026-11-09T00:01:00Z',
+  };
+  const activeDiscoveryJob = discoveryJob || defaultDiscoveryJob;
+
+  await page.route('**/api/weaknesses/recurring/discover', async (route) => {
+    if (discoveryJob && discoveryJob.status === 'FAILED') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(discoveryJob),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 202,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ...activeDiscoveryJob,
+        status: 'PROCESSING',
+        stage: 'CLUSTERING',
+        progressPercent: 35,
+      }),
+    });
+  });
+
+  await page.route('**/api/weaknesses/recurring/jobs/*', async (route) => {
+    discoveryPollCount++;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(activeDiscoveryJob),
+    });
+  });
+
+  await page.route('**/api/weaknesses/recurring/*/positions*', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        page: 0,
+        size: 100,
+        totalElements: clusterPositions.length,
+        totalPages: 1,
+        hasNext: false,
+        positions: clusterPositions,
+      }),
+    });
+  });
+
   await page.route('**/api/weaknesses/recurring*', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify([]),
+      body: JSON.stringify(recurringWeaknesses),
     });
   });
 
@@ -382,5 +640,6 @@ export async function setupJourneyApiMocks(
       currentAuthenticated = val;
     },
     getPollCount: () => pollCount,
+    getDiscoveryPollCount: () => discoveryPollCount,
   };
 }
