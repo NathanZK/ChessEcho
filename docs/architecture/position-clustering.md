@@ -15,27 +15,27 @@ The subsystem operates through two primary components:
 ```mermaid
 %%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false}}}%%
 flowchart TD
-    Account[ChessAccount & Parameters] --> CandidateRetrieval[Candidate Corpus Retrieval]
+    Account["ChessAccount<br/>& Parameters"] --> CandidateRetrieval["Candidate Corpus<br/>Retrieval"]
     CandidateRetrieval --> PipelineChoice{ClusterType}
     
-    PipelineChoice -->|STRUCTURAL| Subvectors[Relational Subvector Block Normalization]
-    Subvectors --> Cosine[Cosine Similarity Matrix]
+    PipelineChoice -->|STRUCTURAL| Subvectors["Relational Subvector<br/>Block Normalization"]
+    Subvectors --> Cosine["Cosine Similarity<br/>Matrix"]
     
-    PipelineChoice -->|DYNAMIC| DynamicIndex[DynamicInvertedIndex & Stockfish PV Unigrams]
-    DynamicIndex --> DynamicScoring[Dynamic BM25 Similarity Matrix]
+    PipelineChoice -->|DYNAMIC| DynamicIndex["DynamicInvertedIndex<br/>& Stockfish PV Unigrams"]
+    DynamicIndex --> DynamicScoring["Dynamic BM25<br/>Similarity Matrix"]
     
-    Cosine --> MNN[Relaxed MNN Graph Construction]
+    Cosine --> MNN["Relaxed MNN<br/>Graph Construction"]
     DynamicScoring --> MNN
     
-    MNN --> Leiden[CWTS Leiden Community Detection]
-    Leiden --> Modularity["Reichardt-Bornholdt Modularity Equivalence (gamma=1.25)"]
-    Modularity --> Centroid[Centroid Vector Evaluation & Pruning]
+    MNN --> Leiden["CWTS Leiden<br/>Community Detection"]
+    Leiden --> Modularity["Reichardt-Bornholdt<br/>Modularity Equivalence<br/>(gamma=1.25)"]
+    Modularity --> Centroid["Centroid Vector<br/>Evaluation & Pruning"]
     Centroid --> Eviction{"sim(u, C) >= 0.38"}
     
     Eviction -->|Yes| ClusterAssignment[Assigned to Cluster]
-    Eviction -->|No| OutlierEviction[OUTLIER_EVICTED cluster_id=null]
+    Eviction -->|No| OutlierEviction["OUTLIER_EVICTED<br/>cluster_id=null"]
     
-    ClusterAssignment --> Snapshot[PositionClusterSnapshot Persistence]
+    ClusterAssignment --> Snapshot["PositionClusterSnapshot<br/>Persistence"]
     OutlierEviction --> Snapshot
 ```
 

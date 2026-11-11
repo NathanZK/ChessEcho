@@ -323,6 +323,58 @@ flowchart TD
     A21 --> A4
 ```
 
+### 3.3 Journey 11: Individual Game Analysis (J11)
+*User goal: Review an entire imported game move-by-move with Stockfish evaluation and drill down into mistakes.*
+
+```mermaid
+flowchart TD
+    G1["Open Game Analysis View<br/>(or click source link)"] --> G2["Load Game Metadata<br/>& Move Plies"]
+    G2 --> G3{{"Existing Analysis?"}}
+
+    G3 -->|"Yes"| G4["Render Analyzed Plies<br/>with Eval Badges"]
+    G3 -->|"No"| G5["Show 'Analyze Game'<br/>Button"]
+
+    G5 --> G6["Trigger POST<br/>/api/games/{id}/analyze"]
+    G6 --> G7{{"Response?"}}
+
+    G7 -->|"429 Capacity"| G8["Display Countdown<br/>(Retry-After: 5s)"]
+    G8 -->|"Auto-Retry"| G6
+
+    G7 -->|"200 OK"| G4
+
+    G4 --> G9{{"User Interaction"}}
+    G9 -->|"Browse Moves"| G10["Navigate Move List<br/>& Update Board"]
+    G9 -->|"Filter Mistakes"| G11["Filter Inaccuracies,<br/>Mistakes, Blunders"]
+    G11 --> G4
+
+    G9 -->|"Practice Move"| G12["Launch Interactive<br/>Retry Practice"]
+    G12 --> G13["Find Best<br/>Alternative Move"]
+    G13 --> G4
+```
+
+### 3.4 Journey 12: Recurring Weakness Discovery (J12)
+*User goal: Run graph community clustering over historical mistakes to identify cohesive thematic weakness families.*
+
+```mermaid
+flowchart TD
+    C1["Navigate to Library<br/>(#weaknesses tab)"] --> C2["Click 'Discover<br/>Thematic Clusters'"]
+    C2 --> C3["Select Cluster Mode<br/>(Structural / Dynamic)"]
+    C3 --> C4["POST /api/weaknesses/<br/>recurring/discover"]
+    C4 --> C5["Receive 202 Accepted<br/>with Job ID"]
+
+    C5 --> C6["Poll GET .../jobs/{id}<br/>Every 2 Seconds"]
+    C6 --> C7{{"Job Status?"}}
+
+    C7 -->|"RUNNING"| C6
+    C7 -->|"FAILED"| C8["Show Failure Alert<br/>with Retry"]
+    C7 -->|"COMPLETED"| C9["Fetch Clusters<br/>GET /api/weaknesses/<br/>recurring"]
+
+    C9 --> C10["Render Cluster Cards<br/>(Leiden Modularity)"]
+    C10 --> C11{{"Inspect Cluster?"}}
+    C11 -->|"View Members"| C12["GET .../positions<br/>Paginated Member List"]
+    C12 --> C13["Practice Position<br/>in Practice Shell"]
+```
+
 **Key Security & Auth Details (J08/J09/J10):**
 - **Guest State First**: Initial HTTP 401 on `GET /api/me` is not an error; it establishes guest session state and sets the readable double-submit `XSRF-TOKEN` cookie.
 - **Credentials & Registration**: Canonical lowercased email, salted PBKDF2 hash, constant-time validation. Duplicate registrations return `409 REGISTRATION_CONFLICT`.

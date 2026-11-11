@@ -1,9 +1,10 @@
 # Frontend architecture
 
-ChessProbe's frontend is a Next.js client application. `/` owns the Import Games,
-Long Decisions, Weaknesses Library, and Practice Puzzles tabs; `/login` and
-`/register` are separate routes. The tabs are views inside the home route, not
-separate pages.
+ChessProbe's frontend is a Next.js client application. `/` owns 6 active views:
+Import Games, Tactical Weaknesses (with thematic Leiden cluster discovery),
+Practice Puzzles, Long Decisions, Similar Positions, and Game Analysis;
+`/login` and `/register` are separate routes. The views switch dynamically
+inside the home route via active tab state, URL hash, and browser store recovery.
 The [README architecture overview](../../README.md#architecture) links this
 guide; backend processing is covered by issue
 [#425](https://github.com/NathanZK/ChessEcho/issues/425).
@@ -26,22 +27,22 @@ flowchart TB
   routes["Next.js routes"] --> home["/ · tabbed home"]
   routes --> login["/login"]
   routes --> register["/register"]
-  cookie["HttpOnly server session cookie"] --> bootstrap["GET /api/me"]
-  storage["Browser storage · context only"] -.-> home
+  cookie["HttpOnly server<br/>session cookie"] --> bootstrap["GET /api/me"]
+  storage["Browser storage<br/>context only"] -.-> home
   home --> bootstrap
   bootstrap -->|"200"| accounts["GET /api/accounts"]
   bootstrap -->|"401"| guest["Guest mode"]
   bootstrap -->|"other error"| sessionError["Session error"]
-  accounts --> selected["Server-listed account selection"]
-  selected --> disconnect["DELETE /api/accounts/{accountId}/connection"]
+  accounts --> selected["Server-listed<br/>account selection"]
+  selected --> disconnect["DELETE /api/accounts/<br/>{accountId}/connection"]
   home --> signOut["Sign out"]
   signOut --> logout["POST /api/logout"]
   login --> postLogin["POST /api/login"]
   register --> postRegister["POST /api/register"]
   postLogin -->|"success"| home
   postRegister -->|"success"| home
-  disconnect -->|"confirmed"| clearAccount["Clear selected account and job"]
-  logout --> clearSession["Clear local account, job, and puzzle state"]
+  disconnect -->|"confirmed"| clearAccount["Clear selected<br/>account and job"]
+  logout --> clearSession["Clear local account,<br/>job, and puzzle state"]
 ```
 
 The session cookie supplies identity; local browser stores restore tab,
@@ -53,7 +54,7 @@ guest-eligible reads use a username after bootstrap resolves.
 
 | Route or view | UI and state owner | Data boundary and rendered outcome |
 | --- | --- | --- |
-| `/` — shared shell | `app/page.tsx` composes `Header`, `ImportGamesView`, `LongDecisionsView`, `WeaknessesList`, `PositionProgressView`, and `PracticePuzzlesView`. `Header` changes the selected tab. The tab is reflected in the URL hash and browser storage. | A single page switches among Import Games, Long Decisions, Weaknesses Library, and Practice Puzzles; opening a tab does not navigate to another route. |
+| `/` — shared shell | `app/page.tsx` composes `Header`, `ImportGamesView`, `LongDecisionsView`, `WeaknessesList`, `SimilarPositionsView`, `GameAnalysisView`, `PositionProgressView`, `PracticePuzzlesView`, and `ExplorePositionModal`. `Header` changes the selected tab. The tab is reflected in the URL hash and browser storage. | A single page switches among the 6 analytical views (Import Games, Tactical Weaknesses, Practice Puzzles, Long Decisions, Similar Positions, and Game Analysis); opening a tab does not navigate to another route. `ExplorePositionModal` opens an interactive Stockfish exploration overlay from any view. |
 | `/` — session and account context | `useAccountSession` bootstraps session state in memory, then loads connected accounts for an authenticated user. `browserStores.ts` retains selected display context. | `GET /api/me` establishes authenticated, unauthenticated, or error UI state. Only an authenticated response triggers `GET /api/accounts`; a valid empty list becomes unconnected, while a failed or malformed list becomes a retryable account-loading error. |
 | `/login` | `app/login/page.tsx` owns controlled email/password fields, password visibility, submit state, and error text. | `POST /api/login`; success navigates to `/`, while invalid credentials or request errors remain on the form with an alert. |
 | `/register` | `app/register/page.tsx` owns the equivalent registration form state and links to `/login`. | `POST /api/register`; success navigates to `/`, while registration or request errors remain on the form with an alert. |
@@ -117,17 +118,17 @@ response handling.
 %%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false, "diagramPadding": 120}}}%%
 flowchart TB
   form["ImportGamesView"] --> guest["Guest: username"]
-  form --> connect["Authenticated: POST /api/accounts"]
-  connect --> account["Selected server-listed account"]
-  account -->|"disconnect · 204"| disconnect["DELETE /api/accounts/{accountId}/connection"]
+  form --> connect["Authenticated:<br/>POST /api/accounts"]
+  connect --> account["Selected server-listed<br/>account"]
+  account -->|"disconnect · 204"| disconnect["DELETE /api/accounts/<br/>{accountId}/connection"]
   disconnect --> clear["Clear selection + job"]
   disconnect -->|"404"| reload["Reload GET /api/accounts"]
-  guest -->|"POST /api/games/import · username"| job["Job snapshot"]
-  account -->|"POST /api/games/import · accountId"| job
-  job -->|"GET /api/jobs/{id} · every 2s"| status["Import + analysis status"]
+  guest -->|"POST /api/games/import<br/>· username"| job["Job snapshot"]
+  account -->|"POST /api/games/import<br/>· accountId"| job
+  job -->|"GET /api/jobs/{id}<br/>· every 2s"| status["Import + analysis<br/>status"]
   status -->|"transient error"| job
   status -->|"401 / 403 / 404"| unavailable["Clear job + explain"]
-  status -->|"import or analysis completes"| refresh["Refresh weaknesses"]
+  status -->|"import or analysis<br/>completes"| refresh["Refresh weaknesses"]
 ```
 
 `ImportGamesView` owns the form: Chess.com username, time controls, player
@@ -194,12 +195,12 @@ and
 ```mermaid
 %%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false}}}%%
 flowchart TB
-  context["Resolved accountId or guest username"] --> weaknesses["GET /api/positions/weaknesses · shared account data"]
-  weaknesses --> list["WeaknessesList · 20 rows/page"]
+  context["Resolved accountId<br/>or guest username"] --> weaknesses["GET /api/positions/weaknesses<br/>(shared account data)"]
+  weaknesses --> list["WeaknessesList<br/>(20 rows/page)"]
   list -->|"Practice Position"| localPuzzle["Local puzzle conversion"]
   localPuzzle --> practice["Existing / practice tab"]
-  list -->|"View Progress"| selected["Selected position + color"]
-  selected -->|"authenticated"| progress["GET /api/positions/{positionId}/progress · personal history"]
+  list -->|"View Progress"| selected["Selected position<br/>+ color"]
+  selected -->|"authenticated"| progress["GET /api/positions/<br/>{positionId}/progress<br/>(personal history)"]
   selected -->|"guest"| signIn["Sign-in prompt"]
   progress --> view["PositionProgressView"]
 ```
@@ -273,10 +274,10 @@ Return navigation captures any originating `TabType` (`weaknesses`, `long-decisi
 %%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false, "diagramPadding": 120}}}%%
 flowchart TB
   load["GET /api/puzzles"] --> board["ChessBoardArea"]
-  board -->|"first puzzle move"| local["Local validation + feedback"]
-  board -->|"authenticated solved/failed result"| events["POST /api/puzzles/events · user/account history"]
-  timer["Local stopwatch/countdown"] --> attempt["POST /api/puzzles/attempt"]
-  account["Authenticated accountId"] --> events
+  board -->|"first puzzle move"| local["Local validation<br/>+ feedback"]
+  board -->|"authenticated solved/failed result"| events["POST /api/puzzles/events<br/>(user/account history)"]
+  timer["Local stopwatch/<br/>countdown"] --> attempt["POST /api/puzzles/<br/>attempt"]
+  account["Authenticated<br/>accountId"] --> events
   account --> attempt
   guest["Guest"] -->|"no accountId"| attempt
 ```
@@ -330,18 +331,18 @@ the personal counts without changing guest practice. See
 and [`PuzzleAttemptCount.test.tsx`](../../frontend/src/__tests__/PuzzleAttemptCount.test.tsx).
 The endpoint is described in
 [`API_CONTRACT.md`](../../API_CONTRACT.md), with implementation in the
-[controller route](../../backend/src/main/kotlin/com/chessecho/controller/PuzzleEventController.kt)
-and [request DTO](../../backend/src/main/kotlin/com/chessecho/dto/PuzzleEventRequest.kt).
+[controller route](../../backend/src/main/kotlin/com/chessprobe/controller/PuzzleEventController.kt)
+and [request DTO](../../backend/src/main/kotlin/com/chessprobe/dto/PuzzleEventRequest.kt).
 
 Timed practice uses local stopwatch/countdown state and submits
 `POST /api/puzzles/attempt` with attempt/puzzle IDs, mode, elapsed time,
 outcome, optional allowed time, and optional account ID. The backend responds
 with a receipt; the page does not render the receipt, only a separate failure
 notice when the request fails. Authenticated attempts include the selected
-account ID; guest attempts omit it. This route is also absent from
-`API_CONTRACT.md`; its current
-[route](../../backend/src/main/kotlin/com/chessecho/controller/PuzzleController.kt)
-and [request/response DTO](../../backend/src/main/kotlin/com/chessecho/dto/TrainingAttemptRequest.kt)
+account ID; guest attempts omit it. This route is documented in
+[`API_CONTRACT.md`](../../API_CONTRACT.md); its
+[route](../../backend/src/main/kotlin/com/chessprobe/controller/PuzzleController.kt)
+and [request/response DTO](../../backend/src/main/kotlin/com/chessprobe/dto/TrainingAttemptRequest.kt)
 define the boundary.
 
 `StopwatchTimer` and `CountdownTimer` generate UUIDs with
@@ -366,12 +367,12 @@ Line exploration has three frontend modes:
 ```mermaid
 %%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false}}}%%
 flowchart TB
-  explore["Exploration position"] -->|"ChessProbe or Challenge"| continuation["GET /api/puzzles/continuation"]
-  continuation --> candidates["Candidate list + provider"]
-  candidates --> board["Local candidate selection and board update"]
-  explore -->|"exploration move · all modes"| evaluate["GET /api/puzzles/evaluate-move"]
-  evaluate --> outcome["Acceptable move, feedback, or evaluation error"]
-  bothSides["Both Sides"] -->|"no automatic continuation"| explore
+  explore["Exploration position"] -->|"ChessProbe or Challenge"| continuation["GET /api/puzzles/<br/>continuation"]
+  continuation --> candidates["Candidate list<br/>+ provider"]
+  candidates --> board["Local candidate selection<br/>and board update"]
+  explore -->|"exploration move<br/>(all modes)"| evaluate["GET /api/puzzles/<br/>evaluate-move"]
+  evaluate --> outcome["Acceptable move, feedback,<br/>or evaluation error"]
+  bothSides["Both Sides"] -->|"no automatic<br/>continuation"| explore
 ```
 
 - **ChessProbe** requests candidates from

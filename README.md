@@ -24,20 +24,20 @@ The goal is to change habits, not to memorize engine lines.
 
 ## Features
 
-- **Chess.com game import** via the public API — no credentials required
-- **Time-control filtering**: Blitz, Rapid, Bullet, Classical (select one or more)
-- **Long Decisions**: find individual positions where you spent at least a chosen number of seconds deciding, filtered by time control
-- **Color filtering**: analyze as White, Black, or Both
-- **Recurring position detection**: each imported game is replayed move-by-move; positions are normalized using four FEN fields (piece placement, side to move, castling rights, en passant)
-- **Stockfish analysis**: qualifying positions (reached 5+ times) are evaluated at depth 16; each historically played move is individually assessed
-- **Recency-weighted weakness ranking**: recent mistakes carry more weight than old ones; positions you consistently struggle with rank higher than one-off blunders
-- **Historical game evidence**: each weakness links to the source games where the mistake occurred
-- **Interactive personalized puzzles**: practice your actual recurring weaknesses on an interactive board; the system recognizes your historical mistake moves and gives targeted feedback
-- **Evaluation bar, hints, undo/redo**: move-by-move evaluation tracking, source-square hint highlighting, and full board navigation
-- **Configurable thresholds**: adjust minimum eval loss, minimum mistake count, and color filter without triggering new Stockfish analysis
-- **Connected Chess.com accounts**: signed-in users connect or disconnect accounts; imports use the confirmed selected account, while guest imports remain username-based
-- **Personal training history**: puzzle and training history is private to each signed-in user and Chess.com account, and remains available after disconnecting and reconnecting
-- **Immutable import jobs**: every job persists its account, date, time-control, color, and provider snapshot; workers fail closed on malformed configuration
+- **6 Focused Analysis & Practice Views**:
+  - **Practice Puzzles**: Drill your actual recurring mistakes with interactive move validation, continuation lines, and instant tactical feedback.
+  - **Tactical Weaknesses**: Browse detected recurring weaknesses and thematic Leiden clusters with win/loss records and source game links.
+  - **Long Decisions**: Isolate positions where you spent significant clock time deciding, filtered by time control and move phase.
+  - **Similar Positions**: Retrieve structurally and dynamically similar tactical positions across your games using dual-mode retrieval.
+  - **Import Games**: Asynchronous game ingestion from the Chess.com public API with live progress polling and resilient checkpointing.
+  - **Game Analysis**: On-demand move-by-move engine evaluation of individual games with mistake categorization and retry practice.
+- **Interactive Position Exploration (`ExplorePositionModal`)**: Freeform interactive exploration of any board position with live Stockfish move evaluations.
+- **Time-control filtering**: Blitz, Rapid, Bullet, Classical (select one or more).
+- **Color filtering**: Analyze as White, Black, or Both.
+- **Normalized 4-field FEN identification**: Piece placement, active side, castling rights, and en passant square.
+- **Stockfish depth-16 evaluation**: Baseline evaluations and historical candidate assessments with global position-level reuse.
+- **Recency-weighted and practical-evidence ranking**: Blends historical frequency, eval loss, recency decay, and empirical win-rate Wilson score intervals.
+- **Connected Chess.com accounts & personal training history**: Multi-user session management with server-authoritative private training history.
 
 ---
 
@@ -45,15 +45,15 @@ The goal is to change habits, not to memorize engine lines.
 
 | Layer | Technology |
 |---|---|
-| **Backend** | Kotlin 2.0, Spring Boot 3.3.2 |
+| **Backend** | Kotlin 2.1.0, Spring Boot 3.5.14, Java 21 |
 | **Database** | PostgreSQL 16, Flyway |
 | **Chess engine** | Stockfish (subprocess, depth 16) |
-| **Chess library** | kchesslib (PGN parsing, board replay, FEN generation) |
-| **Frontend** | Next.js 16, React 19, TypeScript |
+| **Chess libraries** | chesslib 1.3.7 (PGN parsing & FEN generation), CWTS Leiden 1.3.0 (graph community clustering) |
+| **Frontend** | Next.js 16.4.1, React 19, TypeScript 5 |
 | **Board UI** | react-chessboard, chess.js |
 | **Styling** | Tailwind CSS 4 |
-| **Backend testing** | JUnit 5, Mockito, H2, Testcontainers (PostgreSQL 16) |
-| **Frontend testing** | Vitest, Testing Library |
+| **Backend testing** | JUnit 5, Mockito, Testcontainers (PostgreSQL 16), PIT (mutation testing) |
+| **Frontend testing** | Vitest, Testing Library, Playwright (user journeys & sustained monkey campaigns) |
 | **CI** | GitHub Actions |
 
 ---
@@ -250,7 +250,7 @@ make down   # stops and removes both application and database containers
 ```
 Import Chess.com games
         ↓
-Replay each game move-by-move (kchesslib)
+Replay each game move-by-move (chesslib)
         ↓
 Identify unique board positions (4-field FEN hash)
         ↓
@@ -288,11 +288,55 @@ Move-order transpositions that produce legally identical positions are grouped t
 
 ## Architecture
 
-![ChessProbe Architecture and Data Flow Pipeline](docs/assets/architecture-data-flow.svg)
+ChessProbe has no monolithic linear pipeline. It operates as **decoupled processing lifecycles** coordinating through shared PostgreSQL persistence and managed Stockfish engine subprocesses:
+
+```mermaid
+%%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false, "diagramPadding": 120}}}%%
+flowchart TB
+    subgraph External ["External Services & Subprocesses"]
+        PubAPI["Chess.com PubAPI"]
+        Stockfish["Stockfish Engine<br/>(Subprocess)"]
+    end
+
+    subgraph DataStore ["Shared PostgreSQL Persistence"]
+        DB_Core[("Accounts, Games, Positions,<br/>Occurrences, Engine Analysis")]
+        DB_Clusters[("Cluster Snapshots,<br/>Clusters, Assignments")]
+        DB_User[("Users, Sessions, Credentials,<br/>Training Attempts & Events")]
+    end
+
+    subgraph Workflows ["Decoupled Processing Lifecycles"]
+        W1["1. Game Ingestion Pipeline<br/>Async Job: Archives to Replay,<br/>Occurrences & Candidate Eval"]
+        W2["2. Weakness & Practice Derivation<br/>Read-Time Join: Occurrences,<br/>Evaluations, Recency Decay"]
+        W3["3. Thematic Clustering & Discovery<br/>Async Snapshot Job:<br/>Relaxed MNN + CWTS Leiden"]
+        W4["4. Dynamic Similarity Retrieval<br/>Online Query: DynamicInvertedIndex<br/>+ Stockfish MultiPV Rerank"]
+        W5["5. Individual Game Analysis<br/>On-Demand: Ply Evaluation,<br/>Mistake Review (429 Throttled)"]
+        W6["6. Interactive Move Evaluation<br/>Online Query: Live Stockfish<br/>via MoveEvaluationService"]
+    end
+
+    PubAPI -.-> W1
+    W1 --> DB_Core
+    W1 -.-> Stockfish
+    Stockfish -.-> DB_Core
+
+    DB_Core --> W2
+    DB_User --> W2
+
+    DB_Core --> W3
+    W3 --> DB_Clusters
+
+    DB_Core --> W4
+    W4 -.-> Stockfish
+
+    DB_Core --> W5
+    W5 -.-> Stockfish
+    W5 --> DB_Core
+
+    W6 -.-> Stockfish
+```
 
 ### Components
 
-**Next.js frontend** — `/` contains the Import Games, Weaknesses Library, and Practice Puzzles tabs, with separate `/login` and `/register` routes. Tab state is reflected in the URL hash and browser storage; session identity remains server-authoritative. See the [frontend architecture guide](docs/architecture/frontend.md) for route-to-API/UI traces, state ownership, and diagrams.
+**Next.js frontend** — `/` contains 6 active views: Practice Puzzles, Tactical Weaknesses (with thematic Leiden cluster discovery), Long Decisions, Similar Positions, Import Games, and Game Analysis, plus interactive position exploration (`ExplorePositionModal`) and separate `/login` and `/register` routes. Tab state is reflected in the URL hash and browser storage; session identity remains server-authoritative. See the [frontend architecture guide](docs/architecture/frontend.md) for route-to-API/UI traces, state ownership, and diagrams.
 
 **Kotlin/Spring Boot backend** — handles game import (via Chess.com's public API), PGN parsing, position detection, engine analysis orchestration, weakness calculation, and puzzle serving. Runs on port 8080. See the [backend architecture guide](docs/architecture/backend-architecture.md) for request-to-service and persistence traces.
 
@@ -373,57 +417,12 @@ This is a known open problem in the design — not a bug — and is an active ar
 
 ### Practical-Evidence Ranking (Enabled by Default)
 
-Practical evidence is enabled in the normal application and Docker Compose
-configuration. It adjusts `recommendationPriority` only; objective `priority`
-and engine-based weakness detection remain unchanged. The initial policy is
-confidence-gated using these defaults:
+Practical evidence ranking adjusts `recommendationPriority` using historical game outcomes reaching a position, leaving the underlying objective `priority` and engine evaluations unchanged. It applies a conservative Bernoulli Wilson score interval over distinct games ($N \ge 5$) against a fixed score rate baseline ($0.50 \pm 0.10$):
+- **POOR** ($p^+ \le 0.40$): Increases recommendation priority by **+25%** ($\times 1.25$).
+- **SUCCESSFUL** ($p^- \ge 0.60$): Reduces recommendation priority by **-25%** ($\times 0.75$).
+- **Inconclusive** ($N < 5$ or interval spans threshold): Priority remains unchanged.
 
-| Environment setting | Default |
-|---|---:|
-| `CHESS_WEAKNESS_PRACTICAL_RANKING_ENABLED` | `true` |
-| `CHESS_WEAKNESS_PRACTICAL_SAMPLE_FLOOR` | `5` distinct eligible games |
-| `CHESS_WEAKNESS_PRACTICAL_COMPARATOR_METHOD` | `FIXED_SCORE_RATE` |
-| `CHESS_WEAKNESS_PRACTICAL_COMPARATOR_SCORE_RATE` | `0.5` |
-| `CHESS_WEAKNESS_PRACTICAL_CONFIDENCE_METHOD` | `BERNOULLI_WILSON_SCORE_POINTS_HALF_DRAW_CONSERVATIVE` |
-| `CHESS_WEAKNESS_PRACTICAL_WILSON_Z_SCORE` | `1.0` |
-| `CHESS_WEAKNESS_PRACTICAL_MEANINGFUL_DIFFERENCE` | `0.1` |
-| `CHESS_WEAKNESS_PRACTICAL_MAX_PRIORITY_ADJUSTMENT` | `0.25` |
-| `CHESS_WEAKNESS_PRACTICAL_OBSERVATION_WINDOW_DAYS` | unset (all history) |
-| `CHESS_WEAKNESS_PRACTICAL_POLICY_VERSION` | `practical-score-rate-wilson-v1` |
-
-These are repository-tested starting values, not an empirically optimized
-calibration. Environment overrides take precedence; `.env.example` lists the
-complete settings, and Docker Compose forwards them to the application.
-Invalid supplied values fail startup validation even when ranking is disabled.
-When using the rollback switch, calibration environment overrides may be left
-unset; the YAML defaults remain complete and valid.
-
-The empirical score rate is `(wins + 0.5 * draws) / distinct eligible games`.
-With the defaults, the conservative Wilson interval classifies evidence as:
-
-- **POOR** when the upper bound is at or below `0.5 - 0.1` (`0.4`).
-- **SUCCESSFUL** when the lower bound is at or above `0.5 + 0.1` (`0.6`).
-- **Inconclusive** otherwise; objective priority is unchanged.
-
-If fewer than five eligible games remain after exclusions, the objective
-priority is unchanged. Eligible evidence adjusts priority by a fixed multiplier,
-not by distance from the comparator: POOR multiplies it by
-`1.25`; SUCCESSFUL multiplies it by `0.75`. For example, objective priority
-`10` becomes `12.5` or `7.5`; the objective `priority` field itself is not
-modified. Opponent rating is not used directly.
-
-The z-score controls confidence-interval width and can change classifications.
-The default `1.0` is a tested starting value rather than a statistically
-optimized choice. For illustration, at a 67% score rate over 60 games, the
-default comparator and difference produce a lower bound of about `0.607`
-(SUCCESSFUL) at z-score `1.0`, while z-score `1.96` gives about `0.544`
-(inconclusive).
-
-To roll back the practical contribution, set
-`CHESS_WEAKNESS_PRACTICAL_RANKING_ENABLED=false` in the process environment or
-`.env` file and restart. This restores the pre-practical
-`recommendationPriority` calculation; authenticated adaptive scheduling,
-history, decay, and pagination remain active.
+To roll back practical ranking without restarting the database, set `CHESS_WEAKNESS_PRACTICAL_RANKING_ENABLED=false` in the environment or `.env` file. For the full mathematical derivations, z-score calibration, and parameter specifications, see the [Practical Weakness Prioritization Specification](docs/architecture/practical-weakness-prioritization.md).
 
 ---
 
