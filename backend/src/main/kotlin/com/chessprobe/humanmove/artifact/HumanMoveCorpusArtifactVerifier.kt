@@ -427,7 +427,7 @@ object HumanMoveCorpusArtifactVerifier {
     }
 
     private inline fun <T> withTemporaryDirectory(block: (Path) -> T): T {
-        val directory = Files.createTempDirectory("chessecho-corpus-verify-")
+        val directory = Files.createTempDirectory("chessprobe-corpus-verify-")
         try {
             return block(directory)
         } finally {
