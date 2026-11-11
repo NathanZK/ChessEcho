@@ -1595,4 +1595,71 @@ describe('Issue 98 — board state derivation', () => {
     rerender(<ChessBoardArea {...propsWithCandidate} pendingContinuationCandidate={null} canHint={false} />);
     expect(screen.getByRole('button', { name: /Hint/i })).toBeDisabled();
   });
+
+  it('T41 — navigating to another puzzle sharing identical initialFen with a different puzzleId resets board state and move history', async () => {
+    const onFenChange = vi.fn();
+    const onBoardHistoryChange = vi.fn();
+    const props = boardProps({ onFenChange, onBoardHistoryChange, puzzleId: 'puzzle-weakness-1' });
+
+    const { rerender } = render(<ChessBoardArea {...props} />);
+    expect(onFenChange).toHaveBeenCalledTimes(1);
+    expect(onFenChange).toHaveBeenCalledWith(FEN_A);
+    expect(capturedOptions.position).toBe(FEN_A);
+
+    // Highlight a square to test customSquareStyles reset
+    await act(async () => {
+      capturedOptions.onSquareClick?.({ piece: 'wP', square: 'd2' });
+    });
+    expect(capturedOptions.squareStyles).toEqual({
+      d2: { backgroundColor: 'rgba(245, 158, 11, 0.4)' },
+    });
+
+    // Make a move on puzzle 1
+    await act(async () => {
+      capturedOptions.onPieceDrop({ sourceSquare: 'f1', targetSquare: 'b5' });
+    });
+    expect(capturedOptions.position).toBe(FEN_BB5);
+    expect(screen.getByTitle(/Previous Move/i)).not.toBeDisabled();
+
+    // Rerender with a new puzzleId but identical initialFen (same opening tabiya or wrap-around)
+    await act(async () => {
+      rerender(<ChessBoardArea {...props} puzzleId="puzzle-1" initialFen={FEN_A} />);
+    });
+
+    // Board position must be reset to initialFen FEN_A and move history cleared
+    expect(capturedOptions.position).toBe(FEN_A);
+    expect(onFenChange).toHaveBeenLastCalledWith(FEN_A);
+    expect(capturedOptions.squareStyles).toEqual({});
+    expect(onBoardHistoryChange).toHaveBeenLastCalledWith({ fens: [FEN_A], index: 0 });
+    expect(screen.getByTitle(/Previous Move/i)).toBeDisabled();
+    expect(screen.getByTitle(/Next Move/i)).toBeDisabled();
+
+    // Verify gameHistory was reset properly with [initialGame] by making a move and undoing it
+    await act(async () => {
+      capturedOptions.onPieceDrop({ sourceSquare: 'f1', targetSquare: 'b5' });
+    });
+    expect(capturedOptions.position).toBe(FEN_BB5);
+    expect(screen.getByTitle(/Previous Move/i)).not.toBeDisabled();
+
+    await act(async () => {
+      fireEvent.click(screen.getByTitle(/Previous Move/i));
+    });
+    expect(capturedOptions.position).toBe(FEN_A);
+  });
+
+  it('T42 — identical initialFen does not reset board when puzzleId is unchanged between undefined and empty string', async () => {
+    const props = boardProps({ puzzleId: undefined });
+    const { rerender } = render(<ChessBoardArea {...props} />);
+
+    await act(async () => {
+      capturedOptions.onPieceDrop({ sourceSquare: 'f1', targetSquare: 'b5' });
+    });
+    expect(capturedOptions.position).toBe(FEN_BB5);
+
+    await act(async () => {
+      rerender(<ChessBoardArea {...props} puzzleId="" initialFen={FEN_A} />);
+    });
+    // Position should NOT reset because empty string and undefined both represent absence of puzzleId
+    expect(capturedOptions.position).toBe(FEN_BB5);
+  });
 });
