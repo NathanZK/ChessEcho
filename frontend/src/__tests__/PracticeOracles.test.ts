@@ -12,7 +12,7 @@ import {
   type PageLike,
   type PracticeModelContext,
 } from '../../journeys/model/practiceModel';
-import { InvariantErrorObserver } from '../../journeys/model/monkeyOracles';
+import { InvariantErrorObserver, assertInvariantOracles } from '../../journeys/model/monkeyOracles';
 
 interface MockDomElement {
   role?: string;
@@ -28,6 +28,7 @@ interface MockDomElement {
 interface MockLocator {
   waitFor: (opts?: { state?: string; timeout?: number }) => Promise<void>;
   toBeVisible: () => Promise<boolean>;
+  isVisible: () => Promise<boolean>;
   textContent: () => Promise<string | null>;
   getAttribute: (name: string) => Promise<string | null>;
   count: () => Promise<number>;
@@ -82,6 +83,7 @@ function createMockPage(elements: MockDomElement[]): PageLike {
         }
       },
       toBeVisible: async () => firstMatch?.visible ?? false,
+      isVisible: async () => firstMatch?.visible ?? false,
       textContent: async () => firstMatch?.textContent ?? (typeof firstMatch?.text === 'string' ? firstMatch.text : null),
       getAttribute: async (name: string) => firstMatch?.attributes?.[name] ?? null,
       count: async () => matched.reduce((acc, el) => acc + (el.count ?? (el.visible !== false ? 1 : 0)), 0),
@@ -166,6 +168,7 @@ describe('Practice Behavioral Oracles & Invariants', () => {
         if (el.selector?.includes('d2')) {
           return {
             ...el,
+            selector: el.selector.replace('wP', 'bP'),
             attributes: { 'data-piece': 'bP' },
           };
         }
@@ -257,6 +260,30 @@ describe('Practice Behavioral Oracles & Invariants', () => {
       await expect(verifyMoveFeedback(page, 'CORRECT', 'd4')).resolves.not.toThrow();
     });
 
+    it('verifies best move feedback in CORRECT state when SAN contains regex metacharacter "+" (e.g. Bxf7+)', async () => {
+      const page = createMockPage([
+        { text: 'Bxf7+ is the best move!', textContent: 'Bxf7+ is the best move!', visible: true },
+      ]);
+
+      await expect(verifyMoveFeedback(page, 'CORRECT', 'Bxf7+')).resolves.not.toThrow();
+    });
+
+    it('verifies best move feedback in CORRECT state when SAN contains checkmate "#" (e.g. Qxf7#)', async () => {
+      const page = createMockPage([
+        { text: 'Qxf7# is the best move!', textContent: 'Qxf7# is the best move!', visible: true },
+      ]);
+
+      await expect(verifyMoveFeedback(page, 'CORRECT', 'Qxf7#')).resolves.not.toThrow();
+    });
+
+    it('NEGATIVE: rejects when rendered text omits the check symbol "+" for expected Bxf7+', async () => {
+      const page = createMockPage([
+        { text: 'Bxf7 is the best move!', textContent: 'Bxf7 is the best move!', visible: true },
+      ]);
+
+      await expect(verifyMoveFeedback(page, 'CORRECT', 'Bxf7+')).rejects.toThrow();
+    });
+
     it('verifies inaccurate move feedback banner and notation in INCORRECT state', async () => {
       const page = createMockPage([
         { role: 'heading', name: 'Not the Recommended Move', visible: true },
@@ -264,6 +291,24 @@ describe('Practice Behavioral Oracles & Invariants', () => {
       ]);
 
       await expect(verifyMoveFeedback(page, 'INCORRECT', 'a3')).resolves.not.toThrow();
+    });
+
+    it('verifies inaccurate move feedback in INCORRECT state when SAN contains "+" (e.g. Bxf7+)', async () => {
+      const page = createMockPage([
+        { role: 'heading', name: 'Not the Recommended Move', visible: true },
+        { text: 'Bxf7+ is not the recommended move', textContent: 'Bxf7+ is not the recommended move', visible: true },
+      ]);
+
+      await expect(verifyMoveFeedback(page, 'INCORRECT', 'Bxf7+')).resolves.not.toThrow();
+    });
+
+    it('NEGATIVE: rejects inaccurate move feedback when move SAN does not match rendered feedback', async () => {
+      const page = createMockPage([
+        { role: 'heading', name: 'Not the Recommended Move', visible: true },
+        { text: 'a3 is not the recommended move', textContent: 'a3 is not the recommended move', visible: true },
+      ]);
+
+      await expect(verifyMoveFeedback(page, 'INCORRECT', 'Bxf7+')).rejects.toThrow();
     });
 
     it('verifies recurring blunder banner in HISTORICAL_MISTAKE state', async () => {
@@ -405,14 +450,50 @@ describe('Practice Behavioral Oracles & Invariants', () => {
       await expect(STATE_ORACLES.EXPLORING.assert(page, context)).resolves.not.toThrow();
     });
 
-    it('maintains backward compatibility when called without context (legacy journey callers)', async () => {
-      const page = createMockPage([
+    it('requires mandatory context when asserting state invariants', async () => {
+      const mockElements = [
+        ...generateBoardElementsFromFen(DEFAULT_PRACTICE_FEN),
         { selector: '[data-square="d2"]', visible: true },
         { role: 'button', name: 'Back to Puzzles', visible: true },
-      ]);
+        { text: 'Failed: 0', textContent: 'Failed: 0', visible: true },
+        { text: 'Solved: 0', textContent: 'Solved: 0', visible: true },
+      ];
+      const page = createMockPage(mockElements);
+      const context: PracticeModelContext = {
+        puzzleLoaded: true,
+        attemptCount: 0,
+        inExploration: false,
+        expectedFen: DEFAULT_PRACTICE_FEN,
+        expectedSolvedCount: 0,
+        expectedFailedCount: 0,
+        expectedSideToMove: 'white',
+      };
 
-      // Call without context
-      await expect(STATE_ORACLES.PRACTICE_IDLE.assert(page)).resolves.not.toThrow();
+      await expect(STATE_ORACLES.PRACTICE_IDLE.assert(page, context)).resolves.not.toThrow();
+    });
+
+    it('enforces mandatory context parameter on assertInvariantOracles', async () => {
+      const mockElements = [
+        ...generateBoardElementsFromFen(DEFAULT_PRACTICE_FEN),
+        { selector: '[data-square="d2"]', visible: true },
+        { role: 'button', name: 'Back to Puzzles', visible: true },
+        { role: 'main', selector: 'main', visible: true },
+        { text: 'Failed: 0', textContent: 'Failed: 0', visible: true },
+        { text: 'Solved: 0', textContent: 'Solved: 0', visible: true },
+      ];
+      const page = createMockPage(mockElements);
+      const observer = new InvariantErrorObserver();
+      const context: PracticeModelContext = {
+        puzzleLoaded: true,
+        attemptCount: 0,
+        inExploration: false,
+        expectedFen: DEFAULT_PRACTICE_FEN,
+        expectedSolvedCount: 0,
+        expectedFailedCount: 0,
+        expectedSideToMove: 'white',
+      };
+
+      await assertInvariantOracles(page, 'PRACTICE_IDLE', observer, 1, context);
     });
   });
 

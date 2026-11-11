@@ -1,63 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { parseCampaignArgs } from '../journeys/model/campaignConfig.ts';
+import {
+  aggregateCampaignMetrics,
+  formatCampaignSummaryTable,
+} from '../journeys/model/campaignAggregator.ts';
 
-const argv = process.argv.slice(2);
-
-function parseSeedArgument(arg) {
-  const trimmed = arg.trim();
-  if (trimmed.includes(',')) {
-    return trimmed.split(',').map((s) => Number(s.trim()));
-  }
-  if (trimmed.includes('-')) {
-    const [start, end] = trimmed.split('-').map((s) => Number(s.trim()));
-    const seeds = [];
-    for (let i = start; i <= end; i++) seeds.push(i);
-    return seeds;
-  }
-  const count = Number(trimmed);
-  const seeds = [];
-  for (let i = 1; i <= count; i++) seeds.push(i);
-  return seeds;
-}
-
-let seeds = [1, 2, 3];
-let budget = 20;
-let workers = 1;
-let startingState = 'DISCOVERY';
-let timeoutMs = 30000;
-let trace = 'failures-only';
-let strategy = 'uniform';
-
-for (const arg of argv) {
-  if (arg.startsWith('--seed=')) {
-    seeds = [Number(arg.slice('--seed='.length))];
-  } else if (arg.startsWith('--seeds=')) {
-    seeds = parseSeedArgument(arg.slice('--seeds='.length));
-  } else if (arg.startsWith('--budget=')) {
-    budget = Number(arg.slice('--budget='.length));
-  } else if (arg.startsWith('--workers=')) {
-    workers = Number(arg.slice('--workers='.length));
-  } else if (arg.startsWith('--startingState=')) {
-    startingState = arg.slice('--startingState='.length);
-  } else if (arg.startsWith('--timeout=')) {
-    timeoutMs = Number(arg.slice('--timeout='.length));
-  } else if (arg.startsWith('--trace=')) {
-    trace = arg.slice('--trace='.length);
-  } else if (arg.startsWith('--strategy=')) {
-    strategy = arg.slice('--strategy='.length);
-  }
-}
-
-const config = {
-  seeds,
-  budget,
-  workers,
-  startingState,
-  timeoutMs,
-  trace,
-  strategy,
-};
+const config = parseCampaignArgs(process.argv.slice(2));
 
 const metricsDir = 'test-results/campaign-metrics';
 try {
@@ -77,12 +27,12 @@ const playwrightArgs = [
   'playwright',
   'test',
   'journeys/campaign-monkey.spec.ts',
-  `--workers=${workers}`,
-  `--timeout=${timeoutMs}`,
+  `--workers=${config.workers}`,
+  `--timeout=${config.timeoutMs}`,
 ];
 
 console.log(
-  `Executing Exploration Campaign: ${seeds.length} seeds (budget: ${budget}, workers: ${workers}, trace: ${trace})...`
+  `Executing Exploration Campaign: ${config.seeds.length} seeds (budget: ${config.budget}, workers: ${config.workers}, trace: ${config.trace})...`
 );
 
 const child = spawn('npx', playwrightArgs, {
@@ -99,76 +49,23 @@ child.on('exit', (code) => {
         return JSON.parse(raw);
       });
 
-      let passedRuns = 0;
-      let failedRuns = 0;
-      let totalActions = 0;
-      let totalDurationMs = 0;
-      const statesSet = new Set();
-      const transitionsSet = new Set();
-      const stateActionsSet = new Set();
-      const transitionPairsSet = new Set();
-      const failedSeeds = [];
-      const replayCommands = [];
+      const runs = metrics.map((m) => ({
+        ...m,
+        uniqueStates: new Set(m.uniqueStates || []),
+        transitions: new Set(m.transitions || []),
+        stateActions: new Set(m.stateActions || []),
+        transitionPairs: new Set(m.transitionPairs || []),
+        configurationTransitions: new Set(m.configurationTransitions || []),
+        error: m.error ? new Error(m.error) : undefined,
+      }));
 
-      for (const m of metrics) {
-        if (m.success) {
-          passedRuns++;
-        } else {
-          failedRuns++;
-          failedSeeds.push(m.seed);
-          const stratArg = config.strategy && config.strategy !== 'uniform' ? ` --strategy=${config.strategy}` : '';
-          replayCommands.push(
-            `npm run test:monkey:campaign -- --seed=${m.seed} --budget=${budget} --startingState=${startingState} --workers=1${stratArg}`
-          );
-        }
-        totalActions += m.executedSteps || 0;
-        totalDurationMs += m.durationMs || 0;
-
-        if (Array.isArray(m.uniqueStates)) {
-          for (const s of m.uniqueStates) statesSet.add(s);
-        }
-        if (Array.isArray(m.transitions)) {
-          for (const t of m.transitions) transitionsSet.add(t);
-        }
-        if (Array.isArray(m.stateActions)) {
-          for (const sa of m.stateActions) stateActionsSet.add(sa);
-        }
-        if (Array.isArray(m.transitionPairs)) {
-          for (const tp of m.transitionPairs) transitionPairsSet.add(tp);
-        }
-      }
-
-      const actionsPerSecond =
-        totalDurationMs > 0 ? Number(((totalActions / totalDurationMs) * 1000).toFixed(2)) : 0;
-
-      const lines = [
-        '==================================================',
-        '          Exploration Campaign Summary            ',
-        '==================================================',
-        `Strategy:            ${config.strategy}`,
-        `Total Runs:          ${metrics.length}`,
-        `Passed Runs:         ${passedRuns}`,
-        `Failed Runs:         ${failedRuns}`,
-        `Total Actions:       ${totalActions}`,
-        `Total Duration:      ${(totalDurationMs / 1000).toFixed(2)}s`,
-        `Action Throughput:   ${actionsPerSecond} actions/sec`,
-        `States Visited:      ${Array.from(statesSet).join(', ') || 'None'}`,
-        `Transitions Count:   ${transitionsSet.size}`,
-        `State-Actions:       ${stateActionsSet.size}`,
-        `Transition Pairs:    ${transitionPairsSet.size}`,
-      ];
-
-      if (failedSeeds.length > 0) {
-        lines.push('--------------------------------------------------');
-        lines.push(`Failed Seeds (${failedSeeds.length}): ${failedSeeds.join(', ')}`);
-        lines.push('Replay Commands:');
-        for (const cmd of replayCommands) {
-          lines.push(`  ${cmd}`);
-        }
-      }
-
-      lines.push('==================================================');
-      console.log('\n' + lines.join('\n') + '\n');
+      const summary = aggregateCampaignMetrics(
+        runs,
+        config.budget,
+        config.startingState,
+        config.strategy
+      );
+      console.log('\n' + formatCampaignSummaryTable(summary) + '\n');
     }
   }
 

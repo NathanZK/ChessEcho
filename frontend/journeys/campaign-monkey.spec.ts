@@ -11,6 +11,7 @@ import {
   setupJourneyApiMocks,
   DEFAULT_MOCK_ACCOUNT,
   MOCK_PUZZLES,
+  DYNAMIC_EVAL_MOCK_PUZZLE,
 } from './fixtures/mockApi';
 
 // Parse configuration from environment variable if passed by CLI runner, or fallback to defaults
@@ -40,7 +41,8 @@ test.describe('Multi-Seed Exploration Campaign Runner', () => {
       await setupJourneyApiMocks(page, {
         authenticated: true,
         accounts: [DEFAULT_MOCK_ACCOUNT],
-        puzzles: MOCK_PUZZLES,
+        puzzles: config.fault ? [DYNAMIC_EVAL_MOCK_PUZZLE, ...MOCK_PUZZLES] : MOCK_PUZZLES,
+        ...(config.fault ? { evaluateMoveFault: { fault: 'server_error_500', failureCount: 1 } } : {}),
       });
 
       const startTime = Date.now();
@@ -57,6 +59,10 @@ test.describe('Multi-Seed Exploration Campaign Runner', () => {
           seed,
           actionBudget: config.budget,
           initialState: config.startingState,
+          initialContext: createInitialContext({
+            corpus: config.fault ? [DYNAMIC_EVAL_MOCK_PUZZLE, ...MOCK_PUZZLES] : MOCK_PUZZLES,
+            faultInjectionEnabled: Boolean(config.fault),
+          }),
           traceMode: config.trace,
           strategy: config.strategy,
         });
@@ -70,7 +76,9 @@ test.describe('Multi-Seed Exploration Campaign Runner', () => {
           executedSteps: 0,
           actionLog: [],
           finalState: config.startingState,
-          finalContext: createInitialContext(),
+          finalContext: createInitialContext({
+            faultInjectionEnabled: Boolean(config.fault),
+          }),
           success: false,
           error: caughtError,
         };
@@ -101,6 +109,10 @@ test.describe('Multi-Seed Exploration Campaign Runner', () => {
       const transitions = new Set<string>();
       const stateActions = new Set<string>();
       const transitionPairs = new Set<string>();
+      const configurationTransitions = new Set<string>();
+      let faultAttempted = 0;
+      let faultTriggered = 0;
+      let faultRecovered = 0;
 
       if (result.actionLog) {
         for (const entry of result.actionLog) {
@@ -109,6 +121,25 @@ test.describe('Multi-Seed Exploration Campaign Runner', () => {
           transitions.add(`${entry.fromState}->${entry.toState}`);
           stateActions.add(`${entry.fromState}:${entry.action}`);
           transitionPairs.add(`${entry.fromState}->${entry.action}->${entry.toState}`);
+          if (entry.contextSignature) {
+            configurationTransitions.add(
+              `${entry.fromState}[${entry.contextSignature}]->${entry.action}->${entry.toState}`
+            );
+          }
+
+          if (entry.action === 'SUBMIT_FAULT') {
+            faultAttempted++;
+          }
+          if (entry.toState === 'EVALUATION_ERROR') {
+            faultTriggered++;
+          }
+          if (
+            entry.fromState === 'EVALUATION_ERROR' &&
+            (entry.action === 'RETRY' || entry.action === 'BACK_TO_PUZZLES') &&
+            (entry.toState === 'CORRECT' || entry.toState === 'DISCOVERY' || entry.toState === 'INCORRECT')
+          ) {
+            faultRecovered++;
+          }
         }
       } else {
         uniqueStates.add(config.startingState);
@@ -124,9 +155,19 @@ test.describe('Multi-Seed Exploration Campaign Runner', () => {
         transitions,
         stateActions,
         transitionPairs,
+        configurationTransitions,
+        ...(config.fault
+          ? {
+              faultAttempted,
+              faultTriggered,
+              faultRecovered,
+            }
+          : {}),
         error: caughtError,
         heapUsedBytes: Math.max(0, endHeap - startHeap),
+        testWorkerHeapBytes: Math.max(0, endHeap - startHeap),
         chromiumHeapBytes,
+        browserJsHeapBytes: chromiumHeapBytes,
         traceSizeBytes,
         screenshotPath: result.screenshotPath,
       };
@@ -144,6 +185,7 @@ test.describe('Multi-Seed Exploration Campaign Runner', () => {
             transitions: Array.from(metric.transitions),
             stateActions: Array.from(metric.stateActions || []),
             transitionPairs: Array.from(metric.transitionPairs || []),
+            configurationTransitions: Array.from(metric.configurationTransitions || []),
           })
         );
       } catch {

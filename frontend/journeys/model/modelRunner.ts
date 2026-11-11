@@ -53,7 +53,9 @@ export function findBfsPath<
       : undefined
   );
 
-  const candidate = exploration.paths.find((p) => p.targetState === targetState);
+  const candidate = exploration.paths
+    .filter((p) => p.targetState === targetState)
+    .sort((a, b) => a.actions.length - b.actions.length)[0];
   return candidate ? [...candidate.actions] : null;
 }
 

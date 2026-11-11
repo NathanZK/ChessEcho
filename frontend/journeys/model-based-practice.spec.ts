@@ -5,11 +5,15 @@ import {
   DEFAULT_MOCK_PUZZLE,
   BLACK_TO_MOVE_MOCK_PUZZLE,
   DYNAMIC_EVAL_MOCK_PUZZLE,
+  WEAKNESS_BACKED_MOCK_PUZZLE,
 } from './fixtures/mockApi';
 import {
   PRACTICE_TRANSITIONS,
   STATE_ORACLES,
   executeConcreteAction,
+  createInitialContext,
+  DEFAULT_PRACTICE_FEN,
+  type PracticeModelContext,
 } from './model/practiceModel';
 import { explorePracticeStates } from './model/bfsExplorer';
 import { selectHighRiskPaths } from './model/pathSelector';
@@ -36,17 +40,27 @@ test.describe('Phase 2 Model-Based Testing: Bounded BFS Exploration & High-Risk 
     // 2. Load application on Practice Puzzles tab
     await page.goto('/#puzzles');
 
+    let context: PracticeModelContext = createInitialContext();
+
     // 3. Navigate to discovery to begin from formal initial state
     const backToPuzzlesButton = page.getByRole('button', { name: /Back to Puzzles/i });
     await expect(backToPuzzlesButton).toBeVisible();
     await backToPuzzlesButton.click();
-    await STATE_ORACLES.DISCOVERY.assert(page, expect);
+    await STATE_ORACLES.DISCOVERY.assert(page, context, expect);
 
     // 4. Action: SELECT_PUZZLE -> PRACTICE_IDLE
     const startPracticeButton = page.getByRole('button', { name: /Start Practice/i });
     await expect(startPracticeButton).toBeVisible();
     await startPracticeButton.click();
-    await STATE_ORACLES.PRACTICE_IDLE.assert(page, expect);
+    context = {
+      ...context,
+      puzzleLoaded: true,
+      expectedFen: DEFAULT_PRACTICE_FEN,
+      expectedSideToMove: 'white',
+      expectedFailedCount: 0,
+      expectedSolvedCount: 0,
+    };
+    await STATE_ORACLES.PRACTICE_IDLE.assert(page, context, expect);
 
     // REGRESSION CHECK: Answer Secrecy (INV-03)
     // Target move and exploration controls must be hidden prior to solving
@@ -59,10 +73,23 @@ test.describe('Phase 2 Model-Based Testing: Bounded BFS Exploration & High-Risk 
     await expect(a2Square).toBeVisible();
     await a2Square.click();
     await a3Square.click();
-    await STATE_ORACLES.INCORRECT.assert(page, expect);
+    context = {
+      ...context,
+      attemptCount: 1,
+      expectedFailedCount: 1,
+      lastMoveSan: 'a3',
+      expectedFen: DEFAULT_PRACTICE_FEN,
+    };
+    await STATE_ORACLES.INCORRECT.assert(page, context, expect);
 
     // 6. Action: RETRY -> PRACTICE_IDLE (board is rolled back to baseline FEN)
-    await STATE_ORACLES.PRACTICE_IDLE.assert(page, expect);
+    await executeConcreteAction(page, 'RETRY', context);
+    await page.waitForTimeout(100);
+    context = {
+      ...context,
+      expectedFen: DEFAULT_PRACTICE_FEN,
+    };
+    await STATE_ORACLES.PRACTICE_IDLE.assert(page, context, expect);
   });
 
   test('Path 2: Mode boundary crossing from solve to line exploration and return (mode-boundary-exploration)', async ({ page }) => {
@@ -75,7 +102,15 @@ test.describe('Phase 2 Model-Based Testing: Bounded BFS Exploration & High-Risk 
 
     // 2. Load application on Practice Puzzles tab
     await page.goto('/#puzzles');
-    await STATE_ORACLES.PRACTICE_IDLE.assert(page, expect);
+    let context: PracticeModelContext = {
+      ...createInitialContext(),
+      puzzleLoaded: true,
+      expectedFen: DEFAULT_PRACTICE_FEN,
+      expectedSideToMove: 'white',
+      expectedFailedCount: 0,
+      expectedSolvedCount: 0,
+    };
+    await STATE_ORACLES.PRACTICE_IDLE.assert(page, context, expect);
 
     // 3. Action: SUBMIT_OPTIMAL (play d2 -> d4) -> CORRECT
     const d2Square = page.locator('[data-square="d2"]');
@@ -83,25 +118,49 @@ test.describe('Phase 2 Model-Based Testing: Bounded BFS Exploration & High-Risk 
     await expect(d2Square).toBeVisible();
     await d2Square.click();
     await d4Square.click();
-    await STATE_ORACLES.CORRECT.assert(page, expect);
+    context = {
+      ...context,
+      attemptCount: 1,
+      expectedSolvedCount: 1,
+      solved: true,
+      lastMoveSan: 'd4',
+      expectedFen: 'r1bqkbnr/pppp1ppp/2n5/4p3/3PP3/5N2/PPP2PPP/RNBQKB1R b KQkq - 0 3',
+      expectedHistory: ['d4'],
+    };
+    await STATE_ORACLES.CORRECT.assert(page, context, expect);
 
     // 4. Action: CONTINUE_EXPLORATION -> EXPLORING
     const continueButton = page.getByRole('button', { name: /Continue Exploration →/i });
     await expect(continueButton).toBeVisible();
     await continueButton.click();
-    await STATE_ORACLES.EXPLORING.assert(page, expect);
+    context = {
+      ...context,
+      inExploration: true,
+      expectedSideToMove: 'black',
+    };
+    await STATE_ORACLES.EXPLORING.assert(page, context, expect);
 
-    // 5. Action: EXIT_EXPLORATION -> PRACTICE_IDLE
+    // 5. Action: EXIT_EXPLORATION -> CORRECT (unchanged exploration exit restores solve feedback)
     const exitExplorationButton = page.getByRole('button', { name: /^Exit$|Exit Exploration/i });
     await expect(exitExplorationButton).toBeVisible();
     await exitExplorationButton.click();
-    await STATE_ORACLES.PRACTICE_IDLE.assert(page, expect);
+    context = {
+      ...context,
+      inExploration: false,
+      expectedFen: 'r1bqkbnr/pppp1ppp/2n5/4p3/3PP3/5N2/PPP2PPP/RNBQKB1R b KQkq - 0 3',
+      expectedSideToMove: 'black',
+    };
+    await STATE_ORACLES.CORRECT.assert(page, context, expect);
 
     // 6. Action: BACK_TO_PUZZLES -> DISCOVERY
     const backButton = page.getByRole('button', { name: /Back to Puzzles/i });
     await expect(backButton).toBeVisible();
     await backButton.click();
-    await STATE_ORACLES.DISCOVERY.assert(page, expect);
+    context = {
+      ...context,
+      puzzleLoaded: false,
+    };
+    await STATE_ORACLES.DISCOVERY.assert(page, context, expect);
   });
 
   test('Path 3: Navigation during in-flight evaluation with deferred route gate (pending-navigation)', async ({ page }) => {
@@ -132,7 +191,15 @@ test.describe('Phase 2 Model-Based Testing: Bounded BFS Exploration & High-Risk 
 
     // 3. Load application on Practice Puzzles tab
     await page.goto('/#puzzles');
-    await STATE_ORACLES.PRACTICE_IDLE.assert(page, expect);
+    let context: PracticeModelContext = {
+      ...createInitialContext(),
+      puzzleLoaded: true,
+      expectedFen: DEFAULT_PRACTICE_FEN,
+      expectedSideToMove: 'white',
+      expectedFailedCount: 0,
+      expectedSolvedCount: 0,
+    };
+    await STATE_ORACLES.PRACTICE_IDLE.assert(page, context, expect);
 
     // 4. Submit move to trigger in-flight evaluation: d2 -> d4
     const d2Square = page.locator('[data-square="d2"]');
@@ -147,25 +214,38 @@ test.describe('Phase 2 Model-Based Testing: Bounded BFS Exploration & High-Risk 
     await backButton.click();
 
     // 6. Assert Discovery view is immediately rendered
-    await STATE_ORACLES.DISCOVERY.assert(page, expect);
+    context = {
+      ...context,
+      puzzleLoaded: false,
+    };
+    await STATE_ORACLES.DISCOVERY.assert(page, context, expect);
 
     // 7. Release deferred network route and verify Discovery remains intact with zero unhandled errors
     releaseEvaluation();
     await page.waitForTimeout(150);
-    await STATE_ORACLES.DISCOVERY.assert(page, expect);
+    await STATE_ORACLES.DISCOVERY.assert(page, context, expect);
   });
 
   test('Path 4: Interactive control operations (flip, hint, timer, blindfold, and history navigation)', async ({ page }) => {
-    // 1. Setup mocked API boundary
+    // 1. Setup mocked API boundary with weakness-backed puzzle for blindfold eligibility
     await setupJourneyApiMocks(page, {
       authenticated: true,
       accounts: [DEFAULT_MOCK_ACCOUNT],
-      puzzles: [DEFAULT_MOCK_PUZZLE],
+      puzzles: [WEAKNESS_BACKED_MOCK_PUZZLE],
     });
 
     // 2. Load application on Practice Puzzles tab
     await page.goto('/#puzzles');
-    await STATE_ORACLES.PRACTICE_IDLE.assert(page, expect);
+    let context: PracticeModelContext = {
+      ...createInitialContext(),
+      puzzleLoaded: true,
+      isWeaknessPlaylist: true,
+      expectedFen: DEFAULT_PRACTICE_FEN,
+      expectedSideToMove: 'white',
+      expectedFailedCount: 0,
+      expectedSolvedCount: 0,
+    };
+    await STATE_ORACLES.PRACTICE_IDLE.assert(page, context, expect);
 
     // 3. Action: FLIP_BOARD
     await executeConcreteAction(page, 'FLIP_BOARD');
@@ -175,27 +255,58 @@ test.describe('Phase 2 Model-Based Testing: Bounded BFS Exploration & High-Risk 
     await executeConcreteAction(page, 'REQUEST_HINT');
     await page.waitForTimeout(60);
 
-    // 5. Action: TOGGLE_TIMER_MODE
+    // 5. Action: TOGGLE_TIMER_MODE (cycle modes: STOPWATCH -> COUNTDOWN -> untimed)
+    await executeConcreteAction(page, 'TOGGLE_TIMER_MODE');
+    await page.waitForTimeout(60);
+    await executeConcreteAction(page, 'TOGGLE_TIMER_MODE');
+    await page.waitForTimeout(60);
     await executeConcreteAction(page, 'TOGGLE_TIMER_MODE');
     await page.waitForTimeout(60);
 
-    // 6. Action: ENTER_BLINDFOLD, TOGGLE_BLINDFOLD_VISIBILITY, SUBMIT_BLINDFOLD_MOVE & EXIT_BLINDFOLD
+    // 6. Action: SUBMIT_OPTIMAL -> CORRECT
+    await executeConcreteAction(page, 'SUBMIT_OPTIMAL');
+    context = {
+      ...context,
+      attemptCount: 1,
+      expectedSolvedCount: 1,
+      solved: true,
+      lastMoveSan: 'd4',
+      expectedFen: 'r1bqkbnr/pppp1ppp/2n5/4p3/3PP3/5N2/PPP2PPP/RNBQKB1R b KQkq - 0 3',
+      expectedHistory: ['d4'],
+    };
+    await STATE_ORACLES.CORRECT.assert(page, context, expect);
+
+    // 7. Action: ENTER_BLINDFOLD from feedback state, TOGGLE_BLINDFOLD_VISIBILITY, SUBMIT_BLINDFOLD_MOVE & EXIT_BLINDFOLD back to CORRECT
     await executeConcreteAction(page, 'ENTER_BLINDFOLD');
     await page.waitForTimeout(100);
+    context = {
+      ...context,
+      blindfoldActive: true,
+      blindfoldPreviousState: 'CORRECT',
+    };
+    await STATE_ORACLES.BLINDFOLD.assert(page, context, expect);
+
     await executeConcreteAction(page, 'TOGGLE_BLINDFOLD_VISIBILITY');
     await page.waitForTimeout(60);
     await executeConcreteAction(page, 'SUBMIT_BLINDFOLD_MOVE');
     await page.waitForTimeout(100);
     await executeConcreteAction(page, 'EXIT_BLINDFOLD');
     await page.waitForTimeout(100);
-
-    // 7. Action: SUBMIT_OPTIMAL -> CORRECT
-    await executeConcreteAction(page, 'SUBMIT_OPTIMAL');
-    await STATE_ORACLES.CORRECT.assert(page, expect);
+    context = {
+      ...context,
+      blindfoldActive: false,
+      blindfoldPreviousState: undefined,
+    };
+    await STATE_ORACLES.CORRECT.assert(page, context, expect);
 
     // 8. Action: CONTINUE_EXPLORATION -> EXPLORING
     await executeConcreteAction(page, 'CONTINUE_EXPLORATION');
-    await STATE_ORACLES.EXPLORING.assert(page, expect);
+    context = {
+      ...context,
+      inExploration: true,
+      expectedSideToMove: 'black',
+    };
+    await STATE_ORACLES.EXPLORING.assert(page, context, expect);
 
     // 9. In exploration, navigate history back and forward
     await executeConcreteAction(page, 'NAVIGATE_HISTORY_PREV');
@@ -203,11 +314,21 @@ test.describe('Phase 2 Model-Based Testing: Bounded BFS Exploration & High-Risk 
     await executeConcreteAction(page, 'NAVIGATE_HISTORY_NEXT');
     await page.waitForTimeout(60);
 
-    // 10. Exit exploration back to idle, then back to discovery
+    // 10. Exit exploration back to correct, then back to discovery
     await executeConcreteAction(page, 'EXIT_EXPLORATION');
-    await STATE_ORACLES.PRACTICE_IDLE.assert(page, expect);
+    context = {
+      ...context,
+      inExploration: false,
+      expectedFen: 'r1bqkbnr/pppp1ppp/2n5/4p3/3PP3/5N2/PPP2PPP/RNBQKB1R b KQkq - 0 3',
+      expectedSideToMove: 'black',
+    };
+    await STATE_ORACLES.CORRECT.assert(page, context, expect);
     await executeConcreteAction(page, 'BACK_TO_PUZZLES');
-    await STATE_ORACLES.DISCOVERY.assert(page, expect);
+    context = {
+      ...context,
+      puzzleLoaded: false,
+    };
+    await STATE_ORACLES.DISCOVERY.assert(page, context, expect);
   });
 
   test('Path 5: Deterministic network failure injection (HTTP 500), observable EVALUATION_ERROR banner, and retry recovery', async ({ page }) => {
@@ -221,7 +342,15 @@ test.describe('Phase 2 Model-Based Testing: Bounded BFS Exploration & High-Risk 
 
     // 2. Load application on Practice Puzzles tab
     await page.goto('/#puzzles');
-    await STATE_ORACLES.PRACTICE_IDLE.assert(page, expect);
+    let context: PracticeModelContext = {
+      ...createInitialContext(),
+      puzzleLoaded: true,
+      expectedFen: DEFAULT_PRACTICE_FEN,
+      expectedSideToMove: 'white',
+      expectedFailedCount: 0,
+      expectedSolvedCount: 0,
+    };
+    await STATE_ORACLES.PRACTICE_IDLE.assert(page, context, expect);
 
     // 3. Submit move: d2 -> d4 under failing route
     const d2Square = page.locator('[data-square="d2"]');
@@ -231,18 +360,30 @@ test.describe('Phase 2 Model-Based Testing: Bounded BFS Exploration & High-Risk 
     await d4Square.click();
 
     // 4. Assert EVALUATION_ERROR oracle (error banner is visible and retry button exists)
-    await STATE_ORACLES.EVALUATION_ERROR.assert(page, expect);
+    context = {
+      ...context,
+      pendingEvaluationMove: 'd4',
+    };
+    await STATE_ORACLES.EVALUATION_ERROR.assert(page, context, expect);
     const retryButton = page.getByRole('button', { name: /Retry evaluation/i });
     await expect(retryButton).toBeVisible();
 
-    // 5. Clear the fault dynamically and click Reset/Retry to restore PRACTICE_IDLE
+    // 5. Clear the fault dynamically and click Retry evaluation to recover and transition to CORRECT
     mockHandle.setEvaluateMoveFault(undefined);
-    const resetButton = page.getByRole('button', { name: /Reset Position|Reset/i });
-    await expect(resetButton).toBeVisible();
-    await resetButton.click();
+    await executeConcreteAction(page, 'RETRY', context);
+    await page.waitForTimeout(100);
 
-    // 6. Assert restored interactive PRACTICE_IDLE state
-    await STATE_ORACLES.PRACTICE_IDLE.assert(page, expect);
+    // 6. Assert restored interactive state is CORRECT (move evaluated successfully)
+    context = {
+      ...context,
+      attemptCount: 1,
+      expectedSolvedCount: 1,
+      solved: true,
+      lastMoveSan: 'd4',
+      expectedFen: 'r1bqkbnr/pppp1ppp/2n5/4p3/3PP3/5N2/PPP2PPP/RNBQKB1R b KQkq - 0 3',
+      expectedHistory: ['d4'],
+    };
+    await STATE_ORACLES.CORRECT.assert(page, context, expect);
   });
 
   test('Path 6: Evaluation error recovery via navigation back to Discovery (BACK_TO_PUZZLES)', async ({ page }) => {
@@ -256,7 +397,15 @@ test.describe('Phase 2 Model-Based Testing: Bounded BFS Exploration & High-Risk 
 
     // 2. Load application on Practice Puzzles tab
     await page.goto('/#puzzles');
-    await STATE_ORACLES.PRACTICE_IDLE.assert(page, expect);
+    let context: PracticeModelContext = {
+      ...createInitialContext(),
+      puzzleLoaded: true,
+      expectedFen: DEFAULT_PRACTICE_FEN,
+      expectedSideToMove: 'white',
+      expectedFailedCount: 0,
+      expectedSolvedCount: 0,
+    };
+    await STATE_ORACLES.PRACTICE_IDLE.assert(page, context, expect);
 
     // 3. Submit move: d2 -> d4 under malformed JSON response route
     const d2Square = page.locator('[data-square="d2"]');
@@ -266,7 +415,11 @@ test.describe('Phase 2 Model-Based Testing: Bounded BFS Exploration & High-Risk 
     await d4Square.click();
 
     // 4. Assert EVALUATION_ERROR oracle
-    await STATE_ORACLES.EVALUATION_ERROR.assert(page, expect);
+    context = {
+      ...context,
+      pendingEvaluationMove: 'd4',
+    };
+    await STATE_ORACLES.EVALUATION_ERROR.assert(page, context, expect);
 
     // 5. Navigate back to Discovery
     const backButton = page.getByRole('button', { name: /Back to Puzzles/i });
@@ -274,7 +427,11 @@ test.describe('Phase 2 Model-Based Testing: Bounded BFS Exploration & High-Risk 
     await backButton.click();
 
     // 6. Assert Discovery view is stable
-    await STATE_ORACLES.DISCOVERY.assert(page, expect);
+    context = {
+      ...context,
+      puzzleLoaded: false,
+    };
+    await STATE_ORACLES.DISCOVERY.assert(page, context, expect);
   });
 
   test('Path 7: Multi-Position Puzzle Corpus - Black to move puzzle loading and board orientation', async ({ page }) => {

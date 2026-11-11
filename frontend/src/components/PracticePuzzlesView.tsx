@@ -1251,7 +1251,7 @@ export function PracticePuzzlesView({
     isInitialDecision: boolean = true
   ) => {
     if (!activePuzzle) return;
-    if (isInitialDecision && weaknessBacked) {
+    if (isInitialDecision && weaknessBacked && Boolean(activePuzzle.targetMove)) {
       if (!puzzleContextReady) return;
       void puzzleAttempts.submit(moveSan, isCorrect);
     }
@@ -1304,6 +1304,10 @@ export function PracticePuzzlesView({
               const acceptable = evalResult.acceptable;
               const isBest = moveSan === evalResult.bestMove;
               const evalCp = evalResult.evalCp ?? startCp;
+
+              if (isInitialDecision && weaknessBacked && puzzleContextReady) {
+                void puzzleAttempts.submit(moveSan, acceptable);
+              }
 
               if (acceptable) {
                 setActivePuzzle((prev) => {

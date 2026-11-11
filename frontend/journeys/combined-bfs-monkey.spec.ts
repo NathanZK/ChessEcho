@@ -5,7 +5,7 @@ import {
   DEFAULT_MOCK_ACCOUNT,
   DEFAULT_MOCK_PUZZLE,
 } from './fixtures/mockApi';
-import { STATE_ORACLES } from './model/practiceModel';
+import { STATE_ORACLES, createInitialContext } from './model/practiceModel';
 import {
   executeBfsPath,
   runCombinedBfsMonkey,
@@ -132,12 +132,12 @@ test.describe('Phase 5: Combined Model-Based BFS Exploration with Constrained Mo
     await backButton.click();
 
     // 5. Assert Discovery view is immediately rendered
-    await STATE_ORACLES.DISCOVERY.assert(page, expect);
+    await STATE_ORACLES.DISCOVERY.assert(page, createInitialContext(), expect);
 
     // 6. Release deferred network route and verify Discovery remains intact with zero unhandled errors
     releaseEvaluation();
     await page.waitForTimeout(150);
-    await STATE_ORACLES.DISCOVERY.assert(page, expect);
+    await STATE_ORACLES.DISCOVERY.assert(page, createInitialContext(), expect);
   });
 
   test('Deliberately induced failure in combined execution captures full record, screenshot, and trace archive', async ({ page }) => {

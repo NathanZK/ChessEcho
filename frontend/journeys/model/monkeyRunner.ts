@@ -5,6 +5,7 @@ import {
   type PracticeAction,
   type PracticeModelContext,
   createInitialContext,
+  deriveContextSignature,
   getNextState,
   ensureDiscoveryState,
   executeConcreteAction,
@@ -22,6 +23,14 @@ import {
   assertInvariantOracles,
 } from './monkeyOracles';
 
+export type MonkeyStepHook = (
+  step: number,
+  action?: PracticeAction,
+  fromState?: PracticeAbstractState,
+  toState?: PracticeAbstractState,
+  context?: PracticeModelContext
+) => Promise<void> | void;
+
 export interface MonkeyRunOptions {
   page: Page;
   seed: number;
@@ -30,7 +39,7 @@ export interface MonkeyRunOptions {
   initialContext?: PracticeModelContext;
   stepOffset?: number;
   screenshotOnFailure?: boolean;
-  stepHook?: (step: number, state: PracticeAbstractState) => Promise<void>;
+  stepHook?: MonkeyStepHook;
   traceMode?: 'failures-only' | 'all' | 'off';
   strategy?: MonkeySelectionStrategy;
 }
@@ -75,7 +84,17 @@ export function diagnoseTransitionFailure(
     }
   }
 
-  // 3. Fallback: State transition timeout or DOM assertion mismatch
+  // 3. Check for Behavioral Oracle / Invariant Failures
+  if (
+    originalError.message.includes('[Oracle') ||
+    originalError.message.includes('Invariant violated') ||
+    originalError.message.includes('MISMATCH') ||
+    originalError.message.includes('DESYNCHRONIZATION')
+  ) {
+    return `[Behavioral Oracle Failure] Oracle assertion failed for state ${nextState} after action ${action}: ${originalError.message}`;
+  }
+
+  // 4. Fallback: State transition timeout or DOM assertion mismatch
   return `[State Transition Timeout] Transition to ${nextState} timed out after action ${action}: ${originalError.message}`;
 }
 
@@ -129,10 +148,8 @@ export async function runConstrainedMonkey(options: MonkeyRunOptions): Promise<M
   try {
     for (let i = 1; i <= actionBudget; i++) {
       const step = stepOffset + i;
-      if (options.stepHook) {
-        await options.stepHook(step, currentState);
-      }
 
+      // Stage 1: Precondition Guard Check (filtered via selectConstrainedAction)
       const action = selectConstrainedAction(currentState, currentContext, prng, strategy, {
         transitionCounts,
         stateCounts,
@@ -143,6 +160,7 @@ export async function runConstrainedMonkey(options: MonkeyRunOptions): Promise<M
         break;
       }
 
+      // Stage 2: Next Context Computation
       const transitionResult = getNextState(currentState, action, currentContext);
       if (!transitionResult) {
         break;
@@ -157,15 +175,30 @@ export async function runConstrainedMonkey(options: MonkeyRunOptions): Promise<M
         action,
         toState: nextState,
         timestamp: stepStartTime,
+        contextSignature: deriveContextSignature(currentContext),
       });
 
       try {
-        await executeConcreteAction(page, action);
-        // Await expected state-specific oracle to guarantee React has settled
-        await assertInvariantOracles(page, nextState, observer, step);
+        // Stage 3: Concrete Action Execution
+        await executeConcreteAction(page, action, currentContext);
+
+        // Stage 4: Post-Action Lifecycle Hook
+        if (options.stepHook) {
+          await options.stepHook(step, action, currentState, nextState, nextContext);
+        }
+
+        // Stage 5: Mandatory Oracle Verification
+        await assertInvariantOracles(page, nextState, observer, step, nextContext);
+
+        // Stage 6: Error Observer Check
+        observer.assertNoErrors(step, nextState);
+
+        // Stage 7: Atomic Commit
         const transitionKey = `${currentState}->${action}->${nextState}`;
         transitionCounts.set(transitionKey, (transitionCounts.get(transitionKey) ?? 0) + 1);
         stateCounts.set(nextState, (stateCounts.get(nextState) ?? 0) + 1);
+        currentState = nextState;
+        currentContext = nextContext;
       } catch (error) {
         const stepRequests = networkMonitor.getRequestsSince(stepStartTime);
         const diagnosis = diagnoseTransitionFailure(action, nextState, stepRequests, error as Error);
@@ -215,9 +248,6 @@ export async function runConstrainedMonkey(options: MonkeyRunOptions): Promise<M
           tracePath,
         };
       }
-
-      currentState = nextState;
-      currentContext = nextContext;
     }
 
     let tracePath: string | undefined;

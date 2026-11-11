@@ -3,9 +3,10 @@ import { test, expect } from '@playwright/test';
 import {
   setupJourneyApiMocks,
   DEFAULT_MOCK_ACCOUNT,
-  DEFAULT_MOCK_PUZZLE,
+  MOCK_PUZZLES,
 } from './fixtures/mockApi';
 import { runConstrainedMonkey } from './model/monkeyRunner';
+import { ensureDiscoveryState } from './model/practiceModel';
 
 test.describe('Phase 4: Constrained Monkey Testing with Playwright', () => {
   test('Bounded monkey run executes valid state-constrained sequence within action budget', async ({ page }) => {
@@ -13,7 +14,7 @@ test.describe('Phase 4: Constrained Monkey Testing with Playwright', () => {
     await setupJourneyApiMocks(page, {
       authenticated: true,
       accounts: [DEFAULT_MOCK_ACCOUNT],
-      puzzles: [DEFAULT_MOCK_PUZZLE],
+      puzzles: MOCK_PUZZLES,
     });
 
     // 2. Navigate to practice tab
@@ -47,7 +48,7 @@ test.describe('Phase 4: Constrained Monkey Testing with Playwright', () => {
     await setupJourneyApiMocks(page, {
       authenticated: true,
       accounts: [DEFAULT_MOCK_ACCOUNT],
-      puzzles: [DEFAULT_MOCK_PUZZLE],
+      puzzles: MOCK_PUZZLES,
     });
 
     await page.goto('/#puzzles');
@@ -62,8 +63,15 @@ test.describe('Phase 4: Constrained Monkey Testing with Playwright', () => {
 
     expect(run1.success).toBe(true);
 
-    // Reload and replay under identical seed
+    // Reset mock API state, clear localStorage, and reload for identical independent replay
+    await page.evaluate(() => localStorage.clear());
+    await setupJourneyApiMocks(page, {
+      authenticated: true,
+      accounts: [DEFAULT_MOCK_ACCOUNT],
+      puzzles: MOCK_PUZZLES,
+    });
     await page.reload();
+    await ensureDiscoveryState(page);
     const run2 = await runConstrainedMonkey({
       page,
       seed,
@@ -81,7 +89,7 @@ test.describe('Phase 4: Constrained Monkey Testing with Playwright', () => {
     await setupJourneyApiMocks(page, {
       authenticated: true,
       accounts: [DEFAULT_MOCK_ACCOUNT],
-      puzzles: [DEFAULT_MOCK_PUZZLE],
+      puzzles: MOCK_PUZZLES,
     });
 
     await page.goto('/#puzzles');
