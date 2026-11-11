@@ -102,9 +102,9 @@ stockfish
 make db-up
 ```
 
-This starts a PostgreSQL 16 container (`chessecho-postgres`) on port `5432` with:
-- Database: `chessecho`
-- User: `chessecho`
+This starts a PostgreSQL 16 container (`chessprobe-postgres`) on port `5432` with:
+- Database: `chessprobe`
+- User: `chessprobe`
 - Password: `chessprobe_pass`
 
 Data is persisted in a named Docker volume (`postgres_data`).
@@ -121,8 +121,8 @@ This is the standard inner loop for backend development, offering fast compilati
 cd backend
 CHESS_PUBAPI_USERNAME=your_chesscom_username \
 CHESS_PUBAPI_CONTACT=your_email@example.com \
-SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5432/chessecho \
-SPRING_DATASOURCE_USERNAME=chessecho \
+SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5432/chessprobe \
+SPRING_DATASOURCE_USERNAME=chessprobe \
 SPRING_DATASOURCE_PASSWORD=chessprobe_pass \
 ./gradlew bootRun
 ```
@@ -133,10 +133,10 @@ SPRING_DATASOURCE_PASSWORD=chessprobe_pass \
 
 **Option B — Docker (container workflow)**
 
-Builds and runs the backend inside Docker from local source without requiring a local Java 21 JDK or Stockfish installation on the host, useful for verifying container parity. `make app-build` compiles the backend in a multi-stage container build and tags the image as `chess-echo`, which Docker Compose (`make app-up` or `make up`) reuses directly.
+Builds and runs the backend inside Docker from local source without requiring a local Java 21 JDK or Stockfish installation on the host, useful for verifying container parity. `make app-build` compiles the backend in a multi-stage container build and tags the image as `chess-probe`, which Docker Compose (`make app-up` or `make up`) reuses directly.
 
 ```bash
-make app-build   # builds the Docker image (chess-echo) from local source
+make app-build   # builds the Docker image (chess-probe) from local source
 make app-up      # starts the application container on port 8080 reusing the built image
 ```
 
@@ -167,19 +167,19 @@ Runs the published backend container alongside PostgreSQL without needing to clo
 > **Note:** The pre-built Docker image (`nathanzk/chessecho-backend:latest`) is published natively for **`linux/arm64` (Apple Silicon)**. If you are on a different architecture, use Option A (local Gradle) or Option B (local Docker build).
 
 1. **Create a shared network:**
-   Containers must share a user-defined network so the backend can resolve the database hostname (`chessecho-postgres`) via Docker DNS:
+   Containers must share a user-defined network so the backend can resolve the database hostname (`chessprobe-postgres`) via Docker DNS:
    ```bash
-   docker network create chessecho-net
+   docker network create chessprobe-net
    ```
 
 2. **Start PostgreSQL:**
    ```bash
    docker run -d \
-     --name chessecho-postgres \
-     --network chessecho-net \
+     --name chessprobe-postgres \
+     --network chessprobe-net \
      -p 5432:5432 \
-     -e POSTGRES_DB=chessecho \
-     -e POSTGRES_USER=chessecho \
+     -e POSTGRES_DB=chessprobe \
+     -e POSTGRES_USER=chessprobe \
      -e POSTGRES_PASSWORD=chessprobe_pass \
      -v postgres_data:/var/lib/postgresql/data \
      postgres:16-alpine
@@ -188,11 +188,11 @@ Runs the published backend container alongside PostgreSQL without needing to clo
 3. **Start the pre-built backend:**
    ```bash
    docker run -d \
-     --name chessecho-app \
-     --network chessecho-net \
+     --name chessprobe-app \
+     --network chessprobe-net \
      -p 8080:8080 \
-     -e SPRING_DATASOURCE_URL=jdbc:postgresql://chessecho-postgres:5432/chessecho \
-     -e SPRING_DATASOURCE_USERNAME=chessecho \
+     -e SPRING_DATASOURCE_URL=jdbc:postgresql://chessprobe-postgres:5432/chessprobe \
+     -e SPRING_DATASOURCE_USERNAME=chessprobe \
      -e SPRING_DATASOURCE_PASSWORD=chessprobe_pass \
      -e STOCKFISH_PATH=stockfish \
      -e CHESS_PUBAPI_USERNAME=your_chesscom_username \
@@ -202,21 +202,21 @@ Runs the published backend container alongside PostgreSQL without needing to clo
 
 4. **Inspect logs:**
    ```bash
-   docker logs chessecho-app -f
+   docker logs chessprobe-app -f
    ```
 
 5. **Update to the latest published image:**
    ```bash
    docker pull nathanzk/chessecho-backend:latest
-   docker stop chessecho-app && docker rm chessecho-app
+   docker stop chessprobe-app && docker rm chessprobe-app
    # Re-run step 3
    ```
 
 6. **Stop and tear down the standalone environment:**
    ```bash
-   docker stop chessecho-app chessecho-postgres
-   docker rm chessecho-app chessecho-postgres
-   docker network rm chessecho-net
+   docker stop chessprobe-app chessprobe-postgres
+   docker rm chessprobe-app chessprobe-postgres
+   docker network rm chessprobe-net
    ```
 
 The backend starts on **http://localhost:8080**.

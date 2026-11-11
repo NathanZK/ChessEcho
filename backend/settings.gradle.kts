@@ -1,1 +1,1 @@
-rootProject.name = "chess-echo"
+rootProject.name = "chessprobe"

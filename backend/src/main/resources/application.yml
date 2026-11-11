@@ -1,9 +1,9 @@
 spring:
   application:
-    name: chess-echo
+    name: chessprobe
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://postgres:5432/chessprobe}
-    username: ${SPRING_DATASOURCE_USERNAME:chessecho}
+    username: ${SPRING_DATASOURCE_USERNAME:chessprobe}
     password: ${SPRING_DATASOURCE_PASSWORD:chessprobe_pass}
     driver-class-name: org.postgresql.Driver
   jpa:
@@ -22,7 +22,7 @@ spring:
       max-file-size: ${CHESSPROBE_CORPUS_MULTIPART_MAX_FILE_SIZE:2GB}
       max-request-size: ${CHESSPROBE_CORPUS_MULTIPART_MAX_REQUEST_SIZE:3GB}
 
-chessecho:
+chessprobe:
   auth:
     cookie:
       name: CHESSPROBE_SESSION
@@ -38,7 +38,7 @@ chessecho:
     dev-mode:
       enabled: ${CHESSPROBE_AUTH_DEV_MODE_ENABLED:false}
   corpus:
-    archive-root: ${CHESSPROBE_CORPUS_ARCHIVE_ROOT:/var/lib/chessecho/corpus-archive}
+    archive-root: ${CHESSPROBE_CORPUS_ARCHIVE_ROOT:/var/lib/chessprobe/corpus-archive}
     max-archive-bytes: ${CHESSPROBE_CORPUS_MAX_ARCHIVE_BYTES:2147483648}
     max-expanded-bytes: ${CHESSPROBE_CORPUS_MAX_EXPANDED_BYTES:4294967296}
     max-games: ${CHESSPROBE_CORPUS_MAX_GAMES:100000}
@@ -87,7 +87,7 @@ engine:
   analysis:
     multi-pv: ${ENGINE_ANALYSIS_MULTI_PV:5}
   continuation:
-    # continuation.max-eval-loss controls which candidate moves ChessEcho may play.
+    # continuation.max-eval-loss controls which candidate moves ChessProbe may play.
     multi-pv: ${ENGINE_CONTINUATION_MULTI_PV:5}
     max-eval-loss: ${ENGINE_CONTINUATION_MAX_EVAL_LOSS:0.50}
   exploration:

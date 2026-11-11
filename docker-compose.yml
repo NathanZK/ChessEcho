@@ -5,7 +5,7 @@ services:
     environment:
       POSTGRES_DB: chessprobe
       POSTGRES_USER: chessprobe
-      POSTGRES_PASSWORD: chessecho_pass
+      POSTGRES_PASSWORD: chessprobe_pass
     ports:
       - "5432:5432"
     volumes:
@@ -19,9 +19,9 @@ services:
       - "8080:8080"
     environment:
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-local}
-      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/chessecho
-      SPRING_DATASOURCE_USERNAME: chessecho
-      SPRING_DATASOURCE_PASSWORD: chessecho_pass
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/chessprobe
+      SPRING_DATASOURCE_USERNAME: chessprobe
+      SPRING_DATASOURCE_PASSWORD: chessprobe_pass
       STOCKFISH_PATH: stockfish
       CHESS_PUBAPI_USERNAME: ${CHESS_PUBAPI_USERNAME:-}
       CHESS_PUBAPI_CONTACT: ${CHESS_PUBAPI_CONTACT:-}
