@@ -5,20 +5,28 @@ import {
   TACTICAL_SACRIFICE_MOCK_PUZZLE,
   MULTI_MOVE_CONTINUATION_MOCK_PUZZLE,
   ENDGAME_MOCK_PUZZLE,
+  WEAKNESS_BACKED_MOCK_PUZZLE,
   MOCK_PUZZLES,
   setupJourneyApiMocks,
   type JourneyRoutablePage,
   type JourneyRouteLike,
 } from '../../journeys/fixtures/mockApi';
+import { deriveMoveSquares } from '../../journeys/model/practiceModel';
 
 describe('Task 1: Curated Multi-Position Puzzle Fixtures', () => {
-  it('exports MOCK_PUZZLES containing all 5 distinct puzzle geometries', () => {
-    expect(MOCK_PUZZLES).toHaveLength(5);
+  it('exports MOCK_PUZZLES containing all 6 distinct puzzle geometries including weakness-backed', () => {
+    expect(MOCK_PUZZLES).toHaveLength(6);
     expect(MOCK_PUZZLES).toContain(DEFAULT_MOCK_PUZZLE);
     expect(MOCK_PUZZLES).toContain(BLACK_TO_MOVE_MOCK_PUZZLE);
     expect(MOCK_PUZZLES).toContain(TACTICAL_SACRIFICE_MOCK_PUZZLE);
     expect(MOCK_PUZZLES).toContain(MULTI_MOVE_CONTINUATION_MOCK_PUZZLE);
     expect(MOCK_PUZZLES).toContain(ENDGAME_MOCK_PUZZLE);
+    expect(MOCK_PUZZLES).toContain(WEAKNESS_BACKED_MOCK_PUZZLE);
+  });
+
+  it('verifies WEAKNESS_BACKED_MOCK_PUZZLE has source "weakness" for blindfold eligibility', () => {
+    expect(WEAKNESS_BACKED_MOCK_PUZZLE.source).toBe('weakness');
+    expect(WEAKNESS_BACKED_MOCK_PUZZLE.puzzleId).toBe('puzzle-weakness-1');
   });
 
   it('verifies BLACK_TO_MOVE_MOCK_PUZZLE has playerColor BLACK and active Black turn in FEN', () => {
@@ -51,17 +59,40 @@ describe('Task 1: Curated Multi-Position Puzzle Fixtures', () => {
     expect(ENDGAME_MOCK_PUZZLE.targetMove).toBe('Kd4');
   });
 
-  it('verifies all puzzle fixtures satisfy required schema properties', () => {
+  it('verifies all puzzle fixtures satisfy required schema properties and explicit move semantics', () => {
     for (const puzzle of MOCK_PUZZLES) {
       expect(puzzle.puzzleId).toMatch(/^puzzle-/);
       expect(['WHITE', 'BLACK']).toContain(puzzle.playerColor);
       expect(typeof puzzle.fen).toBe('string');
       expect(typeof puzzle.targetMove).toBe('string');
+      expect(typeof puzzle.mistakeMove).toBe('string');
+      expect(typeof puzzle.blunderMove).toBe('string');
+      expect(Array.isArray(puzzle.solutionLine)).toBe(true);
+      expect(puzzle.solutionLine!.length).toBeGreaterThan(0);
       expect(Array.isArray(puzzle.acceptableMoves)).toBe(true);
       expect(Array.isArray(puzzle.movesPlayed)).toBe(true);
       expect(typeof puzzle.priority).toBe('number');
       expect(typeof puzzle.evalCp).toBe('number');
     }
+  });
+
+  it('dynamically derives source and destination squares via deriveMoveSquares for all puzzle targets', () => {
+    // White move d4 in baseline FEN
+    const defaultMove = deriveMoveSquares(DEFAULT_MOCK_PUZZLE.fen, DEFAULT_MOCK_PUZZLE.targetMove);
+    expect(defaultMove).toEqual({ from: 'd2', to: 'd4' });
+
+    // Black move d6 in Sicilian FEN
+    const blackMove = deriveMoveSquares(BLACK_TO_MOVE_MOCK_PUZZLE.fen, BLACK_TO_MOVE_MOCK_PUZZLE.targetMove);
+    expect(blackMove).toEqual({ from: 'd7', to: 'd6' });
+
+    // White tactical sacrifice Bxf7+
+    const tacticsMove = deriveMoveSquares(TACTICAL_SACRIFICE_MOCK_PUZZLE.fen, TACTICAL_SACRIFICE_MOCK_PUZZLE.targetMove);
+    expect(tacticsMove).toEqual({ from: 'c4', to: 'f7' });
+
+    // Throws DynamicMoveDerivationError on illegal SAN
+    expect(() => deriveMoveSquares(DEFAULT_MOCK_PUZZLE.fen, 'Qxe8#')).toThrow(
+      /\[DynamicMoveDerivationError\] Move "Qxe8#" is not legal/
+    );
   });
 });
 

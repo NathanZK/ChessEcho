@@ -15,6 +15,7 @@ import {
 } from './monkeyOracles';
 import {
   runConstrainedMonkey,
+  type MonkeyStepHook,
 } from './monkeyRunner';
 
 export type HighRiskScenario =
@@ -65,7 +66,7 @@ export interface CombinedRunOptions {
   customBfsPath?: PracticeAction[];
   stepOffset?: number;
   screenshotOnFailure?: boolean;
-  stepHook?: (step: number, state: PracticeAbstractState) => Promise<void>;
+  stepHook?: MonkeyStepHook;
 }
 
 export interface BfsExecutionResult {

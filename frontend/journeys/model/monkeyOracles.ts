@@ -1,5 +1,5 @@
 import type { Page, ConsoleMessage } from '@playwright/test';
-import { type PracticeAbstractState, STATE_ORACLES } from './practiceModel';
+import { type PracticeAbstractState, type PracticeModelContext, type PageLike, STATE_ORACLES, verifyVisible } from './practiceModel';
 
 export interface ActionLogEntry<TState = PracticeAbstractState> {
   step: number;
@@ -7,6 +7,7 @@ export interface ActionLogEntry<TState = PracticeAbstractState> {
   action: string;
   toState: TState;
   timestamp: number;
+  contextSignature?: string;
 }
 
 export interface MonkeyErrorRecord {
@@ -147,10 +148,11 @@ export class NetworkActivityMonitor {
  * Missing oracles fail loudly.
  */
 export async function assertInvariantOracles(
-  page: Page,
+  page: PageLike,
   state: PracticeAbstractState,
   observer: InvariantErrorObserver,
   step: number,
+  context: PracticeModelContext,
 ): Promise<void> {
   // Oracle 1: Zero Unhandled Exceptions
   if (observer.hasErrors()) {
@@ -162,9 +164,9 @@ export async function assertInvariantOracles(
   }
 
   // Oracle 2: No Blank Presentation / Root Container Intact
-  const mainContent = page.locator('main');
-  const mainVisible = await mainContent.isVisible().catch(() => false);
-  if (!mainVisible) {
+  try {
+    await verifyVisible(page.locator('main'));
+  } catch {
     throw new Error(`[Oracle 2 Failure] Application root container is not visible at step ${step} in state ${state}.`);
   }
 
@@ -175,7 +177,7 @@ export async function assertInvariantOracles(
   }
 
   try {
-    await oracle.assert(page);
+    await oracle.assert(page, context);
   } catch (err) {
     throw new Error(
       `[Oracle 3 Failure] Invariant violated for state ${state} at step ${step} (${oracle.description}): ${(err as Error).message}`

@@ -1,5 +1,6 @@
 import { Chess, type Square } from 'chess.js';
 import type { StateModel, StateOracle } from './stateModel';
+import { MOCK_PUZZLES, DEFAULT_MOCK_PUZZLE } from '../fixtures/mockApi';
 
 export const DEFAULT_PRACTICE_FEN = 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3';
 
@@ -11,7 +12,8 @@ export type PracticeAbstractState =
   | 'INCORRECT'
   | 'HISTORICAL_MISTAKE'
   | 'EVALUATION_ERROR'
-  | 'EXPLORING';
+  | 'EXPLORING'
+  | 'BLINDFOLD';
 
 export type PracticeAction =
   | 'SELECT_PUZZLE'
@@ -23,6 +25,7 @@ export type PracticeAction =
   | 'RESET'
   | 'CONTINUE_EXPLORATION'
   | 'EXIT_EXPLORATION'
+  | 'APPLY_DECISION_MOVE'
   | 'BACK_TO_PUZZLES'
   | 'FLIP_BOARD'
   | 'REQUEST_HINT'
@@ -32,7 +35,8 @@ export type PracticeAction =
   | 'SUBMIT_BLINDFOLD_MOVE'
   | 'NAVIGATE_HISTORY_PREV'
   | 'NAVIGATE_HISTORY_NEXT'
-  | 'TOGGLE_TIMER_MODE';
+  | 'TOGGLE_TIMER_MODE'
+  | 'NEXT_PUZZLE';
 
 export const PRACTICE_ABSTRACT_STATES: PracticeAbstractState[] = [
   'DISCOVERY',
@@ -43,6 +47,7 @@ export const PRACTICE_ABSTRACT_STATES: PracticeAbstractState[] = [
   'HISTORICAL_MISTAKE',
   'EVALUATION_ERROR',
   'EXPLORING',
+  'BLINDFOLD',
 ];
 
 export const PRACTICE_ACTIONS: PracticeAction[] = [
@@ -55,6 +60,7 @@ export const PRACTICE_ACTIONS: PracticeAction[] = [
   'RESET',
   'CONTINUE_EXPLORATION',
   'EXIT_EXPLORATION',
+  'APPLY_DECISION_MOVE',
   'BACK_TO_PUZZLES',
   'FLIP_BOARD',
   'REQUEST_HINT',
@@ -65,13 +71,46 @@ export const PRACTICE_ACTIONS: PracticeAction[] = [
   'NAVIGATE_HISTORY_PREV',
   'NAVIGATE_HISTORY_NEXT',
   'TOGGLE_TIMER_MODE',
+  'NEXT_PUZZLE',
 ];
 
+export interface PuzzleFixture {
+  puzzleId: string;
+  source?: string;
+  fen: string;
+  playerColor?: 'WHITE' | 'BLACK' | string;
+  targetMove: string;
+  mistakeMove?: string;
+  blunderMove?: string;
+  solutionLine?: string[];
+  openingTitle?: string;
+  acceptableMoves?: Array<{ move: string; evalLoss?: number }>;
+  movesPlayed?: Array<{ move: string; timesPlayed?: number; averageLoss?: number }>;
+  priority?: number;
+  timesReached?: number;
+  mistakeCount?: number;
+  mistakeRate?: number;
+  gameUrls?: string[];
+  evalCp?: number;
+}
+
+export interface PracticeCampaignContext {
+  corpus: PuzzleFixture[];
+  expectedSolvedCount: number;
+  expectedFailedCount: number;
+  faultInjectionEnabled: boolean;
+  timerMode: 'STOPWATCH' | 'COUNTDOWN' | null;
+}
+
 export interface PracticeModelContext {
+  corpus?: PuzzleFixture[];
+  activePuzzleIndex?: number;
+  activePuzzle?: PuzzleFixture;
   puzzleLoaded: boolean;
   attemptCount: number;
   inExploration: boolean;
   solved?: boolean;
+  startingFen?: string;
   expectedFen?: string;
   expectedHistory?: string[];
   expectedSideToMove?: 'white' | 'black';
@@ -82,14 +121,22 @@ export interface PracticeModelContext {
   blindfoldActive?: boolean;
   blindfoldVisible?: boolean;
   blindfoldMoveCount?: number;
+  blindfoldPreviousState?: PracticeAbstractState;
+  isWeaknessPlaylist?: boolean;
   hintActive?: boolean;
   historyIndex?: number;
   historyLength?: number;
   timerMode?: 'STOPWATCH' | 'COUNTDOWN' | null;
   faultInjectionEnabled?: boolean;
+  pendingEvaluationMove?: string | null;
+  pendingEvaluationPayload?: unknown | null;
+  explorationDecisionMove?: string | null;
+  solutionLineProgress?: number;
+  selectedSquare?: string | null;
+  promotionPiece?: 'q' | 'r' | 'b' | 'n' | null;
 }
 
-export function createInitialContext(): PracticeModelContext {
+export function createInitialContext(overrides?: Partial<PracticeModelContext>): PracticeModelContext {
   return {
     puzzleLoaded: false,
     attemptCount: 0,
@@ -108,6 +155,89 @@ export function createInitialContext(): PracticeModelContext {
     historyLength: 0,
     timerMode: null,
     faultInjectionEnabled: false,
+    ...overrides,
+  };
+}
+
+export function createPracticeContext(
+  fixture: PuzzleFixture,
+  corpus: PuzzleFixture[],
+  index: number,
+  campaignContext: PracticeCampaignContext
+): PracticeModelContext {
+  const chess = new Chess(fixture.fen);
+  return {
+    // Puzzle-scoped state (strictly initialized, preventing leakage across puzzles)
+    activePuzzleIndex: index,
+    activePuzzle: fixture,
+    corpus,
+    puzzleLoaded: true,
+    inExploration: false,
+    startingFen: fixture.fen,
+    expectedFen: fixture.fen,
+    expectedSideToMove: chess.turn() === 'w' ? 'white' : 'black',
+    expectedHistory: [],
+    historyIndex: 0,
+    historyLength: 0,
+    attemptCount: 0,
+    solved: false,
+    lastMoveSan: undefined,
+    isBoardFlipped: false,
+    hintActive: false,
+    isWeaknessPlaylist: fixture.source === 'weakness',
+    blindfoldActive: false,
+    blindfoldVisible: false,
+    blindfoldMoveCount: 0,
+    blindfoldPreviousState: undefined,
+    pendingEvaluationMove: null,
+    pendingEvaluationPayload: null,
+    explorationDecisionMove: null,
+    solutionLineProgress: 0,
+    selectedSquare: null,
+    promotionPiece: null,
+
+    // Campaign-scoped state (explicitly preserved)
+    expectedSolvedCount: campaignContext.expectedSolvedCount,
+    expectedFailedCount: campaignContext.expectedFailedCount,
+    faultInjectionEnabled: campaignContext.faultInjectionEnabled,
+    timerMode: campaignContext.timerMode,
+  };
+}
+
+export function deriveMoveSquares(fen: string, san: string): { from: string; to: string } {
+  const chess = new Chess(fen);
+  const moves = chess.moves({ verbose: true });
+  const moveObj = moves.find((m) => m.san === san);
+  if (!moveObj) {
+    throw new Error(
+      `[DynamicMoveDerivationError] Move "${san}" is not legal in position "${fen}". Legal moves: ${moves.map((m) => m.san).join(', ')}`
+    );
+  }
+  return { from: moveObj.from, to: moveObj.to };
+}
+
+export function deriveFenAtHistoryIndex(
+  startingFen: string,
+  history: string[],
+  index: number
+): { fen: string; sideToMove: 'white' | 'black' } {
+  if (index < 0 || index > history.length) {
+    throw new Error(`[HistoryIndexOutOfBoundsError] Index ${index} is outside bounds [0, ${history.length}]`);
+  }
+  const chess = new Chess(startingFen);
+  for (let i = 0; i < index; i++) {
+    try {
+      const result = chess.move(history[i]);
+      if (!result) {
+        throw new Error(`[IllegalHistoryMoveError] Move "${history[i]}" at ply ${i} is illegal from FEN "${chess.fen()}"`);
+      }
+    } catch {
+      throw new Error(`[IllegalHistoryMoveError] Move "${history[i]}" at ply ${i} is illegal from FEN "${chess.fen()}"`);
+    }
+  }
+  return {
+    fen: chess.fen(),
+    sideToMove: chess.turn() === 'w' ? 'white' : 'black',
   };
 }
 
@@ -153,16 +283,23 @@ function deriveMoveState(
     };
   }
 
+  // Dynamic evaluation puzzles (!targetMove) roll back board to pre-move baseline on inaccurate move
+  const isDynamicEvalRollback = resultType === 'INCORRECT' && !ctx.activePuzzle?.targetMove;
+  const resultingFen = isDynamicEvalRollback ? (ctx.startingFen ?? DEFAULT_PRACTICE_FEN) : nextFen;
+  const resultingHistory = isDynamicEvalRollback ? (ctx.expectedHistory ?? []) : [...(ctx.expectedHistory ?? []), san];
+  const resultingHistoryIndex = isDynamicEvalRollback ? (ctx.historyIndex ?? 0) : newHistoryIndex;
+  const resultingSide = isDynamicEvalRollback ? (ctx.expectedSideToMove ?? 'white') : nextSide;
+
   return {
     ...ctx,
     attemptCount: ctx.attemptCount + 1,
     hintActive: false,
-    historyLength: newHistoryIndex,
-    historyIndex: newHistoryIndex,
+    historyLength: resultingHistoryIndex,
+    historyIndex: resultingHistoryIndex,
     expectedFailedCount: (ctx.expectedFailedCount ?? 0) + 1,
-    expectedFen: nextFen,
-    expectedHistory: [...(ctx.expectedHistory ?? []), san],
-    expectedSideToMove: nextSide,
+    expectedFen: resultingFen,
+    expectedHistory: resultingHistory,
+    expectedSideToMove: resultingSide,
     lastMoveSan: san,
   };
 }
@@ -173,61 +310,97 @@ export const PRACTICE_TRANSITIONS: TransitionRule[] = [
     from: 'DISCOVERY',
     action: 'SELECT_PUZZLE',
     to: 'PRACTICE_IDLE',
-    effect: (ctx) => ({
-      ...ctx,
-      puzzleLoaded: true,
-      attemptCount: 0,
-      inExploration: false,
-      expectedFen: DEFAULT_PRACTICE_FEN,
-      expectedHistory: [],
-      expectedSideToMove: 'white',
-      expectedSolvedCount: ctx.expectedSolvedCount ?? 0,
-      expectedFailedCount: ctx.expectedFailedCount ?? 0,
-      lastMoveSan: undefined,
-    }),
+    effect: (ctx) => {
+      const corpus = ctx.corpus ?? MOCK_PUZZLES;
+      const index = ctx.activePuzzleIndex ?? 0;
+      const fixture = corpus[index] ?? corpus[0] ?? DEFAULT_MOCK_PUZZLE;
+      return createPracticeContext(fixture, corpus, index, {
+        corpus,
+        expectedSolvedCount: ctx.expectedSolvedCount ?? 0,
+        expectedFailedCount: ctx.expectedFailedCount ?? 0,
+        faultInjectionEnabled: Boolean(ctx.faultInjectionEnabled),
+        timerMode: ctx.timerMode ?? null,
+      });
+    },
   },
   // Submitting moves from Idle
   {
     from: 'PRACTICE_IDLE',
     action: 'SUBMIT_OPTIMAL',
     to: 'CORRECT',
-    guard: (ctx) => ctx.puzzleLoaded && !ctx.blindfoldActive,
-    effect: (ctx) => deriveMoveState(ctx, 'd4', 'CORRECT'),
+    guard: (ctx) => ctx.puzzleLoaded && !ctx.blindfoldActive && !ctx.faultInjectionEnabled,
+    effect: (ctx) =>
+      deriveMoveState(
+        ctx,
+        ctx.activePuzzle?.targetMove || ctx.activePuzzle?.solutionLine?.[0] || 'd4',
+        'CORRECT'
+      ),
   },
   {
     from: 'PRACTICE_IDLE',
     action: 'SUBMIT_MISTAKE',
     to: 'INCORRECT',
-    guard: (ctx) => ctx.puzzleLoaded && !ctx.blindfoldActive,
-    effect: (ctx) => deriveMoveState(ctx, 'a3', 'INCORRECT'),
+    guard: (ctx) => ctx.puzzleLoaded && !ctx.blindfoldActive && !ctx.faultInjectionEnabled,
+    effect: (ctx) =>
+      deriveMoveState(
+        ctx,
+        ctx.activePuzzle?.mistakeMove ?? 'a3',
+        'INCORRECT'
+      ),
   },
   {
     from: 'PRACTICE_IDLE',
     action: 'SUBMIT_BLUNDER',
     to: 'HISTORICAL_MISTAKE',
-    guard: (ctx) => ctx.puzzleLoaded && !ctx.blindfoldActive,
-    effect: (ctx) => deriveMoveState(ctx, 'h4', 'HISTORICAL_MISTAKE'),
+    guard: (ctx) =>
+      ctx.puzzleLoaded &&
+      !ctx.blindfoldActive &&
+      !ctx.faultInjectionEnabled &&
+      Boolean(ctx.activePuzzle?.movesPlayed && ctx.activePuzzle.movesPlayed.length > 0),
+    effect: (ctx) =>
+      deriveMoveState(
+        ctx,
+        ctx.activePuzzle?.blunderMove ?? ctx.activePuzzle?.movesPlayed?.[0]?.move ?? 'h4',
+        'HISTORICAL_MISTAKE'
+      ),
   },
   {
     from: 'PRACTICE_IDLE',
     action: 'SUBMIT_FAULT',
     to: 'EVALUATION_ERROR',
     guard: (ctx) => ctx.puzzleLoaded && !!ctx.faultInjectionEnabled,
+    effect: (ctx) => {
+      const fen = ctx.expectedFen ?? ctx.startingFen ?? DEFAULT_PRACTICE_FEN;
+      const targetMove = ctx.activePuzzle?.targetMove || ctx.activePuzzle?.solutionLine?.[0] || 'd4';
+      return {
+        ...ctx,
+        faultInjectionEnabled: false,
+        pendingEvaluationMove: targetMove,
+        pendingEvaluationPayload: {
+          fen,
+          move: targetMove,
+        },
+      };
+    },
   },
   {
     from: 'PRACTICE_IDLE',
     action: 'RESET',
     to: 'PRACTICE_IDLE',
     guard: (ctx) => ctx.puzzleLoaded,
-    effect: (ctx) => ({
-      ...ctx,
-      expectedFen: DEFAULT_PRACTICE_FEN,
-      expectedHistory: [],
-      expectedSideToMove: 'white',
-      hintActive: false,
-      historyIndex: 0,
-      historyLength: 0,
-    }),
+    effect: (ctx) => {
+      const startingFen = ctx.startingFen ?? ctx.activePuzzle?.fen ?? DEFAULT_PRACTICE_FEN;
+      const chess = new Chess(startingFen);
+      return {
+        ...ctx,
+        expectedFen: startingFen,
+        expectedHistory: [],
+        expectedSideToMove: chess.turn() === 'w' ? 'white' : 'black',
+        hintActive: false,
+        historyIndex: 0,
+        historyLength: 0,
+      };
+    },
   },
   {
     from: 'PRACTICE_IDLE',
@@ -249,26 +422,38 @@ export const PRACTICE_TRANSITIONS: TransitionRule[] = [
     action: 'RETRY',
     to: 'PRACTICE_IDLE',
     guard: (ctx) => ctx.puzzleLoaded,
-    effect: (ctx) => ({
-      ...ctx,
-      expectedFen: DEFAULT_PRACTICE_FEN,
-      expectedSideToMove: 'white',
-      hintActive: false,
-      historyIndex: 0,
-    }),
+    effect: (ctx) => {
+      const startingFen = ctx.startingFen ?? ctx.activePuzzle?.fen ?? DEFAULT_PRACTICE_FEN;
+      const chess = new Chess(startingFen);
+      return {
+        ...ctx,
+        expectedFen: startingFen,
+        expectedSideToMove: chess.turn() === 'w' ? 'white' : 'black',
+        expectedHistory: [],
+        hintActive: false,
+        historyIndex: 0,
+        historyLength: 0,
+      };
+    },
   },
   {
     from: 'HISTORICAL_MISTAKE',
     action: 'RETRY',
     to: 'PRACTICE_IDLE',
     guard: (ctx) => ctx.puzzleLoaded,
-    effect: (ctx) => ({
-      ...ctx,
-      expectedFen: DEFAULT_PRACTICE_FEN,
-      expectedSideToMove: 'white',
-      hintActive: false,
-      historyIndex: 0,
-    }),
+    effect: (ctx) => {
+      const startingFen = ctx.startingFen ?? ctx.activePuzzle?.fen ?? DEFAULT_PRACTICE_FEN;
+      const chess = new Chess(startingFen);
+      return {
+        ...ctx,
+        expectedFen: startingFen,
+        expectedSideToMove: chess.turn() === 'w' ? 'white' : 'black',
+        expectedHistory: [],
+        hintActive: false,
+        historyIndex: 0,
+        historyLength: 0,
+      };
+    },
   },
   {
     from: 'HISTORICAL_MISTAKE',
@@ -279,9 +464,47 @@ export const PRACTICE_TRANSITIONS: TransitionRule[] = [
   {
     from: 'EVALUATION_ERROR',
     action: 'RETRY',
-    to: 'PRACTICE_IDLE',
-    guard: (ctx) => ctx.puzzleLoaded,
-    effect: (ctx) => ({ ...ctx, hintActive: false, historyIndex: 0 }),
+    to: 'CORRECT',
+    guard: (ctx) => {
+      if (!ctx.puzzleLoaded) return false;
+      const target = (ctx.activePuzzle?.targetMove || ctx.activePuzzle?.solutionLine?.[0]) ?? 'd4';
+      const move = ctx.pendingEvaluationMove ?? target;
+      const isTarget = move === target;
+      const isAcceptable = ctx.activePuzzle?.acceptableMoves?.some((m) => m.move === move);
+      return isTarget || Boolean(isAcceptable);
+    },
+    effect: (ctx) => {
+      const target = (ctx.activePuzzle?.targetMove || ctx.activePuzzle?.solutionLine?.[0]) ?? 'd4';
+      const move = ctx.pendingEvaluationMove ?? target;
+      const nextCtx = deriveMoveState(ctx, move, 'CORRECT');
+      return {
+        ...nextCtx,
+        pendingEvaluationMove: null,
+        pendingEvaluationPayload: null,
+      };
+    },
+  },
+  {
+    from: 'EVALUATION_ERROR',
+    action: 'RETRY',
+    to: 'INCORRECT',
+    guard: (ctx) => {
+      if (!ctx.puzzleLoaded) return false;
+      const target = (ctx.activePuzzle?.targetMove || ctx.activePuzzle?.solutionLine?.[0]) ?? 'd4';
+      const move = ctx.pendingEvaluationMove ?? target;
+      const isTarget = move === target;
+      const isAcceptable = ctx.activePuzzle?.acceptableMoves?.some((m) => m.move === move);
+      return !isTarget && !isAcceptable;
+    },
+    effect: (ctx) => {
+      const move = ctx.pendingEvaluationMove ?? 'a3';
+      const nextCtx = deriveMoveState(ctx, move, 'INCORRECT');
+      return {
+        ...nextCtx,
+        pendingEvaluationMove: null,
+        pendingEvaluationPayload: null,
+      };
+    },
   },
   {
     from: 'EVALUATION_ERROR',
@@ -305,22 +528,57 @@ export const PRACTICE_TRANSITIONS: TransitionRule[] = [
   },
   {
     from: 'CORRECT',
+    action: 'NEXT_PUZZLE',
+    to: 'PRACTICE_IDLE',
+    guard: (ctx) => Boolean(ctx.solved) && ctx.puzzleLoaded && !ctx.blindfoldActive && !ctx.inExploration && Boolean(ctx.isWeaknessPlaylist),
+    effect: (ctx) => {
+      const corpus = ctx.corpus ?? MOCK_PUZZLES;
+      const nextIndex = ((ctx.activePuzzleIndex ?? 0) + 1) % corpus.length;
+      const nextFixture = corpus[nextIndex] ?? corpus[0] ?? DEFAULT_MOCK_PUZZLE;
+      return createPracticeContext(nextFixture, corpus, nextIndex, {
+        corpus,
+        expectedSolvedCount: ctx.expectedSolvedCount ?? 0,
+        expectedFailedCount: ctx.expectedFailedCount ?? 0,
+        faultInjectionEnabled: Boolean(ctx.faultInjectionEnabled),
+        timerMode: ctx.timerMode ?? null,
+      });
+    },
+  },
+  {
+    from: 'CORRECT',
     action: 'BACK_TO_PUZZLES',
     to: 'DISCOVERY',
     effect: (ctx) => ({ ...ctx, puzzleLoaded: false, inExploration: false, hintActive: false, blindfoldActive: false }),
   },
-  // Line Exploration back to Idle or Discovery
+  // Line Exploration back to Idle, Correct, or Discovery
   {
     from: 'EXPLORING',
     action: 'EXIT_EXPLORATION',
-    to: 'PRACTICE_IDLE',
+    to: 'CORRECT',
     guard: (ctx) => ctx.inExploration,
     effect: (ctx) => ({
       ...ctx,
       inExploration: false,
-      expectedFen: DEFAULT_PRACTICE_FEN,
-      expectedSideToMove: 'white',
     }),
+  },
+  {
+    from: 'EXPLORING',
+    action: 'APPLY_DECISION_MOVE',
+    to: 'PRACTICE_IDLE',
+    guard: (ctx) => Boolean(ctx.inExploration) && Boolean(ctx.explorationDecisionMove),
+    effect: (ctx) => {
+      const fen = ctx.startingFen ?? DEFAULT_PRACTICE_FEN;
+      return {
+        ...ctx,
+        inExploration: false,
+        expectedFen: fen,
+        expectedSideToMove: 'white',
+        expectedHistory: [],
+        historyIndex: 0,
+        historyLength: 0,
+        explorationDecisionMove: null,
+      };
+    },
   },
   {
     from: 'EXPLORING',
@@ -373,34 +631,76 @@ export const PRACTICE_TRANSITIONS: TransitionRule[] = [
     guard: (ctx) => ctx.puzzleLoaded && !ctx.solved && !ctx.blindfoldActive && !ctx.inExploration,
     effect: (ctx) => ({ ...ctx, hintActive: true }),
   },
-  // 3. Blindfold Mode: ENTER_BLINDFOLD, EXIT_BLINDFOLD, TOGGLE_BLINDFOLD_VISIBILITY & SUBMIT_BLINDFOLD_MOVE
+  // 3. Blindfold Mode Transitions (Gated by isWeaknessPlaylist in post-attempt feedback states)
   {
-    from: 'PRACTICE_IDLE',
+    from: 'CORRECT',
     action: 'ENTER_BLINDFOLD',
-    to: 'PRACTICE_IDLE',
-    guard: (ctx) => ctx.puzzleLoaded && !ctx.blindfoldActive && !ctx.inExploration,
-    effect: (ctx) => ({ ...ctx, blindfoldActive: true, blindfoldVisible: false }),
+    to: 'BLINDFOLD',
+    guard: (ctx) => Boolean(ctx.isWeaknessPlaylist) && !ctx.blindfoldActive,
+    effect: (ctx) => ({ ...ctx, blindfoldActive: true, blindfoldPreviousState: 'CORRECT', blindfoldVisible: false }),
   },
   {
-    from: 'PRACTICE_IDLE',
-    action: 'EXIT_BLINDFOLD',
-    to: 'PRACTICE_IDLE',
-    guard: (ctx) => Boolean(ctx.blindfoldActive),
-    effect: (ctx) => ({ ...ctx, blindfoldActive: false }),
+    from: 'HISTORICAL_MISTAKE',
+    action: 'ENTER_BLINDFOLD',
+    to: 'BLINDFOLD',
+    guard: (ctx) => Boolean(ctx.isWeaknessPlaylist) && !ctx.blindfoldActive,
+    effect: (ctx) => ({ ...ctx, blindfoldActive: true, blindfoldPreviousState: 'HISTORICAL_MISTAKE', blindfoldVisible: false }),
   },
   {
-    from: 'PRACTICE_IDLE',
+    from: 'INCORRECT',
+    action: 'ENTER_BLINDFOLD',
+    to: 'BLINDFOLD',
+    guard: (ctx) => Boolean(ctx.isWeaknessPlaylist) && !ctx.blindfoldActive,
+    effect: (ctx) => ({ ...ctx, blindfoldActive: true, blindfoldPreviousState: 'INCORRECT', blindfoldVisible: false }),
+  },
+  {
+    from: 'EXPLORING',
+    action: 'ENTER_BLINDFOLD',
+    to: 'BLINDFOLD',
+    guard: (ctx) => Boolean(ctx.isWeaknessPlaylist) && !ctx.blindfoldActive,
+    effect: (ctx) => ({ ...ctx, blindfoldActive: true, blindfoldPreviousState: 'EXPLORING', blindfoldVisible: false }),
+  },
+  {
+    from: 'BLINDFOLD',
     action: 'TOGGLE_BLINDFOLD_VISIBILITY',
-    to: 'PRACTICE_IDLE',
+    to: 'BLINDFOLD',
     guard: (ctx) => Boolean(ctx.blindfoldActive),
     effect: (ctx) => ({ ...ctx, blindfoldVisible: !ctx.blindfoldVisible }),
   },
   {
-    from: 'PRACTICE_IDLE',
+    from: 'BLINDFOLD',
     action: 'SUBMIT_BLINDFOLD_MOVE',
-    to: 'PRACTICE_IDLE',
+    to: 'BLINDFOLD',
     guard: (ctx) => Boolean(ctx.blindfoldActive),
     effect: (ctx) => ({ ...ctx, blindfoldMoveCount: (ctx.blindfoldMoveCount ?? 0) + 1 }),
+  },
+  {
+    from: 'BLINDFOLD',
+    action: 'EXIT_BLINDFOLD',
+    to: 'CORRECT',
+    guard: (ctx) => Boolean(ctx.blindfoldActive) && (ctx.blindfoldPreviousState === 'CORRECT' || !ctx.blindfoldPreviousState),
+    effect: (ctx) => ({ ...ctx, blindfoldActive: false, blindfoldPreviousState: undefined }),
+  },
+  {
+    from: 'BLINDFOLD',
+    action: 'EXIT_BLINDFOLD',
+    to: 'HISTORICAL_MISTAKE',
+    guard: (ctx) => Boolean(ctx.blindfoldActive) && ctx.blindfoldPreviousState === 'HISTORICAL_MISTAKE',
+    effect: (ctx) => ({ ...ctx, blindfoldActive: false, blindfoldPreviousState: undefined }),
+  },
+  {
+    from: 'BLINDFOLD',
+    action: 'EXIT_BLINDFOLD',
+    to: 'INCORRECT',
+    guard: (ctx) => Boolean(ctx.blindfoldActive) && ctx.blindfoldPreviousState === 'INCORRECT',
+    effect: (ctx) => ({ ...ctx, blindfoldActive: false, blindfoldPreviousState: undefined }),
+  },
+  {
+    from: 'BLINDFOLD',
+    action: 'EXIT_BLINDFOLD',
+    to: 'EXPLORING',
+    guard: (ctx) => Boolean(ctx.blindfoldActive) && ctx.blindfoldPreviousState === 'EXPLORING',
+    effect: (ctx) => ({ ...ctx, blindfoldActive: false, blindfoldPreviousState: undefined }),
   },
   // 4. Move History Navigation: NAVIGATE_HISTORY_PREV & NAVIGATE_HISTORY_NEXT
   {
@@ -408,28 +708,96 @@ export const PRACTICE_TRANSITIONS: TransitionRule[] = [
     action: 'NAVIGATE_HISTORY_PREV',
     to: 'PRACTICE_IDLE',
     guard: (ctx) => (ctx.historyIndex ?? 0) > 0 && !ctx.blindfoldActive,
-    effect: (ctx) => ({ ...ctx, historyIndex: Math.max(0, (ctx.historyIndex ?? 1) - 1) }),
+    effect: (ctx) => {
+      const history = ctx.expectedHistory ?? [];
+      const newIndex = Math.max(0, (ctx.historyIndex ?? 0) - 1);
+      const startingFen = ctx.startingFen ?? DEFAULT_PRACTICE_FEN;
+      const { fen, sideToMove } = (history.length > 0 || newIndex === 0)
+        ? deriveFenAtHistoryIndex(startingFen, history, newIndex)
+        : { fen: ctx.expectedFen ?? startingFen, sideToMove: ctx.expectedSideToMove ?? 'white' };
+      return {
+        ...ctx,
+        historyIndex: newIndex,
+        historyLength: history.length || ctx.historyLength || 0,
+        expectedFen: fen,
+        expectedSideToMove: sideToMove,
+      };
+    },
   },
   {
     from: 'PRACTICE_IDLE',
     action: 'NAVIGATE_HISTORY_NEXT',
     to: 'PRACTICE_IDLE',
-    guard: (ctx) => (ctx.historyIndex ?? 0) < (ctx.historyLength ?? 0) && !ctx.blindfoldActive,
-    effect: (ctx) => ({ ...ctx, historyIndex: Math.min(ctx.historyLength ?? 0, (ctx.historyIndex ?? 0) + 1) }),
+    guard: (ctx) =>
+      (ctx.historyIndex ?? 0) <
+        (ctx.expectedHistory && ctx.expectedHistory.length > 0
+          ? ctx.expectedHistory.length
+          : (ctx.historyLength ?? 0)) &&
+      !ctx.blindfoldActive,
+    effect: (ctx) => {
+      const history = ctx.expectedHistory ?? [];
+      const maxLen = history.length > 0 ? history.length : (ctx.historyLength ?? 0);
+      const newIndex = Math.min(maxLen, (ctx.historyIndex ?? 0) + 1);
+      const startingFen = ctx.startingFen ?? DEFAULT_PRACTICE_FEN;
+      const { fen, sideToMove } = (history.length >= newIndex && history.length > 0)
+        ? deriveFenAtHistoryIndex(startingFen, history, newIndex)
+        : { fen: ctx.expectedFen ?? startingFen, sideToMove: ctx.expectedSideToMove ?? 'white' };
+      return {
+        ...ctx,
+        historyIndex: newIndex,
+        historyLength: history.length || maxLen,
+        expectedFen: fen,
+        expectedSideToMove: sideToMove,
+      };
+    },
   },
   {
     from: 'EXPLORING',
     action: 'NAVIGATE_HISTORY_PREV',
     to: 'EXPLORING',
     guard: (ctx) => (ctx.historyIndex ?? 0) > 0 && !ctx.blindfoldActive,
-    effect: (ctx) => ({ ...ctx, historyIndex: Math.max(0, (ctx.historyIndex ?? 1) - 1) }),
+    effect: (ctx) => {
+      const history = ctx.expectedHistory ?? [];
+      const newIndex = Math.max(0, (ctx.historyIndex ?? 0) - 1);
+      const startingFen = ctx.startingFen ?? DEFAULT_PRACTICE_FEN;
+      const { fen, sideToMove } = (history.length > 0 || newIndex === 0)
+        ? deriveFenAtHistoryIndex(startingFen, history, newIndex)
+        : { fen: ctx.expectedFen ?? startingFen, sideToMove: ctx.expectedSideToMove ?? 'white' };
+      return {
+        ...ctx,
+        historyIndex: newIndex,
+        historyLength: history.length || ctx.historyLength || 0,
+        expectedFen: fen,
+        expectedSideToMove: sideToMove,
+      };
+    },
   },
   {
     from: 'EXPLORING',
     action: 'NAVIGATE_HISTORY_NEXT',
     to: 'EXPLORING',
-    guard: (ctx) => (ctx.historyIndex ?? 0) < (ctx.historyLength ?? 0) && !ctx.blindfoldActive,
-    effect: (ctx) => ({ ...ctx, historyIndex: Math.min(ctx.historyLength ?? 0, (ctx.historyIndex ?? 0) + 1) }),
+    guard: (ctx) =>
+      (ctx.historyIndex ?? 0) <
+        (ctx.expectedHistory && ctx.expectedHistory.length > 0
+          ? ctx.expectedHistory.length
+          : (ctx.historyLength ?? 0)) &&
+      !ctx.blindfoldActive,
+    effect: (ctx) => {
+      const history = ctx.expectedHistory ?? [];
+      const maxLen = history.length > 0 ? history.length : (ctx.historyLength ?? 0);
+      const newIndex = Math.min(maxLen, (ctx.historyIndex ?? 0) + 1);
+      const startingFen = ctx.startingFen ?? DEFAULT_PRACTICE_FEN;
+      const { fen, sideToMove } = (history.length >= newIndex && history.length > 0)
+        ? deriveFenAtHistoryIndex(startingFen, history, newIndex)
+        : { fen: ctx.expectedFen ?? startingFen, sideToMove: ctx.expectedSideToMove ?? 'white' };
+      return {
+        ...ctx,
+        historyIndex: newIndex,
+        historyLength: history.length || maxLen,
+        expectedFen: fen,
+        expectedSideToMove: sideToMove,
+      };
+    },
   },
   // 5. Timed Training Mode: TOGGLE_TIMER_MODE
   {
@@ -497,32 +865,30 @@ export interface InspectableLocator {
   textContent?: () => Promise<string | null>;
   getAttribute?: (name: string) => Promise<string | null>;
   count?: () => Promise<number>;
+  first?: () => InspectableLocator;
 }
 
 export interface PageLike {
-  getByRole: (role: Parameters<Page['getByRole']>[0], options?: { name?: string | RegExp }) => unknown;
-  getByText: (text: string | RegExp) => unknown;
-  locator: (selector: string) => unknown;
+  getByRole: (role: Parameters<Page['getByRole']>[0], options?: { name?: string | RegExp }) => InspectableLocator;
+  getByText: (text: string | RegExp) => InspectableLocator;
+  getByLabel?: (text: string | RegExp) => InspectableLocator;
+  locator: (selector: string) => InspectableLocator;
 }
 
 export interface StateOracleDefinition {
   description: string;
-  assert: (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => Promise<void>;
+  assert: (page: PageLike, context: PracticeModelContext, expectFn?: ExpectFn) => Promise<void>;
 }
 
-export function resolveArgs(arg1?: unknown, arg2?: unknown): {
-  context?: PracticeModelContext;
+export function resolveArgs(context: PracticeModelContext, maybeExpectFn?: unknown): {
+  context: PracticeModelContext;
   expectFn?: ExpectFn;
 } {
-  if (typeof arg1 === 'function') {
-    return { expectFn: arg1 as ExpectFn };
-  }
-  const ctx = arg1 && typeof arg1 === 'object' ? (arg1 as PracticeModelContext) : undefined;
-  const exp = typeof arg2 === 'function' ? (arg2 as ExpectFn) : undefined;
-  return { context: ctx, expectFn: exp };
+  const exp = typeof maybeExpectFn === 'function' ? (maybeExpectFn as ExpectFn) : undefined;
+  return { context, expectFn: exp };
 }
 
-async function verifyVisible(locator: unknown, arg1?: unknown, arg2?: unknown): Promise<void> {
+export async function verifyVisible(locator: unknown, arg1?: unknown, arg2?: unknown): Promise<void> {
   const expectFn = typeof arg1 === 'function' ? (arg1 as ExpectFn) : (typeof arg2 === 'function' ? (arg2 as ExpectFn) : undefined);
   if (expectFn) {
     await expectFn(locator as Locator).toBeVisible({ timeout: 10_000 });
@@ -557,20 +923,29 @@ export async function verifyBoardPosition(
         const expectedCode = `${piece.color}${piece.type.toUpperCase()}`;
         const exactPieceLocator = page.locator(`[data-square="${sq}"] [data-piece="${expectedCode}"]`);
 
-        if (typeof pieceLocator.getAttribute === 'function') {
-          const actualCode = await pieceLocator.getAttribute('data-piece');
-          if (actualCode && actualCode !== expectedCode) {
-            throw new Error(
-              `[PIECE_TOPOLOGY_MISMATCH] Square "${sq}" expected piece "${expectedCode}" in position "${expectedFen}", but found "${actualCode}".`
-            );
-          }
-        }
-
         try {
           await verifyVisible(exactPieceLocator, expectFn);
-        } catch (err) {
+        } catch {
+          if (typeof pieceLocator.count === 'function') {
+            const count = await pieceLocator.count();
+            if (count === 0) {
+              throw new Error(
+                `[PIECE_TOPOLOGY_MISMATCH] Square "${sq}" expected piece "${expectedCode}" in position "${expectedFen}", but no piece was found.`
+              );
+            }
+          }
+
+          if (typeof pieceLocator.getAttribute === 'function') {
+            const actualCode = await pieceLocator.getAttribute('data-piece');
+            if (actualCode && actualCode !== expectedCode) {
+              throw new Error(
+                `[PIECE_TOPOLOGY_MISMATCH] Square "${sq}" expected piece "${expectedCode}" in position "${expectedFen}", but found "${actualCode}".`
+              );
+            }
+          }
+
           throw new Error(
-            `[PIECE_TOPOLOGY_MISMATCH] Square "${sq}" expected piece "${expectedCode}" in position "${expectedFen}", but piece was not visible: ${err instanceof Error ? err.message : String(err)}`
+            `[PIECE_TOPOLOGY_MISMATCH] Square "${sq}" expected piece "${expectedCode}" in position "${expectedFen}", but piece was not visible.`
           );
         }
       } else {
@@ -657,6 +1032,10 @@ export async function verifyTurnState(
   }
 }
 
+export function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 export async function verifyMoveFeedback(
   page: PageLike,
   state: PracticeAbstractState,
@@ -664,13 +1043,14 @@ export async function verifyMoveFeedback(
   expectFn?: ExpectFn
 ): Promise<void> {
   if (!lastMoveSan) return;
+  const escapedSan = escapeRegex(lastMoveSan);
   if (state === 'CORRECT') {
-    const moveFeedback = page.getByText(new RegExp(`${lastMoveSan}\\s+is\\s+(?:the best|an acceptable)`, 'i'));
+    const moveFeedback = page.getByText(new RegExp(`${escapedSan}\\s+is\\s+(?:the best|an acceptable)`, 'i'));
     await verifyVisible(moveFeedback, expectFn);
   } else if (state === 'INCORRECT') {
     const heading = page.getByRole('heading', { name: /Not the Recommended Move/i });
     await verifyVisible(heading, expectFn);
-    const moveFeedback = page.getByText(new RegExp(`${lastMoveSan}\\s+is not the recommended move`, 'i'));
+    const moveFeedback = page.getByText(new RegExp(`${escapedSan}\\s+is not the recommended move`, 'i'));
     await verifyVisible(moveFeedback, expectFn);
   } else if (state === 'HISTORICAL_MISTAKE') {
     const blunderBanner = page.getByText(/Recurring Weakness Detected!|Matches your previous blunder|blunder/i);
@@ -708,20 +1088,20 @@ export async function verifyMoveHistory(
 export const STATE_ORACLES: Record<PracticeAbstractState, StateOracleDefinition> = {
   DISCOVERY: {
     description: 'Catalog view is active; Start Practice button and catalog description are visible.',
-    assert: async (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => {
-      const { expectFn } = resolveArgs(contextOrExpect, maybeExpectFn);
+    assert: async (page: PageLike, context: PracticeModelContext, maybeExpectFn?: unknown) => {
+      const { expectFn } = resolveArgs(context, maybeExpectFn);
       await verifyVisible(page.getByRole('button', { name: /Start Practice/i }), expectFn);
       await verifyVisible(page.getByText(/Strengthen your play by solving recurring mistake positions/i), expectFn);
     },
   },
   PRACTICE_IDLE: {
     description: 'Interactive board is ready; square d2 is visible and Back to Puzzles is interactive.',
-    assert: async (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => {
-      const { context, expectFn } = resolveArgs(contextOrExpect, maybeExpectFn);
+    assert: async (page: PageLike, context: PracticeModelContext, maybeExpectFn?: unknown) => {
+      const { expectFn } = resolveArgs(context, maybeExpectFn);
       await verifyVisible(page.locator('[data-square="d2"]'), expectFn);
       await verifyVisible(page.getByRole('button', { name: /Back to Puzzles/i }), expectFn);
 
-      if (context?.puzzleLoaded) {
+      if (context.puzzleLoaded) {
         if (context.expectedFen) {
           await verifyBoardPosition(page, context.expectedFen, expectFn);
         }
@@ -733,102 +1113,115 @@ export const STATE_ORACLES: Record<PracticeAbstractState, StateOracleDefinition>
   },
   EVALUATING: {
     description: 'Move evaluation is in-flight; evaluating indicator is active.',
-    assert: async (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => {
-      const { expectFn } = resolveArgs(contextOrExpect, maybeExpectFn);
+    assert: async (page: PageLike, context: PracticeModelContext, maybeExpectFn?: unknown) => {
+      const { expectFn } = resolveArgs(context, maybeExpectFn);
       await verifyVisible(page.getByText(/Evaluating move/i), expectFn);
     },
   },
   CORRECT: {
     description: 'Puzzle solved optimally; Continue Exploration button visible and solved count incremented.',
-    assert: async (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => {
-      const { context, expectFn } = resolveArgs(contextOrExpect, maybeExpectFn);
+    assert: async (page: PageLike, context: PracticeModelContext, maybeExpectFn?: unknown) => {
+      const { expectFn } = resolveArgs(context, maybeExpectFn);
       await verifyVisible(page.getByRole('button', { name: /Continue Exploration →/i }), expectFn);
       await verifyVisible(page.getByText(/Solved: [1-9]\d*/i), expectFn);
 
-      if (context) {
-        if (context.expectedFen) {
-          await verifyBoardPosition(page, context.expectedFen, expectFn);
-        }
-        if (context.expectedFailedCount !== undefined && context.expectedSolvedCount !== undefined) {
-          await verifyAttemptCounters(page, context.expectedFailedCount, context.expectedSolvedCount, expectFn);
-        }
-        if (context.lastMoveSan) {
-          await verifyMoveFeedback(page, 'CORRECT', context.lastMoveSan, expectFn);
-        }
-        if (context.expectedHistory && context.expectedHistory.length > 0) {
-          await verifyMoveHistory(page, context.expectedHistory, expectFn);
-        }
+      if (context.expectedFen) {
+        await verifyBoardPosition(page, context.expectedFen, expectFn);
+      }
+      if (context.expectedFailedCount !== undefined && context.expectedSolvedCount !== undefined) {
+        await verifyAttemptCounters(page, context.expectedFailedCount, context.expectedSolvedCount, expectFn);
+      }
+      if (context.lastMoveSan) {
+        await verifyMoveFeedback(page, 'CORRECT', context.lastMoveSan, expectFn);
+      }
+      if (context.expectedHistory && context.expectedHistory.length > 0) {
+        await verifyMoveHistory(page, context.expectedHistory, expectFn);
       }
     },
   },
   INCORRECT: {
     description: 'Inaccurate move played; rollback to baseline FEN and Not the Recommended Move banner visible.',
-    assert: async (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => {
-      const { context, expectFn } = resolveArgs(contextOrExpect, maybeExpectFn);
+    assert: async (page: PageLike, context: PracticeModelContext, maybeExpectFn?: unknown) => {
+      const { expectFn } = resolveArgs(context, maybeExpectFn);
       await verifyVisible(page.getByRole('heading', { name: /Not the Recommended Move/i }), expectFn);
       await verifyVisible(page.locator('[data-square="d2"]'), expectFn);
 
-      if (context) {
-        if (context.expectedFen) {
-          await verifyBoardPosition(page, context.expectedFen, expectFn);
-        }
-        if (context.expectedFailedCount !== undefined && context.expectedSolvedCount !== undefined) {
-          await verifyAttemptCounters(page, context.expectedFailedCount, context.expectedSolvedCount, expectFn);
-        }
-        if (context.lastMoveSan) {
-          await verifyMoveFeedback(page, 'INCORRECT', context.lastMoveSan, expectFn);
-        }
+      if (context.expectedFen) {
+        await verifyBoardPosition(page, context.expectedFen, expectFn);
+      }
+      if (context.expectedFailedCount !== undefined && context.expectedSolvedCount !== undefined) {
+        await verifyAttemptCounters(page, context.expectedFailedCount, context.expectedSolvedCount, expectFn);
+      }
+      if (context.lastMoveSan) {
+        await verifyMoveFeedback(page, 'INCORRECT', context.lastMoveSan, expectFn);
       }
     },
   },
   HISTORICAL_MISTAKE: {
     description: 'Historical mistake repeated; mistake banner and hint/retry action visible.',
-    assert: async (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => {
-      const { context, expectFn } = resolveArgs(contextOrExpect, maybeExpectFn);
+    assert: async (page: PageLike, context: PracticeModelContext, maybeExpectFn?: unknown) => {
+      const { expectFn } = resolveArgs(context, maybeExpectFn);
       await verifyVisible(page.getByText(/Recurring Weakness Detected!|Matches your previous blunder|blunder/i), expectFn);
 
-      if (context) {
-        if (context.expectedFen) {
-          await verifyBoardPosition(page, context.expectedFen, expectFn);
-        }
-        if (context.expectedFailedCount !== undefined && context.expectedSolvedCount !== undefined) {
-          await verifyAttemptCounters(page, context.expectedFailedCount, context.expectedSolvedCount, expectFn);
-        }
-        if (context.lastMoveSan) {
-          await verifyMoveFeedback(page, 'HISTORICAL_MISTAKE', context.lastMoveSan, expectFn);
-        }
+      if (context.expectedFen) {
+        await verifyBoardPosition(page, context.expectedFen, expectFn);
+      }
+      if (context.expectedFailedCount !== undefined && context.expectedSolvedCount !== undefined) {
+        await verifyAttemptCounters(page, context.expectedFailedCount, context.expectedSolvedCount, expectFn);
+      }
+      if (context.lastMoveSan) {
+        await verifyMoveFeedback(page, 'HISTORICAL_MISTAKE', context.lastMoveSan, expectFn);
       }
     },
   },
   EVALUATION_ERROR: {
     description: 'Evaluation failed or timed out; error banner visible.',
-    assert: async (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => {
-      const { expectFn } = resolveArgs(contextOrExpect, maybeExpectFn);
+    assert: async (page: PageLike, context: PracticeModelContext, maybeExpectFn?: unknown) => {
+      const { expectFn } = resolveArgs(context, maybeExpectFn);
       await verifyVisible(page.getByText('Move Evaluation Failed'), expectFn);
     },
   },
   EXPLORING: {
     description: 'Line exploration mode active; exploration controls and Exit Exploration visible.',
-    assert: async (page: PageLike, contextOrExpect?: unknown, maybeExpectFn?: unknown) => {
-      const { context, expectFn } = resolveArgs(contextOrExpect, maybeExpectFn);
+    assert: async (page: PageLike, context: PracticeModelContext, maybeExpectFn?: unknown) => {
+      const { expectFn } = resolveArgs(context, maybeExpectFn);
       await verifyVisible(page.getByText(/Line Exploration/i), expectFn);
       await verifyVisible(page.getByRole('button', { name: /^Exit$|Exit Exploration/i }), expectFn);
 
-      if (context) {
-        if (context.expectedFen) {
-          await verifyBoardPosition(page, context.expectedFen, expectFn);
-        }
-        if (context.expectedSideToMove) {
-          await verifyTurnState(page, context.expectedSideToMove, true, expectFn);
-        }
-        if (context.expectedHistory && context.expectedHistory.length > 0) {
-          const decisionBanner = page.getByText(/Line Exploration\s*\(from/i) as InspectableLocator;
-          const checkVisible = decisionBanner.isVisible ?? decisionBanner.toBeVisible;
-          if (typeof checkVisible === 'function' && (await checkVisible.call(decisionBanner).catch(() => false))) {
-            await verifyMoveHistory(page, context.expectedHistory, expectFn);
-          }
+      if (context.expectedFen) {
+        await verifyBoardPosition(page, context.expectedFen, expectFn);
+      }
+      if (context.expectedSideToMove) {
+        await verifyTurnState(page, context.expectedSideToMove, true, expectFn);
+      }
+      if (context.expectedHistory && context.expectedHistory.length > 0) {
+        const decisionBanner = page.getByText(/Line Exploration\s*\(from/i) as InspectableLocator;
+        const checkVisible = decisionBanner.isVisible ?? decisionBanner.toBeVisible;
+        if (typeof checkVisible === 'function' && (await checkVisible.call(decisionBanner).catch(() => false))) {
+          await verifyMoveHistory(page, context.expectedHistory, expectFn);
         }
       }
+    },
+  },
+  BLINDFOLD: {
+    description: 'Blindfold training mode active; notation exchange UI and blindfold board wrapper are mounted.',
+    assert: async (page: PageLike, context: PracticeModelContext, maybeExpectFn?: unknown) => {
+      const { expectFn } = resolveArgs(context, maybeExpectFn);
+      await verifyVisible(page.getByText(/Blindfold continuation/i), expectFn);
+      await verifyVisible(page.locator('[data-testid="blindfold-board"]'), expectFn);
+      if (typeof page.getByLabel === 'function') {
+        const labelLocator = page.getByLabel('Move notation');
+        await verifyVisible(labelLocator.first ? labelLocator.first() : labelLocator, expectFn);
+      } else {
+        const inputLocator = page.locator('input[aria-label="Move notation"]');
+        await verifyVisible(inputLocator.first ? inputLocator.first() : inputLocator, expectFn);
+      }
+      const sendBtn = page.getByRole('button', { name: /Send/i });
+      await verifyVisible(sendBtn.first ? sendBtn.first() : sendBtn, expectFn);
+      const toggleBtn = page.getByRole('button', { name: /Hide board|Reveal board/i });
+      await verifyVisible(toggleBtn.first ? toggleBtn.first() : toggleBtn, expectFn);
+      const exitBtn = page.getByRole('button', { name: /^Exit$/i });
+      await verifyVisible(exitBtn.first ? exitBtn.first() : exitBtn, expectFn);
     },
   },
 };
@@ -849,48 +1242,20 @@ export async function ensureDiscoveryState(page: Page): Promise<void> {
   }
 }
 
-async function submitMoveBySquares(
+async function playSquareMove(
   page: Page,
-  preferredFrom: string,
-  preferredTo: string,
-  actionName: string
+  fromSquare: string,
+  toSquare: string
 ): Promise<void> {
-  const fromLocator = page.locator(`[data-square="${preferredFrom}"]`);
-  const toLocator = page.locator(`[data-square="${preferredTo}"]`);
+  const fromLocator = page.locator(`[data-square="${fromSquare}"]`);
+  const toLocator = page.locator(`[data-square="${toSquare}"]`);
 
-  const preferredFromVisible = await fromLocator.isVisible().catch(() => false);
-  const preferredToVisible = await toLocator.isVisible().catch(() => false);
+  await fromLocator.waitFor({ state: 'visible', timeout: 5000 });
+  await toLocator.waitFor({ state: 'visible', timeout: 5000 });
 
-  if (preferredFromVisible && preferredToVisible) {
-    await fromLocator.click();
-    await page.waitForTimeout(60);
-    await toLocator.click();
-    return;
-  }
-
-  // Dynamic fallback: discover squares with pieces and destinations
-  const pieceSquares = await page.locator('[data-square]').evaluateAll((elements) => {
-    return elements
-      .map((el) => {
-        const sq = el.getAttribute('data-square') ?? '';
-        const hasPiece = el.querySelector('svg, img, [data-piece]') !== null || el.children.length > 0;
-        return { sq, hasPiece };
-      })
-      .filter((item) => item.sq.length === 2);
-  }).catch(() => []);
-
-  const sources = pieceSquares.filter((s) => s.hasPiece).map((s) => s.sq);
-  const destinations = pieceSquares.filter((s) => !s.hasPiece).map((s) => s.sq);
-
-  if (sources.length === 0 || destinations.length === 0) {
-    throw new Error(`[ActionExecutionError] No interactable squares available on active board for ${actionName}`);
-  }
-
-  const from = page.locator(`[data-square="${sources[0]}"]`);
-  const to = page.locator(`[data-square="${destinations[0]}"]`);
-  await from.click();
+  await fromLocator.click();
   await page.waitForTimeout(60);
-  await to.click();
+  await toLocator.click();
 }
 
 /**
@@ -898,7 +1263,8 @@ async function submitMoveBySquares(
  */
 export async function executeConcreteAction(
   page: Page,
-  action: PracticeAction
+  action: PracticeAction,
+  context?: PracticeModelContext
 ): Promise<void> {
   switch (action) {
     case 'SELECT_PUZZLE': {
@@ -909,31 +1275,49 @@ export async function executeConcreteAction(
     }
 
     case 'SUBMIT_OPTIMAL': {
-      // White optimal first move: d2 -> d4 (or dynamic legal fallback)
-      await submitMoveBySquares(page, 'd2', 'd4', 'SUBMIT_OPTIMAL');
+      const fen = context?.expectedFen ?? DEFAULT_PRACTICE_FEN;
+      const san = context?.activePuzzle?.targetMove || context?.activePuzzle?.solutionLine?.[0] || 'd4';
+      const { from, to } = deriveMoveSquares(fen, san);
+      await playSquareMove(page, from, to);
       break;
     }
 
     case 'SUBMIT_MISTAKE': {
-      // Inaccurate move: a2 -> a3 (or dynamic legal fallback)
-      await submitMoveBySquares(page, 'a2', 'a3', 'SUBMIT_MISTAKE');
+      const fen = context?.expectedFen ?? DEFAULT_PRACTICE_FEN;
+      const san = context?.activePuzzle?.mistakeMove || 'a3';
+      const { from, to } = deriveMoveSquares(fen, san);
+      await playSquareMove(page, from, to);
       break;
     }
 
     case 'SUBMIT_BLUNDER': {
-      // Severe mistake: h2 -> h4 (or dynamic legal fallback)
-      await submitMoveBySquares(page, 'h2', 'h4', 'SUBMIT_BLUNDER');
+      const fen = context?.expectedFen ?? DEFAULT_PRACTICE_FEN;
+      const san = context?.activePuzzle?.blunderMove || context?.activePuzzle?.movesPlayed?.[0]?.move || 'h4';
+      const { from, to } = deriveMoveSquares(fen, san);
+      await playSquareMove(page, from, to);
       break;
     }
 
     case 'SUBMIT_FAULT': {
-      // Submit move that triggers evaluation failure under active route fault
-      const from = page.locator('[data-square="d2"]');
-      const to = page.locator('[data-square="d4"]');
-      await from.waitFor({ state: 'visible', timeout: 5000 });
-      await from.click();
-      await page.waitForTimeout(60);
-      await to.click();
+      const fen = context?.expectedFen ?? DEFAULT_PRACTICE_FEN;
+      const san = context?.activePuzzle?.targetMove || context?.activePuzzle?.solutionLine?.[0] || 'd4';
+      const { from, to } = deriveMoveSquares(fen, san);
+      await playSquareMove(page, from, to);
+      break;
+    }
+
+    case 'NEXT_PUZZLE': {
+      const nextBtn = page.getByRole('button', { name: /Next Puzzle/i }).first();
+      await nextBtn.waitFor({ state: 'visible', timeout: 5000 });
+      await nextBtn.click();
+      await page.waitForTimeout(100);
+      if (context?.corpus && context.activePuzzleIndex !== undefined) {
+        const nextIndex = (context.activePuzzleIndex + 1) % context.corpus.length;
+        const nextPuzzle = context.corpus[nextIndex];
+        if (nextPuzzle?.fen) {
+          await verifyBoardPosition(page, nextPuzzle.fen);
+        }
+      }
       break;
     }
 
@@ -968,7 +1352,8 @@ export async function executeConcreteAction(
       break;
     }
 
-    case 'EXIT_EXPLORATION': {
+    case 'EXIT_EXPLORATION':
+    case 'APPLY_DECISION_MOVE': {
       const exitBtn = page.getByRole('button', { name: /^Exit$|Exit Exploration/i });
       await exitBtn.waitFor({ state: 'visible', timeout: 5000 });
       await exitBtn.click();
@@ -1007,11 +1392,13 @@ export async function executeConcreteAction(
 
     case 'ENTER_BLINDFOLD': {
       const trainBlindfoldBtn = page.getByRole('button', { name: /Train Blindfold/i }).first();
-      if (await trainBlindfoldBtn.isVisible().catch(() => false)) {
-        const disabled = await trainBlindfoldBtn.isDisabled().catch(() => false);
-        if (!disabled) {
-          await trainBlindfoldBtn.click();
-        }
+      await verifyVisible(trainBlindfoldBtn);
+      const isLoc = trainBlindfoldBtn as { isDisabled?: () => Promise<boolean>; click?: () => Promise<void> };
+      if (typeof isLoc.isDisabled === 'function' && (await isLoc.isDisabled().catch(() => false))) {
+        throw new Error('[ActionExecutionError] "Train Blindfold" button is disabled');
+      }
+      if (typeof isLoc.click === 'function') {
+        await isLoc.click();
       }
       await page.waitForTimeout(100);
       break;
@@ -1019,8 +1406,10 @@ export async function executeConcreteAction(
 
     case 'EXIT_BLINDFOLD': {
       const exitBlindfoldBtn = page.getByRole('button', { name: /^Exit$/i }).first();
-      if (await exitBlindfoldBtn.isVisible().catch(() => false)) {
-        await exitBlindfoldBtn.click();
+      await verifyVisible(exitBlindfoldBtn);
+      const isLoc = exitBlindfoldBtn as { click?: () => Promise<void> };
+      if (typeof isLoc.click === 'function') {
+        await isLoc.click();
       }
       await page.waitForTimeout(100);
       break;
@@ -1028,8 +1417,10 @@ export async function executeConcreteAction(
 
     case 'TOGGLE_BLINDFOLD_VISIBILITY': {
       const toggleBtn = page.getByRole('button', { name: /Hide board|Reveal board/i }).first();
-      if (await toggleBtn.isVisible().catch(() => false)) {
-        await toggleBtn.click();
+      await verifyVisible(toggleBtn);
+      const isLoc = toggleBtn as { click?: () => Promise<void> };
+      if (typeof isLoc.click === 'function') {
+        await isLoc.click();
       }
       await page.waitForTimeout(60);
       break;
@@ -1038,12 +1429,18 @@ export async function executeConcreteAction(
     case 'SUBMIT_BLINDFOLD_MOVE': {
       const notationInput = page.getByLabel('Move notation');
       const sendBtn = page.getByRole('button', { name: /Send/i });
-      if (await notationInput.isVisible().catch(() => false)) {
-        const disabled = await notationInput.isDisabled().catch(() => false);
-        if (!disabled) {
-          await notationInput.fill('d4');
-          await sendBtn.click();
-        }
+      await verifyVisible(notationInput);
+      await verifyVisible(sendBtn);
+      const inputLoc = notationInput as { isDisabled?: () => Promise<boolean>; fill?: (text: string) => Promise<void> };
+      if (typeof inputLoc.isDisabled === 'function' && (await inputLoc.isDisabled().catch(() => false))) {
+        throw new Error('[ActionExecutionError] Blindfold move notation input is disabled');
+      }
+      if (typeof inputLoc.fill === 'function') {
+        await inputLoc.fill('d4');
+      }
+      const sendLoc = sendBtn as { click?: () => Promise<void> };
+      if (typeof sendLoc.click === 'function') {
+        await sendLoc.click();
       }
       await page.waitForTimeout(100);
       break;
@@ -1106,6 +1503,47 @@ export async function executeConcreteAction(
 }
 
 /**
+ * Derives a deterministic context signature for equivalence partitioning of practice configurations.
+ *
+ * Equivalence Boundaries:
+ * - Active puzzle identity and expected position FEN differentiate behavior across puzzles/positions.
+ * - Exact historyIndex and historyLength differentiate navigation states across exploration plies.
+ * - blindfoldPreviousState differentiates blindfold sessions by their target restoration state on exit.
+ * - explorationDecisionMove differentiates exploration sessions where decision moves can be applied vs standard exploration.
+ * - Operational modes (exploration, blindfold visibility/activity, board orientation, timerMode, playlist mode) are included.
+ * - Transient fields (pending HTTP payloads, intermediate square selection, promotion piece) are excluded.
+ */
+export function deriveContextSignature(ctx: PracticeModelContext): string {
+  const puzzleKey = ctx.activePuzzle?.puzzleId ?? (ctx.activePuzzleIndex !== undefined ? `idx-${ctx.activePuzzleIndex}` : 'none');
+  const fenKey = ctx.expectedFen ?? ctx.startingFen ?? 'none';
+  const historyKey = `${ctx.historyIndex ?? 0}/${ctx.historyLength ?? 0}`;
+  const blindfoldOrigin = ctx.blindfoldPreviousState ?? 'none';
+  const decisionKey = ctx.explorationDecisionMove ?? 'none';
+  const timer = ctx.timerMode ?? 'off';
+  const side = ctx.expectedSideToMove ?? 'white';
+
+  return [
+    puzzleKey,
+    fenKey,
+    ctx.puzzleLoaded ? 'loaded' : 'unloaded',
+    ctx.inExploration ? 'exploring' : 'standard',
+    `attempts:${ctx.attemptCount}`,
+    ctx.solved ? 'solved' : 'unsolved',
+    ctx.isBoardFlipped ? 'flipped' : 'normal',
+    ctx.blindfoldActive ? 'bf-active' : 'bf-off',
+    ctx.blindfoldVisible ? 'bf-vis' : 'bf-hid',
+    `bf-origin:${blindfoldOrigin}`,
+    ctx.hintActive ? 'hint-on' : 'hint-off',
+    `history:${historyKey}`,
+    `decision:${decisionKey}`,
+    `timer:${timer}`,
+    `side:${side}`,
+    ctx.isWeaknessPlaylist ? 'weakness' : 'standard-playlist',
+    ctx.faultInjectionEnabled ? 'fault-on' : 'fault-off',
+  ].join('|');
+}
+
+/**
  * StateModel implementation for Practice Puzzles.
  */
 export const PracticeModel: StateModel<
@@ -1119,8 +1557,7 @@ export const PracticeModel: StateModel<
   transitions: PRACTICE_TRANSITIONS,
   oracles: STATE_ORACLES as Record<PracticeAbstractState, StateOracle<PracticeModelContext>>,
   executeAction: executeConcreteAction,
-  contextSignature: (ctx) =>
-    `${ctx.puzzleLoaded}:${ctx.inExploration}:${ctx.attemptCount}:${ctx.solved}:${ctx.isBoardFlipped}:${ctx.blindfoldActive}:${ctx.blindfoldVisible}:${ctx.hintActive}:${Math.min(ctx.historyIndex ?? 0, 2)}:${ctx.timerMode}`,
+  contextSignature: deriveContextSignature,
   ensureInitialState: ensureDiscoveryState,
 };
 

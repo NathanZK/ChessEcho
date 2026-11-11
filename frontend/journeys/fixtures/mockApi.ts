@@ -1,4 +1,5 @@
 import type { Page } from '@playwright/test';
+import { Chess } from 'chess.js';
 
 export type NetworkFaultType =
   | 'server_error_500'
@@ -59,10 +60,13 @@ export const DEFAULT_MOCK_WEAKNESS = {
 
 export const DEFAULT_MOCK_PUZZLE = {
   puzzleId: 'puzzle-1',
-  source: 'puzzle',
+  source: 'weakness',
   fen: 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3',
   playerColor: 'WHITE',
   targetMove: 'd4',
+  mistakeMove: 'a3',
+  blunderMove: 'h4',
+  solutionLine: ['d4'],
   openingTitle: 'Ruy Lopez / Italian Game',
   acceptableMoves: [{ move: 'Bc4', evalLoss: 0.05 }],
   movesPlayed: [
@@ -200,10 +204,13 @@ export const DEFAULT_MOCK_CLUSTER_POSITION = {
 
 export const BLACK_TO_MOVE_MOCK_PUZZLE = {
   puzzleId: 'puzzle-black-1',
-  source: 'puzzle',
+  source: 'weakness',
   fen: 'rnbqkbnr/pp1ppppp/8/2p5/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2',
   playerColor: 'BLACK',
   targetMove: 'd6',
+  mistakeMove: 'g6',
+  blunderMove: 'a6',
+  solutionLine: ['d6'],
   openingTitle: 'Sicilian Defense',
   acceptableMoves: [
     { move: 'Nc6', evalLoss: 0.02 },
@@ -222,10 +229,13 @@ export const BLACK_TO_MOVE_MOCK_PUZZLE = {
 
 export const TACTICAL_SACRIFICE_MOCK_PUZZLE = {
   puzzleId: 'puzzle-tactics-1',
-  source: 'puzzle',
+  source: 'weakness',
   fen: 'r1bq1rk1/ppp2ppp/2np4/2b1p1N1/2B1P1n1/2NP4/PPP2PPP/R1BQ1RK1 w - - 0 8',
   playerColor: 'WHITE',
   targetMove: 'Bxf7+',
+  mistakeMove: 'a3',
+  blunderMove: 'd4',
+  solutionLine: ['Bxf7+'],
   openingTitle: 'Tactical Bishop Sacrifice',
   acceptableMoves: [
     { move: 'h3', evalLoss: 0.1 },
@@ -243,10 +253,13 @@ export const TACTICAL_SACRIFICE_MOCK_PUZZLE = {
 
 export const MULTI_MOVE_CONTINUATION_MOCK_PUZZLE = {
   puzzleId: 'puzzle-continuation-1',
-  source: 'puzzle',
+  source: 'weakness',
   fen: 'r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2NP1N2/PPP2PPP/R1BQK2R b KQkq - 0 5',
-  playerColor: 'WHITE',
+  playerColor: 'BLACK',
   targetMove: 'O-O',
+  mistakeMove: 'a6',
+  blunderMove: 'h6',
+  solutionLine: ['O-O'],
   openingTitle: 'Giuoco Piano Multi-Move Sequence',
   acceptableMoves: [
     { move: 'd6', evalLoss: 0.04 },
@@ -264,10 +277,13 @@ export const MULTI_MOVE_CONTINUATION_MOCK_PUZZLE = {
 
 export const ENDGAME_MOCK_PUZZLE = {
   puzzleId: 'puzzle-endgame-1',
-  source: 'puzzle',
+  source: 'weakness',
   fen: '8/8/4k3/8/4K3/3P4/8/8 w - - 0 1',
   playerColor: 'WHITE',
   targetMove: 'Kd4',
+  mistakeMove: 'Ke3',
+  blunderMove: 'Kf4',
+  solutionLine: ['Kd4'],
   openingTitle: 'King and Pawn Endgame',
   acceptableMoves: [
     { move: 'd4', evalLoss: 0.0 },
@@ -285,10 +301,13 @@ export const ENDGAME_MOCK_PUZZLE = {
 
 export const DYNAMIC_EVAL_MOCK_PUZZLE = {
   puzzleId: 'puzzle-eval-1',
-  source: 'puzzle',
+  source: 'weakness',
   fen: 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3',
   playerColor: 'WHITE',
   targetMove: '',
+  mistakeMove: 'a3',
+  blunderMove: 'h4',
+  solutionLine: ['d4'],
   openingTitle: 'Dynamic Evaluation Practice',
   acceptableMoves: [],
   movesPlayed: [],
@@ -300,12 +319,20 @@ export const DYNAMIC_EVAL_MOCK_PUZZLE = {
   evalCp: 40,
 };
 
+export const WEAKNESS_BACKED_MOCK_PUZZLE = {
+  ...DEFAULT_MOCK_PUZZLE,
+  puzzleId: 'puzzle-weakness-1',
+  source: 'weakness',
+  openingTitle: 'Weakness Drill / Scotch Game',
+};
+
 export const MOCK_PUZZLES = [
   DEFAULT_MOCK_PUZZLE,
   BLACK_TO_MOVE_MOCK_PUZZLE,
   TACTICAL_SACRIFICE_MOCK_PUZZLE,
   MULTI_MOVE_CONTINUATION_MOCK_PUZZLE,
   ENDGAME_MOCK_PUZZLE,
+  WEAKNESS_BACKED_MOCK_PUZZLE,
 ];
 
 export interface JourneyMockHandle {
@@ -671,16 +698,37 @@ export async function setupJourneyApiMocks(
     });
   });
 
-  await page.route('**/api/puzzles/*/continuation*', async (route) => {
+  await page.route(/.*\/api\/puzzles\/.*continuation.*/, async (route) => {
     if (await applyRouteFault(route, currentContinuationFault)) {
       return;
+    }
+    const url = new URL(route.request().url());
+    const fen = url.searchParams.get('fen') || '';
+    let legalMove = 'd4';
+    if (fen) {
+      try {
+        const chess = new Chess(fen);
+        const legalMoves = chess.moves();
+        if (legalMoves.length > 0) {
+          legalMove = legalMoves.includes('exd4')
+            ? 'exd4'
+            : legalMoves.includes('Nf6')
+            ? 'Nf6'
+            : legalMoves.includes('Bc5')
+            ? 'Bc5'
+            : legalMoves[0];
+        }
+      } catch {
+        // fallback
+      }
     }
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
         source: 'ENGINE',
-        continuationMove: 'd4',
+        continuationMove: legalMove,
+        candidates: [{ move: legalMove, evalCp: 45, pv: [legalMove] }],
         explanation: 'Engine continuation',
         evalCp: 45,
       }),
@@ -696,7 +744,6 @@ export async function setupJourneyApiMocks(
   });
 
   await page.route('**/api/puzzles/attempt', async (route) => {
-    attemptCount = { solvedCount: attemptCount.solvedCount + 1, failedCount: attemptCount.failedCount };
     await route.fulfill({
       status: 200,
       contentType: 'application/json',

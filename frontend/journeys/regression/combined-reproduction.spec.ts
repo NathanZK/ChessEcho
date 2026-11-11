@@ -4,7 +4,7 @@ import {
   DEFAULT_MOCK_ACCOUNT,
   DEFAULT_MOCK_PUZZLE,
 } from '../fixtures/mockApi';
-import { STATE_ORACLES, ensureDiscoveryState } from '../model/practiceModel';
+import { STATE_ORACLES, ensureDiscoveryState, createInitialContext, DEFAULT_PRACTICE_FEN } from '../model/practiceModel';
 import { runCombinedBfsMonkey } from '../model/combinedRunner';
 
 /**
@@ -65,14 +65,24 @@ test.describe('Phase 5 Regression: Combined BFS-Monkey Deterministic Reproductio
 
     await page.goto('/#puzzles');
 
+    let context = createInitialContext();
+
     // [BFS Preamble Step 0] Ensure Discovery state
     await ensureDiscoveryState(page);
-    await STATE_ORACLES.DISCOVERY.assert(page, expect);
+    await STATE_ORACLES.DISCOVERY.assert(page, context, expect);
 
     // [BFS Preamble Step 1] SELECT_PUZZLE: DISCOVERY -> PRACTICE_IDLE
     const startPracticeButton = page.getByRole('button', { name: /Start Practice/i });
     await startPracticeButton.click();
-    await STATE_ORACLES.PRACTICE_IDLE.assert(page, expect);
+    context = {
+      ...context,
+      puzzleLoaded: true,
+      expectedFen: DEFAULT_PRACTICE_FEN,
+      expectedSideToMove: 'white',
+      expectedFailedCount: 0,
+      expectedSolvedCount: 0,
+    };
+    await STATE_ORACLES.PRACTICE_IDLE.assert(page, context, expect);
     await expect(page.getByText(/Failed: 0/i)).toBeVisible();
 
     // [BFS Preamble Step 2] SUBMIT_INACCURATE: PRACTICE_IDLE -> INCORRECT
@@ -83,7 +93,14 @@ test.describe('Phase 5 Regression: Combined BFS-Monkey Deterministic Reproductio
     await page.waitForTimeout(60);
     await a3.click();
 
-    await STATE_ORACLES.INCORRECT.assert(page, expect);
+    context = {
+      ...context,
+      attemptCount: 1,
+      expectedFailedCount: 1,
+      lastMoveSan: 'a3',
+      expectedFen: DEFAULT_PRACTICE_FEN,
+    };
+    await STATE_ORACLES.INCORRECT.assert(page, context, expect);
     await expect(page.getByText(/Failed: 1/i)).toBeVisible();
 
     // [Monkey Exploration Step 3] RETRY: INCORRECT -> PRACTICE_IDLE
@@ -93,7 +110,11 @@ test.describe('Phase 5 Regression: Combined BFS-Monkey Deterministic Reproductio
       await resetButton.click();
       await page.waitForTimeout(100);
     }
-    await STATE_ORACLES.PRACTICE_IDLE.assert(page, expect);
+    context = {
+      ...context,
+      expectedFen: DEFAULT_PRACTICE_FEN,
+    };
+    await STATE_ORACLES.PRACTICE_IDLE.assert(page, context, expect);
 
     // Verify baseline piece presence
     await expect(page.locator('[data-square="d2"]')).toBeVisible();
@@ -107,13 +128,24 @@ test.describe('Phase 5 Regression: Combined BFS-Monkey Deterministic Reproductio
     await page.waitForTimeout(60);
     await h4.click();
 
-    await STATE_ORACLES.HISTORICAL_MISTAKE.assert(page, expect);
+    context = {
+      ...context,
+      attemptCount: 2,
+      expectedFailedCount: 2,
+      lastMoveSan: 'h4',
+      expectedFen: DEFAULT_PRACTICE_FEN,
+    };
+    await STATE_ORACLES.HISTORICAL_MISTAKE.assert(page, context, expect);
     await expect(page.getByText(/Failed: 2/i)).toBeVisible();
 
     // [Monkey Exploration Step 5] BACK_TO_PUZZLES: HISTORICAL_MISTAKE -> DISCOVERY
     const backBtn = page.getByRole('button', { name: /Back to Puzzles/i });
     await expect(backBtn).toBeVisible();
     await backBtn.click();
-    await STATE_ORACLES.DISCOVERY.assert(page, expect);
+    context = {
+      ...context,
+      puzzleLoaded: false,
+    };
+    await STATE_ORACLES.DISCOVERY.assert(page, context, expect);
   });
 });

@@ -103,6 +103,12 @@ export function exploreAbstractStates<TState, TAction, TContext>(
           states: [...current.states, nextState],
           depth: current.depth + 1,
         });
+      } else {
+        paths.push({
+          targetState: nextState,
+          actions: [...current.actions, rule.action],
+          states: [...current.states, nextState],
+        });
       }
     }
   }

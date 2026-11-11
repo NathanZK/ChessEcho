@@ -123,6 +123,21 @@ describe('Campaign CLI Argument Parser (campaignConfig)', () => {
     expect(config.budget).toBe(1);
     expect(config.workers).toBe(1);
     expect(config.timeoutMs).toBe(1);
+    expect(config.fault).toBe(false);
+  });
+
+  it('parses fault injection flags correctly', () => {
+    const configDefault = parseCampaignArgs([]);
+    expect(configDefault.fault).toBe(false);
+
+    const configBare = parseCampaignArgs(['--fault']);
+    expect(configBare.fault).toBe(true);
+
+    const configExplicit = parseCampaignArgs(['--fault=true']);
+    expect(configExplicit.fault).toBe(true);
+
+    const configFalse = parseCampaignArgs(['--fault=false']);
+    expect(configFalse.fault).toBe(false);
   });
 });
 
@@ -250,5 +265,108 @@ describe('Campaign Metric Aggregator (campaignAggregator)', () => {
     const table = formatCampaignSummaryTable(summary);
     expect(table).toContain('States Visited:      None');
     expect(table).toContain('Total Runs:          0');
+  });
+
+  it('aggregates tri-partite fault metrics and reports VALIDATED, NOT_TRIGGERED, and FAILED statuses', () => {
+    // 1. NOT_TRIGGERED: fault attempted but triggered is 0
+    const runsNotTriggered: CampaignRunMetric[] = [
+      {
+        seed: 1,
+        success: true,
+        executedSteps: 10,
+        durationMs: 1000,
+        uniqueStates: new Set(['PRACTICE_IDLE']),
+        transitions: new Set(),
+        faultAttempted: 2,
+        faultTriggered: 0,
+        faultRecovered: 0,
+      },
+    ];
+    const summaryNotTriggered = aggregateCampaignMetrics(runsNotTriggered, 10, 'PRACTICE_IDLE');
+    expect(summaryNotTriggered.faultSummary?.status).toBe('NOT_TRIGGERED');
+    expect(summaryNotTriggered.faultSummary?.attempted).toBe(2);
+    expect(summaryNotTriggered.faultSummary?.triggered).toBe(0);
+    const tableNotTriggered = formatCampaignSummaryTable(summaryNotTriggered);
+    expect(tableNotTriggered).toContain('Fault Validation:    NOT_TRIGGERED (attempted: 2, triggered: 0, recovered: 0)');
+
+    // 2. VALIDATED: triggered > 0 and recovered >= triggered
+    const runsValidated: CampaignRunMetric[] = [
+      {
+        seed: 2,
+        success: true,
+        executedSteps: 15,
+        durationMs: 1500,
+        uniqueStates: new Set(['PRACTICE_IDLE', 'EVALUATION_ERROR', 'CORRECT']),
+        transitions: new Set(['PRACTICE_IDLE->EVALUATION_ERROR', 'EVALUATION_ERROR->CORRECT']),
+        faultAttempted: 1,
+        faultTriggered: 1,
+        faultRecovered: 1,
+      },
+    ];
+    const summaryValidated = aggregateCampaignMetrics(runsValidated, 15, 'PRACTICE_IDLE');
+    expect(summaryValidated.faultSummary?.status).toBe('VALIDATED');
+    expect(summaryValidated.faultSummary?.recovered).toBe(1);
+    const tableValidated = formatCampaignSummaryTable(summaryValidated);
+    expect(tableValidated).toContain('Fault Validation:    VALIDATED (attempted: 1, triggered: 1, recovered: 1)');
+
+    // 3. FAILED: triggered > recovered
+    const runsFailed: CampaignRunMetric[] = [
+      {
+        seed: 3,
+        success: false,
+        executedSteps: 12,
+        durationMs: 1200,
+        uniqueStates: new Set(['PRACTICE_IDLE', 'EVALUATION_ERROR']),
+        transitions: new Set(['PRACTICE_IDLE->EVALUATION_ERROR']),
+        faultAttempted: 2,
+        faultTriggered: 2,
+        faultRecovered: 1,
+      },
+    ];
+    const summaryFailed = aggregateCampaignMetrics(runsFailed, 12, 'PRACTICE_IDLE');
+    expect(summaryFailed.faultSummary?.status).toBe('FAILED');
+    const tableFailed = formatCampaignSummaryTable(summaryFailed);
+    expect(tableFailed).toContain('Fault Validation:    FAILED (attempted: 2, triggered: 2, recovered: 1)');
+  });
+
+  it('aggregates configuration transitions and scoped memory usage metrics', () => {
+    const runs: CampaignRunMetric[] = [
+      {
+        seed: 1,
+        success: true,
+        executedSteps: 10,
+        durationMs: 1000,
+        uniqueStates: new Set(['PRACTICE_IDLE']),
+        transitions: new Set(['PRACTICE_IDLE->CORRECT']),
+        configurationTransitions: new Set([
+          'PRACTICE_IDLE[true:false:0:false:false:false:false:false:0:null]->SUBMIT_OPTIMAL->CORRECT',
+        ]),
+        browserJsHeapBytes: 25 * 1024 * 1024,
+        testWorkerHeapBytes: 50 * 1024 * 1024,
+      },
+      {
+        seed: 2,
+        success: true,
+        executedSteps: 10,
+        durationMs: 1000,
+        uniqueStates: new Set(['CORRECT']),
+        transitions: new Set(['CORRECT->PRACTICE_IDLE']),
+        configurationTransitions: new Set([
+          'CORRECT[true:false:1:true:false:false:false:false:0:null]->NEXT_PUZZLE->PRACTICE_IDLE',
+        ]),
+        browserJsHeapBytes: 35 * 1024 * 1024,
+        testWorkerHeapBytes: 70 * 1024 * 1024,
+      },
+    ];
+
+    const summary = aggregateCampaignMetrics(runs, 10, 'PRACTICE_IDLE');
+    expect(summary.uniqueConfigurationTransitions).toHaveLength(2);
+    expect(summary.avgBrowserJsHeapBytes).toBe(30 * 1024 * 1024);
+    expect(summary.avgTestWorkerHeapBytes).toBe(60 * 1024 * 1024);
+
+    const table = formatCampaignSummaryTable(summary);
+    expect(table).toContain('Config Transitions:  2');
+    expect(table).toContain('Browser JS Heap:     30.00 MB (avg)');
+    expect(table).toContain('Test Worker Heap:    60.00 MB (avg)');
   });
 });
