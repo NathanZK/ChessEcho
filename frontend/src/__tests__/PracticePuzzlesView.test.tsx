@@ -36,6 +36,12 @@ vi.mock('react-chessboard', () => ({
       >
         Play e5
       </button>
+      <button
+        data-testid="play-d4-drop"
+        onClick={() => options?.onPieceDrop?.({ sourceSquare: 'd2', targetSquare: 'd4' })}
+      >
+        Play d4
+      </button>
     </div>
   ),
 }));
@@ -535,5 +541,92 @@ describe('PracticePuzzlesView', () => {
     // Assert evaluation resolved successfully and preserved original captured duration in comparison
     expect(await screen.findByText('Puzzle Solved! 🎉')).toBeInTheDocument();
     expect(screen.getByText(/Solved in [0-9.]+s vs\. original game thinking time of 0:45\./)).toBeInTheDocument();
+  });
+
+  it('resets board position and clears move history when navigating between puzzles sharing identical initialFen in weakness playlist', async () => {
+    const SAME_FEN = 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3';
+    const POST_D4_FEN = 'r1bqkbnr/pppp1ppp/2n5/4p3/3PP3/5N2/PPP2PPP/RNBQKB1R b KQkq - 0 3';
+
+    vi.mocked(api.fetchPuzzles).mockResolvedValueOnce([
+      {
+        puzzleId: 'puzzle-1',
+        fen: SAME_FEN,
+        playerColor: 'WHITE',
+        targetMove: 'd4',
+        openingTitle: 'Ruy Lopez / Italian Game',
+        acceptableMoves: [],
+        movesPlayed: [],
+        priority: 1,
+        timesReached: 1,
+        mistakeCount: 1,
+        mistakeRate: 1,
+        evalCp: 35,
+      },
+      {
+        puzzleId: 'puzzle-weakness-1',
+        fen: SAME_FEN,
+        playerColor: 'WHITE',
+        targetMove: 'd4',
+        openingTitle: 'Weakness Drill / Scotch Game',
+        acceptableMoves: [],
+        movesPlayed: [],
+        priority: 2,
+        timesReached: 2,
+        mistakeCount: 1,
+        mistakeRate: 1,
+        evalCp: 40,
+      },
+    ]);
+
+    render(
+      <PracticePuzzlesView
+        sessionStatus="authenticated"
+        sessionUserId="user-1"
+        activeAccountId="acc-1"
+        activeUsername="test_user"
+        sessionGatePromise={Promise.resolve(true)}
+        sessionGateOpen={true}
+        onNavigateTab={vi.fn()}
+      />
+    );
+
+    // Wait for puzzle-1 to load
+    await waitFor(() => {
+      expect(screen.getByText('Puzzle 1 of 2')).toBeInTheDocument();
+      expect(screen.getByTestId('mock-chessboard')).toHaveAttribute('data-position', SAME_FEN);
+    });
+
+    // Solve or make move d4 on puzzle-1
+    vi.mocked(api.evaluateMove).mockResolvedValueOnce({
+      fen: SAME_FEN,
+      move: 'd4',
+      bestMove: 'd4',
+      bestEvalCp: 40,
+      evalCp: 40,
+      evalLoss: 0,
+      maxEvalLoss: 0.5,
+      threshold: 0.5,
+      acceptable: true,
+    });
+
+    screen.getByTestId('play-d4-drop').click();
+
+    // Verify move is applied on board
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-chessboard')).toHaveAttribute('data-position', POST_D4_FEN);
+      expect(screen.getByTitle(/Previous Move/i)).not.toBeDisabled();
+    });
+
+    // Click Next Puzzle to navigate to puzzle-weakness-1 (which has identical SAME_FEN)
+    const nextBtn = screen.getAllByRole('button', { name: /Next Puzzle/i })[0];
+    nextBtn.click();
+
+    // Verify board resets to initial SAME_FEN, history index is 0, and Previous Move is disabled
+    await waitFor(() => {
+      expect(screen.getByText('Puzzle 2 of 2')).toBeInTheDocument();
+      expect(screen.getByText('Weakness Drill / Scotch Game')).toBeInTheDocument();
+      expect(screen.getByTestId('mock-chessboard')).toHaveAttribute('data-position', SAME_FEN);
+      expect(screen.getByTitle(/Previous Move/i)).toBeDisabled();
+    });
   });
 });

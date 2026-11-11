@@ -24,6 +24,7 @@ export interface ChessBoardHistorySnapshot {
 }
 
 interface ChessBoardAreaProps {
+  puzzleId?: string;
   initialDecisionEnabled?: boolean;
   isMoveEvaluationPending?: boolean;
   blindfoldMode?: boolean;
@@ -75,6 +76,7 @@ interface ChessBoardAreaProps {
 }
 
 export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
+  puzzleId,
   initialDecisionEnabled = true,
   isMoveEvaluationPending = false,
   blindfoldMode = false,
@@ -162,9 +164,9 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
     onAlternativeContinuationAppliedRef.current = onAlternativeContinuationApplied;
   });
 
-  // Reset board state whenever initialFen changes
+  // Reset board state whenever initialFen or puzzle identity changes
   const [fenNotification, setFenNotification] = useState<{ fen: string }>({ fen: initialFen });
-  const initialPositionKey = `${initialFen}\u0000${initialMoveHistoryStartFen ?? ''}\u0000${initialMoveHistorySan.join('\u0000')}`;
+  const initialPositionKey = `${puzzleId ?? ''}\u0000${initialFen}\u0000${initialMoveHistoryStartFen ?? ''}\u0000${initialMoveHistorySan.join('\u0000')}`;
   const [trackedInitialPositionKey, setTrackedInitialPositionKey] = useState(initialPositionKey);
   if (trackedInitialPositionKey !== initialPositionKey) {
     const initialGame = createChessGameAtPosition(
