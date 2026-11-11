@@ -1,36 +1,82 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# ChessProbe Frontend ♟️
 
-## Getting Started
+Next.js 16.4.1 single-page application and interactive chessboard interface for ChessProbe.
 
-First, run the development server:
+---
 
+## 1. Architecture & Tech Stack
+
+- **Framework**: Next.js 16.4.1 (App Router), React 19.2.8, TypeScript 5
+- **Styling**: Tailwind CSS 4
+- **Chess Engine & Board UI**: `react-chessboard`, `chess.js`
+- **Icons**: `lucide-react`
+- **Testing**:
+  - Unit & Component: Vitest 4, `@testing-library/react`
+  - End-to-End User Journeys: Playwright
+  - Exploratory Monkey Testing: Custom multi-seed transition campaign runner
+  - Mutation Testing: Stryker Mutator
+
+---
+
+## 2. Views & Features
+
+The main application route (`/`) serves 6 primary analytical views:
+1. **Practice Puzzles (`puzzles`)**: Interactive board drilling personalized recurring mistake positions, validating player moves against Stockfish evaluations, and supporting continuation lines and tactical hints.
+2. **Tactical Weaknesses (`weaknesses`)**: Categorized library of recurring opening mistakes, win/loss stats, historical game links, and on-demand Leiden community clustering (`ClusterType.STRUCTURAL` and `ClusterType.DYNAMIC`).
+3. **Long Decisions (`long-decisions`)**: Identifies positions where the player spent significant time thinking, with time-control filtering and interactive practice transitions.
+4. **Similar Positions (`similar-positions`)**: Dual-mode tactical search (`mode=STRUCTURAL` for pawn/piece placement vectors, `mode=DYNAMIC` for Stockfish continuation token retrieval via `DynamicInvertedIndex`).
+5. **Import Games (`import`)**: Asynchronous game ingestion from Chess.com PubAPI with live status polling and resilient checkpointing.
+6. **Game Analysis (`game-analysis`)**: Move-by-move engine review of individual games with mistake categorization and immediate retry drilldown.
+
+Additionally, **`ExplorePositionModal`** provides freeform position exploration from arbitrary FENs with live Stockfish move evaluation.
+
+---
+
+## 3. Getting Started
+
+### Prerequisites
+- Node.js 20+
+- Running ChessProbe backend (defaults to `http://localhost:8080/api`)
+
+### Installation & Development
 ```bash
+npm ci
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+```
+The app starts on **http://localhost:3000**.
+
+### Environment Variables
+Configure in `.env.local`:
+```bash
+NEXT_PUBLIC_API_URL=http://localhost:8080/api
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+---
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 4. Verification & Testing Commands
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+# Unit and component tests (Vitest)
+npm run test
 
-## Learn More
+# Type checking
+npx tsc --noEmit
 
-To learn more about Next.js, take a look at the following resources:
+# Linter (zero warnings policy)
+npm run lint
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+# Unused dependencies and export analysis
+npm run knip
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+# End-to-End user journeys (Playwright)
+npm run test:journeys
 
-## Deploy on Vercel
+# Exploratory monkey testing
+npm run test:monkey
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+# Multi-seed sustained exploration campaign runner
+npm run test:monkey:campaign -- --seeds=3 --budget=25
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+# Frontend mutation testing (Stryker)
+npm run test:mutation
+```

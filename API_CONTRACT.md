@@ -667,6 +667,7 @@ Searches personal-game positions similar to an arbitrary orthodox FEN input usin
 - `limit` (integer, optional, default `20`): Maximum number of results to return. Coerced into range `1..100`.
 - `depth` (integer, optional, default `8`): Stockfish search depth for dynamic analysis. Coerced into range `4..12`.
 - `multiPv` (integer, optional, default `1`): Number of principal variations computed per position. Coerced into range `1..5`.
+- `mode` (string, optional, default `STRUCTURAL`): Similarity retrieval mode. `STRUCTURAL` uses an in-memory inverted index over pawn structure and piece placement subvectors; `DYNAMIC` uses `DynamicInvertedIndex` over continuation tokens from depth-16 Stockfish MultiPV analysis under semaphore concurrency control.
 
 #### Authorization and Isolation
 - Authenticated callers must supply `accountId` matching their connected account (403 `FORBIDDEN` if accessing another user's account). Passing `username` returns 400 `ACCOUNT_SELECTION_REQUIRED` to prevent ownership bypass.
@@ -770,6 +771,299 @@ Returned when the specified `accountId` or guest `username` does not exist.
   ]
 }
 ```
+
+---
+
+## 11. Submit Puzzle Training Attempt
+
+Records a player's interactive training attempt on a puzzle position.
+
+### `POST /api/puzzles/attempt`
+
+#### Request Body
+```json
+{
+  "attemptId": "UUID (required)",
+  "puzzleId": "string (required)",
+  "mode": "string (required, e.g. PRACTICE)",
+  "elapsedMs": 4200,
+  "allowedMs": 10000,
+  "outcome": "SUCCESS | FAILED (required)",
+  "accountId": "UUID (optional)"
+}
+```
+
+#### Authorization & Access
+- Optional session and CSRF required.
+- If authenticated, attempts are privately linked to the caller's active user session.
+- If guest, attempt is recorded anonymously.
+
+#### `200 OK`
+```json
+{
+  "attemptId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "puzzleId": "puz-12345",
+  "mode": "PRACTICE",
+  "elapsedMs": 4200,
+  "allowedMs": 10000,
+  "outcome": "SUCCESS",
+  "recordedAt": "2026-11-11T20:00:00Z"
+}
+```
+
+---
+
+## 12. Position Training Progress
+
+Retrieves historical training attempt intervals and baseline progress metrics for a specific position and player color.
+
+### `GET /api/positions/{positionId}/progress`
+
+#### Query Parameters
+- `positionId` (UUID, path parameter, required): The target position UUID.
+- `accountId` (UUID, query parameter, required): The connected Chess.com account UUID.
+- `playerColor` (string, required): `WHITE` or `BLACK`.
+- `minEvalLoss` (double, required): Minimum evaluation loss threshold in pawns (e.g. `1.0`).
+
+#### Authorization
+- **Requires active authenticated session** (`AuthenticatedPrincipal`). Guests are not permitted (`401 UNAUTHENTICATED`).
+- Caller must own/connect the specified `accountId` (`403 FORBIDDEN` if accessing an unowned account). Missing `accountId` returns `400 ACCOUNT_SELECTION_REQUIRED`.
+
+#### `200 OK`
+```json
+{
+  "positionId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "baseline": {
+    "historicalOccurrences": 12,
+    "historicalMistakes": 8,
+    "historicalScoreRate": 0.33,
+    "averageEvalLoss": 1.45
+  },
+  "intervals": [
+    {
+      "intervalIndex": 0,
+      "startDate": "2026-01-01T00:00:00Z",
+      "endDate": "2026-01-31T23:59:59Z",
+      "attempts": 5,
+      "successCount": 4,
+      "successRate": 0.80
+    }
+  ],
+  "netScoreDelta": 0.47
+}
+```
+
+---
+
+## 13. Long Decisions
+
+Retrieves positions where the player spent an unusually long time thinking before moving, filtered by time control and move phase.
+
+### `GET /api/positions/long-decisions`
+
+#### Query Parameters
+- `accountId` (UUID, required): The connected account UUID.
+- `timeControl` (string, required): `RAPID`, `BLITZ`, `BULLET`, or `CLASSICAL`.
+- `minDurationSeconds` (integer, optional): Filter by minimum decision time in seconds.
+- `thresholdSeconds` (integer, optional): Alias for decision time threshold.
+- `severity` (string, optional): Filter by decision severity (`LOW`, `MEDIUM`, `HIGH`).
+- `page` (integer, optional, default `0`): Page index.
+- `size` (integer, optional, default `20`): Page size.
+
+At least one of `severity`, `minDurationSeconds`, or `thresholdSeconds` is required. If none are provided, returns `400 BAD_REQUEST`.
+
+#### Authorization
+- **Requires active authenticated session** (`AuthenticatedPrincipal`).
+
+#### `200 OK`
+```json
+{
+  "content": [
+    {
+      "occurrenceId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "gameId": "4ba95f64-5717-4562-b3fc-2c963f66afa7",
+      "plyNumber": 14,
+      "movePlayed": "Qd3",
+      "decisionTimeSeconds": 45,
+      "decisionSeverity": "HIGH",
+      "fen": "r1bqkb1r/pppp1ppp/2n5/4p3/3PP3/5N2/PPP2PPP/RNBQKB1R w KQkq - 1 5",
+      "playedAt": "2026-02-15T10:00:00Z",
+      "timeControl": "RAPID"
+    }
+  ],
+  "pageNumber": 0,
+  "pageSize": 20,
+  "totalElements": 1,
+  "totalPages": 1
+}
+```
+
+---
+
+## 14. Analyze Individual Game
+
+Triggers on-demand move-by-move Stockfish evaluation for an imported game.
+
+### `POST /api/games/{id}/analyze`
+
+#### Path Parameter
+- `id` (UUID, required): The internal `Game` UUID.
+
+#### Authorization & Capacity Throttling
+- Optional session cookie.
+- If concurrent engine analysis capacity is exceeded, returns **`429 Too Many Requests`** with a standard **`Retry-After: 5`** HTTP response header.
+
+#### `200 OK` (Analysis Complete)
+```json
+{
+  "gameId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "whiteUsername": "player1",
+  "blackUsername": "player2",
+  "timeControl": "RAPID",
+  "playedAt": "2026-02-15T10:00:00Z",
+  "result": "win",
+  "analysisStatus": "COMPLETE",
+  "plies": [
+    {
+      "plyNumber": 1,
+      "movePlayed": "e4",
+      "playerColor": "WHITE",
+      "preMoveFen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      "decisionTimeMs": 1200,
+      "decisionSeverity": "LOW",
+      "bestMove": "e4",
+      "bestEvalCp": 25,
+      "evalCp": 25,
+      "evalLoss": 0.0,
+      "weaknessSeverity": null
+    }
+  ]
+}
+```
+
+#### `429 Too Many Requests` (Capacity Exceeded)
+Returned when all engine analysis worker permits are currently in use.
+- **Header:** `Retry-After: 5`
+```json
+{
+  "gameId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "whiteUsername": "player1",
+  "blackUsername": "player2",
+  "timeControl": "RAPID",
+  "playedAt": "2026-02-15T10:00:00Z",
+  "result": "win",
+  "analysisStatus": "CAPACITY_EXCEEDED",
+  "plies": []
+}
+```
+
+---
+
+## 15. Thematic Recurring Weakness Discovery
+
+Discovers thematic weakness clusters across account positions using graph community detection (CWTS Leiden modularity optimization over a Relaxed Mutual Nearest Neighbor graph).
+
+### `POST /api/weaknesses/recurring/discover`
+Triggers an asynchronous discovery job.
+
+#### Request Body
+```json
+{
+  "accountId": "UUID (required if authenticated)",
+  "username": "string (optional for guest)",
+  "clusterType": "STRUCTURAL | DYNAMIC (optional, default STRUCTURAL)",
+  "minSize": 10
+}
+```
+
+#### `202 Accepted`
+```json
+{
+  "jobId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "accountId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "status": "QUEUED | RUNNING",
+  "clusterType": "STRUCTURAL",
+  "createdAt": "2026-11-11T20:00:00Z"
+}
+```
+
+### `GET /api/weaknesses/recurring/jobs/{jobId}`
+Polls discovery job progress.
+
+#### `200 OK`
+```json
+{
+  "jobId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "accountId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "status": "COMPLETED | RUNNING | FAILED | CANCELLED",
+  "clusterType": "STRUCTURAL",
+  "totalPositions": 150,
+  "clustersFound": 8,
+  "completedAt": "2026-11-11T20:02:15Z"
+}
+```
+
+### `POST /api/weaknesses/recurring/jobs/{jobId}/cancel`
+Cancels an in-flight discovery job.
+
+#### `200 OK`
+Returns `RecurringDiscoveryJobResponse` with `status: "CANCELLED"`.
+
+### `GET /api/weaknesses/recurring`
+Retrieves the latest discovered recurring weakness clusters for the selected account.
+
+#### Query Parameters
+- `accountId` (UUID, optional)
+- `username` (string, optional)
+
+#### `200 OK`
+```json
+[
+  {
+    "clusterId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    "clusterName": "Sicilian Defense: Scheveningen Structure",
+    "clusterType": "STRUCTURAL",
+    "memberCount": 14,
+    "representativeFen": "r1bqkb1r/pp1p1ppp/2n1pn2/8/3NP3/2N5/PPP2PPP/R1BQKB1R w KQkq - 1 6",
+    "averageEvalLoss": 1.25,
+    "mistakeCount": 18
+  }
+]
+```
+
+### `GET /api/weaknesses/recurring/{clusterId}/positions`
+Retrieves paginated member positions within a recurring weakness cluster.
+
+#### Query Parameters
+- `clusterId` (UUID, path parameter, required)
+- `page` (integer, default `0`)
+- `size` (integer, default `20`)
+- `playableOnly` (boolean, default `false`)
+- `accountId` (UUID, optional)
+
+#### `200 OK`
+```json
+{
+  "clusterId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "positions": [
+    {
+      "positionId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+      "fen": "r1bqkb1r/pp1p1ppp/2n1pn2/8/3NP3/2N5/PPP2PPP/R1BQKB1R w KQkq - 1 6",
+      "evalLoss": 1.25,
+      "mistakeCount": 4,
+      "timesReached": 6,
+      "acceptableMoves": [
+        { "move": "Be2", "evalLoss": 0.05 }
+      ]
+    }
+  ],
+  "pageNumber": 0,
+  "pageSize": 20,
+  "totalElements": 14,
+  "totalPages": 1
+}
+```
+
 ---
 
 ## Identity & Session (Issue #113)

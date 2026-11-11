@@ -78,8 +78,8 @@ Based on these empirical measurements, we recommend the following priorities for
    - Both Node.js heap and Chromium memory remained completely stable even past 100+ actions. Complex process-recycling mechanisms or worker-hopping architectures are currently unnecessary and would introduce unjustified complexity.
 2. **Standardize on `failures-only` Tracing**:
    - Tracing files grow at approximately ~65–70 KB per action step when screenshots and snapshots are active. Keeping `--trace=failures-only` as the permanent default keeps disk consumption negligible while ensuring that failing runs automatically capture actionable `.zip` traces.
-3. **Reconcile Exploration Exit Transition Invariant**:
-   - Create a dedicated follow-up issue to address the exploration exit desynchronization bug: either `EXIT_EXPLORATION` in `PracticePuzzlesView.tsx` should automatically advance to the next puzzle / reset the completion state, or `practiceModel.ts` should forbid move submission transitions following exploration exit until a new puzzle is loaded or reset is clicked.
+3. **Exploration Exit Transition Invariant Resolved (Issue #779)**:
+   - The exploration exit desynchronization bug identified in Section 3 was formally resolved in commit `236d627` (Issue #779). `PracticePuzzlesView.tsx` and `practiceModel.ts` were reconciled so that exiting line exploration (`EXIT_EXPLORATION`) restores the state machine cleanly to `CORRECT`, preserving the completed board state and move legality without timing out subsequent actions.
 4. **Campaign Integration in Local Quality Audits**:
    - Regular pull request CI workflows must remain fast by keeping monkey tests scoped to smoke tests (`npm run test:monkey`). Multi-seed campaigns (`npm run test:monkey:campaign -- --seeds=5 --budget=50`) should be run locally before major releases or scheduled as overnight soak tests.
 
@@ -123,4 +123,32 @@ To validate the hypothesis in Issue #773 (whether feedback-guided selection acce
 - **Retain `uniform` as the default exploration mode** in accordance with repository constraints to preserve non-prescriptive random testing.
 - **Provide `--strategy=least-used-transition`** for broad state-space coverage and maximum transition diversity in regression campaigns.
 - **Provide `--strategy=rare-state-bias`** as a high-velocity bug-hunting mode specifically suited for quickly driving campaigns into deep states and uncovered failure modes.
+
+---
+
+## 6. Operational CLI Usage & Strategy Configuration
+
+The multi-seed monkey campaign runner is driven through `scripts/run-campaign.mjs` via `npm run test:monkey:campaign`:
+
+```bash
+# Standard exploratory run (defaults: uniform strategy, budget 25, 3 seeds)
+npm run test:monkey:campaign
+
+# Broad transition exploration across 5 seeds
+npm run test:monkey:campaign -- --seeds=5 --budget=50 --strategy=least-used-transition
+
+# High-velocity bug hunting targeting deep/rare states
+npm run test:monkey:campaign -- --seeds=5 --budget=50 --strategy=rare-state-bias
+
+# Deterministic defect reproduction with failures-only tracing
+npm run test:monkey:campaign -- --seeds=4 --budget=100 --workers=1 --trace=failures-only
+```
+
+### CLI Flag Reference:
+- `--seeds=<n>`: Number of distinct deterministic seeds to execute (e.g. `3`).
+- `--budget=<n>`: Maximum action steps executed per seed (e.g. `50`).
+- `--strategy=<policy>`: Transition selection strategy (`uniform`, `least-used-transition`, `rare-state-bias`).
+- `--workers=<n>`: Number of parallel Playwright test workers (default: all available CPU cores).
+- `--trace=<mode>`: Playwright trace recording mode (`failures-only` [default], `on`, `off`).
+- `--startingState=<state>`: Starting state machine state (`DISCOVERY` [default] or `PRACTICE_IDLE`).
 

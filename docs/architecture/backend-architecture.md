@@ -16,8 +16,55 @@ the linked subsystem documents below retain deeper domain detail.
 | Persistence | Spring Data repositories persist users, identities, sessions, accounts, jobs, games, positions, occurrences, engine evaluations, training attempts/events, and human-move/corpus records in PostgreSQL. Flyway applies the pre-deployment baseline at `backend/src/main/resources/db/migration/V1__baseline.sql`; database constraints and triggers enforce invariants in addition to service checks. |
 | External/process | `ChessComClient` calls the Chess.com PubAPI. `StockfishService` manages the Stockfish subprocess for analysis and move evaluation. Corpus artifacts cross a filesystem boundary under the configured archive root. |
 
-The endpoint diagrams and tables below cover 33 method mappings across the 16
-current controllers, including routes behind profile/property conditions.
+The endpoint diagrams and tables below cover 42 method mappings across all 20
+current controllers (28 public user-facing mappings and 14 internal admin mappings),
+including routes behind profile/property conditions.
+
+### Decoupled Processing Lifecycles
+
+```mermaid
+%%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false, "diagramPadding": 120}}}%%
+flowchart TB
+    subgraph External ["External Services & Subprocesses"]
+        PubAPI["Chess.com PubAPI"]
+        Stockfish["Stockfish Engine<br/>(Subprocess)"]
+    end
+
+    subgraph DataStore ["Shared PostgreSQL Persistence"]
+        DB_Core[("Accounts, Games, Positions,<br/>Occurrences, Engine Analysis")]
+        DB_Clusters[("Cluster Snapshots,<br/>Clusters, Assignments")]
+        DB_User[("Users, Sessions, Credentials,<br/>Training Attempts & Events")]
+    end
+
+    subgraph Workflows ["Decoupled Processing Lifecycles"]
+        W1["1. Game Ingestion Pipeline<br/>Async Job: Archives to Replay,<br/>Occurrences & Candidate Eval"]
+        W2["2. Weakness & Practice Derivation<br/>Read-Time Join: Occurrences,<br/>Evaluations, Recency Decay"]
+        W3["3. Thematic Clustering & Discovery<br/>Async Snapshot Job:<br/>Relaxed MNN + CWTS Leiden"]
+        W4["4. Dynamic Similarity Retrieval<br/>Online Query: DynamicInvertedIndex<br/>+ Stockfish MultiPV Rerank"]
+        W5["5. Individual Game Analysis<br/>On-Demand: Ply Evaluation,<br/>Mistake Review (429 Throttled)"]
+        W6["6. Interactive Move Evaluation<br/>Online Query: Live Stockfish<br/>via MoveEvaluationService"]
+    end
+
+    PubAPI -.-> W1
+    W1 --> DB_Core
+    W1 -.-> Stockfish
+    Stockfish -.-> DB_Core
+
+    DB_Core --> W2
+    DB_User --> W2
+
+    DB_Core --> W3
+    W3 --> DB_Clusters
+
+    DB_Core --> W4
+    W4 -.-> Stockfish
+
+    DB_Core --> W5
+    W5 -.-> Stockfish
+    W5 --> DB_Core
+
+    W6 -.-> Stockfish
+```
 
 ## Request identity, account scope, and errors
 
@@ -26,12 +73,12 @@ current controllers, including routes behind profile/property conditions.
 flowchart TB
     Client[HTTP client] --> Filter[SessionAuthenticationFilter]
     Filter -->|"principal or absent;<br/>seed XSRF cookie"| MVC[Spring MVC]
-    MVC --> CSRF{Registered CSRF path and mutating method?}
-    CSRF -->|yes: compare cookie and header| Handler[Controller]
+    MVC --> CSRF{"Registered CSRF path<br/>and mutating method?"}
+    CSRF -->|"yes: compare cookie<br/>and header"| Handler[Controller]
     CSRF -->|no: continue| Handler
     Handler --> Resolver{Principal parameter}
-    Resolver -->|required and absent: 401| Errors[Exception mapping]
-    Resolver -->|optional or not requested| Logic[Service or direct controller logic]
+    Resolver -->|"required & absent: 401"| Errors[Exception mapping]
+    Resolver -->|"optional or not requested"| Logic["Service or direct<br/>controller logic"]
     Logic --> Errors
     Errors --> Response[HTTP response]
 ```
@@ -85,18 +132,18 @@ and ownership invariants.
 ```mermaid
 %%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false, "diagramPadding": 120}}}%%
 flowchart TB
-    Register[POST /api/register] --> Local[LocalCredentialService and session persistence]
+    Register[POST /api/register] --> Local["LocalCredentialService<br/>and session persistence"]
     Login[POST /api/login] --> Local
     Me[GET /api/me] --> Principal[Required principal resolver]
     Principal --> MeResponse[CurrentUserResponse]
-    Logout[POST /api/logout] --> Revoke[IdentitySessionService revokes optional cookie]
+    Logout[POST /api/logout] --> Revoke["IdentitySessionService<br/>revokes optional cookie"]
     Revoke --> Clear[Clear session cookie]
-    Dev[POST /api/dev/session] --> DevIdentity[Conditional DevIdentityProvider]
-    DevIdentity --> Session[IdentitySessionService and session cookie]
+    Dev[POST /api/dev/session] --> DevIdentity["Conditional<br/>DevIdentityProvider"]
+    DevIdentity --> Session["IdentitySessionService<br/>and session cookie"]
     List[GET /api/accounts] --> Accounts[AccountOwnershipService]
     Associate[POST /api/accounts] --> Accounts
-    Disconnect["DELETE /api/accounts/{accountId}/connection"] --> Accounts
-    Accounts --> AccountRows[(AccountConnectionRepository and ChessAccountRepository)]
+    Disconnect["DELETE /api/accounts/<br/>{accountId}/connection"] --> Accounts
+    Accounts --> AccountRows[("AccountConnectionRepository<br/>and ChessAccountRepository")]
 ```
 
 The dev-session route exists only under the `{dev, local}` profile allowlist
@@ -119,20 +166,20 @@ absent. The table records the response and access boundary for each route.
 ```mermaid
 %%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false}}}%%
 flowchart TB
-    Start[POST /api/games/import] --> Own[Resolve guest username or connected account ID]
+    Start[POST /api/games/import] --> Own["Resolve guest username<br/>or connected account ID"]
     Own --> Job[(Persist immutable AsyncJob)]
     Job --> Accepted[202 ImportJobResponse]
-    Job --> Worker["@Async worker claims job and reloads snapshot"]
-    Worker --> PubAPI[Chess.com archives and monthly games]
-    PubAPI --> Parse[Parse PGN and replay positions]
-    Parse --> UserData[(Game, Position, PositionOccurrence)]
+    Job --> Worker["@Async worker claims job<br/>and reloads snapshot"]
+    Worker --> PubAPI["Chess.com archives<br/>and monthly games"]
+    PubAPI --> Parse["Parse PGN and<br/>replay positions"]
+    Parse --> UserData[("Game, Position,<br/>PositionOccurrence")]
     UserData --> Qualify[Qualify affected positions]
     Qualify --> Stockfish[Stockfish subprocess]
-    Stockfish --> EngineData[(EngineAnalysis and MoveEvaluation)]
+    Stockfish --> EngineData[("EngineAnalysis and<br/>MoveEvaluation")]
     Worker --> Poll["GET /api/jobs/{id}"]
     Poll --> Status[JobStatusResponse]
-    Games[GET /api/games] --> GameService[GameService and account resolution]
-    GameService --> GameRows[(ChessAccount and GameRepository)]
+    Games[GET /api/games] --> GameService["GameService and<br/>account resolution"]
+    GameService --> GameRows[("ChessAccount and<br/>GameRepository")]
     GameRows --> GamePage[Page of GameDto]
 ```
 
@@ -166,6 +213,7 @@ default.
 | `POST /api/games/import` | `GameImportController`; optional principal and validated `ImportGamesRequest` JSON → `GameImportService.createImportJob` → connection check and persisted immutable `AsyncJob`; submits job ID to `@Async executeImportJob`. | 202 `ImportJobResponse`. | Optional session and CSRF. Guests select by username regardless of connection state; authenticated requests require an explicit currently connected account UUID. |
 | `GET /api/jobs/{id}` | `GameImportController`; UUID and optional principal → direct `AsyncJobRepository` load plus optional `ArchiveDerivedProcessingRepository` status lookup → `AccountOwnershipService.authorizeJob` → `JobStatusResponse`. | 200 `JobStatusResponse`. | Optional session; guests may poll guest-started jobs regardless of later connections, and authenticated callers only jobs they initiated. Missing or unresolved jobs map to 404. |
 | `GET /api/games` | `GameController`; optional query inputs `username`, `platform` (default `CHESS_COM`), `accountId`, Spring `Pageable`; optional principal → `GameService` → `AccountOwnershipService` and `GameRepository` → `Page<GameDto>`. | 200 page of `GameDto`. | Optional session. Authenticated reads select any existing account UUID; username-based guest reads ignore connection state. |
+| `POST /api/games/{id}/analyze` | `GameAnalysisController`; game UUID path value and optional principal → `GameAnalysisService.analyzeGame` → evaluates missing plies via Stockfish under `SimilarityConcurrencyManager` capacity throttle. | 200 `GameAnalysisResponseDto` (complete) or 429 with `Retry-After: 5` header (capacity exceeded). | Optional session and CSRF. |
 
 ## Weaknesses and puzzles
 
@@ -177,10 +225,10 @@ flowchart TB
     Occurrences[("PositionOccurrence<br/>and Game")] --> Weakness
     Evaluations[("EngineAnalysis<br/>and MoveEvaluation")] --> Weakness
     Events[("User-scoped<br/>scheduling events")] --> Schedule[Adaptive scheduling]
-    Weakness --> WeaknessResponse[200 WeaknessResponse list]
+    Weakness --> WeaknessResponse["200 WeaknessResponse<br/>list"]
     Weakness --> Puzzles[PuzzleResponse mapping]
     Schedule --> Puzzles
-    Puzzles --> PuzzleResponse[200 PuzzleResponse list]
+    Puzzles --> PuzzleResponse["200 PuzzleResponse<br/>list"]
 ```
 
 Weaknesses and puzzles are read-time interpretations of occurrences and engine
@@ -230,14 +278,14 @@ empirical provider, rating bands, candidate collection, and fallback behavior.
 ```mermaid
 %%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false, "diagramPadding": 120}}}%%
 flowchart TB
-    AttemptRoute[POST /api/puzzles/attempt] --> AttemptService[TrainingAttemptService]
+    AttemptRoute["POST /api/puzzles/<br/>attempt"] --> AttemptService[TrainingAttemptService]
     AttemptService --> AttemptRepo[(TrainingAttemptRepository)]
     AttemptRepo --> AttemptResponse[TrainingAttemptResponse]
-    EventRoute[POST /api/puzzles/events] --> EventController[PuzzleEventController direct path]
-    EventController --> EventRepos[(AccountOwnership, occurrence, user, event repositories)]
+    EventRoute["POST /api/puzzles/<br/>events"] --> EventController["PuzzleEventController<br/>direct path"]
+    EventController --> EventRepos[("AccountOwnership, occurrence,<br/>user, event repositories")]
     EventRepos --> EventResponse[202 accepted or 404]
-    ProgressRoute["GET /api/positions/{positionId}/progress"] --> Progress[ProgressService]
-    Progress --> ProgressRepos[(Selected connection, occurrences, user SOLVED events, engine analysis)]
+    ProgressRoute["GET /api/positions/<br/>{positionId}/progress"] --> Progress[ProgressService]
+    Progress --> ProgressRepos[("Selected connection, occurrences,<br/>user SOLVED events,<br/>engine analysis")]
     ProgressRepos --> ProgressResponse[ProgressResponse]
 ```
 
@@ -255,9 +303,60 @@ or persisted progress rows.
 |---|---|---|---|
 | `POST /api/puzzles/attempt` | `TrainingAttemptRequest` JSON and optional principal → `TrainingAttemptService` validates timing/outcome, optionally resolves `accountId`, then saves `TrainingAttemptRepository` and optional user reference. | 200 `TrainingAttemptResponse`. | Optional session; authenticated attempts must select an account, and account UUIDs require a session. No CSRF registration. |
 | `POST /api/puzzles/events` | `PuzzleEventRequest` JSON and required principal → direct `AccountOwnershipService.resolveSharedAccount`, `PositionOccurrenceRepository` lookup, `AppUserRepository` reference, then `PuzzleSchedulingEventRepository.save`. | 202 empty body; 404 if no matching occurrence. | Required session. No CSRF registration. |
+| `GET /api/puzzles/{positionId}/attempt-count` | `PuzzleEventController`; `positionId` UUID path variable, `accountId` UUID, `playerColor` query param, required principal → `PuzzleSubmissionService.count` queries submission attempt count for the account/position. | 200 `PuzzleAttemptCountResponse`. | Required session. GET is CSRF-exempt. |
 | `GET /api/positions/{positionId}/progress` | `ProgressController`; UUID path value, required `playerColor`, current connected `accountId`, positive finite `minEvalLoss`, and principal → `ProgressService` verifies the connection and reads that account's occurrences plus the user's SOLVED events and engine evaluation; classifies mistakes using the selected Weaknesses threshold and computes baseline/intervals in memory. | 200 `ProgressResponse`; 400 for missing selection or invalid threshold; 404 for unknown/unconnected account. | Required session and current connection. No derived progress row is written. |
 
+## Long decisions
+
+Isolates critical board positions where the player spent an unusually long time thinking before moving.
+
+| Method and path | Controller inputs and execution/data path | Response | Access boundary |
+|---|---|---|---|
+| `GET /api/positions/long-decisions` | `LongDecisionController`; `accountId`, `timeControl`, `severity`, `minDurationSeconds`, `thresholdSeconds`, `page` (default 0), `size` (default 20), required `AuthenticatedPrincipal` → `LongDecisionService.findLongDecisions` → queries `PositionOccurrence` joined with `Game` filtered by move duration. | 200 `LongDecisionPageResponse`; 400 if no filter threshold provided. | Required session and CSRF-exempt GET. |
+
+## Thematic recurring weaknesses
+
+Discovers thematic weakness clusters across account positions using graph community detection (CWTS Leiden modularity optimization over a Relaxed Mutual Nearest Neighbor graph). Operates as an independent offline asynchronous job lifecycle.
+
+| Method and path | Controller inputs and execution/data path | Response | Access boundary |
+|---|---|---|---|
+| `POST /api/weaknesses/recurring/discover` | `RecurringWeaknessController`; `RecurringDiscoveryRequest` JSON (`accountId`, optional `username`, `clusterType`, `minSize`) and optional principal → `RecurringWeaknessDiscoveryService.triggerDiscovery` → creates `AsyncJob` and starts background clustering. | 202 `RecurringDiscoveryJobResponse`. | Optional session; CSRF required. |
+| `GET /api/weaknesses/recurring/jobs/{jobId}` | `RecurringWeaknessController`; job UUID path value and optional principal → `RecurringWeaknessDiscoveryService.getJob` → polls discovery job status. | 200 `RecurringDiscoveryJobResponse`. | Optional session; authenticated callers authorized for their jobs. |
+| `POST /api/weaknesses/recurring/jobs/{jobId}/cancel` | `RecurringWeaknessController`; job UUID path value, optional `accountId`/`username`, optional principal → `RecurringWeaknessDiscoveryService.cancelJob` → transitions job to CANCELLED. | 200 `RecurringDiscoveryJobResponse`. | Optional session; CSRF required. |
+| `GET /api/weaknesses/recurring` | `RecurringWeaknessController`; optional `accountId`/`username` and optional principal → `RecurringWeaknessDiscoveryService.getLatestRecurringWeaknesses` → returns latest cluster snapshot summary. | 200 list of `RecurringWeaknessResponse`. | Optional session. |
+| `GET /api/weaknesses/recurring/{clusterId}/positions` | `RecurringWeaknessController`; cluster UUID path value, `page`, `size`, `playableOnly`, optional `accountId`, optional principal → `RecurringWeaknessDiscoveryService.getClusterMemberPositions` → paginated member positions. | 200 `ClusterMemberPositionsResponse`. | Optional session. |
+
+## Tactical position similarity
+
+Retrieves structurally or dynamically similar positions across historical games matching an input orthodox FEN.
+
+| Method and path | Controller inputs and execution/data path | Response | Access boundary |
+|---|---|---|---|
+| `GET /api/positions/similar` | `PositionSimilarityController`; `fen`, optional `accountId`/`username`, `limit` (default 20), `depth` (default 8), `multiPv` (default 1), `mode` (`STRUCTURAL` or `DYNAMIC`), optional principal → `PositionSimilarityService`. Mode `STRUCTURAL` uses an in-memory inverted index on pawn and piece placement subvectors; mode `DYNAMIC` uses `DynamicInvertedIndex` with depth-16 MultiPV Stockfish candidate reranking under `SimilarityConcurrencyManager`. | 200 `SimilarPositionsResponse`; 400 for invalid FEN or parameters. | Optional session. GET is CSRF-exempt. |
+
+## Stockfish Subprocess Lifecycle and Concurrency Model
+
+Stockfish execution in ChessProbe is decoupled across five distinct lifecycles:
+1. **Batch Background Analysis** (`EngineAnalysisService`): Invoked during game imports to analyze qualifying positions reached $\ge 5$ times. Executes depth-16 MultiPV-5 analysis sequentially with global deduplication across users.
+2. **Dynamic Similarity Evaluation** (`PositionSimilarityService`): Evaluates candidate positions for query-time similarity matching using `DynamicInvertedIndex` tokens. Guarded by `SimilarityConcurrencyManager`.
+3. **Interactive Move Evaluation** (`MoveEvaluationService`): Validates and scores user moves on-the-fly during freeform position exploration (`ExplorePositionModal`) and puzzle retry.
+4. **Continuation Opponent Moves** (`EngineMoveProvider`): Generates candidate continuation lines for puzzle practice when human move empirical distributions are absent or exhausted.
+5. **On-Demand Full Game Review** (`GameAnalysisService`): Evaluates all plies of an individual game upon user request (`POST /api/games/{id}/analyze`).
+
+### Process Execution & Recycling
+- **Subprocess Spawning**: Spawns the Stockfish executable declared in `chess.stockfish.path` via `ProcessBuilder`.
+- **UCI Protocol**: Interacts using standard UCI commands (`uci`, `isready`, `position fen <fen>`, `go depth <d> multipv <m>`).
+- **Watchdog Timeout**: Enforces a strict timeout on every engine invocation. If Stockfish fails to respond within the allotted window or produces malformed UCI output, the process is forcefully destroyed (`destroyForcibly()`) and recycled.
+
+### Concurrency Control & Throttling
+- **`SimilarityConcurrencyManager`**: Implements a bounded counting semaphore (configured via `chess.similarity.dynamic.max-concurrent-sessions`, default 2) protecting host CPU resources against thread saturation.
+- **Dynamic Retrieval Fallback**: When all permits are in use during a `GET /api/positions/similar?mode=DYNAMIC` request, `PositionSimilarityService` returns a clean response with `fallbackReason: "CAPACITY_EXCEEDED"` without blocking the HTTP worker thread.
+- **Game Analysis Throttling**: When all permits are in use during `POST /api/games/{id}/analyze`, `GameAnalysisController` returns HTTP **`429 Too Many Requests`** with a **`Retry-After: 5`** response header.
+
 ## Human-move distribution and corpus operations
+
+> [!NOTE]
+> **Admin API Boundary**: All endpoints under `/api/admin/human-move-distribution/*` (14 endpoint mappings across 6 controllers) are internal administration and benchmark infrastructure routes. They operate outside the user-facing session boundary and do not require user authentication or CSRF tokens. They are excluded from the public `API_CONTRACT.md`.
 
 ```mermaid
 %%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false}}}%%
@@ -265,7 +364,7 @@ flowchart TB
     BFS["POST /api/admin/<br/>human-move-distribution/<br/>bfs"] --> Traverse["HumanMoveBfsService<br/>and traversal"]
     Traverse --> ChessCom[Chess.com PubAPI]
     Traverse --> Global[("Global<br/>HumanMoveDistribution")]
-    Discover["POST /api/admin/<br/>human-move-distribution/<br/>population/discover"] --> DiscoverService[Population discovery]
+    Discover["POST /api/admin/<br/>human-move-distribution/<br/>population/discover"] --> DiscoverService["Population<br/>discovery"]
     DiscoverService --> ChessCom
     Finalize["POST /api/admin/<br/>human-move-distribution/<br/>finalize"] --> Finalizer["HumanMoveDistribution<br/>FinalizationService"]
     Finalizer --> Global
@@ -276,23 +375,23 @@ flowchart TB
 ```mermaid
 %%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false}}}%%
 flowchart TB
-    Create[POST /api/admin/human-move-distribution/corpus-runs] --> RunService[HumanMoveCorpusService]
-    RunService --> RunTraversal[Shared traversal and qualification]
-    RunTraversal --> RunRows[(Run, games, observations)]
-    List[GET /api/admin/human-move-distribution/corpus-runs] --> RunReads[HumanMoveCorpusService reads]
-    Detail["GET /api/admin/human-move-distribution/corpus-runs/{runId}"] --> RunReads
+    Create["POST /api/admin/<br/>human-move-distribution/<br/>corpus-runs"] --> RunService[HumanMoveCorpusService]
+    RunService --> RunTraversal["Shared traversal<br/>and qualification"]
+    RunTraversal --> RunRows[("Run, games,<br/>observations")]
+    List["GET /api/admin/<br/>human-move-distribution/<br/>corpus-runs"] --> RunReads["HumanMoveCorpusService<br/>reads"]
+    Detail["GET /api/admin/<br/>human-move-distribution/<br/>corpus-runs/{runId}"] --> RunReads
     RunReads --> RunRows
-    Checkpoint["POST /api/admin/human-move-distribution/corpus-runs/{runId}/checkpoints"] --> CheckpointService[Read-only checkpoint calculation]
+    Checkpoint["POST /api/admin/<br/>human-move-distribution/<br/>corpus-runs/{runId}/<br/>checkpoints"] --> CheckpointService["Read-only checkpoint<br/>calculation"]
     CheckpointService --> RunRows
 ```
 
 ```mermaid
 %%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false}}}%%
 flowchart TB
-    Materialize[POST /api/admin/human-move-distribution/corpus-projections/materialize] --> Materializer[HumanMoveCorpusMaterializationService]
-    Finalize["POST /api/admin/human-move-distribution/corpus-projections/{projectionId}/finalize"] --> ProjectionFinalizer[Projection finalization service]
-    Compare[POST /api/admin/human-move-distribution/corpus-projections/compare] --> Comparator[HumanMoveCorpusCrossCohortService]
-    Materializer --> ProjectionData[(Corpus and projection repositories)]
+    Materialize["POST /api/admin/<br/>human-move-distribution/<br/>corpus-projections/<br/>materialize"] --> Materializer["HumanMoveCorpus<br/>MaterializationService"]
+    Finalize["POST /api/admin/<br/>human-move-distribution/<br/>corpus-projections/<br/>{projectionId}/finalize"] --> ProjectionFinalizer["Projection finalization<br/>service"]
+    Compare["POST /api/admin/<br/>human-move-distribution/<br/>corpus-projections/<br/>compare"] --> Comparator["HumanMoveCorpus<br/>CrossCohortService"]
+    Materializer --> ProjectionData[("Corpus and projection<br/>repositories")]
     ProjectionFinalizer --> ProjectionData
     Comparator --> ProjectionData
 ```
@@ -300,12 +399,12 @@ flowchart TB
 ```mermaid
 %%{init: {"htmlLabels": false, "flowchart": {"htmlLabels": false}}}%%
 flowchart TB
-    Export[POST /api/admin/human-move-distribution/corpus-artifacts/export] --> ArtifactService[HumanMoveCorpusArtifactService]
-    Download["GET /api/admin/human-move-distribution/corpus-artifacts/{contentDigest}"] --> ArtifactService
-    Verify[POST /api/admin/human-move-distribution/corpus-artifacts/verify] --> ArtifactService
-    Import[POST /api/admin/human-move-distribution/corpus-artifacts/import] --> ImportService[HumanMoveCorpusImportService]
-    Purge["POST /api/admin/human-move-distribution/corpus-artifacts/{runId}/purge"] --> PurgeService[HumanMoveCorpusPurgeService]
-    ArtifactService --> Files[(Configured archive filesystem)]
+    Export["POST /api/admin/<br/>human-move-distribution/<br/>corpus-artifacts/<br/>export"] --> ArtifactService["HumanMoveCorpus<br/>ArtifactService"]
+    Download["GET /api/admin/<br/>human-move-distribution/<br/>corpus-artifacts/<br/>{contentDigest}"] --> ArtifactService
+    Verify["POST /api/admin/<br/>human-move-distribution/<br/>corpus-artifacts/<br/>verify"] --> ArtifactService
+    Import["POST /api/admin/<br/>human-move-distribution/<br/>corpus-artifacts/<br/>import"] --> ImportService["HumanMoveCorpus<br/>ImportService"]
+    Purge["POST /api/admin/<br/>human-move-distribution/<br/>corpus-artifacts/<br/>{runId}/purge"] --> PurgeService["HumanMoveCorpus<br/>PurgeService"]
+    ArtifactService --> Files[("Configured archive<br/>filesystem")]
     ImportService --> Corpus[(Corpus repositories)]
     PurgeService --> Corpus
     PurgeService --> Files

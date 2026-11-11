@@ -48,14 +48,14 @@ This document serves as the durable evidence repository for opt-in mutation test
 
 ## 2. Detailed Class Audits
 
-### 2.1 `com.chessecho.controller.GameImportController`
+### 2.1 `com.chessprobe.controller.GameImportController`
 
-- **Test Suite**: `com.chessecho.controller.GameImportControllerTest`
+- **Test Suite**: `com.chessprobe.controller.GameImportControllerTest`
 - **Execution Command**:
   ```bash
   ./gradlew pitest \
-    -Ppitest.targetClasses="com.chessecho.controller.GameImportController*" \
-    -Ppitest.targetTests="com.chessecho.controller.GameImportControllerTest*"
+    -Ppitest.targetClasses="com.chessprobe.controller.GameImportController*" \
+    -Ppitest.targetTests="com.chessprobe.controller.GameImportControllerTest*"
   ```
 - **Results**: 52 generated, 43 killed (83%), 4 survived, 5 no coverage; 91% test strength.
 - **Meaningful Gaps Killed**:
@@ -68,14 +68,14 @@ This document serves as the durable evidence repository for opt-in mutation test
   - Line 155 (`EmptyObjectReturnValsMutator`): optional fallback when repository is null.
   - Lines 80, 84, 87 (x4) in `getJobStatus()`: optional `accountOwnershipService != null` block left null in WebMvc slice test.
 
-### 2.2 `com.chessecho.dto.ImportGamesRequest`
+### 2.2 `com.chessprobe.dto.ImportGamesRequest`
 
-- **Test Suite**: `com.chessecho.controller.GameImportControllerTest`
+- **Test Suite**: `com.chessprobe.controller.GameImportControllerTest`
 - **Execution Command**:
   ```bash
   ./gradlew pitest \
-    -Ppitest.targetClasses="com.chessecho.dto.ImportGamesRequest*" \
-    -Ppitest.targetTests="com.chessecho.controller.GameImportControllerTest*"
+    -Ppitest.targetClasses="com.chessprobe.dto.ImportGamesRequest*" \
+    -Ppitest.targetTests="com.chessprobe.controller.GameImportControllerTest*"
   ```
 - **Results**: 41 generated, 18 killed (44%), 2 survived, 21 no coverage; 90% test strength.
 - **Meaningful Gaps Killed**:
@@ -85,14 +85,14 @@ This document serves as the durable evidence repository for opt-in mutation test
 - **Uncovered Branches**:
   - Normalization helper methods (`canonicalTimeControls`, `normalizedPlatform`, `normalizedUsername`) unreferenced directly within slice test scope.
 
-### 2.3 `com.chessecho.service.GameParserService`
+### 2.3 `com.chessprobe.service.GameParserService`
 
-- **Test Suite**: `com.chessecho.service.GameParserServiceTest`
+- **Test Suite**: `com.chessprobe.service.GameParserServiceTest`
 - **Execution Command**:
   ```bash
   ./gradlew pitest \
-    -Ppitest.targetClasses="com.chessecho.service.GameParserService*" \
-    -Ppitest.targetTests="com.chessecho.service.GameParserServiceTest*"
+    -Ppitest.targetClasses="com.chessprobe.service.GameParserService*" \
+    -Ppitest.targetTests="com.chessprobe.service.GameParserServiceTest*"
   ```
 - **Results**: 171 generated, 47 killed (27%), 35 survived, 89 no coverage; 57% test strength.
 - **Meaningful Gaps Killed**:
@@ -102,14 +102,14 @@ This document serves as the durable evidence repository for opt-in mutation test
   - Inlined Kotlin standard library bytecode comparator branches (`Comparisons.kt`) in deterministic tie-breakers.
   - Secondary comparison branches in heuristic time parsing (`parseClockMs`).
 
-### 2.4 `com.chessecho.service.GameImportService`
+### 2.4 `com.chessprobe.service.GameImportService`
 
-- **Test Suite**: `com.chessecho.integration.service.GameImportServiceAttributionIntegrationTest`
+- **Test Suite**: `com.chessprobe.integration.service.GameImportServiceAttributionIntegrationTest`
 - **Execution Command**:
   ```bash
   ./gradlew pitest \
-    -Ppitest.targetClasses="com.chessecho.service.GameImportService*" \
-    -Ppitest.targetTests="com.chessecho.integration.service.GameImportServiceAttributionIntegrationTest*"
+    -Ppitest.targetClasses="com.chessprobe.service.GameImportService*" \
+    -Ppitest.targetTests="com.chessprobe.integration.service.GameImportServiceAttributionIntegrationTest*"
   ```
 - **Results**: 323 generated, 117 killed (36%), 119 survived, 87 no coverage; 50% test strength.
 - **Meaningful Gaps Killed**:
@@ -121,14 +121,14 @@ This document serves as the durable evidence repository for opt-in mutation test
   - Loop and worker lease timeouts (16 mutations timed out and counted as killed).
   - Unexercised crash recovery sweep branches (`sweepStaleImportJobs`).
 
-### 2.5 `com.chessecho.service.AccountOwnershipService`
+### 2.5 `com.chessprobe.service.AccountOwnershipService`
 
-- **Test Suite**: `com.chessecho.service.AccountOwnershipServiceTest`
+- **Test Suite**: `com.chessprobe.service.AccountOwnershipServiceTest`
 - **Execution Command**:
   ```bash
   ./gradlew pitest \
-    -Ppitest.targetClasses="com.chessecho.service.AccountOwnershipService*" \
-    -Ppitest.targetTests="com.chessecho.service.AccountOwnershipServiceTest*"
+    -Ppitest.targetClasses="com.chessprobe.service.AccountOwnershipService*" \
+    -Ppitest.targetTests="com.chessprobe.service.AccountOwnershipServiceTest*"
   ```
 - **Results**: 74 generated, 47 killed (64%), 8 survived, 19 no coverage; 85% test strength.
 - **Meaningful Gaps Killed**:
@@ -137,15 +137,15 @@ This document serves as the durable evidence repository for opt-in mutation test
 - **Accepted Surviving Mutants**:
   - Void method calls (e.g. `connectionRepository.flush()`) without observable return differences.
 
-### 2.6 `com.chessecho.service.WeaknessPriorityPolicy` (PR [#555](https://github.com/NathanZK/ChessEcho/pull/555))
+### 2.6 `com.chessprobe.service.WeaknessPriorityPolicy` (PR [#555](https://github.com/NathanZK/ChessEcho/pull/555))
 
 - **Issue / PR**: Issue [#553](https://github.com/NathanZK/ChessEcho/issues/553), PR [#555](https://github.com/NathanZK/ChessEcho/pull/555)
-- **Test Suite**: `com.chessecho.service.WeaknessPriorityPolicyTest`
+- **Test Suite**: `com.chessprobe.service.WeaknessPriorityPolicyTest`
 - **Execution Command**:
   ```bash
   ./gradlew pitest \
-    -Ppitest.targetClasses="com.chessecho.service.WeaknessPriorityPolicy*" \
-    -Ppitest.targetTests="com.chessecho.service.WeaknessPriorityPolicyTest*"
+    -Ppitest.targetClasses="com.chessprobe.service.WeaknessPriorityPolicy*" \
+    -Ppitest.targetTests="com.chessprobe.service.WeaknessPriorityPolicyTest*"
   ```
 - **Results**: 57 generated, 51 killed (89%), 3 survived (5%), 3 no coverage (5%); 94% test strength.
 - **Meaningful Gaps Killed**:
@@ -156,15 +156,15 @@ This document serves as the durable evidence repository for opt-in mutation test
 - **Uncovered Branches**:
   - Defensive fallback return paths in internal getters.
 
-### 2.7 `com.chessecho.service.GameOutcomeNormalizer` (PR [#555](https://github.com/NathanZK/ChessEcho/pull/555))
+### 2.7 `com.chessprobe.service.GameOutcomeNormalizer` (PR [#555](https://github.com/NathanZK/ChessEcho/pull/555))
 
 - **Issue / PR**: Issue [#553](https://github.com/NathanZK/ChessEcho/issues/553), PR [#555](https://github.com/NathanZK/ChessEcho/pull/555)
-- **Test Suite**: `com.chessecho.service.GameOutcomeNormalizerTest`
+- **Test Suite**: `com.chessprobe.service.GameOutcomeNormalizerTest`
 - **Execution Command**:
   ```bash
   ./gradlew pitest \
-    -Ppitest.targetClasses="com.chessecho.service.GameOutcomeNormalizer*" \
-    -Ppitest.targetTests="com.chessecho.service.GameOutcomeNormalizerTest*"
+    -Ppitest.targetClasses="com.chessprobe.service.GameOutcomeNormalizer*" \
+    -Ppitest.targetTests="com.chessprobe.service.GameOutcomeNormalizerTest*"
   ```
 - **Results**: 46 generated, 45 killed (98%), 1 survived (2%), 0 no coverage (0%); 98% test strength.
 - **Meaningful Gaps Killed**:
@@ -174,15 +174,15 @@ This document serves as the durable evidence repository for opt-in mutation test
   - 1 diagnostic logging output mutant.
 - **Uncovered Branches**: None.
 
-### 2.8 `com.chessecho.service.PgnHeaderTagReader` (PR [#555](https://github.com/NathanZK/ChessEcho/pull/555))
+### 2.8 `com.chessprobe.service.PgnHeaderTagReader` (PR [#555](https://github.com/NathanZK/ChessEcho/pull/555))
 
 - **Issue / PR**: Issue [#553](https://github.com/NathanZK/ChessEcho/issues/553), PR [#555](https://github.com/NathanZK/ChessEcho/pull/555)
-- **Test Suite**: `com.chessecho.service.PgnHeaderTagReaderTest`
+- **Test Suite**: `com.chessprobe.service.PgnHeaderTagReaderTest`
 - **Execution Command**:
   ```bash
   ./gradlew pitest \
-    -Ppitest.targetClasses="com.chessecho.service.PgnHeaderTagReader*" \
-    -Ppitest.targetTests="com.chessecho.service.PgnHeaderTagReaderTest*"
+    -Ppitest.targetClasses="com.chessprobe.service.PgnHeaderTagReader*" \
+    -Ppitest.targetTests="com.chessprobe.service.PgnHeaderTagReaderTest*"
   ```
 - **Results**: 102 generated, 85 killed (83%), 15 survived (15%), 2 no coverage (2%); 85% test strength.
 - **Meaningful Gaps Killed**:
@@ -193,15 +193,15 @@ This document serves as the durable evidence repository for opt-in mutation test
 - **Uncovered Branches**:
   - Auxiliary stream reset error paths.
 
-### 2.9 `com.chessecho.service.PracticalEvidenceService` (PR [#555](https://github.com/NathanZK/ChessEcho/pull/555))
+### 2.9 `com.chessprobe.service.PracticalEvidenceService` (PR [#555](https://github.com/NathanZK/ChessEcho/pull/555))
 
 - **Issue / PR**: Issue [#553](https://github.com/NathanZK/ChessEcho/issues/553), PR [#555](https://github.com/NathanZK/ChessEcho/pull/555)
-- **Test Suite**: `com.chessecho.service.PracticalEvidenceServiceTest`
+- **Test Suite**: `com.chessprobe.service.PracticalEvidenceServiceTest`
 - **Execution Command**:
   ```bash
   ./gradlew pitest \
-    -Ppitest.targetClasses="com.chessecho.service.PracticalEvidenceService*" \
-    -Ppitest.targetTests="com.chessecho.service.PracticalEvidenceServiceTest*"
+    -Ppitest.targetClasses="com.chessprobe.service.PracticalEvidenceService*" \
+    -Ppitest.targetTests="com.chessprobe.service.PracticalEvidenceServiceTest*"
   ```
 - **Results**: 41 generated, 35 killed (85%), 5 survived (12%), 1 no coverage (2%); 88% test strength.
 - **Meaningful Gaps Killed**:
@@ -212,15 +212,15 @@ This document serves as the durable evidence repository for opt-in mutation test
 - **Uncovered Branches**:
   - Null-safety checks on optional parameters.
 
-### 2.10 `com.chessecho.service.WeaknessCalculationService` (including `WeaknessEvaluationLoss`) (PR [#555](https://github.com/NathanZK/ChessEcho/pull/555))
+### 2.10 `com.chessprobe.service.WeaknessCalculationService` (including `WeaknessEvaluationLoss`) (PR [#555](https://github.com/NathanZK/ChessEcho/pull/555))
 
 - **Issue / PR**: Issue [#553](https://github.com/NathanZK/ChessEcho/issues/553), PR [#555](https://github.com/NathanZK/ChessEcho/pull/555)
-- **Test Suite**: `com.chessecho.service.WeaknessCalculationServiceTest`, `com.chessecho.service.WeaknessEvaluationLossKtTest`
+- **Test Suite**: `com.chessprobe.service.WeaknessCalculationServiceTest`, `com.chessprobe.service.WeaknessEvaluationLossKtTest`
 - **Execution Command**:
   ```bash
   ./gradlew pitest \
-    -Ppitest.targetClasses="com.chessecho.service.WeaknessCalculationService*,com.chessecho.service.WeaknessEvaluationLoss*" \
-    -Ppitest.targetTests="com.chessecho.service.WeaknessCalculationServiceTest*,com.chessecho.service.WeaknessEvaluationLossKtTest*"
+    -Ppitest.targetClasses="com.chessprobe.service.WeaknessCalculationService*,com.chessprobe.service.WeaknessEvaluationLoss*" \
+    -Ppitest.targetTests="com.chessprobe.service.WeaknessCalculationServiceTest*,com.chessprobe.service.WeaknessEvaluationLossKtTest*"
   ```
 - **Results**: 245 generated, 179 killed (73%), 51 survived (21%), 15 no coverage (6%); 78% test strength.
 - **Meaningful Gaps Killed**:
@@ -235,15 +235,15 @@ This document serves as the durable evidence repository for opt-in mutation test
 - **Uncovered Branches**:
   - Optional fallback paths when auxiliary repositories are null.
 
-### 2.11 `com.chessecho.service.MoveEvaluationService` (PR [#558](https://github.com/NathanZK/ChessEcho/pull/558))
+### 2.11 `com.chessprobe.service.MoveEvaluationService` (PR [#558](https://github.com/NathanZK/ChessEcho/pull/558))
 
 - **Issue / PR**: Issue [#557](https://github.com/NathanZK/ChessEcho/issues/557), PR [#558](https://github.com/NathanZK/ChessEcho/pull/558)
-- **Test Suite**: `com.chessecho.service.MoveEvaluationServiceTest`
+- **Test Suite**: `com.chessprobe.service.MoveEvaluationServiceTest`
 - **Execution Command**:
   ```bash
   ./gradlew pitest \
-    -Ppitest.targetClasses="com.chessecho.service.MoveEvaluationService*" \
-    -Ppitest.targetTests="com.chessecho.service.MoveEvaluationServiceTest*"
+    -Ppitest.targetClasses="com.chessprobe.service.MoveEvaluationService*" \
+    -Ppitest.targetTests="com.chessprobe.service.MoveEvaluationServiceTest*"
   ```
 - **Results**: 30 generated, 29 killed (97%), 1 survived (3%), 0 no coverage (0%); 97% test strength.
 - **Meaningful Gaps Killed**:
@@ -258,15 +258,15 @@ This document serves as the durable evidence repository for opt-in mutation test
   - 1 boundary condition mutation on Line 98 (`ConditionalsBoundaryMutator` changing `score.mate > 0` to `>= 0`) accepted as an equivalent mutant on non-zero domain values (Taxonomy Category 5), since chess engine mate distances are non-zero integers (+1, +2, -1, -2).
 - **Uncovered Branches**: None (0 no coverage).
 
-### 2.12 `com.chessecho.service.HumanMoveBfsTraversal` (PR [#567](https://github.com/NathanZK/ChessEcho/pull/567))
+### 2.12 `com.chessprobe.service.HumanMoveBfsTraversal` (PR [#567](https://github.com/NathanZK/ChessEcho/pull/567))
 
 - **Issue / PR**: Issue [#563](https://github.com/NathanZK/ChessEcho/issues/563), PR [#567](https://github.com/NathanZK/ChessEcho/pull/567)
-- **Test Suite**: `com.chessecho.service.HumanMoveBfsServiceTest`
+- **Test Suite**: `com.chessprobe.service.HumanMoveBfsServiceTest`
 - **Execution Command**:
   ```bash
   ./gradlew pitest \
-    -Ppitest.targetClasses="com.chessecho.service.HumanMoveBfsTraversal*" \
-    -Ppitest.targetTests="com.chessecho.service.HumanMoveBfsServiceTest*"
+    -Ppitest.targetClasses="com.chessprobe.service.HumanMoveBfsTraversal*" \
+    -Ppitest.targetTests="com.chessprobe.service.HumanMoveBfsServiceTest*"
   ```
 - **Results**: 136 generated, 122 killed (90%), 14 survived (10%), 0 no coverage (0%); 90% test strength (96.8% excluding compiler null-checks).
 - **Meaningful Gaps Killed**:
@@ -281,15 +281,15 @@ This document serves as the durable evidence repository for opt-in mutation test
   - 1 redundant `chesslibGame.loadMoveText()` call where `PgnHolder.loadPgn()` already pre-loads move text.
 - **Uncovered Branches**: None (0 no coverage; line coverage 99%).
 
-### 2.13 `com.chessecho.service.EvaluationEvidenceSnapshotService` (PR [#568](https://github.com/NathanZK/ChessEcho/pull/568))
+### 2.13 `com.chessprobe.service.EvaluationEvidenceSnapshotService` (PR [#568](https://github.com/NathanZK/ChessEcho/pull/568))
 
 - **Issue / PR**: Issue [#562](https://github.com/NathanZK/ChessEcho/issues/562), PR [#568](https://github.com/NathanZK/ChessEcho/pull/568)
-- **Test Suite**: `com.chessecho.service.EvaluationEvidenceSnapshotTest`
+- **Test Suite**: `com.chessprobe.service.EvaluationEvidenceSnapshotTest`
 - **Execution Command**:
   ```bash
   ./gradlew pitest \
-    -Ppitest.targetClasses="com.chessecho.service.EvaluationEvidenceSnapshotService*" \
-    -Ppitest.targetTests="com.chessecho.service.EvaluationEvidenceSnapshotTest*"
+    -Ppitest.targetClasses="com.chessprobe.service.EvaluationEvidenceSnapshotService*" \
+    -Ppitest.targetTests="com.chessprobe.service.EvaluationEvidenceSnapshotTest*"
   ```
 - **Results**: 346 generated, 126 killed (36%), 23 survived (7%), 197 no coverage (57%); 85% test strength.
 - **Meaningful Gaps Killed**:
@@ -303,15 +303,15 @@ This document serves as the durable evidence repository for opt-in mutation test
 - **Uncovered Branches**:
   - 197 mutants in database persistence methods (`persist`, `readVerifiedPersisted`, `reconstructPersisted`, `loadRows`, etc.) requiring PostgreSQL Testcontainers are deferred to `EvaluationEvidenceSnapshotPostgresIntegrationTest`.
 
-### 2.14 `com.chessecho.service.continuation.EngineMoveProvider` (PR [#564](https://github.com/NathanZK/ChessEcho/pull/564))
+### 2.14 `com.chessprobe.service.continuation.EngineMoveProvider` (PR [#564](https://github.com/NathanZK/ChessEcho/pull/564))
 
 - **Issue / PR**: Issue [#559](https://github.com/NathanZK/ChessEcho/issues/559), PR [#564](https://github.com/NathanZK/ChessEcho/pull/564)
-- **Test Suite**: `com.chessecho.service.continuation.EngineMoveProviderTest`
+- **Test Suite**: `com.chessprobe.service.continuation.EngineMoveProviderTest`
 - **Execution Command**:
   ```bash
   ./gradlew pitest \
-    -Ppitest.targetClasses="com.chessecho.service.continuation.EngineMoveProvider*" \
-    -Ppitest.targetTests="com.chessecho.service.continuation.EngineMoveProviderTest*"
+    -Ppitest.targetClasses="com.chessprobe.service.continuation.EngineMoveProvider*" \
+    -Ppitest.targetTests="com.chessprobe.service.continuation.EngineMoveProviderTest*"
   ```
 - **Results**: 29 generated, 29 killed (100%), 0 survived (0%), 0 no coverage (0%); 100% test strength.
 - **Meaningful Gaps Killed**:
@@ -322,15 +322,15 @@ This document serves as the durable evidence repository for opt-in mutation test
 - **Accepted Surviving Mutants**: None (0 survived).
 - **Uncovered Branches**: None (0 no coverage; line coverage 100%).
 
-### 2.15 `com.chessecho.service.continuation.HumanMoveProvider` (PR [#565](https://github.com/NathanZK/ChessEcho/pull/565))
+### 2.15 `com.chessprobe.service.continuation.HumanMoveProvider` (PR [#565](https://github.com/NathanZK/ChessEcho/pull/565))
 
 - **Issue / PR**: Issue [#560](https://github.com/NathanZK/ChessEcho/issues/560), PR [#565](https://github.com/NathanZK/ChessEcho/pull/565)
-- **Test Suite**: `com.chessecho.service.continuation.HumanMoveProviderTest`
+- **Test Suite**: `com.chessprobe.service.continuation.HumanMoveProviderTest`
 - **Execution Command**:
   ```bash
   ./gradlew pitest \
-    -Ppitest.targetClasses="com.chessecho.service.continuation.HumanMoveProvider*" \
-    -Ppitest.targetTests="com.chessecho.service.continuation.HumanMoveProviderTest*"
+    -Ppitest.targetClasses="com.chessprobe.service.continuation.HumanMoveProvider*" \
+    -Ppitest.targetTests="com.chessprobe.service.continuation.HumanMoveProviderTest*"
   ```
 - **Results**: 32 generated, 24 killed (75%), 8 survived (25%), 0 no coverage (0%); 75% test strength.
 - **Meaningful Gaps Killed**:
@@ -345,15 +345,15 @@ This document serves as the durable evidence repository for opt-in mutation test
   - 1 equivalent boundary mutation on line 130 (`parts.size >= 4` to `> 4`) where 4-part FEN string rejoining produces an identical string to the input (Taxonomy Category 5).
 - **Uncovered Branches**: None (0 no coverage; line coverage 96%).
 
-### 2.16 `com.chessecho.service.ReferenceCoverageAnalysisService` (PR [#566](https://github.com/NathanZK/ChessEcho/pull/566))
+### 2.16 `com.chessprobe.service.ReferenceCoverageAnalysisService` (PR [#566](https://github.com/NathanZK/ChessEcho/pull/566))
 
 - **Issue / PR**: Issue [#561](https://github.com/NathanZK/ChessEcho/issues/561), PR [#566](https://github.com/NathanZK/ChessEcho/pull/566)
-- **Test Suite**: `com.chessecho.service.ReferenceCoverageAnalysisServiceTest`
+- **Test Suite**: `com.chessprobe.service.ReferenceCoverageAnalysisServiceTest`
 - **Execution Command**:
   ```bash
   ./gradlew pitest \
-    -Ppitest.targetClasses="com.chessecho.service.ReferenceCoverageAnalysisService*" \
-    -Ppitest.targetTests="com.chessecho.service.ReferenceCoverageAnalysisServiceTest*"
+    -Ppitest.targetClasses="com.chessprobe.service.ReferenceCoverageAnalysisService*" \
+    -Ppitest.targetTests="com.chessprobe.service.ReferenceCoverageAnalysisServiceTest*"
   ```
 - **Results**: 61 generated, 60 killed (98%), 1 survived (2%), 0 no coverage (0%); 98% test strength.
 - **Meaningful Gaps Killed**:
@@ -364,16 +364,16 @@ This document serves as the durable evidence repository for opt-in mutation test
   - 1 synthetic Kotlin compiler bytecode iterator conditional on line 211 (Taxonomy Category 3).
 - **Uncovered Branches**: None (0 no coverage; line coverage 99%).
 
-### 2.17 `com.chessecho.similarity.PositionSimilarityScorer` (Issue [#91](https://github.com/NathanZK/ChessEcho/issues/91))
+### 2.17 `com.chessprobe.similarity.PositionSimilarityScorer` (Issue [#91](https://github.com/NathanZK/ChessEcho/issues/91))
 
 - **Issue**: Issue [#91](https://github.com/NathanZK/ChessEcho/issues/91)
 - **Detailed Audit Report**: [2026-10-26-issue-91-mutation-audit.md](./2026-10-26-issue-91-mutation-audit.md)
-- **Test Suite**: `com.chessecho.similarity.PositionSimilarityScorerTest`
+- **Test Suite**: `com.chessprobe.similarity.PositionSimilarityScorerTest`
 - **Execution Command**:
   ```bash
   ./gradlew pitest \
-    -Ppitest.targetClasses="com.chessecho.similarity.PositionSimilarityScorer*" \
-    -Ppitest.targetTests="com.chessecho.similarity.PositionSimilarityScorerTest*"
+    -Ppitest.targetClasses="com.chessprobe.similarity.PositionSimilarityScorer*" \
+    -Ppitest.targetTests="com.chessprobe.similarity.PositionSimilarityScorerTest*"
   ```
 - **Results**: 38 generated, 26 killed (68%), 11 survived (29%), 1 no coverage (3%); 70% test strength. Full-stack targeted audit evaluated 13 failure-mode mutants with 12 killed (92%) and 1 unresolved (8%).
 - **Meaningful Gaps Killed via Regression Tests**:
@@ -574,14 +574,14 @@ This document serves as the durable evidence repository for opt-in mutation test
   - *Fallback & Recovery Lifecycle*: Rollback to preserved `gameHistory` instance on null evaluation, automatic move acceptance on network rejection, complete undo/redo navigation across network-accepted moves, branch overwriting after undo, and stale evaluation rejection guard.
   - *Board Interaction & Event Filtering*: Click-to-move piece selection and deselection, empty square click styling invariance, drop reset on empty target, and arrow key event isolation from input/textarea controls.
 
-### 2.22 `com.chessecho.service.DecisionTimingPolicy` and `LongDecisionService` (Issue #636)
+### 2.22 `com.chessprobe.service.DecisionTimingPolicy` and `LongDecisionService` (Issue #636)
 
 - **Test Suite**: `DecisionTimingPolicyTest`, `DecisionTimingFilterIntersectionTest`, `LongDecisionServiceTest`, `LongDecisionServiceMappingTest`
 - **Execution Command**:
   ```bash
   cd backend && ./gradlew pitest \
-    -Ppitest.targetClasses="com.chessecho.service.DecisionTimingPolicy*,com.chessecho.service.LongDecisionService*" \
-    -Ppitest.targetTests="com.chessecho.service.DecisionTimingPolicyTest*,com.chessecho.service.DecisionTimingFilterIntersectionTest*,com.chessecho.service.LongDecisionServiceTest*,com.chessecho.service.LongDecisionServiceMappingTest*"
+    -Ppitest.targetClasses="com.chessprobe.service.DecisionTimingPolicy*,com.chessprobe.service.LongDecisionService*" \
+    -Ppitest.targetTests="com.chessprobe.service.DecisionTimingPolicyTest*,com.chessprobe.service.DecisionTimingFilterIntersectionTest*,com.chessprobe.service.LongDecisionServiceTest*,com.chessprobe.service.LongDecisionServiceMappingTest*"
   ```
 - **Results**: 39 generated, 36 killed (92%), 3 survived (8%), 0 no coverage; 92% test strength (100% of actionable mutants killed).
 - **Meaningful Gaps Killed**:
@@ -609,14 +609,14 @@ This document serves as the durable evidence repository for opt-in mutation test
 - **Accepted Surviving Mutants**:
   - 90 surviving mutants consist of JSX presentation class strings, text literals ("Loading more…", "Positions"), and non-functional Tailwind style variants.
 
-### 2.24 `com.chessecho.service.PracticalEvidenceService` and `WeaknessCalculationService` (Issue #637)
+### 2.24 `com.chessprobe.service.PracticalEvidenceService` and `WeaknessCalculationService` (Issue #637)
 
 - **Test Suite**: `PracticalEvidenceServiceTest`, `WeaknessCalculationServiceTest`, `WeaknessCalculationTimeControlTest`
 - **Execution Command**:
   ```bash
   cd backend && ./gradlew pitest \
-    -Ppitest.targetClasses="com.chessecho.service.PracticalEvidenceService*,com.chessecho.service.WeaknessCalculationService*" \
-    -Ppitest.targetTests="com.chessecho.service.PracticalEvidenceServiceTest*,com.chessecho.service.WeaknessCalculationServiceTest*"
+    -Ppitest.targetClasses="com.chessprobe.service.PracticalEvidenceService*,com.chessprobe.service.WeaknessCalculationService*" \
+    -Ppitest.targetTests="com.chessprobe.service.PracticalEvidenceServiceTest*,com.chessprobe.service.WeaknessCalculationServiceTest*"
   ```
 - **Results**:
   - `PracticalEvidenceService`: 98% line coverage (173/176), 87% mutation coverage (60/69 killed), 92% test strength (60/65).
@@ -654,8 +654,8 @@ This document serves as the durable evidence repository for opt-in mutation test
 - **Execution Command**:
   ```bash
   cd backend && ./gradlew pitest \
-    -Ppitest.targetClasses="com.chessecho.service.LongDecisionService*,com.chessecho.service.DecisionTimingPolicy*" \
-    -Ppitest.targetTests="com.chessecho.service.LongDecisionServiceTest*,com.chessecho.service.LongDecisionServiceMappingTest*,com.chessecho.service.DecisionTimingPolicyTest*"
+    -Ppitest.targetClasses="com.chessprobe.service.LongDecisionService*,com.chessprobe.service.DecisionTimingPolicy*" \
+    -Ppitest.targetTests="com.chessprobe.service.LongDecisionServiceTest*,com.chessprobe.service.LongDecisionServiceMappingTest*,com.chessprobe.service.DecisionTimingPolicyTest*"
   ```
 - **Results**: 43 generated, 40 killed (93%), 3 survived (7%), 0 no coverage; 93% test strength (100% of actionable mutants killed).
 - **Meaningful Gaps Killed**:
@@ -689,8 +689,8 @@ This document serves as the durable evidence repository for opt-in mutation test
 - **Execution Command**:
   ```bash
   cd backend && ./gradlew pitest \
-    -Ppitest.targetClasses="com.chessecho.service.MoveEvaluationService*,com.chessecho.service.EvaluationLossPolicy*" \
-    -Ppitest.targetTests="com.chessecho.service.MoveEvaluationServiceTest*,com.chessecho.service.EvaluationLossPolicyTest*"
+    -Ppitest.targetClasses="com.chessprobe.service.MoveEvaluationService*,com.chessprobe.service.EvaluationLossPolicy*" \
+    -Ppitest.targetTests="com.chessprobe.service.MoveEvaluationServiceTest*,com.chessprobe.service.EvaluationLossPolicyTest*"
   ```
 - **Results**:
   - Line Coverage: 97% (114/118 lines).
@@ -795,26 +795,26 @@ This document serves as the durable evidence repository for opt-in mutation test
 
 - **Issue**: Issue [#702](https://github.com/NathanZK/ChessEcho/issues/702)
 - **Target Classes**:
-  - `com.chessecho.config.PositionClusteringProperties`
-  - `com.chessecho.similarity.PositionInvertedIndex`
-  - `com.chessecho.similarity.clustering.PositionClusterSimilarityScorer`
-  - `com.chessecho.similarity.clustering.PositionClusterVector`
-  - `com.chessecho.similarity.clustering.RelaxedMnnGraphBuilder`
-  - `com.chessecho.similarity.clustering.PositionLeidenCommunityDetector`
-  - `com.chessecho.similarity.clustering.PositionClusterCentroidEvaluator`
+  - `com.chessprobe.config.PositionClusteringProperties`
+  - `com.chessprobe.similarity.PositionInvertedIndex`
+  - `com.chessprobe.similarity.clustering.PositionClusterSimilarityScorer`
+  - `com.chessprobe.similarity.clustering.PositionClusterVector`
+  - `com.chessprobe.similarity.clustering.RelaxedMnnGraphBuilder`
+  - `com.chessprobe.similarity.clustering.PositionLeidenCommunityDetector`
+  - `com.chessprobe.similarity.clustering.PositionClusterCentroidEvaluator`
 - **Test Suites**:
-  - `com.chessecho.config.PositionClusteringPropertiesTest`
-  - `com.chessecho.similarity.PositionInvertedIndexTest`
-  - `com.chessecho.similarity.clustering.PositionClusterSimilarityScorerTest`
-  - `com.chessecho.similarity.clustering.RelaxedMnnGraphBuilderTest`
-  - `com.chessecho.similarity.clustering.PositionLeidenCommunityDetectorTest`
-  - `com.chessecho.similarity.clustering.PositionClusterCentroidEvaluatorTest`
-  - `com.chessecho.similarity.clustering.CandidateRetrievalRecallBenchmarkTest`
+  - `com.chessprobe.config.PositionClusteringPropertiesTest`
+  - `com.chessprobe.similarity.PositionInvertedIndexTest`
+  - `com.chessprobe.similarity.clustering.PositionClusterSimilarityScorerTest`
+  - `com.chessprobe.similarity.clustering.RelaxedMnnGraphBuilderTest`
+  - `com.chessprobe.similarity.clustering.PositionLeidenCommunityDetectorTest`
+  - `com.chessprobe.similarity.clustering.PositionClusterCentroidEvaluatorTest`
+  - `com.chessprobe.similarity.clustering.CandidateRetrievalRecallBenchmarkTest`
 - **Execution Command**:
   ```bash
   cd backend && ./gradlew pitest \
-    -Ppitest.targetClasses="com.chessecho.similarity.clustering.*,com.chessecho.similarity.PositionInvertedIndex*,com.chessecho.config.PositionClusteringProperties*" \
-    -Ppitest.targetTests="com.chessecho.similarity.clustering.*Test*,com.chessecho.similarity.PositionInvertedIndexTest*,com.chessecho.config.PositionClusteringPropertiesTest*"
+    -Ppitest.targetClasses="com.chessprobe.similarity.clustering.*,com.chessprobe.similarity.PositionInvertedIndex*,com.chessprobe.config.PositionClusteringProperties*" \
+    -Ppitest.targetTests="com.chessprobe.similarity.clustering.*Test*,com.chessprobe.similarity.PositionInvertedIndexTest*,com.chessprobe.config.PositionClusteringPropertiesTest*"
   ```
 - **Results**:
   - Mutants Generated: 336
@@ -841,17 +841,17 @@ This document serves as the durable evidence repository for opt-in mutation test
 
 In accordance with [mutation-testing.md](../mutation-testing.md) and QA Strategy [#547](https://github.com/NathanZK/ChessEcho/issues/547), the following pure domain calculation units and integration suites remain candidates for future focused audits:
 
-- [x] `com.chessecho.service.MoveEvaluationService` (`MoveEvaluationServiceTest`) — Interactive move evaluation, forced-mate centipawn score conversion, and exploration tolerance. (Audited in [#557](https://github.com/NathanZK/ChessEcho/issues/557) / PR [#558](https://github.com/NathanZK/ChessEcho/pull/558))
-- [x] `com.chessecho.service.WeaknessCalculationService` (`WeaknessCalculationServiceTest`) — Account-scoped weakness prioritization and statistical ranking formulas. (Audited in [#553](https://github.com/NathanZK/ChessEcho/issues/553) / PR [#555](https://github.com/NathanZK/ChessEcho/pull/555))
-- [x] `com.chessecho.service.PracticalEvidenceService` (`PracticalEvidenceServiceTest`) — Practical weakness score calculations and confidence thresholds. (Audited in [#553](https://github.com/NathanZK/ChessEcho/issues/553) / PR [#555](https://github.com/NathanZK/ChessEcho/pull/555))
-- [x] `com.chessecho.service.HumanMoveBfsTraversal` (`HumanMoveBfsServiceTest`) — Breadth-first traversal, rating band boundaries, and quota bounds. (Audited in [#563](https://github.com/NathanZK/ChessEcho/issues/563) / PR [#567](https://github.com/NathanZK/ChessEcho/pull/567))
-- [x] `com.chessecho.service.EvaluationEvidenceSnapshotService` (`EvaluationEvidenceSnapshotTest`) — In-memory validation, boundary conditions, entry gates, and aggregation math. (Audited in [#562](https://github.com/NathanZK/ChessEcho/issues/562) / PR [#568](https://github.com/NathanZK/ChessEcho/pull/568))
-- [x] `com.chessecho.service.continuation.EngineMoveProvider` (`EngineMoveProviderTest`) — Candidate filtering, forced-mate loss, resulting FEN generation. (Audited in [#559](https://github.com/NathanZK/ChessEcho/issues/559) / PR [#564](https://github.com/NathanZK/ChessEcho/pull/564))
-- [x] `com.chessecho.service.continuation.HumanMoveProvider` (`HumanMoveProviderTest`) — Real SHA-256 hash lookup, observation boundaries, FEN normalization. (Audited in [#560](https://github.com/NathanZK/ChessEcho/issues/560) / PR [#565](https://github.com/NathanZK/ChessEcho/pull/565))
-- [x] `com.chessecho.service.ReferenceCoverageAnalysisService` (`ReferenceCoverageAnalysisServiceTest`) — Zero-loss acceptance, shared positions threshold boundaries, player map validation. (Audited in [#561](https://github.com/NathanZK/ChessEcho/issues/561) / PR [#566](https://github.com/NathanZK/ChessEcho/pull/566))
-- [ ] `com.chessecho.service.ProgressService` (`ProgressServiceTest`) — Historical interval baseline construction and progress delta calculations.
-- [ ] `com.chessecho.service.EvaluationEvidenceProducerService` (`EvaluationEvidenceProducerServiceTest`) — Deterministic evaluation snapshot producer and verification rules.
-- [ ] `com.chessecho.service.EvaluationEvidenceSnapshotService` (`EvaluationEvidenceSnapshotPostgresIntegrationTest`) — Integration mutation testing for 197 deferred database persistence and reconstruction mutants.
+- [x] `com.chessprobe.service.MoveEvaluationService` (`MoveEvaluationServiceTest`) — Interactive move evaluation, forced-mate centipawn score conversion, and exploration tolerance. (Audited in [#557](https://github.com/NathanZK/ChessEcho/issues/557) / PR [#558](https://github.com/NathanZK/ChessEcho/pull/558))
+- [x] `com.chessprobe.service.WeaknessCalculationService` (`WeaknessCalculationServiceTest`) — Account-scoped weakness prioritization and statistical ranking formulas. (Audited in [#553](https://github.com/NathanZK/ChessEcho/issues/553) / PR [#555](https://github.com/NathanZK/ChessEcho/pull/555))
+- [x] `com.chessprobe.service.PracticalEvidenceService` (`PracticalEvidenceServiceTest`) — Practical weakness score calculations and confidence thresholds. (Audited in [#553](https://github.com/NathanZK/ChessEcho/issues/553) / PR [#555](https://github.com/NathanZK/ChessEcho/pull/555))
+- [x] `com.chessprobe.service.HumanMoveBfsTraversal` (`HumanMoveBfsServiceTest`) — Breadth-first traversal, rating band boundaries, and quota bounds. (Audited in [#563](https://github.com/NathanZK/ChessEcho/issues/563) / PR [#567](https://github.com/NathanZK/ChessEcho/pull/567))
+- [x] `com.chessprobe.service.EvaluationEvidenceSnapshotService` (`EvaluationEvidenceSnapshotTest`) — In-memory validation, boundary conditions, entry gates, and aggregation math. (Audited in [#562](https://github.com/NathanZK/ChessEcho/issues/562) / PR [#568](https://github.com/NathanZK/ChessEcho/pull/568))
+- [x] `com.chessprobe.service.continuation.EngineMoveProvider` (`EngineMoveProviderTest`) — Candidate filtering, forced-mate loss, resulting FEN generation. (Audited in [#559](https://github.com/NathanZK/ChessEcho/issues/559) / PR [#564](https://github.com/NathanZK/ChessEcho/pull/564))
+- [x] `com.chessprobe.service.continuation.HumanMoveProvider` (`HumanMoveProviderTest`) — Real SHA-256 hash lookup, observation boundaries, FEN normalization. (Audited in [#560](https://github.com/NathanZK/ChessEcho/issues/560) / PR [#565](https://github.com/NathanZK/ChessEcho/pull/565))
+- [x] `com.chessprobe.service.ReferenceCoverageAnalysisService` (`ReferenceCoverageAnalysisServiceTest`) — Zero-loss acceptance, shared positions threshold boundaries, player map validation. (Audited in [#561](https://github.com/NathanZK/ChessEcho/issues/561) / PR [#566](https://github.com/NathanZK/ChessEcho/pull/566))
+- [ ] `com.chessprobe.service.ProgressService` (`ProgressServiceTest`) — Historical interval baseline construction and progress delta calculations.
+- [ ] `com.chessprobe.service.EvaluationEvidenceProducerService` (`EvaluationEvidenceProducerServiceTest`) — Deterministic evaluation snapshot producer and verification rules.
+- [ ] `com.chessprobe.service.EvaluationEvidenceSnapshotService` (`EvaluationEvidenceSnapshotPostgresIntegrationTest`) — Integration mutation testing for 197 deferred database persistence and reconstruction mutants.
 
 ---
 

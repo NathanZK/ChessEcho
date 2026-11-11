@@ -19,3 +19,11 @@ ChessProbe required an account-scoped offline position clustering capability to 
 - **Frontend UI Controls / Sliders**: Kept as an internal backend experimental parameter without user-facing exposure.
 - **Incremental Real-Time Clustering on Game Ingestion**: Clustering is designed as an offline asynchronous batch snapshot operation, not an inline ingestion step.
 - **Speculative Interfaces**: Applied Ponytail minimalism to avoid redundant abstractions or single-implementation interfaces.
+
+---
+
+## Subsequent Decision Cross-Reference: Issue #756 (2026-11-08)
+
+On 2026-11-08, Issue [#756](https://github.com/NathanZK/ChessEcho/issues/756) introduced decoupled dynamic clustering (`ClusterType.DYNAMIC`) alongside the original static structural clustering (`ClusterType.STRUCTURAL`):
+- `ClusterType.STRUCTURAL` (this decision) remains the default static clustering architecture using pawn/piece placement vectors ($\alpha \in [0.0, 1.0]$).
+- `ClusterType.DYNAMIC` indexes engine principal-variation continuation unigram tokens via `DynamicInvertedIndex`, constructing a parallel TF-IDF representation over positions with existing Stockfish evaluations without modifying or regressing the structural clustering pipeline.
