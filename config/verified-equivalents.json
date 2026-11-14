@@ -1,0 +1,12 @@
+[
+  {
+    "mutantId": "demo-equivalent-example-01",
+    "type": "EQUIVALENT",
+    "file": "frontend/src/utils/urlUtils.ts",
+    "line": 42,
+    "mutator": "EqualityOperator",
+    "replacement": "!=",
+    "semanticProof": "Demonstration that for all reachable URL strings, normalization ensures strictly identical output regardless of operator flip.",
+    "justification": "Required for backward compatibility with query string edge cases."
+  }
+]

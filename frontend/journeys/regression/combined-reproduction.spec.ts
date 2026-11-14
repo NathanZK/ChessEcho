@@ -77,6 +77,7 @@ test.describe('Phase 5 Regression: Combined BFS-Monkey Deterministic Reproductio
     context = {
       ...context,
       puzzleLoaded: true,
+      activePuzzle: DEFAULT_MOCK_PUZZLE,
       expectedFen: DEFAULT_PRACTICE_FEN,
       expectedSideToMove: 'white',
       expectedFailedCount: 0,
@@ -106,6 +107,7 @@ test.describe('Phase 5 Regression: Combined BFS-Monkey Deterministic Reproductio
     }
     context = {
       ...context,
+      activePuzzle: DEFAULT_MOCK_PUZZLE,
       expectedFen: DEFAULT_PRACTICE_FEN,
     };
     await STATE_ORACLES.PRACTICE_IDLE.assert(page, context, expect);
@@ -133,6 +135,7 @@ test.describe('Phase 5 Regression: Combined BFS-Monkey Deterministic Reproductio
     context = {
       ...context,
       puzzleLoaded: false,
+      activePuzzle: undefined,
     };
     await STATE_ORACLES.DISCOVERY.assert(page, context, expect);
   });

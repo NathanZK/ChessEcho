@@ -367,4 +367,28 @@ class DynamicTacticalScorerTest {
         val nullTerms = scorer.extractDynamicTokensFromResolved(fen, null)
         assertTrue(nullTerms.isEmpty())
     }
+
+    @Test
+    fun `parseUciMove parses direct UCI moves and falls back to SAN moves without mutating board`() {
+        val board =
+            com.github.bhlangonijr.chesslib
+                .Board()
+        board.loadFromFen("rnbqkbnr/ppp1pppp/8/3p4/2PP4/8/PP2PPPP/RNBQKBNR b KQkq c3 0 2")
+        val initialFen = board.fen
+
+        // Direct UCI
+        val uciMove = scorer.parseUciMove(board, "e7e6")
+        assertEquals("e7e6", uciMove.toString().lowercase())
+        assertEquals(initialFen, board.fen, "Board must not be mutated by direct UCI parse")
+
+        // SAN fallback
+        val sanMove = scorer.parseUciMove(board, "e6")
+        assertEquals("e7e6", sanMove.toString().lowercase())
+        assertEquals(initialFen, board.fen, "Board must not be mutated by SAN fallback parse")
+
+        // Illegal move throws IllegalArgumentException
+        assertThrows(IllegalArgumentException::class.java) {
+            scorer.parseUciMove(board, "invalidMove")
+        }
+    }
 }

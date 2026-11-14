@@ -466,4 +466,63 @@ class PositionSimilarityServiceDynamicTest {
         assertEquals(10, result.results[0].achievedDepth)
         assertEquals(SearchStatus.INTERRUPTED, result.results[0].searchStatus)
     }
+
+    @Test
+    fun `dynamic similarity retrieval handles SAN candidate moves via fallback without throwing`() {
+        val testFen = "rnbqkbnr/ppp1pppp/8/3p4/2PP4/8/PP2PPPP/RNBQKBNR b KQkq c3 0 2"
+        val posId = UUID.randomUUID()
+        val dynDoc =
+            PositionDocument(
+                positionId = posId,
+                fen = candidateFen1,
+                canonicalFen = PositionDocument.canonicalizeFen(candidateFen1),
+                sideToMove = "b",
+                terms = mapOf("!-p" to 1.0),
+            )
+        whenever(personalDynamicCorpusProvider.loadPersonalDynamicPositions(account))
+            .thenReturn(listOf(dynDoc))
+
+        whenever(stockfishService.analyzeMultiPv(eq(testFen), eq(16), eq(1)))
+            .thenReturn(listOf(EngineCandidate(move = "e6", score = EvalScore(cp = 50, mate = null))))
+
+        val game = createTestGame(account)
+        val occ = createTestOccurrence(account, game, posId, candidateFen1, playerColor = "BLACK", movePlayed = "e6", plyNumber = 2)
+        whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
+            .thenReturn(listOf(occ))
+
+        whenever(stockfishService.batchResolveContinuations(eq(testFen), any(), any(), anyOrNull())).thenReturn(
+            BatchContinuationResult(
+                queryResult =
+                    ContinuationResult(
+                        status = SearchStatus.COMPLETED,
+                        achievedDepth = 16,
+                        principalVariations = listOf(PrincipalVariation(1, listOf("e6"), 16)),
+                    ),
+                candidateResults =
+                    mapOf(
+                        posId to
+                            ContinuationResult(
+                                status = SearchStatus.COMPLETED,
+                                achievedDepth = 16,
+                                principalVariations = listOf(PrincipalVariation(1, listOf("e6"), 16)),
+                            ),
+                    ),
+                fallbackReason = null,
+                shortlistedCount = 1,
+                engineAttemptedCount = 1,
+                engineCompletedCount = 1,
+            ),
+        )
+
+        val result =
+            service.findSimilarPositions(
+                queryFen = testFen,
+                account = account,
+                mode = SimilarityRetrievalMode.DYNAMIC,
+            )
+
+        assertEquals("DYNAMIC", result.mode)
+        assertTrue(result.dynamicSimilarityApplied)
+        assertEquals(SearchStatus.COMPLETED, result.queryStatus)
+    }
 }

@@ -70,6 +70,7 @@ dependencies {
     testImplementation("org.apache.httpcomponents.client5:httpclient5")
     testImplementation("org.testcontainers:postgresql:1.21.4")
     testImplementation("org.testcontainers:junit-jupiter:1.21.4")
+    testImplementation("net.jqwik:jqwik-kotlin:1.8.5")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     testRuntimeOnly("com.h2database:h2")
 }
@@ -118,12 +119,29 @@ pitest {
             }
             parsedClasses to parsedTests
         } else {
-            listOf("com.chessprobe.service.AdaptivePuzzleSchedulingPolicy*") to
-                listOf("com.chessprobe.service.AdaptivePuzzleSchedulingPolicyTest*")
+            listOf(
+                "com.chessprobe.service.AdaptivePuzzleSchedulingPolicy*",
+                "com.chessprobe.service.EvaluationLossPolicy*",
+            ) to
+                listOf(
+                    "com.chessprobe.service.AdaptivePuzzleSchedulingPolicyTest*",
+                    "com.chessprobe.service.EvaluationLossPolicyTest*",
+                )
         }
 
     targetClasses.set(effectiveTargetClasses)
     targetTests.set(effectiveTargetTests)
+    mutators.set(
+        setOf(
+            "CONDITIONALS_BOUNDARY",
+            "INCREMENTS",
+            "INVERT_NEGS",
+            "MATH",
+            "NEGATE_CONDITIONALS",
+            "RETURNS",
+            "VOID_METHOD_CALLS",
+        ),
+    )
 }
 
 detekt {

@@ -44,3 +44,6 @@ test-results/
 ### Graphify intermediate outputs ###
 graphify-out
 graphify-out/
+
+### jqwik ###
+.jqwik-database
