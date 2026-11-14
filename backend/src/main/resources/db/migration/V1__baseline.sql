@@ -1089,6 +1089,8 @@ CREATE TABLE position_cluster_snapshot (
     total_positions     INT NOT NULL DEFAULT 0,
     cluster_count       INT NOT NULL DEFAULT 0,
     unassigned_count    INT NOT NULL DEFAULT 0,
+    analyzed_position_count INT NOT NULL DEFAULT 0,
+    eligible_position_count INT NOT NULL DEFAULT 0,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at        TIMESTAMPTZ,
     error_message       TEXT,
@@ -1115,8 +1117,43 @@ CREATE TABLE position_cluster_assignment (
     position_id         UUID NOT NULL REFERENCES position(id) ON DELETE CASCADE,
     cluster_id          UUID REFERENCES position_cluster(id) ON DELETE SET NULL,
     assignment_status   VARCHAR(20) NOT NULL CHECK (assignment_status IN ('ASSIGNED', 'OUTLIER_EVICTED', 'ISOLATE')),
+    isolation_reason    VARCHAR(30) CHECK (
+        isolation_reason IS NULL OR
+        isolation_reason IN ('ZERO_TOKENS', 'OUTLIER_EVICTION', 'INCOMPLETE_RESOLUTION', 'UNANALYZED', 'PENDING', 'FAILED', 'GRAPH_ISOLATE')
+    ),
     centroid_similarity DOUBLE PRECISION,
     PRIMARY KEY (snapshot_id, position_id)
 );
 
 CREATE INDEX idx_position_cluster_assignment_cluster ON position_cluster_assignment (cluster_id);
+
+-- Dynamic Continuation Artifact Schema (Issue #793)
+CREATE TABLE position_continuation_artifact (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    position_id         UUID NOT NULL REFERENCES position(id) ON DELETE CASCADE,
+    config_hash         VARCHAR(64) NOT NULL,
+    status              VARCHAR(20) NOT NULL CHECK (status IN ('PENDING', 'COMPLETED', 'FAILED')),
+    resolution_status   VARCHAR(30) CHECK (
+        resolution_status IS NULL OR
+        resolution_status IN ('RESOLVED_QUIET', 'RESOLVED_TERMINAL', 'INCOMPLETE_LIMIT', 'OPERATIONAL_FAILURE')
+    ),
+    achieved_depth      INT,
+    nominal_moves       VARCHAR(255),
+    continuation_moves  VARCHAR(255),
+    resolved_moves      VARCHAR(512),
+    terminal_fen        TEXT,
+    termination_reason  VARCHAR(30) CHECK (
+        termination_reason IS NULL OR
+        termination_reason IN ('QUIET_STOP', 'TERMINAL', 'PV_EXHAUSTED', 'PLY_LIMIT', 'NODE_LIMIT', 'TIMEOUT', 'ENGINE_ERROR')
+    ),
+    lease_token         VARCHAR(64),
+    lease_expires_at    TIMESTAMPTZ,
+    retry_count         INT NOT NULL DEFAULT 0,
+    error_message       VARCHAR(500),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uk_position_continuation_config UNIQUE (position_id, config_hash)
+);
+
+CREATE INDEX idx_pos_cont_artifact_claim ON position_continuation_artifact (status, lease_expires_at);
+CREATE INDEX idx_pos_cont_artifact_lookup ON position_continuation_artifact (position_id, config_hash);

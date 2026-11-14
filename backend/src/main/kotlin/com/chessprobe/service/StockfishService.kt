@@ -7,8 +7,10 @@ import com.github.bhlangonijr.chesslib.PieceType
 import com.github.bhlangonijr.chesslib.move.Move
 import com.github.bhlangonijr.chesslib.move.MoveList
 import org.slf4j.LoggerFactory
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import java.io.BufferedReader
+import java.io.File
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.util.concurrent.Executors
@@ -84,9 +86,22 @@ data class BatchContinuationResult(
 
 @Service
 class StockfishService(
-    private val processStarter: (List<String>) -> Process = { ProcessBuilder(it).start() },
+    @Value("\${chess.stockfish.path:stockfish}")
+    val stockfishPath: String = "stockfish",
+    val processStarter: (List<String>) -> Process = { ProcessBuilder(it).start() },
+    private val binaryDigestProvider: (() -> String)? = null,
 ) {
     private val logger = LoggerFactory.getLogger(StockfishService::class.java)
+
+    val resolvedExecutablePath: String
+        get() = resolveExecutable()?.absolutePath ?: stockfishPath
+
+    fun resolveExecutable(): File? = resolveExecutableFile(stockfishPath)
+
+    fun getEngineBinaryHash(): String =
+        binaryDigestProvider?.invoke()
+            ?: resolveExecutable()?.let { computeFileSha256(it) }
+            ?: computeFallbackDigest(stockfishPath)
 
     private val engineExecutor =
         Executors.newCachedThreadPool { runnable ->
@@ -106,7 +121,7 @@ class StockfishService(
         depth: Int,
         multiPv: Int,
     ): List<EngineCandidate> {
-        val process = ProcessBuilder("stockfish").start()
+        val process = processStarter(listOf(resolvedExecutablePath))
         val reader = BufferedReader(InputStreamReader(process.inputStream))
         val writer = OutputStreamWriter(process.outputStream)
 
@@ -254,7 +269,7 @@ class StockfishService(
 
         fun initialize(): Boolean =
             try {
-                val proc = processStarter(listOf("stockfish"))
+                val proc = processStarter(listOf(resolvedExecutablePath))
                 process = proc
                 reader = BufferedReader(InputStreamReader(proc.inputStream))
                 writer = OutputStreamWriter(proc.outputStream)
@@ -616,6 +631,40 @@ class StockfishService(
     }
 
     /**
+     * Executes full-PV engine analysis preserving all moves in MultiPV-1 without truncation.
+     */
+    fun analyzeFullPv(
+        fen: String,
+        targetDepth: Int = 10,
+        timeoutMs: Long = 5000L,
+        reader: BufferedReader? = null,
+        sendCommand: (String) -> Unit = {},
+    ): FullPvAnalysisResult =
+        if (reader != null) {
+            sendCommand("uci\nisready\nposition fen $fen\ngo depth $targetDepth")
+            FullPvParser.parseFullPvOutput(reader)
+        } else {
+            val context = SubprocessContext(processStarter, resolvedExecutablePath)
+            try {
+                context.start()
+                context.send("uci\nsetoption name Threads value $UCI_THREADS\nsetoption name Hash value $UCI_HASH_MB")
+                context.send("setoption name Ponder value $UCI_PONDER\nisready")
+                context.reader?.let { waitForToken(it, "readyok") }
+                context.send("position fen $fen\ngo depth $targetDepth")
+                val future =
+                    engineExecutor.submit(
+                        java.util.concurrent.Callable { FullPvParser.parseFullPvOutput(context.reader!!) },
+                    )
+                future.get(timeoutMs, TimeUnit.MILLISECONDS)
+            } catch (e: Exception) {
+                logger.warn("analyzeFullPv failed for FEN {}", fen, e)
+                FullPvAnalysisResult(0, emptyList())
+            } finally {
+                context.close()
+            }
+        }
+
+    /**
      * Resolves a tactical continuation from a position using bounded Stockfish search and forcing PV replay.
      */
     fun resolveForcingPvContinuation(
@@ -628,7 +677,7 @@ class StockfishService(
             return terminalRoot
         }
 
-        val context = SubprocessContext(processStarter)
+        val context = SubprocessContext(processStarter, resolvedExecutablePath)
         try {
             context.start()
         } catch (e: Exception) {
@@ -703,64 +752,6 @@ class StockfishService(
             return null
         }
         return buildFallbackResult(fen, TerminationReason.TERMINAL).copy(isTerminal = true)
-    }
-
-    private class SubprocessContext(
-        private val processStarter: (List<String>) -> Process,
-    ) : AutoCloseable {
-        private val logger = LoggerFactory.getLogger(SubprocessContext::class.java)
-        private val lock = Any()
-
-        @Volatile
-        private var closed = false
-
-        var process: Process? = null
-        var reader: BufferedReader? = null
-        var writer: OutputStreamWriter? = null
-
-        fun start() {
-            synchronized(lock) {
-                if (closed) return
-                val proc = processStarter(listOf("stockfish"))
-                process = proc
-                reader = BufferedReader(InputStreamReader(proc.inputStream))
-                writer = OutputStreamWriter(proc.outputStream)
-            }
-        }
-
-        fun send(cmd: String) {
-            val w = writer ?: throw IllegalStateException("Writer unavailable")
-            w.write("$cmd\n")
-            w.flush()
-        }
-
-        fun isClosed(): Boolean = closed
-
-        override fun close() {
-            synchronized(lock) {
-                closed = true
-                try {
-                    reader?.close()
-                } catch (e: Exception) {
-                    logger.debug("Reader close exception", e)
-                }
-                try {
-                    writer?.close()
-                } catch (e: Exception) {
-                    logger.debug("Writer close exception", e)
-                }
-                val proc = process
-                if (proc != null) {
-                    proc.destroyForcibly()
-                    try {
-                        proc.waitFor()
-                    } catch (e: InterruptedException) {
-                        Thread.currentThread().interrupt()
-                        logger.debug("Interrupted during process wait", e)
-                    }
-                }
-            }
-        }
     }
 
     private data class SearchOutput(
@@ -941,6 +932,16 @@ class StockfishService(
     }
 
     companion object {
+        const val UCI_THREADS: Int = 1
+        const val UCI_HASH_MB: Int = 16
+        const val UCI_PONDER: Boolean = false
+
+        fun resolveExecutableFile(command: String): File? = StockfishExecutableResolver.resolveExecutableFile(command)
+
+        fun computeFileSha256(file: File): String = StockfishExecutableResolver.computeFileSha256(file)
+
+        fun computeFallbackDigest(command: String): String = StockfishExecutableResolver.computeFallbackDigest(command)
+
         fun parsePvUpdate(line: String): PrincipalVariation? {
             if (!line.startsWith("info ") || !line.contains(" pv ")) return null
             val tokens = line.trim().split("\\s+".toRegex())
@@ -1008,5 +1009,64 @@ class StockfishService(
                     else -> EvalScore(cp = null, mate = -value)
                 }
             }
+    }
+}
+
+private class SubprocessContext(
+    private val processStarter: (List<String>) -> Process,
+    private val executablePath: String,
+) : AutoCloseable {
+    private val logger = LoggerFactory.getLogger(SubprocessContext::class.java)
+    private val lock = Any()
+
+    @Volatile
+    private var closed = false
+
+    var process: Process? = null
+    var reader: BufferedReader? = null
+    var writer: OutputStreamWriter? = null
+
+    fun start() {
+        synchronized(lock) {
+            if (closed) return
+            val proc = processStarter(listOf(executablePath))
+            process = proc
+            reader = BufferedReader(InputStreamReader(proc.inputStream))
+            writer = OutputStreamWriter(proc.outputStream)
+        }
+    }
+
+    fun send(cmd: String) {
+        val w = writer ?: throw IllegalStateException("Writer unavailable")
+        w.write("$cmd\n")
+        w.flush()
+    }
+
+    fun isClosed(): Boolean = closed
+
+    override fun close() {
+        synchronized(lock) {
+            closed = true
+            try {
+                reader?.close()
+            } catch (e: Exception) {
+                logger.debug("Reader close exception", e)
+            }
+            try {
+                writer?.close()
+            } catch (e: Exception) {
+                logger.debug("Writer close exception", e)
+            }
+            val proc = process
+            if (proc != null) {
+                proc.destroyForcibly()
+                try {
+                    proc.waitFor()
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    logger.debug("Interrupted during process wait", e)
+                }
+            }
+        }
     }
 }

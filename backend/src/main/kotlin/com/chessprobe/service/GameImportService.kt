@@ -22,6 +22,7 @@ import com.chessprobe.repository.PuzzleSchedulingEventRepository
 import com.chessprobe.repository.UserPositionStatsRepository
 import com.chessprobe.repository.UserPositionWeaknessRepository
 import com.chessprobe.service.auth.AuthenticatedPrincipal
+import com.chessprobe.service.clustering.DynamicContinuationCoordinator
 import com.chessprobe.service.similarity.DynamicSimilarityCache
 import com.chessprobe.service.similarity.PositionSimilarityCache
 import com.chessprobe.service.weakness.RecurringWeaknessDiscoveryService
@@ -64,6 +65,8 @@ class GameImportService(
     private val dynamicSimilarityCache: DynamicSimilarityCache? = null,
     @org.springframework.beans.factory.annotation.Autowired(required = false)
     private val recurringWeaknessDiscoveryService: RecurringWeaknessDiscoveryService? = null,
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private val dynamicContinuationCoordinator: DynamicContinuationCoordinator? = null,
     @Value("\${chessprobe.import.derived-game-batch-size:1000}")
     private val derivedGameBatchSize: Int = DerivedProcessingCoordinator.DEFAULT_DERIVED_GAME_BATCH_SIZE,
     userPositionStatsBatchService: UserPositionStatsBatchService? = null,
@@ -295,6 +298,9 @@ class GameImportService(
         affectedPositionIds: Set<UUID>,
     ) {
         try {
+            if (affectedPositionIds.isNotEmpty()) {
+                dynamicContinuationCoordinator?.enqueuePositions(affectedPositionIds)
+            }
             val outcome =
                 if (request.multiPv == null) {
                     engineAnalysisOrchestrator.analyzeAffectedPositions(affectedPositionIds)

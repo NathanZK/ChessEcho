@@ -1,5 +1,6 @@
 package com.chessprobe.domain.clustering
 
+import com.chessprobe.service.continuation.TerminationReason
 import jakarta.persistence.Column
 import jakarta.persistence.Embeddable
 import jakarta.persistence.EmbeddedId
@@ -75,6 +76,10 @@ class PositionClusterSnapshot(
     var clusterCount: Int = 0,
     @Column(name = "unassigned_count", nullable = false)
     var unassignedCount: Int = 0,
+    @Column(name = "analyzed_position_count", nullable = false)
+    var analyzedPositionCount: Int = 0,
+    @Column(name = "eligible_position_count", nullable = false)
+    var eligiblePositionCount: Int = 0,
     @Column(name = "created_at", nullable = false)
     val createdAt: Instant = Instant.now(),
     @Column(name = "completed_at")
@@ -127,9 +132,74 @@ class PositionClusterAssignment(
     @Enumerated(EnumType.STRING)
     @Column(name = "assignment_status", nullable = false)
     val assignmentStatus: PositionClusterAssignmentStatus,
+    @Column(name = "isolation_reason")
+    val isolationReason: String? = null,
     @Column(name = "centroid_similarity")
     val centroidSimilarity: Double? = null,
 ) {
     val snapshotId: UUID get() = id.snapshotId
     val positionId: UUID get() = id.positionId
 }
+
+enum class PositionContinuationStatus {
+    PENDING,
+    COMPLETED,
+    FAILED,
+}
+
+enum class TacticalResolutionStatus {
+    RESOLVED_QUIET,
+    RESOLVED_TERMINAL,
+    INCOMPLETE_LIMIT,
+    OPERATIONAL_FAILURE,
+}
+
+@Entity
+@Table(
+    name = "position_continuation_artifact",
+    uniqueConstraints = [
+        UniqueConstraint(
+            name = "uk_position_continuation_config",
+            columnNames = ["position_id", "config_hash"],
+        ),
+    ],
+)
+class PositionContinuationArtifact(
+    @Id
+    val id: UUID = UUID.randomUUID(),
+    @Column(name = "position_id", nullable = false)
+    val positionId: UUID,
+    @Column(name = "config_hash", nullable = false, length = 64)
+    val configHash: String,
+    @Enumerated(EnumType.STRING)
+    @Column(name = "status", nullable = false, length = 20)
+    var status: PositionContinuationStatus = PositionContinuationStatus.PENDING,
+    @Enumerated(EnumType.STRING)
+    @Column(name = "resolution_status", length = 30)
+    var resolutionStatus: TacticalResolutionStatus? = null,
+    @Column(name = "achieved_depth")
+    var achievedDepth: Int? = null,
+    @Column(name = "nominal_moves", length = 255)
+    var nominalMoves: String? = null,
+    @Column(name = "continuation_moves", length = 255)
+    var continuationMoves: String? = null,
+    @Column(name = "resolved_moves", length = 512)
+    var resolvedMoves: String? = null,
+    @Column(name = "terminal_fen")
+    var terminalFen: String? = null,
+    @Enumerated(EnumType.STRING)
+    @Column(name = "termination_reason", length = 30)
+    var terminationReason: TerminationReason? = null,
+    @Column(name = "lease_token", length = 64)
+    var leaseToken: String? = null,
+    @Column(name = "lease_expires_at")
+    var leaseExpiresAt: Instant? = null,
+    @Column(name = "retry_count", nullable = false)
+    var retryCount: Int = 0,
+    @Column(name = "error_message", length = 500)
+    var errorMessage: String? = null,
+    @Column(name = "created_at", nullable = false)
+    val createdAt: Instant = Instant.now(),
+    @Column(name = "updated_at", nullable = false)
+    var updatedAt: Instant = Instant.now(),
+)

@@ -16,6 +16,7 @@ import com.chessprobe.service.similarity.PersonalDynamicCorpusProvider
 import com.chessprobe.service.similarity.PersonalPositionCorpusProvider
 import com.chessprobe.service.weakness.RecurringWeaknessDiscoveryService
 import com.chessprobe.similarity.DynamicInvertedIndex
+import com.chessprobe.similarity.PositionAnalysisOutcome
 import com.chessprobe.similarity.PositionDocument
 import com.chessprobe.similarity.PositionInvertedIndex
 import com.chessprobe.similarity.clustering.ClusterEvaluationResult
@@ -193,6 +194,8 @@ class PositionClusteringService(
         snapshot.totalPositions = 0
         snapshot.clusterCount = 0
         snapshot.unassignedCount = 0
+        snapshot.analyzedPositionCount = 0
+        snapshot.eligiblePositionCount = 0
         snapshot.completedAt = Instant.now()
         return snapshotRepository.save(snapshot)
     }
@@ -380,8 +383,29 @@ class PositionClusteringService(
         positions: List<PositionDocument>,
         evaluation: ClusterEvaluationResult,
     ): PositionClusterSnapshot {
+        val clusterIdByIndex = persistClusters(snapshotId, evaluation.clusters)
+        val assignments = buildClusterAssignments(snapshotId, evaluation.assignments, clusterIdByIndex, positions)
+        assignmentRepository.saveAll(assignments)
+
+        val snapshot = snapshotRepository.findById(snapshotId).orElseThrow()
+        promoteSnapshotIfRequested(snapshot, accountId, promoteToActive)
+
+        val unassignedCount =
+            evaluation.assignments.count {
+                it.status == PositionClusterAssignmentStatus.OUTLIER_EVICTED ||
+                    it.status == PositionClusterAssignmentStatus.ISOLATE
+            }
+
+        updateSnapshotMetadata(snapshot, positions, evaluation.clusters.size, unassignedCount)
+        return snapshotRepository.save(snapshot)
+    }
+
+    private fun persistClusters(
+        snapshotId: UUID,
+        clusters: List<com.chessprobe.similarity.clustering.EvaluatedCluster>,
+    ): Map<Int, UUID> {
         val clusterIdByIndex = mutableMapOf<Int, UUID>()
-        for (c in evaluation.clusters) {
+        for (c in clusters) {
             val jsonVector = objectMapper.writeValueAsString(c.centroidVector)
             val clusterEntity =
                 PositionCluster(
@@ -393,20 +417,54 @@ class PositionClusteringService(
             val saved = clusterRepository.save(clusterEntity)
             clusterIdByIndex[c.clusterIndex] = saved.id
         }
+        return clusterIdByIndex
+    }
 
-        val assignments =
-            evaluation.assignments.map { a ->
-                val clusterId = if (a.clusterIndex != null) clusterIdByIndex[a.clusterIndex] else null
-                PositionClusterAssignment(
-                    id = PositionClusterAssignmentId(snapshotId, a.positionId),
-                    clusterId = clusterId,
-                    assignmentStatus = a.status,
-                    centroidSimilarity = a.centroidSimilarity,
-                )
-            }
-        assignmentRepository.saveAll(assignments)
+    private fun buildClusterAssignments(
+        snapshotId: UUID,
+        assignments: List<com.chessprobe.similarity.clustering.EvaluatedPositionAssignment>,
+        clusterIdByIndex: Map<Int, UUID>,
+        positions: List<PositionDocument>,
+    ): List<PositionClusterAssignment> {
+        val positionsById = positions.associateBy { it.positionId }
+        return assignments.map { a ->
+            val clusterId = if (a.clusterIndex != null) clusterIdByIndex[a.clusterIndex] else null
+            val doc = positionsById[a.positionId]
+            val isolationReason = mapIsolationReason(a.status, doc?.analysisOutcome)
+            PositionClusterAssignment(
+                id = PositionClusterAssignmentId(snapshotId, a.positionId),
+                clusterId = clusterId,
+                assignmentStatus = a.status,
+                isolationReason = isolationReason,
+                centroidSimilarity = a.centroidSimilarity,
+            )
+        }
+    }
 
-        val snapshot = snapshotRepository.findById(snapshotId).orElseThrow()
+    private fun mapIsolationReason(
+        status: PositionClusterAssignmentStatus,
+        outcome: PositionAnalysisOutcome?,
+    ): String? =
+        when (status) {
+            PositionClusterAssignmentStatus.ASSIGNED -> null
+            PositionClusterAssignmentStatus.OUTLIER_EVICTED -> "OUTLIER_EVICTION"
+            PositionClusterAssignmentStatus.ISOLATE ->
+                when (outcome) {
+                    PositionAnalysisOutcome.EVALUATED_ZERO_TOKENS -> "ZERO_TOKENS"
+                    PositionAnalysisOutcome.INCOMPLETE_RESOLUTION -> "INCOMPLETE_RESOLUTION"
+                    PositionAnalysisOutcome.UNANALYZED -> "UNANALYZED"
+                    PositionAnalysisOutcome.PENDING -> "PENDING"
+                    PositionAnalysisOutcome.FAILED -> "FAILED"
+                    PositionAnalysisOutcome.EVALUATED_WITH_TOKENS -> "GRAPH_ISOLATE"
+                    null -> "ZERO_TOKENS"
+                }
+        }
+
+    private fun promoteSnapshotIfRequested(
+        snapshot: PositionClusterSnapshot,
+        accountId: UUID,
+        promoteToActive: Boolean,
+    ) {
         if (promoteToActive) {
             snapshotRepository.updateStatusForAccountAndClusterType(
                 accountId = accountId,
@@ -420,18 +478,39 @@ class PositionClusteringService(
         } else {
             snapshot.status = PositionClusterSnapshotStatus.EXPERIMENTAL
         }
+    }
 
-        val unassignedCount =
-            evaluation.assignments.count {
-                it.status == PositionClusterAssignmentStatus.OUTLIER_EVICTED ||
-                    it.status == PositionClusterAssignmentStatus.ISOLATE
+    private fun updateSnapshotMetadata(
+        snapshot: PositionClusterSnapshot,
+        positions: List<PositionDocument>,
+        clusterCount: Int,
+        unassignedCount: Int,
+    ) {
+        val isDynamic = snapshot.clusterType == ClusterType.DYNAMIC
+        snapshot.analyzedPositionCount =
+            if (isDynamic) {
+                positions.count {
+                    it.analysisOutcome == PositionAnalysisOutcome.EVALUATED_WITH_TOKENS ||
+                        it.analysisOutcome == PositionAnalysisOutcome.EVALUATED_ZERO_TOKENS ||
+                        it.analysisOutcome == PositionAnalysisOutcome.INCOMPLETE_RESOLUTION
+                }
+            } else {
+                positions.size
+            }
+        snapshot.eligiblePositionCount =
+            if (isDynamic) {
+                positions.count {
+                    it.analysisOutcome == PositionAnalysisOutcome.EVALUATED_WITH_TOKENS ||
+                        it.analysisOutcome == PositionAnalysisOutcome.EVALUATED_ZERO_TOKENS
+                }
+            } else {
+                positions.size
             }
 
         snapshot.totalPositions = positions.size
-        snapshot.clusterCount = evaluation.clusters.size
+        snapshot.clusterCount = clusterCount
         snapshot.unassignedCount = unassignedCount
         snapshot.completedAt = Instant.now()
-        return snapshotRepository.save(snapshot)
     }
 
     private fun recordFailure(

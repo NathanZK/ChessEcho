@@ -3,6 +3,7 @@ package com.chessprobe.service
 import com.chessprobe.service.continuation.TerminationReason
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -11,6 +12,7 @@ import org.junit.jupiter.api.assertThrows
 import java.io.BufferedReader
 import java.io.OutputStreamWriter
 import java.io.StringReader
+import java.nio.file.Files
 
 class StockfishServiceTest {
     @Test
@@ -465,5 +467,150 @@ class StockfishServiceTest {
         assertEquals(3, result.pliesResolved)
         assertEquals(listOf("d8d7", "b3e6", "f7e6"), result.moves)
         assertEquals(listOf("Rxd7", "Qxe6+", "fxe6"), result.sanMoves)
+    }
+
+    @Test
+    fun `analyzeFullPv preserves multi-ply nominal PV correctly without truncation`() {
+        val stockfishService = StockfishService()
+        val fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        val reader =
+            simulatedReader(
+                "uciok",
+                "readyok",
+                "info depth 10 seldepth 12 multipv 1 score cp 25 nodes 1500 pv e2e4 e7e5 g1f3 b8c6 f1b5 a7a6",
+                "bestmove e2e4 ponder e7e5",
+            )
+
+        val result =
+            stockfishService.analyzeFullPv(
+                fen = fen,
+                targetDepth = 10,
+                reader = reader,
+            )
+
+        assertEquals(10, result.achievedDepth)
+        assertEquals(listOf("e2e4", "e7e5", "g1f3", "b8c6", "f1b5", "a7a6"), result.moves)
+        assertEquals(25, result.evalCentipawns)
+        assertFalse(result.isMate)
+        assertNull(result.mateDepth)
+    }
+
+    @Test
+    fun `analyzeFullPv succeeds on short 1-ply PV when search depth meets target`() {
+        val stockfishService = StockfishService()
+        val fen = "r1bqkb1r/pppp1ppp/2n5/4p3/2B1n3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 5"
+        val reader =
+            simulatedReader(
+                "uciok",
+                "readyok",
+                "info depth 10 seldepth 10 multipv 1 score cp 120 nodes 800 pv d2d4",
+                "bestmove d2d4",
+            )
+
+        val result =
+            stockfishService.analyzeFullPv(
+                fen = fen,
+                targetDepth = 10,
+                reader = reader,
+            )
+
+        assertEquals(10, result.achievedDepth)
+        assertEquals(listOf("d2d4"), result.moves)
+        assertEquals(120, result.evalCentipawns)
+    }
+
+    @Test
+    fun `resolveExecutableFile resolves valid executable and returns null for invalid file`() {
+        val tempFile = Files.createTempFile("test-stockfish", ".bin").toFile()
+        try {
+            tempFile.setExecutable(true)
+            val resolved = StockfishService.resolveExecutableFile(tempFile.absolutePath)
+            assertNotNull(resolved)
+            assertEquals(tempFile.canonicalFile, resolved)
+
+            val nonexistent = StockfishService.resolveExecutableFile("/nonexistent/bin/stockfish-fake")
+            assertNull(nonexistent)
+        } finally {
+            tempFile.delete()
+        }
+    }
+
+    @Test
+    fun `computeFileSha256 changes when binary bytes change and remains identical for same bytes`() {
+        val fileA = Files.createTempFile("test-bin-a", ".bin").toFile()
+        val fileB = Files.createTempFile("test-bin-b", ".bin").toFile()
+        try {
+            fileA.writeBytes("binary-content-v1".toByteArray())
+            fileB.writeBytes("binary-content-v2".toByteArray())
+
+            val hashA1 = StockfishService.computeFileSha256(fileA)
+            val hashA2 = StockfishService.computeFileSha256(fileA)
+            val hashB = StockfishService.computeFileSha256(fileB)
+
+            assertEquals(hashA1, hashA2)
+            assertNotEquals(hashA1, hashB)
+            assertEquals(64, hashA1.length)
+        } finally {
+            fileA.delete()
+            fileB.delete()
+        }
+    }
+
+    @Test
+    fun `getEngineBinaryHash uses binaryDigestProvider when provided`() {
+        val customDigest = "custom-mock-sha256-digest"
+        val service = StockfishService(binaryDigestProvider = { customDigest })
+        assertEquals(customDigest, service.getEngineBinaryHash())
+    }
+
+    @Test
+    fun `analyzeFullPv sends UCI threads, hash, and ponder options to subprocess`() {
+        val capturedCommands = mutableListOf<String>()
+        val mockReader = simulatedReader("readyok", "info depth 10 multipv 1 pv e2e4", "bestmove e2e4")
+        val process: Process =
+            object : Process() {
+                val outputStream =
+                    object : java.io.OutputStream() {
+                        val buffer = StringBuilder()
+
+                        override fun write(b: Int) {
+                            if (b == '\n'.code) {
+                                capturedCommands.add(buffer.toString())
+                                buffer.clear()
+                            } else {
+                                buffer.append(b.toChar())
+                            }
+                        }
+                    }
+
+                override fun getOutputStream(): java.io.OutputStream = outputStream
+
+                override fun getInputStream(): java.io.InputStream =
+                    java.io.ByteArrayInputStream(
+                        "readyok\ninfo depth 10 multipv 1 pv e2e4\nbestmove e2e4\n".toByteArray(),
+                    )
+
+                override fun getErrorStream(): java.io.InputStream = java.io.ByteArrayInputStream(ByteArray(0))
+
+                override fun waitFor(): Int = 0
+
+                override fun exitValue(): Int = 0
+
+                override fun destroy() {}
+
+                override fun destroyForcibly(): Process = this
+            }
+
+        val service = StockfishService(processStarter = { process })
+        val result =
+            service.analyzeFullPv(
+                fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                targetDepth = 10,
+            )
+        assertNotNull(result)
+        val commandsString = capturedCommands.joinToString("\n")
+        assertTrue(commandsString.contains("setoption name Threads value 1"))
+        assertTrue(commandsString.contains("setoption name Hash value 16"))
+        assertTrue(commandsString.contains("setoption name Ponder value false"))
     }
 }

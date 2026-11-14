@@ -26,7 +26,7 @@ The goal is to change habits, not to memorize engine lines.
 
 - **6 Focused Analysis & Practice Views**:
   - **Practice Puzzles**: Drill your actual recurring mistakes with interactive move validation, continuation lines, and instant tactical feedback.
-  - **Tactical Weaknesses**: Browse detected recurring weaknesses and thematic Leiden clusters with win/loss records and source game links.
+  - **Tactical Weaknesses**: Browse detected recurring weaknesses and thematic Leiden clusters with win/loss records and source game links (see [Position Clustering Architecture](docs/architecture/position-clustering.md)).
   - **Long Decisions**: Isolate positions where you spent significant clock time deciding, filtered by time control and move phase.
   - **Similar Positions**: Retrieve structurally and dynamically similar tactical positions across your games using dual-mode retrieval.
   - **Import Games**: Asynchronous game ingestion from the Chess.com public API with live progress polling and resilient checkpointing.
