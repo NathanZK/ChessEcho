@@ -103,18 +103,20 @@ class RecurringWeaknessDiscoveryService(
     ): RecurringDiscoveryJobResponse {
         request.validate()
 
-        val existingJobId = activeAccountJobs[account.id]
-        if (existingJobId != null) {
-            val existing = jobs[existingJobId]
-            if (existing != null && !existing.status.isTerminal()) {
-                throw IllegalStateException("An active discovery job is already in progress for account ${account.id}")
-            }
-        }
-
         val jobId = UUID.randomUUID()
         val jobState = DiscoveryJobState(jobId = jobId, accountId = account.id)
-        jobs[jobId] = jobState
-        activeAccountJobs[account.id] = jobId
+
+        synchronized(activeAccountJobs) {
+            val existingJobId = activeAccountJobs[account.id]
+            if (existingJobId != null) {
+                val existing = jobs[existingJobId]
+                if (existing != null && !existing.status.isTerminal()) {
+                    throw IllegalStateException("An active discovery job is already in progress for account ${account.id}")
+                }
+            }
+            jobs[jobId] = jobState
+            activeAccountJobs[account.id] = jobId
+        }
         val initialResponse = toResponse(jobState)
 
         executor.submit { runPipeline(jobState, account, request) }
@@ -795,14 +797,16 @@ private fun buildPartialWarning(resolved: ResolvedSnapshotsResult): String? =
     }
 
 private fun toResponse(state: DiscoveryJobState): RecurringDiscoveryJobResponse =
-    RecurringDiscoveryJobResponse(
-        jobId = state.jobId,
-        accountId = state.accountId,
-        status = state.status.name,
-        progressPercent = state.progressPercent,
-        stage = state.stage.name,
-        errorMessage = state.errorMessage,
-        warningMessage = state.warningMessage,
-        createdAt = state.createdAt,
-        updatedAt = state.updatedAt,
-    )
+    synchronized(state) {
+        RecurringDiscoveryJobResponse(
+            jobId = state.jobId,
+            accountId = state.accountId,
+            status = state.status.name,
+            progressPercent = state.progressPercent,
+            stage = state.stage.name,
+            errorMessage = state.errorMessage,
+            warningMessage = state.warningMessage,
+            createdAt = state.createdAt,
+            updatedAt = state.updatedAt,
+        )
+    }
