@@ -68,6 +68,9 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: npx playwright install-deps chromium
 
+      - name: Build Next.js production application
+        run: npm run build
+
       - name: Run deterministic Playwright journeys
         run: npm run test:journeys
 

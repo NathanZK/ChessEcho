@@ -9,6 +9,7 @@ export interface ObservedPracticeState {
     isInteractive: boolean;
     lastMove?: string;
   };
+  hasResidualHighlight?: boolean;
 }
 
 export class InvariantEvaluator {

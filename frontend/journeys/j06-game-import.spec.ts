@@ -32,7 +32,7 @@ test.describe('Journeys J06-J07: Game Import and Analysis Pipeline', () => {
     });
 
     // 2. Navigate to import tab
-    await page.goto('/#import');
+    await page.goto('/#import', { waitUntil: 'domcontentloaded' });
 
     // 3. Fill guest username
     const usernameInput = page.getByLabel('Chess.com Username');
@@ -84,7 +84,7 @@ test.describe('Journeys J06-J07: Game Import and Analysis Pipeline', () => {
     });
 
     // 2. Navigate to import tab
-    await page.goto('/#import');
+    await page.goto('/#import', { waitUntil: 'domcontentloaded' });
 
     // 3. Connected username is pre-populated
     const usernameInput = page.getByLabel('Chess.com Username');
@@ -107,7 +107,7 @@ test.describe('Journeys J06-J07: Game Import and Analysis Pipeline', () => {
     });
 
     // 2. Navigate to import tab
-    await page.goto('/#import');
+    await page.goto('/#import', { waitUntil: 'domcontentloaded' });
 
     // 3. Fill username and submit
     await page.getByLabel('Chess.com Username').fill('carlsen');

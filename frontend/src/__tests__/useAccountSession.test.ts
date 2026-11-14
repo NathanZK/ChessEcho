@@ -126,4 +126,68 @@ describe('useAccountSession', () => {
     expect(onClearAccountState).toHaveBeenCalled();
     expect(activeAccountStore.getSnapshot()).toBeUndefined();
   });
+
+  it('broadcasts LOGOUT on handleLogout via BroadcastChannel("chessprobe_auth")', async () => {
+    vi.mocked(api.fetchCurrentSession).mockResolvedValueOnce({
+      status: 'authenticated',
+      userId: 'user-123',
+    });
+    vi.mocked(api.fetchAccounts).mockResolvedValueOnce([]);
+
+    const channel = new BroadcastChannel('chessprobe_auth');
+    const receivedMessages: unknown[] = [];
+    channel.onmessage = (event) => {
+      receivedMessages.push(event.data);
+    };
+
+    const { result } = renderHook(() => useAccountSession());
+
+    await waitFor(() => {
+      expect(result.current.sessionStatus).toBe('authenticated');
+    });
+
+    await act(async () => {
+      result.current.handleLogout();
+    });
+
+    expect(result.current.sessionStatus).toBe('unauthenticated');
+    expect(receivedMessages).toContainEqual({ type: 'LOGOUT' });
+    channel.close();
+  });
+
+  it('reacts to incoming LOGOUT message on BroadcastChannel("chessprobe_auth") and clears session state', async () => {
+    const onClearAccountState = vi.fn();
+    vi.mocked(api.fetchCurrentSession).mockResolvedValueOnce({
+      status: 'authenticated',
+      userId: 'user-123',
+    });
+    vi.mocked(api.fetchAccounts).mockResolvedValueOnce([
+      {
+        id: 'acc-1',
+        platform: 'CHESS_COM',
+        username: 'chess_player',
+      },
+    ]);
+
+    const { result } = renderHook(() => useAccountSession({ onClearAccountState }));
+
+    await waitFor(() => {
+      expect(result.current.sessionStatus).toBe('authenticated');
+      expect(result.current.accountStatus).toBe('connected');
+    });
+
+    const channel = new BroadcastChannel('chessprobe_auth');
+    await act(async () => {
+      channel.postMessage({ type: 'LOGOUT' });
+    });
+
+    await waitFor(() => {
+      expect(result.current.sessionStatus).toBe('unauthenticated');
+      expect(result.current.accountStatus).toBe('unconnected');
+    });
+
+    expect(onClearAccountState).toHaveBeenCalled();
+    expect(activeAccountStore.getSnapshot()).toBeUndefined();
+    channel.close();
+  });
 });

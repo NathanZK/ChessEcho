@@ -4,6 +4,7 @@ import {
   DEFAULT_MOCK_WEAKNESS,
   DEFAULT_MOCK_RECURRING_WEAKNESS,
   DEFAULT_MOCK_DYNAMIC_RECURRING_WEAKNESS,
+  DEFAULT_MOCK_CLUSTER_POSITION,
 } from './fixtures/mockApi';
 
 test.describe('Journey J01: Weaknesses Library Practice and Exit Return Flow', () => {
@@ -15,7 +16,7 @@ test.describe('Journey J01: Weaknesses Library Practice and Exit Return Flow', (
     });
 
     // 2. Load application
-    await page.goto('/#weaknesses');
+    await page.goto('/#weaknesses', { waitUntil: 'domcontentloaded' });
 
     // 3. Verify Weaknesses tab displays populated cards
     const practiceButton = page.getByRole('button', { name: /Practice Position/i });
@@ -61,7 +62,7 @@ test.describe('Journey J01: Weaknesses Library Practice and Exit Return Flow', (
     });
 
     // 2. Load application
-    await page.goto('/#weaknesses');
+    await page.goto('/#weaknesses', { waitUntil: 'domcontentloaded' });
 
     // 3. Verify thematic cluster cards are visible
     await expect(page.getByText(/Thematic Clusters/i)).toBeVisible();
@@ -99,5 +100,61 @@ test.describe('Journey J01: Weaknesses Library Practice and Exit Return Flow', (
     await expect(backBtn).toBeVisible();
     await backBtn.click();
     await expect(page).toHaveURL(/#weaknesses/);
+  });
+
+  test('user inspects cluster member positions in modal and progresses through practice playlist', async ({ page }) => {
+    // 1. Declare and setup mock cluster with member positions
+    const clusterPositions = [
+      DEFAULT_MOCK_CLUSTER_POSITION,
+      {
+        ...DEFAULT_MOCK_CLUSTER_POSITION,
+        positionId: 'pos-rec-2',
+        fen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2',
+        targetMove: 'Nc6',
+        movePlayed: 'f5',
+      },
+    ];
+
+    await setupJourneyApiMocks(page, {
+      authenticated: true,
+      recurringWeaknesses: [DEFAULT_MOCK_RECURRING_WEAKNESS],
+      clusterPositions,
+    });
+
+    // 2. Open weaknesses tab
+    await page.goto('/#weaknesses', { waitUntil: 'domcontentloaded' });
+
+    // 3. Click Inspect Evidence to view member positions
+    const inspectButton = page.getByRole('button', { name: /Inspect Evidence/i });
+    await expect(inspectButton).toBeVisible();
+    await inspectButton.click();
+
+    // 4. Verify member positions modal dialog opens and renders member cards
+    const modal = page.getByRole('dialog');
+    await expect(modal).toBeVisible();
+    await expect(page.getByText('Cluster Evidence Inspection')).toBeVisible();
+    await expect(page.getByText('Played:').first()).toBeVisible();
+
+    // 5. Close evidence modal via close button
+    const closeButton = modal.getByRole('button', { name: /Close dialog/i });
+    await expect(closeButton).toBeVisible();
+    await closeButton.click();
+    await expect(modal).toBeHidden();
+
+    // 6. Click Practice This Weakness to launch playlist
+    const practiceButton = page.getByRole('button', { name: /Practice This Weakness/i });
+    await expect(practiceButton).toBeVisible();
+    await practiceButton.click();
+
+    // 7. Verify transition to practice shell mounted on puzzles tab
+    await expect(page).toHaveURL(/#puzzles/);
+    await expect(page.locator('[data-testid="practice-board-area"]')).toBeVisible();
+
+    // 8. Progress to next puzzle in playlist
+    const nextButton = page.getByRole('button', { name: /Next Puzzle/i });
+    if (await nextButton.isVisible()) {
+      await nextButton.click();
+      await expect(page.locator('[data-testid="practice-board-area"]')).toBeVisible();
+    }
   });
 });

@@ -179,6 +179,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
     setGameHistory([initialGame]);
     setFenHistory([initialFen]);
     setHistoryIndex(0);
+    setMoveFromSquare(null);
     setCustomSquareStyles({});
     setFenNotification({ fen: initialFen });
   }
@@ -191,6 +192,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
     setFenHistory([prevFen]);
     setGameHistory((prev) => [prev[0] ?? new Chess(prevFen)]);
     setHistoryIndex(0);
+    setMoveFromSquare(null);
     setCustomSquareStyles({});
     setFenNotification({ fen: prevFen });
   }
@@ -217,6 +219,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
         },
       });
     } else {
+      setMoveFromSquare(null);
       setCustomSquareStyles({});
     }
   }
@@ -404,6 +407,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
         const currentFen = game.fen();
         const nextFen = gameCopy.fen();
 
+        setMoveFromSquare(null);
         setCustomSquareStyles({});
         currentBoardFenRef.current = nextFen;
         setGame(gameCopy);
@@ -495,6 +499,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
         return true;
       }
 
+      setMoveFromSquare(null);
       setCustomSquareStyles({});
       setGame(gameCopy);
 
@@ -551,6 +556,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   };
 
   const handleUndo = () => {
+    setMoveFromSquare(null);
     setCustomSquareStyles({});
     if (historyIndex > 0) {
       const prevIndex = historyIndex - 1;
@@ -564,6 +570,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
   };
 
   const handleRedo = () => {
+    setMoveFromSquare(null);
     setCustomSquareStyles({});
     if (historyIndex < fenHistory.length - 1) {
       const nextIndex = historyIndex + 1;
@@ -611,6 +618,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
     setGameHistory([resetGame]);
     setFenHistory([initialFen]);
     setHistoryIndex(0);
+    setMoveFromSquare(null);
     setCustomSquareStyles({});
     onFenChange?.(initialFen);
     onReset?.();
@@ -672,6 +680,7 @@ export const ChessBoardArea: React.FC<ChessBoardAreaProps> = ({
         [square]: { backgroundColor: 'rgba(245, 158, 11, 0.4)' },
       });
     } else {
+      setMoveFromSquare(null);
       setCustomSquareStyles({});
     }
   };

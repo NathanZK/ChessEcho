@@ -39,6 +39,7 @@ out/
 ### Stryker Mutation Testing ###
 .stryker-tmp/
 reports/
+test-results/
 
 ### Graphify intermediate outputs ###
 graphify-out

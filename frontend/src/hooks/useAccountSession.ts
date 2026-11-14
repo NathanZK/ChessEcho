@@ -26,6 +26,8 @@ function errorMessageOf(e: unknown): string | undefined {
   return undefined;
 }
 
+export type AuthBroadcastMessage = { type: 'LOGOUT' };
+
 export type UseAccountSessionOptions = {
   onClearAccountState?: () => void;
 };
@@ -208,8 +210,18 @@ export function useAccountSession(options?: UseAccountSessionOptions) {
   const handleLogout = React.useCallback(() => {
     clearSessionState();
     setSessionStatus('unauthenticated');
+    sessionGate.resolve(true);
+    if (typeof window !== 'undefined' && typeof BroadcastChannel !== 'undefined') {
+      try {
+        const channel = new BroadcastChannel('chessprobe_auth');
+        channel.postMessage({ type: 'LOGOUT' } satisfies AuthBroadcastMessage);
+        channel.close();
+      } catch {
+        // Safe fallback in restricted or sandboxed environments
+      }
+    }
     void apiLogout();
-  }, [clearSessionState]);
+  }, [clearSessionState, sessionGate]);
 
   const handleSetUsername = React.useCallback((user: string | undefined) => {
     activeUsernameStore.set(user);
@@ -253,6 +265,33 @@ export function useAccountSession(options?: UseAccountSessionOptions) {
       accountContextMountedRef.current = false;
     };
   }, [loadOwnedAccounts, reconcileSessionIdentity, sessionGate]);
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined' || typeof BroadcastChannel === 'undefined') {
+      return;
+    }
+    let channel: BroadcastChannel | null = null;
+    try {
+      channel = new BroadcastChannel('chessprobe_auth');
+      channel.onmessage = (event: MessageEvent<unknown>) => {
+        const data = event.data as Partial<AuthBroadcastMessage> | null;
+        if (data && typeof data === 'object' && data.type === 'LOGOUT') {
+          clearSessionState();
+          setSessionStatus('unauthenticated');
+          sessionGate.resolve(true);
+        }
+      };
+    } catch {
+      // BroadcastChannel unavailable in sandbox
+    }
+    return () => {
+      try {
+        channel?.close();
+      } catch {
+        // ignore close errors
+      }
+    };
+  }, [clearSessionState, sessionGate]);
 
   const connectedAccount =
     sessionStatus === 'authenticated' && accountStatus === 'connected' ? activeAccount : undefined;

@@ -13,6 +13,7 @@ import {
   executeConcreteAction,
   createInitialContext,
   DEFAULT_PRACTICE_FEN,
+  deriveMoveState,
   type PracticeModelContext,
 } from './model/practiceModel';
 import { explorePracticeStates } from './model/bfsExplorer';
@@ -55,6 +56,7 @@ test.describe('Phase 2 Model-Based Testing: Bounded BFS Exploration & High-Risk 
     context = {
       ...context,
       puzzleLoaded: true,
+      activePuzzle: DEFAULT_MOCK_PUZZLE,
       expectedFen: DEFAULT_PRACTICE_FEN,
       expectedSideToMove: 'white',
       expectedFailedCount: 0,
@@ -72,14 +74,9 @@ test.describe('Phase 2 Model-Based Testing: Bounded BFS Exploration & High-Risk 
     const a3Square = page.locator('[data-square="a3"]');
     await expect(a2Square).toBeVisible();
     await a2Square.click();
+    await page.waitForTimeout(60);
     await a3Square.click();
-    context = {
-      ...context,
-      attemptCount: 1,
-      expectedFailedCount: 1,
-      lastMoveSan: 'a3',
-      expectedFen: DEFAULT_PRACTICE_FEN,
-    };
+    context = deriveMoveState(context, 'a3', 'INCORRECT');
     await STATE_ORACLES.INCORRECT.assert(page, context, expect);
 
     // 6. Action: RETRY -> PRACTICE_IDLE (board is rolled back to baseline FEN)

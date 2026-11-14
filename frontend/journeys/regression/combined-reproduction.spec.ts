@@ -4,7 +4,7 @@ import {
   DEFAULT_MOCK_ACCOUNT,
   DEFAULT_MOCK_PUZZLE,
 } from '../fixtures/mockApi';
-import { STATE_ORACLES, ensureDiscoveryState, createInitialContext, DEFAULT_PRACTICE_FEN } from '../model/practiceModel';
+import { STATE_ORACLES, ensureDiscoveryState, createInitialContext, DEFAULT_PRACTICE_FEN, deriveMoveState } from '../model/practiceModel';
 import { runCombinedBfsMonkey } from '../model/combinedRunner';
 
 /**
@@ -93,13 +93,7 @@ test.describe('Phase 5 Regression: Combined BFS-Monkey Deterministic Reproductio
     await page.waitForTimeout(60);
     await a3.click();
 
-    context = {
-      ...context,
-      attemptCount: 1,
-      expectedFailedCount: 1,
-      lastMoveSan: 'a3',
-      expectedFen: DEFAULT_PRACTICE_FEN,
-    };
+    context = deriveMoveState(context, 'a3', 'INCORRECT');
     await STATE_ORACLES.INCORRECT.assert(page, context, expect);
     await expect(page.getByText(/Failed: 1/i)).toBeVisible();
 
@@ -128,13 +122,7 @@ test.describe('Phase 5 Regression: Combined BFS-Monkey Deterministic Reproductio
     await page.waitForTimeout(60);
     await h4.click();
 
-    context = {
-      ...context,
-      attemptCount: 2,
-      expectedFailedCount: 2,
-      lastMoveSan: 'h4',
-      expectedFen: DEFAULT_PRACTICE_FEN,
-    };
+    context = deriveMoveState(context, 'h4', 'HISTORICAL_MISTAKE');
     await STATE_ORACLES.HISTORICAL_MISTAKE.assert(page, context, expect);
     await expect(page.getByText(/Failed: 2/i)).toBeVisible();
 
