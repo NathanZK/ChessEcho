@@ -1,5 +1,5 @@
 import fc from 'fast-check';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 import { Chess } from 'chess.js';
 import { areMovesEqual, toCanonicalMove, type CanonicalMove } from '../utils/chessMove';
 import { parseFenInput, parsePgnMainLine } from '../utils/positionImport';
@@ -11,7 +11,7 @@ import {
   type BlindfoldGameState,
 } from '../utils/blindfoldGameState';
 import { computeDurationComparison, evaluateDecisionTimingComparison } from '../utils/decisionTimingComparison';
-import { formatPawnLoss, formatScoreRate, formatTimerMs } from '../utils/formatters';
+import { formatPawnLoss, formatScoreRate, formatTimerMs, calculateWhitePercent } from '../utils/formatters';
 
 /**
  * Domain Property-Based Tests (Phase 3, Issue #714)
@@ -40,6 +40,21 @@ const BENCHMARK_FENS = [
 ];
 
 const WHITESPACE_ARB = fc.constantFrom('', ' ', '  ', '\t', ' \t ');
+
+let suiteStartTime: number;
+
+beforeAll(() => {
+  suiteStartTime = performance.now();
+  const rawSeed = process.env.FAST_CHECK_SEED;
+  const parsedSeed = rawSeed !== undefined ? parseInt(rawSeed, 10) : NaN;
+  const seed = Number.isFinite(parsedSeed) ? parsedSeed : Date.now();
+  fc.configureGlobal({ seed });
+});
+
+afterAll(() => {
+  const suiteDurationMs = performance.now() - suiteStartTime;
+  expect(suiteDurationMs).toBeLessThanOrEqual(5000);
+});
 
 describe('Move Normalization & Equality Properties (chessMove.ts)', () => {
   it('Format Invariance: toCanonicalMove yields identical canonical representation for SAN, UCI, and coordinate objects', () => {
@@ -523,6 +538,100 @@ describe('Blindfold State Transition & Reversibility Properties (blindfoldGameSt
         }
       }),
       { numRuns: 25 },
+    );
+  });
+});
+
+describe('Domain Hardening Properties (Issue #791)', () => {
+  it('Monotonicity and bounds of White-perspective evaluation (calculateWhitePercent)', () => {
+    // Arbitrary integer centipawns in standard range [-2000, 2000]
+    fc.assert(
+      fc.property(
+        fc.integer({ min: -2000, max: 2000 }),
+        fc.constantFrom('w', 'b'),
+        (evalSide, side) => {
+          const evalWhite = side === 'w' ? evalSide : -evalSide;
+          const percent = calculateWhitePercent(evalWhite);
+          expect(percent).toBeGreaterThanOrEqual(0);
+          expect(percent).toBeLessThanOrEqual(100);
+        },
+      ),
+      { numRuns: 100 },
+    );
+
+    // Monotonicity: v1 <= v2 ==> calculateWhitePercent(v1) <= calculateWhitePercent(v2)
+    fc.assert(
+      fc.property(
+        fc.integer({ min: -2500, max: 2500 }),
+        fc.integer({ min: -2500, max: 2500 }),
+        (v1, v2) => {
+          const [smaller, larger] = v1 <= v2 ? [v1, v2] : [v2, v1];
+          expect(calculateWhitePercent(smaller)).toBeLessThanOrEqual(calculateWhitePercent(larger));
+        },
+      ),
+      { numRuns: 100 },
+    );
+  });
+
+  it('Legal FEN Round-Trip & Idempotence: random legal walks yield valid FENs and idempotent canonicalization', () => {
+    // Legal walk generator from benchmark starts
+    fc.assert(
+      fc.property(
+        fc.constantFrom(...BENCHMARK_FENS),
+        fc.array(fc.nat(), { minLength: 1, maxLength: 10 }),
+        (startFen, moveChoices) => {
+          const game = new Chess(startFen);
+          for (const choice of moveChoices) {
+            const legalMoves = game.moves({ verbose: true });
+            if (legalMoves.length === 0 || game.isGameOver()) break;
+            const chosenMove = legalMoves[choice % legalMoves.length];
+            game.move(chosenMove.san);
+          }
+          const walkFen = game.fen();
+          // parseFenInput accepts legal FEN
+          const parseResult = parseFenInput(walkFen);
+          expect(parseResult.ok).toBe(true);
+
+          // Canonicalization idempotence
+          const c1 = new Chess(walkFen).fen();
+          const c2 = new Chess(c1).fen();
+          expect(c1).toBe(c2);
+        },
+      ),
+      { numRuns: 50 },
+    );
+  });
+
+  it('Move Reversibility in Domain State: history rebuilding restores exact active and sliced FENs', () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom(...BENCHMARK_FENS),
+        fc.array(fc.nat(), { minLength: 1, maxLength: 8 }),
+        (startFen, moveChoices) => {
+          const game = new Chess(startFen);
+          const history: Array<{ san: string }> = [];
+          const stepFens: string[] = [startFen];
+
+          for (const choice of moveChoices) {
+            const legalMoves = game.moves({ verbose: true });
+            if (legalMoves.length === 0 || game.isGameOver()) break;
+            const chosenMove = legalMoves[choice % legalMoves.length];
+            game.move(chosenMove.san);
+            history.push({ san: chosenMove.san });
+            stepFens.push(game.fen());
+          }
+
+          // Full history recovery
+          expect(rebuildPositionFromHistory(startFen, history)).toBe(game.fen());
+
+          // Historical slice rollback
+          for (let i = 0; i < history.length; i++) {
+            const sliceHistory = history.slice(0, i);
+            expect(rebuildPositionFromHistory(startFen, sliceHistory)).toBe(stepFens[i]);
+          }
+        },
+      ),
+      { numRuns: 40 },
     );
   });
 });

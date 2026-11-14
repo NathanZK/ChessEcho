@@ -4,6 +4,7 @@ import {
   formatPawnLoss,
   formatScoreRate,
   formatTimerMs,
+  calculateWhitePercent,
 } from '../utils/formatters';
 
 describe('formatters', () => {
@@ -90,6 +91,30 @@ describe('formatters', () => {
       expect(formatTimerMs(65400.6)).toBe('1:05');
       expect(formatTimerMs(999.4)).toBe('0:00');
       expect(formatTimerMs(999.6)).toBe('0:01');
+    });
+  });
+
+  describe('calculateWhitePercent', () => {
+    it('calculates 50% for equal 0 eval', () => {
+      expect(calculateWhitePercent(0)).toBe(50);
+    });
+
+    it('calculates 100% for +1000 cp and 0% for -1000 cp', () => {
+      expect(calculateWhitePercent(1000)).toBe(100);
+      expect(calculateWhitePercent(-1000)).toBe(0);
+    });
+
+    it('clamps advantage beyond +/- 10 pawns', () => {
+      expect(calculateWhitePercent(2000)).toBe(100);
+      expect(calculateWhitePercent(-2000)).toBe(0);
+    });
+
+    it('handles null, undefined, and non-finite inputs by returning 50%', () => {
+      expect(calculateWhitePercent(null)).toBe(50);
+      expect(calculateWhitePercent(undefined)).toBe(50);
+      expect(calculateWhitePercent(NaN)).toBe(50);
+      expect(calculateWhitePercent(Infinity)).toBe(50);
+      expect(calculateWhitePercent(-Infinity)).toBe(50);
     });
   });
 });

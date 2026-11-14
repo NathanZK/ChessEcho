@@ -51,3 +51,16 @@ export function formatTimerMs(ms: number): string {
   const seconds = totalSeconds % 60;
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
+
+/**
+ * Calculates percentage height for White's portion of the evaluation bar (50% is equal 0.0).
+ * Capped between -10.0 and +10.0 pawns (-1000 to +1000 centipawns):
+ * +10 -> 100% white, 0 -> 50% white, -10 -> 0% white.
+ * Null, undefined, or non-finite inputs safely evaluate to 50% (0 centipawns).
+ */
+export function calculateWhitePercent(evalCp?: number | null): number {
+  const normalized = typeof evalCp === 'number' && Number.isFinite(evalCp) ? evalCp : 0;
+  const pawns = normalized / 100.0;
+  const clampedPawns = Math.max(-10, Math.min(10, pawns));
+  return 50 + ((clampedPawns / 10.0) * 50);
+}

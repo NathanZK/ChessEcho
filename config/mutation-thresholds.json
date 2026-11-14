@@ -1,0 +1,20 @@
+{
+  "status": "PROVISIONAL_BOOTSTRAP",
+  "calibrated": false,
+  "note": "Provisional bootstrap thresholds awaiting empirical 3-run nightly CI calibration. Explicitly incomplete.",
+  "stryker": {
+    "status": "PROVISIONAL_BOOTSTRAP",
+    "provisionalFloor": 60.0,
+    "thresholdFloor": null,
+    "baselineAdjustedScore": null,
+    "calibratedAt": null
+  },
+  "pitest": {
+    "status": "PROVISIONAL_BOOTSTRAP",
+    "provisionalFloor": 65.0,
+    "thresholdFloor": null,
+    "baselineAdjustedScore": null,
+    "calibratedAt": null
+  }
+}
+

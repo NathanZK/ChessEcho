@@ -335,12 +335,24 @@ class DynamicTacticalScorer {
         }
     }
 
-    private fun parseUciMove(
+    internal fun parseUciMove(
         board: Board,
         uci: String,
     ): Move {
-        val legalMove = board.legalMoves().firstOrNull { it.toString().lowercase() == uci.lowercase() }
-        if (legalMove != null) return legalMove
+        val trimmed = uci.trim()
+        val directMatch = board.legalMoves().firstOrNull { it.toString().equals(trimmed, ignoreCase = true) }
+        if (directMatch != null) return directMatch
+
+        val clone = board.clone()
+        val sanSuccess = runCatching { clone.doMove(trimmed) }.getOrDefault(false)
+        if (sanSuccess) {
+            val parsedMove = runCatching { clone.undoMove() }.getOrNull()
+            if (parsedMove != null) {
+                val matched = board.legalMoves().firstOrNull { it == parsedMove }
+                if (matched != null) return matched
+            }
+        }
+
         throw IllegalArgumentException("Illegal or unparseable move: $uci in ${board.fen}")
     }
 

@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { calculateWhitePercent } from '../utils/formatters';
 
 interface EvalBarProps {
   evalCp?: number;
@@ -9,13 +10,8 @@ interface EvalBarProps {
 }
 
 export const EvalBar: React.FC<EvalBarProps> = ({ evalCp = 0, isExploring = false, isUnknown = false }) => {
-  // Convert centipawns to pawn advantage capped between -10.0 and +10.0
   const pawns = evalCp / 100.0;
-  const clampedPawns = Math.max(-10, Math.min(10, pawns));
-  
-  // Calculate percentage height for White's portion of the bar (50% is equal 0.0)
-  // +10 -> 100% white, 0 -> 50% white, -10 -> 0% white
-  const whitePercent = 50 + (clampedPawns / 10.0) * 50;
+  const whitePercent = calculateWhitePercent(evalCp);
 
   const displayEval =
     pawns >= 0 ? `+${pawns.toFixed(2)}` : `${pawns.toFixed(2)}`;
