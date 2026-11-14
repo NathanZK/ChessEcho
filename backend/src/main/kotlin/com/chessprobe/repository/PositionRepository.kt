@@ -1,9 +1,11 @@
 package com.chessprobe.repository
 
 import com.chessprobe.domain.Position
+import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
+import org.springframework.data.repository.query.Param
 import java.time.Instant
 import java.util.UUID
 
@@ -60,5 +62,28 @@ interface PositionRepository : JpaRepository<Position, UUID> {
     fun findQualifyingPositions(
         positionIds: Set<UUID>,
         minOccurrences: Long,
+    ): List<Position>
+
+    @Query(
+        """
+        SELECT p FROM Position p
+        WHERE NOT EXISTS (
+            SELECT 1 FROM PositionContinuationArtifact a
+            WHERE a.positionId = p.id
+              AND a.configHash = :configHash
+              AND (
+                a.status = com.chessprobe.domain.clustering.PositionContinuationStatus.COMPLETED
+                OR (a.status = com.chessprobe.domain.clustering.PositionContinuationStatus.PENDING AND a.leaseExpiresAt >= :now)
+                OR a.retryCount >= :maxRetries
+              )
+        )
+        ORDER BY p.createdAt ASC
+        """,
+    )
+    fun findEligiblePositionsForContinuation(
+        @Param("configHash") configHash: String,
+        @Param("now") now: Instant,
+        @Param("maxRetries") maxRetries: Int,
+        pageable: Pageable,
     ): List<Position>
 }

@@ -353,4 +353,18 @@ class DynamicTacticalScorerTest {
         assertTrue(ranked[1].dynamicScore > ranked[2].dynamicScore, "Partial match must outscore non-match")
         assertEquals(0.0, ranked[2].dynamicScore, "Non-matching candidate must have score 0.0")
     }
+
+    @Test
+    fun `extractDynamicTokensFromResolved parses space-delimited UCI moves and returns empty for null or blank`() {
+        val fen = "6k1/p4ppp/8/8/8/8/8/3R2K1 w - - 0 1"
+        val terms = scorer.extractDynamicTokensFromResolved(fen, "d1d8")
+        assertTrue(terms.containsKey("!-R"))
+        assertTrue(terms.containsKey("?#"))
+
+        val emptyTerms = scorer.extractDynamicTokensFromResolved(fen, "")
+        assertTrue(emptyTerms.isEmpty())
+
+        val nullTerms = scorer.extractDynamicTokensFromResolved(fen, null)
+        assertTrue(nullTerms.isEmpty())
+    }
 }

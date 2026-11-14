@@ -4,6 +4,7 @@ import com.chessprobe.config.PositionClusteringProperties
 import com.chessprobe.domain.ChessAccount
 import com.chessprobe.domain.clustering.ClusterType
 import com.chessprobe.domain.clustering.PositionCluster
+import com.chessprobe.domain.clustering.PositionClusterAssignment
 import com.chessprobe.domain.clustering.PositionClusterAssignmentStatus
 import com.chessprobe.domain.clustering.PositionClusterSnapshot
 import com.chessprobe.repository.ChessAccountRepository
@@ -13,6 +14,7 @@ import com.chessprobe.repository.clustering.PositionClusterSnapshotRepository
 import com.chessprobe.service.clustering.PositionClusteringService
 import com.chessprobe.service.similarity.PersonalDynamicCorpusProvider
 import com.chessprobe.service.similarity.PersonalPositionCorpusProvider
+import com.chessprobe.similarity.PositionAnalysisOutcome
 import com.chessprobe.similarity.PositionDocument
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -210,4 +212,74 @@ class DynamicPositionClusteringTest {
         assertEquals(3, resultSnapshot.totalPositions)
         assertTrue(resultSnapshot.clusterCount >= 1, "Dynamic clustering must produce at least 1 cluster from matching terms")
     }
+
+    @Test
+    fun `generateClusterSnapshot persists isolationReason and analyzedPositionCount for dynamic clustering`() {
+        val accountId = UUID.randomUUID()
+        val account = ChessAccount(id = accountId, platform = "CHESS_COM", username = "testuser")
+        whenever(accountRepository.findById(accountId)).thenReturn(Optional.of(account))
+        whenever(transactionManager.getTransaction(any())).thenReturn(SimpleTransactionStatus())
+
+        val p1 = UUID.randomUUID()
+        val p2 = UUID.randomUUID()
+        val p3 = UUID.randomUUID()
+
+        val docEvaluated = testDoc(p1, "8/8/8/3n4/8/8/8/8 w - - 0 1", mapOf("M:e7e5" to 1.0), PositionAnalysisOutcome.EVALUATED_WITH_TOKENS)
+        val docIncomplete = testDoc(p2, "8/8/8/4n3/8/8/8/8 w - - 0 1", outcome = PositionAnalysisOutcome.INCOMPLETE_RESOLUTION)
+        val docUnanalyzed = testDoc(p3, "8/8/8/5n2/8/8/8/8 w - - 0 1", outcome = PositionAnalysisOutcome.UNANALYZED)
+
+        whenever(dynamicCorpusProvider.loadPersonalDynamicPositions(account))
+            .thenReturn(listOf(docEvaluated, docIncomplete, docUnanalyzed))
+
+        val snapshotMap = mutableMapOf<UUID, PositionClusterSnapshot>()
+        whenever(snapshotRepository.save(any())).thenAnswer {
+            val s = it.getArgument<PositionClusterSnapshot>(0)
+            snapshotMap[s.id] = s
+            s
+        }
+        whenever(snapshotRepository.findById(any())).thenAnswer {
+            val id = it.getArgument<UUID>(0)
+            Optional.ofNullable(snapshotMap[id])
+        }
+        whenever(snapshotRepository.findMaxVersionByAccountIdAndClusterType(eq(accountId), eq(ClusterType.DYNAMIC))).thenReturn(0)
+
+        val savedAssignments = mutableListOf<PositionClusterAssignment>()
+        whenever(assignmentRepository.saveAll(any<Iterable<PositionClusterAssignment>>())).thenAnswer {
+            val list = (it.getArgument<Iterable<PositionClusterAssignment>>(0)).toList()
+            savedAssignments.addAll(list)
+            list
+        }
+
+        val snapshotFuture = service.generateClusterSnapshot(accountId, ClusterType.DYNAMIC, promoteToActive = true)
+        val resultSnapshot = snapshotFuture.join()
+
+        assertEquals(3, resultSnapshot.totalPositions)
+        assertEquals(2, resultSnapshot.analyzedPositionCount) // p1 (evaluated) + p2 (incomplete)
+        assertEquals(1, resultSnapshot.eligiblePositionCount) // p1 only
+
+        val aIncomplete = savedAssignments.first { it.positionId == p2 }
+        assertEquals(PositionClusterAssignmentStatus.ISOLATE, aIncomplete.assignmentStatus)
+        assertEquals("INCOMPLETE_RESOLUTION", aIncomplete.isolationReason)
+
+        val aEvaluated = savedAssignments.first { it.positionId == p1 }
+        assertEquals(PositionClusterAssignmentStatus.ISOLATE, aEvaluated.assignmentStatus)
+        assertEquals("GRAPH_ISOLATE", aEvaluated.isolationReason)
+
+        val aUnanalyzed = savedAssignments.first { it.positionId == p3 }
+        assertEquals(PositionClusterAssignmentStatus.ISOLATE, aUnanalyzed.assignmentStatus)
+        assertEquals("UNANALYZED", aUnanalyzed.isolationReason)
+    }
+
+    private fun testDoc(
+        id: UUID,
+        fen: String,
+        terms: Map<String, Double> = emptyMap(),
+        outcome: PositionAnalysisOutcome = PositionAnalysisOutcome.EVALUATED_WITH_TOKENS,
+    ) = PositionDocument(
+        positionId = id,
+        fen = fen,
+        canonicalFen = fen.substringBefore(" 0 1"),
+        terms = terms,
+        analysisOutcome = outcome,
+    )
 }

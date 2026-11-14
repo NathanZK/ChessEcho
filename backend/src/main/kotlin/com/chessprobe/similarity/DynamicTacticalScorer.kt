@@ -150,6 +150,15 @@ class DynamicTacticalScorer {
             0.0
         }
 
+    fun extractDynamicTokensFromResolved(
+        fen: String,
+        resolvedMoves: String?,
+    ): Map<String, Double> {
+        if (resolvedMoves.isNullOrBlank()) return emptyMap()
+        val moves = resolvedMoves.trim().split("\\s+".toRegex()).filter { it.isNotBlank() }
+        return extractDynamicTokens(fen, moves)
+    }
+
     fun extractDynamicTokens(
         fen: String,
         moves: List<String>,
