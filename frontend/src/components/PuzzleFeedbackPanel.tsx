@@ -250,7 +250,12 @@ export const PuzzleFeedbackPanel: React.FC<PuzzleFeedbackPanelProps> = ({
   }, [feedback.status, onNextPuzzle]);
 
   return (
-    <div className="flex flex-col space-y-3 bg-slate-900 p-4 rounded-2xl border border-slate-800 shadow-xl text-slate-200">
+    <div
+      data-testid="puzzle-feedback-panel"
+      data-feedback-status={feedback.status}
+      data-interactive={String(feedback.status !== 'EVALUATING')}
+      className="flex flex-col space-y-3 bg-slate-900 p-4 rounded-2xl border border-slate-800 shadow-xl text-slate-200"
+    >
       {/* Collapsible Puzzle Settings Section (Universal across all position sources) */}
       <div className="border-b border-slate-800 pb-3">
           <button

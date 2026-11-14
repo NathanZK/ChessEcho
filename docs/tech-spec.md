@@ -70,6 +70,8 @@ contract:
   - **Practical weakness priority**: Confidence-gated, account/position/color-scoped distinct-game score rates adjust recommendation priority using the enabled normal policy; objective priority is unchanged. See `README.md` and `docs/architecture/precomputed-weakness-analysis.md`.
   - **Evaluation evidence**: Internal `EvaluationEvidenceProducerService.produce` creates #430 snapshots from explicit input and verifies #450 before persistence; see `docs/engineering/human-move-corpus-portability.md`.
   - **Human-move corpus administration**: `/api/admin/human-move-distribution/*` covers BFS acquisition, corpus runs/checkpoints, artifact export/verify/import/purge, projections, and cross-cohort comparison.
+  - **Multi-tab session synchronization**: `BroadcastChannel('chessprobe_auth')` synchronizes `LOGOUT` across open tabs without page reloads.
+  - **Viewport geometry invariants**: Document root maintains zero vertical scrollbars at 1440x900 (`scrollHeight <= clientHeight`), navigation collapses into mobile drawer at 375x667, board-to-sidebar gap $\le 24\text{px}$, and sidebar width $\ge 340\text{px}$.
   - **Errors and security**: API errors use structured responses; state-changing requests require the session's double-submit CSRF token. See `API_CONTRACT.md`.
 
 flow:
@@ -119,6 +121,6 @@ convention:
   - **Access control**: authenticated job status is initiator-only; personal state is scoped per user. See `docs/architecture/identity-and-session.md` and `docs/architecture/backend-architecture.md`.
   - **Tests**: backend tests under `src/test/kotlin/com/chessprobe/{controller,service,repository,integration,...}`; integration tests use Testcontainers PostgreSQL.
   - **Mutation testing**: opt-in PIT audits per `docs/engineering/mutation-testing.md`; verified audit records indexed in `docs/engineering/audit/index.md`.
-  - **CI**: `.github/workflows/ci.yml` runs backend ktlint, Detekt, and tests (Java 21) and frontend lint, typecheck, Vitest, and build (Node 20).
+  - **CI**: `.github/workflows/ci.yml` runs backend ktlint, Detekt, and tests (Java 21) and frontend lint, typecheck, Vitest, and build (Node 20). `.github/workflows/journey-tests.yml` executes journey tests with `retries: 0` against pre-built Next.js production server (`npx next start -p 3000`); scheduled nightly runs allow `retries: 2` (`PLAYWRIGHT_NIGHTLY=1`).
   - **Persistence**: follow the pre-deployment baseline-first migration convention in `docs/engineering/repository-conventions.md`.
   - **Workflow**: keep changes issue-focused and target pull requests at `main`; follow the repository conventions in `AGENTS.md`.

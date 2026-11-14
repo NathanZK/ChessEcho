@@ -608,22 +608,16 @@ export function PracticePuzzlesView({
         onReturnToTab?.('game-analysis');
         return;
       }
-      if (
-        activePuzzle?.source === 'supplied' ||
-        activePuzzle?.source === 'long-decision' ||
-        activePuzzle?.source === 'similar'
-      ) {
-        setActivePuzzle(null);
+      if (activePuzzle) {
+        setCurrentBoardFen(activePuzzle.fen);
         setInitialMoveHistorySan([]);
         setInitialMoveHistoryStartFen(undefined);
-        setCurrentBoardFen('');
-        setFeedback({ status: 'IDLE' });
+        if (decisionMove) {
+          setFeedback({ status: 'IDLE' });
+        } else {
+          setFeedback({ status: 'CORRECT', lastMove: activePuzzle.targetMove });
+        }
         return;
-      }
-      if (decisionMove) {
-        setFeedback({ status: 'IDLE' });
-      } else {
-        setFeedback({ status: 'CORRECT', lastMove: activePuzzle?.targetMove });
       }
     },
     [
@@ -1798,7 +1792,7 @@ export function PracticePuzzlesView({
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 w-full max-w-[1720px] mx-auto items-start">
               {/* Left Stockfish Eval Bar & Center Interactive Chessboard */}
-              <div className="lg:col-span-8 2xl:col-span-9 flex flex-col items-center">
+              <div data-testid="practice-board-column" className="lg:col-span-8 2xl:col-span-9 flex flex-col items-center">
                 <div className="flex items-start justify-center gap-3 w-full">
                   <div className="hidden sm:flex flex-col items-center pt-1 shrink-0">
                     <span className="text-[10px] font-bold text-on-surface-variant mb-1.5 uppercase tracking-wider font-mono">
@@ -1811,7 +1805,15 @@ export function PracticePuzzlesView({
                     />
                   </div>
 
-                  <div data-testid="practice-board-area" className="w-full max-w-[680px] shrink-0 flex flex-col space-y-2.5">
+                  <div
+                    data-testid="practice-board-area"
+                    data-puzzle-id={activePuzzle?.puzzleId}
+                    data-puzzle-source={activePuzzle?.source}
+                    data-target-move={activePuzzle?.targetMove}
+                    data-board-fen={currentBoardFen || activePuzzle?.fen}
+                    data-feedback-status={feedback.status}
+                    className="w-full max-w-[680px] shrink-0 flex flex-col space-y-2.5"
+                  >
                     <ChessBoardArea
                       key={!isWeaknessPlaylist ? activePuzzle.puzzleId : 'puzzle-board'}
                       puzzleId={`${activePuzzle.puzzleId}-${currentPuzzleIndex}`}
@@ -1889,7 +1891,7 @@ export function PracticePuzzlesView({
               </div>
 
               {/* Right Feedback & Settings Panel */}
-              <div className="lg:col-span-4 2xl:col-span-3 w-full space-y-4">
+              <div data-testid="practice-sidebar-panel" className="lg:col-span-4 2xl:col-span-3 w-full space-y-4">
               {blindfold.state ? (
                 <NotationExchangeUI
                   state={blindfold.state}

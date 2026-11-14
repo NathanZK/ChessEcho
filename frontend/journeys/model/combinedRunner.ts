@@ -180,11 +180,18 @@ export async function runCombinedBfsMonkey(
 
   const context = page.context();
   let tracingActive = false;
+  let chunkActive = false;
   try {
     await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
     tracingActive = true;
   } catch {
     // Tracing already active in outer runner
+    try {
+      await context.tracing.startChunk();
+      chunkActive = true;
+    } catch {
+      // Chunking unavailable
+    }
   }
 
   try {
@@ -211,6 +218,10 @@ export async function runCombinedBfsMonkey(
         tracePath = `test-results/combined-failures/trace-target-${targetState}-seed-${monkeySeed}.zip`;
         await context.tracing.stop({ path: tracePath }).catch(() => {});
         tracingActive = false;
+      } else if (chunkActive) {
+        tracePath = `test-results/combined-failures/trace-target-${targetState}-seed-${monkeySeed}.zip`;
+        await context.tracing.stopChunk({ path: tracePath }).catch(() => {});
+        chunkActive = false;
       }
 
       const formattedLog = bfsResult.actionLog
@@ -265,10 +276,15 @@ export async function runCombinedBfsMonkey(
       }
 
       let tracePath = monkeyResult.tracePath;
-      if (tracingActive && !tracePath) {
+      if ((tracingActive || chunkActive) && !tracePath) {
         tracePath = `test-results/combined-failures/trace-target-${targetState}-seed-${monkeySeed}.zip`;
-        await context.tracing.stop({ path: tracePath }).catch(() => {});
-        tracingActive = false;
+        if (tracingActive) {
+          await context.tracing.stop({ path: tracePath }).catch(() => {});
+          tracingActive = false;
+        } else if (chunkActive) {
+          await context.tracing.stopChunk({ path: tracePath }).catch(() => {});
+          chunkActive = false;
+        }
       }
 
       const formattedLog = combinedActionLog
@@ -314,6 +330,10 @@ export async function runCombinedBfsMonkey(
     if (tracingActive) {
       await context.tracing.stop().catch(() => {});
       tracingActive = false;
+    }
+    if (chunkActive) {
+      await context.tracing.stopChunk().catch(() => {});
+      chunkActive = false;
     }
   }
 }

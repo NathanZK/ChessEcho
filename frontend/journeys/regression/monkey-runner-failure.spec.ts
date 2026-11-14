@@ -31,7 +31,7 @@ test.describe('Unassisted Monkey-Runner Failure Propagation (Issue #779 / Sectio
       puzzles: MOCK_PUZZLES,
     });
 
-    await page.goto('/#puzzles');
+    await page.goto('/#puzzles', { waitUntil: 'domcontentloaded' });
     await ensureDiscoveryState(page);
 
     const fixture = MOCK_PUZZLES[0];

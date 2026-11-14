@@ -249,7 +249,7 @@ export interface TransitionRule {
   effect?: (context: PracticeModelContext) => PracticeModelContext;
 }
 
-function deriveMoveState(
+export function deriveMoveState(
   ctx: PracticeModelContext,
   san: string,
   resultType: 'CORRECT' | 'INCORRECT' | 'HISTORICAL_MISTAKE'

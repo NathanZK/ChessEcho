@@ -5,8 +5,10 @@ import {
   DEFAULT_MOCK_GAME_ANALYSIS,
 } from './fixtures/mockApi';
 
-test.describe('Journey: Individual Game Analysis Practice & Return Flow', () => {
-  test('user opens game analysis, selects game, practices mistake with concealed answer, and returns to game view', async ({ page }) => {
+test.describe('Journey: Individual Game Analysis Practice & Return Flow (AUD-01–03)', () => {
+  test('user opens game analysis, selects game, inspects move-by-move evaluation, practices mistake, and returns', async ({
+    page,
+  }) => {
     // 1. Declare and setup mocked API boundary with games and game analysis
     await setupJourneyApiMocks(page, {
       authenticated: true,
@@ -15,18 +17,24 @@ test.describe('Journey: Individual Game Analysis Practice & Return Flow', () => 
     });
 
     // 2. Navigate to Game Analysis tab
-    await page.goto('/#game-analysis');
+    await page.goto('/#game-analysis', { waitUntil: 'domcontentloaded' });
 
     // 3. Verify Games list is displayed and click Analyze
+    await expect(page.getByRole('heading', { name: 'My Games' })).toBeVisible();
     const analyzeButton = page.getByRole('button', { name: /Analyze/i });
     await expect(analyzeButton).toBeVisible();
     await analyzeButton.click();
 
-    // 4. Verify Game Analysis dashboard loaded
+    // 4. Verify Game Analysis dashboard loaded with move-by-move plies and evaluation (AUD-01–03)
     await expect(page.getByText(/Back to My Games/i)).toBeVisible();
     await expect(page.getByText(/carlsen vs nakamura/i)).toBeVisible();
+    await expect(page.getByText('Qualifying Mistake Moves')).toBeVisible();
 
-    // 5. Verify Move Detail shows blunder and "Practice this mistake" button
+    // Assert move ply #5 (Bc4) is listed with its evaluation loss
+    await expect(page.getByText('#5')).toBeVisible();
+    await expect(page.getByText('Bc4').first()).toBeVisible();
+
+    // 5. Verify Move Detail shows blunder severity and "Practice this mistake" button
     const practiceMistakeButton = page.getByRole('button', { name: /Practice this mistake/i });
     await expect(practiceMistakeButton).toBeVisible();
     await practiceMistakeButton.click();

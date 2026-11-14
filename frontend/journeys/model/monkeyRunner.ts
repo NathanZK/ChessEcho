@@ -123,12 +123,19 @@ export async function runConstrainedMonkey(options: MonkeyRunOptions): Promise<M
 
   const context = page.context();
   let tracingActive = false;
+  let chunkActive = false;
   if (traceMode !== 'off') {
     try {
       await context.tracing.start({ screenshots: true, snapshots: true, sources: true });
       tracingActive = true;
     } catch {
-      // Tracing already active in outer runner or unsupported
+      // Tracing already active in outer runner
+      try {
+        await context.tracing.startChunk();
+        chunkActive = true;
+      } catch {
+        // Chunking unavailable
+      }
     }
   }
 
@@ -221,6 +228,10 @@ export async function runConstrainedMonkey(options: MonkeyRunOptions): Promise<M
           tracePath = `test-results/monkey-failures/trace-seed-${seed}-step-${step}.zip`;
           await context.tracing.stop({ path: tracePath }).catch(() => {});
           tracingActive = false;
+        } else if (chunkActive) {
+          tracePath = `test-results/monkey-failures/trace-seed-${seed}-step-${step}.zip`;
+          await context.tracing.stopChunk({ path: tracePath }).catch(() => {});
+          chunkActive = false;
         }
 
         const formattedLog = actionLog
@@ -251,11 +262,16 @@ export async function runConstrainedMonkey(options: MonkeyRunOptions): Promise<M
     }
 
     let tracePath: string | undefined;
-    if (tracingActive && traceMode === 'all') {
+    if ((tracingActive || chunkActive) && traceMode === 'all') {
       fs.mkdirSync('test-results/monkey-traces', { recursive: true });
       tracePath = `test-results/monkey-traces/trace-seed-${seed}.zip`;
-      await context.tracing.stop({ path: tracePath }).catch(() => {});
-      tracingActive = false;
+      if (tracingActive) {
+        await context.tracing.stop({ path: tracePath }).catch(() => {});
+        tracingActive = false;
+      } else if (chunkActive) {
+        await context.tracing.stopChunk({ path: tracePath }).catch(() => {});
+        chunkActive = false;
+      }
     }
 
     return {
@@ -272,6 +288,10 @@ export async function runConstrainedMonkey(options: MonkeyRunOptions): Promise<M
     if (tracingActive) {
       await context.tracing.stop().catch(() => {});
       tracingActive = false;
+    }
+    if (chunkActive) {
+      await context.tracing.stopChunk().catch(() => {});
+      chunkActive = false;
     }
   }
 }

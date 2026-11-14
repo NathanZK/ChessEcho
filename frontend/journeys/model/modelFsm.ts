@@ -113,7 +113,10 @@ export function getPracticeFsmNextState(
   ctx: PracticeContext
 ): TransitionResult<PracticeState, PracticeContext> | null {
   // Terminal states cannot transition
-  if (from === 'SOLVED' || from === 'EXIT') {
+  if (from === 'EXIT') {
+    return null;
+  }
+  if (from === 'SOLVED' && action !== 'ENTER_LINE_EXPLORATION' && action !== 'RESET') {
     return null;
   }
 
@@ -128,7 +131,7 @@ export function getPracticeFsmNextState(
       return null;
 
     case 'MAKE_MOVE_CORRECT':
-      if (from === 'INITIAL' || from === 'ATTEMPTED_WRONG') {
+      if (from === 'INITIAL') {
         return {
           nextState: 'ATTEMPTED_RIGHT',
           nextContext: { ...ctx, attemptCount: ctx.attemptCount + 1 },
@@ -137,7 +140,7 @@ export function getPracticeFsmNextState(
       return null;
 
     case 'MAKE_MOVE_INCORRECT':
-      if (from === 'INITIAL' || from === 'ATTEMPTED_WRONG') {
+      if (from === 'INITIAL') {
         return {
           nextState: 'ATTEMPTED_WRONG',
           nextContext: { ...ctx, attemptCount: ctx.attemptCount + 1 },
@@ -164,7 +167,12 @@ export function getPracticeFsmNextState(
       return null;
 
     case 'ENTER_LINE_EXPLORATION':
-      if (from === 'INITIAL' || from === 'ATTEMPTED_WRONG' || from === 'ATTEMPTED_RIGHT') {
+      if (
+        from === 'INITIAL' ||
+        from === 'ATTEMPTED_WRONG' ||
+        from === 'ATTEMPTED_RIGHT' ||
+        from === 'SOLVED'
+      ) {
         return {
           nextState: 'LINE_EXPLORATION',
           nextContext: { ...ctx, inExploration: true },
@@ -186,7 +194,7 @@ export function getPracticeFsmNextState(
       return null;
 
     case 'ENTER_CHALLENGE_MODE':
-      if (from === 'INITIAL' || from === 'ATTEMPTED_WRONG') {
+      if (from === 'LINE_EXPLORATION') {
         return {
           nextState: 'CHALLENGE_MODE',
           nextContext: { ...ctx, inChallengeMode: true },
@@ -208,7 +216,7 @@ export function getPracticeFsmNextState(
       return null;
 
     case 'ENTER_BLINDFOLD':
-      if (from === 'INITIAL' || from === 'ATTEMPTED_WRONG') {
+      if (from === 'SOLVED') {
         return {
           nextState: 'BLINDFOLD',
           nextContext: { ...ctx, inBlindfold: true },

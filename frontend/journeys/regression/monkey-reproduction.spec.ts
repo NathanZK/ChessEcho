@@ -4,7 +4,7 @@ import {
   DEFAULT_MOCK_ACCOUNT,
   DEFAULT_MOCK_PUZZLE,
 } from '../fixtures/mockApi';
-import { STATE_ORACLES, ensureDiscoveryState, createInitialContext, DEFAULT_PRACTICE_FEN } from '../model/practiceModel';
+import { STATE_ORACLES, ensureDiscoveryState, createInitialContext, DEFAULT_PRACTICE_FEN, deriveMoveState } from '../model/practiceModel';
 
 /**
  * Phase 4 Regression Demonstration (Issue #715)
@@ -54,6 +54,7 @@ test.describe('Phase 4 Regression: Monkey-Discovered Sequence Conversion', () =>
     context = {
       ...context,
       puzzleLoaded: true,
+      activePuzzle: DEFAULT_MOCK_PUZZLE,
       expectedFen: DEFAULT_PRACTICE_FEN,
       expectedSideToMove: 'white',
       expectedFailedCount: 0,
@@ -70,15 +71,10 @@ test.describe('Phase 4 Regression: Monkey-Discovered Sequence Conversion', () =>
     const a3 = page.locator('[data-square="a3"]');
     await expect(a2).toBeVisible();
     await a2.click();
+    await page.waitForTimeout(60);
     await a3.click();
 
-    context = {
-      ...context,
-      attemptCount: 1,
-      expectedFailedCount: 1,
-      lastMoveSan: 'a3',
-      expectedFen: DEFAULT_PRACTICE_FEN,
-    };
+    context = deriveMoveState(context, 'a3', 'INCORRECT');
     // Invariant: Inaccurate move triggers INCORRECT oracle and increments failed count
     await STATE_ORACLES.INCORRECT.assert(page, context, expect);
     await expect(page.getByText(/Failed: 1/i)).toBeVisible();
@@ -105,15 +101,10 @@ test.describe('Phase 4 Regression: Monkey-Discovered Sequence Conversion', () =>
     const h4 = page.locator('[data-square="h4"]');
     await expect(h2).toBeVisible();
     await h2.click();
+    await page.waitForTimeout(60);
     await h4.click();
 
-    context = {
-      ...context,
-      attemptCount: 2,
-      expectedFailedCount: 2,
-      lastMoveSan: 'h4',
-      expectedFen: DEFAULT_PRACTICE_FEN,
-    };
+    context = deriveMoveState(context, 'h4', 'HISTORICAL_MISTAKE');
     // Invariant: Blunder recognized, HISTORICAL_MISTAKE oracle matches coaching feedback
     await STATE_ORACLES.HISTORICAL_MISTAKE.assert(page, context, expect);
     await expect(page.getByText(/Failed: 2/i)).toBeVisible();
@@ -148,6 +139,7 @@ test.describe('Phase 4 Regression: Monkey-Discovered Sequence Conversion', () =>
     context = {
       ...context,
       puzzleLoaded: true,
+      activePuzzle: DEFAULT_MOCK_PUZZLE,
       expectedFen: DEFAULT_PRACTICE_FEN,
       expectedSideToMove: 'white',
       expectedFailedCount: 0,
