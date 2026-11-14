@@ -48,4 +48,4 @@ This document formalizes the runtime invariants governing ChessProbe across all 
 - **Statement**: Subprocess Stockfish sessions are bounded by a configurable semaphore (`chess.similarity.dynamic.max-concurrent-sessions` $\ge 1$) with fail-safe `try-finally` permit release preventing capacity lockouts.
 - **Scope & Applicability**: J03, `PositionSimilarityService`, `SimilarityConcurrencyManager`.
 - **Failure Mode & Violation Impact**: Host CPU starvation under concurrent requests, or permanent permit leaks hanging future similarity searches on engine anomalies.
-- **Current Verification Method**: `SimilarityConcurrencyManagerTest.kt`, `SimilarPositionsControllerIntegrationTest.kt`.
+- **Current Verification Method**: `SimilarityConcurrencyManagerTest.kt`, `SimilarPositionsControllerIntegrationTest.kt`, `SimilarityConcurrencyManagerConcurrencyTest.kt`.

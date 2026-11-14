@@ -2,6 +2,7 @@ import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
   testDir: './journeys',
+  testMatch: /.*\.spec\.ts$/,
   testIgnore: process.env.PLAYWRIGHT_INCLUDE_MONKEY ? [] : ['**/*-monkey.spec.ts'],
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
