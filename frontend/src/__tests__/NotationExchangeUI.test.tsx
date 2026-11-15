@@ -154,4 +154,28 @@ describe('NotationExchangeUI', () => {
 
     expect(screen.getByText('Draw by stalemate.')).toBeInTheDocument();
   });
+
+  it('renders explicit ChessProbe computer reply text when state.lastChessEchoMove.san is present', () => {
+    const state = {
+      ...createBlinfoldGameState(START_FEN, 'WHITE'),
+      lastChessEchoMove: {
+        san: 'e5',
+        fromFen: START_FEN,
+        toFen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1',
+      },
+    };
+
+    render(
+      <NotationExchangeUI
+        state={state}
+        onPlayerMove={vi.fn()}
+        onReveal={vi.fn()}
+        onReset={vi.fn()}
+      />
+    );
+
+    const replyBanner = screen.getByTestId('blindfold-computer-reply-text');
+    expect(replyBanner).toBeInTheDocument();
+    expect(replyBanner).toHaveTextContent(/ChessProbe played:\s*e5/i);
+  });
 });

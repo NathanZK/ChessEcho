@@ -140,11 +140,15 @@ describe('Line Exploration Evaluation & EvalBar Updates', () => {
     const fenWhite = 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3';
     expect(toWhitePerspective(120, fenWhite)).toBe(120);
     expect(toWhitePerspective(-80, fenWhite)).toBe(-80);
+    expect(toWhitePerspective(120, 'WHITE')).toBe(120);
+    expect(toWhitePerspective(120, 'w')).toBe(120);
 
     // Black to move: positive is Black advantage (so negative White), negative is White advantage (so positive White)
     const fenBlack = 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 2 3';
     expect(toWhitePerspective(80, fenBlack)).toBe(-80);
     expect(toWhitePerspective(-150, fenBlack)).toBe(150);
+    expect(toWhitePerspective(80, 'BLACK')).toBe(-80);
+    expect(toWhitePerspective(-150, 'b')).toBe(150);
   });
 
   it('2. Anchors exploration baseline to the solved puzzle evaluation, not the original starting position, and remains unlocked', async () => {

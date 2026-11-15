@@ -34,6 +34,7 @@ import {
   fetchPuzzleContinuation,
   submitTrainingAttempt,
   evaluateMove,
+  toWhitePerspective,
   type SessionState,
   type LongDecisionOccurrence,
 } from '@/services/api';
@@ -77,14 +78,20 @@ export type LongDecisionReturnSnapshot = {
   timerWasRunning: boolean;
 };
 
+export const FEEDBACK_DISMISSAL_MIN_DURATION_MS = 1500;
+
 function getAuthoritativeTimerElapsed(
   timer: StopwatchTimer | CountdownTimer | null,
   allowedMs: number,
   fallbackMs: number,
+  stopTimer: boolean = false
 ): number {
   if (!timer) return fallbackMs;
   if (timer.isRunning()) {
-    return timer instanceof StopwatchTimer ? timer.stop() : allowedMs - timer.pause();
+    if (stopTimer) {
+      return timer instanceof StopwatchTimer ? timer.stop() : allowedMs - timer.pause();
+    }
+    return timer instanceof StopwatchTimer ? timer.getElapsed() : allowedMs - timer.getRemaining();
   }
   return timer instanceof StopwatchTimer ? timer.getElapsed() : allowedMs - timer.getRemaining();
 }
@@ -192,13 +199,15 @@ export function PracticePuzzlesView({
   const [isEvaluatingMove, setIsEvaluatingMove] = useState<boolean>(false);
   const evaluationRequestIdRef = React.useRef<number>(0);
   const activePuzzleRef = React.useRef<Puzzle | null>(null);
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     activePuzzleRef.current = activePuzzle;
   }, [activePuzzle]);
 
   // Timed training state
   const timerRef = React.useRef<StopwatchTimer | CountdownTimer | null>(null);
   const timerAttemptRef = React.useRef<TimerAttempt | null>(null);
+  const isEngineCalculatingRef = React.useRef<boolean>(false);
+  const isPuzzleCompletedRef = React.useRef<boolean>(false);
   const [timerMode, setTimerMode] = useState<'STOPWATCH' | 'COUNTDOWN' | null>(null);
   const [timerElapsedMs, setTimerElapsedMs] = useState<number>(0);
   const [timerAllowedMs, setTimerAllowedMs] = useState<number>(30000);
@@ -289,21 +298,36 @@ export function PracticePuzzlesView({
     }
 
     let attempt = timerAttemptRef.current;
+    const isSamePuzzle =
+      attempt !== null &&
+      (attempt.puzzle === activePuzzle ||
+        (Boolean(activePuzzle.puzzleId && attempt.puzzle.puzzleId)
+          ? attempt.puzzle.puzzleId === activePuzzle.puzzleId
+          : attempt.puzzle.fen === activePuzzle.fen && attempt.puzzle.playerColor === activePuzzle.playerColor));
+
     if (
-      attempt?.puzzle !== activePuzzle ||
+      !attempt ||
+      !isSamePuzzle ||
       attempt.mode !== timerMode ||
       attempt.allowedMs !== timerAllowedMs
     ) {
       attempt = null;
       timerRef.current = null;
+    } else {
+      attempt.puzzle = activePuzzle;
     }
 
     const tick = () => {
       if (!attempt) return;
+      if (isPuzzleCompletedRef.current) return;
       const current = attempt.timer;
       if (timerMode === 'STOPWATCH' && current instanceof StopwatchTimer) {
         setTimerElapsedMs(current.getElapsed());
       } else if (timerMode === 'COUNTDOWN' && current instanceof CountdownTimer) {
+        if (isEngineCalculatingRef.current) {
+          setTimerElapsedMs(timerAllowedMs - current.getRemaining());
+          return;
+        }
         const remaining = current.getRemaining();
         setTimerElapsedMs(timerAllowedMs - remaining);
         if (remaining === 0 && !attempt.hasExpired) {
@@ -565,6 +589,7 @@ export function PracticePuzzlesView({
     setTimerElapsedMs(0);
     setTimerExpired(false);
     setTimerSubmissionError(null);
+    timerAttemptRef.current = null;
     if (timerRef.current) {
       if (timerRef.current instanceof StopwatchTimer) {
         timerRef.current.reset();
@@ -644,6 +669,33 @@ export function PracticePuzzlesView({
     lineExplorationRef.current = lineExploration;
   });
 
+  const isEngineCalculating =
+    isEvaluatingMove ||
+    (blindfold.state !== null && (blindfold.state.currentTurn === 'CHESSPROBE' || blindfold.state.isLoading)) ||
+    lineExploration.continuation.loading ||
+    lineExploration.isMoveEvaluationPending;
+  const isPuzzleCompleted =
+    feedback.status === 'CORRECT' ||
+    (blindfold.state !== null && Boolean(blindfold.state.isTerminal));
+
+  React.useLayoutEffect(() => {
+    isEngineCalculatingRef.current = isEngineCalculating;
+    isPuzzleCompletedRef.current = isPuzzleCompleted;
+  });
+
+  React.useEffect(() => {
+    const timer = timerRef.current;
+    if (timer instanceof CountdownTimer) {
+      if (isEngineCalculating || isPuzzleCompleted) {
+        if (timer.isRunning()) {
+          timer.pause();
+        }
+      } else if (!timerAttemptRef.current?.hasExpired && !timer.isRunning()) {
+        timer.resume();
+      }
+    }
+  }, [isEngineCalculating, isPuzzleCompleted]);
+
   const weaknessBacked = isWeaknessBacked(activePuzzle);
   const isWeaknessPlaylist =
     activePuzzle?.source === 'weakness' || (!activePuzzle?.source && weaknessBacked);
@@ -666,6 +718,8 @@ export function PracticePuzzlesView({
       } catch {
         return false;
       }
+      puzzleLoadSeqRef.current += 1;
+      setIsFetchingMorePuzzles(false);
       evaluationRequestIdRef.current += 1;
       setIsEvaluatingMove(false);
       if (!preserveReturnState && !hasLongDecisionReturnContext && !hasSimilarPositionsReturnContext) {
@@ -813,6 +867,8 @@ export function PracticePuzzlesView({
       const finalIndex = Math.max(0, targetIdx);
 
       setCurrentPuzzleIndex(finalIndex);
+      puzzleLoadSeqRef.current += 1;
+      setIsFetchingMorePuzzles(false);
       evaluationRequestIdRef.current += 1;
       setIsEvaluatingMove(false);
       setActivePuzzle(selectedPuzzle);
@@ -1260,7 +1316,8 @@ export function PracticePuzzlesView({
         const attemptElapsed = getAuthoritativeTimerElapsed(
           timerRef.current,
           timerAllowedMs,
-          timerElapsedMs
+          timerElapsedMs,
+          false
         );
         setTimerElapsedMs(attemptElapsed);
         evaluationRequestIdRef.current += 1;
@@ -1304,6 +1361,12 @@ export function PracticePuzzlesView({
               }
 
               if (acceptable) {
+                const finalElapsed = timerRef.current instanceof StopwatchTimer
+                  ? timerRef.current.stop()
+                  : (timerRef.current instanceof CountdownTimer
+                      ? (timerAllowedMs - timerRef.current.pause())
+                      : attemptElapsed);
+                setTimerElapsedMs(finalElapsed);
                 setActivePuzzle((prev) => {
                   if (!prev) return null;
                   const newAcceptable = prev.acceptableMoves.filter((m) => m.move !== moveSan);
@@ -1320,7 +1383,7 @@ export function PracticePuzzlesView({
                   status: 'CORRECT',
                   lastMove: moveSan,
                   evalLoss: evalResult.evalLoss,
-                  attemptElapsedMs: attemptElapsed,
+                  attemptElapsedMs: finalElapsed,
                 };
                 setFeedback(nextFeedback);
                 setCurrentEvalCp(evalCp);
@@ -1337,12 +1400,15 @@ export function PracticePuzzlesView({
                 // Roll back board to preMoveFen and remove move from history
                 setBoardResetTrigger((prev) => prev + 1);
                 setMoveHistory((prev) => prev.slice(0, -1));
+                const currentElapsed = timerRef.current instanceof StopwatchTimer
+                  ? timerRef.current.getElapsed()
+                  : attemptElapsed;
                 const nextFeedback: PuzzleFeedbackState = {
                   status: 'INCORRECT',
                   lastMove: moveSan,
                   evalLoss: evalResult.evalLoss,
                   historicalInfo: { timesPlayed: 1, averageLoss: evalResult.evalLoss },
-                  attemptElapsedMs: attemptElapsed,
+                  attemptElapsedMs: currentElapsed,
                 };
                 setFeedback(nextFeedback);
                 soundService.playSound('incorrect');
@@ -1799,7 +1865,11 @@ export function PracticePuzzlesView({
                       Eval
                     </span>
                     <EvalBar
-                      evalCp={currentEvalCp}
+                      evalCp={
+                        lineExploration.isExplorationActive
+                          ? currentEvalCp
+                          : toWhitePerspective(currentEvalCp, activePuzzle?.playerColor ?? 'WHITE')
+                      }
                       isExploring={!lineExploration.isExplorationActive && historyIndex > 1}
                       isUnknown={isEvalUnknown}
                     />

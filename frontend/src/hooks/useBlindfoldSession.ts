@@ -66,7 +66,12 @@ export function useBlindfoldSession(requestChessEchoMove: RequestChessEchoMove):
           fail(result.error);
           return;
         }
-        commit({ ...result, isLoading: false, isVisible: stateRef.current!.isVisible });
+        commit({
+          ...result,
+          isLoading: false,
+          isVisible: stateRef.current!.isVisible,
+          lastPlayerMove: stateRef.current?.lastPlayerMove ?? result.lastPlayerMove,
+        });
       },
       (error: unknown) => fail(error instanceof Error ? error.message : 'ChessProbe request failed.'),
     );

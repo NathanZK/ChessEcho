@@ -431,8 +431,9 @@ describe('Blindfold continuation flow', () => {
     fireEvent.submit(notationInput().closest('form')!);
     await screen.findByText('Qh4');
 
-    // Wait for ChessEcho reply 'Ke2'
-    await screen.findByText('Ke2');
+    // Wait for ChessEcho reply 'Ke2' via explicit computer-reply announcement banner
+    const computerReply = await screen.findByTestId('blindfold-computer-reply-text');
+    expect(computerReply).toHaveTextContent('Ke2');
 
     fireEvent.change(notationInput(), { target: { value: 'Qxe4#' } });
     fireEvent.submit(notationInput().closest('form')!);

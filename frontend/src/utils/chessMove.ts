@@ -85,11 +85,15 @@ export function areMovesEqual(
  * (+ = side to move is winning). This helper converts relative centipawns
  * to absolute centipawns (+ = White is winning, - = Black is winning).
  *
- * @param evalCp Centipawn evaluation relative to the player to move in [fen].
- * @param fen The chess position in FEN notation before the move was played.
+ * @param evalCp Centipawn evaluation relative to the player to move in [fenOrColor].
+ * @param fenOrColor The chess position in FEN notation before the move was played, or a color indicator ('WHITE' | 'BLACK' | 'w' | 'b').
  * @returns Absolute centipawns from White's perspective (+ = White advantage, - = Black advantage).
  */
-export function toWhitePerspective(evalCp: number, fen: string): number {
-  const isWhiteToMove = fen.split(' ')[1] === 'w';
-  return isWhiteToMove ? evalCp : -evalCp;
+export function toWhitePerspective(evalCp: number, fenOrColor: string): number {
+  const trimmed = fenOrColor.trim();
+  const isWhite =
+    trimmed === 'WHITE' ||
+    trimmed === 'w' ||
+    (trimmed.includes(' ') ? trimmed.split(/\s+/)[1] === 'w' : false);
+  return isWhite ? evalCp : -evalCp;
 }

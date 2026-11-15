@@ -1,6 +1,6 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { render, screen, waitFor, fireEvent, act, cleanup } from '@testing-library/react';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { PracticePuzzlesView, type PracticePuzzlesViewHandle } from '@/components/PracticePuzzlesView';
 import * as api from '@/services/api';
 
@@ -49,6 +49,13 @@ vi.mock('react-chessboard', () => ({
 describe('PracticePuzzlesView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    cleanup();
+    localStorage.clear();
+    vi.useRealTimers();
+    vi.resetAllMocks();
   });
 
   it('renders loading state initially while puzzles are loading', () => {
@@ -597,18 +604,6 @@ describe('PracticePuzzlesView', () => {
     });
 
     // Solve or make move d4 on puzzle-1
-    vi.mocked(api.evaluateMove).mockResolvedValueOnce({
-      fen: SAME_FEN,
-      move: 'd4',
-      bestMove: 'd4',
-      bestEvalCp: 40,
-      evalCp: 40,
-      evalLoss: 0,
-      maxEvalLoss: 0.5,
-      threshold: 0.5,
-      acceptable: true,
-    });
-
     screen.getByTestId('play-d4-drop').click();
 
     // Verify move is applied on board
@@ -628,5 +623,337 @@ describe('PracticePuzzlesView', () => {
       expect(screen.getByTestId('mock-chessboard')).toHaveAttribute('data-position', SAME_FEN);
       expect(screen.getByTitle(/Previous Move/i)).toBeDisabled();
     });
+  });
+
+  it('pauses CountdownTimer during engine evaluation and halts completely upon puzzle completion', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'performance'] });
+    const actionsRef = React.createRef<PracticePuzzlesViewHandle | null>();
+
+    vi.mocked(api.fetchPuzzles).mockResolvedValueOnce([
+      {
+        puzzleId: 'puzzle-countdown-1',
+        fen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1',
+        playerColor: 'BLACK',
+        targetMove: '',
+        openingTitle: 'Sicilian Defense',
+        acceptableMoves: [],
+        movesPlayed: [],
+        priority: 1,
+        timesReached: 1,
+        mistakeCount: 1,
+        mistakeRate: 1,
+        evalCp: 35,
+      },
+    ]);
+
+    const { unmount } = render(
+      <PracticePuzzlesView
+        actionsRef={actionsRef}
+        sessionStatus="authenticated"
+        sessionUserId="user-1"
+        activeAccountId="acc-1"
+        activeUsername="test_user"
+        sessionGatePromise={Promise.resolve(true)}
+        sessionGateOpen={true}
+        onNavigateTab={vi.fn()}
+      />
+    );
+
+    await vi.waitFor(() => {
+      expect(screen.getByTestId('mock-chessboard')).toBeInTheDocument();
+    });
+
+    // Open puzzle settings and activate Countdown mode
+    fireEvent.click(screen.getByRole('button', { name: /puzzle settings/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Countdown' }));
+
+    // Allow initial timer initialization
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+
+    // Initial countdown elapsed should display 0:00
+    expect(screen.getByText('0:00')).toBeInTheDocument();
+
+    // Let 2 seconds pass
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+    expect(screen.getByText('0:02')).toBeInTheDocument();
+
+    // Simulate pending engine evaluation
+    let resolveEvaluation!: (res: api.MoveEvaluationResponse) => void;
+    vi.mocked(api.evaluateMove).mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveEvaluation = resolve;
+      })
+    );
+
+    // Play a move that triggers evaluation
+    act(() => {
+      screen.getByTestId('play-c5-drop').click();
+    });
+
+    // Advance 3 seconds while evaluation is pending
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+
+    // Countdown MUST be paused during engine evaluation - elapsed time remains 0:02
+    expect(screen.getByText('0:02')).toBeInTheDocument();
+
+    // Resolve evaluation with correct move
+    act(() => {
+      resolveEvaluation({
+        fen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1',
+        move: 'c5',
+        bestMove: 'c5',
+        bestEvalCp: 20,
+        evalCp: 20,
+        evalLoss: 0,
+        maxEvalLoss: 0.5,
+        threshold: 0.5,
+        acceptable: true,
+      });
+    });
+
+    // Wait for solved status
+    await vi.waitFor(() => {
+      expect(screen.getByText('Puzzle Solved! 🎉')).toBeInTheDocument();
+    });
+
+    // Advance 10 seconds after puzzle completion
+    act(() => {
+      vi.advanceTimersByTime(10000);
+    });
+
+    // Countdown MUST stay completely halted and not continue incrementing or expire
+    expect(screen.getByText('0:02')).toBeInTheDocument();
+    expect(screen.queryByText(/Time Expired/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Time's up/i)).not.toBeInTheDocument();
+
+    unmount();
+    vi.useRealTimers();
+  });
+
+  it('allows retries on incorrect Decision Timing moves, keeps stopwatch running, and records successful elapsed time', async () => {
+    vi.mocked(api.fetchPuzzles).mockResolvedValueOnce([]);
+    const actionsRef = React.createRef<PracticePuzzlesViewHandle | null>();
+
+    const { unmount } = render(
+      <PracticePuzzlesView
+        actionsRef={actionsRef}
+        sessionStatus="authenticated"
+        sessionUserId="user-1"
+        activeAccountId="acc-1"
+        activeUsername="test_user"
+        sessionGatePromise={Promise.resolve(true)}
+        sessionGateOpen={true}
+        onNavigateTab={vi.fn()}
+      />
+    );
+
+    await waitFor(() => {
+      expect(actionsRef.current).not.toBeNull();
+    });
+
+    const testOccurrence: api.LongDecisionOccurrence = {
+      id: 'occ-retry-1',
+      positionId: 'pos-retry-1',
+      fen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1',
+      playerColor: 'BLACK',
+      plyNumber: 2,
+      movePlayed: 'e5',
+      decisionTimeMs: 45_000,
+      timeControl: 'RAPID',
+      platformGameId: 'game-123',
+      playedAt: '2026-03-01T12:00:00Z',
+      opponentUsername: 'opponent',
+      chessComUrl: 'https://www.chess.com/game/live/123?move=2',
+      severity: 'SIGNIFICANT',
+    };
+
+    await waitFor(() => {
+      expect(actionsRef.current!.exploreLongDecision(testOccurrence)).toBe(true);
+    });
+
+    const board = screen.getByTestId('mock-chessboard');
+    expect(board).toHaveAttribute('data-position', testOccurrence.fen);
+
+    // Initial running stopwatch
+    expect(await screen.findByText(/0:0[0-9]/)).toBeInTheDocument();
+
+    // First attempt is incorrect (e5 instead of c5)
+    vi.mocked(api.evaluateMove).mockResolvedValueOnce({
+      fen: testOccurrence.fen,
+      move: 'e5',
+      bestMove: 'c5',
+      bestEvalCp: 20,
+      evalCp: -100,
+      evalLoss: 1.2,
+      maxEvalLoss: 0.8,
+      threshold: 0.8,
+      acceptable: false,
+    });
+
+    act(() => {
+      screen.getByTestId('play-e5-drop').click();
+    });
+
+    expect(await screen.findByText('Not the Recommended Move')).toBeInTheDocument();
+
+    // Board rolled back to initial position for retry
+    expect(board).toHaveAttribute('data-position', testOccurrence.fen);
+
+    // Wait 250ms for timer to advance during retry thought
+    await new Promise((r) => setTimeout(r, 250));
+
+    // Second attempt is acceptable (successful retry)
+    vi.mocked(api.evaluateMove).mockResolvedValueOnce({
+      fen: testOccurrence.fen,
+      move: 'c5',
+      bestMove: 'c5',
+      bestEvalCp: 20,
+      evalCp: 20,
+      evalLoss: 0,
+      maxEvalLoss: 0.8,
+      threshold: 0.8,
+      acceptable: true,
+    });
+
+    act(() => {
+      screen.getByTestId('play-c5-drop').click();
+    });
+
+    expect(await screen.findByText('Puzzle Solved! 🎉')).toBeInTheDocument();
+
+    // The successful attempt must record an elapsed time strictly greater than the initial attempt
+    const comparisonText = screen.getByText(/Solved in [0-9.]+s vs\. original game thinking time of 0:45\./).textContent;
+    expect(comparisonText).toBeDefined();
+    const secondsMatch = comparisonText?.match(/Solved in ([0-9.]+)s/);
+    expect(secondsMatch).not.toBeNull();
+    const elapsedSeconds = parseFloat(secondsMatch![1]);
+    expect(elapsedSeconds).toBeGreaterThanOrEqual(0.2);
+
+    unmount();
+  });
+
+  it('resets stopwatch to 0:00 when advancing between two consecutive distinct puzzles sharing identical FEN and playerColor with different identities', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'performance'] });
+    const actionsRef = React.createRef<PracticePuzzlesViewHandle | null>();
+
+    const IDENTICAL_FEN = 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2';
+
+    vi.mocked(api.fetchPuzzles).mockResolvedValueOnce([
+      {
+        puzzleId: 'puzzle-identity-alpha',
+        fen: IDENTICAL_FEN,
+        playerColor: 'WHITE',
+        targetMove: 'd4',
+        openingTitle: 'Identical FEN Puzzle Alpha',
+        acceptableMoves: [],
+        movesPlayed: [],
+        priority: 1,
+        timesReached: 1,
+        mistakeCount: 1,
+        mistakeRate: 1,
+        evalCp: 35,
+      },
+      {
+        puzzleId: 'puzzle-identity-beta',
+        fen: IDENTICAL_FEN,
+        playerColor: 'WHITE',
+        targetMove: 'd4',
+        openingTitle: 'Identical FEN Puzzle Beta',
+        acceptableMoves: [],
+        movesPlayed: [],
+        priority: 2,
+        timesReached: 2,
+        mistakeCount: 1,
+        mistakeRate: 1,
+        evalCp: 40,
+      },
+    ]);
+
+    const { unmount } = render(
+      <PracticePuzzlesView
+        actionsRef={actionsRef}
+        sessionStatus="authenticated"
+        sessionUserId="user-1"
+        activeAccountId="acc-1"
+        activeUsername="test_user"
+        sessionGatePromise={Promise.resolve(true)}
+        sessionGateOpen={true}
+        onNavigateTab={vi.fn()}
+      />
+    );
+
+    await vi.waitFor(() => {
+      expect(screen.getByTestId('mock-chessboard')).toBeInTheDocument();
+    });
+
+    // Open puzzle settings and activate Stopwatch mode
+    fireEvent.click(screen.getByRole('button', { name: /puzzle settings/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Stopwatch' }));
+
+    // Initialize timer
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+
+    // Initially stopwatch displays 0:00
+    expect(screen.getByText('0:00')).toBeInTheDocument();
+
+    // Advance 3 seconds while solving Puzzle Alpha
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+    expect(screen.getByText('0:03')).toBeInTheDocument();
+
+    // Play target move 'd4' to complete Puzzle Alpha
+    act(() => {
+      screen.getByTestId('play-d4-drop').click();
+    });
+
+    await vi.waitFor(() => {
+      expect(screen.getByText('Puzzle Solved! 🎉')).toBeInTheDocument();
+    });
+
+    // Advance 5 seconds after solving Puzzle Alpha - stopwatch MUST remain frozen at 0:03 on the same puzzle
+    act(() => {
+      vi.advanceTimersByTime(5000);
+    });
+    expect(screen.getByText('0:03')).toBeInTheDocument();
+
+    // Advance to Puzzle Beta using Next Puzzle button
+    const nextBtn = screen.getAllByRole('button', { name: /Next Puzzle/i })[0];
+    act(() => {
+      nextBtn.click();
+    });
+
+    await vi.waitFor(() => {
+      expect(screen.getByText('Puzzle 2 of 2')).toBeInTheDocument();
+      expect(screen.getByText('Identical FEN Puzzle Beta')).toBeInTheDocument();
+    });
+
+    // Allow timer initialization for Puzzle Beta
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+
+    // CRITICAL ADVERSARIAL ASSERTION:
+    // Advancing to the distinct second puzzle sharing identical FEN MUST reset the stopwatch to 0:00
+    // and must NOT retain or resume the 0:03 elapsed time from Puzzle Alpha!
+    expect(screen.getByText('0:00')).toBeInTheDocument();
+    expect(screen.queryByText('0:03')).not.toBeInTheDocument();
+
+    // Advance 2 seconds on Puzzle Beta
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+    expect(screen.getByText('0:02')).toBeInTheDocument();
+
+    unmount();
+    vi.useRealTimers();
   });
 });

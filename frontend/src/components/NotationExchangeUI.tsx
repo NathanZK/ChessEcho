@@ -13,6 +13,15 @@ interface NotationExchangeUIProps {
   onExit?: () => void;
 }
 
+function getTerminalMessage(state: BlindfoldGameState): string | null {
+  if (!state.isTerminal) return null;
+  if (state.winner === 'PLAYER') return 'Checkmate! You won.';
+  if (state.winner === 'CHESSPROBE') return 'Checkmate! ChessProbe won.';
+  if (state.terminalReason === 'STALEMATE') return 'Draw by stalemate.';
+  if (state.terminalReason === 'DRAW') return 'Game drawn.';
+  return 'Game complete.';
+}
+
 export const NotationExchangeUI: React.FC<NotationExchangeUIProps> = ({
   state,
   onPlayerMove,
@@ -43,20 +52,7 @@ export const NotationExchangeUI: React.FC<NotationExchangeUIProps> = ({
     }
   };
 
-  let terminalMessage: string | null = null;
-  if (state.isTerminal) {
-    if (state.winner === 'PLAYER') {
-      terminalMessage = 'Checkmate! You won.';
-    } else if (state.winner === 'CHESSPROBE') {
-      terminalMessage = 'Checkmate! ChessProbe won.';
-    } else if (state.terminalReason === 'STALEMATE') {
-      terminalMessage = 'Draw by stalemate.';
-    } else if (state.terminalReason === 'DRAW') {
-      terminalMessage = 'Game drawn.';
-    } else {
-      terminalMessage = 'Game complete.';
-    }
-  }
+  const terminalMessage = getTerminalMessage(state);
 
   return (
     <section className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4 shadow-xl">
@@ -93,6 +89,15 @@ export const NotationExchangeUI: React.FC<NotationExchangeUIProps> = ({
         </button>
       </form>
       {state.notationError && <p className="mt-2 text-xs text-rose-400">{state.notationError}</p>}
+      {state.lastChessEchoMove?.san && (
+        <div
+          data-testid="blindfold-computer-reply-text"
+          className="mt-2 rounded-lg border border-slate-700 bg-slate-800/60 p-2 text-xs font-medium text-slate-200"
+        >
+          <span className="font-bold text-slate-400">ChessProbe played:</span>{' '}
+          <span className="font-mono font-bold text-white">{state.lastChessEchoMove.san}</span>
+        </div>
+      )}
       {state.lastPlayerMove?.feedbackText && (
         <div
           data-testid="blindfold-feedback-text"
