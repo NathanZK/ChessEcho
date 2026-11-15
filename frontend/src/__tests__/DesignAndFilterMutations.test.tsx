@@ -24,6 +24,7 @@ vi.mock('../services/api', async (importOriginal) => {
     fetchPositionProgress: vi.fn(),
     fetchPuzzles: vi.fn(),
     fetchRecurringWeaknesses: vi.fn().mockResolvedValue([]),
+    ensureCsrfToken: vi.fn().mockResolvedValue('mock-token'),
   };
 });
 

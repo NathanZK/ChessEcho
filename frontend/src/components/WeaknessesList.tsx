@@ -34,7 +34,9 @@ import {
   type RecurringDiscoveryJobResponse,
   type RecurringWeaknessResponse,
 } from '../services/api';
-import { Puzzle } from '@/types/puzzle';
+import { Puzzle, type ColorFilter } from '@/types/puzzle';
+
+export type WeaknessColorFilter = ColorFilter | 'ALL';
 import { HistoricalGamesModal } from './HistoricalGamesModal';
 import { ClusterEvidenceModal } from './ClusterEvidenceModal';
 import {
@@ -126,8 +128,8 @@ interface WeaknessesListProps {
   onSelectPractice: (puzzle: Puzzle, fullList?: Puzzle[]) => void;
   onViewProgress?: (positionId: string, playerColor: 'WHITE' | 'BLACK', minEvalLoss: number, ecoCode?: string) => void;
   onWeaknessCountChange?: (count: number) => void;
-  activeColorFilter?: 'ALL' | 'WHITE' | 'BLACK';
-  onColorFilterChange?: (color: 'ALL' | 'WHITE' | 'BLACK') => void;
+  activeColorFilter?: WeaknessColorFilter;
+  onColorFilterChange?: (color: WeaknessColorFilter) => void;
   isAnalysisActive?: boolean;
   refreshKey?: number;
 }
@@ -151,13 +153,15 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
 }) => {
   const selector = accountId ?? username;
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
-  const [colorFilter, setColorFilter] = useState<'ALL' | 'WHITE' | 'BLACK'>(
+  const [colorFilter, setColorFilter] = useState<WeaknessColorFilter>(
     activeColorFilter || 'ALL'
   );
 
   if (activeColorFilter && activeColorFilter !== colorFilter) {
     setColorFilter(activeColorFilter);
   }
+
+  const isAllOrBoth = colorFilter === 'ALL' || colorFilter === 'BOTH';
 
   const [timeControlFilter, setTimeControlFilter] = useState<'ALL' | 'BULLET' | 'BLITZ' | 'RAPID' | 'CLASSICAL'>('ALL');
   const [phaseFilter, setPhaseFilter] = useState<'ALL' | 'OPENING' | 'MIDDLEGAME' | 'ENDGAME'>('ALL');
@@ -174,7 +178,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
   });
 
   const activeFilterBadges: string[] = [];
-  if (colorFilter !== 'ALL') {
+  if (!isAllOrBoth) {
     activeFilterBadges.push(`Color: ${colorFilter === 'WHITE' ? 'White' : 'Black'}`);
   }
   if (phaseFilter !== 'ALL') {
@@ -215,6 +219,25 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
   const [activeDiscoveryJob, setActiveDiscoveryJob] = useState<RecurringDiscoveryJobResponse | null>(null);
   const [isCancellingDiscovery, setIsCancellingDiscovery] = useState(false);
 
+  useEffect(() => {
+    if (!isDiscoveryModalOpen && !isAccountPromptOpen) return;
+    const previousActive = document.activeElement as HTMLElement | null;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        if (isDiscoveryModalOpen) setIsDiscoveryModalOpen(false);
+        if (isAccountPromptOpen) setIsAccountPromptOpen(false);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      if (previousActive && typeof previousActive.focus === 'function') {
+        previousActive.focus();
+      }
+    };
+  }, [isDiscoveryModalOpen, isAccountPromptOpen]);
+
   // Thematic Clusters state (#735)
   const [clusterViewMode, setClusterViewMode] = useState<'CLUSTERS' | 'POSITIONS'>('POSITIONS');
   const [recurringClusters, setRecurringClusters] = useState<RecurringWeaknessResponse[]>([]);
@@ -243,9 +266,13 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
       if (data && data.length > 0) {
         setClusterViewMode('CLUSTERS');
       }
-    } catch (err) {
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to load recurring weaknesses';
+      if (message.includes('ACCOUNT_SELECTION_REQUIRED')) {
+        return;
+      }
       console.error('Failed to load recurring weaknesses:', err);
-      setClusterError(err instanceof Error ? err.message : 'Failed to load recurring weaknesses');
+      setClusterError(message);
     } finally {
       setIsLoadingClusters(false);
     }
@@ -281,8 +308,12 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
       })
       .catch((err: unknown) => {
         if (!active) return;
+        const message = err instanceof Error ? err.message : 'Failed to load recurring weaknesses';
+        if (message.includes('ACCOUNT_SELECTION_REQUIRED')) {
+          return;
+        }
         console.error('Failed to load recurring weaknesses:', err);
-        setClusterError(err instanceof Error ? err.message : 'Failed to load recurring weaknesses');
+        setClusterError(message);
       })
       .finally(() => {
         if (!active) return;
@@ -377,7 +408,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
     isFetchingRef.current = false;
   };
 
-  const handleColorChange = (newColor: 'ALL' | 'WHITE' | 'BLACK') => {
+  const handleColorChange = (newColor: WeaknessColorFilter) => {
     invalidateWeaknessRequests();
     setColorFilter(newColor);
     onColorFilterChange?.(newColor);
@@ -400,9 +431,10 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
 
   const handleResetFilters = () => {
     invalidateWeaknessRequests();
-    if (colorFilter !== 'ALL') {
-      setColorFilter('ALL');
-      onColorFilterChange?.('ALL');
+    if (!isAllOrBoth) {
+      const resetColor: WeaknessColorFilter = activeColorFilter === 'BOTH' ? 'BOTH' : 'ALL';
+      setColorFilter(resetColor);
+      onColorFilterChange?.(resetColor);
     }
     if (phaseFilter !== 'ALL') {
       setPhaseFilter('ALL');
@@ -430,7 +462,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
       isFetchingRef.current = true;
 
       try {
-        const backendColor = colorFilter === 'ALL' ? 'BOTH' : colorFilter;
+        const backendColor = isAllOrBoth ? 'BOTH' : colorFilter;
         const newRows = await fetchWeaknesses(
           selector,
           'CHESS_COM',
@@ -461,7 +493,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
         }
       }
     },
-    [selector, hasMore, page, minEvalLoss, minMistakeCount, colorFilter, loadMoreError]
+    [selector, hasMore, page, minEvalLoss, minMistakeCount, colorFilter, isAllOrBoth, loadMoreError]
   );
 
   useEffect(() => {
@@ -523,7 +555,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
       setIsLoadingMore(false);
       isFetchingRef.current = true;
       try {
-        const backendColor = colorFilter === 'ALL' ? 'BOTH' : colorFilter;
+        const backendColor = isAllOrBoth ? 'BOTH' : colorFilter;
         const data = await fetchWeaknesses(
           requestSelector,
           'CHESS_COM',
@@ -555,7 +587,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
     return () => {
       invalidateWeaknessRequests();
     };
-  }, [selector, minEvalLoss, minMistakeCount, colorFilter, reloadToken, refreshKey]);
+  }, [selector, minEvalLoss, minMistakeCount, colorFilter, isAllOrBoth, reloadToken, refreshKey]);
 
   return (
     <div className="space-y-4 max-w-[1536px] mx-auto">
@@ -745,9 +777,9 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
             <div className="flex bg-surface-container-lowest p-0.5 rounded-lg border border-outline-variant text-xs font-mono">
               <button
                 type="button"
-                onClick={() => handleColorChange('ALL')}
+                onClick={() => handleColorChange(activeColorFilter === 'BOTH' ? 'BOTH' : 'ALL')}
                 className={`px-2.5 py-1 rounded-md font-semibold transition cursor-pointer ${
-                  colorFilter === 'ALL'
+                  isAllOrBoth
                     ? 'bg-surface-container text-primary border border-outline-variant'
                     : 'text-on-surface-variant hover:text-on-surface'
                 }`}
@@ -1622,6 +1654,9 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
           aria-modal="true"
           aria-labelledby="discovery-modal-title"
           className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setIsDiscoveryModalOpen(false);
+          }}
         >
           <div className="bg-surface-container-high border border-outline-variant rounded-2xl w-full max-w-md p-6 space-y-5 shadow-2xl">
             <div className="flex items-center justify-between border-b border-outline-variant pb-3">
@@ -1713,14 +1748,18 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
         <div
           role="dialog"
           aria-modal="true"
+          aria-labelledby="account-prompt-title"
           className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setIsAccountPromptOpen(false);
+          }}
         >
           <div className="bg-surface-container-high border border-outline-variant rounded-2xl w-full max-w-sm p-6 space-y-4 text-center shadow-2xl">
             <div className="w-12 h-12 rounded-xl bg-primary/20 text-primary flex items-center justify-center mx-auto">
               <Target className="w-6 h-6" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-on-surface">Connect Account</h3>
+              <h3 id="account-prompt-title" className="text-base font-bold text-on-surface">Connect Account</h3>
               <p className="text-xs text-on-surface-variant mt-1.5 leading-relaxed">
                 Connect your Chess.com account in the Import Games tab to analyze your recurring opening weaknesses.
               </p>

@@ -32,7 +32,9 @@ import java.io.StringReader
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.Callable
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 class DynamicContinuationCoordinatorTest {
     private val artifactRepository: PositionContinuationArtifactRepository = mock()
@@ -487,10 +489,11 @@ class DynamicContinuationCoordinatorTest {
 
     @Test
     fun `queue saturation drops extra positions non-blockingly and recovery retrieves them when capacity exists`() {
+        val allowWorkerToProceed = CountDownLatch(1)
         val slowPositionRepo: PositionRepository =
             mock {
                 on { findById(any()) } doAnswer {
-                    Thread.sleep(100)
+                    allowWorkerToProceed.await(5, TimeUnit.SECONDS)
                     java.util.Optional.empty()
                 }
             }
@@ -524,16 +527,20 @@ class DynamicContinuationCoordinatorTest {
             val recovered = customCoordinator.recoverEligiblePositions(batchSize = 2)
             assertTrue(recovered >= 0)
         } finally {
+            allowWorkerToProceed.countDown()
             customCoordinator.destroy()
         }
     }
 
     @Test
     fun `duplicate discovery ignores already queued positions and avoids duplicate enqueueing`() {
+        val inFindById = CountDownLatch(1)
+        val allowFindByIdToComplete = CountDownLatch(1)
         val slowPositionRepo: PositionRepository =
             mock {
                 on { findById(any()) } doAnswer {
-                    Thread.sleep(100)
+                    inFindById.countDown()
+                    allowFindByIdToComplete.await(5, TimeUnit.SECONDS)
                     java.util.Optional.empty()
                 }
             }
@@ -550,11 +557,13 @@ class DynamicContinuationCoordinatorTest {
             val initialQueuedCount = testCoordinator.getQueuedPositionsCount()
 
             testCoordinator.enqueuePositions(listOf(posId))
+            assertTrue(inFindById.await(5, TimeUnit.SECONDS), "Worker did not reach findById in time")
             assertEquals(initialQueuedCount + 1, testCoordinator.getQueuedPositionsCount())
 
             testCoordinator.enqueuePositions(listOf(posId))
             assertEquals(initialQueuedCount + 1, testCoordinator.getQueuedPositionsCount())
         } finally {
+            allowFindByIdToComplete.countDown()
             testCoordinator.destroy()
         }
     }
@@ -590,7 +599,7 @@ class DynamicContinuationCoordinatorTest {
             )
 
         try {
-            val deadline = System.currentTimeMillis() + 2000
+            val deadline = System.currentTimeMillis() + 5000
             var recovered = false
             while (System.currentTimeMillis() < deadline) {
                 if (newCoordinator.getRecoveredPositionsCount() >= 2L) {

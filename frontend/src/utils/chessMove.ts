@@ -77,3 +77,19 @@ export function areMovesEqual(
   if (!m1 || !m2) return false;
   return m1.from === m2.from && m1.to === m2.to && m1.promotion === m2.promotion;
 }
+
+/**
+ * Converts a centipawn score to absolute White perspective.
+ *
+ * In UCI and Stockfish, evaluation scores are relative to the side to move
+ * (+ = side to move is winning). This helper converts relative centipawns
+ * to absolute centipawns (+ = White is winning, - = Black is winning).
+ *
+ * @param evalCp Centipawn evaluation relative to the player to move in [fen].
+ * @param fen The chess position in FEN notation before the move was played.
+ * @returns Absolute centipawns from White's perspective (+ = White advantage, - = Black advantage).
+ */
+export function toWhitePerspective(evalCp: number, fen: string): number {
+  const isWhiteToMove = fen.split(' ')[1] === 'w';
+  return isWhiteToMove ? evalCp : -evalCp;
+}

@@ -135,4 +135,65 @@ describe('HistoricalGamesModal', () => {
     const firstGameLink = gameLinks[0].closest('a');
     expect(firstGameLink).toHaveAttribute('href', 'https://www.chess.com/game/live/172923974924');
   });
+
+  it('exposes role="dialog", aria-modal="true", and accessible title', () => {
+    render(<HistoricalGamesModal urls={mockUrls} onClose={mockOnClose} />);
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toBeInTheDocument();
+    expect(dialog).toHaveAttribute('aria-modal', 'true');
+    expect(dialog).toHaveAttribute('aria-labelledby');
+  });
+
+  it('calls onClose when Escape key is pressed', () => {
+    render(<HistoricalGamesModal urls={mockUrls} onClose={mockOnClose} />);
+
+    fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' });
+    expect(mockOnClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls onClose when clicking the backdrop overlay', () => {
+    const { container } = render(<HistoricalGamesModal urls={mockUrls} onClose={mockOnClose} />);
+    const backdrop = container.firstElementChild as HTMLElement;
+
+    fireEvent.mouseDown(backdrop);
+    expect(mockOnClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not call onClose when clicking inside the dialog content', () => {
+    render(<HistoricalGamesModal urls={mockUrls} onClose={mockOnClose} />);
+    const dialog = screen.getByRole('dialog');
+
+    fireEvent.mouseDown(dialog);
+    expect(mockOnClose).not.toHaveBeenCalled();
+  });
+
+  it('restores focus to previously active element on unmount', () => {
+    const triggerButton = document.createElement('button');
+    document.body.appendChild(triggerButton);
+    triggerButton.focus();
+    expect(document.activeElement).toBe(triggerButton);
+
+    const { unmount } = render(<HistoricalGamesModal urls={mockUrls} onClose={mockOnClose} />);
+    unmount();
+
+    expect(document.activeElement).toBe(triggerButton);
+    document.body.removeChild(triggerButton);
+  });
+
+  it('traps focus inside the modal on Tab key', () => {
+    render(<HistoricalGamesModal urls={mockUrls} onClose={mockOnClose} />);
+    const closeIcon = screen.getByLabelText('Close modal');
+    const closeBtn = screen.getByText('Close');
+
+    // Focus last element and press Tab -> should wrap to first focusable element
+    closeBtn.focus();
+    fireEvent.keyDown(window, { key: 'Tab', code: 'Tab' });
+    expect(document.activeElement).toBe(closeIcon);
+
+    // Focus first element and press Shift+Tab -> should wrap to last focusable element
+    closeIcon.focus();
+    fireEvent.keyDown(window, { key: 'Tab', code: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(closeBtn);
+  });
 });

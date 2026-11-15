@@ -20,6 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       frontend: ${{ steps.filter.outputs.frontend }}
+      e2e: ${{ steps.filter.outputs.e2e }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,6 +32,12 @@ jobs:
             frontend:
               - 'frontend/**'
               - 'API_CONTRACT.md'
+              - '.github/workflows/journey-tests.yml'
+            e2e:
+              - 'backend/**'
+              - 'frontend/**'
+              - 'scripts/test-double/**'
+              - 'docker-compose.yml'
               - '.github/workflows/journey-tests.yml'
 
   journeys:
@@ -91,9 +98,67 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  fullstack-e2e:
+    name: Full-Stack E2E (Docker & Test Double)
+    needs: changes
+    if: ${{ needs.changes.outputs.e2e == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Frontend Dependencies
+        run: cd frontend && npm ci
+
+      - name: Install Playwright Browsers
+        run: cd frontend && npx playwright install --with-deps chromium
+
+      - name: Start Mock Chess.com HTTP Provider
+        run: |
+          node scripts/test-double/server.js &
+          echo "MOCK_PID=$!" >> $GITHUB_ENV
+          timeout 15s bash -c 'until curl -s http://localhost:8085/health > /dev/null; do sleep 0.5; done'
+
+      - name: Start Isolated Docker Backend & PostgreSQL
+        run: |
+          docker compose -p chessecho-e2e up -d --build postgres app
+          timeout 60s bash -c 'until curl -s http://localhost:8080/api/me > /dev/null; do sleep 1; done'
+
+      - name: Build Frontend Application
+        run: cd frontend && npm run build
+
+      - name: Run Docker-backed Full-Stack E2E Suite
+        run: cd frontend && npm run test:e2e:docker
+
+      - name: Upload E2E Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fullstack-e2e-artifacts
+          path: |
+            frontend/journeys/artifacts/
+            frontend/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Dump Docker Logs on Failure
+        if: failure()
+        run: docker compose -p chessecho-e2e logs
+
+      - name: Safe Isolated Teardown
+        if: always()
+        run: |
+          docker compose -p chessecho-e2e down -v
+          [ -n "$MOCK_PID" ] && kill $MOCK_PID || true
+
   journey-gate:
     name: Journey Gate
-    needs: [changes, journeys]
+    needs: [changes, journeys, fullstack-e2e]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -103,10 +168,14 @@ jobs:
           CHANGES_RESULT="${{ needs.changes.result }}"
           FRONTEND_FILTER="${{ needs.changes.outputs.frontend }}"
           JOURNEYS_RESULT="${{ needs.journeys.result }}"
+          E2E_FILTER="${{ needs.changes.outputs.e2e }}"
+          E2E_RESULT="${{ needs.fullstack-e2e.result }}"
 
           echo "Changes detection result: '${CHANGES_RESULT:-}'"
           echo "Frontend path filter:     '${FRONTEND_FILTER:-}'"
           echo "Journeys job result:      '${JOURNEYS_RESULT:-}'"
+          echo "E2E path filter:          '${E2E_FILTER:-}'"
+          echo "E2E job result:           '${E2E_RESULT:-}'"
 
           # 1. Fail closed if changes job did not succeed
           if [ "${CHANGES_RESULT:-}" != "success" ]; then
@@ -122,7 +191,15 @@ jobs:
             fi
           fi
 
-          # 3. When no frontend changes are detected, journeys must be skipped
+          # 3. When fullstack changes are detected, E2E must succeed
+          if [ "${E2E_FILTER}" = "true" ]; then
+            if [ "${E2E_RESULT:-}" != "success" ]; then
+              echo "::error::Fullstack changes detected, but E2E job was '${E2E_RESULT:-}' (expected 'success')."
+              exit 1
+            fi
+          fi
+
+          # 4. When no frontend changes are detected, journeys must be skipped
           if [ "${FRONTEND_FILTER}" = "false" ]; then
             if [ "${JOURNEYS_RESULT:-}" != "skipped" ]; then
               echo "::error::No frontend changes detected, but journeys job was '${JOURNEYS_RESULT:-}' (expected 'skipped')."
@@ -130,9 +207,21 @@ jobs:
             fi
           fi
 
-          # 4. Fail closed on unexpected failure or cancellation
+          # 5. When no fullstack changes are detected, E2E must be skipped
+          if [ "${E2E_FILTER}" = "false" ]; then
+            if [ "${E2E_RESULT:-}" != "skipped" ]; then
+              echo "::error::No fullstack changes detected, but E2E job was '${E2E_RESULT:-}' (expected 'skipped')."
+              exit 1
+            fi
+          fi
+
+          # 6. Fail closed on unexpected failure or cancellation
           if [ "${JOURNEYS_RESULT:-}" != "success" ] && [ "${JOURNEYS_RESULT:-}" != "skipped" ]; then
             echo "::error::Journeys job ended with non-passing status '${JOURNEYS_RESULT:-}'."
+            exit 1
+          fi
+          if [ "${E2E_RESULT:-}" != "success" ] && [ "${E2E_RESULT:-}" != "skipped" ]; then
+            echo "::error::E2E job ended with non-passing status '${E2E_RESULT:-}'."
             exit 1
           fi
 

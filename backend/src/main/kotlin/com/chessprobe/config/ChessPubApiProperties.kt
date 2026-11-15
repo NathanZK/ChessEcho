@@ -4,6 +4,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties
 
 @ConfigurationProperties(prefix = "chess.pubapi")
 data class ChessPubApiProperties(
+    var baseUrl: String = "https://api.chess.com",
     var userAgentUsername: String = "",
     var contact: String = "",
     var delayMs: Long = 100L,

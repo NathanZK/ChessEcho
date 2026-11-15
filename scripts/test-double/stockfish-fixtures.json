@@ -1,0 +1,85 @@
+{
+  "version": "1.0.0",
+  "comment": "Deterministic fixtures for Mock Stockfish UCI engine double",
+  "positions": {
+    "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2": {
+      "multiPv": [
+        {
+          "rank": 1,
+          "scoreCp": 20,
+          "depth": 16,
+          "pv": "b8c6 f1c4 g8f6 d2d3 f8c5 c2c3 d7d6"
+        },
+        {
+          "rank": 2,
+          "scoreCp": 40,
+          "depth": 16,
+          "pv": "d7d6 d2d4 e5d4 f3d4 g8f6 b1c3 f8e7"
+        },
+        {
+          "rank": 3,
+          "scoreCp": 50,
+          "depth": 16,
+          "pv": "g8f6 f3e5 d7d6 e5f3 f6e4 d2d4 d6d5"
+        },
+        {
+          "rank": 4,
+          "scoreCp": 120,
+          "depth": 16,
+          "pv": "d8e7 f1c4 b8c6 e1g1 d7d6 b1c3 c8e6"
+        },
+        {
+          "rank": 5,
+          "scoreCp": -450,
+          "depth": 16,
+          "pv": "f7f6 f3e5 f6e5 d1h5 e8e7 h5e5 e7f7 f1c4"
+        }
+      ],
+      "bestMove": "b8c6",
+      "moves": {
+        "f7f6": {
+          "scoreCp": 450,
+          "depth": 16,
+          "pv": "f3e5 f6e5 d1h5 e8e7 h5e5 e7f7 f1c4 d7d5 c4d5 f7g6",
+          "bestMove": "f3e5"
+        },
+        "b8c6": {
+          "scoreCp": 20,
+          "depth": 16,
+          "pv": "f1c4 g8f6 d2d3 f8c5 c2c3 d7d6",
+          "bestMove": "f1c4"
+        }
+      }
+    },
+    "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1": {
+      "multiPv": [
+        {
+          "rank": 1,
+          "scoreCp": 30,
+          "depth": 16,
+          "pv": "e2e4 e7e5 g1f3 b8c6 f1c4 f8c5"
+        },
+        {
+          "rank": 2,
+          "scoreCp": 25,
+          "depth": 16,
+          "pv": "d2d4 d7d5 c2c4 e7e6 b1c3 g8f6"
+        },
+        {
+          "rank": 3,
+          "scoreCp": 20,
+          "depth": 16,
+          "pv": "g1f3 d7d5 g2g3 c7c5 f1g2 b8c6"
+        },
+        {
+          "rank": 4,
+          "scoreCp": 15,
+          "depth": 16,
+          "pv": "c2c4 e7e5 b1c3 g8f6 g1f3 b8c6"
+        }
+      ],
+      "bestMove": "e2e4",
+      "moves": {}
+    }
+  }
+}

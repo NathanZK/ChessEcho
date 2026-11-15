@@ -1,0 +1,127 @@
+{
+  "version": "1.0.0",
+  "generatedAt": "2026-11-15T14:15:00Z",
+  "account": "e2e_player",
+  "games": [
+    {
+      "url": "https://www.chess.com/game/live/10000000001",
+      "pgn": "[Event \"Live Chess\"]\n[Site \"Chess.com\"]\n[Date \"2024.01.10\"]\n[White \"GrandmasterW\"]\n[Black \"e2e_player\"]\n[Result \"1-0\"]\n[TimeControl \"180\"]\n[ECO \"C40\"]\n\n1. e4 {[%clk 0:03:00]} e5 {[%clk 0:03:00]} 2. Nf3 {[%clk 0:02:58]} f6 {[%clk 0:01:45]} 3. Nxe5 {[%clk 0:02:50]} fxe5 {[%clk 0:01:40]} 4. Qh5+ {[%clk 0:02:48]} Ke7 {[%clk 0:01:35]} 5. Qxe5+ {[%clk 0:02:45]} Kf7 {[%clk 0:01:30]} 6. Bc4+ {[%clk 0:02:40]} d5 {[%clk 0:01:25]} 7. Bxd5+ {[%clk 0:02:35]} Kg6 {[%clk 0:01:20]} 8. h4 {[%clk 0:02:30]} h6 {[%clk 0:01:15]} 9. Bxb7 {[%clk 0:02:25]} Bxb7 {[%clk 0:01:10]} 10. Qf5# {[%clk 0:02:20]} 1-0",
+      "time_control": "180",
+      "end_time": 1704880000,
+      "rated": true,
+      "fen": "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2",
+      "time_class": "blitz",
+      "rules": "chess",
+      "white": {
+        "rating": 1500,
+        "result": "win",
+        "@id": "https://api.chess.com/pub/player/grandmasterw",
+        "username": "GrandmasterW",
+        "uuid": "00000000-0000-0000-0000-000000000001"
+      },
+      "black": {
+        "rating": 1450,
+        "result": "checkmated",
+        "@id": "https://api.chess.com/pub/player/e2e_player",
+        "username": "e2e_player",
+        "uuid": "00000000-0000-0000-0000-000000000002"
+      }
+    },
+    {
+      "url": "https://www.chess.com/game/live/10000000002",
+      "pgn": "[Event \"Live Chess\"]\n[Site \"Chess.com\"]\n[Date \"2024.01.12\"]\n[White \"MasterWhite2\"]\n[Black \"e2e_player\"]\n[Result \"1-0\"]\n[TimeControl \"180\"]\n[ECO \"C40\"]\n\n1. e4 {[%clk 0:03:00]} e5 {[%clk 0:03:00]} 2. Nf3 {[%clk 0:02:57]} f6 {[%clk 0:01:55]} 3. Nxe5 {[%clk 0:02:52]} fxe5 {[%clk 0:01:50]} 4. Qh5+ {[%clk 0:02:50]} Ke7 {[%clk 0:01:45]} 5. Qxe5+ {[%clk 0:02:45]} Kf7 {[%clk 0:01:40]} 6. Bc4+ {[%clk 0:02:40]} d5 {[%clk 0:01:35]} 7. Bxd5+ {[%clk 0:02:35]} Kg6 {[%clk 0:01:30]} 8. h4 {[%clk 0:02:30]} h6 {[%clk 0:01:25]} 9. Bxb7 {[%clk 0:02:25]} Bxb7 {[%clk 0:01:20]} 10. Qf5# {[%clk 0:02:20]} 1-0",
+      "time_control": "180",
+      "end_time": 1705050000,
+      "rated": true,
+      "fen": "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2",
+      "time_class": "blitz",
+      "rules": "chess",
+      "white": {
+        "rating": 1520,
+        "result": "win",
+        "@id": "https://api.chess.com/pub/player/masterwhite2",
+        "username": "MasterWhite2",
+        "uuid": "00000000-0000-0000-0000-000000000003"
+      },
+      "black": {
+        "rating": 1440,
+        "result": "checkmated",
+        "@id": "https://api.chess.com/pub/player/e2e_player",
+        "username": "e2e_player",
+        "uuid": "00000000-0000-0000-0000-000000000002"
+      }
+    },
+    {
+      "url": "https://www.chess.com/game/live/10000000003",
+      "pgn": "[Event \"Live Chess\"]\n[Site \"Chess.com\"]\n[Date \"2024.01.15\"]\n[White \"MasterWhite3\"]\n[Black \"e2e_player\"]\n[Result \"1-0\"]\n[TimeControl \"180\"]\n[ECO \"C40\"]\n\n1. e4 {[%clk 0:03:00]} e5 {[%clk 0:03:00]} 2. Nf3 {[%clk 0:02:55]} f6 {[%clk 0:02:00]} 3. Nxe5 {[%clk 0:02:50]} fxe5 {[%clk 0:01:55]} 4. Qh5+ {[%clk 0:02:45]} Ke7 {[%clk 0:01:50]} 5. Qxe5+ {[%clk 0:02:40]} Kf7 {[%clk 0:01:45]} 6. Bc4+ {[%clk 0:02:35]} d5 {[%clk 0:01:40]} 7. Bxd5+ {[%clk 0:02:30]} Kg6 {[%clk 0:01:35]} 8. h4 {[%clk 0:02:25]} h6 {[%clk 0:01:30]} 9. Bxb7 {[%clk 0:02:20]} Bxb7 {[%clk 0:01:25]} 10. Qf5# {[%clk 0:02:15]} 1-0",
+      "time_control": "180",
+      "end_time": 1705310000,
+      "rated": true,
+      "fen": "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2",
+      "time_class": "blitz",
+      "rules": "chess",
+      "white": {
+        "rating": 1510,
+        "result": "win",
+        "@id": "https://api.chess.com/pub/player/masterwhite3",
+        "username": "MasterWhite3",
+        "uuid": "00000000-0000-0000-0000-000000000004"
+      },
+      "black": {
+        "rating": 1435,
+        "result": "checkmated",
+        "@id": "https://api.chess.com/pub/player/e2e_player",
+        "username": "e2e_player",
+        "uuid": "00000000-0000-0000-0000-000000000002"
+      }
+    },
+    {
+      "url": "https://www.chess.com/game/live/10000000004",
+      "pgn": "[Event \"Live Chess\"]\n[Site \"Chess.com\"]\n[Date \"2024.01.18\"]\n[White \"MasterWhite4\"]\n[Black \"e2e_player\"]\n[Result \"0-1\"]\n[TimeControl \"180\"]\n[ECO \"C44\"]\n\n1. e4 {[%clk 0:03:00]} e5 {[%clk 0:03:00]} 2. Nf3 {[%clk 0:02:58]} Nc6 {[%clk 0:02:55]} 3. Bc4 {[%clk 0:02:54]} Bc5 {[%clk 0:02:50]} 4. c3 {[%clk 0:02:50]} Nf6 {[%clk 0:02:45]} 5. d4 {[%clk 0:02:45]} exd4 {[%clk 0:02:40]} 6. cxd4 {[%clk 0:02:40]} Bb4+ {[%clk 0:02:35]} 7. Bd2 {[%clk 0:02:35]} Bxd2+ {[%clk 0:02:30]} 8. Nbxd2 {[%clk 0:02:30]} d5 {[%clk 0:02:25]} 0-1",
+      "time_control": "180",
+      "end_time": 1705570000,
+      "rated": true,
+      "fen": "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2",
+      "time_class": "blitz",
+      "rules": "chess",
+      "white": {
+        "rating": 1490,
+        "result": "resigned",
+        "@id": "https://api.chess.com/pub/player/masterwhite4",
+        "username": "MasterWhite4",
+        "uuid": "00000000-0000-0000-0000-000000000005"
+      },
+      "black": {
+        "rating": 1445,
+        "result": "win",
+        "@id": "https://api.chess.com/pub/player/e2e_player",
+        "username": "e2e_player",
+        "uuid": "00000000-0000-0000-0000-000000000002"
+      }
+    },
+    {
+      "url": "https://www.chess.com/game/live/10000000005",
+      "pgn": "[Event \"Live Chess\"]\n[Site \"Chess.com\"]\n[Date \"2024.01.20\"]\n[White \"MasterWhite5\"]\n[Black \"e2e_player\"]\n[Result \"0-1\"]\n[TimeControl \"180\"]\n[ECO \"C44\"]\n\n1. e4 {[%clk 0:03:00]} e5 {[%clk 0:03:00]} 2. Nf3 {[%clk 0:02:58]} Nc6 {[%clk 0:02:56]} 3. Bc4 {[%clk 0:02:52]} Bc5 {[%clk 0:02:51]} 4. c3 {[%clk 0:02:48]} Nf6 {[%clk 0:02:46]} 5. d4 {[%clk 0:02:42]} exd4 {[%clk 0:02:40]} 6. cxd4 {[%clk 0:02:38]} Bb4+ {[%clk 0:02:35]} 7. Bd2 {[%clk 0:02:32]} Bxd2+ {[%clk 0:02:30]} 8. Nbxd2 {[%clk 0:02:28]} d5 {[%clk 0:02:24]} 0-1",
+      "time_control": "180",
+      "end_time": 1705740000,
+      "rated": true,
+      "fen": "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2",
+      "time_class": "blitz",
+      "rules": "chess",
+      "white": {
+        "rating": 1495,
+        "result": "resigned",
+        "@id": "https://api.chess.com/pub/player/masterwhite5",
+        "username": "MasterWhite5",
+        "uuid": "00000000-0000-0000-0000-000000000006"
+      },
+      "black": {
+        "rating": 1455,
+        "result": "win",
+        "@id": "https://api.chess.com/pub/player/e2e_player",
+        "username": "e2e_player",
+        "uuid": "00000000-0000-0000-0000-000000000002"
+      }
+    }
+  ]
+}

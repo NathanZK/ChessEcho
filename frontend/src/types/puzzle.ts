@@ -1,5 +1,7 @@
 import type { LongDecisionTimeControl, DecisionSeverity } from '../services/api';
 
+export type ColorFilter = 'BOTH' | 'WHITE' | 'BLACK';
+
 export type PuzzleSource = 'puzzle' | 'weakness' | 'long-decision' | 'similar' | 'supplied';
 
 export interface LongDecisionContext {

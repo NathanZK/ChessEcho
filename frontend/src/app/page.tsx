@@ -16,7 +16,7 @@ import {
 import { PositionProgressView } from '@/components/PositionProgressView';
 import { ImportGamesView } from '@/components/ImportGamesView';
 import { GameAnalysisView } from '@/components/GameAnalysisView';
-import { Puzzle } from '@/types/puzzle';
+import { Puzzle, type ColorFilter } from '@/types/puzzle';
 import {
   JobStatusResponse,
   type LongDecisionOccurrence,
@@ -162,12 +162,13 @@ export default function Home() {
     }
   };
 
-  const handleColorFilterChange = (color: 'BOTH' | 'WHITE' | 'BLACK') => {
+  const handleColorFilterChange = (color: ColorFilter | 'ALL') => {
+    const normalized: ColorFilter = color === 'ALL' ? 'BOTH' : color;
     practiceActionsRef.current?.invalidatePuzzleRequests();
-    setPuzzleColorFilter(color);
+    setPuzzleColorFilter(normalized);
     if (typeof window !== 'undefined') {
-      localStorage.setItem('chessecho_puzzle_color_filter', color);
-      const weaknessColor = color === 'BOTH' ? 'ALL' : color;
+      localStorage.setItem('chessecho_puzzle_color_filter', normalized);
+      const weaknessColor = normalized === 'BOTH' ? 'ALL' : normalized;
       localStorage.setItem('chessecho_weakness_color_filter', weaknessColor);
     }
   };
@@ -324,8 +325,8 @@ export default function Home() {
                   : undefined
               }
               onWeaknessCountChange={setWeaknessCount}
-              activeColorFilter={puzzleColorFilter === 'BOTH' ? 'ALL' : puzzleColorFilter}
-              onColorFilterChange={(c) => handleColorFilterChange(c === 'ALL' ? 'BOTH' : c)}
+              activeColorFilter={puzzleColorFilter}
+              onColorFilterChange={handleColorFilterChange}
               isAnalysisActive={
                 !!session.activeUsername && activeJobStatus?.analysisStatus === 'ANALYZING'
               }
