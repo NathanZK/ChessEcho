@@ -1,16 +1,16 @@
 package com.chessprobe.integration.service
 
+import com.chessprobe.AbstractIntegrationTest
 import com.chessprobe.domain.AsyncJob
 import com.chessprobe.domain.ChessAccount
 import com.chessprobe.domain.Platform
 import com.chessprobe.domain.PlayerColor
 import com.chessprobe.domain.TimeControl
 import com.chessprobe.dto.ImportGamesRequest
-import com.chessprobe.repository.AsyncJobRepository
-import com.chessprobe.repository.ChessAccountRepository
 import com.chessprobe.service.ChessComClient
 import com.chessprobe.service.EngineAnalysisService
 import com.chessprobe.service.GameImportService
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.atLeastOnce
@@ -21,7 +21,6 @@ import org.mockito.kotlin.whenever
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.mock.mockito.MockBean
-import org.springframework.test.context.ActiveProfiles
 import java.util.UUID
 import kotlin.reflect.full.memberProperties
 import kotlin.test.assertEquals
@@ -29,22 +28,21 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@ActiveProfiles("test")
-class Issue417AnalysisTerminalStateIntegrationTest {
+class Issue417AnalysisTerminalStateIntegrationTest : AbstractIntegrationTest() {
     @Autowired
     private lateinit var gameImportService: GameImportService
-
-    @Autowired
-    private lateinit var asyncJobRepository: AsyncJobRepository
-
-    @Autowired
-    private lateinit var chessAccountRepository: ChessAccountRepository
 
     @MockBean
     private lateinit var chessComClient: ChessComClient
 
     @MockBean
     private lateinit var engineAnalysisService: EngineAnalysisService
+
+    @AfterEach
+    fun tearDown() {
+        asyncJobRepository.deleteAll()
+        chessAccountRepository.deleteAll()
+    }
 
     @Test
     fun `all qualifying positions succeed and complete analysis`() {

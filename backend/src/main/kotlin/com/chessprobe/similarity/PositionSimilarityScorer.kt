@@ -25,10 +25,14 @@ class PositionSimilarityScorer {
         val documentFrequencies = computeDocumentFrequencies(eligibleCandidates)
 
         val queryTermKeys = query.terms.keys
+        val queryHasCentralPawns = queryTermKeys.any { isCentralPawnToken(it) }
 
         return eligibleCandidates
             .map { candidate ->
-                val bm25 = calculateBm25(queryTermKeys, candidate, poolSize, avgDocumentLength, documentFrequencies)
+                var bm25 = calculateBm25(queryTermKeys, candidate, poolSize, avgDocumentLength, documentFrequencies)
+                if (queryHasCentralPawns && isStartingPosition(candidate)) {
+                    bm25 *= STARTING_POSITION_OPENING_PENALTY
+                }
                 candidate to bm25
             }.sortedWith(
                 compareByDescending<Pair<PositionDocument, Double>> { it.second }
@@ -40,6 +44,18 @@ class PositionSimilarityScorer {
                     rank = index + 1,
                 )
             }
+    }
+
+    private fun isStartingPosition(doc: PositionDocument): Boolean =
+        doc.canonicalFen == STARTING_POSITION_CANONICAL_FEN ||
+            doc.fen.startsWith("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR")
+
+    private fun isCentralPawnToken(term: String): Boolean {
+        if (!term.contains("pawn", ignoreCase = true)) return false
+        return term.contains("e4", ignoreCase = true) ||
+            term.contains("c5", ignoreCase = true) ||
+            term.contains("d4", ignoreCase = true) ||
+            term.contains("d5", ignoreCase = true)
     }
 
     private fun computeDocumentFrequencies(candidates: List<PositionDocument>): Map<String, Int> {
@@ -75,13 +91,17 @@ class PositionSimilarityScorer {
             val df = documentFrequencies[term] ?: continue
             val idf = ln(1.0 + ((poolSize - df + 0.5) / (df + 0.5)))
             val tfWeight = (tf * (BM25_K1 + 1.0)) / (tf + denominatorFactor)
-            totalScore += idf * tfWeight
+            val weight = if (isCentralPawnToken(term)) CENTRAL_PAWN_BOOST else 1.0
+            totalScore += idf * tfWeight * weight
         }
 
         return totalScore
     }
 
     companion object {
+        private const val STARTING_POSITION_CANONICAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -"
+        private const val CENTRAL_PAWN_BOOST = 3.0
+        private const val STARTING_POSITION_OPENING_PENALTY = 0.5
         private const val BM25_K1 = 1.2
         private const val BM25_B = 0.75
     }

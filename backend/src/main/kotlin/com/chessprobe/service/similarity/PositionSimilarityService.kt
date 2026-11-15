@@ -121,14 +121,36 @@ class PositionSimilarityService(
         depth: Int = DEFAULT_DEPTH,
         multiPv: Int = DEFAULT_MULTI_PV,
         mode: SimilarityRetrievalMode = SimilarityRetrievalMode.STRUCTURAL,
+    ): SimilarPositionsResult =
+        findSimilarPositions(
+            queryFen = queryFen,
+            account = account,
+            minScore = minScore,
+            limit = limit,
+            depth = depth,
+            multiPv = multiPv,
+            mode = mode,
+            maxPositionsPerGame = DEFAULT_MAX_POSITIONS_PER_GAME,
+        )
+
+    @Transactional(readOnly = true)
+    fun findSimilarPositions(
+        queryFen: String,
+        account: ChessAccount,
+        minScore: Double = 0.0,
+        limit: Int = DEFAULT_LIMIT,
+        depth: Int = DEFAULT_DEPTH,
+        multiPv: Int = DEFAULT_MULTI_PV,
+        mode: SimilarityRetrievalMode = SimilarityRetrievalMode.STRUCTURAL,
+        maxPositionsPerGame: Int = DEFAULT_MAX_POSITIONS_PER_GAME,
     ): SimilarPositionsResult {
         val validFen = validator.validateOrthodoxFen(queryFen)
         val resolvedLimit = limit.coerceIn(1, MAX_LIMIT)
         return when (mode) {
             SimilarityRetrievalMode.STRUCTURAL ->
-                findStructuralSimilarPositions(validFen, account, minScore, resolvedLimit)
+                findStructuralSimilarPositions(validFen, account, minScore, resolvedLimit, maxPositionsPerGame)
             SimilarityRetrievalMode.DYNAMIC ->
-                findDynamicSimilarPositions(validFen, account, resolvedLimit, depth, multiPv)
+                findDynamicSimilarPositions(validFen, account, resolvedLimit, depth, multiPv, maxPositionsPerGame)
         }
     }
 
@@ -137,6 +159,7 @@ class PositionSimilarityService(
         account: ChessAccount,
         minScore: Double,
         limit: Int,
+        maxPositionsPerGame: Int = DEFAULT_MAX_POSITIONS_PER_GAME,
     ): SimilarPositionsResult {
         val queryDoc = tokenExtractor.extractDocument(UUID.randomUUID(), validFen, includeReachability = false)
 
@@ -162,7 +185,7 @@ class PositionSimilarityService(
             return emptyResult(validFen, mode = "STRUCTURAL")
         }
 
-        val shortlistedMatches = qualifyingMatches.take(limit)
+        val shortlistedMatches = applyDiversityCap(qualifyingMatches, limit, maxPositionsPerGame)
         val results = mapStructuralMatches(shortlistedMatches)
 
         return SimilarPositionsResult(
@@ -186,6 +209,7 @@ class PositionSimilarityService(
         limit: Int,
         depth: Int,
         multiPv: Int,
+        maxPositionsPerGame: Int = DEFAULT_MAX_POSITIONS_PER_GAME,
     ): SimilarPositionsResult {
         val queryDoc = tokenExtractor.extractDocument(UUID.randomUUID(), validFen, includeReachability = false)
         val activeTurn = queryDoc.sideToMove
@@ -194,7 +218,7 @@ class PositionSimilarityService(
 
         return concurrencyManager.withPermitOrFallback(
             onPermitAcquired = {
-                executeDynamicSearch(validFen, account, activeTurn, expectedColor, limit, depth, multiPv)
+                executeDynamicSearch(validFen, account, activeTurn, expectedColor, limit, depth, multiPv, maxPositionsPerGame)
             },
             onCapacityExceeded = {
                 emptyDynamicResult(
@@ -213,6 +237,7 @@ class PositionSimilarityService(
         limit: Int,
         depth: Int,
         multiPv: Int,
+        maxPositionsPerGame: Int = DEFAULT_MAX_POSITIONS_PER_GAME,
     ): SimilarPositionsResult {
         val targetDepth = maxOf(depth, DYNAMIC_TARGET_DEPTH)
         val queryFeatures = resolveDynamicQueryFeatures(validFen, targetDepth)
@@ -225,18 +250,7 @@ class PositionSimilarityService(
             )
         }
 
-        val dynamicIndex =
-            dynamicCache.getOrBuild(account.id) {
-                val docs = personalDynamicCorpusProvider.loadPersonalDynamicPositions(account)
-                DynamicInvertedIndex(docs)
-            }
-
-        val scoredCandidates =
-            dynamicIndex.retrieveCandidates(
-                queryTerms = queryFeatures.tokens.keys,
-                activeTurn = activeTurn,
-                maxCandidates = candidateBudget,
-            )
+        val scoredCandidates = retrieveScoredCandidates(account, queryFeatures.tokens.keys, activeTurn)
 
         val qualifyingMatches = qualifyDynamicCandidates(account.id, scoredCandidates, expectedColor)
         if (qualifyingMatches.isEmpty()) {
@@ -263,6 +277,7 @@ class PositionSimilarityService(
                 resolution = resolution,
                 queryPvs = queryFeatures.principalVariations,
                 limit = limit,
+                maxPositionsPerGame = maxPositionsPerGame,
             )
         }
 
@@ -274,6 +289,23 @@ class PositionSimilarityService(
             queryFeatures = queryFeatures,
             targetDepth = targetDepth,
             limit = limit,
+            maxPositionsPerGame = maxPositionsPerGame,
+        )
+    }
+
+    private fun retrieveScoredCandidates(
+        account: ChessAccount,
+        queryTokens: Set<String>,
+        activeTurn: String,
+    ): List<ScoredCandidate> {
+        val dynamicIndex =
+            dynamicCache.getOrBuild(account.id) {
+                DynamicInvertedIndex(personalDynamicCorpusProvider.loadPersonalDynamicPositions(account))
+            }
+        return dynamicIndex.retrieveCandidates(
+            queryTerms = queryTokens,
+            activeTurn = activeTurn,
+            maxCandidates = candidateBudget,
         )
     }
 
@@ -284,8 +316,9 @@ class PositionSimilarityService(
         resolution: CandidateContinuationsResolution,
         queryPvs: List<PrincipalVariation>,
         limit: Int,
+        maxPositionsPerGame: Int = DEFAULT_MAX_POSITIONS_PER_GAME,
     ): SimilarPositionsResult {
-        val fallbackMatches = qualifyingMatches.take(limit)
+        val fallbackMatches = applyDiversityCap(qualifyingMatches, limit, maxPositionsPerGame)
         val fallbackResults =
             mapDynamicMatches(
                 shortlisted = fallbackMatches,
@@ -315,6 +348,7 @@ class PositionSimilarityService(
         queryFeatures: DynamicQueryResolution,
         targetDepth: Int,
         limit: Int,
+        maxPositionsPerGame: Int = DEFAULT_MAX_POSITIONS_PER_GAME,
     ): SimilarPositionsResult {
         val queryMoves =
             queryFeatures
@@ -347,7 +381,7 @@ class PositionSimilarityService(
                     .thenBy { it.first.positionId },
             )
 
-        val shortlisted = sortedQualifying.take(limit)
+        val shortlisted = applyDiversityCap(sortedQualifying, limit, maxPositionsPerGame)
         val results = mapRerankedMatches(shortlisted, rankedMap, resolution, targetDepth)
 
         return SimilarPositionsResult(
@@ -681,8 +715,39 @@ class PositionSimilarityService(
         )
     }
 
+    private fun <T> applyDiversityCap(
+        candidates: List<Pair<T, List<PositionOccurrence>>>,
+        limit: Int,
+        maxPositionsPerGame: Int,
+    ): List<Pair<T, List<PositionOccurrence>>> {
+        if (maxPositionsPerGame <= 0) return candidates.take(limit)
+
+        val gameCounts = mutableMapOf<UUID, Int>()
+        val accepted = mutableListOf<Pair<T, List<PositionOccurrence>>>()
+
+        for (candidate in candidates) {
+            val occurrences = candidate.second
+            val gameIds = occurrences.map { it.game.id }.distinct()
+
+            val isEligible = gameIds.isEmpty() || gameIds.any { (gameCounts[it] ?: 0) < maxPositionsPerGame }
+
+            if (isEligible) {
+                accepted.add(candidate)
+                for (gameId in gameIds) {
+                    gameCounts[gameId] = (gameCounts[gameId] ?: 0) + 1
+                }
+                if (accepted.size >= limit) {
+                    break
+                }
+            }
+        }
+
+        return accepted
+    }
+
     companion object {
         const val DEFAULT_LIMIT = 20
+        const val DEFAULT_MAX_POSITIONS_PER_GAME = 3
         const val MAX_LIMIT = 100
         const val MAX_CANDIDATES = 200
         const val MAX_ENGINE_SHORTLIST = 100
