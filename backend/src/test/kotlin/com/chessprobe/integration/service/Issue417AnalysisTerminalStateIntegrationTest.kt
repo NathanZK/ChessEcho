@@ -38,10 +38,20 @@ class Issue417AnalysisTerminalStateIntegrationTest : AbstractIntegrationTest() {
     @MockBean
     private lateinit var engineAnalysisService: EngineAnalysisService
 
+    private val accountsToClean = mutableListOf<ChessAccount>()
+
     @AfterEach
     fun tearDown() {
-        asyncJobRepository.deleteAll()
-        chessAccountRepository.deleteAll()
+        for (account in accountsToClean) {
+            val accountId = account.id ?: continue
+            drainAsyncWorkerQuiescence(accountId = accountId)
+        }
+        for (account in accountsToClean) {
+            val accountId = account.id ?: continue
+            val context = cleanTenantData(accountId = accountId)
+            assertTenantQuarantined(context)
+        }
+        accountsToClean.clear()
     }
 
     @Test
@@ -117,12 +127,13 @@ class Issue417AnalysisTerminalStateIntegrationTest : AbstractIntegrationTest() {
     }
 
     private fun createAccount(suffix: String): ChessAccount =
-        chessAccountRepository.save(
-            ChessAccount(
-                platform = "CHESS_COM",
-                username = "issue417_${suffix}_${UUID.randomUUID().toString().take(8)}",
-            ),
-        )
+        chessAccountRepository
+            .save(
+                ChessAccount(
+                    platform = "CHESS_COM",
+                    username = "issue417_${suffix}_${UUID.randomUUID().toString().take(8)}",
+                ),
+            ).also { accountsToClean.add(it) }
 
     private fun stubQualifyingGames(username: String) {
         val archiveUrl = "https://api.chess.com/pub/player/$username/games/2024/01"

@@ -143,8 +143,10 @@ class GameImportServiceCoordinatorIntegrationTest : GameImportServiceBaseIntegra
 
     private fun seedFirstClaimFixture(): Pair<com.chessprobe.domain.ChessAccount, com.chessprobe.domain.ImportedArchive> {
         val account =
-            chessAccountRepository.saveAndFlush(
-                com.chessprobe.domain.ChessAccount(platform = "CHESS_COM", username = "first-claim"),
+            trackTestAccount(
+                chessAccountRepository.saveAndFlush(
+                    com.chessprobe.domain.ChessAccount(platform = "CHESS_COM", username = "first-claim"),
+                ),
             )
         val archive =
             importedArchiveRepository.saveAndFlush(

@@ -17,8 +17,10 @@ class GameImportServiceBatchIntegrationTest : GameImportServiceBaseIntegrationTe
     fun `updateUserPositionStats handles empty set, sub-1000 set, and multi-batch over 1000 positions correctly`() {
         val appUser = appUserRepository.save(com.chessprobe.domain.AppUser(email = "batch@test.com"))
         val account =
-            chessAccountRepository.save(
-                com.chessprobe.domain.ChessAccount(platform = "CHESS_COM", username = "batchuser"),
+            trackTestAccount(
+                chessAccountRepository.save(
+                    com.chessprobe.domain.ChessAccount(platform = "CHESS_COM", username = "batchuser"),
+                ),
             )
         val dummyGame = gameRepository.save(com.chessprobe.domain.Game(chessAccount = account, platformGameId = "dummy1", pgn = "1. e4"))
 
@@ -446,8 +448,10 @@ class GameImportServiceBatchIntegrationTest : GameImportServiceBaseIntegrationTe
         whenever(chessComClient.fetchArchiveUrls("capuser9")).thenReturn(listOf(staleMonthUrl, newMonthUrl))
 
         val account =
-            chessAccountRepository.save(
-                com.chessprobe.domain.ChessAccount(platform = "CHESS_COM", username = "capuser9"),
+            trackTestAccount(
+                chessAccountRepository.save(
+                    com.chessprobe.domain.ChessAccount(platform = "CHESS_COM", username = "capuser9"),
+                ),
             )
         importedArchiveRepository.saveAndFlush(
             com.chessprobe.domain.ImportedArchive(

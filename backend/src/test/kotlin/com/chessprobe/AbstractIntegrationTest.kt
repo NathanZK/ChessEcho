@@ -51,6 +51,8 @@ abstract class AbstractIntegrationTest {
             }
 
         init {
+            com.chessprobe.isolation.TestNetworkGuard
+                .install()
             Runtime.getRuntime().addShutdownHook(
                 Thread {
                     postgres.stop()

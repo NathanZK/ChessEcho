@@ -2,6 +2,7 @@ package com.chessprobe.integration.service
 
 import com.chessprobe.AbstractIntegrationTest
 import com.chessprobe.domain.AsyncJob
+import com.chessprobe.domain.ChessAccount
 import com.chessprobe.domain.Platform
 import com.chessprobe.domain.PlayerColor
 import com.chessprobe.dto.ImportGamesRequest
@@ -71,8 +72,44 @@ abstract class GameImportServiceBaseIntegrationTest : AbstractIntegrationTest() 
     @SpyBean
     protected lateinit var gameParserService: com.chessprobe.service.GameParserService
 
+    protected val currentTestAccounts = mutableListOf<ChessAccount>()
+    protected val currentTestUsernames = mutableSetOf<String>()
+
+    protected fun trackTestAccount(account: ChessAccount): ChessAccount {
+        if (currentTestAccounts.none { it.id == account.id }) {
+            currentTestAccounts.add(account)
+        }
+        return account
+    }
+
+    protected fun trackTestAccountId(accountId: UUID): UUID {
+        chessAccountRepository.findById(accountId).ifPresent { trackTestAccount(it) }
+        return accountId
+    }
+
+    protected fun trackTestUsername(username: String) {
+        currentTestUsernames.add(username)
+    }
+
+    protected fun createTrackedTestAccount(
+        platform: Platform = Platform.CHESS_COM,
+        username: String = "test-user-${UUID.randomUUID().toString().take(8)}",
+    ): ChessAccount {
+        val account =
+            chessAccountRepository.save(
+                ChessAccount(
+                    platform = platform.name,
+                    username = username,
+                ),
+            )
+        return trackTestAccount(account)
+    }
+
     @BeforeEach
     fun setup() {
+        currentTestAccounts.clear()
+        currentTestUsernames.clear()
+        trackTestUsername("hikaru")
         whenever(chessComClient.fetchArchiveUrls(any())).thenAnswer { invocation ->
             val username = invocation.getArgument<String>(0)
             listOf("https://api.chess.com/pub/player/$username/games/2024/01")
@@ -124,19 +161,44 @@ abstract class GameImportServiceBaseIntegrationTest : AbstractIntegrationTest() 
 
     @AfterEach
     open fun tearDown() {
-        puzzleSchedulingEventRepository.deleteAll()
-        engineAnalysisRepository.deleteAll()
-        userPositionWeaknessRepository.deleteAll()
-        userPositionStatsRepository.deleteAll()
-        positionOccurrenceRepository.deleteAll()
-        positionRepository.deleteAll()
-        gameRepository.deleteAll()
-        archiveDerivedProcessingRepository.deleteAll()
-        importedArchiveRepository.deleteAll()
-        asyncJobRepository.deleteAll()
-        accountConnectionRepository.deleteAll()
-        chessAccountRepository.deleteAll()
-        appUserRepository.deleteAll()
+        collectTrackedTestAccounts()
+        currentTestAccounts.forEach { account -> account.id?.let(::cancelAbandonedJobs) }
+        currentTestAccounts.forEach { account -> account.id?.let(::drainAccountQuiescence) }
+        currentTestAccounts.forEach { account -> account.id?.let(::cleanAndQuarantineAccount) }
+        currentTestAccounts.clear()
+        currentTestUsernames.clear()
+    }
+
+    private fun collectTrackedTestAccounts() {
+        for (username in currentTestUsernames) {
+            chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", username)?.let {
+                trackTestAccount(it)
+            }
+        }
+    }
+
+    private fun cancelAbandonedJobs(accountId: UUID) {
+        val now = java.time.Instant.now()
+        val activeJobs =
+            asyncJobRepository.findAll().filter {
+                it.chessAccount?.id == accountId && it.status in setOf("QUEUED", "PROCESSING")
+            }
+        for (job in activeJobs) {
+            if (job.status == "QUEUED" || job.leaseExpiresAt?.isBefore(now) == true) {
+                job.status = "FAILED"
+                job.errorMessage = "TEST_TEARDOWN_ABANDONED"
+                asyncJobRepository.saveAndFlush(job)
+            }
+        }
+    }
+
+    private fun drainAccountQuiescence(accountId: UUID) {
+        drainAsyncWorkerQuiescence(accountId = accountId, timeoutMs = 5000)
+    }
+
+    private fun cleanAndQuarantineAccount(accountId: UUID) {
+        val context = cleanTenantData(accountId = accountId)
+        assertTenantQuarantined(context)
     }
 
     protected fun markJobAbandoned(jobId: UUID) {
@@ -176,18 +238,22 @@ abstract class GameImportServiceBaseIntegrationTest : AbstractIntegrationTest() 
         return constructor.newInstance(job, workerToken)
     }
 
-    protected fun importRequest(username: String): ImportGamesRequest =
-        ImportGamesRequest(
+    protected fun importRequest(username: String): ImportGamesRequest {
+        trackTestUsername(username)
+        return ImportGamesRequest(
             username = "hikaru",
             platform = Platform.CHESS_COM,
             timeControls = listOf(com.chessprobe.domain.TimeControl.BLITZ),
             playerColor = PlayerColor.BOTH,
         )
+    }
 
     protected fun waitForJob(jobId: UUID): AsyncJob {
         repeat(50) {
             val job = asyncJobRepository.findById(jobId).orElse(null)
             if (job != null && job.status in listOf("COMPLETED", "FAILED")) {
+                trackTestUsername(job.username)
+                job.chessAccount?.let { trackTestAccount(it) }
                 return job
             }
             Thread.sleep(100)
@@ -214,6 +280,8 @@ abstract class GameImportServiceBaseIntegrationTest : AbstractIntegrationTest() 
         repeat(50) {
             val current = asyncJobRepository.findById(jobId).orElse(null)
             if (current != null && current.status in listOf("COMPLETED", "FAILED")) {
+                trackTestUsername(current.username)
+                current.chessAccount?.let { trackTestAccount(it) }
                 return current
             }
             Thread.sleep(100)
@@ -225,6 +293,8 @@ abstract class GameImportServiceBaseIntegrationTest : AbstractIntegrationTest() 
         repeat(50) {
             val current = asyncJobRepository.findById(jobId).orElse(null)
             if (current != null && current.analysisStatus in listOf("COMPLETED", "FAILED")) {
+                trackTestUsername(current.username)
+                current.chessAccount?.let { trackTestAccount(it) }
                 return current
             }
             Thread.sleep(100)
