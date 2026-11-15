@@ -2,7 +2,8 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Home from '../app/page';
-import { PuzzleFeedbackPanel, formatDecimal } from '../components/PuzzleFeedbackPanel';
+import { PuzzleFeedbackPanel } from '../components/PuzzleFeedbackPanel';
+import { formatDecimal } from '../utils/formatters';
 import * as api from '../services/api';
 import { Puzzle } from '@/types/puzzle';
 

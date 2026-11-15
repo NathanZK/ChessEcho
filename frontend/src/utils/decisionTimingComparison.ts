@@ -1,8 +1,8 @@
 import { toCanonicalMove, areMovesEqual, type CanonicalMove } from './chessMove';
-import { formatTimerMs } from '../components/PuzzleFeedbackPanel';
+import { formatTimerMs } from './formatters';
 import type { AcceptableMove, LongDecisionContext } from '../types/puzzle';
 
-export type DecisionQuality = 'OPTIMAL' | 'ACCEPTABLE' | 'INFERIOR';
+type DecisionQuality = 'OPTIMAL' | 'ACCEPTABLE' | 'INFERIOR';
 
 export interface DecisionTimingComparisonResult {
   title: string;

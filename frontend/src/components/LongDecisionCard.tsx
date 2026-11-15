@@ -9,12 +9,12 @@ import {
 } from '../services/api';
 import { buildExactPlyChessComUrl, isValidChessComUrl } from '../utils/urlUtils';
 
-export function formatDecisionDuration(decisionTimeMs: number): string {
+function formatDecisionDuration(decisionTimeMs: number): string {
   const seconds = decisionTimeMs / 1_000;
   return `${Number(seconds.toFixed(3))} ${seconds === 1 ? 'second' : 'seconds'}`;
 }
 
-export function formatSeverityLabel(severity: DecisionSeverity): string {
+function formatSeverityLabel(severity: DecisionSeverity): string {
   switch (severity) {
     case 'NO_CONCERN':
       return 'No concern';
@@ -29,7 +29,7 @@ export function formatSeverityLabel(severity: DecisionSeverity): string {
   }
 }
 
-export function severityPillStyles(severity: DecisionSeverity): string {
+function severityPillStyles(severity: DecisionSeverity): string {
   switch (severity) {
     case 'CRITICAL':
       return 'bg-rose-500/10 text-rose-400 border border-rose-500/20';
@@ -44,7 +44,7 @@ export function severityPillStyles(severity: DecisionSeverity): string {
   }
 }
 
-export function formatPlayedAt(playedAt: string | null): string {
+function formatPlayedAt(playedAt: string | null): string {
   if (!playedAt) return 'Date unavailable';
   const date = new Date(playedAt);
   if (!Number.isFinite(date.getTime())) return 'Date unavailable';

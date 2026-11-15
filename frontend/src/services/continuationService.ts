@@ -7,7 +7,7 @@ import {
   MoveEvaluationResponse,
 } from './api';
 
-export interface SelectionResult {
+interface SelectionResult {
   candidate: ContinuationCandidate | null;
   response: ContinuationResponse | null;
   fromCache: boolean;
@@ -80,7 +80,7 @@ export const createStochasticSelectionPolicy = (
  */
 export const defaultSelectionPolicy: CandidateSelectionPolicy = createDeterministicSelectionPolicy();
 
-export class ContinuationCacheService {
+class ContinuationCacheService {
   private cache: Map<string, ContinuationResponse> = new Map();
 
   private getCacheKey(fen: string, mode: ContinuationMode, ratingBand?: string): string {
@@ -151,7 +151,7 @@ export class ContinuationCacheService {
 
 export const continuationService = new ContinuationCacheService();
 
-export class MoveEvaluationCacheService {
+class MoveEvaluationCacheService {
   private cache: Map<string, MoveEvaluationResponse> = new Map();
 
   private getCacheKey(fen: string, move: string): string {

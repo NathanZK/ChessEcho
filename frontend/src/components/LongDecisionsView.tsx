@@ -4,9 +4,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   LongDecisionGridCard,
   LongDecisionListRow,
-  formatDecisionDuration,
-  formatSeverityLabel,
-  severityPillStyles,
 } from './LongDecisionCard';
 import { StatusBanner } from './StatusBanner';
 import {
@@ -14,12 +11,6 @@ import {
   type LongDecisionOccurrence,
   type LongDecisionTimeControl,
 } from '../services/api';
-
-export {
-  formatDecisionDuration,
-  formatSeverityLabel,
-  severityPillStyles,
-};
 
 type SessionStatus = 'loading' | 'authenticated' | 'unauthenticated' | 'error';
 type AccountStatus = 'loading' | 'connected' | 'unconnected' | 'error';
