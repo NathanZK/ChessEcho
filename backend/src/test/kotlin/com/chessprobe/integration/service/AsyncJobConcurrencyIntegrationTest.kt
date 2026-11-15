@@ -9,7 +9,6 @@ import com.chessprobe.dto.ImportGamesRequest
 import com.chessprobe.service.ActiveImportJobException
 import com.chessprobe.service.GameImportService
 import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import java.util.UUID
@@ -30,11 +29,24 @@ class AsyncJobConcurrencyIntegrationTest : AbstractIntegrationTest() {
     @Autowired
     private lateinit var gameImportService: GameImportService
 
-    @BeforeEach
+    private val accountsToClean = mutableListOf<ChessAccount>()
+
     @AfterEach
     fun cleanUp() {
-        asyncJobRepository.deleteAll()
-        chessAccountRepository.deleteAll()
+        for (account in accountsToClean) {
+            val accountId = account.id ?: continue
+            asyncJobRepository.findByChessAccountIdAndStatusIn(accountId, listOf("QUEUED", "PROCESSING"))?.let {
+                it.status = "FAILED"
+                asyncJobRepository.saveAndFlush(it)
+            }
+            drainAsyncWorkerQuiescence(accountId = accountId)
+        }
+        for (account in accountsToClean) {
+            val accountId = account.id ?: continue
+            val context = cleanTenantData(accountId = accountId)
+            assertTenantQuarantined(context)
+        }
+        accountsToClean.clear()
     }
 
     @Test
@@ -58,7 +70,7 @@ class AsyncJobConcurrencyIntegrationTest : AbstractIntegrationTest() {
 
             assertEquals(1, outcomes.count { it.isSuccess })
             assertEquals(1, outcomes.count { it.exceptionOrNull() is ActiveImportJobException })
-            val persisted = asyncJobRepository.findAll()
+            val persisted = asyncJobRepository.findAll().filter { it.username == request.username }
             assertEquals(1, persisted.size, "the rejected transaction must not leave an orphan job")
             assertTrue(persisted.single().status in setOf("QUEUED", "PROCESSING"))
         } finally {
@@ -93,13 +105,13 @@ class AsyncJobConcurrencyIntegrationTest : AbstractIntegrationTest() {
         val rejected =
             runCatching { gameImportService.createImportJob(request) }
         assertTrue(rejected.exceptionOrNull() is ActiveImportJobException)
-        assertEquals(1, asyncJobRepository.count())
+        assertEquals(1, asyncJobRepository.findAll().count { it.username == request.username })
 
         first.status = "FAILED"
         asyncJobRepository.saveAndFlush(first)
         val retry = gameImportService.createImportJob(request)
         assertNotEquals(first.id, retry.id)
-        assertEquals(2, asyncJobRepository.count())
+        assertEquals(2, asyncJobRepository.findAll().count { it.username == request.username })
     }
 
     private fun request(username: String): ImportGamesRequest =
@@ -110,12 +122,15 @@ class AsyncJobConcurrencyIntegrationTest : AbstractIntegrationTest() {
             playerColor = PlayerColor.BOTH,
         )
 
-    private fun seedAccount(username: String) {
-        chessAccountRepository.saveAndFlush(
-            ChessAccount(
-                platform = Platform.CHESS_COM.name,
-                username = username,
-            ),
-        )
+    private fun seedAccount(username: String): ChessAccount {
+        val account =
+            chessAccountRepository.saveAndFlush(
+                ChessAccount(
+                    platform = Platform.CHESS_COM.name,
+                    username = username,
+                ),
+            )
+        accountsToClean.add(account)
+        return account
     }
 }

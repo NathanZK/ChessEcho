@@ -23,30 +23,16 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.assertNotNull
 
 class ParallelGameImportConcurrencyTest : GameImportServiceBaseIntegrationTest() {
-    private val accountsToClean = mutableListOf<ChessAccount>()
-
     @AfterEach
     override fun tearDown() {
-        try {
-            registerDiscoveredAccounts()
-            for (account in accountsToClean) {
-                val accountId = account.id ?: continue
-                drainAsyncWorkerQuiescence(accountId = accountId)
-                val context = cleanTenantData(accountId = accountId)
-                assertTenantQuarantined(context)
-            }
-        } finally {
-            accountsToClean.clear()
-            positionRepository.deleteAll()
-        }
+        registerDiscoveredAccounts()
+        super.tearDown()
     }
 
     private fun registerDiscoveredAccounts() {
         for (username in listOf("hikaru", "magnus")) {
             val account = chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", username) ?: continue
-            if (accountsToClean.none { it.id == account.id }) {
-                accountsToClean.add(account)
-            }
+            trackTestAccount(account)
         }
     }
 
@@ -65,8 +51,8 @@ class ParallelGameImportConcurrencyTest : GameImportServiceBaseIntegrationTest()
 
         val accountA = assertNotNull(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "hikaru"))
         val accountB = assertNotNull(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "magnus"))
-        accountsToClean.add(accountA)
-        accountsToClean.add(accountB)
+        trackTestAccount(accountA)
+        trackTestAccount(accountB)
 
         assertTenantOwnership(accountA, accountB)
         assertUniqueKeysAndReferentialIntegrity()

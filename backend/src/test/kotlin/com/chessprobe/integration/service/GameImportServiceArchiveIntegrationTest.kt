@@ -1,6 +1,5 @@
 package com.chessprobe.integration.service
 
-import com.chessprobe.domain.AsyncJob
 import com.chessprobe.domain.Platform
 import com.chessprobe.domain.PlayerColor
 import com.chessprobe.dto.ImportGamesRequest
@@ -93,17 +92,7 @@ class GameImportServiceArchiveIntegrationTest : GameImportServiceBaseIntegration
         val job = gameImportService.createImportJob(request)
         gameImportService.executeImportJob(job.id, request)
 
-        var completedJob: AsyncJob? = null
-        var attempts = 0
-        while (attempts < 50) {
-            val currentJob = asyncJobRepository.findById(job.id).orElse(null)
-            if (currentJob != null && currentJob.status in listOf("COMPLETED", "FAILED")) {
-                completedJob = currentJob
-                break
-            }
-            Thread.sleep(100)
-            attempts++
-        }
+        val completedJob = awaitTerminalJob(job.id)
 
         assertNotNull(completedJob)
         assertEquals("FAILED", completedJob.status, "Expected FAILED status on 500 error")
@@ -295,17 +284,7 @@ class GameImportServiceArchiveIntegrationTest : GameImportServiceBaseIntegration
         val job = gameImportService.createImportJob(request)
         gameImportService.executeImportJob(job.id, request)
 
-        var completedJob: AsyncJob? = null
-        var attempts = 0
-        while (attempts < 50) {
-            val currentJob = asyncJobRepository.findById(job.id).orElse(null)
-            if (currentJob != null && currentJob.status in listOf("COMPLETED", "FAILED")) {
-                completedJob = currentJob
-                break
-            }
-            Thread.sleep(100)
-            attempts++
-        }
+        val completedJob = awaitTerminalJob(job.id)
 
         assertNotNull(completedJob)
         assertEquals("COMPLETED", completedJob.status)

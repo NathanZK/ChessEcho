@@ -2,11 +2,19 @@ import { defineConfig, devices } from '@playwright/test';
 
 const isNightly = !!process.env.PLAYWRIGHT_NIGHTLY;
 const isCI = !!process.env.CI;
+const isExploratory =
+  process.env.PLAYWRIGHT_SUITE === 'exploratory' || !!process.env.PLAYWRIGHT_INCLUDE_MONKEY;
+
+const defaultIgnored = [
+  '**/*-monkey.spec.ts',
+  '**/general-defect-detection.spec.ts',
+  '**/performance/heapTelemetry.spec.ts',
+];
 
 export default defineConfig({
   testDir: './journeys',
   testMatch: /.*\.spec\.ts$/,
-  testIgnore: process.env.PLAYWRIGHT_INCLUDE_MONKEY ? [] : ['**/*-monkey.spec.ts'],
+  testIgnore: isExploratory ? [] : defaultIgnored,
   fullyParallel: true,
   forbidOnly: isCI,
   retries: isNightly ? 2 : 0,

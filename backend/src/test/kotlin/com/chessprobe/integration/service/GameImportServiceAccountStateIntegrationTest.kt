@@ -90,6 +90,10 @@ class GameImportServiceAccountStateIntegrationTest : GameImportServiceBaseIntegr
         assertEquals("PROCESSING", untouched.status, "a live worker must not be displaced")
         assertEquals(liveToken, untouched.workerToken, "recovery must not steal a live worker's lease")
         verifyNoInteractions(chessComClient)
+        transactionTemplate.executeWithoutResult {
+            untouched.status = "FAILED"
+            asyncJobRepository.save(untouched)
+        }
     }
 
     @Test
@@ -112,6 +116,10 @@ class GameImportServiceAccountStateIntegrationTest : GameImportServiceBaseIntegr
         val untouched = asyncJobRepository.findById(job.id).orElseThrow()
         assertEquals(0, untouched.gamesImported, "a worker that no longer owns the lease must not write progress")
         assertEquals(0, untouched.gamesProcessed)
+        transactionTemplate.executeWithoutResult {
+            untouched.status = "FAILED"
+            asyncJobRepository.save(untouched)
+        }
     }
 
     @Test
@@ -138,6 +146,11 @@ class GameImportServiceAccountStateIntegrationTest : GameImportServiceBaseIntegr
         assertEquals("FAILED", stale.status)
         assertEquals("STALE_PROCESSING_JOB_RECLAIMED", stale.errorMessage)
         assertEquals("QUEUED", replacement.status)
+        transactionTemplate.executeWithoutResult {
+            val r = asyncJobRepository.findAnyByIdForUpdate(replacement.id) ?: return@executeWithoutResult
+            r.status = "FAILED"
+            asyncJobRepository.save(r)
+        }
     }
 
     @Test
@@ -187,6 +200,7 @@ class GameImportServiceAccountStateIntegrationTest : GameImportServiceBaseIntegr
         } finally {
             releaseDeletion.countDown()
             pool.shutdownNow()
+            asyncJobRepository.deleteById(job.id)
         }
     }
 }

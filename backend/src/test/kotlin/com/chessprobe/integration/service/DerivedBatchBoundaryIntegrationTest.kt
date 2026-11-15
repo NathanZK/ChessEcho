@@ -2,6 +2,7 @@ package com.chessprobe.integration.service
 
 import com.chessprobe.AbstractIntegrationTest
 import com.chessprobe.domain.ArchiveDerivedStatus
+import com.chessprobe.domain.ChessAccount
 import com.chessprobe.domain.Game
 import com.chessprobe.domain.Platform
 import com.chessprobe.domain.PlayerColor
@@ -101,17 +102,25 @@ class DerivedBatchBoundaryIntegrationTest : AbstractIntegrationTest() {
         )
     }
 
+    private val accountsToClean = mutableListOf<ChessAccount>()
+
     @AfterEach
     fun tearDown() {
-        userPositionStatsRepository.deleteAll()
-        positionOccurrenceRepository.deleteAll()
-        positionRepository.deleteAll()
-        gameRepository.deleteAll()
-        archiveDerivedProcessingRepository.deleteAll()
-        importedArchiveRepository.deleteAll()
-        asyncJobRepository.deleteAll()
-        chessAccountRepository.deleteAll()
-        appUserRepository.deleteAll()
+        chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "batched")?.let {
+            if (accountsToClean.none { a -> a.id == it.id }) {
+                accountsToClean.add(it)
+            }
+        }
+        for (account in accountsToClean) {
+            val accountId = account.id ?: continue
+            drainAsyncWorkerQuiescence(accountId = accountId)
+        }
+        for (account in accountsToClean) {
+            val accountId = account.id ?: continue
+            val context = cleanTenantData(accountId = accountId)
+            assertTenantQuarantined(context)
+        }
+        accountsToClean.clear()
     }
 
     @Test

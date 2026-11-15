@@ -103,6 +103,10 @@ class GameImportServiceAnalysisIntegrationTest : GameImportServiceBaseIntegratio
         assertEquals(1, analysisMultiPv.get(job))
         val reloaded = assertNotNull(asyncJobRepository.findById(job.id).orElse(null))
         assertEquals(1, analysisMultiPv.get(reloaded))
+        transactionTemplate.executeWithoutResult {
+            reloaded.status = "FAILED"
+            asyncJobRepository.save(reloaded)
+        }
     }
 
     @Test
