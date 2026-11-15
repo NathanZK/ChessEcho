@@ -3,10 +3,9 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import {
   PuzzleFeedbackPanel,
-  formatDecimal,
-  formatTimerMs,
   formatCalculationLine,
 } from '../components/PuzzleFeedbackPanel';
+import { formatDecimal, formatTimerMs } from '../utils/formatters';
 import type { Puzzle } from '@/types/puzzle';
 import type { ContinuationCandidate } from '../services/api';
 

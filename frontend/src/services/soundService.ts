@@ -145,7 +145,6 @@ class SoundService {
   }
 }
 
-export { SoundService };
 export const soundService = new SoundService();
 
 // Export standalone utility functions for direct import convenience

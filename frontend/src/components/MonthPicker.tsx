@@ -33,7 +33,7 @@ const SHORT_MONTH_NAMES = [
   'Dec',
 ];
 
-export function formatMonthLabel(value?: string): string | null {
+function formatMonthLabel(value?: string): string | null {
   if (!value || !/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) return null;
   const [yearStr, monthStr] = value.split('-');
   const monthIdx = parseInt(monthStr, 10) - 1;

@@ -33,9 +33,7 @@ import {
 } from '@/utils/formatters';
 import { evaluateDecisionTimingComparison } from '@/utils/decisionTimingComparison';
 
-export { formatDecimal, formatTimerMs };
-
-export interface FeedbackState {
+interface FeedbackState {
   status: 'IDLE' | 'CORRECT' | 'HISTORICAL_MISTAKE' | 'INCORRECT' | 'EXPLORING' | 'EVALUATING' | 'EVALUATION_ERROR';
   lastMove?: string;
   historicalInfo?: { timesPlayed: number; averageLoss: number };
