@@ -1,14 +1,16 @@
 package com.chessprobe.concurrency
 
 import com.chessprobe.domain.ChessAccount
+import com.chessprobe.domain.Game
 import com.chessprobe.domain.Platform
 import com.chessprobe.domain.PlayerColor
 import com.chessprobe.domain.Position
 import com.chessprobe.dto.ImportGamesRequest
 import com.chessprobe.integration.service.GameImportServiceBaseIntegrationTest
 import com.chessprobe.service.AnalysisOutcome
-import com.chessprobe.service.GameParserService
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
@@ -21,13 +23,37 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.test.assertNotNull
 
 class ParallelGameImportConcurrencyTest : GameImportServiceBaseIntegrationTest() {
+    private val accountsToClean = mutableListOf<ChessAccount>()
+
+    @AfterEach
+    override fun tearDown() {
+        try {
+            registerDiscoveredAccounts()
+            for (account in accountsToClean) {
+                val accountId = account.id ?: continue
+                drainAsyncWorkerQuiescence(accountId = accountId)
+                val context = cleanTenantData(accountId = accountId)
+                assertTenantQuarantined(context)
+            }
+        } finally {
+            accountsToClean.clear()
+            positionRepository.deleteAll()
+        }
+    }
+
+    private fun registerDiscoveredAccounts() {
+        for (username in listOf("hikaru", "magnus")) {
+            val account = chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", username) ?: continue
+            if (accountsToClean.none { it.id == account.id }) {
+                accountsToClean.add(account)
+            }
+        }
+    }
+
     @Test
     fun `parallel import jobs verify primary key uniqueness, complete records, referential integrity, and tenant ownership`() {
         setupMockChessComClient()
         whenever(engineAnalysisOrchestrator.analyzeAffectedPositions(any())).thenReturn(AnalysisOutcome())
-
-        val startFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-        positionRepository.save(Position(hash = GameParserService.generateHash(startFen), fen = startFen))
 
         val jobA = gameImportService.createImportJob(createImportRequest("hikaru"))
         val jobB = gameImportService.createImportJob(createImportRequest("magnus"))
@@ -39,9 +65,57 @@ class ParallelGameImportConcurrencyTest : GameImportServiceBaseIntegrationTest()
 
         val accountA = assertNotNull(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "hikaru"))
         val accountB = assertNotNull(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "magnus"))
+        accountsToClean.add(accountA)
+        accountsToClean.add(accountB)
 
         assertTenantOwnership(accountA, accountB)
         assertUniqueKeysAndReferentialIntegrity()
+    }
+
+    @Test
+    fun `teardown quarantine assertion fails with AssertionError when residual tenant data escapes cleanup`() {
+        val account =
+            chessAccountRepository.saveAndFlush(
+                ChessAccount(
+                    platform = "CHESS_COM",
+                    username = "res-leak-${UUID.randomUUID().toString().replace("-", "").take(8)}",
+                ),
+            )
+        val pos =
+            positionRepository.saveAndFlush(
+                Position(
+                    hash = "hash-leak-${UUID.randomUUID()}",
+                    fen = "8/8/8/8/8/8/8/8 w - - 0 1",
+                ),
+            )
+        val game =
+            gameRepository.saveAndFlush(
+                Game(
+                    chessAccount = account,
+                    platformGameId = "leak-game-${UUID.randomUUID()}",
+                    pgn = "1. e4",
+                    timeControl = "RAPID",
+                ),
+            )
+
+        val context =
+            TenantCleanupContext.create(
+                userIds = emptySet(),
+                accountIds = setOf(account.id!!),
+                snapshotInventory = ChildInventory.Captured(emptyList()),
+                archiveInventory = ChildInventory.Captured(emptyList()),
+            )
+
+        try {
+            val error =
+                assertThrows(AssertionError::class.java) {
+                    assertTenantQuarantined(context)
+                }
+            assertTrue(error.message?.contains("game") == true)
+        } finally {
+            cleanTenantData(accountId = account.id)
+            positionRepository.delete(pos)
+        }
     }
 
     private fun createImportRequest(username: String) =

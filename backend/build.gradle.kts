@@ -77,6 +77,7 @@ dependencies {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+    jvmArgs("-Xmx2048m", "-XX:+UseG1GC")
 }
 
 ktlint {

@@ -447,4 +447,102 @@ class PositionSimilarityServiceTest {
         verifyNoInteractions(stockfishService)
         verifyNoInteractions(personalDynamicCorpusProvider)
     }
+
+    @Test
+    fun `searching with Sicilian sample FEN does not rank starting position above authentic Sicilian positions`() {
+        val sicilianQueryFen = "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq c6 0 2"
+        val startFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        val authenticSicilianFen = "r1bqkbnr/pp1ppppp/2n5/2p5/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 1 2"
+
+        val posIdStart = UUID.randomUUID()
+        val posIdSicilian = UUID.randomUUID()
+
+        val docStart = tokenExtractor.extractDocument(posIdStart, startFen, includeReachability = true)
+        val docSicilian = tokenExtractor.extractDocument(posIdSicilian, authenticSicilianFen, includeReachability = true)
+
+        whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(listOf(docStart, docSicilian))
+
+        val game = createTestGame(account)
+        val occStart = createTestOccurrence(account, game, posIdStart, startFen, plyNumber = 1, movePlayed = "e4")
+        val occSicilian = createTestOccurrence(account, game, posIdSicilian, authenticSicilianFen, plyNumber = 3, movePlayed = "d4")
+
+        whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
+            .thenReturn(listOf(occStart, occSicilian))
+
+        val result =
+            service.findSimilarPositions(
+                queryFen = sicilianQueryFen,
+                account = account,
+                minScore = 0.0,
+                limit = 10,
+            )
+
+        assertTrue(result.results.size >= 2)
+        assertEquals(posIdSicilian, result.results[0].positionId)
+        assertEquals(1, result.results[0].rank)
+        assertTrue(result.results[0].score > result.results[1].score)
+    }
+
+    @Test
+    fun `cross-game diversity results cap positions per game at maxPositionsPerGame while preserving monotonic rank ordering`() {
+        val game1 = createTestGame(account, platformGameId = "game-1")
+        val game2 = createTestGame(account, platformGameId = "game-2")
+
+        val game1Fens =
+            listOf(
+                "r1bqkbnr/pp1ppppp/2n5/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 1 2",
+                "rnbqkb1r/pp1ppppp/5n2/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 1 2",
+                "rnbqkbnr/pp2pppp/3p4/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+                "rnbqkbnr/pp1p1ppp/4p3/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+                "rnbqkbnr/1p1ppppp/p7/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+            )
+        val game2Fens =
+            listOf(
+                "rnbqkbnr/pppp1ppp/4p3/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+                "rnbqkbnr/ppp1pppp/3p4/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+            )
+
+        val game1Docs =
+            game1Fens.mapIndexed { i, fen ->
+                val posId = UUID.randomUUID()
+                val doc = tokenExtractor.extractDocument(posId, fen, includeReachability = true)
+                val occ = createTestOccurrence(account, game1, posId, fen, plyNumber = i + 1, movePlayed = "Nf3")
+                Triple(posId, doc, occ)
+            }
+        val game2Docs =
+            game2Fens.mapIndexed { i, fen ->
+                val posId = UUID.randomUUID()
+                val doc = tokenExtractor.extractDocument(posId, fen, includeReachability = true)
+                val occ = createTestOccurrence(account, game2, posId, fen, plyNumber = i + 1, movePlayed = "Nf3")
+                Triple(posId, doc, occ)
+            }
+
+        val allTriples = game1Docs + game2Docs
+        val allDocs = allTriples.map { it.second }
+        val allOccs = allTriples.map { it.third }
+
+        whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(allDocs)
+        whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
+            .thenReturn(allOccs)
+
+        val result =
+            service.findSimilarPositions(
+                queryFen = candidateFen1,
+                account = account,
+                minScore = 0.0,
+                limit = 10,
+                maxPositionsPerGame = 3,
+            )
+
+        assertEquals(5, result.results.size)
+        val game1ReturnedOccurrences = result.results.flatMap { it.occurrences }.filter { it.platformGameId == "game-1" }
+        assertEquals(3, game1ReturnedOccurrences.size)
+
+        for (i in result.results.indices) {
+            assertEquals(i + 1, result.results[i].rank)
+            if (i > 0) {
+                assertTrue(result.results[i - 1].score >= result.results[i].score)
+            }
+        }
+    }
 }

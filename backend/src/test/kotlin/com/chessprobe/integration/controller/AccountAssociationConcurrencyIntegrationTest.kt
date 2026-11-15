@@ -1,5 +1,6 @@
 package com.chessprobe.integration.controller
 
+import com.chessprobe.AbstractIntegrationTest
 import com.chessprobe.domain.ChessAccount
 import com.chessprobe.dto.AccountAssociationRequest
 import com.chessprobe.repository.ChessAccountRepository
@@ -18,12 +19,7 @@ import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.jdbc.core.JdbcTemplate
-import org.springframework.test.context.DynamicPropertyRegistry
-import org.springframework.test.context.DynamicPropertySource
 import org.springframework.transaction.support.TransactionTemplate
-import org.testcontainers.containers.PostgreSQLContainer
-import org.testcontainers.junit.jupiter.Container
-import org.testcontainers.junit.jupiter.Testcontainers
 import java.util.UUID
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
@@ -33,8 +29,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@Testcontainers
-class AccountAssociationConcurrencyIntegrationTest {
+class AccountAssociationConcurrencyIntegrationTest : AbstractIntegrationTest() {
     @Autowired
     private lateinit var jdbc: JdbcTemplate
 
@@ -348,19 +343,4 @@ class AccountAssociationConcurrencyIntegrationTest {
                 VerifiedIdentityClaims("integration-test", subject, "$subject@example.test", true),
                 devPrincipal = false,
             ).rawSecret
-
-    companion object {
-        @Container
-        @JvmField
-        val postgres: PostgreSQLContainer<Nothing> = PostgreSQLContainer("postgres:16-alpine")
-
-        @DynamicPropertySource
-        @JvmStatic
-        fun properties(registry: DynamicPropertyRegistry) {
-            registry.add("spring.datasource.url", postgres::getJdbcUrl)
-            registry.add("spring.datasource.username", postgres::getUsername)
-            registry.add("spring.datasource.password", postgres::getPassword)
-            registry.add("spring.jpa.hibernate.ddl-auto") { "validate" }
-        }
-    }
 }

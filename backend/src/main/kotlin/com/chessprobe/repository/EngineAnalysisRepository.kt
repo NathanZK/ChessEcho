@@ -26,7 +26,9 @@ interface EngineAnalysisRepository : JpaRepository<EngineAnalysis, UUID> {
     /**
      * Batch finds engine analysis records along with their moveEvaluations for a set of position IDs.
      */
-    @Query("SELECT DISTINCT e FROM EngineAnalysis e LEFT JOIN FETCH e.moveEvaluations WHERE e.position.id IN :positionIds")
+    @Query(
+        "SELECT DISTINCT e FROM EngineAnalysis e LEFT JOIN FETCH e.moveEvaluations WHERE e.position.id IN :positionIds ORDER BY e.id ASC",
+    )
     fun findByPositionIdInWithMoveEvaluations(
         @Param("positionIds") positionIds: Set<UUID>,
     ): List<EngineAnalysis>

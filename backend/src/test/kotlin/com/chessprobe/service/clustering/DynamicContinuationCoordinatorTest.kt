@@ -530,14 +530,33 @@ class DynamicContinuationCoordinatorTest {
 
     @Test
     fun `duplicate discovery ignores already queued positions and avoids duplicate enqueueing`() {
-        val posId = UUID.randomUUID()
-        val initialQueuedCount = coordinator.getQueuedPositionsCount()
+        val slowPositionRepo: PositionRepository =
+            mock {
+                on { findById(any()) } doAnswer {
+                    Thread.sleep(100)
+                    java.util.Optional.empty()
+                }
+            }
+        val testCoordinator =
+            DynamicContinuationCoordinator(
+                artifactRepository = artifactRepository,
+                positionRepository = slowPositionRepo,
+                stockfishService = stockfishService,
+                properties = properties,
+                engineDigestProvider = { testEngineDigest },
+            )
+        try {
+            val posId = UUID.randomUUID()
+            val initialQueuedCount = testCoordinator.getQueuedPositionsCount()
 
-        coordinator.enqueuePositions(listOf(posId))
-        assertEquals(initialQueuedCount + 1, coordinator.getQueuedPositionsCount())
+            testCoordinator.enqueuePositions(listOf(posId))
+            assertEquals(initialQueuedCount + 1, testCoordinator.getQueuedPositionsCount())
 
-        coordinator.enqueuePositions(listOf(posId))
-        assertEquals(initialQueuedCount + 1, coordinator.getQueuedPositionsCount())
+            testCoordinator.enqueuePositions(listOf(posId))
+            assertEquals(initialQueuedCount + 1, testCoordinator.getQueuedPositionsCount())
+        } finally {
+            testCoordinator.destroy()
+        }
     }
 
     @Test

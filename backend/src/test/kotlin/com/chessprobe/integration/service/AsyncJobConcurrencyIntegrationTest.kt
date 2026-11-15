@@ -1,19 +1,17 @@
 package com.chessprobe.integration.service
 
+import com.chessprobe.AbstractIntegrationTest
 import com.chessprobe.domain.ChessAccount
 import com.chessprobe.domain.Platform
 import com.chessprobe.domain.PlayerColor
 import com.chessprobe.domain.TimeControl
 import com.chessprobe.dto.ImportGamesRequest
-import com.chessprobe.repository.AsyncJobRepository
-import com.chessprobe.repository.ChessAccountRepository
 import com.chessprobe.service.ActiveImportJobException
 import com.chessprobe.service.GameImportService
 import org.junit.jupiter.api.AfterEach
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.boot.test.context.SpringBootTest
-import org.springframework.test.context.ActiveProfiles
 import java.util.UUID
 import java.util.concurrent.Callable
 import java.util.concurrent.CountDownLatch
@@ -28,21 +26,15 @@ import kotlin.test.assertTrue
  * convention. A losing transaction must roll back completely, while terminal
  * jobs remain reusable for a later import.
  */
-@SpringBootTest
-@ActiveProfiles("test")
-class AsyncJobConcurrencyIntegrationTest {
+class AsyncJobConcurrencyIntegrationTest : AbstractIntegrationTest() {
     @Autowired
     private lateinit var gameImportService: GameImportService
 
-    @Autowired
-    private lateinit var asyncJobRepository: AsyncJobRepository
-
-    @Autowired
-    private lateinit var chessAccountRepository: ChessAccountRepository
-
+    @BeforeEach
     @AfterEach
     fun cleanUp() {
         asyncJobRepository.deleteAll()
+        chessAccountRepository.deleteAll()
     }
 
     @Test

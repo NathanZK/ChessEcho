@@ -1,15 +1,13 @@
 package com.chessprobe.integration.service
 
+import com.chessprobe.AbstractIntegrationTest
 import com.chessprobe.domain.ArchiveDerivedStatus
 import com.chessprobe.domain.Game
 import com.chessprobe.domain.Platform
 import com.chessprobe.domain.PlayerColor
 import com.chessprobe.domain.TimeControl
 import com.chessprobe.dto.ImportGamesRequest
-import com.chessprobe.repository.AppUserRepository
 import com.chessprobe.repository.ArchiveDerivedProcessingRepository
-import com.chessprobe.repository.AsyncJobRepository
-import com.chessprobe.repository.ChessAccountRepository
 import com.chessprobe.repository.GameRepository
 import com.chessprobe.repository.ImportedArchiveRepository
 import com.chessprobe.repository.PositionOccurrenceRepository
@@ -26,10 +24,8 @@ import org.mockito.kotlin.any
 import org.mockito.kotlin.doAnswer
 import org.mockito.kotlin.whenever
 import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.mock.mockito.MockBean
 import org.springframework.boot.test.mock.mockito.SpyBean
-import org.springframework.test.context.ActiveProfiles
 import org.springframework.test.context.TestPropertySource
 import java.util.UUID
 import kotlin.test.assertEquals
@@ -54,21 +50,13 @@ import kotlin.test.assertTrue
  * This bounds derived lock lifetime to one batch; it does not claim to eliminate
  * deadlocks.
  */
-@SpringBootTest
-@ActiveProfiles("test")
 @TestPropertySource(properties = ["chessprobe.import.derived-game-batch-size=1"])
-class DerivedBatchBoundaryIntegrationTest {
+class DerivedBatchBoundaryIntegrationTest : AbstractIntegrationTest() {
     @Autowired
     private lateinit var gameImportService: GameImportService
 
     @Autowired
-    private lateinit var asyncJobRepository: AsyncJobRepository
-
-    @Autowired
     private lateinit var gameRepository: GameRepository
-
-    @Autowired
-    private lateinit var chessAccountRepository: ChessAccountRepository
 
     @Autowired
     private lateinit var importedArchiveRepository: ImportedArchiveRepository
@@ -84,9 +72,6 @@ class DerivedBatchBoundaryIntegrationTest {
 
     @Autowired
     private lateinit var userPositionStatsRepository: UserPositionStatsRepository
-
-    @Autowired
-    private lateinit var appUserRepository: AppUserRepository
 
     @MockBean
     private lateinit var chessComClient: ChessComClient

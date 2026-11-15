@@ -1,13 +1,11 @@
 package com.chessprobe.integration.service
 
+import com.chessprobe.AbstractIntegrationTest
 import com.chessprobe.domain.AsyncJob
 import com.chessprobe.domain.Platform
 import com.chessprobe.domain.PlayerColor
 import com.chessprobe.dto.ImportGamesRequest
-import com.chessprobe.repository.AppUserRepository
 import com.chessprobe.repository.ArchiveDerivedProcessingRepository
-import com.chessprobe.repository.AsyncJobRepository
-import com.chessprobe.repository.ChessAccountRepository
 import com.chessprobe.repository.GameRepository
 import com.chessprobe.repository.ImportedArchiveRepository
 import com.chessprobe.repository.PositionOccurrenceRepository
@@ -27,28 +25,15 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.mock.mockito.MockBean
 import org.springframework.boot.test.mock.mockito.SpyBean
-import org.springframework.jdbc.core.JdbcTemplate
-import org.springframework.test.context.ActiveProfiles
-import org.springframework.transaction.support.TransactionTemplate
 import java.util.UUID
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@ActiveProfiles("test")
-abstract class GameImportServiceBaseIntegrationTest {
+abstract class GameImportServiceBaseIntegrationTest : AbstractIntegrationTest() {
     @Autowired
     protected lateinit var gameImportService: GameImportService
 
     @Autowired
-    protected lateinit var asyncJobRepository: AsyncJobRepository
-
-    @Autowired
     protected lateinit var gameRepository: GameRepository
-
-    @Autowired
-    protected lateinit var appUserRepository: AppUserRepository
-
-    @Autowired
-    protected lateinit var chessAccountRepository: ChessAccountRepository
 
     @Autowired
     protected lateinit var importedArchiveRepository: ImportedArchiveRepository
@@ -73,12 +58,6 @@ abstract class GameImportServiceBaseIntegrationTest {
 
     @Autowired
     protected lateinit var engineAnalysisRepository: com.chessprobe.repository.EngineAnalysisRepository
-
-    @Autowired
-    protected lateinit var jdbcTemplate: JdbcTemplate
-
-    @Autowired
-    protected lateinit var transactionTemplate: TransactionTemplate
 
     @Autowired
     protected lateinit var objectMapper: ObjectMapper
@@ -144,7 +123,7 @@ abstract class GameImportServiceBaseIntegrationTest {
     }
 
     @AfterEach
-    fun tearDown() {
+    open fun tearDown() {
         puzzleSchedulingEventRepository.deleteAll()
         engineAnalysisRepository.deleteAll()
         userPositionWeaknessRepository.deleteAll()
@@ -155,6 +134,7 @@ abstract class GameImportServiceBaseIntegrationTest {
         archiveDerivedProcessingRepository.deleteAll()
         importedArchiveRepository.deleteAll()
         asyncJobRepository.deleteAll()
+        accountConnectionRepository.deleteAll()
         chessAccountRepository.deleteAll()
         appUserRepository.deleteAll()
     }
