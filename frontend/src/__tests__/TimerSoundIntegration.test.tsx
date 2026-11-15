@@ -235,15 +235,16 @@ describe('Timed Training sound transitions in the production page', () => {
     expect(screen.getByText('0:02')).toBeInTheDocument();
   });
 
-  it('keeps countdown expiry audio independent of earlier decision telemetry', async () => {
+  it('halts countdown permanently upon successful completion without later expiry audio or Time\'s up cue', async () => {
     await openTraining();
     await start('Countdown');
     fireEvent.click(screen.getByRole('button', { name: 'Play fixture best move' }));
     expect(api.submitTrainingAttempt).toHaveBeenCalledWith(expect.objectContaining({ mode: 'COUNTDOWN', outcome: 'SUBMITTED' }));
     played.length = 0;
     await advance(30_100);
-    expect(played).toEqual(['/sounds/completion.wav']);
-    expect(screen.getByText("Time's up")).toBeInTheDocument();
+    // Completion permanently stops countdown - no late expiry sound or Time's up banner
+    expect(played).toEqual([]);
+    expect(screen.queryByText("Time's up")).toBeNull();
   });
 
   it('continues after rejected playback and retains timing submission errors', async () => {

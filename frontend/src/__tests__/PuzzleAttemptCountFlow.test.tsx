@@ -154,7 +154,8 @@ describe('submitted-answer count in the production puzzle page', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Submit best answer' }));
     await act(async () => { vi.advanceTimersByTime(30_100); });
     expect(api.recordPuzzleEvent).toHaveBeenCalledTimes(1);
-    expect(api.submitTrainingAttempt).toHaveBeenCalledTimes(2);
+    // Completed session must not emit late expiry attempt telemetry
+    expect(api.submitTrainingAttempt).toHaveBeenCalledTimes(1);
     expect(counts).toEqual({ solvedCount: 1, failedCount: 0 });
   });
 

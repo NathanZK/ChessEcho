@@ -240,5 +240,42 @@ describe('useBlindfoldSession', () => {
       });
       expect(result.current.state?.isFailed).toBe(false);
     });
+
+    it('preserves lastPlayerMove feedback text when computer reply arrives after player move evaluation', async () => {
+      const pendingReply = deferred<string | null>();
+      const request = vi.fn().mockReturnValue(pendingReply.promise);
+      const { result } = renderHook(() => useBlindfoldSession(request));
+      act(() => result.current.start(WHITE_TO_MOVE, 'WHITE'));
+
+      vi.mocked(moveEvaluationService.evaluateMove).mockResolvedValue({
+        fen: WHITE_TO_MOVE,
+        move: 'e4',
+        bestMove: 'e4',
+        bestEvalCp: 20,
+        evalCp: 20,
+        evalLoss: 0,
+        maxEvalLoss: 0.5,
+        threshold: 0.5,
+        acceptable: true,
+      });
+
+      act(() => result.current.submitPlayerMove('e4'));
+
+      // Wait for move evaluation to attach feedbackText
+      await waitFor(() => {
+        expect(result.current.state?.lastPlayerMove?.feedbackText).toBe('Best move!');
+      });
+
+      // Now resolve the pending computer reply
+      await act(async () => {
+        pendingReply.resolve('e5');
+      });
+
+      // The computer reply arrives, but lastPlayerMove feedbackText must still be preserved
+      await waitFor(() => {
+        expect(result.current.state?.lastChessEchoMove?.san).toBe('e5');
+        expect(result.current.state?.lastPlayerMove?.feedbackText).toBe('Best move!');
+      });
+    });
   });
 });
