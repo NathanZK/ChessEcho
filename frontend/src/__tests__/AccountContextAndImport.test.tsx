@@ -4,6 +4,7 @@ import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Home from '../app/page';
 import { ImportGamesView } from '../components/ImportGamesView';
 import * as api from '../services/api';
+import { activeAccountStore, activeUsernameStore, activeTabStore } from '../utils/browserStores';
 
 const SHORT_MONTH_NAMES = [
   'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
@@ -19,21 +20,31 @@ vi.mock('../services/api', async () => {
     pollJobStatus: vi.fn(),
     fetchPuzzles: vi.fn(),
     fetchWeaknesses: vi.fn(),
+    fetchAccounts: vi.fn(),
+    fetchGames: vi.fn(),
+    analyzeGame: vi.fn(),
   };
 });
 
 vi.mock('../components/WeaknessesList', () => ({
   WeaknessesList: ({
+    accountId,
     username,
+    sessionStatus,
     isAnalysisActive,
     refreshKey,
   }: {
+    accountId?: string;
     username?: string;
+    sessionStatus?: string;
     isAnalysisActive?: boolean;
     refreshKey?: number;
   }) => (
     <div>
       <h2>Recurring Opening Weaknesses Library</h2>
+      <span data-testid="weakness-account-id">{accountId ?? 'none'}</span>
+      <span data-testid="weakness-username">{username ?? 'none'}</span>
+      <span data-testid="weakness-session-status">{sessionStatus ?? 'none'}</span>
       <span data-testid="weakness-refresh-key">{refreshKey ?? 0}</span>
       {isAnalysisActive && (
         <div>
@@ -49,9 +60,29 @@ describe('Account Context and Import Games MVP Behavior', () => {
     localStorage.clear();
     window.location.hash = '';
     vi.resetAllMocks();
+    activeAccountStore.invalidate();
+    activeUsernameStore.invalidate();
+    activeTabStore.invalidate();
     vi.mocked(api.fetchCurrentSession).mockResolvedValue({ status: 'unauthenticated' });
     vi.mocked(api.fetchPuzzles).mockResolvedValue([]);
     vi.mocked(api.fetchWeaknesses).mockResolvedValue([]);
+    vi.mocked(api.fetchGames).mockResolvedValue({
+      content: [],
+      totalElements: 0,
+      totalPages: 0,
+      number: 0,
+      size: 50,
+    });
+    vi.mocked(api.analyzeGame).mockResolvedValue({
+      gameId: 'game-123',
+      whiteUsername: 'HeroPlayer',
+      blackUsername: 'RivalPlayer',
+      timeControl: 'blitz',
+      playedAt: '2026-11-09T18:00:00Z',
+      result: 'win',
+      analysisStatus: 'COMPLETE',
+      plies: [],
+    });
   });
 
   afterEach(() => {
@@ -726,6 +757,63 @@ describe('Account Context and Import Games MVP Behavior', () => {
       fireEvent.click(weaknessesTabBtn);
 
       expect(screen.getByText(/Recurring Opening Weaknesses Library/i)).toBeInTheDocument();
+    });
+  });
+
+  describe('6. Account Context Propagation and Enforced Authentication Guards (#805)', () => {
+    it('passes accountId and sessionStatus to Weaknesses view when authenticated with connected account', async () => {
+      const mockAccount = { id: 'acc-uuid-1', platform: 'CHESS_COM' as const, username: 'proplayer' };
+      vi.mocked(api.fetchCurrentSession).mockResolvedValue({ status: 'authenticated', userId: 'user-1' });
+      vi.mocked(api.fetchAccounts).mockResolvedValue([mockAccount]);
+      act(() => {
+        activeAccountStore.set(mockAccount);
+      });
+
+      render(<Home />);
+
+      await waitFor(() => {
+        expect(screen.getByText('proplayer')).toBeInTheDocument();
+      });
+
+      const weaknessesTabBtn = screen.getByRole('button', {
+        name: /^(Recurring Weaknesses|Position Weaknesses|Weaknesses Library)$/i,
+      });
+      fireEvent.click(weaknessesTabBtn);
+
+      expect(await screen.findByTestId('weakness-account-id')).toHaveTextContent('acc-uuid-1');
+      expect(screen.getByTestId('weakness-session-status')).toHaveTextContent('authenticated');
+    });
+
+    it('passes accountId from activeAccountStore to fetchGames when Game Analysis tab is opened in authenticated session', async () => {
+      const mockAccount = { id: 'acc-uuid-2', platform: 'CHESS_COM' as const, username: 'proplayer2' };
+      vi.mocked(api.fetchCurrentSession).mockResolvedValue({ status: 'authenticated', userId: 'user-2' });
+      vi.mocked(api.fetchAccounts).mockResolvedValue([mockAccount]);
+      act(() => {
+        activeAccountStore.set(mockAccount);
+        activeTabStore.set('game-analysis');
+      });
+
+      render(<Home />);
+
+      await waitFor(() => {
+        expect(api.fetchGames).toHaveBeenCalledWith(
+          expect.objectContaining({ accountId: 'acc-uuid-2' })
+        );
+      });
+    });
+
+    it('prevents guest sessions from issuing game-list requests and guards unauthenticated game analysis', async () => {
+      vi.mocked(api.fetchCurrentSession).mockResolvedValue({ status: 'unauthenticated' });
+      act(() => {
+        activeAccountStore.set(undefined);
+        activeTabStore.set('game-analysis');
+      });
+
+      render(<Home />);
+
+      await new Promise((r) => setTimeout(r, 50));
+      expect(api.fetchGames).not.toHaveBeenCalled();
+      expect(screen.getByText(/No games found/i)).toBeInTheDocument();
     });
   });
 });

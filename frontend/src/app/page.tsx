@@ -307,6 +307,7 @@ export default function Home() {
             <WeaknessesList
               accountId={session.sessionGateOpen ? session.connectedAccount?.id : undefined}
               username={session.sessionGateOpen ? session.weaknessDisplayUsername : undefined}
+              sessionStatus={session.sessionStatus}
               minEvalLoss={minEvalLoss}
               onMinEvalLossChange={handleMinEvalLossChange}
               minMistakeCount={minMistakeCount}
@@ -380,6 +381,7 @@ export default function Home() {
         {(activeTab === 'game-analysis' || hasGameAnalysisReturnContext) && (
           <div hidden={activeTab !== 'game-analysis'}>
             <GameAnalysisView
+              sessionStatus={session.sessionStatus}
               initialGameId={gameAnalysisSnapshot?.gameId}
               initialPlyNumber={gameAnalysisSnapshot?.plyNumber}
               initialThreshold={gameAnalysisSnapshot?.evalLossThreshold}

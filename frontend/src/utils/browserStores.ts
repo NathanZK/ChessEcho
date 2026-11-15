@@ -169,6 +169,22 @@ export const activeAccountStore = createStore<AccountSummary | undefined>({
       window.localStorage.removeItem(ACCOUNT_KEY);
     }
   },
+  watch: (onExternalChange) => {
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === ACCOUNT_KEY || event.key === null) {
+        onExternalChange();
+      }
+    };
+    const handleAccountChange = () => {
+      onExternalChange();
+    };
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('chessecho_active_account_change', handleAccountChange);
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('chessecho_active_account_change', handleAccountChange);
+    };
+  },
 });
 
 export const activeJobStore = createStore<JobStatusResponse | null>({
@@ -305,3 +321,4 @@ export const gameAnalysisReturnStore = createStore<GameAnalysisReturnSnapshot | 
     }
   },
 });
+

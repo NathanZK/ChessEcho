@@ -132,6 +132,7 @@ interface WeaknessesListProps {
   onColorFilterChange?: (color: WeaknessColorFilter) => void;
   isAnalysisActive?: boolean;
   refreshKey?: number;
+  sessionStatus?: 'loading' | 'authenticated' | 'unauthenticated' | 'error';
 }
 
 const PAGE_SIZE = 20;
@@ -150,8 +151,11 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
   onColorFilterChange,
   isAnalysisActive,
   refreshKey,
+  sessionStatus,
 }) => {
   const selector = accountId ?? username;
+  const targetAccountId = accountId;
+  const targetUsername = accountId ? undefined : username;
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [colorFilter, setColorFilter] = useState<WeaknessColorFilter>(
     activeColorFilter || 'ALL'
@@ -261,7 +265,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
     setIsLoadingClusters(true);
     setClusterError(null);
     try {
-      const data = await fetchRecurringWeaknesses(accountId, username);
+      const data = await fetchRecurringWeaknesses(targetAccountId, targetUsername);
       setRecurringClusters(data || []);
       if (data && data.length > 0) {
         setClusterViewMode('CLUSTERS');
@@ -276,7 +280,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
     } finally {
       setIsLoadingClusters(false);
     }
-  }, [selector, accountId, username]);
+  }, [selector, targetAccountId, targetUsername]);
 
   useEffect(() => {
     let active = true;
@@ -294,7 +298,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
       setIsLoadingClusters(true);
       setClusterError(null);
     });
-    const clusterPromise = fetchRecurringWeaknesses(accountId, username);
+    const clusterPromise = fetchRecurringWeaknesses(targetAccountId, targetUsername);
     if (!clusterPromise || typeof clusterPromise.then !== 'function') {
       return;
     }
@@ -323,7 +327,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
     return () => {
       active = false;
     };
-  }, [selector, accountId, username, refreshKey]);
+  }, [selector, targetAccountId, targetUsername, refreshKey]);
 
   useEffect(() => {
     if (!activeDiscoveryJob) {
@@ -351,7 +355,8 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
   }, [activeDiscoveryJob, clearPollTimer, loadClusters]);
 
   const handleOpenDiscovery = () => {
-    if (!selector) {
+    if (sessionStatus === 'loading') return;
+    if (sessionStatus === 'unauthenticated' || sessionStatus === 'error' || !accountId) {
       setIsAccountPromptOpen(true);
     } else {
       setDiscoverySubmitError(null);
@@ -371,13 +376,18 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
   };
 
   const handleStartDiscovery = async () => {
-    if (!selector) return;
+    if (sessionStatus === 'loading') return;
+    if (sessionStatus === 'unauthenticated' || sessionStatus === 'error' || !accountId) {
+      setIsAccountPromptOpen(true);
+      setIsDiscoveryModalOpen(false);
+      return;
+    }
     setIsSubmittingDiscovery(true);
     setDiscoverySubmitError(null);
     try {
       const job = await triggerRecurringDiscovery({
-        accountId,
-        username,
+        accountId: targetAccountId,
+        username: targetUsername,
         timeControls: discoveryTimeControls,
         minEvalLoss: discoveryMinEvalLoss,
       });
@@ -394,7 +404,7 @@ export const WeaknessesList: React.FC<WeaknessesListProps> = ({
     if (!activeDiscoveryJob) return;
     setIsCancellingDiscovery(true);
     try {
-      const cancelled = await cancelRecurringDiscoveryJob(activeDiscoveryJob.jobId, accountId, username);
+      const cancelled = await cancelRecurringDiscoveryJob(activeDiscoveryJob.jobId, targetAccountId, targetUsername);
       setActiveDiscoveryJob(cancelled);
     } catch (err) {
       console.error('Failed to cancel discovery job:', err);
