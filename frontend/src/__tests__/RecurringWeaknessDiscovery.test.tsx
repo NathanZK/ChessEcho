@@ -302,4 +302,24 @@ describe('Recurring Weakness Discovery & Polling (#735)', () => {
       expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     });
   });
+
+  it('dismisses discovery modal when Escape key is pressed', () => {
+    render(<WeaknessesList {...defaultProps} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Find Recurring Weaknesses/i }));
+    expect(screen.getByRole('dialog', { name: /Discover Recurring Weaknesses/i })).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: /Discover Recurring Weaknesses/i })).not.toBeInTheDocument();
+  });
+
+  it('dismisses account prompt modal when Escape key is pressed', () => {
+    render(<WeaknessesList {...defaultProps} accountId={undefined} username={undefined} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Find Recurring Weaknesses/i }));
+    expect(screen.getByRole('dialog', { name: /Connect Account/i })).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: /Connect Account/i })).not.toBeInTheDocument();
+  });
 });

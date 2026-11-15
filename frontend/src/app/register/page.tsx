@@ -1,10 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Eye, EyeOff } from 'lucide-react';
-import { register } from '@/services/api';
+import { register, ensureCsrfToken } from '@/services/api';
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -13,6 +13,12 @@ export default function RegisterPage() {
   const [passwordVisible, setPasswordVisible] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    ensureCsrfToken().catch((err: unknown) => {
+      setError(err instanceof Error ? err.message : 'Unable to initialize secure session.');
+    });
+  }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

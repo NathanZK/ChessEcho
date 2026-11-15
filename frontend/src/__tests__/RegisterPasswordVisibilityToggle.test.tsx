@@ -21,10 +21,12 @@ vi.mock('next/navigation', () => ({
 
 const apiMocks = vi.hoisted(() => ({
   register: vi.fn(),
+  ensureCsrfToken: vi.fn(() => Promise.resolve('mock-token')),
 }));
 
 vi.mock('@/services/api', () => ({
   register: apiMocks.register,
+  ensureCsrfToken: apiMocks.ensureCsrfToken,
 }));
 
 function getPasswordInput(): HTMLInputElement {

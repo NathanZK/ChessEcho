@@ -195,10 +195,13 @@ class DynamicContinuationCoordinator(
     private fun processSingleQueueItem() {
         val positionId = precomputeQueue.poll(2, TimeUnit.SECONDS)
         if (positionId != null) {
-            queuedPositions.remove(positionId)
-            val position = positionRepository.findById(positionId).orElse(null)
-            if (position != null) {
-                getOrComputeContinuation(position)
+            try {
+                val position = positionRepository.findById(positionId).orElse(null)
+                if (position != null) {
+                    getOrComputeContinuation(position)
+                }
+            } finally {
+                queuedPositions.remove(positionId)
             }
         } else {
             recoverEligiblePositions(batchSize = 100)

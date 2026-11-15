@@ -97,8 +97,39 @@ function jsonHeaders(): HeadersInit {
   };
 }
 
+/**
+ * Ensures the double-submit CSRF token cookie is present in the browser before state-changing mutations.
+ * If absent (e.g. direct deep-link to /register or /login without prior session bootstrap),
+ * it calls GET /api/me to seed the cookie from SessionAuthenticationFilter.
+ * Throws an Error if initialization fails or if the token cannot be established.
+ */
+export async function ensureCsrfToken(): Promise<string> {
+  const existing = csrfToken();
+  if (existing) return existing;
+
+  const session = await fetchCurrentSession();
+  if (session.status === 'error') {
+    throw new Error('Unable to initialize secure session. Please check your network connection.');
+  }
+
+  const token = csrfToken();
+  if (!token) {
+    throw new Error('CSRF security token could not be established. Please refresh the page.');
+  }
+  return token;
+}
+
 async function authenticate(path: '/register' | '/login', email: string, password: string): Promise<AuthResult> {
   try {
+    try {
+      await ensureCsrfToken();
+    } catch (bootstrapErr) {
+      return {
+        status: 'error',
+        error: bootstrapErr instanceof Error ? bootstrapErr.message : 'Unable to initialize secure session.',
+      };
+    }
+
     const response = await fetch(`${API_BASE_URL}${path}`, {
       method: 'POST',
       credentials: 'include',
@@ -603,17 +634,7 @@ export async function fetchPuzzleAttemptCount(
   return { solvedCount: body.solvedCount, failedCount: body.failedCount };
 }
 
-/**
- * Converts a side-to-move centipawn evaluation into absolute White-perspective centipawns.
- *
- * @param evalCp Centipawn evaluation relative to the player to move in [fen].
- * @param fen The chess position in FEN notation before the move was played.
- * @returns Absolute centipawns from White's perspective (+ = White advantage, - = Black advantage).
- */
-export function toWhitePerspective(evalCp: number, fen: string): number {
-  const isWhiteToMove = fen.split(' ')[1] === 'w';
-  return isWhiteToMove ? evalCp : -evalCp;
-}
+export { toWhitePerspective } from '@/utils/chessMove';
 
 export async function fetchPuzzleContinuation(
   fen: string,

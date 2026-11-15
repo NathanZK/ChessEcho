@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { toCanonicalMove, areMovesEqual } from '../utils/chessMove';
+import { toCanonicalMove, areMovesEqual, toWhitePerspective } from '../utils/chessMove';
 
 describe('chessMove utility', () => {
   const startFen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
@@ -59,5 +59,20 @@ describe('chessMove utility', () => {
     expect(toCanonicalMove('invalid-fen', 'e4')).toBeNull();
     expect(toCanonicalMove(startFen, null)).toBeNull();
     expect(toCanonicalMove(startFen, undefined)).toBeNull();
+  });
+
+  describe('toWhitePerspective', () => {
+    it('preserves centipawn evaluation when white is to move', () => {
+      expect(toWhitePerspective(150, startFen)).toBe(150);
+      expect(toWhitePerspective(-80, startFen)).toBe(-80);
+      expect(toWhitePerspective(0, startFen)).toBe(0);
+    });
+
+    it('inverts centipawn evaluation when black is to move', () => {
+      const blackToMoveFen = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1';
+      expect(toWhitePerspective(150, blackToMoveFen)).toBe(-150);
+      expect(toWhitePerspective(-80, blackToMoveFen)).toBe(80);
+      expect(toWhitePerspective(0, blackToMoveFen)).toBe(-0);
+    });
   });
 });

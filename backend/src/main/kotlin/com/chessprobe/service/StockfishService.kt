@@ -1,5 +1,6 @@
 package com.chessprobe.service
 
+import com.chessprobe.config.StockfishProperties
 import com.chessprobe.service.continuation.TerminationReason
 import com.github.bhlangonijr.chesslib.Board
 import com.github.bhlangonijr.chesslib.Piece
@@ -7,7 +8,6 @@ import com.github.bhlangonijr.chesslib.PieceType
 import com.github.bhlangonijr.chesslib.move.Move
 import com.github.bhlangonijr.chesslib.move.MoveList
 import org.slf4j.LoggerFactory
-import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import java.io.BufferedReader
 import java.io.File
@@ -86,13 +86,13 @@ data class BatchContinuationResult(
 
 @Service
 class StockfishService(
-    @Value("\${chess.stockfish.path:stockfish}")
-    val stockfishPath: String = "stockfish",
+    val properties: StockfishProperties = StockfishProperties(),
     val processStarter: (List<String>) -> Process = { ProcessBuilder(it).start() },
     private val binaryDigestProvider: (() -> String)? = null,
 ) {
     private val logger = LoggerFactory.getLogger(StockfishService::class.java)
 
+    val stockfishPath: String get() = properties.path
     val resolvedExecutablePath: String
         get() = resolveExecutable()?.absolutePath ?: stockfishPath
 
@@ -108,6 +108,20 @@ class StockfishService(
             Thread(runnable).apply { isDaemon = true }
         }
 
+    private fun startProcess(): Process {
+        val path = properties.path
+        if (properties.requireMock) {
+            val isMock = path.contains("mock") || path.contains("test-double")
+            if (!isMock || path == "stockfish") {
+                throw IllegalStateException(
+                    "Launching real Stockfish process is forbidden when chess.stockfish.require-mock=true. " +
+                        "Configured path was: '$path'. Please configure a deterministic test double.",
+                )
+            }
+        }
+        return processStarter(listOf(path))
+    }
+
     /**
      * Executes engine MultiPV analysis for a given FEN position to determine the top-N engine candidate moves.
      *
@@ -121,7 +135,7 @@ class StockfishService(
         depth: Int,
         multiPv: Int,
     ): List<EngineCandidate> {
-        val process = processStarter(listOf(resolvedExecutablePath))
+        val process = startProcess()
         val reader = BufferedReader(InputStreamReader(process.inputStream))
         val writer = OutputStreamWriter(process.outputStream)
 
@@ -269,7 +283,7 @@ class StockfishService(
 
         fun initialize(): Boolean =
             try {
-                val proc = processStarter(listOf(resolvedExecutablePath))
+                val proc = startProcess()
                 process = proc
                 reader = BufferedReader(InputStreamReader(proc.inputStream))
                 writer = OutputStreamWriter(proc.outputStream)
@@ -473,7 +487,7 @@ class StockfishService(
         depth: Int,
         historicalSanMoves: List<String>,
     ): Map<String, PositionAnalysis> {
-        val process = ProcessBuilder("stockfish").start()
+        val process = startProcess()
         val reader = BufferedReader(InputStreamReader(process.inputStream))
         val writer = OutputStreamWriter(process.outputStream)
 
@@ -542,7 +556,7 @@ class StockfishService(
             val move = board.undoMove()
             val uciMove = move.toString()
 
-            val process = ProcessBuilder("stockfish").start()
+            val process = startProcess()
             val reader = BufferedReader(InputStreamReader(process.inputStream))
             val writer = OutputStreamWriter(process.outputStream)
 
@@ -677,7 +691,7 @@ class StockfishService(
             return terminalRoot
         }
 
-        val context = SubprocessContext(processStarter, resolvedExecutablePath)
+        val context = SubprocessContext(processStarter = { _ -> startProcess() }, executablePath = resolvedExecutablePath)
         try {
             context.start()
         } catch (e: Exception) {
@@ -729,29 +743,6 @@ class StockfishService(
         sendCommand("uci\nisready\nposition fen $fen\ngo depth ${options.maxDepth} nodes ${options.maxNodes}")
         val output = readSearchOutput(reader, sendCommand, options)
         return replayForcingPv(board, fen, output.pvMoves, output.score, options, output.nodeLimitReached)
-    }
-
-    private fun validateAndLoadBoard(fen: String): Board {
-        if (fen.isBlank() || fen.split(" ").size < 4) {
-            throw IllegalArgumentException("Invalid FEN: $fen")
-        }
-        val board = Board()
-        try {
-            board.loadFromFen(fen)
-        } catch (e: Exception) {
-            throw IllegalArgumentException("Invalid FEN: $fen", e)
-        }
-        return board
-    }
-
-    private fun checkTerminalRoot(
-        board: Board,
-        fen: String,
-    ): PvContinuationResult? {
-        if (!board.isMated && !board.isDraw && !board.isStaleMate) {
-            return null
-        }
-        return buildFallbackResult(fen, TerminationReason.TERMINAL).copy(isTerminal = true)
     }
 
     private data class SearchOutput(
@@ -894,43 +885,6 @@ class StockfishService(
         return null
     }
 
-    private fun buildFallbackResult(
-        fen: String,
-        reason: TerminationReason,
-    ): PvContinuationResult =
-        PvContinuationResult(
-            originalFen = fen,
-            terminalFen = fen,
-            moves = emptyList(),
-            sanMoves = emptyList(),
-            score = null,
-            pliesResolved = 0,
-            isTerminal = false,
-            terminationReason = reason,
-        )
-
-    private fun isForcingMove(
-        board: Board,
-        move: Move,
-    ): Boolean {
-        if (board.isKingAttacked) {
-            return true
-        }
-        val isCapture =
-            board.getPiece(move.to) != Piece.NONE ||
-                (board.getPiece(move.from).pieceType == PieceType.PAWN && move.from.file != move.to.file)
-        if (isCapture) {
-            return true
-        }
-        if (move.promotion != Piece.NONE) {
-            return true
-        }
-        board.doMove(move)
-        val givesCheck = board.isKingAttacked
-        board.undoMove()
-        return givesCheck
-    }
-
     companion object {
         const val UCI_THREADS: Int = 1
         const val UCI_HASH_MB: Int = 16
@@ -1069,4 +1023,64 @@ private class SubprocessContext(
             }
         }
     }
+}
+
+private fun validateAndLoadBoard(fen: String): Board {
+    if (fen.isBlank() || fen.split(" ").size < 4) {
+        throw IllegalArgumentException("Invalid FEN: $fen")
+    }
+    val board = Board()
+    try {
+        board.loadFromFen(fen)
+    } catch (e: Exception) {
+        throw IllegalArgumentException("Invalid FEN: $fen", e)
+    }
+    return board
+}
+
+private fun checkTerminalRoot(
+    board: Board,
+    fen: String,
+): PvContinuationResult? {
+    if (!board.isMated && !board.isDraw && !board.isStaleMate) {
+        return null
+    }
+    return buildFallbackResult(fen, TerminationReason.TERMINAL).copy(isTerminal = true)
+}
+
+private fun buildFallbackResult(
+    fen: String,
+    reason: TerminationReason,
+): PvContinuationResult =
+    PvContinuationResult(
+        originalFen = fen,
+        terminalFen = fen,
+        moves = emptyList(),
+        sanMoves = emptyList(),
+        score = null,
+        pliesResolved = 0,
+        isTerminal = false,
+        terminationReason = reason,
+    )
+
+private fun isForcingMove(
+    board: Board,
+    move: Move,
+): Boolean {
+    if (board.isKingAttacked) {
+        return true
+    }
+    val isCapture =
+        board.getPiece(move.to) != Piece.NONE ||
+            (board.getPiece(move.from).pieceType == PieceType.PAWN && move.from.file != move.to.file)
+    if (isCapture) {
+        return true
+    }
+    if (move.promotion != Piece.NONE) {
+        return true
+    }
+    board.doMove(move)
+    val givesCheck = board.isKingAttacked
+    board.undoMove()
+    return givesCheck
 }

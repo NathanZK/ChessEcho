@@ -74,7 +74,8 @@ class ChessComClient(
      * Retrieves the master list of monthly archive URLs for the given username.
      */
     fun fetchArchiveUrls(username: String): List<String> {
-        val url = "https://api.chess.com/pub/player/${username.lowercase()}/games/archives"
+        val root = properties.baseUrl.trimEnd('/')
+        val url = "$root/pub/player/${username.lowercase()}/games/archives"
 
         @Suppress("UNCHECKED_CAST")
         val response = getJson(url, Map::class.java) as? Map<String, Any> ?: return emptyList()

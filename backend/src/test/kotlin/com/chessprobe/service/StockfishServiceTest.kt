@@ -1,5 +1,6 @@
 package com.chessprobe.service
 
+import com.chessprobe.config.StockfishProperties
 import com.chessprobe.service.continuation.TerminationReason
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -7,6 +8,7 @@ import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import java.io.BufferedReader
@@ -612,5 +614,58 @@ class StockfishServiceTest {
         assertTrue(commandsString.contains("setoption name Threads value 1"))
         assertTrue(commandsString.contains("setoption name Hash value 16"))
         assertTrue(commandsString.contains("setoption name Ponder value false"))
+    }
+
+    @Test
+    fun `requireMock blocks execution when path is stockfish and throws IllegalStateException`() {
+        val properties = StockfishProperties(path = "stockfish", requireMock = true)
+        val service = StockfishService(properties = properties, processStarter = { throw AssertionError("Should not be called") })
+
+        val ex =
+            assertThrows<IllegalStateException> {
+                service.analyzeMultiPv("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 16, 1)
+            }
+        assertTrue(ex.message!!.contains("Launching real Stockfish process is forbidden"))
+    }
+
+    @Test
+    fun `requireMock allows execution when path contains mock`() {
+        var launchedPath = ""
+        val fakeProcess =
+            org.mockito.kotlin.mock<Process> {
+                on { inputStream }.thenReturn(java.io.ByteArrayInputStream("uciok\nreadyok\nbestmove e2e4\n".toByteArray()))
+                on { outputStream }.thenReturn(java.io.ByteArrayOutputStream())
+                on { isAlive }.thenReturn(false)
+            }
+        val properties = StockfishProperties(path = "scripts/test-double/mock-stockfish.js", requireMock = true)
+        val service =
+            StockfishService(
+                properties = properties,
+                processStarter = {
+                    launchedPath = it.first()
+                    fakeProcess
+                },
+            )
+
+        val result = service.analyzeMultiPv("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 16, 1)
+        assertEquals("scripts/test-double/mock-stockfish.js", launchedPath)
+        assertNotNull(result)
+    }
+
+    @Test
+    fun `StockfishService executes real mock-stockfish script and parses multiPv results`() {
+        val scriptFile = java.io.File("../scripts/test-double/mock-stockfish.js").canonicalFile
+        assumeTrue(scriptFile.exists() && scriptFile.canExecute(), "Mock script not found or executable")
+        val properties = StockfishProperties(path = scriptFile.absolutePath, requireMock = true)
+        val service = StockfishService(properties = properties)
+
+        val candidates = service.analyzeMultiPv("rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2", 16, 3)
+        assertEquals(3, candidates.size)
+        assertEquals("Nc6", candidates[0].move)
+        assertEquals(20, candidates[0].score.cp)
+        assertEquals("d6", candidates[1].move)
+        assertEquals(40, candidates[1].score.cp)
+        assertEquals("Nf6", candidates[2].move)
+        assertEquals(50, candidates[2].score.cp)
     }
 }

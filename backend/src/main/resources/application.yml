@@ -59,11 +59,13 @@ chessprobe:
 chess:
   stockfish:
     path: ${STOCKFISH_PATH:stockfish}
+    require-mock: ${STOCKFISH_REQUIRE_MOCK:false}
   similarity:
     dynamic:
       max-concurrent-sessions: ${CHESS_SIMILARITY_DYNAMIC_MAX_CONCURRENT_SESSIONS:2}
       candidate-budget: ${CHESS_SIMILARITY_DYNAMIC_CANDIDATE_BUDGET:100}
   pubapi:
+    base-url: ${CHESS_PUBAPI_BASE_URL:https://api.chess.com}
     user-agent-username: ${CHESS_PUBAPI_USERNAME:}
     contact: ${CHESS_PUBAPI_CONTACT:}
     delay-ms: ${CHESS_PUBAPI_DELAY_MS:100}

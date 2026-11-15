@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ContinuationMode,
   ContinuationCandidate,
@@ -183,13 +183,11 @@ export function useLineExploration({
 
         if (candidate.evalCp != null) {
           const whiteEval = toWhitePerspective(candidate.evalCp, requestedContinuationFen);
-          onUpdateEval(whiteEval, false);
           setExplorationEvalMap((prev) => ({
             ...prev,
             [candidate.resultingFen]: { evalCp: whiteEval, isUnknown: false },
           }));
         } else {
-          onUpdateEval(currentEvalCp, true);
           setExplorationEvalMap((prev) => ({
             ...prev,
             [candidate.resultingFen]: { evalCp: currentEvalCp, isUnknown: true },
@@ -198,6 +196,18 @@ export function useLineExploration({
       }
     }
   }
+
+  // Synchronize parent onUpdateEval when pending continuation candidate is selected
+  useEffect(() => {
+    if (pendingContinuationCandidate && isExplorationActive && requestedContinuationFen) {
+      if (pendingContinuationCandidate.evalCp != null) {
+        const whiteEval = toWhitePerspective(pendingContinuationCandidate.evalCp, requestedContinuationFen);
+        onUpdateEval(whiteEval, false);
+      } else {
+        onUpdateEval(currentEvalCp, true);
+      }
+    }
+  }, [pendingContinuationCandidate, isExplorationActive, requestedContinuationFen, currentEvalCp, onUpdateEval]);
 
   // Keep lastContinuationCandidates synchronized with board history
   const [trackedHistorySync, setTrackedHistorySync] = useState({
@@ -230,29 +240,11 @@ export function useLineExploration({
   const evalEntry = isExplorationActive && currentBoardFen
     ? explorationEvalMap[currentBoardFen]
     : undefined;
-  const [trackedEvalSync, setTrackedEvalSync] = useState({
-    currentBoardFen,
-    isExplorationActive,
-    evalCp: evalEntry?.evalCp,
-    isUnknown: evalEntry?.isUnknown,
-  });
-
-  if (
-    trackedEvalSync.currentBoardFen !== currentBoardFen ||
-    trackedEvalSync.isExplorationActive !== isExplorationActive ||
-    trackedEvalSync.evalCp !== evalEntry?.evalCp ||
-    trackedEvalSync.isUnknown !== evalEntry?.isUnknown
-  ) {
-    setTrackedEvalSync({
-      currentBoardFen,
-      isExplorationActive,
-      evalCp: evalEntry?.evalCp,
-      isUnknown: evalEntry?.isUnknown,
-    });
+  useEffect(() => {
     if (evalEntry) {
       onUpdateEval(evalEntry.evalCp, evalEntry.isUnknown);
     }
-  }
+  }, [evalEntry, onUpdateEval]);
 
   const handleExplorationPlayModeChange = (mode: ExplorationPlayMode) => {
     setExplorationPlayMode(mode);

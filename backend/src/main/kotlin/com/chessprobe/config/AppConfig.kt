@@ -15,6 +15,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer
     PracticalEvidenceProperties::class,
     SessionCookieProperties::class,
     PositionClusteringProperties::class,
+    StockfishProperties::class,
 )
 class AppConfig {
     @Bean

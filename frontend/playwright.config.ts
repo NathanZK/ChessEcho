@@ -4,6 +4,7 @@ const isNightly = !!process.env.PLAYWRIGHT_NIGHTLY;
 const isCI = !!process.env.CI;
 const isExploratory =
   process.env.PLAYWRIGHT_SUITE === 'exploratory' || !!process.env.PLAYWRIGHT_INCLUDE_MONKEY;
+const isE2E = !!process.env.PLAYWRIGHT_RUN_E2E;
 
 const defaultIgnored = [
   '**/*-monkey.spec.ts',
@@ -14,7 +15,9 @@ const defaultIgnored = [
 export default defineConfig({
   testDir: './journeys',
   testMatch: /.*\.spec\.ts$/,
-  testIgnore: isExploratory ? [] : defaultIgnored,
+  testIgnore: isE2E
+    ? (isExploratory ? [] : defaultIgnored)
+    : (isExploratory ? ['**/e2e-*.spec.ts'] : [...defaultIgnored, '**/e2e-*.spec.ts']),
   fullyParallel: true,
   forbidOnly: isCI,
   retries: isNightly ? 2 : 0,
@@ -34,9 +37,9 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: isCI ? 'npx next start -p 3000' : 'npm run dev',
+    command: isCI || isE2E ? 'npx next start -p 3000' : 'npm run dev',
     url: 'http://localhost:3000',
-    reuseExistingServer: !isCI,
+    reuseExistingServer: !isCI && !isE2E,
     timeout: 120_000,
   },
 });

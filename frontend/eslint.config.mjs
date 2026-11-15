@@ -106,7 +106,10 @@ const eslintConfig = defineConfig([
   },
   // Puzzle feedback & line exploration panel: tracked in #685
   {
-    files: ["src/components/PuzzleFeedbackPanel.tsx"],
+    files: [
+      "src/components/PuzzleFeedbackPanel.tsx",
+      "src/components/LineExplorationWorkbench.tsx",
+    ],
     rules: {
       "max-lines": "off",
       "max-lines-per-function": "off",

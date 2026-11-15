@@ -93,4 +93,52 @@ describe('Local email/password API contract (Issue #276)', () => {
       error: 'Unable to reach ChessProbe. Please try again.',
     });
   });
+
+  it('automatically bootstraps CSRF via /me when cookie is absent on direct entry', async () => {
+    document.cookie = 'XSRF-TOKEN=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
+
+    // First fetch: GET /me (simulating SessionAuthenticationFilter seeding the cookie)
+    vi.mocked(global.fetch).mockImplementationOnce(async (url) => {
+      expect(String(url)).toContain('/me');
+      document.cookie = 'XSRF-TOKEN=bootstrapped-csrf-token; path=/';
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ status: 'unauthenticated' }),
+      } as Response;
+    });
+
+    // Second fetch: POST /register
+    vi.mocked(global.fetch).mockImplementationOnce(async (url, init) => {
+      expect(String(url)).toContain('/register');
+      const options = init as RequestInit;
+      expect(headerValue(options, 'X-XSRF-TOKEN')).toBe('bootstrapped-csrf-token');
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ userId: 'direct-user-123' }),
+      } as Response;
+    });
+
+    await expect(register('direct@example.com', 'password123')).resolves.toEqual({
+      status: 'authenticated',
+      userId: 'direct-user-123',
+    });
+  });
+
+  it('surfaces meaningful error and prevents submission when CSRF bootstrap fails', async () => {
+    document.cookie = 'XSRF-TOKEN=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
+
+    // GET /me throws network error
+    vi.mocked(global.fetch).mockRejectedValueOnce(new Error('Connection refused'));
+
+    const result = await register('direct@example.com', 'password123');
+    expect(result).toEqual({
+      status: 'error',
+      error: 'Unable to initialize secure session. Please check your network connection.',
+    });
+    // Ensure POST /register was NEVER called
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(String(vi.mocked(global.fetch).mock.calls[0][0])).toContain('/me');
+  });
 });

@@ -10,6 +10,12 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chessprobe -d chessprobe"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+      start_period: 2s
 
   app:
     build: ./backend
@@ -17,14 +23,20 @@ services:
     container_name: chessprobe-app
     ports:
       - "8080:8080"
+    volumes:
+      - ./scripts/test-double:/app/scripts/test-double:ro
     environment:
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-local}
+      CHESSPROBE_AUTH_COOKIE_SECURE: ${CHESSPROBE_AUTH_COOKIE_SECURE:-${CHESSECHO_AUTH_COOKIE_SECURE:-false}}
+      CHESSECHO_AUTH_COOKIE_SECURE: ${CHESSECHO_AUTH_COOKIE_SECURE:-false}
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/chessprobe
       SPRING_DATASOURCE_USERNAME: chessprobe
       SPRING_DATASOURCE_PASSWORD: chessprobe_pass
-      STOCKFISH_PATH: stockfish
-      CHESS_PUBAPI_USERNAME: ${CHESS_PUBAPI_USERNAME:-}
-      CHESS_PUBAPI_CONTACT: ${CHESS_PUBAPI_CONTACT:-}
+      STOCKFISH_PATH: ${STOCKFISH_PATH:-/app/scripts/test-double/mock-stockfish.sh}
+      STOCKFISH_REQUIRE_MOCK: ${STOCKFISH_REQUIRE_MOCK:-true}
+      CHESS_PUBAPI_BASE_URL: ${CHESS_PUBAPI_BASE_URL:-http://host.docker.internal:8085}
+      CHESS_PUBAPI_USERNAME: ${CHESS_PUBAPI_USERNAME:-e2e_agent}
+      CHESS_PUBAPI_CONTACT: ${CHESS_PUBAPI_CONTACT:-e2e@chessecho.local}
       CHESS_WEAKNESS_PRACTICAL_RANKING_ENABLED: ${CHESS_WEAKNESS_PRACTICAL_RANKING_ENABLED:-true}
       CHESS_WEAKNESS_PRACTICAL_SAMPLE_FLOOR: ${CHESS_WEAKNESS_PRACTICAL_SAMPLE_FLOOR:-5}
       CHESS_WEAKNESS_PRACTICAL_COMPARATOR_METHOD: ${CHESS_WEAKNESS_PRACTICAL_COMPARATOR_METHOD:-FIXED_SCORE_RATE}
@@ -37,7 +49,10 @@ services:
       CHESS_WEAKNESS_PRACTICAL_POLICY_VERSION: ${CHESS_WEAKNESS_PRACTICAL_POLICY_VERSION:-practical-score-rate-wilson-v1}
 
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
 volumes:
   postgres_data:
