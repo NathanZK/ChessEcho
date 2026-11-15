@@ -13,6 +13,7 @@ import com.chessprobe.dto.RecurringDiscoveryJobResponse
 import com.chessprobe.dto.RecurringDiscoveryRequest
 import com.chessprobe.dto.RecurringWeaknessResponse
 import com.chessprobe.service.AccountOwnershipService
+import com.chessprobe.service.AccountSelectionRequiredException
 import com.chessprobe.service.auth.AuthenticatedPrincipal
 import com.chessprobe.service.weakness.RecurringWeaknessDiscoveryService
 import com.chessprobe.web.UnauthenticatedException
@@ -70,6 +71,49 @@ class RecurringWeaknessControllerTest {
         val response = controller.triggerDiscovery(request, null)
         assertEquals(HttpStatus.ACCEPTED, response.statusCode)
         assertEquals(jobResponse.jobId, response.body?.jobId)
+    }
+
+    @Test
+    fun `POST discover returns 202 Accepted when authenticated caller provides accountId exclusively`() {
+        val principal = AuthenticatedPrincipal(appUserId = UUID.randomUUID(), devPrincipal = false)
+        val request = RecurringDiscoveryRequest(accountId = testAccount.id, username = null, timeControls = listOf("RAPID"))
+        `when`(accountOwnershipService.resolvePrivateRead(testAccount.id, principal)).thenReturn(testAccount)
+
+        val jobResponse =
+            RecurringDiscoveryJobResponse(
+                jobId = UUID.randomUUID(),
+                accountId = testAccount.id,
+                status = DiscoveryJobStatus.QUEUED.name,
+                progressPercent = 0,
+                stage = DiscoveryStage.INITIALIZING.name,
+                errorMessage = null,
+                createdAt = Instant.now(),
+                updatedAt = Instant.now(),
+            )
+        `when`(discoveryService.triggerDiscovery(testAccount, request)).thenReturn(jobResponse)
+
+        val response = controller.triggerDiscovery(request, principal)
+        assertEquals(HttpStatus.ACCEPTED, response.statusCode)
+        assertEquals(jobResponse.jobId, response.body?.jobId)
+    }
+
+    @Test
+    fun `POST discover throws AccountSelectionRequiredException when authenticated caller provides username`() {
+        val principal = AuthenticatedPrincipal(appUserId = UUID.randomUUID(), devPrincipal = false)
+        val request = RecurringDiscoveryRequest(accountId = testAccount.id, username = "testplayer", timeControls = listOf("RAPID"))
+
+        assertThrows<AccountSelectionRequiredException> {
+            controller.triggerDiscovery(request, principal)
+        }
+    }
+
+    @Test
+    fun `POST discover throws UnauthenticatedException when unauthenticated caller provides accountId`() {
+        val request = RecurringDiscoveryRequest(accountId = testAccount.id, username = null, timeControls = listOf("RAPID"))
+
+        assertThrows<UnauthenticatedException> {
+            controller.triggerDiscovery(request, null)
+        }
     }
 
     @Test
@@ -136,6 +180,49 @@ class RecurringWeaknessControllerTest {
     }
 
     @Test
+    fun `POST cancel job throws AccountSelectionRequiredException when authenticated caller provides username`() {
+        val jobId = UUID.randomUUID()
+        val principal = AuthenticatedPrincipal(appUserId = UUID.randomUUID(), devPrincipal = false)
+        val jobResponse =
+            RecurringDiscoveryJobResponse(
+                jobId = jobId,
+                accountId = testAccount.id,
+                status = DiscoveryJobStatus.PROCESSING.name,
+                progressPercent = 40,
+                stage = DiscoveryStage.EVALUATION.name,
+                errorMessage = null,
+                createdAt = Instant.now(),
+                updatedAt = Instant.now(),
+            )
+        `when`(discoveryService.getJob(jobId)).thenReturn(jobResponse)
+
+        assertThrows<AccountSelectionRequiredException> {
+            controller.cancelJob(jobId, testAccount.id, "testplayer", principal)
+        }
+    }
+
+    @Test
+    fun `POST cancel job throws UnauthenticatedException when unauthenticated caller provides accountId`() {
+        val jobId = UUID.randomUUID()
+        val jobResponse =
+            RecurringDiscoveryJobResponse(
+                jobId = jobId,
+                accountId = testAccount.id,
+                status = DiscoveryJobStatus.PROCESSING.name,
+                progressPercent = 40,
+                stage = DiscoveryStage.EVALUATION.name,
+                errorMessage = null,
+                createdAt = Instant.now(),
+                updatedAt = Instant.now(),
+            )
+        `when`(discoveryService.getJob(jobId)).thenReturn(jobResponse)
+
+        assertThrows<UnauthenticatedException> {
+            controller.cancelJob(jobId, testAccount.id, null, null)
+        }
+    }
+
+    @Test
     fun `GET recurring weaknesses returns 200 OK with weakness list`() {
         `when`(accountOwnershipService.resolvePrivateRead(Platform.CHESS_COM, "testplayer", null)).thenReturn(testAccount)
         val weakness =
@@ -163,6 +250,52 @@ class RecurringWeaknessControllerTest {
         assertEquals(HttpStatus.OK, response.statusCode)
         assertEquals(1, response.body?.size)
         assertEquals(weakness.clusterId, response.body?.get(0)?.clusterId)
+    }
+
+    @Test
+    fun `GET recurring weaknesses returns 200 OK for authenticated caller with accountId exclusively`() {
+        val principal = AuthenticatedPrincipal(appUserId = UUID.randomUUID(), devPrincipal = false)
+        `when`(accountOwnershipService.resolvePrivateRead(testAccount.id, principal)).thenReturn(testAccount)
+        val weakness =
+            RecurringWeaknessResponse(
+                clusterId = UUID.randomUUID(),
+                clusterType = ClusterType.STRUCTURAL,
+                recommendationPriority = 10.0,
+                representativeFen = "fen2",
+                memberPositionCount = 5,
+                totalOccurrences = 8,
+                distinctGamesCount = 2,
+                mistakeCount = 3,
+                mistakeFrequency = 37.5,
+                blunderRate = 12.5,
+                evaluatedOccurrences = 8,
+                unevaluatedOccurrences = 0,
+                evalLossDistribution = mapOf("SIGNIFICANT" to 3),
+                evalLossPercentages = mapOf("SIGNIFICANT" to 37.5),
+                timingProfile = mapOf("RAPID_DECISION" to 8),
+                formatBreakdown = mapOf("RAPID" to 8),
+            )
+        `when`(discoveryService.getLatestRecurringWeaknesses(testAccount)).thenReturn(listOf(weakness))
+
+        val response = controller.getRecurringWeaknesses(testAccount.id, null, principal)
+        assertEquals(HttpStatus.OK, response.statusCode)
+        assertEquals(1, response.body?.size)
+    }
+
+    @Test
+    fun `GET recurring weaknesses throws AccountSelectionRequiredException when authenticated caller provides username`() {
+        val principal = AuthenticatedPrincipal(appUserId = UUID.randomUUID(), devPrincipal = false)
+
+        assertThrows<AccountSelectionRequiredException> {
+            controller.getRecurringWeaknesses(testAccount.id, "testplayer", principal)
+        }
+    }
+
+    @Test
+    fun `GET recurring weaknesses throws UnauthenticatedException when unauthenticated caller provides accountId`() {
+        assertThrows<UnauthenticatedException> {
+            controller.getRecurringWeaknesses(testAccount.id, null, null)
+        }
     }
 
     @Test

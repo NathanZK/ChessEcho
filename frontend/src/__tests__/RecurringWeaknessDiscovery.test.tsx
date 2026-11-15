@@ -47,6 +47,73 @@ describe('Recurring Weakness Discovery & Polling (#735)', () => {
     expect(screen.getByRole('heading', { name: 'Connect Account' })).toBeInTheDocument();
   });
 
+  it('displays connection prompt when unauthenticated guest has username but no accountId', async () => {
+    render(<WeaknessesList {...defaultProps} accountId={undefined} username="magnus" sessionStatus="unauthenticated" />);
+
+    const findBtn = screen.getByRole('button', { name: /Find Recurring Weaknesses/i });
+    fireEvent.click(findBtn);
+
+    expect(screen.getByRole('heading', { name: 'Connect Account' })).toBeInTheDocument();
+  });
+
+  it('displays connection prompt when authenticated but accountId is missing', async () => {
+    render(<WeaknessesList {...defaultProps} accountId={undefined} username="magnus" sessionStatus="authenticated" />);
+
+    const findBtn = screen.getByRole('button', { name: /Find Recurring Weaknesses/i });
+    fireEvent.click(findBtn);
+
+    expect(screen.getByRole('heading', { name: 'Connect Account' })).toBeInTheDocument();
+  });
+
+  it('forwards accountId without username to fetchRecurringWeaknesses, triggerRecurringDiscovery, and cancelRecurringDiscoveryJob when authenticated', async () => {
+    const mockJob: api.RecurringDiscoveryJobResponse = {
+      jobId: 'job-isolation-123',
+      accountId: 'test-account-uuid',
+      status: 'PROCESSING',
+      progressPercent: 35,
+      stage: 'CLUSTERING',
+      createdAt: '2026-11-09T00:00:00Z',
+      updatedAt: '2026-11-09T00:01:00Z',
+    };
+    const cancelledJob: api.RecurringDiscoveryJobResponse = {
+      ...mockJob,
+      status: 'CANCELLED',
+      stage: 'CANCELLED',
+    };
+
+    vi.mocked(api.triggerRecurringDiscovery).mockResolvedValueOnce(mockJob);
+    vi.mocked(api.getRecurringDiscoveryJobStatus).mockResolvedValue(mockJob);
+    vi.mocked(api.cancelRecurringDiscoveryJob).mockResolvedValueOnce(cancelledJob);
+
+    render(<WeaknessesList {...defaultProps} accountId="test-account-uuid" username="magnus" sessionStatus="authenticated" />);
+
+    // 1. Initial mount call to fetchRecurringWeaknesses
+    await waitFor(() => {
+      expect(api.fetchRecurringWeaknesses).toHaveBeenCalledWith('test-account-uuid', undefined);
+    });
+
+    // 2. Trigger discovery
+    fireEvent.click(screen.getByRole('button', { name: /Find Recurring Weaknesses/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Start Discovery/i }));
+
+    await waitFor(() => {
+      expect(api.triggerRecurringDiscovery).toHaveBeenCalledWith(
+        expect.objectContaining({
+          accountId: 'test-account-uuid',
+          username: undefined,
+        })
+      );
+    });
+
+    // 3. Cancel discovery
+    const cancelBtn = await screen.findByRole('button', { name: /Cancel/i });
+    fireEvent.click(cancelBtn);
+
+    await waitFor(() => {
+      expect(api.cancelRecurringDiscoveryJob).toHaveBeenCalledWith('job-isolation-123', 'test-account-uuid', undefined);
+    });
+  });
+
   it('opens discovery modal, submits parameters, and renders progress banner', async () => {
     const mockJob: api.RecurringDiscoveryJobResponse = {
       jobId: 'job-123',
@@ -126,7 +193,7 @@ describe('Recurring Weakness Discovery & Polling (#735)', () => {
     fireEvent.click(cancelBtn);
 
     await waitFor(() => {
-      expect(api.cancelRecurringDiscoveryJob).toHaveBeenCalledWith('job-123', 'test-account-uuid', 'magnus');
+      expect(api.cancelRecurringDiscoveryJob).toHaveBeenCalledWith('job-123', 'test-account-uuid', undefined);
     });
   });
 

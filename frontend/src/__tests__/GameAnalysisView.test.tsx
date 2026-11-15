@@ -1,8 +1,9 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import GameAnalysisView from '../components/GameAnalysisView';
 import * as api from '../services/api';
+import { activeAccountStore } from '../utils/browserStores';
 
 vi.mock('../services/api', () => ({
   fetchGames: vi.fn(),
@@ -83,6 +84,7 @@ describe('GameAnalysisView', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    activeAccountStore.set(undefined);
     vi.mocked(api.fetchGames).mockResolvedValue(mockGames);
     vi.mocked(api.analyzeGame).mockResolvedValue(mockAnalysis);
     vi.mocked(api.fetchSimilarPositions).mockResolvedValue({
@@ -100,7 +102,10 @@ describe('GameAnalysisView', () => {
   });
 
   it('renders My Games list initially and allows selecting a game to analyze', async () => {
-    render(<GameAnalysisView />);
+    act(() => {
+      activeAccountStore.set({ id: 'acc-123', username: 'HeroPlayer', platform: 'CHESS_COM' });
+    });
+    render(<GameAnalysisView sessionStatus="authenticated" />);
 
     expect(await screen.findByText('HeroPlayer')).toBeInTheDocument();
     expect(screen.getByText('RivalPlayer')).toBeInTheDocument();
@@ -197,5 +202,171 @@ describe('GameAnalysisView', () => {
       expect.objectContaining({ plyNumber: 12, movePlayed: 'Nf6' }),
       expect.objectContaining({ gameId: 'game-123' })
     );
+  });
+
+  it('subscribes to activeAccountStore and passes accountId to fetchGames', async () => {
+    act(() => {
+      activeAccountStore.set({ id: 'acc-789', username: 'HeroPlayer', platform: 'CHESS_COM' });
+    });
+
+    render(<GameAnalysisView />);
+
+    await waitFor(() => {
+      expect(api.fetchGames).toHaveBeenCalledWith(
+        expect.objectContaining({
+          page: 0,
+          size: 50,
+          accountId: 'acc-789',
+        })
+      );
+    });
+  });
+
+  it('re-executes fetchGames when activeAccountId updates in activeAccountStore', async () => {
+    act(() => {
+      activeAccountStore.set({ id: 'acc-1', username: 'PlayerOne', platform: 'CHESS_COM' });
+    });
+
+    render(<GameAnalysisView />);
+
+    await waitFor(() => {
+      expect(api.fetchGames).toHaveBeenCalledWith(
+        expect.objectContaining({ accountId: 'acc-1' })
+      );
+    });
+
+    act(() => {
+      activeAccountStore.set({ id: 'acc-2', username: 'PlayerTwo', platform: 'CHESS_COM' });
+    });
+
+    await waitFor(() => {
+      expect(api.fetchGames).toHaveBeenCalledWith(
+        expect.objectContaining({ accountId: 'acc-2' })
+      );
+    });
+  });
+
+  it('does not dispatch fetchGames while account context is unhydrated or missing activeAccountId', async () => {
+    act(() => {
+      activeAccountStore.set(undefined);
+    });
+    render(<GameAnalysisView sessionStatus="authenticated" />);
+
+    await new Promise((r) => setTimeout(r, 50));
+    expect(api.fetchGames).not.toHaveBeenCalled();
+    expect(screen.getByText(/No games found/i)).toBeInTheDocument();
+  });
+
+  it('does not dispatch fetchGames while sessionStatus is loading', async () => {
+    act(() => {
+      activeAccountStore.set({ id: 'acc-123', username: 'HeroPlayer', platform: 'CHESS_COM' });
+    });
+    render(<GameAnalysisView sessionStatus="loading" />);
+
+    await new Promise((r) => setTimeout(r, 50));
+    expect(api.fetchGames).not.toHaveBeenCalled();
+  });
+
+  it('prevents guest sessions from issuing game-list requests', async () => {
+    act(() => {
+      activeAccountStore.set(undefined);
+    });
+    render(<GameAnalysisView sessionStatus="unauthenticated" />);
+
+    await new Promise((r) => setTimeout(r, 50));
+    expect(api.fetchGames).not.toHaveBeenCalled();
+    expect(screen.getByText(/No games found/i)).toBeInTheDocument();
+  });
+
+  it('dispatches fetchGames with accountId once hydrated and renders games', async () => {
+    act(() => {
+      activeAccountStore.set({ id: 'acc-123', username: 'HeroPlayer', platform: 'CHESS_COM' });
+    });
+    render(<GameAnalysisView sessionStatus="authenticated" />);
+
+    await waitFor(() => {
+      expect(api.fetchGames).toHaveBeenCalledWith(
+        expect.objectContaining({ page: 0, size: 50, accountId: 'acc-123' })
+      );
+    });
+    expect(await screen.findByText('HeroPlayer')).toBeInTheDocument();
+  });
+
+  it('discards stale in-flight responses when switching accounts and renders only active account games', async () => {
+    let resolveAcc1!: (value: api.GamePageResponse) => void;
+    const acc1Promise = new Promise<api.GamePageResponse>((res) => {
+      resolveAcc1 = res;
+    });
+
+    const acc2Games: api.GamePageResponse = {
+      ...mockGames,
+      content: [
+        {
+          ...mockGames.content[0],
+          id: 'game-acc2',
+          whiteUsername: 'AccountTwoHero',
+        },
+      ],
+    };
+
+    vi.mocked(api.fetchGames).mockImplementation((params) => {
+      if (params?.accountId === 'acc-1') return acc1Promise;
+      if (params?.accountId === 'acc-2') return Promise.resolve(acc2Games);
+      return Promise.resolve({ content: [], totalElements: 0, totalPages: 0, number: 0, size: 50 });
+    });
+
+    act(() => {
+      activeAccountStore.set({ id: 'acc-1', username: 'User1', platform: 'CHESS_COM' });
+    });
+
+    render(<GameAnalysisView sessionStatus="authenticated" />);
+
+    await waitFor(() => {
+      expect(api.fetchGames).toHaveBeenCalledWith(expect.objectContaining({ accountId: 'acc-1' }));
+    });
+
+    act(() => {
+      activeAccountStore.set({ id: 'acc-2', username: 'User2', platform: 'CHESS_COM' });
+    });
+
+    expect(await screen.findByText('AccountTwoHero')).toBeInTheDocument();
+
+    act(() => {
+      resolveAcc1({
+        ...mockGames,
+        content: [
+          {
+            ...mockGames.content[0],
+            id: 'game-acc1',
+            whiteUsername: 'StaleAccountOneHero',
+          },
+        ],
+      });
+    });
+
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByText('StaleAccountOneHero')).not.toBeInTheDocument();
+    expect(screen.getByText('AccountTwoHero')).toBeInTheDocument();
+  });
+
+  it('displays account connection modal when unauthenticated session mounts with initialGameId', async () => {
+    render(<GameAnalysisView initialGameId="game-123" sessionStatus="unauthenticated" />);
+
+    expect(api.analyzeGame).not.toHaveBeenCalled();
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Connect Account' })).toBeInTheDocument();
+  });
+
+  it('closes account connection modal when dismissed', async () => {
+    render(<GameAnalysisView initialGameId="game-123" sessionStatus="unauthenticated" />);
+
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+
+    const dismissBtn = screen.getByRole('button', { name: /Dismiss/i });
+    fireEvent.click(dismissBtn);
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
   });
 });

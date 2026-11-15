@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { ArrowLeft, AlertTriangle } from 'lucide-react';
+import React, { useState, useEffect, useSyncExternalStore } from 'react';
+import { ArrowLeft, AlertTriangle, Target } from 'lucide-react';
 import {
   type GameSummary,
   type GameAnalysisResponse,
@@ -11,6 +11,7 @@ import {
   analyzeGame,
   fetchSimilarPositions,
 } from '../services/api';
+import { activeAccountStore } from '../utils/browserStores';
 import {
   DEFAULT_EVAL_LOSS_THRESHOLD,
   DEFAULT_TIMING_FILTERS,
@@ -28,6 +29,7 @@ export interface GameAnalysisViewProps {
   initialThreshold?: number;
   initialTimingFilters?: DecisionSeverityCategory[];
   onPracticeMistake?: (ply: AnalyzedPly, analysis: GameAnalysisResponse) => void;
+  sessionStatus?: 'loading' | 'authenticated' | 'unauthenticated' | 'error';
 }
 
 const GamesListView: React.FC<{
@@ -176,48 +178,209 @@ const GameAnalysisDashboard: React.FC<GameAnalysisDashboardProps> = ({
   </div>
 );
 
+const AccountConnectionPromptModal: React.FC<{
+  isOpen: boolean;
+  onDismiss: () => void;
+}> = ({ isOpen, onDismiss }) => {
+  if (!isOpen) return null;
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm font-mono"
+    >
+      <div className="bg-surface-container-high border border-outline-variant rounded-2xl w-full max-w-sm p-6 space-y-4 text-center shadow-2xl">
+        <div className="w-12 h-12 rounded-xl bg-primary/20 text-primary flex items-center justify-center mx-auto">
+          <Target className="w-6 h-6" />
+        </div>
+        <div>
+          <h3 className="text-base font-bold text-on-surface">Connect Account</h3>
+          <p className="text-xs text-on-surface-variant mt-1.5 leading-relaxed">
+            Connect your Chess.com account in the Import Games tab to analyze your games.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="w-full py-2 bg-primary text-on-primary font-mono font-bold text-xs rounded-xl hover:bg-primary/90 transition cursor-pointer"
+        >
+          Dismiss
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const GamesListSection: React.FC<{
+  error: string | null;
+  games: GameSummary[];
+  isLoadingGames: boolean;
+  onSelectGame: (id: string) => void;
+  isAccountPromptOpen: boolean;
+  onDismissAccountPrompt: () => void;
+}> = ({
+  error,
+  games,
+  isLoadingGames,
+  onSelectGame,
+  isAccountPromptOpen,
+  onDismissAccountPrompt,
+}) => (
+  <>
+    {error && <div className="max-w-6xl mx-auto px-4 mt-4 text-xs text-error font-mono">{error}</div>}
+    <GamesListView
+      games={games}
+      isLoading={isLoadingGames}
+      onSelectGame={onSelectGame}
+    />
+    <AccountConnectionPromptModal
+      isOpen={isAccountPromptOpen}
+      onDismiss={onDismissAccountPrompt}
+    />
+  </>
+);
+
+function useGameList(
+  initialGameId: string | null,
+  activeAccountId: string | undefined,
+  sessionStatus: 'loading' | 'authenticated' | 'unauthenticated' | 'error' | undefined,
+  setError: (err: string | null) => void
+) {
+  const [games, setGames] = useState<GameSummary[]>([]);
+  const [isLoadingGames, setIsLoadingGames] = useState(false);
+
+  useEffect(() => {
+    if (initialGameId) return;
+
+    if (sessionStatus === 'unauthenticated' || sessionStatus === 'error') {
+      queueMicrotask(() => {
+        setGames([]);
+        setIsLoadingGames(false);
+      });
+      return;
+    }
+
+    if (sessionStatus === 'loading') {
+      queueMicrotask(() => {
+        setIsLoadingGames(true);
+      });
+      return;
+    }
+
+    if (!activeAccountId) {
+      queueMicrotask(() => {
+        setGames([]);
+        setIsLoadingGames(false);
+      });
+      return;
+    }
+
+    let isCurrent = true;
+    queueMicrotask(() => {
+      if (isCurrent) {
+        setIsLoadingGames(true);
+        setError(null);
+      }
+    });
+
+    fetchGames({ page: 0, size: 50, accountId: activeAccountId })
+      .then((res) => {
+        if (isCurrent) setGames(res.content);
+      })
+      .catch((err: unknown) => {
+        if (isCurrent) setError(err instanceof Error ? err.message : 'Failed to load games');
+      })
+      .finally(() => {
+        if (isCurrent) setIsLoadingGames(false);
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [initialGameId, activeAccountId, sessionStatus, setError]);
+
+  return { games, isLoadingGames };
+}
+
+function useSimilaritySearch(setError: (err: string | null) => void) {
+  const [similarityResults, setSimilarityResults] =
+    useState<SimilarPositionsResponse | null>(null);
+  const [similarityMode, setSimilarityMode] = useState<'STRUCTURAL' | 'DYNAMIC'>('STRUCTURAL');
+  const [isSearchingSimilarity, setIsSearchingSimilarity] = useState(false);
+
+  const handleSearchSimilarity = (mode: 'STRUCTURAL' | 'DYNAMIC', fen: string) => {
+    setIsSearchingSimilarity(true);
+    setSimilarityMode(mode);
+    fetchSimilarPositions({ fen, mode, limit: 5 })
+      .then(setSimilarityResults)
+      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Similarity search failed'))
+      .finally(() => setIsSearchingSimilarity(false));
+  };
+
+  return {
+    similarityResults,
+    similarityMode,
+    isSearchingSimilarity,
+    handleSearchSimilarity,
+  };
+}
+
 export const GameAnalysisView: React.FC<GameAnalysisViewProps> = ({
   initialGameId = null,
   initialPlyNumber = null,
   initialThreshold = DEFAULT_EVAL_LOSS_THRESHOLD,
   initialTimingFilters = DEFAULT_TIMING_FILTERS,
   onPracticeMistake,
+  sessionStatus,
 }) => {
-  const [games, setGames] = useState<GameSummary[]>([]);
+  const activeAccount = useSyncExternalStore(
+    activeAccountStore.subscribe,
+    activeAccountStore.getSnapshot,
+    activeAccountStore.getServerSnapshot
+  );
+  const activeAccountId = activeAccount?.id;
+  const [isAccountPromptOpen, setIsAccountPromptOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const { games, isLoadingGames } = useGameList(
+    initialGameId,
+    activeAccountId,
+    sessionStatus,
+    setError
+  );
   const [selectedGameId, setSelectedGameId] = useState<string | null>(initialGameId);
   const [analysis, setAnalysis] = useState<GameAnalysisResponse | null>(null);
   const [selectedPlyNumber, setSelectedPlyNumber] = useState<number | null>(initialPlyNumber);
   const [evalLossThreshold, setEvalLossThreshold] = useState<number>(initialThreshold);
   const [timingFilters, setTimingFilters] =
     useState<DecisionSeverityCategory[]>(initialTimingFilters);
-  const [similarityResults, setSimilarityResults] =
-    useState<SimilarPositionsResponse | null>(null);
-  const [similarityMode, setSimilarityMode] = useState<'STRUCTURAL' | 'DYNAMIC'>('STRUCTURAL');
-  const [isSearchingSimilarity, setIsSearchingSimilarity] = useState(false);
-  const [isLoadingGames, setIsLoadingGames] = useState(!initialGameId);
-  const [error, setError] = useState<string | null>(null);
+
+  const {
+    similarityResults,
+    similarityMode,
+    isSearchingSimilarity,
+    handleSearchSimilarity,
+  } = useSimilaritySearch(setError);
 
   useEffect(() => {
-    let isMounted = true;
     if (!initialGameId) {
-      fetchGames({ page: 0, size: 50 })
-        .then((res) => {
-          if (isMounted) setGames(res.content);
-        })
-        .catch((err: unknown) => {
-          if (isMounted) setError(err instanceof Error ? err.message : 'Failed to load games');
-        })
-        .finally(() => {
-          if (isMounted) setIsLoadingGames(false);
-        });
+      queueMicrotask(() => {
+        setSelectedGameId(null);
+        setAnalysis(null);
+        setSelectedPlyNumber(null);
+        setError(null);
+      });
     }
-    return () => {
-      isMounted = false;
-    };
-  }, [initialGameId]);
+  }, [activeAccountId, initialGameId]);
 
   useEffect(() => {
     if (!selectedGameId) return;
+    if (sessionStatus === 'unauthenticated' || sessionStatus === 'error') {
+      queueMicrotask(() => {
+        setIsAccountPromptOpen(true);
+      });
+      return;
+    }
     let isMounted = true;
     analyzeGame(selectedGameId)
       .then((res) => {
@@ -232,49 +395,33 @@ export const GameAnalysisView: React.FC<GameAnalysisViewProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [selectedGameId, initialPlyNumber]);
+  }, [selectedGameId, initialPlyNumber, sessionStatus]);
 
-  const handleSearchSimilarity = async (mode: 'STRUCTURAL' | 'DYNAMIC', fen: string) => {
-    setIsSearchingSimilarity(true);
-    setSimilarityMode(mode);
-    try {
-      const results = await fetchSimilarPositions({ fen, mode, limit: 5 });
-      setSimilarityResults(results);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Similarity search failed');
-    } finally {
-      setIsSearchingSimilarity(false);
+  const handleSelectGame = (id: string) => {
+    if (sessionStatus === 'unauthenticated' || sessionStatus === 'error') {
+      setIsAccountPromptOpen(true);
+      return;
     }
-  };
-
-  const handleBackToGames = () => {
-    setSelectedGameId(null);
-    setAnalysis(null);
-    setSelectedPlyNumber(null);
     setError(null);
+    setSelectedGameId(id);
   };
 
   if (!selectedGameId || !analysis) {
     return (
-      <>
-        {error && <div className="max-w-6xl mx-auto px-4 mt-4 text-xs text-error font-mono">{error}</div>}
-        <GamesListView
-          games={games}
-          isLoading={isLoadingGames}
-          onSelectGame={(id) => {
-            setError(null);
-            setSelectedGameId(id);
-          }}
-        />
-      </>
+      <GamesListSection
+        error={error}
+        games={games}
+        isLoadingGames={isLoadingGames}
+        onSelectGame={handleSelectGame}
+        isAccountPromptOpen={isAccountPromptOpen}
+        onDismissAccountPrompt={() => setIsAccountPromptOpen(false)}
+      />
     );
   }
 
   const qualifyingPlies = filterQualifyingPlies(analysis.plies, evalLossThreshold, timingFilters);
   const activePly =
-    qualifyingPlies.find((p) => p.plyNumber === selectedPlyNumber) ||
-    qualifyingPlies[0] ||
-    null;
+    qualifyingPlies.find((p) => p.plyNumber === selectedPlyNumber) || qualifyingPlies[0] || null;
 
   return (
     <GameAnalysisDashboard
@@ -287,7 +434,12 @@ export const GameAnalysisView: React.FC<GameAnalysisViewProps> = ({
       similarityResults={similarityResults}
       similarityMode={similarityMode}
       isSearchingSimilarity={isSearchingSimilarity}
-      onBackToGames={handleBackToGames}
+      onBackToGames={() => {
+        setSelectedGameId(null);
+        setAnalysis(null);
+        setSelectedPlyNumber(null);
+        setError(null);
+      }}
       onEvalLossThresholdChange={setEvalLossThreshold}
       onToggleTimingFilter={(cat) => setTimingFilters((prev) => toggleTimingCategory(prev, cat))}
       onSelectPly={setSelectedPlyNumber}
