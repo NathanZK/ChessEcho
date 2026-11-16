@@ -97,3 +97,28 @@ export function toWhitePerspective(evalCp: number, fenOrColor: string): number {
     (trimmed.includes(' ') ? trimmed.split(/\s+/)[1] === 'w' : false);
   return isWhite ? evalCp : -evalCp;
 }
+
+/**
+ * Resolves player color from occurrence metadata, falling back strictly to
+ * the FEN position side-to-move so that positions never default to Black.
+ */
+export function derivePositionPlayerColor(
+  fen: string,
+  occurrenceColor?: string | null
+): 'WHITE' | 'BLACK' {
+  if (occurrenceColor) {
+    const norm = occurrenceColor.trim().toUpperCase();
+    if (norm === 'WHITE' || norm === 'BLACK') return norm;
+  }
+  const turn = fen.trim().split(/\s+/)[1];
+  return turn === 'b' ? 'BLACK' : 'WHITE';
+}
+
+/**
+ * Converts a raw move (UCI or SAN) into canonical SAN using the position FEN.
+ */
+export function resolveCanonicalPuzzleMove(fen: string, rawMove?: string | null): string {
+  if (!rawMove) return '';
+  const canonical = toCanonicalMove(fen, rawMove);
+  return canonical ? canonical.san : rawMove;
+}

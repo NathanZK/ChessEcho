@@ -109,12 +109,18 @@ export const DEFAULT_MOCK_SIMILAR_POSITION = {
   principalVariations: [],
   occurrences: [
     {
+      id: 'occ-sim-1',
       gameId: 'game-sim-1',
       platformGameId: 'chesscom-sim-1',
       playedAt: '2026-11-01T12:00:00Z',
       plyNumber: 5,
+      playedMove: 'Bb5',
       movePlayed: 'Bb5',
       playerColor: 'WHITE',
+      opponentUsername: 'nakamura',
+      timeControl: 'rapid',
+      gameResult: 'win',
+      chessComUrl: 'https://www.chess.com/game/live/101',
     },
   ],
 };

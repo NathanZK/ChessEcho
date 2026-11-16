@@ -5,6 +5,8 @@ import {
   filterQualifyingPlies,
   toggleTimingCategory,
   formatEvaluation,
+  isEngineMistake,
+  isTimingObservation,
   AnalyzedPly,
 } from '../utils/gameAnalysisFilters';
 
@@ -106,5 +108,28 @@ describe('gameAnalysisFilters', () => {
     expect(formatEvaluation(-120)).toBe('-1.20');
     expect(formatEvaluation(0)).toBe('0.00');
     expect(formatEvaluation(null)).toBe('-');
+  });
+
+  it('differentiates engine mistakes and timing observations independently', () => {
+    // Ply 1: good move (loss 0.0), MINOR timing -> timing observation only
+    expect(isEngineMistake(samplePlies[0])).toBe(false);
+    expect(isTimingObservation(samplePlies[0])).toBe(true);
+
+    // Ply 12: blunder (loss 1.55), SIGNIFICANT timing -> both
+    expect(isEngineMistake(samplePlies[1])).toBe(true);
+    expect(isTimingObservation(samplePlies[1])).toBe(true);
+
+    // Ply 24: blunder (loss 5.0), NO_CONCERN timing -> engine mistake only
+    expect(isEngineMistake(samplePlies[2])).toBe(true);
+    expect(isTimingObservation(samplePlies[2])).toBe(false);
+
+    // Neither
+    const normalMove: AnalyzedPly = {
+      ...samplePlies[0],
+      evalLoss: 0.05,
+      decisionSeverity: 'NO_CONCERN',
+    };
+    expect(isEngineMistake(normalMove)).toBe(false);
+    expect(isTimingObservation(normalMove)).toBe(false);
   });
 });
