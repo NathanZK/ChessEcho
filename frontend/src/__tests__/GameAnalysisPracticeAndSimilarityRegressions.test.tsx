@@ -21,7 +21,7 @@ vi.mock('../components/ChessBoardView', () => ({
   ),
 }));
 
-describe('Issue #669 Remediation Regressions', () => {
+describe('Game Analysis Practice and Similarity Regressions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     sessionStorage.clear();
