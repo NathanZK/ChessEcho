@@ -176,4 +176,32 @@ class PositionInvertedIndexTest {
             index.generateCandidates(doc.terms.keys, activeTurn = "w", maxCandidates = 10, alpha = Double.NaN)
         }
     }
+
+    @Test
+    fun `queryCandidates forwards alpha parameter and alters candidate ranking between pawn and piece weighting`() {
+        val index = PositionInvertedIndex()
+        val docPawn =
+            PositionDocument(
+                positionId = UUID.randomUUID(),
+                fen = "fenPawn w - -",
+                canonicalFen = "fenPawn w - -",
+                terms = mapOf("Ie4" to 1.0, "Id4" to 1.0),
+            )
+        val docPiece =
+            PositionDocument(
+                positionId = UUID.randomUUID(),
+                fen = "fenPiece w - -",
+                canonicalFen = "fenPiece w - -",
+                terms = (1..10).associate { "piece|white|knight|s$it" to 1.0 },
+            )
+        index.index(listOf(docPawn, docPiece))
+
+        val queryTerms = setOf("Ie4", "Id4") + (1..10).map { "piece|white|knight|s$it" }
+
+        val pawnFirst = index.queryCandidates(queryTerms, activeTurn = "w", alpha = 1.0)
+        assertEquals(docPawn.positionId, pawnFirst[0].positionId)
+
+        val pieceFirst = index.queryCandidates(queryTerms, activeTurn = "w", alpha = 0.0)
+        assertEquals(docPiece.positionId, pieceFirst[0].positionId)
+    }
 }

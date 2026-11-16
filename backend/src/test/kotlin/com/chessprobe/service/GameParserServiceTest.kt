@@ -120,7 +120,7 @@ class GameParserServiceTest {
                 .thenThrow(AssertionError("File.createTempFile must not be called during game parsing"))
 
             val affectedPositionIds = gameParserService.parseAndSavePositions(listOf(game))
-            assertEquals(2, affectedPositionIds.size)
+            assertEquals(1, affectedPositionIds.size)
         }
     }
 
@@ -155,31 +155,33 @@ class GameParserServiceTest {
 
         val affectedPositionIds = gameParserService.parseAndSavePositions(listOf(game))
 
-        // 3 decision plies for White: e4, Nf3, Bb5
+        // White moves: e4 (ply 1, startpos, excluded), Nf3 (ply 3), Bb5 (ply 5) -> 2 saved positions
         val positionsCaptor = argumentCaptor<List<Position>>()
         verify(positionRepository, times(1)).saveAll(positionsCaptor.capture())
 
         val savedPositions = positionsCaptor.firstValue
-        assertEquals(3, savedPositions.size)
-        assertEquals(3, affectedPositionIds.size)
+        assertEquals(2, savedPositions.size)
+        assertEquals(2, affectedPositionIds.size)
         assertEquals(savedPositions.map { it.id }.toSet(), affectedPositionIds)
 
-        // Before e4 (startpos)
+        // Before e4 (startpos) must NOT be persisted
         val hashStartFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -"
         val digest = java.security.MessageDigest.getInstance("SHA-256")
         val expectedHashStart = digest.digest(hashStartFen.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
 
-        assertTrue(savedPositions.any { it.hash == expectedHashStart }, "Expected start position before e4 not found")
+        kotlin.test.assertFalse(savedPositions.any { it.hash == expectedHashStart }, "Start position before e4 must be excluded")
 
         val occurrencesCaptor = argumentCaptor<List<com.chessprobe.domain.PositionOccurrence>>()
         verify(positionOccurrenceRepository, times(1)).saveAll(occurrencesCaptor.capture())
 
         val savedOccurrences = occurrencesCaptor.firstValue
-        assertEquals(3, savedOccurrences.size)
+        assertEquals(2, savedOccurrences.size)
 
-        val ply1 = savedOccurrences.first { it.plyNumber == 1 }
-        assertEquals("e4", ply1.movePlayed)
-        assertEquals("WHITE", ply1.playerColor)
+        kotlin.test.assertFalse(savedOccurrences.any { it.plyNumber == 1 }, "Ply 1 start position occurrence must be excluded")
+
+        val ply3 = savedOccurrences.first { it.plyNumber == 3 }
+        assertEquals("Nf3", ply3.movePlayed)
+        assertEquals("WHITE", ply3.playerColor)
 
         val ply5 = savedOccurrences.first { it.plyNumber == 5 }
         assertEquals("Bb5", ply5.movePlayed)
@@ -194,25 +196,25 @@ class GameParserServiceTest {
         val appUser = AppUser(email = "test@example.com")
         val chessAccount = ChessAccount(platform = "CHESS_COM", username = "tester")
 
-        // Game 1: 1. d3 d6 2. e3 e6 (2 White positions)
+        // Game 1: 1. d3 d6 2. e3 e6 3. a3 a6 (White positions: after 1... d6, after 2... e6 transposed)
         val game1 =
             Game(
                 chessAccount = chessAccount,
                 platformGameId = "test-game-1",
                 whiteUsername = "tester",
                 blackUsername = "opponent",
-                pgn = "1. d3 d6 2. e3 e6 1/2-1/2",
+                pgn = "1. d3 d6 2. e3 e6 3. a3 a6 1/2-1/2",
                 timeControl = "600",
                 playedAt = Instant.now(),
             )
-        // Game 2: 1. e3 e6 2. d3 d6 (2 White positions)
+        // Game 2: 1. e3 e6 2. d3 d6 3. a3 a6 (White positions: after 1... e6, after 2... d6 transposed)
         val game2 =
             Game(
                 chessAccount = chessAccount,
                 platformGameId = "test-game-2",
                 whiteUsername = "tester",
                 blackUsername = "opponent",
-                pgn = "1. e3 e6 2. d3 d6 1/2-1/2",
+                pgn = "1. e3 e6 2. d3 d6 3. a3 a6 1/2-1/2",
                 timeControl = "600",
                 playedAt = Instant.now(),
             )
@@ -224,8 +226,10 @@ class GameParserServiceTest {
 
         val savedPositions = positionsCaptor.firstValue
 
-        // Game 1 has 2 White positions (before d3, before e3), Game 2 has 2 White positions (before e3, before d3).
-        // The start position is shared in both games.
+        // Start position is excluded. Unique White positions:
+        // 1. after 1... d6 before 2. e3 (G1)
+        // 2. after 1... e6 before 2. d3 (G2)
+        // 3. after 2... e6 / 2... d6 before 3. a3 (transposition shared by both)
         // Total unique White positions across G1 and G2 = 3.
         assertEquals(3, savedPositions.size, "Transpositions must generate the exact same hash and deduplicate")
         assertEquals(3, affectedPositionIds.size)
@@ -240,7 +244,7 @@ class GameParserServiceTest {
         val appUser = AppUser(email = "test@example.com")
         val chessAccount = ChessAccount(platform = "CHESS_COM", username = "tester")
 
-        // Game 1: King moves and returns, losing castling rights (3 White positions: before e4, before Ke2, before Ke1)
+        // Game 1: King moves and returns, losing castling rights (before Ke2, before Ke1)
         val game1 =
             Game(
                 chessAccount = chessAccount,
@@ -251,7 +255,7 @@ class GameParserServiceTest {
                 timeControl = "600",
                 playedAt = Instant.now(),
             )
-        // Game 2: Knight moves and returns, retaining castling rights (3 White positions: before e4, before Nf3, before Ng1)
+        // Game 2: Knight moves and returns, retaining castling rights (before Nf3, before Ng1)
         val game2 =
             Game(
                 chessAccount = chessAccount,
@@ -270,11 +274,12 @@ class GameParserServiceTest {
 
         val savedPositions = positionsCaptor.firstValue
 
-        // Plies 1 (startpos) and 3 (after 1... e5) are identical across both games.
+        // Ply 1 (startpos) is excluded.
+        // Ply 3 (after 1... e5) is identical across both games.
         // Ply 5 (before 3. Ke1 vs before 3. Ng1) differ due to piece placement & castling rights.
-        // Total unique White positions = 2 shared + 1 unique G1 + 1 unique G2 = 4.
-        assertEquals(4, savedPositions.size, "Different castling rights must generate different hashes")
-        assertEquals(4, affectedPositionIds.size)
+        // Total unique White positions = 1 shared + 1 unique G1 + 1 unique G2 = 3.
+        assertEquals(3, savedPositions.size, "Different castling rights must generate different hashes")
+        assertEquals(3, affectedPositionIds.size)
         assertEquals(savedPositions.map { it.id }.toSet(), affectedPositionIds)
     }
 
@@ -307,7 +312,7 @@ class GameParserServiceTest {
                 platformGameId = "ordered-inserts",
                 whiteUsername = "tester",
                 blackUsername = "opponent",
-                pgn = "1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 1/2-1/2",
+                pgn = "1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 b5 1/2-1/2",
                 timeControl = "600",
                 playedAt = Instant.now(),
             )
@@ -415,7 +420,7 @@ class GameParserServiceTest {
 
         val occurrences = argumentCaptor<List<PositionOccurrence>>()
         verify(positionOccurrenceRepository).saveAll(occurrences.capture())
-        val samePlyOccurrences = occurrences.firstValue.filter { it.plyNumber == 1 && it.playerColor == "WHITE" }
+        val samePlyOccurrences = occurrences.firstValue.filter { it.plyNumber == 3 && it.playerColor == "WHITE" }
         assertEquals(2, samePlyOccurrences.size)
 
         // Candidate key: (game_id, position_id, ply_number, player_color).
@@ -565,7 +570,7 @@ class GameParserServiceTest {
                     [Black "opponent"]
                     [TimeControl "7200"]
 
-                    1. e4 {[%clk 1:59:50]} 1... e5 {[%clk 1:59:55]} 2. Nf3 {[%clk 1:59:40.500]} 2... Nc6 {[%clk 1:59:45]} 1/2-1/2
+                    1. e4 {[%clk 1:59:50]} 1... e5 {[%clk 1:59:55]} 2. Nf3 {[%clk 1:59:40.500]} 2... Nc6 {[%clk 1:59:45]} 3. Bb5 {[%clk 1:59:30]} 1/2-1/2
                     """.trimIndent(),
                 timeControl = "7200",
                 playedAt = Instant.now(),
@@ -576,12 +581,13 @@ class GameParserServiceTest {
         val occurrences = argumentCaptor<List<PositionOccurrence>>()
         verify(positionOccurrenceRepository).saveAll(occurrences.capture())
         val captured = occurrences.firstValue
+        // Ply 1 (1. e4, startpos) is excluded. Captured has ply 3 (Nf3) and ply 5 (Bb5).
         assertEquals(2, captured.size)
 
-        // Ply 1: 7200s (7,200,000ms) - 1:59:50 (7,190,000ms) = 10,000ms
-        assertEquals(10_000L, captured[0].decisionTimeMs)
         // Ply 3: starting 7,190,000ms - 1:59:40.500 (7,180,500ms) = 9,500ms
-        assertEquals(9_500L, captured[1].decisionTimeMs)
+        assertEquals(9_500L, captured[0].decisionTimeMs)
+        // Ply 5: starting 7,180,500ms - 1:59:30 (7,170,000ms) = 10,500ms
+        assertEquals(10_500L, captured[1].decisionTimeMs)
     }
 
     @Test
@@ -606,7 +612,7 @@ class GameParserServiceTest {
                     [Result "1/2-1/2"]
                     [TimeControl "180+2"]
 
-                    1. e4 {[%clk 0:03:01.5]} 1... e5 {[%clk 0:03:00.0]} 2. Nf3 {[%clk 0:02:55]} 1/2-1/2
+                    1. e4 {[%clk 0:03:01.5]} 1... e5 {[%clk 0:03:00.0]} 2. Nf3 {[%clk 0:02:55]} 2... Nc6 {[%clk 0:02:52]} 3. Bb5 {[%clk 0:02:50]} 1/2-1/2
                     """.trimIndent(),
                 timeControl = "180+2",
                 playedAt = Instant.now(),
@@ -626,7 +632,7 @@ class GameParserServiceTest {
                     [Black "opponent"]
                     [Result "1/2-1/2"]
 
-                    1. d4 d5 2. c4 1/2-1/2
+                    1. d4 d5 2. c4 e6 3. Nc3 1/2-1/2
                     """.trimIndent(),
                 timeControl = "300",
                 playedAt = Instant.now(),
@@ -637,13 +643,14 @@ class GameParserServiceTest {
         val occurrences = argumentCaptor<List<PositionOccurrence>>()
         verify(positionOccurrenceRepository).saveAll(occurrences.capture())
         val captured = occurrences.firstValue
+        // Ply 1 startpos excluded from both games; each has ply 3 and ply 5
         assertEquals(4, captured.size)
 
         // gameWithClocks:
-        // Ply 1: 0:03:01.5 = 181.5s = 181500ms
-        assertEquals(181500L, captured[0].remainingClockMs)
         // Ply 3: 0:02:55 = 175s = 175000ms
-        assertEquals(175000L, captured[1].remainingClockMs)
+        assertEquals(175000L, captured[0].remainingClockMs)
+        // Ply 5: 0:02:50 = 170s = 170000ms
+        assertEquals(170000L, captured[1].remainingClockMs)
 
         // gameWithoutClocks:
         assertNull(captured[2].remainingClockMs)
@@ -736,10 +743,11 @@ class GameParserServiceTest {
         val occurrences = argumentCaptor<List<PositionOccurrence>>()
         verify(positionOccurrenceRepository).saveAll(occurrences.capture())
         val captured = occurrences.firstValue
-        assertEquals(3, captured.size, "Should extract exactly 3 white user turns despite NAGs and variations")
-        assertEquals(listOf("e4", "Nf3", "Bb5"), captured.map { it.movePlayed })
-        assertEquals(listOf(1, 3, 5), captured.map { it.plyNumber })
-        assertEquals(3, affected.size)
+        // Ply 1 (1. e4, startpos) is excluded. White has ply 3 (Nf3) and ply 5 (Bb5).
+        assertEquals(2, captured.size, "Should extract user turns despite NAGs and variations, excluding start position")
+        assertEquals(listOf("Nf3", "Bb5"), captured.map { it.movePlayed })
+        assertEquals(listOf(3, 5), captured.map { it.plyNumber })
+        assertEquals(2, affected.size)
     }
 }
 
@@ -970,7 +978,7 @@ class GameParserServiceConcurrencyTest {
                 [White "$username"]
                 [Black "opponent"]
 
-                1. e4 e5 1/2-1/2
+                1. e4 e5 2. Nf3 Nc6 1/2-1/2
                 """.trimIndent(),
             timeControl = "600",
             playedAt = Instant.now(),

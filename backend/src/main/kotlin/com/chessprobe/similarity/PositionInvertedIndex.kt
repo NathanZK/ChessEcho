@@ -21,7 +21,8 @@ class PositionInvertedIndex : PositionSimilarityCandidateGenerator {
         queryTerms: Set<String>,
         activeTurn: String,
         maxCandidates: Int = PositionSimilarityCandidateGenerator.DEFAULT_MAX_CANDIDATES,
-    ): List<PositionDocument> = generateCandidates(queryTerms, activeTurn, maxCandidates)
+        alpha: Double? = null,
+    ): List<PositionDocument> = generateCandidates(queryTerms, activeTurn, maxCandidates, alpha = alpha)
 
     fun queryCandidates(
         queryTerms: Set<String>,

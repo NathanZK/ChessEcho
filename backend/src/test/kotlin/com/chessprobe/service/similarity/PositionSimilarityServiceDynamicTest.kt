@@ -525,4 +525,50 @@ class PositionSimilarityServiceDynamicTest {
         assertTrue(result.dynamicSimilarityApplied)
         assertEquals(SearchStatus.COMPLETED, result.queryStatus)
     }
+
+    @Test
+    fun `dynamic similarity retrieval results are identical regardless of alpha parameter value`() {
+        val posId = UUID.randomUUID()
+        val dynTokens = dynamicScorer.extractDynamicTokens(queryFen, listOf("g1f3"))
+        val dynDoc =
+            PositionDocument(
+                positionId = posId,
+                fen = candidateFen1,
+                canonicalFen = PositionDocument.canonicalizeFen(candidateFen1),
+                sideToMove = "w",
+                terms = dynTokens,
+            )
+
+        whenever(personalDynamicCorpusProvider.loadPersonalDynamicPositions(account))
+            .thenReturn(listOf(dynDoc))
+
+        whenever(stockfishService.analyzeMultiPv(eq(queryFen), eq(16), eq(1)))
+            .thenReturn(listOf(EngineCandidate(move = "g1f3", score = EvalScore(cp = 50, mate = null))))
+
+        val game = createTestGame(account)
+        val occ = createTestOccurrence(account, game, posId, candidateFen1, playerColor = "WHITE", movePlayed = "e4", plyNumber = 1)
+        whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
+            .thenReturn(listOf(occ))
+
+        val resultAlpha0 =
+            service.findSimilarPositions(
+                queryFen = queryFen,
+                account = account,
+                mode = SimilarityRetrievalMode.DYNAMIC,
+                alpha = 0.0,
+            )
+
+        val resultAlpha1 =
+            service.findSimilarPositions(
+                queryFen = queryFen,
+                account = account,
+                mode = SimilarityRetrievalMode.DYNAMIC,
+                alpha = 1.0,
+            )
+
+        assertEquals(resultAlpha0.results.size, resultAlpha1.results.size)
+        assertEquals(resultAlpha0.results[0].positionId, resultAlpha1.results[0].positionId)
+        assertEquals(resultAlpha0.results[0].dynamicScore, resultAlpha1.results[0].dynamicScore)
+        assertEquals(resultAlpha0.results[0].score, resultAlpha1.results[0].score)
+    }
 }

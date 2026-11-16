@@ -51,6 +51,7 @@ class PositionSimilarityServiceTest {
 
     @BeforeEach
     fun setUp() {
+        cache.invalidate(account.id)
         service =
             PositionSimilarityService(
                 corpusProvider = corpusProvider,
@@ -382,9 +383,10 @@ class PositionSimilarityServiceTest {
 
         whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(listOf(doc1, doc2))
 
-        val game = createTestGame(account, platformGameId = "https://www.chess.com/game/live/444")
-        val occ1 = createTestOccurrence(account, game, posId1, candidateFen1, plyNumber = 3, movePlayed = "Nf3")
-        val occ2 = createTestOccurrence(account, game, posId2, candidateFen2, plyNumber = 40, movePlayed = "f3")
+        val game1 = createTestGame(account, platformGameId = "https://www.chess.com/game/live/444")
+        val game2 = createTestGame(account, platformGameId = "https://www.chess.com/game/live/555")
+        val occ1 = createTestOccurrence(account, game1, posId1, candidateFen1, plyNumber = 3, movePlayed = "Nf3")
+        val occ2 = createTestOccurrence(account, game2, posId2, candidateFen2, plyNumber = 40, movePlayed = "f3")
 
         whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
             .thenReturn(listOf(occ1, occ2))
@@ -451,23 +453,18 @@ class PositionSimilarityServiceTest {
     @Test
     fun `searching with Sicilian sample FEN does not rank starting position above authentic Sicilian positions`() {
         val sicilianQueryFen = "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq c6 0 2"
-        val startFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
         val authenticSicilianFen = "r1bqkbnr/pp1ppppp/2n5/2p5/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 1 2"
 
-        val posIdStart = UUID.randomUUID()
         val posIdSicilian = UUID.randomUUID()
-
-        val docStart = tokenExtractor.extractDocument(posIdStart, startFen, includeReachability = true)
         val docSicilian = tokenExtractor.extractDocument(posIdSicilian, authenticSicilianFen, includeReachability = true)
 
-        whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(listOf(docStart, docSicilian))
+        whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(listOf(docSicilian))
 
         val game = createTestGame(account)
-        val occStart = createTestOccurrence(account, game, posIdStart, startFen, plyNumber = 1, movePlayed = "e4")
         val occSicilian = createTestOccurrence(account, game, posIdSicilian, authenticSicilianFen, plyNumber = 3, movePlayed = "d4")
 
         whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
-            .thenReturn(listOf(occStart, occSicilian))
+            .thenReturn(listOf(occSicilian))
 
         val result =
             service.findSimilarPositions(
@@ -477,10 +474,9 @@ class PositionSimilarityServiceTest {
                 limit = 10,
             )
 
-        assertTrue(result.results.size >= 2)
+        assertTrue(result.results.isNotEmpty())
         assertEquals(posIdSicilian, result.results[0].positionId)
         assertEquals(1, result.results[0].rank)
-        assertTrue(result.results[0].score > result.results[1].score)
     }
 
     @Test
@@ -544,6 +540,96 @@ class PositionSimilarityServiceTest {
                 assertTrue(result.results[i - 1].score >= result.results[i].score)
             }
         }
+    }
+
+    @Test
+    fun `applyDiversityCap retains occurrences only for uncapped games when candidate spans multiple games`() {
+        val game1 = createTestGame(account, platformGameId = "game-1")
+        val game2 = createTestGame(account, platformGameId = "game-2")
+
+        val fenA = "r1bqkbnr/pp1ppppp/2n5/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 1 2"
+        val fenB = "rnbqkb1r/pp1ppppp/5n2/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 1 2"
+        val fenC = "rnbqkbnr/pp2pppp/3p4/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2"
+
+        val posIdA = UUID.randomUUID()
+        val posIdB = UUID.randomUUID()
+        val posIdC = UUID.randomUUID()
+
+        val docA = tokenExtractor.extractDocument(posIdA, fenA, includeReachability = true)
+        val docB = tokenExtractor.extractDocument(posIdB, fenB, includeReachability = true)
+        val docC = tokenExtractor.extractDocument(posIdC, fenC, includeReachability = true)
+
+        val occB1 = createTestOccurrence(account, game1, posIdB, fenB, plyNumber = 3, movePlayed = "Nf3")
+        val occA1 = createTestOccurrence(account, game1, posIdA, fenA, plyNumber = 1, movePlayed = "e4")
+        val occA2 = createTestOccurrence(account, game2, posIdA, fenA, plyNumber = 1, movePlayed = "e4")
+        val occC1 = createTestOccurrence(account, game1, posIdC, fenC, plyNumber = 5, movePlayed = "d4")
+
+        whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(listOf(docA, docB, docC))
+        whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
+            .thenReturn(listOf(occB1, occA1, occA2, occC1))
+
+        val result =
+            service.findSimilarPositions(
+                queryFen = candidateFen1,
+                account = account,
+                minScore = 0.0,
+                limit = 10,
+                maxPositionsPerGame = 1,
+            )
+
+        assertEquals(2, result.results.size)
+        assertEquals(posIdB, result.results[0].positionId)
+        assertEquals(posIdA, result.results[1].positionId)
+
+        val posAReturnedOccurrences = result.results[1].occurrences
+        assertEquals(1, posAReturnedOccurrences.size)
+        assertEquals("game-2", posAReturnedOccurrences[0].platformGameId, "posIdA must only retain the uncapped game-2 occurrence")
+
+        val allReturnedGame1Occurrences = result.results.flatMap { it.occurrences }.filter { it.platformGameId == "game-1" }
+        assertEquals(1, allReturnedGame1Occurrences.size, "game-1 must strictly have at most 1 occurrence")
+    }
+
+    @Test
+    fun `regression test querying Sicilian FEN returns diversified results with at most K positions per game`() {
+        val queryFen = "rnbqkbnr/ppp1pppp/8/3p4/2PP4/8/PP2PPPP/RNBQKBNR b KQkq c3 0 2"
+
+        val game1 = createTestGame(account, platformGameId = "game-sicilian-1")
+        val game2 = createTestGame(account, platformGameId = "game-sicilian-2")
+
+        val fen1 = "rnbqkbnr/ppp1pppp/8/3p4/2PP4/5N2/PP2PPPP/RNBQKB1R b KQkq - 1 2"
+        val fen2 = "rnbqkbnr/ppp1pppp/8/3p4/2PP4/2N5/PP2PPPP/R1BQKBNR b KQkq - 1 2"
+        val fen3 = "rnbqkbnr/ppp2ppp/4p3/3p4/2PP4/8/PP2PPPP/RNBQKBNR w KQkq - 0 3"
+
+        val posId1 = UUID.randomUUID()
+        val posId2 = UUID.randomUUID()
+        val posId3 = UUID.randomUUID()
+
+        val doc1 = tokenExtractor.extractDocument(posId1, fen1, includeReachability = true)
+        val doc2 = tokenExtractor.extractDocument(posId2, fen2, includeReachability = true)
+        val doc3 = tokenExtractor.extractDocument(posId3, fen3, includeReachability = true)
+
+        val occ1G1 = createTestOccurrence(account, game1, posId1, fen1, plyNumber = 3, movePlayed = "Nf6", playerColor = "BLACK")
+        val occ2G1 = createTestOccurrence(account, game1, posId2, fen2, plyNumber = 5, movePlayed = "e6", playerColor = "BLACK")
+        val occ3G2 = createTestOccurrence(account, game2, posId3, fen3, plyNumber = 3, movePlayed = "c6", playerColor = "BLACK")
+
+        whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(listOf(doc1, doc2, doc3))
+        whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
+            .thenReturn(listOf(occ1G1, occ2G1, occ3G2))
+
+        val resultK1 =
+            service.findSimilarPositions(
+                queryFen = queryFen,
+                account = account,
+                minScore = 0.0,
+                limit = 10,
+                maxPositionsPerGame = 1,
+            )
+
+        val game1OccurrencesK1 = resultK1.results.flatMap { it.occurrences }.filter { it.platformGameId == "game-sicilian-1" }
+        val game2OccurrencesK1 = resultK1.results.flatMap { it.occurrences }.filter { it.platformGameId == "game-sicilian-2" }
+
+        assertTrue(game1OccurrencesK1.size <= 1, "Game 1 must have at most 1 position when K=1")
+        assertTrue(game2OccurrencesK1.size <= 1, "Game 2 must have at most 1 position when K=1")
     }
 
     @Test

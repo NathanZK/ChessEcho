@@ -984,6 +984,8 @@ export async function fetchSimilarPositions(params: {
   depth?: number;
   multiPv?: number;
   mode?: 'STRUCTURAL' | 'DYNAMIC';
+  alpha?: number;
+  maxPositionsPerGame?: number;
 }): Promise<SimilarPositionsResponse> {
   const queryParams = new URLSearchParams();
   queryParams.set('fen', params.fen);
@@ -995,6 +997,8 @@ export async function fetchSimilarPositions(params: {
   if (params.depth !== undefined) queryParams.set('depth', params.depth.toString());
   if (params.multiPv !== undefined) queryParams.set('multiPv', params.multiPv.toString());
   if (params.mode) queryParams.set('mode', params.mode);
+  if (params.alpha !== undefined) queryParams.set('alpha', params.alpha.toString());
+  if (params.maxPositionsPerGame !== undefined) queryParams.set('maxPositionsPerGame', params.maxPositionsPerGame.toString());
 
   const response = await fetch(`${API_BASE_URL}/positions/similar?${queryParams.toString()}`, {
     credentials: 'include',

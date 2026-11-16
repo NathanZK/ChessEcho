@@ -144,7 +144,7 @@ class JpaPersonalDynamicCorpusProviderTest {
     @Test
     fun `loadPersonalDynamicPositions safely rejects incompatible engine config hashes and marks UNANALYZED`() {
         val account = ChessAccount(platform = "CHESS_COM", username = "test_player")
-        val pos = Position(hash = "hash-incompat", fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1")
+        val pos = Position(hash = "hash-incompat", fen = "rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2")
 
         whenever(occurrenceRepository.findDistinctPositionsByChessAccountId(account.id))
             .thenReturn(listOf(pos))

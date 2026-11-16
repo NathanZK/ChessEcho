@@ -41,6 +41,8 @@ class PositionSimilarityController(
         @RequestParam(defaultValue = "1") multiPv: Int,
         @RequestParam(defaultValue = "STRUCTURAL") mode: String,
         @RequestParam(required = false) excludeGameId: UUID?,
+        @RequestParam(defaultValue = "1") maxPositionsPerGame: Int,
+        @RequestParam(defaultValue = "0.60") alpha: Double,
         @OptionalAuthenticatedPrincipal
         @RequestAttribute(name = SessionAuthenticationFilter.PRINCIPAL_ATTRIBUTE, required = false)
         principal: AuthenticatedPrincipal?,
@@ -55,6 +57,12 @@ class PositionSimilarityController(
         if (multiPv !in 1..5) {
             throw IllegalArgumentException("multiPv must be between 1 and 5: $multiPv")
         }
+        if (maxPositionsPerGame < 1) {
+            throw IllegalArgumentException("maxPositionsPerGame must be at least 1: $maxPositionsPerGame")
+        }
+        if (alpha !in 0.0..1.0 || !alpha.isFinite()) {
+            throw IllegalArgumentException("alpha must be finite and between 0.0 and 1.0: $alpha")
+        }
         val validatedFen = fenPositionValidator.validateOrthodoxFen(fen)
         val resolvedLimit = limit.coerceIn(1, 100)
         val account = resolveAccount(accountId, username, principal)
@@ -68,6 +76,8 @@ class PositionSimilarityController(
                 depth = depth,
                 multiPv = multiPv,
                 mode = parsedMode,
+                alpha = alpha,
+                maxPositionsPerGame = maxPositionsPerGame,
                 excludeGameId = excludeGameId,
             )
 

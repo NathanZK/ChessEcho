@@ -326,3 +326,26 @@ export const gameAnalysisReturnStore = createStore<GameAnalysisReturnSnapshot | 
   },
 });
 
+export interface SimilaritySettings {
+  alpha: number;
+}
+
+export const DEFAULT_SIMILARITY_ALPHA = 0.60;
+const SIMILARITY_ALPHA_KEY = 'chessecho_similarity_alpha';
+
+export const similaritySettingsStore = createStore<SimilaritySettings>({
+  read: () => {
+    const saved = window.localStorage.getItem(SIMILARITY_ALPHA_KEY);
+    if (!saved) return { alpha: DEFAULT_SIMILARITY_ALPHA };
+    const parsed = parseFloat(saved);
+    if (Number.isFinite(parsed) && parsed >= 0.0 && parsed <= 1.0) {
+      return { alpha: parsed };
+    }
+    return { alpha: DEFAULT_SIMILARITY_ALPHA };
+  },
+  fallback: () => ({ alpha: DEFAULT_SIMILARITY_ALPHA }),
+  persist: (value) => {
+    window.localStorage.setItem(SIMILARITY_ALPHA_KEY, value.alpha.toString());
+  },
+});
+

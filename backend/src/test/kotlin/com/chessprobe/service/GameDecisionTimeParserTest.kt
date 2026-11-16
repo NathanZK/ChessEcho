@@ -42,7 +42,7 @@ class GameDecisionTimeParserTest {
                     [Black "opponent"]
                     [TimeControl "60+2"]
 
-                    1. e4 {[%clk 0:01:01.5]} e5 {[%clk 0:01:01.0]} 2. Nf3 {[%clk 0:01:01.2]} *
+                    1. e4 {[%clk 0:01:01.5]} e5 {[%clk 0:01:01.0]} 2. Nf3 {[%clk 0:01:01.2]} 2... Nc6 {[%clk 0:01:01.0]} 3. Bb5 {[%clk 0:01:00.7]} *
                     """.trimIndent(),
             )
 
@@ -52,8 +52,9 @@ class GameDecisionTimeParserTest {
         org.mockito.kotlin
             .verify(occurrenceRepository)
             .saveAll(occurrences.capture())
+        // Ply 1 startpos excluded. Ply 3: 61.5s + 2s - 61.2s = 2,300ms. Ply 5: 61.2s + 2s - 60.7s = 2,500ms.
         assertEquals(
-            listOf(500L, 2_300L),
+            listOf(2_300L, 2_500L),
             occurrences.firstValue.sortedBy { it.plyNumber }.map { it.decisionTimeMs },
         )
     }
@@ -101,7 +102,7 @@ class GameDecisionTimeParserTest {
                     [Black "opponent"]
                     [TimeControl "60"]
 
-                    1. e4 {[%clk 0:00:59]} e5 2. Nf3 *
+                    1. e4 {[%clk 0:00:59]} e5 2. Nf3 * 2... Nc6 3. Bb5 *
                     """.trimIndent(),
             )
 
@@ -111,8 +112,9 @@ class GameDecisionTimeParserTest {
         org.mockito.kotlin
             .verify(occurrenceRepository)
             .saveAll(occurrences.capture())
+        // Ply 1 startpos excluded. Ply 3 (Nf3) and Ply 5 (Bb5) preserved.
         assertEquals(2, occurrences.firstValue.size)
-        assertEquals(setOf("e4", "Nf3"), occurrences.firstValue.map { it.movePlayed }.toSet())
+        assertEquals(setOf("Nf3", "Bb5"), occurrences.firstValue.map { it.movePlayed }.toSet())
         assertEquals(2, occurrences.firstValue.count { it.decisionTimeMs == null })
     }
 
@@ -129,7 +131,7 @@ class GameDecisionTimeParserTest {
                     [Black "opponent"]
                     [TimeControl "60"]
 
-                    1. e4 {[%clk 0:00:59]} e5 2. Nf3 {[%clk 0:00:58]} *
+                    1. e4 {[%clk 0:00:59]} e5 2. Nf3 {[%clk 0:00:58]} 2... Nc6 3. Bb5 {[%clk 0:00:57]} *
                     """.trimIndent(),
             )
 
@@ -139,6 +141,7 @@ class GameDecisionTimeParserTest {
         org.mockito.kotlin
             .verify(occurrenceRepository)
             .saveAll(occurrences.capture())
+        // Ply 1 startpos excluded. Ply 3: 59s - 58s = 1,000ms. Ply 5: 58s - 57s = 1,000ms.
         assertEquals(listOf(1_000L, 1_000L), occurrences.firstValue.sortedBy { it.plyNumber }.map { it.decisionTimeMs })
     }
 
@@ -148,14 +151,15 @@ class GameDecisionTimeParserTest {
         val originalGame =
             game(
                 account = account,
-                white = "tester",
+                white = "opponent",
+                black = "tester",
                 pgn =
                     """
-                    [White "tester"]
-                    [Black "opponent"]
+                    [White "opponent"]
+                    [Black "tester"]
                     [TimeControl "60+2"]
 
-                    1. e4 {[%clk 0:01:01.5]} e5 {[%clk 0:01:01.0]} 2. Nf3 {[%clk 0:01:01.2]} *
+                    1. e4 {[%clk 0:01:01.8]} e5 {[%clk 0:01:01.3]} 2. Nf3 {[%clk 0:01:01.6]} 2... Nc6 {[%clk 0:01:01.7]} *
                     """.trimIndent(),
             )
         parser.parseAndSavePositions(listOf(originalGame))
@@ -168,7 +172,7 @@ class GameDecisionTimeParserTest {
         whenever(positionRepository.findByHashIn(any())).thenReturn(existing.map { it.position }.distinct())
         whenever(occurrenceRepository.findByGameIdIn(any())).thenReturn(existing)
 
-        val updatedPgn = originalGame.pgn.replace("0:01:01.5", "0:01:00.5")
+        val updatedPgn = originalGame.pgn.replace("0:01:01.3", "0:01:00.3")
         parser.parseAndSavePositions(listOf(createReplayGame(originalGame, updatedPgn)))
 
         org.mockito.kotlin.verify(occurrenceRepository).updateDecisionTime(
@@ -176,11 +180,11 @@ class GameDecisionTimeParserTest {
             existing[0].position.id,
             existing[0].plyNumber,
             existing[0].playerColor,
-            1_500L,
-            60_500L,
+            1_700L,
+            60_300L,
         )
 
-        val clearedPgn = updatedPgn.replace("{[%clk 0:01:01.2]}", "")
+        val clearedPgn = updatedPgn.replace("{[%clk 0:01:01.7]}", "")
         parser.parseAndSavePositions(listOf(createReplayGame(originalGame, clearedPgn)))
 
         org.mockito.kotlin.verify(occurrenceRepository, org.mockito.kotlin.times(2)).updateDecisionTime(
@@ -220,7 +224,7 @@ class GameDecisionTimeParserTest {
                     [Black "opponent"]
                     [TimeControl "60"]
 
-                    1. e4 {[%clk 0:01:00]} e5 2. Nf3 {[%clk 0:01:00]} *
+                    1. e4 {[%clk 0:01:00]} e5 2. Nf3 {[%clk 0:01:00]} 2... Nc6 3. Bb5 {[%clk 0:01:00]} *
                     """.trimIndent(),
             )
 
@@ -230,6 +234,7 @@ class GameDecisionTimeParserTest {
         org.mockito.kotlin
             .verify(occurrenceRepository)
             .saveAll(occurrences.capture())
+        // Ply 1 startpos excluded. Ply 3 and Ply 5 instant moves.
         assertEquals(
             listOf(0L, 0L),
             occurrences.firstValue.sortedBy { it.plyNumber }.map { it.decisionTimeMs },
@@ -249,7 +254,7 @@ class GameDecisionTimeParserTest {
                     [Black "opponent"]
                     [TimeControl "60+0"]
 
-                    1. e4 {[%clk 0:01:00]} e5 2. Nf3 {[%clk 0:00:58]} *
+                    1. e4 {[%clk 0:01:00]} e5 2. Nf3 {[%clk 0:00:58]} 2... Nc6 3. Bb5 {[%clk 0:00:56]} *
                     """.trimIndent(),
             )
 
@@ -259,6 +264,7 @@ class GameDecisionTimeParserTest {
         org.mockito.kotlin
             .verify(occurrenceRepository)
             .saveAll(occurrences.capture())
+        // Ply 1 startpos excluded. Ply 3 and Ply 5 preserved with null decision time.
         assertEquals(2, occurrences.firstValue.size)
         assertEquals(2, occurrences.firstValue.count { it.decisionTimeMs == null })
     }
@@ -276,7 +282,7 @@ class GameDecisionTimeParserTest {
                     [Black "opponent"]
                     [TimeControl "3600"]
 
-                    1. e4 {[%clk 0:59:00]} e5 2. Nf3 {[%clk 0:58:59]} *
+                    1. e4 {[%clk 0:59:00]} e5 2. Nf3 {[%clk 0:58:59]} 2... Nc6 3. Bb5 {[%clk 0:58:58]} *
                     """.trimIndent(),
             )
 
@@ -286,8 +292,9 @@ class GameDecisionTimeParserTest {
         org.mockito.kotlin
             .verify(occurrenceRepository)
             .saveAll(occurrences.capture())
+        // Ply 1 startpos excluded. Ply 3 (59:00 - 58:59 = 1,000ms), Ply 5 (58:59 - 58:58 = 1,000ms).
         assertEquals(
-            listOf(60_000L, 1_000L),
+            listOf(1_000L, 1_000L),
             occurrences.firstValue.sortedBy { it.plyNumber }.map { it.decisionTimeMs },
         )
     }
@@ -305,7 +312,7 @@ class GameDecisionTimeParserTest {
                     [Black "opponent"]
                     [TimeControl "3600"]
 
-                    1. e4 {[%clk 0:60:00]} e5 *
+                    1. e4 {[%clk 0:60:00]} e5 2. Nf3 *
                     """.trimIndent(),
             )
         parser.parseAndSavePositions(listOf(invalidMinutesGame))
@@ -327,7 +334,7 @@ class GameDecisionTimeParserTest {
                     [Black "opponent"]
                     [TimeControl "60"]
 
-                    1. e4 {[%clk 0:00:60]} e5 *
+                    1. e4 {[%clk 0:00:60]} e5 2. Nf3 *
                     """.trimIndent(),
             )
         parser.parseAndSavePositions(listOf(invalidSecondsGame))
