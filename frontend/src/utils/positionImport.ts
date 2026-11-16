@@ -29,6 +29,25 @@ const VARIATIONS_UNSUPPORTED = "PGN variations aren't supported — paste just t
 const TAG_PAIR = /^\[\s*[A-Za-z0-9_]+\s+"(?:\\.|[^"\\])*"\s*\]/;
 const TAG_PAIR_ANYWHERE = /\[\s*[A-Za-z0-9_]+\s+"(?:\\.|[^"\\])*"\s*\]/;
 
+export const SAMPLE_POSITIONS = [
+  {
+    name: 'Italian Game',
+    fen: 'r1bqk1nr/pppp1ppp/2n5/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4',
+  },
+  {
+    name: 'Sicilian Defense',
+    fen: 'rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq c6 0 2',
+  },
+  {
+    name: 'French Defense',
+    fen: 'rnbqkbnr/pppp1ppp/4p3/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',
+  },
+  {
+    name: "Queen's Gambit",
+    fen: 'rnbqkbnr/ppp1pppp/8/3p4/2PP4/8/PP2PPPP/RNBQKBNR b KQkq c3 0 2',
+  },
+];
+
 export function parseFenInput(input: string): FenParseResult {
   const fen = input.trim();
   if (!fen) {

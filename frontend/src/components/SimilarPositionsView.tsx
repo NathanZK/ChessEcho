@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useSyncExternalStore } from 'react';
 import { StatusBanner } from './StatusBanner';
 import { SectionHeader } from './SectionHeader';
 import { SimilarPositionCard } from './SimilarPositionCard';
@@ -9,7 +9,12 @@ import {
   type SimilarPositionResult,
   fetchSimilarPositions,
 } from '../services/api';
-import { parseFenInput } from '../utils/positionImport';
+import { parseFenInput, SAMPLE_POSITIONS } from '../utils/positionImport';
+import {
+  similaritySettingsStore,
+  DEFAULT_SIMILARITY_ALPHA,
+} from '../utils/browserStores';
+import { StructuralAlphaControl } from './StructuralAlphaControl';
 import type { PositionExplorationStart } from './ExplorePositionModal';
 
 export interface SimilarPositionsReturnSnapshot {
@@ -20,6 +25,7 @@ export interface SimilarPositionsReturnSnapshot {
   activeAccountId: string | null;
   limit?: number;
   mode?: 'STRUCTURAL' | 'DYNAMIC';
+  alpha?: number;
 }
 
 export interface SimilarPositionsViewProps {
@@ -29,25 +35,6 @@ export interface SimilarPositionsViewProps {
   onSnapshotChange?: (snapshot: SimilarPositionsReturnSnapshot | null) => void;
   initialSnapshot?: SimilarPositionsReturnSnapshot | null;
 }
-
-const SAMPLE_POSITIONS = [
-  {
-    name: 'Italian Game',
-    fen: 'r1bqk1nr/pppp1ppp/2n5/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4',
-  },
-  {
-    name: 'Sicilian Defense',
-    fen: 'rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq c6 0 2',
-  },
-  {
-    name: 'French Defense',
-    fen: 'rnbqkbnr/pppp1ppp/4p3/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2',
-  },
-  {
-    name: "Queen's Gambit",
-    fen: 'rnbqkbnr/ppp1pppp/8/3p4/2PP4/8/PP2PPPP/RNBQKBNR b KQkq c3 0 2',
-  },
-];
 
 const SUPPORTED_LIMITS = [5, 10, 20, 30, 40, 50] as const;
 const DEFAULT_LIMIT = 20;
@@ -68,6 +55,14 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
   const [limit, setLimit] = useState<number>(initialSnapshot?.limit ?? DEFAULT_LIMIT);
   const [retrievalMode, setRetrievalMode] = useState<'STRUCTURAL' | 'DYNAMIC'>(
     initialSnapshot?.mode ?? 'STRUCTURAL'
+  );
+  const similaritySettings = useSyncExternalStore(
+    similaritySettingsStore.subscribe,
+    similaritySettingsStore.getSnapshot,
+    similaritySettingsStore.getServerSnapshot
+  );
+  const [alpha, setAlpha] = useState<number>(
+    initialSnapshot?.alpha ?? similaritySettings.alpha ?? DEFAULT_SIMILARITY_ALPHA
   );
   const [inputError, setInputError] = useState<string | null>(null);
   const [incompletePiecePlacement, setIncompletePiecePlacement] = useState<string | null>(null);
@@ -92,6 +87,8 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
     selectedOccurrenceId: initialSnapshot?.selectedOccurrenceId ?? null,
     activeAccountId: connectedAccount?.id ?? guestUsername ?? null,
     limit: initialSnapshot?.limit ?? DEFAULT_LIMIT,
+    mode: initialSnapshot?.mode ?? 'STRUCTURAL',
+    alpha: initialSnapshot?.alpha ?? similaritySettings.alpha ?? DEFAULT_SIMILARITY_ALPHA,
   });
 
   useEffect(() => {
@@ -102,31 +99,36 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
       selectedOccurrenceId,
       activeAccountId: activeAccountIdentifier,
       limit,
+      mode: retrievalMode,
+      alpha,
     };
-  }, [queryFen, fenInput, results, selectedOccurrenceId, activeAccountIdentifier, limit]);
+  }, [queryFen, fenInput, results, selectedOccurrenceId, activeAccountIdentifier, limit, retrievalMode, alpha]);
 
-  const handleFenChange = (value: string) => {
-    setFenInput(value);
+  const resetFenErrors = () => {
     if (inputError) setInputError(null);
     if (incompletePiecePlacement) setIncompletePiecePlacement(null);
   };
 
+  const handleFenChange = (value: string) => {
+    setFenInput(value);
+    resetFenErrors();
+  };
+
   const handleClearFen = () => {
     setFenInput('');
-    setInputError(null);
-    setIncompletePiecePlacement(null);
+    resetFenErrors();
   };
 
   const handleSampleClick = (fen: string) => {
     setFenInput(fen);
-    setInputError(null);
-    setIncompletePiecePlacement(null);
+    resetFenErrors();
   };
 
   const executeSearch = async (
     validFenString: string,
     searchLimit: number = limit,
-    searchMode: 'STRUCTURAL' | 'DYNAMIC' = retrievalMode
+    searchMode: 'STRUCTURAL' | 'DYNAMIC' = retrievalMode,
+    searchAlpha: number = alpha
   ) => {
     if (!connectedAccount && !guestUsername) {
       setSearchError('Connect a Chess.com account or specify a guest username to search.');
@@ -146,6 +148,7 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
         username: !connectedAccount ? guestUsername : undefined,
         limit: searchLimit,
         mode: searchMode,
+        alpha: searchMode === 'STRUCTURAL' ? searchAlpha : undefined,
       });
 
       if (currentVersion !== requestVersionRef.current) return;
@@ -166,6 +169,7 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
         activeAccountId: activeAccountIdentifier,
         limit: searchLimit,
         mode: searchMode,
+        alpha: searchAlpha,
       };
       latestSnapshotRef.current = newSnapshot;
       onSnapshotChangeRef.current?.(newSnapshot);
@@ -191,7 +195,22 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
     onSnapshotChangeRef.current?.(updatedSnapshot);
 
     if (hasSearched && queryFen) {
-      void executeSearch(queryFen, limit, newMode);
+      void executeSearch(queryFen, limit, newMode, alpha);
+    }
+  };
+
+  const handleAlphaChange = (newAlpha: number) => {
+    setAlpha(newAlpha);
+    similaritySettingsStore.set({ alpha: newAlpha });
+    const updatedSnapshot: SimilarPositionsReturnSnapshot = {
+      ...latestSnapshotRef.current,
+      alpha: newAlpha,
+    };
+    latestSnapshotRef.current = updatedSnapshot;
+    onSnapshotChangeRef.current?.(updatedSnapshot);
+
+    if (hasSearched && queryFen && retrievalMode === 'STRUCTURAL') {
+      void executeSearch(queryFen, limit, retrievalMode, newAlpha);
     }
   };
 
@@ -205,7 +224,7 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
       return;
     }
 
-    await executeSearch(parseResult.fen, limit);
+    await executeSearch(parseResult.fen, limit, retrievalMode, alpha);
   };
 
   const handleLimitChange = (newLimit: number) => {
@@ -218,7 +237,7 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
     onSnapshotChangeRef.current?.(updatedSnapshot);
 
     if (hasSearched && queryFen) {
-      void executeSearch(queryFen, newLimit);
+      void executeSearch(queryFen, newLimit, retrievalMode, alpha);
     }
   };
 
@@ -226,7 +245,7 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
     if (!incompletePiecePlacement) return;
     const completedFen = `${incompletePiecePlacement} ${turn} - - 0 1`;
     setFenInput(completedFen);
-    await executeSearch(completedFen, limit);
+    await executeSearch(completedFen, limit, retrievalMode, alpha);
   };
 
   const handleExplore = (fen: string) => {
@@ -314,30 +333,21 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
                 role="group"
                 aria-label="Retrieval Mode"
               >
-                <button
-                  type="button"
-                  aria-pressed={retrievalMode === 'STRUCTURAL'}
-                  onClick={() => handleModeChange('STRUCTURAL')}
-                  className={`px-3 py-1.5 rounded-lg font-medium transition cursor-pointer ${
-                    retrievalMode === 'STRUCTURAL'
-                      ? 'bg-surface-container-high text-primary font-semibold shadow-sm'
-                      : 'text-on-surface-variant hover:text-on-surface'
-                  }`}
-                >
-                  Structural
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={retrievalMode === 'DYNAMIC'}
-                  onClick={() => handleModeChange('DYNAMIC')}
-                  className={`px-3 py-1.5 rounded-lg font-medium transition cursor-pointer ${
-                    retrievalMode === 'DYNAMIC'
-                      ? 'bg-surface-container-high text-primary font-semibold shadow-sm'
-                      : 'text-on-surface-variant hover:text-on-surface'
-                  }`}
-                >
-                  Dynamic
-                </button>
+                {(['STRUCTURAL', 'DYNAMIC'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    aria-pressed={retrievalMode === mode}
+                    onClick={() => handleModeChange(mode)}
+                    className={`px-3 py-1.5 rounded-lg font-medium transition cursor-pointer ${
+                      retrievalMode === mode
+                        ? 'bg-surface-container-high text-primary font-semibold shadow-sm'
+                        : 'text-on-surface-variant hover:text-on-surface'
+                    }`}
+                  >
+                    {mode === 'STRUCTURAL' ? 'Structural' : 'Dynamic'}
+                  </button>
+                ))}
               </div>
 
               <label htmlFor="limit-select" className="sr-only">
@@ -363,17 +373,10 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
                 disabled={isLoading || !fenInput.trim() || !isAccountAvailable}
                 className="inline-flex items-center gap-2 rounded-xl bg-primary-container hover:bg-primary px-5 py-2.5 text-sm font-semibold font-mono text-on-primary-container shadow-sm disabled:opacity-50 disabled:cursor-not-allowed transition cursor-pointer"
               >
-                {isLoading ? (
-                  <>
-                    <span className="material-symbols-outlined text-base animate-spin">sync</span>
-                    <span>Searching...</span>
-                  </>
-                ) : (
-                  <>
-                    <span className="material-symbols-outlined text-base">search</span>
-                    <span>Search</span>
-                  </>
-                )}
+                <span className={`material-symbols-outlined text-base ${isLoading ? 'animate-spin' : ''}`}>
+                  {isLoading ? 'sync' : 'search'}
+                </span>
+                <span>{isLoading ? 'Searching...' : 'Search'}</span>
               </button>
             </div>
           </div>
@@ -387,25 +390,30 @@ export const SimilarPositionsView: React.FC<SimilarPositionsViewProps> = ({
               {incompletePiecePlacement && (
                 <div className="flex items-center gap-2 pt-1">
                   <span className="text-xs font-mono text-on-surface-variant">Set active color:</span>
-                  <button
-                    type="button"
-                    onClick={() => handleSelectActiveColor('w')}
-                    className="rounded-lg border border-outline-variant bg-surface-container px-3 py-1 text-xs font-mono font-medium text-on-surface hover:border-primary transition cursor-pointer"
-                  >
-                    White to move
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSelectActiveColor('b')}
-                    className="rounded-lg border border-outline-variant bg-surface-container px-3 py-1 text-xs font-mono font-medium text-on-surface hover:border-primary transition cursor-pointer"
-                  >
-                    Black to move
-                  </button>
+                  {(['w', 'b'] as const).map((turn) => (
+                    <button
+                      key={turn}
+                      type="button"
+                      onClick={() => handleSelectActiveColor(turn)}
+                      className="rounded-lg border border-outline-variant bg-surface-container px-3 py-1 text-xs font-mono font-medium text-on-surface hover:border-primary transition cursor-pointer"
+                    >
+                      {turn === 'w' ? 'White to move' : 'Black to move'}
+                    </button>
+                  ))}
                 </div>
               )}
             </div>
           )}
         </div>
+
+        {/* Structural Similarity Alpha Weighting Dial/Slider */}
+        {retrievalMode === 'STRUCTURAL' && (
+          <StructuralAlphaControl
+            alpha={alpha}
+            isLoading={isLoading}
+            onAlphaChange={handleAlphaChange}
+          />
+        )}
 
         {/* Starter Sample Triggers */}
         <div className="space-y-1.5 pt-1">

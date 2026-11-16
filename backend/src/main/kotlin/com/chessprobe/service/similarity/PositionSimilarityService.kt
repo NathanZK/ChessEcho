@@ -132,6 +132,7 @@ class PositionSimilarityService(
             depth = depth,
             multiPv = multiPv,
             mode = mode,
+            alpha = DEFAULT_ALPHA,
             maxPositionsPerGame = DEFAULT_MAX_POSITIONS_PER_GAME,
             excludeGameId = excludeGameId,
         )
@@ -145,6 +146,7 @@ class PositionSimilarityService(
         depth: Int = DEFAULT_DEPTH,
         multiPv: Int = DEFAULT_MULTI_PV,
         mode: SimilarityRetrievalMode = SimilarityRetrievalMode.STRUCTURAL,
+        alpha: Double = DEFAULT_ALPHA,
         maxPositionsPerGame: Int = DEFAULT_MAX_POSITIONS_PER_GAME,
         excludeGameId: UUID? = null,
     ): SimilarPositionsResult {
@@ -152,7 +154,7 @@ class PositionSimilarityService(
         val resolvedLimit = limit.coerceIn(1, MAX_LIMIT)
         return when (mode) {
             SimilarityRetrievalMode.STRUCTURAL ->
-                findStructuralSimilarPositions(validFen, account, minScore, resolvedLimit, maxPositionsPerGame, excludeGameId)
+                findStructuralSimilarPositions(validFen, account, minScore, resolvedLimit, alpha, maxPositionsPerGame, excludeGameId)
             SimilarityRetrievalMode.DYNAMIC ->
                 findDynamicSimilarPositions(validFen, account, resolvedLimit, depth, multiPv, maxPositionsPerGame, excludeGameId)
         }
@@ -163,6 +165,7 @@ class PositionSimilarityService(
         account: ChessAccount,
         minScore: Double,
         limit: Int,
+        alpha: Double = DEFAULT_ALPHA,
         maxPositionsPerGame: Int = DEFAULT_MAX_POSITIONS_PER_GAME,
         excludeGameId: UUID? = null,
     ): SimilarPositionsResult {
@@ -174,7 +177,13 @@ class PositionSimilarityService(
 
         val index = getOrBuildIndex(account) ?: return emptyResult(validFen, mode = "STRUCTURAL")
 
-        val candidateDocs = index.queryCandidates(queryDoc.terms.keys, activeTurn = activeTurn, maxCandidates = MAX_CANDIDATES)
+        val candidateDocs =
+            index.queryCandidates(
+                queryTerms = queryDoc.terms.keys,
+                activeTurn = activeTurn,
+                maxCandidates = MAX_CANDIDATES,
+                alpha = alpha,
+            )
         if (candidateDocs.isEmpty()) {
             return emptyResult(validFen, mode = "STRUCTURAL")
         }
@@ -748,29 +757,41 @@ class PositionSimilarityService(
         val gameCounts = mutableMapOf<UUID, Int>()
         val accepted = mutableListOf<Pair<T, List<PositionOccurrence>>>()
 
-        for (candidate in candidates) {
-            val occurrences = candidate.second
-            val gameIds = occurrences.map { it.game.id }.distinct()
-
-            val isEligible = gameIds.isEmpty() || gameIds.any { (gameCounts[it] ?: 0) < maxPositionsPerGame }
-
-            if (isEligible) {
-                accepted.add(candidate)
-                for (gameId in gameIds) {
-                    gameCounts[gameId] = (gameCounts[gameId] ?: 0) + 1
-                }
-                if (accepted.size >= limit) {
-                    break
-                }
+        for ((candidate, occurrences) in candidates) {
+            val retained = filterEligibleOccurrences(occurrences, gameCounts, maxPositionsPerGame) ?: continue
+            accepted.add(candidate to retained)
+            recordGameCounts(retained, gameCounts)
+            if (accepted.size >= limit) {
+                break
             }
         }
 
         return accepted
     }
 
+    private fun filterEligibleOccurrences(
+        occurrences: List<PositionOccurrence>,
+        gameCounts: Map<UUID, Int>,
+        maxPositionsPerGame: Int,
+    ): List<PositionOccurrence>? {
+        if (occurrences.isEmpty()) return occurrences
+        val eligible = occurrences.filter { (gameCounts[it.game.id] ?: 0) < maxPositionsPerGame }
+        return eligible.ifEmpty { null }
+    }
+
+    private fun recordGameCounts(
+        occurrences: List<PositionOccurrence>,
+        gameCounts: MutableMap<UUID, Int>,
+    ) {
+        for (gameId in occurrences.map { it.game.id }.distinct()) {
+            gameCounts[gameId] = (gameCounts[gameId] ?: 0) + 1
+        }
+    }
+
     companion object {
         const val DEFAULT_LIMIT = 20
-        const val DEFAULT_MAX_POSITIONS_PER_GAME = 3
+        const val DEFAULT_MAX_POSITIONS_PER_GAME = 1
+        const val DEFAULT_ALPHA = 0.60
         const val MAX_LIMIT = 100
         const val MAX_CANDIDATES = 200
         const val MAX_ENGINE_SHORTLIST = 100

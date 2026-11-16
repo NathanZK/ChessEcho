@@ -152,21 +152,23 @@ class GameParserService(
 
             if (isUserTurn) {
                 val rawFen = board.fen
-                val hash = generateHash(rawFen)
-                val position = allPositions.getOrPut(hash) { Position(hash = hash, fen = rawFen) }
+                if (!isStandardStartFen(rawFen)) {
+                    val hash = generateHash(rawFen)
+                    val position = allPositions.getOrPut(hash) { Position(hash = hash, fen = rawFen) }
 
-                occurrences.add(
-                    PositionOccurrence(
-                        game = dbGame,
-                        position = position,
-                        chessAccount = dbGame.chessAccount,
-                        plyNumber = index + 1,
-                        movePlayed = move.san,
-                        playerColor = userColor,
-                        decisionTimeMs = decisionTimes[index + 1],
-                        remainingClockMs = remainingClocks[index + 1],
-                    ),
-                )
+                    occurrences.add(
+                        PositionOccurrence(
+                            game = dbGame,
+                            position = position,
+                            chessAccount = dbGame.chessAccount,
+                            plyNumber = index + 1,
+                            movePlayed = move.san,
+                            playerColor = userColor,
+                            decisionTimeMs = decisionTimes[index + 1],
+                            remainingClockMs = remainingClocks[index + 1],
+                        ),
+                    )
+                }
             }
             board.doMove(move)
         }

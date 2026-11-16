@@ -67,18 +67,18 @@ class GameParserServiceAttributionTest {
         val savedOccurrences = occurrencesCaptor.firstValue
 
         // Total half moves = 5 (e4, e5, Nf3, Nc6, Bb5)
-        // White moves (user) = 3 (ply 1: e4, ply 3: Nf3, ply 5: Bb5)
+        // White moves (user) = 3 (ply 1: e4 [startpos, excluded], ply 3: Nf3, ply 5: Bb5)
         // Black moves (opponent) = 2 (ply 2: e5, ply 4: Nc6) -> MUST BE EXCLUDED!
-        assertEquals(3, savedOccurrences.size)
+        assertEquals(2, savedOccurrences.size)
 
         assertTrue(savedOccurrences.all { it.playerColor == "WHITE" })
         assertTrue(savedOccurrences.all { it.chessAccount.username == "gothamchess" })
 
         val plies = savedOccurrences.map { it.plyNumber }.sorted()
-        assertEquals(listOf(1, 3, 5), plies)
+        assertEquals(listOf(3, 5), plies)
 
         val moves = savedOccurrences.map { it.movePlayed }
-        assertEquals(listOf("e4", "Nf3", "Bb5"), moves)
+        assertEquals(listOf("Nf3", "Bb5"), moves)
     }
 
     @Test

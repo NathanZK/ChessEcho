@@ -168,6 +168,8 @@ class ControllerContractVerificationTest {
                 depth = eq(8),
                 multiPv = eq(1),
                 mode = eq(SimilarityRetrievalMode.STRUCTURAL),
+                alpha = eq(0.60),
+                maxPositionsPerGame = eq(1),
                 excludeGameId = isNull(),
             ),
         ).thenReturn(createSampleSimilarPositionsResult(fen, positionId))

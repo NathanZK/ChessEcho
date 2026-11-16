@@ -165,7 +165,7 @@ class Issue417AnalysisTerminalStateIntegrationTest : AbstractIntegrationTest() {
         [Black "opponent$sequence"]
         [Result "1-0"]
 
-        1. e4 e5 2. Nf3 Nc6 3. Bb5 1-0
+        1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 4. Ba4 1-0
         """.trimIndent()
 
     private fun execute(account: ChessAccount): AsyncJob {

@@ -242,7 +242,9 @@ class SimilarPositionsControllerIntegrationTest {
         val account = createAccount("owner-user-${UUID.randomUUID()}")
         connectAccount(userSession.principal.appUserId, account)
 
-        val game = createGame(account, "https://www.chess.com/game/live/111222333")
+        val game1 = createGame(account, "https://www.chess.com/game/live/111222333")
+        val game2 = createGame(account, "https://www.chess.com/game/live/111222334")
+        val game3 = createGame(account, "https://www.chess.com/game/live/111222335")
         val posFen1 = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3"
         val posFen2 = "r1bqkbnr/pppp1ppp/2n5/4p3/3P4/5N2/PPP1PPPP/RNBQKB1R w KQkq - 2 3"
         val posFen3 = "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4"
@@ -251,9 +253,9 @@ class SimilarPositionsControllerIntegrationTest {
         val pos2 = createPosition(posFen2)
         val pos3 = createPosition(posFen3)
 
-        createOccurrence(game, pos1, 4, "Nf3")
-        createOccurrence(game, pos2, 4, "d4")
-        createOccurrence(game, pos3, 6, "Bc4")
+        createOccurrence(game1, pos1, 4, "Nf3")
+        createOccurrence(game2, pos2, 4, "d4")
+        createOccurrence(game3, pos3, 6, "Bc4")
 
         val queryFen = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/2N5/PPPP1PPP/R1BQKBNR w KQkq - 2 3"
 

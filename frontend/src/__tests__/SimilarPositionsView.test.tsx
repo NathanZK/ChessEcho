@@ -1,6 +1,6 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {
   SimilarPositionsView,
@@ -223,14 +223,15 @@ describe('SimilarPositionsView', () => {
     await user.click(screen.getByRole('button', { name: /Search/i }));
 
     await waitFor(() => {
-      expect(api.fetchSimilarPositions).toHaveBeenCalledWith({
-        fen: validFen,
-        accountId: mockConnectedAccount.id,
-        username: undefined,
-        minScore: undefined,
-        limit: 20,
-        mode: 'STRUCTURAL',
-      });
+      expect(api.fetchSimilarPositions).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fen: validFen,
+          accountId: mockConnectedAccount.id,
+          limit: 20,
+          mode: 'STRUCTURAL',
+          alpha: 0.6,
+        })
+      );
     });
 
     expect(screen.queryByText(/Evaluated 120 candidate positions/i)).not.toBeInTheDocument();
@@ -361,14 +362,15 @@ describe('SimilarPositionsView', () => {
     await user.click(screen.getByRole('button', { name: /Search/i }));
 
     await waitFor(() => {
-      expect(api.fetchSimilarPositions).toHaveBeenCalledWith({
-        fen: validFen,
-        accountId: mockConnectedAccount.id,
-        username: undefined,
-        minScore: undefined,
-        limit: 20,
-        mode: 'STRUCTURAL',
-      });
+      expect(api.fetchSimilarPositions).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fen: validFen,
+          accountId: mockConnectedAccount.id,
+          limit: 20,
+          mode: 'STRUCTURAL',
+          alpha: 0.6,
+        })
+      );
     });
 
     // Results are now displayed. Changing limit should trigger an immediate re-fetch.
@@ -376,14 +378,15 @@ describe('SimilarPositionsView', () => {
     await user.selectOptions(limitSelect, '10');
 
     await waitFor(() => {
-      expect(api.fetchSimilarPositions).toHaveBeenCalledWith({
-        fen: validFen,
-        accountId: mockConnectedAccount.id,
-        username: undefined,
-        minScore: undefined,
-        limit: 10,
-        mode: 'STRUCTURAL',
-      });
+      expect(api.fetchSimilarPositions).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fen: validFen,
+          accountId: mockConnectedAccount.id,
+          limit: 10,
+          mode: 'STRUCTURAL',
+          alpha: 0.6,
+        })
+      );
     });
   });
 
@@ -424,14 +427,15 @@ describe('SimilarPositionsView', () => {
     await user.click(screen.getByRole('button', { name: /Search/i }));
 
     await waitFor(() => {
-      expect(api.fetchSimilarPositions).toHaveBeenCalledWith({
-        fen: validFen,
-        accountId: mockConnectedAccount.id,
-        username: undefined,
-        minScore: undefined,
-        limit: 40,
-        mode: 'STRUCTURAL',
-      });
+      expect(api.fetchSimilarPositions).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fen: validFen,
+          accountId: mockConnectedAccount.id,
+          limit: 40,
+          mode: 'STRUCTURAL',
+          alpha: 0.6,
+        })
+      );
     });
 
     expect(onSnapshotChange).toHaveBeenCalledWith(
@@ -561,5 +565,91 @@ describe('SimilarPositionsView', () => {
 
     const drawBadge = screen.getByText('stalemate');
     expect(drawBadge).toHaveClass('text-amber-400');
+  });
+
+  it('renders continuous alpha slider in structural mode and updates value', async () => {
+    const user = userEvent.setup();
+    render(
+      <SimilarPositionsView
+        connectedAccount={mockConnectedAccount}
+        onExplorePosition={vi.fn()}
+      />
+    );
+
+    const slider = screen.getByLabelText(/Structural similarity weight/i) as HTMLInputElement;
+    expect(slider).toBeInTheDocument();
+    expect(slider.type).toBe('range');
+    expect(slider.min).toBe('0');
+    expect(slider.max).toBe('1');
+    expect(slider.step).toBe('0.05');
+    expect(Number(slider.value)).toBe(0.6);
+
+    expect(screen.getByText('Piece Placement (0.0)')).toBeInTheDocument();
+    expect(screen.getByText('Balanced (0.6)')).toBeInTheDocument();
+    expect(screen.getByText('Pawn Structure (1.0)')).toBeInTheDocument();
+
+    // In Dynamic mode, slider is hidden
+    await user.click(screen.getByRole('button', { name: 'Dynamic' }));
+    expect(screen.queryByLabelText(/Structural similarity weight/i)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Structural' }));
+    expect(screen.getByLabelText(/Structural similarity weight/i)).toBeInTheDocument();
+  });
+
+  it('persists alpha changes to similaritySettingsStore', async () => {
+    const { similaritySettingsStore } = await import('../utils/browserStores');
+    render(
+      <SimilarPositionsView
+        connectedAccount={mockConnectedAccount}
+        onExplorePosition={vi.fn()}
+      />
+    );
+
+    const slider = screen.getByLabelText(/Structural similarity weight/i);
+    fireEvent.change(slider, { target: { value: '0.85' } });
+
+    expect(similaritySettingsStore.getSnapshot().alpha).toBe(0.85);
+  });
+
+  it('passes alpha to fetchSimilarPositions only in structural mode', async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.fetchSimilarPositions).mockResolvedValue(mockResponse);
+
+    render(
+      <SimilarPositionsView
+        connectedAccount={mockConnectedAccount}
+        onExplorePosition={vi.fn()}
+      />
+    );
+
+    const slider = screen.getByLabelText(/Structural similarity weight/i);
+    fireEvent.change(slider, { target: { value: '0.75' } });
+
+    const input = screen.getByLabelText(/FEN Position/i);
+    await user.type(input, validFen);
+    await user.click(screen.getByRole('button', { name: /Search/i }));
+
+    await waitFor(() => {
+      expect(api.fetchSimilarPositions).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fen: validFen,
+          mode: 'STRUCTURAL',
+          alpha: 0.75,
+        })
+      );
+    });
+
+    // Switch to Dynamic mode: alpha should be undefined
+    await user.click(screen.getByRole('button', { name: 'Dynamic' }));
+
+    await waitFor(() => {
+      expect(api.fetchSimilarPositions).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          fen: validFen,
+          mode: 'DYNAMIC',
+          alpha: undefined,
+        })
+      );
+    });
   });
 });

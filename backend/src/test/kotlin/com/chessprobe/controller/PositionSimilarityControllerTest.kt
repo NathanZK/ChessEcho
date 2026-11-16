@@ -111,6 +111,8 @@ class PositionSimilarityControllerTest {
                 depth = eq(8),
                 multiPv = eq(2),
                 mode = eq(SimilarityRetrievalMode.STRUCTURAL),
+                alpha = eq(0.60),
+                maxPositionsPerGame = eq(1),
                 excludeGameId = anyOrNull(),
             ),
         ).thenReturn(mockResult)
@@ -145,6 +147,8 @@ class PositionSimilarityControllerTest {
             depth = eq(8),
             multiPv = eq(2),
             mode = eq(SimilarityRetrievalMode.STRUCTURAL),
+            alpha = eq(0.60),
+            maxPositionsPerGame = eq(1),
             excludeGameId = anyOrNull(),
         )
     }
@@ -178,6 +182,8 @@ class PositionSimilarityControllerTest {
                 depth = eq(8),
                 multiPv = eq(1),
                 mode = eq(SimilarityRetrievalMode.DYNAMIC),
+                alpha = eq(0.60),
+                maxPositionsPerGame = eq(1),
                 excludeGameId = anyOrNull(),
             ),
         ).thenReturn(mockResult)
@@ -199,6 +205,8 @@ class PositionSimilarityControllerTest {
             depth = eq(8),
             multiPv = eq(1),
             mode = eq(SimilarityRetrievalMode.DYNAMIC),
+            alpha = eq(0.60),
+            maxPositionsPerGame = eq(1),
             excludeGameId = anyOrNull(),
         )
     }
@@ -220,6 +228,8 @@ class PositionSimilarityControllerTest {
                 depth = eq(8),
                 multiPv = eq(1),
                 mode = eq(SimilarityRetrievalMode.STRUCTURAL),
+                alpha = eq(0.60),
+                maxPositionsPerGame = eq(1),
                 excludeGameId = eq(excludeId),
             ),
         ).thenReturn(mockResult)
@@ -240,7 +250,231 @@ class PositionSimilarityControllerTest {
             depth = eq(8),
             multiPv = eq(1),
             mode = eq(SimilarityRetrievalMode.STRUCTURAL),
+            alpha = eq(0.60),
+            maxPositionsPerGame = eq(1),
             excludeGameId = eq(excludeId),
+        )
+    }
+
+    @Test
+    fun `rejects maxPositionsPerGame less than 1 with 400 bad request`() {
+        whenever(accountOwnershipService.resolvePrivateRead(eq(Platform.CHESS_COM), eq("testuser"), anyOrNull()))
+            .thenReturn(testAccount)
+
+        mockMvc
+            .perform(
+                get("/api/positions/similar")
+                    .param("fen", queryFen)
+                    .param("username", "testuser")
+                    .param("maxPositionsPerGame", "0"),
+            ).andExpect(status().isBadRequest)
+
+        mockMvc
+            .perform(
+                get("/api/positions/similar")
+                    .param("fen", queryFen)
+                    .param("username", "testuser")
+                    .param("maxPositionsPerGame", "-2"),
+            ).andExpect(status().isBadRequest)
+    }
+
+    @Test
+    fun `defaults maxPositionsPerGame to 1 and passes parameter to service`() {
+        val posId = UUID.randomUUID()
+        val mockResult = buildMockResult(posId)
+        whenever(accountOwnershipService.resolvePrivateRead(eq(Platform.CHESS_COM), eq("testuser"), anyOrNull()))
+            .thenReturn(testAccount)
+        whenever(
+            positionSimilarityService.findSimilarPositions(
+                queryFen = eq(queryFen),
+                account = eq(testAccount),
+                minScore = eq(0.0),
+                limit = eq(20),
+                depth = eq(8),
+                multiPv = eq(1),
+                mode = eq(SimilarityRetrievalMode.STRUCTURAL),
+                alpha = eq(0.60),
+                maxPositionsPerGame = eq(1),
+                excludeGameId = anyOrNull(),
+            ),
+        ).thenReturn(mockResult)
+
+        mockMvc
+            .perform(
+                get("/api/positions/similar")
+                    .param("fen", queryFen)
+                    .param("username", "testuser"),
+            ).andExpect(status().isOk)
+
+        verify(positionSimilarityService).findSimilarPositions(
+            queryFen = eq(queryFen),
+            account = eq(testAccount),
+            minScore = eq(0.0),
+            limit = eq(20),
+            depth = eq(8),
+            multiPv = eq(1),
+            mode = eq(SimilarityRetrievalMode.STRUCTURAL),
+            alpha = eq(0.60),
+            maxPositionsPerGame = eq(1),
+            excludeGameId = anyOrNull(),
+        )
+    }
+
+    @Test
+    fun `passes custom maxPositionsPerGame to service`() {
+        val posId = UUID.randomUUID()
+        val mockResult = buildMockResult(posId)
+        whenever(accountOwnershipService.resolvePrivateRead(eq(Platform.CHESS_COM), eq("testuser"), anyOrNull()))
+            .thenReturn(testAccount)
+        whenever(
+            positionSimilarityService.findSimilarPositions(
+                queryFen = eq(queryFen),
+                account = eq(testAccount),
+                minScore = eq(0.0),
+                limit = eq(20),
+                depth = eq(8),
+                multiPv = eq(1),
+                mode = eq(SimilarityRetrievalMode.STRUCTURAL),
+                alpha = eq(0.60),
+                maxPositionsPerGame = eq(4),
+                excludeGameId = anyOrNull(),
+            ),
+        ).thenReturn(mockResult)
+
+        mockMvc
+            .perform(
+                get("/api/positions/similar")
+                    .param("fen", queryFen)
+                    .param("username", "testuser")
+                    .param("maxPositionsPerGame", "4"),
+            ).andExpect(status().isOk)
+
+        verify(positionSimilarityService).findSimilarPositions(
+            queryFen = eq(queryFen),
+            account = eq(testAccount),
+            minScore = eq(0.0),
+            limit = eq(20),
+            depth = eq(8),
+            multiPv = eq(1),
+            mode = eq(SimilarityRetrievalMode.STRUCTURAL),
+            alpha = eq(0.60),
+            maxPositionsPerGame = eq(4),
+            excludeGameId = anyOrNull(),
+        )
+    }
+
+    @Test
+    fun `rejects alpha outside 0 to 1 range or NaN with 400 bad request`() {
+        whenever(accountOwnershipService.resolvePrivateRead(eq(Platform.CHESS_COM), eq("testuser"), anyOrNull()))
+            .thenReturn(testAccount)
+
+        mockMvc
+            .perform(
+                get("/api/positions/similar")
+                    .param("fen", queryFen)
+                    .param("username", "testuser")
+                    .param("alpha", "-0.05"),
+            ).andExpect(status().isBadRequest)
+
+        mockMvc
+            .perform(
+                get("/api/positions/similar")
+                    .param("fen", queryFen)
+                    .param("username", "testuser")
+                    .param("alpha", "1.05"),
+            ).andExpect(status().isBadRequest)
+
+        mockMvc
+            .perform(
+                get("/api/positions/similar")
+                    .param("fen", queryFen)
+                    .param("username", "testuser")
+                    .param("alpha", "NaN"),
+            ).andExpect(status().isBadRequest)
+    }
+
+    @Test
+    fun `defaults alpha to 0_60 and passes parameter to service`() {
+        val posId = UUID.randomUUID()
+        val mockResult = buildMockResult(posId)
+        whenever(accountOwnershipService.resolvePrivateRead(eq(Platform.CHESS_COM), eq("testuser"), anyOrNull()))
+            .thenReturn(testAccount)
+        whenever(
+            positionSimilarityService.findSimilarPositions(
+                queryFen = eq(queryFen),
+                account = eq(testAccount),
+                minScore = eq(0.0),
+                limit = eq(20),
+                depth = eq(8),
+                multiPv = eq(1),
+                mode = eq(SimilarityRetrievalMode.STRUCTURAL),
+                alpha = eq(0.60),
+                maxPositionsPerGame = eq(1),
+                excludeGameId = anyOrNull(),
+            ),
+        ).thenReturn(mockResult)
+
+        mockMvc
+            .perform(
+                get("/api/positions/similar")
+                    .param("fen", queryFen)
+                    .param("username", "testuser"),
+            ).andExpect(status().isOk)
+
+        verify(positionSimilarityService).findSimilarPositions(
+            queryFen = eq(queryFen),
+            account = eq(testAccount),
+            minScore = eq(0.0),
+            limit = eq(20),
+            depth = eq(8),
+            multiPv = eq(1),
+            mode = eq(SimilarityRetrievalMode.STRUCTURAL),
+            alpha = eq(0.60),
+            maxPositionsPerGame = eq(1),
+            excludeGameId = anyOrNull(),
+        )
+    }
+
+    @Test
+    fun `passes custom alpha to service`() {
+        val posId = UUID.randomUUID()
+        val mockResult = buildMockResult(posId)
+        whenever(accountOwnershipService.resolvePrivateRead(eq(Platform.CHESS_COM), eq("testuser"), anyOrNull()))
+            .thenReturn(testAccount)
+        whenever(
+            positionSimilarityService.findSimilarPositions(
+                queryFen = eq(queryFen),
+                account = eq(testAccount),
+                minScore = eq(0.0),
+                limit = eq(20),
+                depth = eq(8),
+                multiPv = eq(1),
+                mode = eq(SimilarityRetrievalMode.STRUCTURAL),
+                alpha = eq(0.85),
+                maxPositionsPerGame = eq(1),
+                excludeGameId = anyOrNull(),
+            ),
+        ).thenReturn(mockResult)
+
+        mockMvc
+            .perform(
+                get("/api/positions/similar")
+                    .param("fen", queryFen)
+                    .param("username", "testuser")
+                    .param("alpha", "0.85"),
+            ).andExpect(status().isOk)
+
+        verify(positionSimilarityService).findSimilarPositions(
+            queryFen = eq(queryFen),
+            account = eq(testAccount),
+            minScore = eq(0.0),
+            limit = eq(20),
+            depth = eq(8),
+            multiPv = eq(1),
+            mode = eq(SimilarityRetrievalMode.STRUCTURAL),
+            alpha = eq(0.85),
+            maxPositionsPerGame = eq(1),
+            excludeGameId = anyOrNull(),
         )
     }
 
