@@ -2,7 +2,8 @@ import { test, expect } from '@playwright/test';
 import path from 'path';
 import { setupJourneyApiMocks } from './fixtures/mockApi';
 
-const EVIDENCE_DIR = path.resolve(__dirname, '../../docs/engineering/evidence/audit-806-669');
+const EVIDENCE_DIR =
+  process.env.EVIDENCE_DIR || path.resolve(__dirname, '../test-results/evidence/my-games-analysis');
 
 const MOCK_GAMES = [
   {
@@ -179,7 +180,7 @@ const MOCK_DYNAMIC_SIMILAR = [
   },
 ];
 
-test.describe('Audit #806 & #669: Playwright Multi-Viewport Evidence Capture', () => {
+test.describe('My Games and Analysis Multi-Viewport Journey', () => {
   test('desktop 1440px: full journey with populated list, filters, mistake detail, similarity, and practice', async ({
     page,
   }) => {
