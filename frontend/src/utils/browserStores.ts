@@ -298,6 +298,10 @@ export interface GameAnalysisReturnSnapshot {
   plyNumber: number;
   evalLossThreshold: number;
   timingFilters: ('All' | 'Minor' | 'Significant' | 'Critical' | 'None')[];
+  expandedSections?: {
+    structural?: boolean;
+    dynamic?: boolean;
+  };
 }
 
 const GAME_ANALYSIS_RETURN_KEY = 'chessecho_game_analysis_return';

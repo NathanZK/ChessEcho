@@ -11,6 +11,14 @@ vi.mock('../services/api', () => ({
   fetchSimilarPositions: vi.fn(),
 }));
 
+vi.mock('../components/ChessBoardView', () => ({
+  ChessBoardView: ({ fen }: { fen: string }) => (
+    <div data-testid="mock-chessboard-view" data-fen={fen}>
+      Board preview
+    </div>
+  ),
+}));
+
 describe('GameAnalysisView', () => {
   const mockGames: api.GamePageResponse = {
     content: [
@@ -24,8 +32,18 @@ describe('GameAnalysisView', () => {
         blackUsername: 'RivalPlayer',
         pgn: '1. e4 e5',
       },
+      {
+        id: 'game-456',
+        platformGameId: 'chess-com-2',
+        timeControl: 'rapid',
+        playedAt: '2026-11-10T14:00:00Z',
+        result: 'loss',
+        whiteUsername: 'RivalPlayer',
+        blackUsername: 'HeroPlayer',
+        pgn: '1. d4 d5',
+      },
     ],
-    totalElements: 1,
+    totalElements: 2,
     totalPages: 1,
     number: 0,
     size: 20,
@@ -101,17 +119,18 @@ describe('GameAnalysisView', () => {
     });
   });
 
-  it('renders My Games list initially and allows selecting a game to analyze', async () => {
+  it('renders My Games list with board previews and allows selecting a game to analyze', async () => {
     act(() => {
       activeAccountStore.set({ id: 'acc-123', username: 'HeroPlayer', platform: 'CHESS_COM' });
     });
     render(<GameAnalysisView sessionStatus="authenticated" />);
 
-    expect(await screen.findByText('HeroPlayer')).toBeInTheDocument();
-    expect(screen.getByText('RivalPlayer')).toBeInTheDocument();
+    expect((await screen.findAllByText('HeroPlayer'))[0]).toBeInTheDocument();
+    expect((await screen.findAllByText('RivalPlayer'))[0]).toBeInTheDocument();
+    expect(screen.getAllByTestId('mock-chessboard-view').length).toBeGreaterThan(0);
 
-    const analyzeBtn = screen.getByRole('button', { name: /Analyze/i });
-    fireEvent.click(analyzeBtn);
+    const analyzeBtns = screen.getAllByRole('button', { name: /Analyze/i });
+    fireEvent.click(analyzeBtns[0]);
 
     await waitFor(() => {
       expect(api.analyzeGame).toHaveBeenCalledWith('game-123');
@@ -121,6 +140,114 @@ describe('GameAnalysisView', () => {
     expect(screen.getAllByText(/Nf6/i).length).toBeGreaterThan(0);
   });
 
+  it('provides time-control filter chips and filters games immediately in client state', async () => {
+    act(() => {
+      activeAccountStore.set({ id: 'acc-123', username: 'HeroPlayer', platform: 'CHESS_COM' });
+    });
+    render(<GameAnalysisView sessionStatus="authenticated" />);
+
+    expect((await screen.findAllByText('HeroPlayer'))[0]).toBeInTheDocument();
+    expect(api.fetchGames).toHaveBeenCalledTimes(1);
+
+    // Verify filter chips are present
+    expect(screen.getByRole('button', { name: /^All$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Bullet$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Blitz$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Rapid$/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Classical$/i })).toBeInTheDocument();
+
+    // Both blitz and rapid games initially shown
+    expect(screen.getByText('BLITZ')).toBeInTheDocument();
+    expect(screen.getByText('RAPID')).toBeInTheDocument();
+
+    // Click Blitz filter
+    fireEvent.click(screen.getByRole('button', { name: /^Blitz$/i }));
+
+    // Only Blitz game shown, Rapid filtered out
+    expect(screen.getByText('BLITZ')).toBeInTheDocument();
+    expect(screen.queryByText('RAPID')).not.toBeInTheDocument();
+    // No extra fetchGames called
+    expect(api.fetchGames).toHaveBeenCalledTimes(1);
+
+    // Click Rapid filter
+    fireEvent.click(screen.getByRole('button', { name: /^Rapid$/i }));
+
+    expect(screen.getByText('RAPID')).toBeInTheDocument();
+    expect(screen.queryByText('BLITZ')).not.toBeInTheDocument();
+    expect(api.fetchGames).toHaveBeenCalledTimes(1);
+  });
+
+  it('renders actionable Import CTA in empty state and navigates with matching preset', async () => {
+    act(() => {
+      activeAccountStore.set({ id: 'acc-123', username: 'HeroPlayer', platform: 'CHESS_COM' });
+    });
+    vi.mocked(api.fetchGames).mockResolvedValue({
+      content: [],
+      totalElements: 0,
+      totalPages: 0,
+      number: 0,
+      size: 20,
+    });
+    const onNavigateImport = vi.fn();
+
+    render(<GameAnalysisView sessionStatus="authenticated" onNavigateImport={onNavigateImport} />);
+
+    expect(await screen.findByText(/No games found/i)).toBeInTheDocument();
+    const importBtn = screen.getByRole('button', { name: /Import Games/i });
+    expect(importBtn).toBeInTheDocument();
+
+    fireEvent.click(importBtn);
+
+    expect(onNavigateImport).toHaveBeenCalledWith([
+      'BULLET',
+      'BLITZ',
+      'RAPID',
+      'CLASSICAL',
+    ]);
+  });
+
+  it('renders filter-specific empty state with clear filter action', async () => {
+    act(() => {
+      activeAccountStore.set({ id: 'acc-123', username: 'HeroPlayer', platform: 'CHESS_COM' });
+    });
+    render(<GameAnalysisView sessionStatus="authenticated" />);
+
+    expect((await screen.findAllByText('HeroPlayer'))[0]).toBeInTheDocument();
+
+    // Click Bullet filter (no bullet games in mock)
+    fireEvent.click(screen.getByRole('button', { name: /^Bullet$/i }));
+
+    expect(screen.getByText(/No Bullet games found/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Import Bullet Games/i })).toBeInTheDocument();
+
+    // Click Clear filter
+    const clearBtn = screen.getByRole('button', { name: /Clear filter/i });
+    fireEvent.click(clearBtn);
+
+    // Filter reset to All
+    expect(screen.getByText('BLITZ')).toBeInTheDocument();
+    expect(screen.getByText('RAPID')).toBeInTheDocument();
+  });
+
+  it('invokes onNavigateImport with context-aware preset from header Import Games button', async () => {
+    act(() => {
+      activeAccountStore.set({ id: 'acc-123', username: 'HeroPlayer', platform: 'CHESS_COM' });
+    });
+    const onNavigateImport = vi.fn();
+    render(<GameAnalysisView sessionStatus="authenticated" onNavigateImport={onNavigateImport} />);
+
+    expect((await screen.findAllByText('HeroPlayer'))[0]).toBeInTheDocument();
+
+    // Select Rapid filter
+    fireEvent.click(screen.getByRole('button', { name: /^Rapid$/i }));
+
+    // Click header Import Games button
+    const headerImportBtn = screen.getByRole('button', { name: /Import Games/i });
+    fireEvent.click(headerImportBtn);
+
+    expect(onNavigateImport).toHaveBeenCalledWith(['RAPID']);
+  });
+
   it('operates eval loss threshold and timing filters independently without mutual reset', async () => {
     render(<GameAnalysisView initialGameId="game-123" />);
 
@@ -128,7 +255,7 @@ describe('GameAnalysisView', () => {
     await screen.findByText(/Qualifying Mistake Moves/i);
     expect(screen.getAllByText(/Nf6/i).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/f3\?\?/i).length).toBeGreaterThan(0);
-    expect(screen.queryByText(/^e4$/i)).not.toBeInTheDocument(); // loss 0.0 does not qualify
+    expect(screen.queryByText(/^e4$/i)).not.toBeInTheDocument();
 
     // Select 'Significant' timing filter
     const significantBtn = screen.getByRole('button', { name: /^Significant$/i });
@@ -289,7 +416,7 @@ describe('GameAnalysisView', () => {
         expect.objectContaining({ page: 0, size: 50, accountId: 'acc-123' })
       );
     });
-    expect(await screen.findByText('HeroPlayer')).toBeInTheDocument();
+    expect((await screen.findAllByText('HeroPlayer'))[0]).toBeInTheDocument();
   });
 
   it('discards stale in-flight responses when switching accounts and renders only active account games', async () => {
