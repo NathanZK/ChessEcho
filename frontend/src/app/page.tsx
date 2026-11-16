@@ -22,7 +22,6 @@ import {
   type LongDecisionOccurrence,
   type GameAnalysisResponse,
   type AnalyzedPly,
-  type SimilarPositionResult,
 } from '@/services/api';
 import { useAccountSession } from '@/hooks/useAccountSession';
 import {
@@ -32,11 +31,6 @@ import {
   gameAnalysisReturnStore,
   type GameAnalysisReturnSnapshot,
 } from '@/utils/browserStores';
-import {
-  buildMistakePracticePuzzle,
-  buildSimilarPositionPracticePuzzle,
-} from '@/utils/gameAnalysisPuzzle';
-import type { DecisionSeverityCategory } from '@/utils/gameAnalysisFilters';
 
 export default function Home() {
   const activeTab = useSyncExternalStore(
@@ -70,7 +64,6 @@ export default function Home() {
   const [hasGameAnalysisReturnContext, setHasGameAnalysisReturnContext] = useState(false);
   const [similarPositionsSnapshot, setSimilarPositionsSnapshot] = useState<SimilarPositionsReturnSnapshot | null>(null);
   const [gameAnalysisSnapshot, setGameAnalysisSnapshot] = useState<GameAnalysisReturnSnapshot | null>(null);
-  const [importPresetTimeControls, setImportPresetTimeControls] = useState<string[] | undefined>();
   const [isSourceNeutralExploration, setIsSourceNeutralExploration] = useState(false);
 
   const onClearAccountState = React.useCallback(() => {
@@ -224,14 +217,29 @@ export default function Home() {
     ply: AnalyzedPly,
     analysis: GameAnalysisResponse
   ) => {
-    const synthesizedPuzzle = buildMistakePracticePuzzle(ply, analysis);
+    const bestMove = ply.bestMove || '';
+    const synthesizedPuzzle: Puzzle = {
+      puzzleId: `game-analysis-${analysis.gameId}-ply-${ply.plyNumber}`,
+      source: 'weakness',
+      fen: ply.preMoveFen,
+      playerColor: ply.playerColor,
+      targetMove: bestMove,
+      openingTitle: `Game Mistake (Move ${Math.ceil(ply.plyNumber / 2)})`,
+      acceptableMoves: bestMove ? [{ move: bestMove, evalLoss: 0 }] : [],
+      movesPlayed: [], // Concealed: user must find the move without seeing the mistake
+      priority: 1,
+      timesReached: 1,
+      mistakeCount: 1,
+      mistakeRate: 1.0,
+      evalCp: ply.evalCp ?? undefined,
+    };
+
     setHasGameAnalysisReturnContext(true);
     const returnSnapshot: GameAnalysisReturnSnapshot = {
       gameId: analysis.gameId,
       plyNumber: ply.plyNumber,
-      evalLossThreshold: gameAnalysisSnapshot?.evalLossThreshold ?? 0.8,
-      timingFilters: gameAnalysisSnapshot?.timingFilters ?? ['All'],
-      expandedSections: gameAnalysisSnapshot?.expandedSections,
+      evalLossThreshold: 0.8,
+      timingFilters: ['All'],
     };
     setGameAnalysisSnapshot(returnSnapshot);
     gameAnalysisReturnStore.set(returnSnapshot);
@@ -241,74 +249,6 @@ export default function Home() {
       synthesizedPuzzle,
       [synthesizedPuzzle],
       'game-analysis'
-    );
-  };
-
-  const handleGameAnalysisPracticeSimilarPosition = (
-    match: SimilarPositionResult,
-    analysis: GameAnalysisResponse,
-    activePly?: AnalyzedPly
-  ) => {
-    const synthesizedPuzzle = buildSimilarPositionPracticePuzzle(match, analysis);
-    setHasGameAnalysisReturnContext(true);
-    const returnSnapshot: GameAnalysisReturnSnapshot = {
-      gameId: analysis.gameId,
-      plyNumber: activePly?.plyNumber ?? gameAnalysisSnapshot?.plyNumber ?? 1,
-      evalLossThreshold: gameAnalysisSnapshot?.evalLossThreshold ?? 0.8,
-      timingFilters: gameAnalysisSnapshot?.timingFilters ?? ['All'],
-      expandedSections: gameAnalysisSnapshot?.expandedSections,
-    };
-    setGameAnalysisSnapshot(returnSnapshot);
-    gameAnalysisReturnStore.set(returnSnapshot);
-
-    changeTab('puzzles');
-    practiceActionsRef.current?.selectPracticeFromLibrary(
-      synthesizedPuzzle,
-      [synthesizedPuzzle],
-      'game-analysis'
-    );
-  };
-
-  const handleGameAnalysisThresholdChange = React.useCallback((threshold: number) => {
-    setGameAnalysisSnapshot((prev) =>
-      prev
-        ? { ...prev, evalLossThreshold: threshold }
-        : {
-            gameId: '',
-            plyNumber: 1,
-            evalLossThreshold: threshold,
-            timingFilters: ['All'],
-          }
-    );
-  }, []);
-
-  const handleGameAnalysisTimingFiltersChange = React.useCallback((filters: DecisionSeverityCategory[]) => {
-    setGameAnalysisSnapshot((prev) =>
-      prev
-        ? { ...prev, timingFilters: filters }
-        : {
-            gameId: '',
-            plyNumber: 1,
-            evalLossThreshold: 0.8,
-            timingFilters: filters,
-          }
-    );
-  }, []);
-
-  const handleGameAnalysisExpandedSectionsChange = (sections: {
-    structural?: boolean;
-    dynamic?: boolean;
-  }) => {
-    setGameAnalysisSnapshot((prev) =>
-      prev
-        ? { ...prev, expandedSections: sections }
-        : {
-            gameId: '',
-            plyNumber: 1,
-            evalLossThreshold: 0.8,
-            timingFilters: ['All'],
-            expandedSections: sections,
-          }
     );
   };
 
@@ -442,26 +382,11 @@ export default function Home() {
           <div hidden={activeTab !== 'game-analysis'}>
             <GameAnalysisView
               sessionStatus={session.sessionStatus}
-              initialGameId={gameAnalysisSnapshot?.gameId || undefined}
+              initialGameId={gameAnalysisSnapshot?.gameId}
               initialPlyNumber={gameAnalysisSnapshot?.plyNumber}
               initialThreshold={gameAnalysisSnapshot?.evalLossThreshold}
               initialTimingFilters={gameAnalysisSnapshot?.timingFilters}
-              initialExpandedSections={gameAnalysisSnapshot?.expandedSections}
-              accountId={session.connectedAccount?.id}
-              guestUsername={
-                !session.connectedAccount
-                  ? session.displayedUsername || session.activeUsername
-                  : undefined
-              }
-              onExpandedSectionsChange={handleGameAnalysisExpandedSectionsChange}
-              onThresholdChange={handleGameAnalysisThresholdChange}
-              onTimingFiltersChange={handleGameAnalysisTimingFiltersChange}
               onPracticeMistake={handleGameAnalysisPracticeMistake}
-              onPracticeSimilarPosition={handleGameAnalysisPracticeSimilarPosition}
-              onNavigateImport={(timeControls) => {
-                setImportPresetTimeControls(timeControls);
-                changeTab('import');
-              }}
             />
           </div>
         )}
@@ -469,7 +394,6 @@ export default function Home() {
         {/* TAB 3: IMPORT GAMES */}
         {activeTab === 'import' && (
           <ImportGamesView
-            initialTimeControls={importPresetTimeControls}
             connectedUsername={session.displayedUsername}
             connectedAccount={session.connectedAccount}
             connectedAccountId={session.connectedAccount?.id}

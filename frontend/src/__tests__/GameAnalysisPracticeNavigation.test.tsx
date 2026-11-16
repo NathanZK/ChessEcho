@@ -1,175 +1,206 @@
-import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { GameAnalysisView } from '../components/GameAnalysisView';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import Home from '../app/page';
 import * as api from '../services/api';
-import type { GameAnalysisResponse, SimilarPositionsResponse } from '../services/api';
+import { activeTabStore, gameAnalysisReturnStore } from '../utils/browserStores';
 
-vi.mock('../services/api', () => ({
-  fetchGames: vi.fn(),
-  analyzeGame: vi.fn(),
-  fetchSimilarPositions: vi.fn(),
-}));
-
-vi.mock('../components/ChessBoardView', () => ({
-  ChessBoardView: ({ fen }: { fen: string }) => (
-    <div data-testid="mock-chessboard-view" data-fen={fen}>
-      Board preview
+vi.mock('react-chessboard', () => ({
+  Chessboard: ({
+    options,
+  }: {
+    options: {
+      position: string;
+      onPieceDrop?: (args: { sourceSquare: string; targetSquare: string }) => boolean;
+    };
+  }) => (
+    <div data-testid="mock-board" data-position={options.position}>
+      {options.position}
     </div>
   ),
 }));
 
-describe('GameAnalysisPracticeNavigation', () => {
-  const mockAnalysis: GameAnalysisResponse = {
-    gameId: 'game-practice-123',
-    whiteUsername: 'HeroPlayer',
-    blackUsername: 'RivalPlayer',
-    timeControl: 'blitz',
-    playedAt: '2026-11-09T18:00:00Z',
-    result: 'win',
-    analysisStatus: 'COMPLETE',
-    plies: [
-      {
-        plyNumber: 14,
-        movePlayed: 'Qd6??',
-        playerColor: 'WHITE',
-        preMoveFen: 'r1bqk2r/ppppbppp/2n5/4p3/2B1n3/3P1N2/PPP2PPP/RNBQ1RK1 w kq - 0 6',
-        decisionTimeMs: 18000,
-        decisionSeverity: 'SIGNIFICANT',
-        bestMove: 'dxe4',
-        bestEvalCp: 180,
-        evalCp: -140,
-        evalLoss: 3.2,
-        weaknessSeverity: 'CRITICAL',
-      },
-    ],
-  };
+vi.mock('../services/soundService', () => ({
+  playSound: vi.fn(),
+  soundService: {
+    playSound: vi.fn(),
+    playMoveSound: vi.fn(),
+    isSoundEnabled: vi.fn().mockReturnValue(true),
+  },
+}));
 
-  const mockSimilarResponse: SimilarPositionsResponse = {
-    queryFen: mockAnalysis.plies[0].preMoveFen,
-    candidatesEvaluated: 10,
-    shortlistedCandidatesCount: 1,
-    engineCompletedCount: 1,
-    dynamicSimilarityApplied: false,
-    fallbackReason: null,
-    queryStatus: 'SUCCESS',
-    queryAchievedDepth: 16,
-    queryPrincipalVariations: [],
-    results: [
-      {
-        rank: 1,
-        score: 0.95,
-        staticScore: 0.95,
-        dynamicScore: 0.0,
-        positionId: 'sim-pos-456',
-        fen: 'r1bqk2r/ppppbppp/2n5/4p3/2B1n3/3P1N2/PPP2PPP/RNBQ1RK1 w kq - 0 6',
-        canonicalFen: 'r1bqk2r/ppppbppp/2n5/4p3/2B1n3/3P1N2/PPP2PPP/RNBQ1RK1 w kq -',
-        searchStatus: 'COMPLETED',
-        achievedDepth: 16,
-        principalVariations: [{ rank: 1, moves: ['dxe4'], achievedDepth: 16 }],
-        occurrences: [
-          {
-            id: 'occ-999',
-            platformGameId: 'other-game-777',
-            playedMove: 'dxe4',
-            plyNumber: 12,
-            playerColor: 'WHITE',
-            opponentUsername: 'OpponentMaster',
-            gameResult: 'win',
-            playedAt: '2026-10-12T10:00:00Z',
-            timeControl: 'blitz',
-            chessComUrl: null,
-          },
-        ],
-      },
-    ],
+vi.mock('../services/api', async () => {
+  const actual = await vi.importActual<typeof import('../services/api')>('../services/api');
+  return {
+    ...actual,
+    fetchPuzzles: vi.fn(),
+    fetchCurrentSession: vi.fn(),
+    fetchAccounts: vi.fn(),
+    fetchGames: vi.fn(),
+    analyzeGame: vi.fn(),
+    fetchSimilarPositions: vi.fn(),
+    fetchRecurringWeaknesses: vi.fn().mockResolvedValue([]),
+    fetchWeaknesses: vi.fn().mockResolvedValue([]),
+    fetchPuzzleContinuation: vi.fn(),
+    evaluateMove: vi.fn(),
   };
+});
+
+const mockAccount: api.AccountSummary = {
+  id: '550e8400-e29b-41d4-a716-446655440010',
+  platform: 'CHESS_COM',
+  username: 'HeroPlayer',
+};
+
+const mockGamesResponse: api.GamePageResponse = {
+  content: [
+    {
+      id: 'game-123',
+      platformGameId: 'chess-com-1',
+      timeControl: 'blitz',
+      playedAt: '2026-11-09T18:00:00Z',
+      result: 'win',
+      whiteUsername: 'HeroPlayer',
+      blackUsername: 'RivalPlayer',
+      pgn: '1. e4 e5',
+    },
+  ],
+  totalElements: 1,
+  totalPages: 1,
+  number: 0,
+  size: 20,
+};
+
+const preMoveFen = 'r1bqkb1r/pppp1ppp/2n2n2/4p3/4P3/2N2N2/PPPP1PPP/R1BQKB1R w KQkq - 4 4';
+
+const mockAnalysisResponse: api.GameAnalysisResponse = {
+  gameId: 'game-123',
+  whiteUsername: 'HeroPlayer',
+  blackUsername: 'RivalPlayer',
+  timeControl: 'blitz',
+  playedAt: '2026-11-09T18:00:00Z',
+  result: 'win',
+  analysisStatus: 'COMPLETE',
+  plies: [
+    {
+      plyNumber: 1,
+      movePlayed: 'e4',
+      playerColor: 'WHITE',
+      preMoveFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+      decisionTimeMs: 2500,
+      decisionSeverity: 'NO_CONCERN',
+      bestMove: 'e4',
+      bestEvalCp: 20,
+      evalCp: 20,
+      evalLoss: 0.0,
+      weaknessSeverity: 'NO_CONCERN',
+    },
+    {
+      plyNumber: 12,
+      movePlayed: 'Nf6',
+      playerColor: 'BLACK',
+      preMoveFen,
+      decisionTimeMs: 14000,
+      decisionSeverity: 'SIGNIFICANT',
+      bestMove: 'Nc6',
+      bestEvalCp: -10,
+      evalCp: 145,
+      evalLoss: 1.55,
+      weaknessSeverity: 'SIGNIFICANT',
+    },
+  ],
+};
+
+describe('Game Analysis Navigation and Practice Bridging', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(api.analyzeGame).mockResolvedValue(mockAnalysis);
-    vi.mocked(api.fetchSimilarPositions).mockResolvedValue(mockSimilarResponse);
+    localStorage.clear();
+    sessionStorage.clear();
+    window.location.hash = '';
+    activeTabStore.set('puzzles');
+    gameAnalysisReturnStore.set(null);
+
+    vi.mocked(api.fetchCurrentSession).mockResolvedValue({
+      status: 'authenticated',
+      userId: 'user-1',
+    });
+    vi.mocked(api.fetchAccounts).mockResolvedValue([mockAccount]);
+    vi.mocked(api.fetchPuzzles).mockResolvedValue([]);
+    vi.mocked(api.fetchGames).mockResolvedValue(mockGamesResponse);
+    vi.mocked(api.analyzeGame).mockResolvedValue(mockAnalysisResponse);
+    vi.mocked(api.fetchSimilarPositions).mockResolvedValue({
+      queryFen: preMoveFen,
+      candidatesEvaluated: 10,
+      shortlistedCandidatesCount: 2,
+      engineCompletedCount: 2,
+      dynamicSimilarityApplied: false,
+      fallbackReason: null,
+      queryStatus: 'SUCCESS',
+      queryAchievedDepth: 16,
+      queryPrincipalVariations: [],
+      results: [],
+    });
+    vi.mocked(api.fetchRecurringWeaknesses).mockResolvedValue([]);
+    vi.mocked(api.fetchWeaknesses).mockResolvedValue([]);
   });
 
-  it('passes onPracticeSimilarPosition callback when Practice CTA is clicked in similar positions', async () => {
-    const onPracticeSimilarPosition = vi.fn();
-    const onExpandedSectionsChange = vi.fn();
+  it('switches to Game Analysis tab via Tools menu and renders games list', async () => {
+    render(<Home />);
 
-    render(
-      <GameAnalysisView
-        initialGameId="game-practice-123"
-        onPracticeSimilarPosition={onPracticeSimilarPosition}
-        onExpandedSectionsChange={onExpandedSectionsChange}
-      />
-    );
+    const toolsBtn = await screen.findByRole('button', { name: /Explore \/ Tools/i });
+    fireEvent.click(toolsBtn);
 
-    await screen.findByText(/Qualifying Mistake Moves/i);
+    const gameAnalysisTabBtn = await screen.findByRole('menuitem', { name: /Game Analysis/i });
+    fireEvent.click(gameAnalysisTabBtn);
 
-    // Expand structural similarities section
-    const structuralBtn = screen.getByRole('button', { name: /Structural Similarities/i });
-    fireEvent.click(structuralBtn);
-
-    expect(onExpandedSectionsChange).toHaveBeenCalledWith(
-      expect.objectContaining({ structural: true })
-    );
-
-    // Wait for similar position card
-    expect(await screen.findByText(/OpponentMaster/i)).toBeInTheDocument();
-
-    // Click Practice button on similar position
-    const practiceButtons = screen.getAllByRole('button', { name: /^Practice$/i });
-    expect(practiceButtons.length).toBeGreaterThanOrEqual(1);
-    fireEvent.click(practiceButtons[0]);
-
-    expect(onPracticeSimilarPosition).toHaveBeenCalledTimes(1);
-    expect(onPracticeSimilarPosition).toHaveBeenCalledWith(
-      expect.objectContaining({ positionId: 'sim-pos-456' }),
-      expect.objectContaining({ gameId: 'game-practice-123' }),
-      expect.objectContaining({ plyNumber: 14 })
-    );
+    expect(activeTabStore.getSnapshot()).toBe('game-analysis');
+    expect(await screen.findByRole('heading', { name: /My Games/i })).toBeInTheDocument();
+    expect(await screen.findByText('RivalPlayer')).toBeInTheDocument();
   });
 
-  it('restores expanded sections state when initialExpandedSections is provided', async () => {
-    render(
-      <GameAnalysisView
-        initialGameId="game-practice-123"
-        initialExpandedSections={{ structural: true }}
-      />
-    );
+  it('analyzes game, practices mistake with concealed blunder move, and returns with context preserved', async () => {
+    render(<Home />);
 
-    await screen.findByText(/Qualifying Mistake Moves/i);
+    // 1. Navigate to Game Analysis tab
+    const toolsBtn = await screen.findByRole('button', { name: /Explore \/ Tools/i });
+    fireEvent.click(toolsBtn);
+    const gameAnalysisTabBtn = await screen.findByRole('menuitem', { name: /Game Analysis/i });
+    fireEvent.click(gameAnalysisTabBtn);
 
-    // Structural was already expanded on mount, so it should fetch without user clicking
+    // 2. Select game to analyze
+    const analyzeBtn = await screen.findByRole('button', { name: /Analyze/i });
+    fireEvent.click(analyzeBtn);
+
     await waitFor(() => {
-      expect(api.fetchSimilarPositions).toHaveBeenCalledWith(
-        expect.objectContaining({
-          mode: 'STRUCTURAL',
-          excludeGameId: 'game-practice-123',
-        })
-      );
+      expect(api.analyzeGame).toHaveBeenCalledWith('game-123');
     });
 
-    expect(await screen.findByText(/OpponentMaster/i)).toBeInTheDocument();
-  });
+    // 3. Verify qualifying mistake move (ply 12) is displayed
+    await screen.findByText(/Qualifying Mistake Moves/i);
+    expect(screen.getAllByText(/Nf6/i).length).toBeGreaterThan(0);
 
-  it('prioritizes engine principal variation best move over historical played move for puzzle target move', () => {
-    const matchWithBothMoves = {
-      ...mockSimilarResponse.results[0],
-      principalVariations: [{ rank: 1, moves: ['Bc4'], achievedDepth: 16 }],
-      occurrences: [
-        {
-          ...mockSimilarResponse.results[0].occurrences[0],
-          playedMove: 'Nxe4', // historical move in other game was suboptimal
-        },
-      ],
-    };
+    // 4. Click "Practice this mistake"
+    const practiceBtn = screen.getByRole('button', { name: /Practice this mistake/i });
+    fireEvent.click(practiceBtn);
 
-    const bestMove =
-      matchWithBothMoves.principalVariations[0]?.moves[0] ||
-      matchWithBothMoves.occurrences[0]?.playedMove ||
-      '';
+    // 5. Verify transition to practice puzzle shell
+    expect(activeTabStore.getSnapshot()).toBe('puzzles');
 
-    expect(bestMove).toBe('Bc4');
-    expect(bestMove).not.toBe('Nxe4');
+    // Verify pre-move position is loaded on board
+    const board = await screen.findByTestId('mock-board');
+    expect(board).toHaveAttribute('data-position', preMoveFen);
+
+    // Verify back navigation button indicates return to Game Analysis
+    const backBtn = screen.getByRole('button', { name: /Back to Game Analysis/i });
+    expect(backBtn).toBeInTheDocument();
+
+    // 6. Click Back to Game Analysis and verify return context is restored
+    fireEvent.click(backBtn);
+
+    expect(activeTabStore.getSnapshot()).toBe('game-analysis');
+    expect(await screen.findByText(/Qualifying Mistake Moves/i)).toBeInTheDocument();
   });
 });

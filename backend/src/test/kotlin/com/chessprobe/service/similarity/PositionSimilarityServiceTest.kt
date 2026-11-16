@@ -545,39 +545,4 @@ class PositionSimilarityServiceTest {
             }
         }
     }
-
-    @Test
-    fun `findSimilarPositions excludes occurrences and candidates from excludeGameId in structural mode`() {
-        val game1 = createTestGame(account, platformGameId = "game-1")
-        val game2 = createTestGame(account, platformGameId = "game-2")
-
-        val posId1 = UUID.randomUUID()
-        val posId2 = UUID.randomUUID()
-
-        val doc1 = tokenExtractor.extractDocument(posId1, candidateFen1, includeReachability = true)
-        val doc2 = tokenExtractor.extractDocument(posId2, candidateFen2, includeReachability = true)
-
-        // posId1 only occurs in game1 (the excluded game)
-        val occ1 = createTestOccurrence(account, game1, posId1, candidateFen1, plyNumber = 3, movePlayed = "Nf3")
-        // posId2 occurs in game2 (other game)
-        val occ2 = createTestOccurrence(account, game2, posId2, candidateFen2, plyNumber = 5, movePlayed = "e4")
-
-        whenever(corpusProvider.loadPersonalPositions(account)).thenReturn(listOf(doc1, doc2))
-        whenever(occurrenceRepository.findAllByChessAccountIdAndPositionIdIn(eq(account.id), any()))
-            .thenReturn(listOf(occ1, occ2))
-
-        val result =
-            service.findSimilarPositions(
-                queryFen = queryFen,
-                account = account,
-                minScore = 0.0,
-                limit = 10,
-                excludeGameId = game1.id,
-            )
-
-        // posId1 must be pruned because its only occurrence was in game1
-        assertEquals(1, result.results.size)
-        assertEquals(posId2, result.results[0].positionId)
-        assertTrue(result.results.all { match -> match.occurrences.none { it.platformGameId == "game-1" } })
-    }
 }

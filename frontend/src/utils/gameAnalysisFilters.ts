@@ -75,17 +75,3 @@ export function formatEvaluation(evalCp?: number | null): string {
   const val = evalCp / 100.0;
   return val > 0 ? `+${val.toFixed(2)}` : val.toFixed(2);
 }
-
-export function isEngineMistake(
-  ply: AnalyzedPly,
-  threshold = DEFAULT_EVAL_LOSS_THRESHOLD
-): boolean {
-  if (ply.evalLoss === null || ply.evalLoss === undefined) return false;
-  return ply.evalLoss >= threshold;
-}
-
-export function isTimingObservation(ply: AnalyzedPly): boolean {
-  const sev = ply.decisionSeverity?.toUpperCase();
-  return sev === 'MINOR' || sev === 'SIGNIFICANT' || sev === 'CRITICAL';
-}
-

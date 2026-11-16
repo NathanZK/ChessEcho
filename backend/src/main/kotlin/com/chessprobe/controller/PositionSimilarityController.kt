@@ -40,7 +40,6 @@ class PositionSimilarityController(
         @RequestParam(defaultValue = "8") depth: Int,
         @RequestParam(defaultValue = "1") multiPv: Int,
         @RequestParam(defaultValue = "STRUCTURAL") mode: String,
-        @RequestParam(required = false) excludeGameId: UUID?,
         @OptionalAuthenticatedPrincipal
         @RequestAttribute(name = SessionAuthenticationFilter.PRINCIPAL_ATTRIBUTE, required = false)
         principal: AuthenticatedPrincipal?,
@@ -68,7 +67,6 @@ class PositionSimilarityController(
                 depth = depth,
                 multiPv = multiPv,
                 mode = parsedMode,
-                excludeGameId = excludeGameId,
             )
 
         return toResponse(result)

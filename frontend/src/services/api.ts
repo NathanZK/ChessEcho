@@ -978,7 +978,6 @@ export async function fetchSimilarPositions(params: {
   fen: string;
   accountId?: string;
   username?: string;
-  excludeGameId?: string;
   minScore?: number;
   limit?: number;
   depth?: number;
@@ -989,7 +988,6 @@ export async function fetchSimilarPositions(params: {
   queryParams.set('fen', params.fen);
   if (params.accountId) queryParams.set('accountId', params.accountId);
   if (params.username) queryParams.set('username', params.username);
-  if (params.excludeGameId) queryParams.set('excludeGameId', params.excludeGameId);
   if (params.minScore !== undefined) queryParams.set('minScore', params.minScore.toString());
   if (params.limit !== undefined) queryParams.set('limit', params.limit.toString());
   if (params.depth !== undefined) queryParams.set('depth', params.depth.toString());

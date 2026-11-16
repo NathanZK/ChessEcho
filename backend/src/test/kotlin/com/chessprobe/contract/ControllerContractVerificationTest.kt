@@ -42,7 +42,6 @@ import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.eq
-import org.mockito.kotlin.isNull
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 import org.springframework.core.MethodParameter
@@ -168,7 +167,6 @@ class ControllerContractVerificationTest {
                 depth = eq(8),
                 multiPv = eq(1),
                 mode = eq(SimilarityRetrievalMode.STRUCTURAL),
-                excludeGameId = isNull(),
             ),
         ).thenReturn(createSampleSimilarPositionsResult(fen, positionId))
 

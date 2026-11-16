@@ -9,7 +9,6 @@ export interface GameAnalysisPliesListProps {
   qualifyingPlies: AnalyzedPly[];
   selectedPlyNumber: number | null;
   onSelectPly: (plyNumber: number) => void;
-  evalLossThreshold?: number;
 }
 
 export const GameAnalysisPliesList: React.FC<GameAnalysisPliesListProps> = ({
@@ -17,7 +16,6 @@ export const GameAnalysisPliesList: React.FC<GameAnalysisPliesListProps> = ({
   qualifyingPlies,
   selectedPlyNumber,
   onSelectPly,
-  evalLossThreshold = 0.8,
 }) => {
   return (
     <div className="lg:col-span-5 bg-surface-container-high border border-outline-variant rounded-lg p-4 max-h-[600px] overflow-y-auto">
@@ -56,15 +54,11 @@ export const GameAnalysisPliesList: React.FC<GameAnalysisPliesListProps> = ({
 
                 <div className="flex items-center gap-3">
                   <div className="text-right">
-                    {ply.evalLoss !== null && ply.evalLoss !== undefined && ply.evalLoss >= evalLossThreshold ? (
-                      <span className="text-error font-semibold block">
-                        -{ply.evalLoss.toFixed(2)}
-                      </span>
-                    ) : (
-                      <span className="text-on-surface-variant font-medium block text-xs">
-                        {ply.evalLoss !== null && ply.evalLoss !== undefined ? `-${ply.evalLoss.toFixed(2)}` : '0.00'}
-                      </span>
-                    )}
+                    <span className="text-error font-semibold block">
+                      -{ply.evalLoss !== null && ply.evalLoss !== undefined
+                        ? ply.evalLoss.toFixed(2)
+                        : '0.00'}
+                    </span>
                     <span className="text-[10px] text-on-surface-variant">
                       {ply.decisionSeverity || 'None'}
                     </span>

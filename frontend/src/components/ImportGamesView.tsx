@@ -31,7 +31,6 @@ interface ImportGamesViewProps {
   onNavigateTab?: (tab: 'puzzles' | 'weaknesses') => void;
   onDisconnect?: () => void;
   onJobStatusUpdate?: (job: JobStatusResponse | null) => void;
-  initialTimeControls?: string[];
 }
 
 export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
@@ -49,12 +48,9 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
   onNavigateTab,
   onDisconnect,
   onJobStatusUpdate,
-  initialTimeControls,
 }) => {
   const [username, setUsername] = useState<string>(connectedUsername || '');
-  const [timeControls, setTimeControls] = useState<string[]>(
-    initialTimeControls && initialTimeControls.length > 0 ? initialTimeControls : ['BLITZ', 'RAPID']
-  );
+  const [timeControls, setTimeControls] = useState<string[]>(['BLITZ', 'RAPID']);
   const [playerColor, setPlayerColor] = useState<'WHITE' | 'BLACK' | 'BOTH'>('BOTH');
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
@@ -109,15 +105,6 @@ export const ImportGamesView: React.FC<ImportGamesViewProps> = ({
     setTrackedConnectedUsername(connectedUsername);
     if (connectedUsername) {
       setUsername(connectedUsername);
-    }
-  }
-
-  // Sync timeControls if initialTimeControls prop changes
-  const [trackedInitialTimeControls, setTrackedInitialTimeControls] = useState(initialTimeControls);
-  if (trackedInitialTimeControls !== initialTimeControls) {
-    setTrackedInitialTimeControls(initialTimeControls);
-    if (initialTimeControls && initialTimeControls.length > 0) {
-      setTimeControls(initialTimeControls);
     }
   }
 

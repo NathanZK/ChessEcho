@@ -111,7 +111,6 @@ class PositionSimilarityControllerTest {
                 depth = eq(8),
                 multiPv = eq(2),
                 mode = eq(SimilarityRetrievalMode.STRUCTURAL),
-                excludeGameId = anyOrNull(),
             ),
         ).thenReturn(mockResult)
 
@@ -145,7 +144,6 @@ class PositionSimilarityControllerTest {
             depth = eq(8),
             multiPv = eq(2),
             mode = eq(SimilarityRetrievalMode.STRUCTURAL),
-            excludeGameId = anyOrNull(),
         )
     }
 
@@ -178,7 +176,6 @@ class PositionSimilarityControllerTest {
                 depth = eq(8),
                 multiPv = eq(1),
                 mode = eq(SimilarityRetrievalMode.DYNAMIC),
-                excludeGameId = anyOrNull(),
             ),
         ).thenReturn(mockResult)
 
@@ -199,48 +196,6 @@ class PositionSimilarityControllerTest {
             depth = eq(8),
             multiPv = eq(1),
             mode = eq(SimilarityRetrievalMode.DYNAMIC),
-            excludeGameId = anyOrNull(),
-        )
-    }
-
-    @Test
-    fun `passes excludeGameId to service`() {
-        whenever(accountOwnershipService.resolvePrivateRead(eq(Platform.CHESS_COM), eq("testuser"), anyOrNull()))
-            .thenReturn(testAccount)
-        val posId = UUID.randomUUID()
-        val mockResult = buildMockResult(posId)
-        val excludeId = UUID.randomUUID()
-
-        whenever(
-            positionSimilarityService.findSimilarPositions(
-                queryFen = eq(queryFen),
-                account = eq(testAccount),
-                minScore = eq(0.0),
-                limit = eq(20),
-                depth = eq(8),
-                multiPv = eq(1),
-                mode = eq(SimilarityRetrievalMode.STRUCTURAL),
-                excludeGameId = eq(excludeId),
-            ),
-        ).thenReturn(mockResult)
-
-        mockMvc
-            .perform(
-                get("/api/positions/similar")
-                    .param("fen", queryFen)
-                    .param("username", "testuser")
-                    .param("excludeGameId", excludeId.toString()),
-            ).andExpect(status().isOk)
-
-        verify(positionSimilarityService).findSimilarPositions(
-            queryFen = eq(queryFen),
-            account = eq(testAccount),
-            minScore = eq(0.0),
-            limit = eq(20),
-            depth = eq(8),
-            multiPv = eq(1),
-            mode = eq(SimilarityRetrievalMode.STRUCTURAL),
-            excludeGameId = eq(excludeId),
         )
     }
 

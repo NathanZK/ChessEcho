@@ -94,7 +94,6 @@ private data class DynamicQueryFailure(
 )
 
 @Service
-@Suppress("LargeClass")
 class PositionSimilarityService(
     private val corpusProvider: PersonalPositionCorpusProvider,
     private val occurrenceRepository: PositionOccurrenceRepository,
@@ -122,7 +121,6 @@ class PositionSimilarityService(
         depth: Int = DEFAULT_DEPTH,
         multiPv: Int = DEFAULT_MULTI_PV,
         mode: SimilarityRetrievalMode = SimilarityRetrievalMode.STRUCTURAL,
-        excludeGameId: UUID? = null,
     ): SimilarPositionsResult =
         findSimilarPositions(
             queryFen = queryFen,
@@ -133,7 +131,6 @@ class PositionSimilarityService(
             multiPv = multiPv,
             mode = mode,
             maxPositionsPerGame = DEFAULT_MAX_POSITIONS_PER_GAME,
-            excludeGameId = excludeGameId,
         )
 
     @Transactional(readOnly = true)
@@ -146,15 +143,14 @@ class PositionSimilarityService(
         multiPv: Int = DEFAULT_MULTI_PV,
         mode: SimilarityRetrievalMode = SimilarityRetrievalMode.STRUCTURAL,
         maxPositionsPerGame: Int = DEFAULT_MAX_POSITIONS_PER_GAME,
-        excludeGameId: UUID? = null,
     ): SimilarPositionsResult {
         val validFen = validator.validateOrthodoxFen(queryFen)
         val resolvedLimit = limit.coerceIn(1, MAX_LIMIT)
         return when (mode) {
             SimilarityRetrievalMode.STRUCTURAL ->
-                findStructuralSimilarPositions(validFen, account, minScore, resolvedLimit, maxPositionsPerGame, excludeGameId)
+                findStructuralSimilarPositions(validFen, account, minScore, resolvedLimit, maxPositionsPerGame)
             SimilarityRetrievalMode.DYNAMIC ->
-                findDynamicSimilarPositions(validFen, account, resolvedLimit, depth, multiPv, maxPositionsPerGame, excludeGameId)
+                findDynamicSimilarPositions(validFen, account, resolvedLimit, depth, multiPv, maxPositionsPerGame)
         }
     }
 
@@ -164,7 +160,6 @@ class PositionSimilarityService(
         minScore: Double,
         limit: Int,
         maxPositionsPerGame: Int = DEFAULT_MAX_POSITIONS_PER_GAME,
-        excludeGameId: UUID? = null,
     ): SimilarPositionsResult {
         val queryDoc = tokenExtractor.extractDocument(UUID.randomUUID(), validFen, includeReachability = false)
 
@@ -185,7 +180,7 @@ class PositionSimilarityService(
             return emptyResult(validFen, mode = "STRUCTURAL")
         }
 
-        val qualifyingMatches = qualifyCandidates(account, filtered, activeTurn, expectedColor, excludeGameId)
+        val qualifyingMatches = qualifyCandidates(account, filtered, activeTurn, expectedColor)
         if (qualifyingMatches.isEmpty()) {
             return emptyResult(validFen, mode = "STRUCTURAL")
         }
@@ -215,7 +210,6 @@ class PositionSimilarityService(
         depth: Int,
         multiPv: Int,
         maxPositionsPerGame: Int = DEFAULT_MAX_POSITIONS_PER_GAME,
-        excludeGameId: UUID? = null,
     ): SimilarPositionsResult {
         val queryDoc = tokenExtractor.extractDocument(UUID.randomUUID(), validFen, includeReachability = false)
         val activeTurn = queryDoc.sideToMove
@@ -224,17 +218,7 @@ class PositionSimilarityService(
 
         return concurrencyManager.withPermitOrFallback(
             onPermitAcquired = {
-                executeDynamicSearch(
-                    validFen = validFen,
-                    account = account,
-                    activeTurn = activeTurn,
-                    expectedColor = expectedColor,
-                    limit = limit,
-                    depth = depth,
-                    multiPv = multiPv,
-                    maxPositionsPerGame = maxPositionsPerGame,
-                    excludeGameId = excludeGameId,
-                )
+                executeDynamicSearch(validFen, account, activeTurn, expectedColor, limit, depth, multiPv, maxPositionsPerGame)
             },
             onCapacityExceeded = {
                 emptyDynamicResult(
@@ -254,7 +238,6 @@ class PositionSimilarityService(
         depth: Int,
         multiPv: Int,
         maxPositionsPerGame: Int = DEFAULT_MAX_POSITIONS_PER_GAME,
-        excludeGameId: UUID? = null,
     ): SimilarPositionsResult {
         val targetDepth = maxOf(depth, DYNAMIC_TARGET_DEPTH)
         val queryFeatures = resolveDynamicQueryFeatures(validFen, targetDepth)
@@ -269,7 +252,7 @@ class PositionSimilarityService(
 
         val scoredCandidates = retrieveScoredCandidates(account, queryFeatures.tokens.keys, activeTurn)
 
-        val qualifyingMatches = qualifyDynamicCandidates(account.id, scoredCandidates, expectedColor, excludeGameId)
+        val qualifyingMatches = qualifyDynamicCandidates(account.id, scoredCandidates, expectedColor)
         if (qualifyingMatches.isEmpty()) {
             return emptyDynamicResult(
                 queryFen = validFen,
@@ -564,7 +547,6 @@ class PositionSimilarityService(
         accountId: UUID,
         scoredCandidates: List<ScoredCandidate>,
         expectedColor: String,
-        excludeGameId: UUID? = null,
     ): List<Pair<ScoredCandidate, List<PositionOccurrence>>> {
         if (scoredCandidates.isEmpty()) return emptyList()
         val candidatePositionIds = scoredCandidates.map { it.positionId }
@@ -574,9 +556,7 @@ class PositionSimilarityService(
             val occs = occurrencesByPos[candidate.positionId].orEmpty()
             val qualifyingOccs =
                 occs.filter { occ ->
-                    (excludeGameId == null || occ.game.id != excludeGameId) &&
-                        occ.playerColor.equals(expectedColor, ignoreCase = true) &&
-                        occ.movePlayed.isNotBlank()
+                    occ.playerColor.equals(expectedColor, ignoreCase = true) && occ.movePlayed.isNotBlank()
                 }
             if (qualifyingOccs.isEmpty()) null else candidate to qualifyingOccs
         }
@@ -647,7 +627,6 @@ class PositionSimilarityService(
         filtered: List<RankedPositionMatch>,
         activeTurn: String,
         expectedColor: String,
-        excludeGameId: UUID? = null,
     ): List<Pair<RankedPositionMatch, List<PositionOccurrence>>> {
         val occurrencesByPos = loadOccurrencesForPositions(account.id, filtered.map { it.document.positionId })
         return filtered.mapNotNull { match ->
@@ -657,9 +636,7 @@ class PositionSimilarityService(
             val occs = occurrencesByPos[match.document.positionId].orEmpty()
             val qualifyingOccs =
                 occs.filter { occ ->
-                    (excludeGameId == null || occ.game.id != excludeGameId) &&
-                        occ.playerColor.equals(expectedColor, ignoreCase = true) &&
-                        occ.movePlayed.isNotBlank()
+                    occ.playerColor.equals(expectedColor, ignoreCase = true) && occ.movePlayed.isNotBlank()
                 }
             if (qualifyingOccs.isEmpty()) {
                 null
