@@ -11,6 +11,14 @@ vi.mock('@/services/api', async () => {
     fetchPuzzles: vi.fn(),
     fetchPuzzleContinuation: vi.fn(),
     evaluateMove: vi.fn(),
+    submitTrainingAttempt: vi.fn().mockResolvedValue({
+      attemptId: 'test-attempt',
+      puzzleId: 'puzzle-1',
+      mode: 'STOPWATCH',
+      elapsedMs: 1000,
+      outcome: 'SUBMITTED',
+      recordedAt: '2026-03-01T12:00:00Z',
+    }),
   };
 });
 
@@ -49,6 +57,14 @@ vi.mock('react-chessboard', () => ({
 describe('PracticePuzzlesView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(api.submitTrainingAttempt).mockResolvedValue({
+      attemptId: 'test-attempt',
+      puzzleId: 'puzzle-1',
+      mode: 'STOPWATCH',
+      elapsedMs: 1000,
+      outcome: 'SUBMITTED',
+      recordedAt: '2026-03-01T12:00:00Z',
+    });
   });
 
   afterEach(() => {
@@ -952,6 +968,87 @@ describe('PracticePuzzlesView', () => {
       vi.advanceTimersByTime(2000);
     });
     expect(screen.getByText('0:02')).toBeInTheDocument();
+
+    unmount();
+    vi.useRealTimers();
+  });
+
+  it('submits timer attempt to API on puzzle completion without leaving uncontrolled network requests', async () => {
+    expect(vi.isMockFunction(api.submitTrainingAttempt)).toBe(true);
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'performance'] });
+    const actionsRef = React.createRef<PracticePuzzlesViewHandle | null>();
+
+    vi.mocked(api.fetchPuzzles).mockResolvedValueOnce([
+      {
+        puzzleId: 'puzzle-isolation-check',
+        fen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2',
+        playerColor: 'WHITE',
+        targetMove: 'd4',
+        openingTitle: 'Isolation Check Puzzle',
+        acceptableMoves: [],
+        movesPlayed: [],
+        priority: 1,
+        timesReached: 1,
+        mistakeCount: 1,
+        mistakeRate: 1,
+        evalCp: 35,
+      },
+    ]);
+
+    const { unmount } = render(
+      <PracticePuzzlesView
+        actionsRef={actionsRef}
+        sessionStatus="authenticated"
+        sessionUserId="user-1"
+        activeAccountId="acc-1"
+        activeUsername="test_user"
+        sessionGatePromise={Promise.resolve(true)}
+        sessionGateOpen={true}
+        onNavigateTab={vi.fn()}
+      />
+    );
+
+    await vi.waitFor(() => {
+      expect(screen.getByTestId('mock-chessboard')).toBeInTheDocument();
+    });
+
+    // Open puzzle settings and activate Stopwatch mode
+    fireEvent.click(screen.getByRole('button', { name: /puzzle settings/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Stopwatch' }));
+
+    // Initialize timer
+    act(() => {
+      vi.advanceTimersByTime(200);
+    });
+
+    expect(screen.getByText('0:00')).toBeInTheDocument();
+
+    // Advance 1 second
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(screen.getByText('0:01')).toBeInTheDocument();
+
+    // Play target move 'd4' to complete the puzzle
+    act(() => {
+      screen.getByTestId('play-d4-drop').click();
+    });
+
+    await vi.waitFor(() => {
+      expect(screen.getByText('Puzzle Solved! 🎉')).toBeInTheDocument();
+    });
+
+    // Verify submitTrainingAttempt was invoked via the mock rather than live network
+    expect(api.submitTrainingAttempt).toHaveBeenCalledTimes(1);
+    expect(api.submitTrainingAttempt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        puzzleId: 'puzzle-isolation-check',
+        mode: 'STOPWATCH',
+        outcome: 'SUBMITTED',
+        accountId: 'acc-1',
+      })
+    );
 
     unmount();
     vi.useRealTimers();
