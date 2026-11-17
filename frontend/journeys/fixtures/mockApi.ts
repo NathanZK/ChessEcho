@@ -663,10 +663,18 @@ export async function setupJourneyApiMocks(
   });
 
   await page.route('**/api/positions/weaknesses*', async (route) => {
+    const url = new URL(route.request().url());
+    const playerColor = url.searchParams.get('playerColor');
+    let results = weaknesses;
+    if (playerColor && playerColor !== 'BOTH') {
+      results = weaknesses.filter(
+        (w) => (w as { playerColor?: string }).playerColor === playerColor
+      );
+    }
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(weaknesses),
+      body: JSON.stringify(results),
     });
   });
 
@@ -908,10 +916,18 @@ export async function setupJourneyApiMocks(
   });
 
   await page.route('**/api/weaknesses/recurring*', async (route) => {
+    const url = new URL(route.request().url());
+    const clusterType = url.searchParams.get('clusterType');
+    let results = recurringWeaknesses;
+    if (clusterType) {
+      results = recurringWeaknesses.filter(
+        (w) => (w as { clusterType?: string }).clusterType === clusterType
+      );
+    }
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(recurringWeaknesses),
+      body: JSON.stringify(results),
     });
   });
 

@@ -145,6 +145,10 @@ export default function Home() {
   const [minEvalLoss, setMinEvalLoss] = useState<number>(0.8);
   const [minMistakeCount, setMinMistakeCount] = useState<number>(3);
   const [puzzleColorFilter, setPuzzleColorFilter] = useState<'BOTH' | 'WHITE' | 'BLACK'>('BOTH');
+  const [weaknessClusterSnapshot, setWeaknessClusterSnapshot] = useState<{
+    clusterType?: 'STRUCTURAL' | 'DYNAMIC';
+    expandedClusterId?: string;
+  } | null>(null);
 
   if (appliedSettings !== settings) {
     setAppliedSettings(settings);
@@ -208,9 +212,17 @@ export default function Home() {
     return success;
   };
 
-  const handleSelectPracticeFromLibrary = (puzzle: Puzzle, fullList?: Puzzle[]) => {
+  const handleSelectPracticeFromLibrary = (
+    puzzle: Puzzle,
+    fullList?: Puzzle[],
+    context?: { clusterType?: 'STRUCTURAL' | 'DYNAMIC'; expandedClusterId?: string }
+  ) => {
+    if (context) {
+      setWeaknessClusterSnapshot(context);
+    }
+    const returnTab = activeTab === 'weakness-analysis' ? 'weakness-analysis' : 'weaknesses';
     changeTab('puzzles');
-    practiceActionsRef.current?.selectPracticeFromLibrary(puzzle, fullList, 'weaknesses');
+    practiceActionsRef.current?.selectPracticeFromLibrary(puzzle, fullList, returnTab);
   };
 
   const handleSimilarPositionsSnapshotChange = React.useCallback(
@@ -312,7 +324,9 @@ export default function Home() {
     );
   };
 
-  const showingPositionProgress = activeTab === 'weaknesses' && selectedProgress !== null;
+  const showingPositionProgress =
+    (activeTab === 'weaknesses' || activeTab === 'weakness-analysis') &&
+    selectedProgress !== null;
 
   return (
     <div
@@ -361,10 +375,29 @@ export default function Home() {
           hasGameAnalysisReturnContext={hasGameAnalysisReturnContext}
         />
 
-        {/* TAB 2: WEAKNESSES LIBRARY */}
+        {/* TAB 1: WEAKNESS LIBRARY */}
         {activeTab === 'weaknesses' && (
+          <WeaknessesList
+            mode="library"
+            accountId={session.sessionGateOpen ? session.connectedAccount?.id : undefined}
+            username={session.sessionGateOpen ? session.weaknessDisplayUsername : undefined}
+            isAnalysisActive={
+              !!session.activeUsername && activeJobStatus?.analysisStatus === 'ANALYZING'
+            }
+            sessionStatus={session.sessionStatus}
+            onSelectPractice={handleSelectPracticeFromLibrary}
+            onWeaknessCountChange={setWeaknessCount}
+            refreshKey={weaknessRefreshKey}
+            initialClusterType={weaknessClusterSnapshot?.clusterType}
+            initialExpandedClusterId={weaknessClusterSnapshot?.expandedClusterId}
+          />
+        )}
+
+        {/* TAB 1b: EXACT-POSITION ANALYSIS */}
+        {activeTab === 'weakness-analysis' && (
           <>
             <WeaknessesList
+              mode="analysis"
               accountId={session.sessionGateOpen ? session.connectedAccount?.id : undefined}
               username={session.sessionGateOpen ? session.weaknessDisplayUsername : undefined}
               sessionStatus={session.sessionStatus}

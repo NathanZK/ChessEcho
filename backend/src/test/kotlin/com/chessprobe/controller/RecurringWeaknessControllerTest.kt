@@ -246,7 +246,7 @@ class RecurringWeaknessControllerTest {
             )
         `when`(discoveryService.getLatestRecurringWeaknesses(testAccount)).thenReturn(listOf(weakness))
 
-        val response = controller.getRecurringWeaknesses(null, "testplayer", null)
+        val response = controller.getRecurringWeaknesses(null, "testplayer", null, null)
         assertEquals(HttpStatus.OK, response.statusCode)
         assertEquals(1, response.body?.size)
         assertEquals(weakness.clusterId, response.body?.get(0)?.clusterId)
@@ -277,9 +277,40 @@ class RecurringWeaknessControllerTest {
             )
         `when`(discoveryService.getLatestRecurringWeaknesses(testAccount)).thenReturn(listOf(weakness))
 
-        val response = controller.getRecurringWeaknesses(testAccount.id, null, principal)
+        val response = controller.getRecurringWeaknesses(testAccount.id, null, null, principal)
         assertEquals(HttpStatus.OK, response.statusCode)
         assertEquals(1, response.body?.size)
+    }
+
+    @Test
+    fun `GET recurring weaknesses with clusterType passes clusterType to discoveryService`() {
+        val principal = AuthenticatedPrincipal(appUserId = UUID.randomUUID(), devPrincipal = false)
+        `when`(accountOwnershipService.resolvePrivateRead(testAccount.id, principal)).thenReturn(testAccount)
+        val weakness =
+            RecurringWeaknessResponse(
+                clusterId = UUID.randomUUID(),
+                clusterType = ClusterType.STRUCTURAL,
+                recommendationPriority = 10.0,
+                representativeFen = "fen3",
+                memberPositionCount = 5,
+                totalOccurrences = 8,
+                distinctGamesCount = 2,
+                mistakeCount = 3,
+                mistakeFrequency = 37.5,
+                blunderRate = 12.5,
+                evaluatedOccurrences = 8,
+                unevaluatedOccurrences = 0,
+                evalLossDistribution = mapOf("SIGNIFICANT" to 3),
+                evalLossPercentages = mapOf("SIGNIFICANT" to 37.5),
+                timingProfile = mapOf("RAPID_DECISION" to 8),
+                formatBreakdown = mapOf("RAPID" to 8),
+            )
+        `when`(discoveryService.getLatestRecurringWeaknesses(testAccount, ClusterType.STRUCTURAL)).thenReturn(listOf(weakness))
+
+        val response = controller.getRecurringWeaknesses(testAccount.id, null, ClusterType.STRUCTURAL, principal)
+        assertEquals(HttpStatus.OK, response.statusCode)
+        assertEquals(1, response.body?.size)
+        assertEquals(ClusterType.STRUCTURAL, response.body?.get(0)?.clusterType)
     }
 
     @Test
@@ -287,14 +318,14 @@ class RecurringWeaknessControllerTest {
         val principal = AuthenticatedPrincipal(appUserId = UUID.randomUUID(), devPrincipal = false)
 
         assertThrows<AccountSelectionRequiredException> {
-            controller.getRecurringWeaknesses(testAccount.id, "testplayer", principal)
+            controller.getRecurringWeaknesses(testAccount.id, "testplayer", null, principal)
         }
     }
 
     @Test
     fun `GET recurring weaknesses throws UnauthenticatedException when unauthenticated caller provides accountId`() {
         assertThrows<UnauthenticatedException> {
-            controller.getRecurringWeaknesses(testAccount.id, null, null)
+            controller.getRecurringWeaknesses(testAccount.id, null, null, null)
         }
     }
 

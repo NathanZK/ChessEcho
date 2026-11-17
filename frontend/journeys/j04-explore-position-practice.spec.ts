@@ -11,6 +11,7 @@ test.describe('Journey J04: Explore Position Practice & Return Flow', () => {
 
     // 2. Load application on weaknesses tab
     await page.goto('/#weaknesses', { waitUntil: 'domcontentloaded' });
+    await expect(page.getByText('Select Cluster Discovery Mode')).toBeVisible();
 
     // 3. Open Explore / Tools dropdown
     const toolsButton = page.getByRole('button', { name: /Explore \/ Tools/i });

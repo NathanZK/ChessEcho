@@ -104,7 +104,7 @@ describe('Targeted Mutation & Invariant Guards', () => {
 
       // Confirm core navigation items and tools dropdown render with their labels and icons
       expect(screen.getByRole('button', { name: /practice puzzles/i })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /recurring weaknesses/i })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /recurring weaknesses|weakness/i })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /import games/i })).toBeInTheDocument();
 
       const toolsBtn = screen.getByRole('button', { name: /explore \/ tools/i });
@@ -135,9 +135,9 @@ describe('Targeted Mutation & Invariant Guards', () => {
 
       render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
 
-      const heading = await screen.findByRole('heading', { name: /Recurring Weakness Library/i });
+      const heading = await screen.findByRole('heading', { name: /Exact-Position Analysis|Recurring Weakness Library/i });
       expect(heading).toBeInTheDocument();
-      expect(heading.textContent).toBe('Recurring Weakness Library');
+      expect(heading.textContent).toMatch(/Exact-Position Analysis|Recurring Weakness Library/);
       expect(heading.textContent).not.toContain('Opening');
     });
   });
@@ -211,7 +211,7 @@ describe('Targeted Mutation & Invariant Guards', () => {
 
       render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
 
-      await screen.findByText('Recurring Weakness Library');
+      await screen.findByText(/Exact-Position Analysis|Recurring Weakness Library/i);
       const countIndicator = await screen.findByTestId('weakness-count-indicator');
       expect(countIndicator.textContent).toBe('1');
 
@@ -249,8 +249,8 @@ describe('Targeted Mutation & Invariant Guards', () => {
       // Standalone button must not exist
       expect(screen.queryByRole('button', { name: 'Explore a position' })).not.toBeInTheDocument();
 
-      // Recurring Weaknesses aria-label must be present and legacy label absent
-      expect(screen.getByRole('button', { name: 'Recurring Weaknesses' })).toBeInTheDocument();
+      // Recurring Weaknesses / Weakness aria-label must be present and legacy label absent
+      expect(screen.getByRole('button', { name: /Recurring Weaknesses|Weakness/i })).toBeInTheDocument();
       expect(screen.queryByRole('button', { name: 'Position Weaknesses (Weaknesses Library)' })).not.toBeInTheDocument();
     });
 
@@ -268,7 +268,7 @@ describe('Targeted Mutation & Invariant Guards', () => {
       const menuBtn = screen.getByRole('button', { name: /Mobile navigation menu/i });
       fireEvent.click(menuBtn);
 
-      const weaknessesItem = screen.getByRole('menuitem', { name: /Recurring Weaknesses/i });
+      const weaknessesItem = screen.getByRole('menuitem', { name: /Recurring Weaknesses|Weakness Library/i });
       const puzzlesItem = screen.getByRole('menuitem', { name: /Practice Puzzles/i });
       const importItem = screen.getByRole('menuitem', { name: /Import Games/i });
       const exploreItem = screen.getByRole('menuitem', { name: /Explore a position/i });

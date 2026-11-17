@@ -411,7 +411,7 @@ describe('Weaknesses Tab MVP', () => {
 
     it('renders with expanded responsive container max-width max-w-[1536px]', () => {
       render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
-      const container = screen.getByText(/Recurring Weakness Library/i).closest('.max-w-\\[1536px\\]');
+      const container = screen.getByText(/Exact-Position Analysis|Recurring Weakness Library/i).closest('.max-w-\\[1536px\\]');
       expect(container).toBeInTheDocument();
     });
   });

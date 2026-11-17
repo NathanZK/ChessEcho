@@ -23,6 +23,7 @@ describe('Thematic Weakness Clusters & Practice Bridge (#735)', () => {
     accountId: 'test-account-uuid',
     username: 'magnus',
     onSelectPractice,
+    mode: 'library' as const,
   };
 
   const mockCluster: api.RecurringWeaknessResponse = {
@@ -52,9 +53,10 @@ describe('Thematic Weakness Clusters & Practice Bridge (#735)', () => {
     vi.mocked(api.fetchRecurringWeaknesses).mockResolvedValueOnce([mockCluster]);
 
     render(<WeaknessesList {...defaultProps} />);
+    fireEvent.click(screen.getByRole('button', { name: /Structural Weakness Clusters/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/Thematic Clusters/i)).toBeInTheDocument();
+      expect(screen.getByText(/Structural Weakness Clusters/i)).toBeInTheDocument();
       expect(screen.getByText(/Mistake Freq: 55%/i)).toBeInTheDocument();
       expect(screen.getByText(/Blunder Rate: 30%/i)).toBeInTheDocument();
       expect(screen.getByText(/4 variations/i)).toBeInTheDocument();
@@ -91,6 +93,7 @@ describe('Thematic Weakness Clusters & Practice Bridge (#735)', () => {
     });
 
     render(<WeaknessesList {...defaultProps} />);
+    fireEvent.click(screen.getByRole('button', { name: /Structural Weakness Clusters/i }));
 
     const practiceBtn = await screen.findByRole('button', { name: /Practice This Weakness/i });
     expect(practiceBtn).toBeInTheDocument();
@@ -114,7 +117,10 @@ describe('Thematic Weakness Clusters & Practice Bridge (#735)', () => {
             puzzleId: 'pos-123',
             targetMove: 'Bb5',
           }),
-        ])
+        ]),
+        expect.objectContaining({
+          clusterType: 'STRUCTURAL',
+        })
       );
     });
   });
@@ -177,6 +183,7 @@ describe('Thematic Weakness Clusters & Practice Bridge (#735)', () => {
       });
 
     render(<WeaknessesList {...defaultProps} />);
+    fireEvent.click(screen.getByRole('button', { name: /Structural Weakness Clusters/i }));
 
     const practiceBtn = await screen.findByRole('button', { name: /Practice This Weakness/i });
     fireEvent.click(practiceBtn);
@@ -196,7 +203,10 @@ describe('Thematic Weakness Clusters & Practice Bridge (#735)', () => {
 
       expect(onSelectPractice).toHaveBeenCalledWith(
         expect.objectContaining({ puzzleId: 'pos-p0-0' }),
-        expect.any(Array)
+        expect.any(Array),
+        expect.objectContaining({
+          clusterType: 'STRUCTURAL',
+        })
       );
     });
 
@@ -215,6 +225,7 @@ describe('Thematic Weakness Clusters & Practice Bridge (#735)', () => {
     });
 
     render(<WeaknessesList {...defaultProps} />);
+    fireEvent.click(screen.getByRole('button', { name: /Structural Weakness Clusters/i }));
 
     const practiceBtn = await screen.findByRole('button', { name: /Practice This Weakness/i });
     fireEvent.click(practiceBtn);
@@ -230,6 +241,7 @@ describe('Thematic Weakness Clusters & Practice Bridge (#735)', () => {
     vi.mocked(api.getClusterPositions).mockRejectedValueOnce(new Error('Network error on practice'));
 
     render(<WeaknessesList {...defaultProps} />);
+    fireEvent.click(screen.getByRole('button', { name: /Structural Weakness Clusters/i }));
 
     const practiceBtn = await screen.findByRole('button', { name: /Practice This Weakness/i });
     fireEvent.click(practiceBtn);
@@ -240,30 +252,46 @@ describe('Thematic Weakness Clusters & Practice Bridge (#735)', () => {
     });
   });
 
-  it('allows toggling between Thematic Clusters and All Positions views', async () => {
-    vi.mocked(api.fetchRecurringWeaknesses).mockResolvedValueOnce([mockCluster]);
+  it('allows toggling between Structural and Dynamic cluster views', async () => {
+    const mockDynamicCluster: api.RecurringWeaknessResponse = {
+      ...mockCluster,
+      clusterId: 'dynamic-cluster-1',
+      clusterType: 'DYNAMIC',
+    };
+    vi.mocked(api.fetchRecurringWeaknesses)
+      .mockResolvedValueOnce([mockCluster])
+      .mockResolvedValueOnce([mockDynamicCluster]);
 
     render(<WeaknessesList {...defaultProps} />);
 
-    await screen.findByText(/Thematic Clusters/i);
+    const structuralBtn = screen.getByRole('button', { name: /Structural Weakness Clusters/i });
+    fireEvent.click(structuralBtn);
 
-    const positionsToggle = screen.getByRole('button', { name: /^All Positions$/i });
-    fireEvent.click(positionsToggle);
+    await waitFor(() => {
+      expect(api.fetchRecurringWeaknesses).toHaveBeenCalledWith(
+        'test-account-uuid',
+        undefined,
+        'STRUCTURAL'
+      );
+    });
 
-    // Positions mode active
-    expect(positionsToggle.className).toMatch(/bg-surface-container|text-primary/);
+    const dynamicBtn = screen.getByRole('button', { name: /Dynamic Weakness Clusters/i });
+    fireEvent.click(dynamicBtn);
 
-    const clustersToggle = screen.getByRole('button', { name: /^Thematic Clusters$/i });
-    fireEvent.click(clustersToggle);
-
-    // Clusters mode restored
-    expect(clustersToggle.className).toMatch(/bg-surface-container|text-primary/);
+    await waitFor(() => {
+      expect(api.fetchRecurringWeaknesses).toHaveBeenCalledWith(
+        'test-account-uuid',
+        undefined,
+        'DYNAMIC'
+      );
+    });
   });
 
   it('renders retryable StatusBanner when fetching clusters fails', async () => {
     vi.mocked(api.fetchRecurringWeaknesses).mockRejectedValueOnce(new Error('Network disconnected'));
 
     render(<WeaknessesList {...defaultProps} />);
+    fireEvent.click(screen.getByRole('button', { name: /Structural Weakness Clusters/i }));
 
     await waitFor(() => {
       expect(screen.getByText(/Network disconnected/i)).toBeInTheDocument();
@@ -282,6 +310,7 @@ describe('Thematic Weakness Clusters & Practice Bridge (#735)', () => {
     });
 
     render(<WeaknessesList {...defaultProps} />);
+    fireEvent.click(screen.getByRole('button', { name: /Structural Weakness Clusters/i }));
 
     const practiceBtn = await screen.findByRole('button', { name: /Practice This Weakness/i });
     fireEvent.click(practiceBtn);
@@ -324,6 +353,7 @@ describe('Thematic Weakness Clusters & Practice Bridge (#735)', () => {
       .mockRejectedValueOnce(new Error('Network failure on page 1'));
 
     render(<WeaknessesList {...defaultProps} />);
+    fireEvent.click(screen.getByRole('button', { name: /Structural Weakness Clusters/i }));
 
     const practiceBtn = await screen.findByRole('button', { name: /Practice This Weakness/i });
     fireEvent.click(practiceBtn);
@@ -364,6 +394,7 @@ describe('Thematic Weakness Clusters & Practice Bridge (#735)', () => {
     });
 
     render(<WeaknessesList {...defaultProps} />);
+    fireEvent.click(screen.getByRole('button', { name: /Structural Weakness Clusters/i }));
 
     const practiceBtn = await screen.findByRole('button', { name: /Practice This Weakness/i });
     fireEvent.click(practiceBtn);

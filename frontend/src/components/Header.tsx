@@ -1,12 +1,20 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Compass, Swords, Target, Download, User, Clock3, ChevronDown, Menu, Search } from 'lucide-react';
+import { Compass, Swords, Target, Crosshair, Download, Clock3, ChevronDown, Menu, Search } from 'lucide-react';
 import type { AccountSummary } from '../services/api';
 import { ExplorePositionModal, type PositionExplorationStart } from './ExplorePositionModal';
 import { AccountMenu } from './AccountMenu';
+import { HeaderAccountStatus } from './HeaderAccountStatus';
 
-export type TabType = 'puzzles' | 'weaknesses' | 'long-decisions' | 'similar-positions' | 'import' | 'game-analysis';
+export type TabType =
+  | 'puzzles'
+  | 'weaknesses'
+  | 'weakness-analysis'
+  | 'long-decisions'
+  | 'similar-positions'
+  | 'import'
+  | 'game-analysis';
 
 export type HeaderSessionStatus = 'loading' | 'authenticated' | 'unauthenticated' | 'error';
 export type HeaderAccountStatus = 'loading' | 'connected' | 'unconnected' | 'error';
@@ -44,18 +52,9 @@ export const Header: React.FC<HeaderProps> = ({
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (
-        toolsDropdownRef.current &&
-        !toolsDropdownRef.current.contains(event.target as Node)
-      ) {
-        setIsToolsMenuOpen(false);
-      }
-      if (
-        mobileToolsDropdownRef.current &&
-        !mobileToolsDropdownRef.current.contains(event.target as Node)
-      ) {
-        setIsMobileToolsOpen(false);
-      }
+      const target = event.target as Node;
+      if (toolsDropdownRef.current && !toolsDropdownRef.current.contains(target)) setIsToolsMenuOpen(false);
+      if (mobileToolsDropdownRef.current && !mobileToolsDropdownRef.current.contains(target)) setIsMobileToolsOpen(false);
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -73,22 +72,11 @@ export const Header: React.FC<HeaderProps> = ({
     };
   }, []);
 
-  const showConnected = sessionStatus === 'authenticated' && !!connectedAccount;
-  const showGuestSelection = sessionStatus === 'unauthenticated' && !!username;
-  const showAccount = showConnected || showGuestSelection;
-  const accountConnectionLabel =
-    accountStatus === 'unconnected'
-      ? 'No Chess.com account connected'
-      : accountStatus === 'loading'
-        ? 'Checking Chess.com connection'
-        : accountStatus === 'error'
-          ? 'Unable to load Chess.com connection'
-          : 'Connected Chess.com account unavailable';
-  const accountUsername = showConnected ? connectedAccount?.username : username;
+  const isWeaknessActive = activeTab === 'weaknesses';
   const isSecondaryActive =
     activeTab === 'long-decisions' ||
     activeTab === 'similar-positions' ||
-    activeTab === 'game-analysis';
+    activeTab === 'weakness-analysis';
 
   return (
     <header className="w-full h-[60px] px-6 md:px-10 border-b border-outline-variant bg-surface-container-lowest sticky top-0 z-50 flex items-center justify-between">
@@ -110,19 +98,19 @@ export const Header: React.FC<HeaderProps> = ({
 
           {/* Primary Navigation Tabs */}
           <nav className="hidden md:flex space-x-6 h-full items-center text-xs font-mono">
-            {/* Core Tab 1: Recurring Weaknesses (central hub) */}
+            {/* Primary Tab 1: Weakness */}
             <button
               type="button"
-              aria-label="Recurring Weaknesses"
+              aria-label="Weakness"
               onClick={() => setActiveTab('weaknesses')}
-              className={`transition cursor-pointer whitespace-nowrap flex items-center gap-2 pb-1 ${
-                activeTab === 'weaknesses'
+              className={`transition cursor-pointer whitespace-nowrap flex items-center gap-1.5 pb-1 ${
+                isWeaknessActive
                   ? 'border-b-2 border-primary text-primary font-semibold'
                   : 'text-on-surface-variant hover:text-on-surface'
               }`}
             >
               <Target className="w-3.5 h-3.5 shrink-0" />
-              <span>Recurring Weaknesses</span>
+              <span>Weakness</span>
               {weaknessCount > 0 && (
                 <span className="px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-primary/20 text-primary border border-primary/30">
                   {weaknessCount}
@@ -130,7 +118,7 @@ export const Header: React.FC<HeaderProps> = ({
               )}
             </button>
 
-            {/* Core Tab 2: Practice Puzzles */}
+            {/* Primary Tab 2: Practice Puzzles */}
             <button
               type="button"
               onClick={() => setActiveTab('puzzles')}
@@ -144,7 +132,21 @@ export const Header: React.FC<HeaderProps> = ({
               <span>{isSourceNeutralExploration ? 'Line Exploration' : 'Practice Puzzles'}</span>
             </button>
 
-            {/* Core Tab 3: Import Games */}
+            {/* Primary Tab 3: My Games */}
+            <button
+              type="button"
+              onClick={() => setActiveTab('game-analysis')}
+              className={`transition cursor-pointer whitespace-nowrap flex items-center gap-2 pb-1 ${
+                activeTab === 'game-analysis'
+                  ? 'border-b-2 border-primary text-primary font-semibold'
+                  : 'text-on-surface-variant hover:text-on-surface'
+              }`}
+            >
+              <Search className="w-3.5 h-3.5 shrink-0" />
+              <span>My Games</span>
+            </button>
+
+            {/* Primary Tab 4: Import Games (placed immediately right of My Games) */}
             <button
               type="button"
               onClick={() => setActiveTab('import')}
@@ -179,6 +181,7 @@ export const Header: React.FC<HeaderProps> = ({
               {isToolsMenuOpen && (
                 <div
                   role="menu"
+                  aria-label="Explore and tools"
                   className="absolute left-0 top-[48px] w-48 py-1 bg-surface-container-high border border-outline-variant rounded-md shadow-lg z-50 text-xs font-mono"
                 >
                   <button
@@ -192,6 +195,22 @@ export const Header: React.FC<HeaderProps> = ({
                   >
                     <Compass className="w-3.5 h-3.5 shrink-0 text-primary" />
                     <span>Explore a position</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setIsToolsMenuOpen(false);
+                      setActiveTab('weakness-analysis');
+                    }}
+                    className={`w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-surface-bright transition cursor-pointer ${
+                      activeTab === 'weakness-analysis'
+                        ? 'text-primary font-semibold bg-surface-container'
+                        : 'text-on-surface-variant hover:text-on-surface'
+                    }`}
+                  >
+                    <Crosshair className="w-3.5 h-3.5 shrink-0 text-primary" />
+                    <span>Exact-Position Analysis</span>
                   </button>
                   <button
                     type="button"
@@ -225,22 +244,6 @@ export const Header: React.FC<HeaderProps> = ({
                     <Compass className="w-3.5 h-3.5 shrink-0 text-primary" />
                     <span>Similar Positions</span>
                   </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setIsToolsMenuOpen(false);
-                      setActiveTab('game-analysis');
-                    }}
-                    className={`w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-surface-bright transition cursor-pointer ${
-                      activeTab === 'game-analysis'
-                        ? 'text-primary font-semibold bg-surface-container'
-                        : 'text-on-surface-variant hover:text-on-surface'
-                    }`}
-                  >
-                    <Search className="w-3.5 h-3.5 shrink-0 text-primary" />
-                    <span>Game Analysis</span>
-                  </button>
                 </div>
               )}
             </div>
@@ -258,7 +261,7 @@ export const Header: React.FC<HeaderProps> = ({
               aria-expanded={isMobileToolsOpen}
               onClick={() => setIsMobileToolsOpen((prev) => !prev)}
               className={`flex items-center justify-center w-9 h-9 rounded-lg border border-outline-variant hover:border-primary/40 text-on-surface-variant hover:text-primary transition shrink-0 cursor-pointer ${
-                isMobileToolsOpen || isSecondaryActive ? 'border-primary text-primary' : ''
+                isMobileToolsOpen || isSecondaryActive || isWeaknessActive ? 'border-primary text-primary' : ''
               }`}
             >
               <Menu className="w-4 h-4" />
@@ -273,6 +276,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <button
                   type="button"
                   role="menuitem"
+                  aria-label="Recurring Weaknesses - Weakness Library"
                   onClick={() => {
                     setIsMobileToolsOpen(false);
                     setActiveTab('weaknesses');
@@ -314,6 +318,22 @@ export const Header: React.FC<HeaderProps> = ({
                   role="menuitem"
                   onClick={() => {
                     setIsMobileToolsOpen(false);
+                    setActiveTab('game-analysis');
+                  }}
+                  className={`w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-surface-bright transition cursor-pointer ${
+                    activeTab === 'game-analysis'
+                      ? 'text-primary font-semibold bg-surface-container'
+                      : 'text-on-surface-variant hover:text-on-surface'
+                  }`}
+                >
+                  <Search className="w-3.5 h-3.5 shrink-0 text-primary" />
+                  <span>My Games</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setIsMobileToolsOpen(false);
                     setActiveTab('import');
                   }}
                   className={`w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-surface-bright transition cursor-pointer ${
@@ -340,6 +360,22 @@ export const Header: React.FC<HeaderProps> = ({
                 >
                   <Compass className="w-3.5 h-3.5 shrink-0 text-primary" />
                   <span>Explore a position</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setIsMobileToolsOpen(false);
+                    setActiveTab('weakness-analysis');
+                  }}
+                  className={`w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-surface-bright transition cursor-pointer ${
+                    activeTab === 'weakness-analysis'
+                      ? 'text-primary font-semibold bg-surface-container'
+                      : 'text-on-surface-variant hover:text-on-surface'
+                  }`}
+                >
+                  <Crosshair className="w-3.5 h-3.5 shrink-0 text-primary" />
+                  <span>Exact-Position Analysis</span>
                 </button>
                 <button
                   type="button"
@@ -373,22 +409,6 @@ export const Header: React.FC<HeaderProps> = ({
                   <Compass className="w-3.5 h-3.5 shrink-0 text-primary" />
                   <span>Similar Positions</span>
                 </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setIsMobileToolsOpen(false);
-                    setActiveTab('game-analysis');
-                  }}
-                  className={`w-full text-left px-3 py-2 flex items-center gap-2 hover:bg-surface-bright transition cursor-pointer ${
-                    activeTab === 'game-analysis'
-                      ? 'text-primary font-semibold bg-surface-container'
-                      : 'text-on-surface-variant hover:text-on-surface'
-                  }`}
-                >
-                  <Search className="w-3.5 h-3.5 shrink-0 text-primary" />
-                  <span>Game Analysis</span>
-                </button>
               </div>
             )}
           </div>
@@ -405,90 +425,13 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           )}
 
-          {showAccount ? (
-            <div
-              className={`items-center space-x-2 ${
-                sessionStatus === 'authenticated' ? 'hidden md:flex' : 'flex'
-              }`}
-            >
-              <div className="flex items-center space-x-2 px-3 py-1 bg-surface-container border border-outline-variant rounded text-xs font-mono text-on-surface-variant">
-                <div className="flex items-center space-x-2">
-                  <span className="w-2 h-2 rounded-full bg-secondary"></span>
-                  <span className="text-on-surface font-semibold">{accountUsername}</span>
-                </div>
-                <span className="text-outline hidden sm:inline">·</span>
-                <span className="text-secondary text-[11px]">{showConnected ? 'Chess.com Connected' : 'Guest Mode'}</span>
-              </div>
-              {sessionStatus === 'authenticated' && (
-                <div className="hidden xl:flex items-center px-2.5 py-1 bg-surface-container-high border border-outline-variant rounded text-xs font-mono text-on-surface">
-                  <User className="w-3.5 h-3.5 mr-1 text-primary" />
-                  <span>Signed in to ChessProbe</span>
-                </div>
-              )}
-              {onDisconnect && (
-                <button
-                  type="button"
-                  onClick={onDisconnect}
-                  title={sessionStatus === 'authenticated' ? 'Sign out' : 'Disconnect Account'}
-                  className="px-2.5 py-1 bg-surface-container-high hover:bg-surface-bright text-xs font-mono rounded text-on-surface border border-outline-variant transition cursor-pointer"
-                >
-                  {sessionStatus === 'authenticated' ? 'Sign out' : 'Disconnect'}
-                </button>
-              )}
-              {showGuestSelection && (
-                <a
-                  href="/login"
-                  className="px-3 py-1 bg-primary-container hover:bg-primary text-on-primary-container text-xs font-mono font-bold rounded transition cursor-pointer text-center"
-                >
-                  Sign In
-                </a>
-              )}
-            </div>
-          ) : (
-            <div
-              className={`items-center space-x-2 ${
-                sessionStatus === 'authenticated' ? 'hidden md:flex' : 'flex'
-              }`}
-            >
-              {sessionStatus === 'authenticated' ? (
-                <div className="flex items-center space-x-2 px-3 py-1 bg-surface-container border border-outline-variant rounded text-xs font-mono text-on-surface-variant">
-                  <span className="text-on-surface font-semibold">Signed in to ChessProbe</span>
-                  <span className="text-outline">·</span>
-                  <span className="text-outline">{accountConnectionLabel}</span>
-                </div>
-              ) : sessionStatus === 'unauthenticated' ? (
-                <span className="text-outline text-xs font-mono hidden sm:inline">
-                  Not Connected
-                </span>
-              ) : null}
-              {sessionStatus === 'authenticated' && onDisconnect && (
-                <button
-                  type="button"
-                  onClick={onDisconnect}
-                  title="Sign out"
-                  className="px-2.5 py-1 bg-surface-container-high hover:bg-surface-bright text-xs font-mono rounded text-on-surface border border-outline-variant transition cursor-pointer"
-                >
-                  Sign out
-                </button>
-              )}
-              {sessionStatus === 'unauthenticated' && (
-                <div className="flex items-center space-x-2">
-                  <a
-                    href="/login"
-                    className="px-3 py-1 bg-primary-container hover:bg-primary text-on-primary-container text-xs font-mono font-bold rounded transition cursor-pointer text-center"
-                  >
-                    Sign In
-                  </a>
-                  <a
-                    href="/register"
-                    className="px-2.5 py-1 text-primary hover:text-white text-xs font-mono transition text-center"
-                  >
-                    Register
-                  </a>
-                </div>
-              )}
-            </div>
-          )}
+          <HeaderAccountStatus
+            sessionStatus={sessionStatus}
+            accountStatus={accountStatus}
+            connectedAccount={connectedAccount}
+            username={username}
+            onDisconnect={onDisconnect}
+          />
         </div>
       </div>
 

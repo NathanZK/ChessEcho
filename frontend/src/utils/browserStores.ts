@@ -85,6 +85,7 @@ export function createStore<T>(definition: StoreDefinition<T>): BrowserStore<T> 
 export type TabValue =
   | 'puzzles'
   | 'weaknesses'
+  | 'weakness-analysis'
   | 'long-decisions'
   | 'similar-positions'
   | 'import'
@@ -99,6 +100,7 @@ const SESSION_USER_KEY = 'chessecho_session_user';
 const isTab = (value: string | null): value is TabValue =>
   value === 'puzzles' ||
   value === 'weaknesses' ||
+  value === 'weakness-analysis' ||
   value === 'long-decisions' ||
   value === 'similar-positions' ||
   value === 'import' ||

@@ -26,6 +26,7 @@ describe('Recurring Weakness Discovery & Polling (#735)', () => {
   });
 
   const defaultProps = {
+    mode: 'library' as const,
     accountId: 'test-account-uuid',
     username: 'magnus',
     onSelectPractice: vi.fn(),
@@ -65,7 +66,7 @@ describe('Recurring Weakness Discovery & Polling (#735)', () => {
     expect(screen.getByRole('heading', { name: 'Connect Account' })).toBeInTheDocument();
   });
 
-  it('forwards accountId without username to fetchRecurringWeaknesses, triggerRecurringDiscovery, and cancelRecurringDiscoveryJob when authenticated', async () => {
+  it('forwards accountId without username to triggerRecurringDiscovery, cancelRecurringDiscoveryJob, and fetchRecurringWeaknesses when authenticated', async () => {
     const mockJob: api.RecurringDiscoveryJobResponse = {
       jobId: 'job-isolation-123',
       accountId: 'test-account-uuid',
@@ -87,25 +88,19 @@ describe('Recurring Weakness Discovery & Polling (#735)', () => {
 
     render(<WeaknessesList {...defaultProps} accountId="test-account-uuid" username="magnus" sessionStatus="authenticated" />);
 
-    // 1. Initial mount call to fetchRecurringWeaknesses
-    await waitFor(() => {
-      expect(api.fetchRecurringWeaknesses).toHaveBeenCalledWith('test-account-uuid', undefined);
-    });
-
-    // 2. Trigger discovery
-    fireEvent.click(screen.getByRole('button', { name: /Find Recurring Weaknesses/i }));
-    fireEvent.click(screen.getByRole('button', { name: /Start Discovery/i }));
-
+    // 1. Explicit cluster selection initiates discovery with accountId and without username
+    fireEvent.click(screen.getByRole('button', { name: /Structural Weakness Clusters/i }));
     await waitFor(() => {
       expect(api.triggerRecurringDiscovery).toHaveBeenCalledWith(
         expect.objectContaining({
           accountId: 'test-account-uuid',
           username: undefined,
+          clusterType: 'STRUCTURAL',
         })
       );
     });
 
-    // 3. Cancel discovery
+    // 2. Cancel discovery in progress
     const cancelBtn = await screen.findByRole('button', { name: /Cancel/i });
     fireEvent.click(cancelBtn);
 

@@ -611,6 +611,20 @@ export function PracticePuzzlesView({
 
   const handleExitExplorationInternal = React.useCallback(
     (decisionMove: string | null) => {
+      if (
+        activePuzzle &&
+        (activePuzzle.source === 'weakness' || activePuzzle.source === 'puzzle' || !activePuzzle.source)
+      ) {
+        setCurrentBoardFen(activePuzzle.fen);
+        setInitialMoveHistorySan([]);
+        setInitialMoveHistoryStartFen(undefined);
+        if (decisionMove) {
+          setFeedback({ status: 'IDLE' });
+        } else {
+          setFeedback({ status: 'CORRECT', lastMove: activePuzzle.targetMove });
+        }
+        return;
+      }
       const returnSnapshot = longDecisionReturnSnapshotRef.current;
       if (returnSnapshot) {
         restoreExplorationReturnSnapshot(returnSnapshot);
@@ -1816,7 +1830,8 @@ export function PracticePuzzlesView({
                     {hasLongDecisionReturnContext ||
                     (activeOriginatingTab && activeOriginatingTab !== 'puzzles')
                       ? `Back to ${
-                          activeOriginatingTab === 'weaknesses'
+                          activeOriginatingTab === 'weaknesses' ||
+                          activeOriginatingTab === 'weakness-analysis'
                             ? 'Weaknesses'
                             : activeOriginatingTab === 'similar-positions'
                             ? 'Similar Positions'

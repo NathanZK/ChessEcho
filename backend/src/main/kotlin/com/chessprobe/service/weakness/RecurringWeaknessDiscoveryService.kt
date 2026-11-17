@@ -95,7 +95,7 @@ class RecurringWeaknessDiscoveryService(
 ) {
     private val jobs = ConcurrentHashMap<UUID, DiscoveryJobState>()
     private val activeAccountJobs = ConcurrentHashMap<UUID, UUID>()
-    private val cachedWeaknesses = ConcurrentHashMap<UUID, List<RecurringWeaknessResponse>>()
+    private val cachedWeaknesses = ConcurrentHashMap<Pair<UUID, ClusterType>, List<RecurringWeaknessResponse>>()
 
     fun triggerDiscovery(
         account: ChessAccount,
@@ -149,10 +149,18 @@ class RecurringWeaknessDiscoveryService(
         return toResponse(jobState)
     }
 
-    fun getLatestRecurringWeaknesses(account: ChessAccount): List<RecurringWeaknessResponse> = cachedWeaknesses[account.id].orEmpty()
+    fun getLatestRecurringWeaknesses(
+        account: ChessAccount,
+        clusterType: ClusterType? = null,
+    ): List<RecurringWeaknessResponse> =
+        if (clusterType != null) {
+            cachedWeaknesses[account.id to clusterType].orEmpty()
+        } else {
+            cachedWeaknesses.filterKeys { it.first == account.id }.values.flatten()
+        }
 
     fun clearCache(accountId: UUID) {
-        cachedWeaknesses.remove(accountId)
+        cachedWeaknesses.keys.removeIf { it.first == accountId }
     }
 
     fun getClusterAccountId(clusterId: UUID): UUID? {
@@ -260,7 +268,7 @@ class RecurringWeaknessDiscoveryService(
             if (isCancelled(jobState)) return
 
             if (resolved.snapshots.isEmpty()) {
-                handleEmptySnapshots(jobState, account.id, resolved)
+                handleEmptySnapshots(jobState, account.id, resolved, request.clusterType)
                 return
             }
 
@@ -269,7 +277,7 @@ class RecurringWeaknessDiscoveryService(
 
             val candidateClusters = loadCandidateClustersForSnapshots(resolved.snapshots)
             if (candidateClusters.isEmpty()) {
-                completeJob(jobState, account.id, emptyList(), buildPartialWarning(resolved))
+                completeJob(jobState, account.id, emptyList(), buildPartialWarning(resolved), request.clusterType)
                 return
             }
 
@@ -283,12 +291,13 @@ class RecurringWeaknessDiscoveryService(
         jobState: DiscoveryJobState,
         accountId: UUID,
         resolved: ResolvedSnapshotsResult,
+        clusterType: ClusterType? = null,
     ) {
         if (resolved.failedTypes.isNotEmpty()) {
             val reasons = resolved.failedTypes.joinToString("; ") { "${it.first}: ${it.second.message ?: "clustering failed"}" }
             failJob(jobState, accountId, "Clustering generation failed: $reasons")
         } else {
-            completeJob(jobState, accountId, emptyList())
+            completeJob(jobState, accountId, emptyList(), null, clusterType)
         }
     }
 
@@ -306,7 +315,7 @@ class RecurringWeaknessDiscoveryService(
     ) {
         val results = executeEvaluationAndClustering(jobState, account, candidateClusters, request, resolved.onDemandRan)
         if (results != null && !isCancelled(jobState)) {
-            completeJob(jobState, account.id, results, buildPartialWarning(resolved))
+            completeJob(jobState, account.id, results, buildPartialWarning(resolved), request.clusterType)
         }
     }
 
@@ -563,11 +572,21 @@ class RecurringWeaknessDiscoveryService(
         accountId: UUID,
         results: List<RecurringWeaknessResponse>,
         warning: String? = null,
+        clusterType: ClusterType? = null,
     ) = synchronized(jobState) {
         if (jobState.status.isTerminal() || isCancelled(jobState)) {
             return@synchronized
         }
-        cachedWeaknesses[accountId] = results
+        if (clusterType != null) {
+            cachedWeaknesses[accountId to clusterType] = results
+        } else if (results.isNotEmpty()) {
+            results.groupBy { it.clusterType }.forEach { (type, list) ->
+                cachedWeaknesses[accountId to type] = list
+            }
+        } else {
+            cachedWeaknesses[accountId to ClusterType.STRUCTURAL] = emptyList()
+            cachedWeaknesses[accountId to ClusterType.DYNAMIC] = emptyList()
+        }
         jobState.status = DiscoveryJobStatus.COMPLETED
         jobState.stage = DiscoveryStage.COMPLETE
         jobState.progressPercent = 100

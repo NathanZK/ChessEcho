@@ -101,6 +101,8 @@ describe('Weakness progress navigation', () => {
     mocks.fetchRecurringWeaknesses.mockResolvedValue([]);
     mocks.fetchPositionProgress.mockResolvedValue(progress);
     mocks.logout.mockResolvedValue(undefined);
+    window.location.hash = '#weakness-analysis';
+    activeTabStore.set('weakness-analysis');
   });
 
   afterEach(() => {
@@ -111,7 +113,7 @@ describe('Weakness progress navigation', () => {
     localStorage.setItem('chessecho_min_eval_loss', '0.3');
     render(<Home />);
 
-    await screen.findByText('Recurring Weakness Library');
+    await screen.findByText(/Exact-Position Analysis|Recurring Weakness Library/);
     fireEvent.click(await screen.findByRole('button', { name: /view progress/i }));
 
     expect(await screen.findByRole('heading', { name: 'Position Progress' })).toBeInTheDocument();
@@ -121,13 +123,13 @@ describe('Weakness progress navigation', () => {
     expect(screen.getByText(progress.assessment)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /back to weaknesses/i }));
-    expect(await screen.findByText('Recurring Weakness Library')).toBeInTheDocument();
+    expect(await screen.findByText(/Exact-Position Analysis|Recurring Weakness Library/)).toBeInTheDocument();
   });
 
   it('uses the dynamic viewport and a shrinkable scroll region while progress is selected', async () => {
     render(<Home />);
 
-    await screen.findByText('Recurring Weakness Library');
+    await screen.findByText(/Exact-Position Analysis|Recurring Weakness Library/);
     fireEvent.click(await screen.findByRole('button', { name: /view progress/i }));
     await screen.findByRole('heading', { name: 'Position Progress' });
 

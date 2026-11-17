@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Home from '../app/page';
 import * as api from '../services/api';
-import { activeTabStore } from '../utils/browserStores';
+import { activeTabStore, activeAccountStore, activeUsernameStore } from '../utils/browserStores';
 
 vi.mock('react-chessboard', () => ({
   Chessboard: ({
@@ -89,8 +89,12 @@ describe('Weakness Library to Line Exploration and Return journey', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
-    window.location.hash = '';
-    activeTabStore.set('weaknesses');
+    window.location.hash = '#weakness-analysis';
+    window.localStorage.setItem('chessecho_session_user', 'user-1');
+    window.localStorage.setItem('chessecho_username', 'carlsen');
+    activeTabStore.set('weakness-analysis');
+    activeAccountStore.set(mockAccount);
+    activeUsernameStore.set(mockAccount.username);
     vi.mocked(api.fetchCurrentSession).mockResolvedValue({
       status: 'authenticated',
       userId: 'user-1',
@@ -98,12 +102,27 @@ describe('Weakness Library to Line Exploration and Return journey', () => {
     vi.mocked(api.fetchAccounts).mockResolvedValue([mockAccount]);
     vi.mocked(api.fetchPuzzles).mockResolvedValue([]);
     vi.mocked(api.fetchWeaknesses).mockResolvedValue([mockWeaknessItem]);
+    vi.mocked(api.evaluateMove).mockResolvedValue({
+      fen: mockWeaknessItem.fen,
+      move: 'Nc6',
+      bestMove: 'Nc6',
+      bestEvalCp: 35,
+      evalCp: 35,
+      evalLoss: 0,
+      maxEvalLoss: 0.8,
+      threshold: 0.8,
+      acceptable: true,
+    });
+    vi.mocked(api.fetchPuzzleContinuation).mockResolvedValue({
+      fen: mockWeaknessItem.fen,
+      requestedMode: 'ENGINE',
+      effectiveProvider: 'ENGINE',
+      candidates: [],
+    });
   });
 
-  it('completes full journey: Weakness Library -> Practice Position -> Continue Exploration -> Exit -> Restores Weaknesses Tab', async () => {
+  it('completes full journey: Weakness Library -> Practice Position -> Continue Exploration -> Exit Exploration preserves Practice -> Back to Weaknesses restores Weaknesses Tab', async () => {
     render(<Home />);
-
-    // 1. Weakness Library is displayed with our weakness item
     const practiceBtn = await screen.findByRole('button', { name: /Practice Position/i });
     expect(practiceBtn).toBeInTheDocument();
 
@@ -131,9 +150,16 @@ describe('Weakness Library to Line Exploration and Return journey', () => {
     expect(exitBtn).toBeInTheDocument();
     fireEvent.click(exitBtn);
 
-    // 8. Observable restored state: Weaknesses Library is active again
+    // 8. Observable restored state: Active puzzle context in Practice is preserved, not ejected to Weaknesses
+    expect(activeTabStore.getSnapshot()).toBe('puzzles');
+    expect(await screen.findByRole('button', { name: /Back to Weaknesses/i })).toBeInTheDocument();
+
+    // 9. Clicking explicit "Back to Weaknesses" returns to Weaknesses Library
+    const backToWeaknessesBtn = screen.getByRole('button', { name: /Back to Weaknesses/i });
+    fireEvent.click(backToWeaknessesBtn);
+
     await waitFor(() => {
-      expect(activeTabStore.getSnapshot()).toBe('weaknesses');
+      expect(activeTabStore.getSnapshot()).toBe('weakness-analysis');
     });
     expect(await screen.findByRole('button', { name: /Practice Position/i })).toBeInTheDocument();
   });

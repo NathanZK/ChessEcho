@@ -24,16 +24,22 @@ The goal is to change habits, not to memorize engine lines.
 
 ## Features
 
-- **6 Focused Analysis & Practice Views**:
-  - **Practice Puzzles**: Drill your actual recurring mistakes with interactive move validation, continuation lines, and instant tactical feedback.
-  - **Tactical Weaknesses**: Browse detected recurring weaknesses and thematic Leiden clusters with win/loss records and source game links (see [Position Clustering Architecture](docs/architecture/position-clustering.md)).
-  - **Long Decisions**: Isolate positions where you spent significant clock time deciding, filtered by time control and move phase.
-  - **Similar Positions**: Retrieve structurally and dynamically similar tactical positions across your games using dual-mode retrieval.
-  - **Import Games**: Asynchronous game ingestion from the Chess.com public API with live progress polling and resilient checkpointing.
-  - **Game Analysis**: On-demand move-by-move engine evaluation of individual games with mistake categorization and retry practice.
-- **Interactive Position Exploration (`ExplorePositionModal`)**: Freeform interactive exploration of any board position with live Stockfish move evaluations.
-- **Time-control filtering**: Blitz, Rapid, Bullet, Classical (select one or more).
-- **Color filtering**: Analyze as White, Black, or Both.
+### Primary Core Destinations
+
+- **1. Recurring Weaknesses**: Automated habit detection and on-demand Structural & Dynamic clustering via CWTS Leiden. Browse recurring mistake clusters, inspect member positions with played vs. target moves and Stockfish evaluation loss, and practice individual cluster positions.
+- **2. Practice Puzzles**: Personalized tactical drills generated from your actual games. Features interactive Stockfish move evaluation, continuation exploration, and blindfold training.
+- **3. Import Games**: Asynchronous game ingestion from the Chess.com public API with live progress polling, resilient archive checkpointing, and connected account management.
+- **4. My Games**: Move-by-move Stockfish game evaluation, mistake classification, retry practice, and exact-ply Chess.com review links.
+
+### Secondary Tools (`Explore / Tools`)
+
+- **Exact-Position Analysis**: Granular position-level blunder analysis with scoped filtering by player color, game phase, mistake frequency, and evaluation loss threshold.
+- **Decision Timing**: Isolate positions where you spent significant clock time deciding, filtered by time control and move phase.
+- **Similar Positions**: Retrieve structurally and dynamically similar tactical positions across your games using dual-mode retrieval.
+- **Explore a Position**: Freeform interactive board exploration (`ExplorePositionModal`) from any FEN or move sequence with live Stockfish evaluations.
+
+### Core Capabilities
+
 - **Normalized 4-field FEN identification**: Piece placement, active side, castling rights, and en passant square.
 - **Stockfish depth-16 evaluation**: Baseline evaluations and historical candidate assessments with global position-level reuse.
 - **Recency-weighted and practical-evidence ranking**: Blends historical frequency, eval loss, recency decay, and empirical win-rate Wilson score intervals.
@@ -336,7 +342,7 @@ flowchart TB
 
 ### Components
 
-**Next.js frontend** — `/` contains 6 active views: Practice Puzzles, Tactical Weaknesses (with thematic Leiden cluster discovery), Long Decisions, Similar Positions, Import Games, and Game Analysis, plus interactive position exploration (`ExplorePositionModal`) and separate `/login` and `/register` routes. Tab state is reflected in the URL hash and browser storage; session identity remains server-authoritative. See the [frontend architecture guide](docs/architecture/frontend.md) for route-to-API/UI traces, state ownership, and diagrams.
+**Next.js frontend** — `/` contains 4 primary core views (Recurring Weaknesses with on-demand Structural & Dynamic Leiden clustering, Practice Puzzles, Import Games, and My Games) and secondary tools under Explore / Tools (Exact-Position Analysis, Decision Timing, Similar Positions, and Explore a Position), plus separate `/login` and `/register` routes. Tab state is reflected in the URL hash and browser storage; session identity remains server-authoritative. See the [frontend architecture guide](docs/architecture/frontend.md) for route-to-API/UI traces, state ownership, and diagrams.
 
 **Kotlin/Spring Boot backend** — handles game import (via Chess.com's public API), PGN parsing, position detection, engine analysis orchestration, weakness calculation, and puzzle serving. Runs on port 8080. See the [backend architecture guide](docs/architecture/backend-architecture.md) for request-to-service and persistence traces.
 

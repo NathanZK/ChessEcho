@@ -63,7 +63,7 @@ test.describe('Journeys J06-J07: Game Import and Analysis Pipeline', () => {
 
     // 8. Verify transition to weaknesses tab
     await expect(page).toHaveURL(/#weaknesses/);
-    await expect(page.getByRole('button', { name: /Practice Position/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Structural Weakness Clusters/i })).toBeVisible();
   });
 
   test('J07: authenticated user submits import for connected account', async ({ page }) => {

@@ -11,6 +11,7 @@ import com.chessprobe.dto.OpeningContext
 import com.chessprobe.dto.PhaseStats
 import com.chessprobe.dto.TimeControlStats
 import com.chessprobe.repository.WeaknessAggregation
+import com.chessprobe.service.similarity.ChessComUrlBuilder
 import java.time.Instant
 import java.time.temporal.ChronoUnit
 import java.util.UUID
@@ -56,6 +57,7 @@ internal data class ObjectiveWeaknessDraft(
 
 internal class ObjectiveWeaknessAnalyzer(
     private val pgnHeaderTagReader: PgnHeaderTagReader = PgnHeaderTagReader(),
+    private val chessComUrlBuilder: ChessComUrlBuilder = ChessComUrlBuilder(),
 ) {
     fun buildDraft(
         aggregation: WeaknessAggregation,
@@ -181,7 +183,14 @@ internal class ObjectiveWeaknessAnalyzer(
         val weight = max(0.1, 1.0 - (daysOld / 365.0))
         acc.priorityScore += evalLoss * weight
         acc.mistakeCount++
-        acc.mistakeUrls.add(gameUrl(platform, occurrence.game.platformGameId))
+        acc.mistakeUrls.add(
+            gameUrl(
+                platform = platform,
+                platformGameId = occurrence.game.platformGameId,
+                plyNumber = occurrence.plyNumber,
+                timeControl = occurrence.game.timeControl,
+            ),
+        )
         acc.mistakeGames.add(occurrence.game)
         if (isSupportedTc && tc != null) {
             acc.tcMistakeCount[tc] = (acc.tcMistakeCount[tc] ?: 0) + 1
@@ -289,10 +298,14 @@ internal class ObjectiveWeaknessAnalyzer(
     fun gameUrl(
         platform: String,
         platformGameId: String,
+        plyNumber: Int = 0,
+        timeControl: String? = null,
     ): String =
         when {
+            platform == "CHESS_COM" ->
+                chessComUrlBuilder.buildExactPlyUrl(platformGameId, plyNumber, timeControl)
+                    ?: if (platformGameId.startsWith("http")) platformGameId else "https://www.chess.com/game/live/$platformGameId"
             platformGameId.startsWith("http") -> platformGameId
-            platform == "CHESS_COM" -> "https://www.chess.com/game/live/$platformGameId"
             platform == "LICHESS" -> "https://lichess.org/$platformGameId"
             else -> platformGameId
         }

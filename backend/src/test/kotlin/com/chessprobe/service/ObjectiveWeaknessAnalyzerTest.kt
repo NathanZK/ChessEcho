@@ -39,7 +39,8 @@ class ObjectiveWeaknessAnalyzerTest {
 
     @Test
     fun `gameUrl generates correct platform specific URL`() {
-        assertEquals("https://www.chess.com/game/live/12345", analyzer.gameUrl("CHESS_COM", "12345"))
+        assertEquals("https://www.chess.com/game/live/12345?move=0", analyzer.gameUrl("CHESS_COM", "12345"))
+        assertEquals("https://www.chess.com/game/live/12345?move=14", analyzer.gameUrl("CHESS_COM", "12345", plyNumber = 14))
         assertEquals("https://lichess.org/abcdef", analyzer.gameUrl("LICHESS", "abcdef"))
         assertEquals("https://custom.com/game/1", analyzer.gameUrl("CHESS_COM", "https://custom.com/game/1"))
         assertEquals("unknown-game-id", analyzer.gameUrl("OTHER", "unknown-game-id"))

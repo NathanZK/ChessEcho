@@ -127,7 +127,7 @@ describe('Session bootstrap gating (Issue #113)', () => {
 
   it('opens the gate and fetches personalized data once the session is authenticated', async () => {
     localStorage.setItem('chessecho_username', 'hikaru');
-    window.location.hash = '#weaknesses';
+    window.location.hash = '#weakness-analysis';
     const d = deferred<SessionState>();
     sessionMocks.fetchCurrentSession.mockReturnValue(d.promise);
 
