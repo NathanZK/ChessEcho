@@ -1130,11 +1130,13 @@ export async function cancelRecurringDiscoveryJob(
 
 export async function fetchRecurringWeaknesses(
   accountId?: string,
-  username?: string
+  username?: string,
+  clusterType?: 'STRUCTURAL' | 'DYNAMIC'
 ): Promise<RecurringWeaknessResponse[]> {
   const queryParams = new URLSearchParams();
   if (accountId) queryParams.set('accountId', accountId);
   if (username) queryParams.set('username', username);
+  if (clusterType) queryParams.set('clusterType', clusterType);
   const queryString = queryParams.toString() ? `?${queryParams.toString()}` : '';
 
   const response = await fetch(`${API_BASE_URL}/weaknesses/recurring${queryString}`, {

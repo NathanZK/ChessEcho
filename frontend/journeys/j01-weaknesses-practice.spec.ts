@@ -15,10 +15,10 @@ test.describe('Journey J01: Weaknesses Library Practice and Exit Return Flow', (
       weaknesses: [DEFAULT_MOCK_WEAKNESS],
     });
 
-    // 2. Load application
-    await page.goto('/#weaknesses', { waitUntil: 'domcontentloaded' });
+    // 2. Load application at exact-position analysis
+    await page.goto('/#weakness-analysis', { waitUntil: 'domcontentloaded' });
 
-    // 3. Verify Weaknesses tab displays populated cards
+    // 3. Verify Position Analysis displays populated cards
     const practiceButton = page.getByRole('button', { name: /Practice Position/i });
     await expect(practiceButton).toBeVisible();
 
@@ -48,8 +48,14 @@ test.describe('Journey J01: Weaknesses Library Practice and Exit Return Flow', (
     await expect(exitButton).toBeVisible();
     await exitButton.click();
 
-    // 10. Verify originating Weaknesses tab is restored
-    await expect(page).toHaveURL(/#weaknesses/);
+    // 10. Verify practice puzzle context is preserved in #puzzles
+    await expect(page).toHaveURL(/#puzzles/);
+    const backButton = page.getByRole('button', { name: /Back to Weaknesses/i });
+    await expect(backButton).toBeVisible();
+
+    // 11. Explicitly click "Back to Weaknesses" to return to previous tab
+    await backButton.click();
+    await expect(page).toHaveURL(/#weakness-analysis/);
     await expect(page.getByRole('button', { name: /Practice Position/i })).toBeVisible();
   });
 
@@ -64,10 +70,12 @@ test.describe('Journey J01: Weaknesses Library Practice and Exit Return Flow', (
     // 2. Load application
     await page.goto('/#weaknesses', { waitUntil: 'domcontentloaded' });
 
-    // 3. Verify thematic cluster cards are visible
-    await expect(page.getByText(/Thematic Clusters/i)).toBeVisible();
+    // 3. Click Structural Weakness Clusters to fetch structural clusters
+    await page.getByRole('button', { name: /Structural Weakness Clusters/i }).click();
+
+    // Verify structural cluster card is visible
     const practiceButtons = page.getByRole('button', { name: /Practice This Weakness/i });
-    await expect(practiceButtons).toHaveCount(2);
+    await expect(practiceButtons).toHaveCount(1);
 
     // 4. Click Practice on first (structural) cluster card
     await practiceButtons.first().click();
@@ -82,14 +90,15 @@ test.describe('Journey J01: Weaknesses Library Practice and Exit Return Flow', (
     await expect(exitButton).toBeVisible();
     await exitButton.click();
 
-    // 7. Verify return to weaknesses tab with thematic clusters still visible
+    // 7. Verify return to weaknesses tab with structural clusters still visible
     await expect(page).toHaveURL(/#weaknesses/);
-    await expect(page.getByText(/Thematic Clusters/i)).toBeVisible();
+    await expect(page.getByRole('button', { name: /Practice This Weakness/i })).toHaveCount(1);
 
-    // 8. Click Practice on second (dynamic) cluster card
+    // 8. Click Dynamic Weakness Clusters to switch and fetch dynamic clusters
+    await page.getByRole('button', { name: /Dynamic Weakness Clusters/i }).click();
     const dynamicPracticeButtons = page.getByRole('button', { name: /Practice This Weakness/i });
-    await expect(dynamicPracticeButtons).toHaveCount(2);
-    await dynamicPracticeButtons.nth(1).click();
+    await expect(dynamicPracticeButtons).toHaveCount(1);
+    await dynamicPracticeButtons.first().click();
 
     // 9. Verify practice mode mounted again with scoped board
     await expect(page).toHaveURL(/#puzzles/);
@@ -124,7 +133,10 @@ test.describe('Journey J01: Weaknesses Library Practice and Exit Return Flow', (
     // 2. Open weaknesses tab
     await page.goto('/#weaknesses', { waitUntil: 'domcontentloaded' });
 
-    // 3. Click Inspect Evidence to view member positions
+    // 3. Click Structural Weakness Clusters to fetch clusters
+    await page.getByRole('button', { name: /Structural Weakness Clusters/i }).click();
+
+    // 4. Click Inspect Evidence to view member positions
     const inspectButton = page.getByRole('button', { name: /Inspect Evidence/i });
     await expect(inspectButton).toBeVisible();
     await inspectButton.click();

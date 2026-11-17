@@ -111,17 +111,13 @@ test.describe('End-to-End Remediation Verification Suite (Issue #801)', () => {
     // -------------------------------------------------------------------------
     // 4. WEAKNESSES VIEW & POPULATION
     // -------------------------------------------------------------------------
-    console.log('[E2E] Step 4: Navigating to Weaknesses tab');
-    const viewWeaknessesBtn = page.getByRole('button', { name: 'View Weaknesses' });
-    if (await viewWeaknessesBtn.isVisible()) {
-      await viewWeaknessesBtn.click();
+    console.log('[E2E] Step 4: Navigating to Exact-Position Analysis tab');
+    const toolsButtonNav = page.getByRole('button', { name: /Explore \/ Tools/i });
+    if (await toolsButtonNav.isVisible()) {
+      await toolsButtonNav.click();
+      await page.getByRole('menuitem', { name: /Exact-Position Analysis/i }).click();
     } else {
-      const weaknessesNav = page.getByRole('button', { name: /Position Weaknesses/i });
-      if (await weaknessesNav.isVisible()) {
-        await weaknessesNav.click();
-      } else {
-        await page.goto('/#weaknesses');
-      }
+      await page.goto('/#weakness-analysis');
     }
 
     // Wait for weakness cards to load

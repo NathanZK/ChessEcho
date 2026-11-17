@@ -14,6 +14,7 @@ test.describe('Responsive Viewport Geometry Harness', () => {
     });
 
     await page.goto('/#weaknesses', { waitUntil: 'domcontentloaded' });
+    await expect(page.getByText('Select Cluster Discovery Mode')).toBeVisible();
 
     // 1. Verify desktop navigation links are hidden on mobile
     const desktopNav = page.locator('header nav.hidden.md\\:flex');

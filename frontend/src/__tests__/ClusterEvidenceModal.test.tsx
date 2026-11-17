@@ -295,4 +295,39 @@ describe('ClusterEvidenceModal Component (#758)', () => {
       expect(screen.getByText('Bc4')).toBeInTheDocument();
     });
   });
+
+  it('renders an individual Practice Position button for each member position and launches practice for that specific position', async () => {
+    const onSelectPractice = vi.fn();
+    vi.mocked(api.getClusterPositions).mockResolvedValueOnce({
+      page: 0,
+      size: 10,
+      totalElements: 1,
+      totalPages: 1,
+      hasNext: false,
+      positions: [mockEvaluatedPosition],
+    });
+
+    render(
+      <ClusterEvidenceModal
+        cluster={mockCluster}
+        accountId="test-account"
+        onClose={onClose}
+        onSelectPractice={onSelectPractice}
+      />
+    );
+
+    const practicePosBtn = await screen.findByRole('button', { name: /Practice Position/i });
+    expect(practicePosBtn).toBeInTheDocument();
+
+    fireEvent.click(practicePosBtn);
+
+    expect(onSelectPractice).toHaveBeenCalledTimes(1);
+    const calledArgs = onSelectPractice.mock.calls[0];
+    const practicePuzzle = calledArgs[0];
+    expect(practicePuzzle.puzzleId).toBe(mockEvaluatedPosition.positionId);
+    expect(practicePuzzle.fen).toBe(mockEvaluatedPosition.fen);
+    expect(practicePuzzle.playerColor).toBe(mockEvaluatedPosition.playerColor);
+    expect(practicePuzzle.targetMove).toBe(mockEvaluatedPosition.targetMove);
+    expect(onClose).toHaveBeenCalled();
+  });
 });

@@ -41,7 +41,7 @@ describe('GameCard', () => {
 
     const link = screen.getByRole('link', { name: /View on Chess\.com/i });
     expect(link).toBeInTheDocument();
-    expect(link).toHaveAttribute('href', 'https://www.chess.com/game/live/172923974924');
+    expect(link).toHaveAttribute('href', 'https://www.chess.com/game/live/172923974924?move=0');
     expect(link).toHaveAttribute('target', '_blank');
   });
 

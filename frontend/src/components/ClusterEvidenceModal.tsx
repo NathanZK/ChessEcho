@@ -6,20 +6,17 @@ import {
   ChevronLeft,
   ChevronRight,
   RefreshCw,
-  ExternalLink,
-  Clock,
   AlertCircle,
   HelpCircle,
 } from 'lucide-react';
-import { ChessBoardView } from './ChessBoardView';
 import {
   getClusterPositions,
   type ClusterMemberPosition,
   type RecurringWeaknessResponse,
 } from '../services/api';
 import { buildExactPlyChessComUrl } from '@/utils/urlUtils';
-import { formatPawnLoss } from '@/utils/formatters';
 import { Puzzle } from '@/types/puzzle';
+import { EvidencePositionCard } from './EvidencePositionCard';
 
 export interface ClusterEvidenceModalProps {
   cluster: RecurringWeaknessResponse;
@@ -29,83 +26,6 @@ export interface ClusterEvidenceModalProps {
 }
 
 const MISTAKE_SEVERITIES = ['MINOR', 'MODERATE', 'SIGNIFICANT', 'SEVERE', 'UNEVALUATED'] as const;
-
-function getSeverityBadge(severity?: string | null) {
-  if (!severity || severity === 'UNEVALUATED') {
-    return {
-      label: 'Unevaluated',
-      className: 'bg-surface-container-high text-outline border border-outline-variant',
-    };
-  }
-  switch (severity) {
-    case 'MINOR':
-      return {
-        label: 'Minor',
-        className: 'bg-amber-accent/15 text-amber-400 border border-amber-accent/30',
-      };
-    case 'MODERATE':
-      return {
-        label: 'Moderate',
-        className: 'bg-amber-accent/25 text-amber-300 border border-amber-accent/40',
-      };
-    case 'SIGNIFICANT':
-      return {
-        label: 'Significant',
-        className: 'bg-rose-500/15 text-rose-300 border border-rose-500/30',
-      };
-    case 'SEVERE':
-      return {
-        label: 'Severe',
-        className: 'bg-error-container/30 text-rose-400 border border-error-container/50',
-      };
-    case 'NO_CONCERN':
-      return {
-        label: 'No Concern',
-        className: 'bg-primary/15 text-emerald-400 border border-primary/30',
-      };
-    default:
-      return {
-        label: severity,
-        className: 'bg-surface-container text-on-surface border border-outline-variant',
-      };
-  }
-}
-
-function getDecisionBadge(severity?: string | null) {
-  if (!severity || severity === 'UNKNOWN' || severity === 'UNEVALUATED') {
-    return {
-      label: 'Unevaluated',
-      className: 'bg-surface-container text-outline border border-outline-variant',
-    };
-  }
-  switch (severity) {
-    case 'NO_CONCERN':
-      return {
-        label: 'NO_CONCERN',
-        className: 'bg-primary/15 text-emerald-400 border border-primary/30',
-      };
-    case 'MINOR':
-      return {
-        label: 'MINOR',
-        className: 'bg-amber-accent/15 text-amber-400 border border-amber-accent/30',
-      };
-    case 'SIGNIFICANT':
-      return {
-        label: 'SIGNIFICANT',
-        className: 'bg-rose-500/15 text-rose-300 border border-rose-500/30',
-      };
-    case 'CRITICAL':
-      return {
-        label: 'CRITICAL',
-        className: 'bg-error-container/30 text-rose-400 border border-error-container/50',
-      };
-    default:
-      return {
-        label: severity,
-        className: 'bg-surface-container text-on-surface border border-outline-variant',
-      };
-  }
-}
 
 const EvidenceHeader: React.FC<{ cluster: RecurringWeaknessResponse; onClose: () => void }> = ({
   cluster,
@@ -221,82 +141,6 @@ const EvidenceDistributions: React.FC<{ cluster: RecurringWeaknessResponse }> = 
   );
 };
 
-const EvidencePositionCard: React.FC<{ pos: ClusterMemberPosition }> = ({ pos }) => {
-  const boardOrientation = pos.playerColor === 'BLACK' ? 'black' : 'white';
-  const severityInfo = getSeverityBadge(pos.mistakeSeverity);
-  const decisionInfo = getDecisionBadge(pos.decisionSeverity);
-  const chessComUrl = buildExactPlyChessComUrl(pos.platformGameId, pos.plyNumber, pos.timeControl);
-  const duration =
-    pos.decisionTimeMs != null ? `${(pos.decisionTimeMs / 1000).toFixed(1)}s` : 'Unavailable';
-
-  return (
-    <div className="p-4 bg-surface-container-low border border-outline-variant rounded-xl flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
-      <div className="flex items-center gap-4">
-        <div className="w-24 h-24 sm:w-28 sm:h-28 shrink-0 rounded-lg overflow-hidden border border-outline-variant bg-surface-container-lowest">
-          <ChessBoardView fen={pos.fen} boardOrientation={boardOrientation} />
-        </div>
-        <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
-            <span className="text-outline">Played:</span>
-            <span className="font-bold px-2 py-0.5 rounded bg-surface-container-lowest border border-outline-variant text-on-surface">
-              {pos.movePlayed}
-            </span>
-            <span className="text-outline ml-2">Stockfish:</span>
-            <span className="font-bold px-2 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">
-              {pos.targetMove || 'Pending analysis'}
-            </span>
-            {pos.acceptableMoves && pos.acceptableMoves.length > 0 && (
-              <span className="text-[11px] text-outline ml-1">
-                (Also: {pos.acceptableMoves.map((m) => `${m.move} [${formatPawnLoss(m.evalLoss)}]`).join(', ')})
-              </span>
-            )}
-          </div>
-          <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
-            <span className="text-outline">Loss:</span>
-            <span className="font-bold text-on-surface">
-              {pos.evalLoss != null ? `${formatPawnLoss(pos.evalLoss)} pawns` : 'Unevaluated'}
-            </span>
-            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${severityInfo.className}`}>
-              {severityInfo.label}
-            </span>
-            <span className="text-outline ml-2">Timing:</span>
-            <span className="font-bold text-on-surface flex items-center gap-1">
-              <Clock className="w-3 h-3 text-outline" />
-              {duration}
-            </span>
-            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${decisionInfo.className}`}>
-              {decisionInfo.label}
-            </span>
-            {pos.timeControl && (
-              <span className="px-1.5 py-0.5 rounded text-[10px] bg-surface-container border border-outline-variant text-outline">
-                {pos.timeControl}
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2 font-mono text-[11px] text-outline">
-            <span>
-              Move {pos.moveNumber} (ply {pos.plyNumber})
-            </span>
-            {chessComUrl ? (
-              <a
-                href={chessComUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 text-primary hover:underline"
-              >
-                <span>View game</span>
-                <ExternalLink className="w-3 h-3" />
-              </a>
-            ) : (
-              <span>Game: {pos.platformGameId}</span>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
 const EvidencePagination: React.FC<{
   page: number;
   totalPages: number;
@@ -333,11 +177,114 @@ const EvidencePagination: React.FC<{
   </div>
 );
 
+interface EvidenceContentProps {
+  error: string | null;
+  isLoading: boolean;
+  positions: ClusterMemberPosition[];
+  page: number;
+  onRetry: (page: number) => void;
+  onPractice?: (pos: ClusterMemberPosition) => void;
+}
+
+const EvidenceContent: React.FC<EvidenceContentProps> = ({
+  error,
+  isLoading,
+  positions,
+  page,
+  onRetry,
+  onPractice,
+}) => {
+  if (error) {
+    return (
+      <div role="alert" className="p-5 rounded-xl border border-error/40 bg-error/10 text-error space-y-3">
+        <div className="flex items-center gap-2">
+          <AlertCircle className="w-5 h-5 text-error" />
+          <span className="text-sm font-bold font-mono">Error Loading Evidence</span>
+        </div>
+        <p className="text-xs font-mono">{error}</p>
+        <button
+          type="button"
+          onClick={() => onRetry(page)}
+          className="px-3 py-1.5 bg-error text-on-error font-mono font-bold text-xs rounded-lg hover:bg-error/90 transition inline-flex items-center gap-1.5 cursor-pointer"
+        >
+          <RefreshCw className="w-3.5 h-3.5" />
+          <span>Retry</span>
+        </button>
+      </div>
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="py-20 text-center space-y-3">
+        <div className="w-8 h-8 border-3 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+        <p className="text-xs font-mono text-outline">Loading cluster member positions...</p>
+      </div>
+    );
+  }
+
+  if (positions.length === 0) {
+    return (
+      <div className="py-16 text-center space-y-2 bg-surface-container-low p-6 rounded-xl border border-outline-variant">
+        <HelpCircle className="w-8 h-8 text-outline mx-auto" />
+        <p className="text-sm font-bold text-on-surface">No Positions Found</p>
+        <p className="text-xs text-outline">No member positions were found for this cluster.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {positions.map((pos) => (
+        <EvidencePositionCard
+          key={pos.positionId}
+          pos={pos}
+          onPractice={onPractice}
+        />
+      ))}
+    </div>
+  );
+};
+
+function createClusterPuzzle(pos: ClusterMemberPosition): Puzzle {
+  const fenTurn = pos.fen ? pos.fen.split(' ')[1] : undefined;
+  const playerColor: 'WHITE' | 'BLACK' =
+    pos.playerColor === 'WHITE' || pos.playerColor === 'BLACK'
+      ? pos.playerColor
+      : (fenTurn === 'b' ? 'BLACK' : 'WHITE');
+
+  const gameUrl = pos.platformGameId
+    ? buildExactPlyChessComUrl(pos.platformGameId, pos.plyNumber, pos.timeControl)
+    : null;
+
+  return {
+    puzzleId: pos.positionId,
+    source: 'weakness',
+    fen: pos.fen,
+    playerColor,
+    targetMove: pos.targetMove || '',
+    acceptableMoves: pos.acceptableMoves || [],
+    openingTitle: `Cluster Weakness: Move ${pos.moveNumber}`,
+    movesPlayed: [
+      {
+        move: pos.movePlayed,
+        timesPlayed: 1,
+        averageLoss: pos.evalLoss ?? 1.0,
+      },
+    ],
+    priority: Math.round((pos.evalLoss ?? 1.0) * 100),
+    timesReached: 1,
+    mistakeCount: 1,
+    mistakeRate: 100,
+    gameUrls: gameUrl ? [gameUrl] : [],
+  };
+}
+
 export const ClusterEvidenceModal: React.FC<ClusterEvidenceModalProps> = ({
   cluster,
   accountId,
   onClose,
-  onSelectPractice: _onSelectPractice,
+  onSelectPractice,
 }) => {
   const [page, setPage] = useState(0);
   const [pageSize] = useState(10);
@@ -349,6 +296,13 @@ export const ClusterEvidenceModal: React.FC<ClusterEvidenceModalProps> = ({
   const [error, setError] = useState<string | null>(null);
 
   const backdropRef = useRef<HTMLDivElement>(null);
+
+  const handlePracticePosition = (pos: ClusterMemberPosition) => {
+    if (!onSelectPractice) return;
+    const singlePuzzle = createClusterPuzzle(pos);
+    onSelectPractice(singlePuzzle, [singlePuzzle]);
+    onClose();
+  };
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -411,40 +365,14 @@ export const ClusterEvidenceModal: React.FC<ClusterEvidenceModalProps> = ({
         <EvidenceDistributions cluster={cluster} />
 
         <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
-          {error ? (
-            <div role="alert" className="p-5 rounded-xl border border-error/40 bg-error/10 text-error space-y-3">
-              <div className="flex items-center gap-2">
-                <AlertCircle className="w-5 h-5 text-error" />
-                <span className="text-sm font-bold font-mono">Error Loading Evidence</span>
-              </div>
-              <p className="text-xs font-mono">{error}</p>
-              <button
-                type="button"
-                onClick={() => void loadPositions(page)}
-                className="px-3 py-1.5 bg-error text-on-error font-mono font-bold text-xs rounded-lg hover:bg-error/90 transition inline-flex items-center gap-1.5 cursor-pointer"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>Retry</span>
-              </button>
-            </div>
-          ) : isLoading ? (
-            <div className="py-20 text-center space-y-3">
-              <div className="w-8 h-8 border-3 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
-              <p className="text-xs font-mono text-outline">Loading cluster member positions...</p>
-            </div>
-          ) : positions.length === 0 ? (
-            <div className="py-16 text-center space-y-2 bg-surface-container-low p-6 rounded-xl border border-outline-variant">
-              <HelpCircle className="w-8 h-8 text-outline mx-auto" />
-              <p className="text-sm font-bold text-on-surface">No Positions Found</p>
-              <p className="text-xs text-outline">No member positions were found for this cluster.</p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {positions.map((pos) => (
-                <EvidencePositionCard key={pos.positionId} pos={pos} />
-              ))}
-            </div>
-          )}
+          <EvidenceContent
+            error={error}
+            isLoading={isLoading}
+            positions={positions}
+            page={page}
+            onRetry={(p) => void loadPositions(p)}
+            onPractice={onSelectPractice ? handlePracticePosition : undefined}
+          />
         </div>
 
         <EvidencePagination

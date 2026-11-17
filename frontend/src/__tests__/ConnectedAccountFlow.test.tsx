@@ -245,7 +245,7 @@ describe('connected Chess.com account flow', () => {
     ]);
 
     render(<Home />);
-    fireEvent.click(await screen.findByRole('button', { name: /^(Recurring Weaknesses|Weaknesses Library)$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^(Recurring Weaknesses|Weaknesses Library|Weakness)$/i }));
 
     const weaknessesList = await screen.findByTestId('weaknesses-list');
     expect(weaknessesList).toHaveAttribute('data-username', chessUsername);
@@ -461,7 +461,20 @@ describe('connected Chess.com account flow', () => {
     vi.mocked(api.fetchCurrentSession).mockResolvedValueOnce({ status: 'unauthenticated' });
 
     render(<Home />);
-    fireEvent.click(await screen.findByRole('button', { name: /^(Recurring Weaknesses|Weaknesses Library)$/i }));
+    const toolsButton = screen.queryByRole('button', { name: /Explore \/ Tools/i });
+    if (toolsButton) {
+      fireEvent.click(toolsButton);
+      const analysisOption = screen.queryByRole('menuitem', { name: /Exact-Position Analysis/i });
+      if (analysisOption) {
+        fireEvent.click(analysisOption);
+      }
+    } else {
+      fireEvent.click(await screen.findByRole('button', { name: /^(Recurring Weaknesses|Weaknesses Library|Weakness)$/i }));
+      const analysisOption = screen.queryByRole('menuitem', { name: /Exact-Position Analysis/i });
+      if (analysisOption) {
+        fireEvent.click(analysisOption);
+      }
+    }
 
     const progressButton = await screen.findByRole('button', { name: /view account progress/i });
     await waitFor(() => {
@@ -533,7 +546,20 @@ describe('connected Chess.com account flow', () => {
       username: serverAccount.username,
     });
 
-    fireEvent.click(screen.getByRole('button', { name: /^(Recurring Weaknesses|Weaknesses Library)$/i }));
+    const toolsButton2 = screen.queryByRole('button', { name: /Explore \/ Tools/i });
+    if (toolsButton2) {
+      fireEvent.click(toolsButton2);
+      const analysisOption2 = screen.queryByRole('menuitem', { name: /Exact-Position Analysis/i });
+      if (analysisOption2) {
+        fireEvent.click(analysisOption2);
+      }
+    } else {
+      fireEvent.click(screen.getByRole('button', { name: /^(Recurring Weaknesses|Weaknesses Library|Weakness)$/i }));
+      const analysisOption2 = screen.queryByRole('menuitem', { name: /Exact-Position Analysis/i });
+      if (analysisOption2) {
+        fireEvent.click(analysisOption2);
+      }
+    }
     fireEvent.click(await screen.findByRole('button', { name: /view account progress/i }));
     expect(await screen.findByText('Retained account history is available.')).toBeInTheDocument();
     expect(api.fetchPositionProgress).toHaveBeenCalledWith('position-1', 'BLACK', serverAccount.id, 0.3);

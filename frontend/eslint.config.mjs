@@ -118,7 +118,10 @@ const eslintConfig = defineConfig([
   },
   // Weaknesses listing & categorization table: tracked in #685
   {
-    files: ["src/components/WeaknessesList.tsx"],
+    files: [
+      "src/components/WeaknessesList.tsx",
+      "src/components/WeaknessLibraryView.tsx",
+    ],
     rules: {
       "max-lines": "off",
       "max-lines-per-function": "off",

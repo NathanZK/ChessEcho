@@ -675,7 +675,7 @@ describe('Weaknesses Tab MVP', () => {
 
     it('renders with expanded responsive container max-width max-w-[1536px]', () => {
       render(<WeaknessesList username="hikaru" onSelectPractice={vi.fn()} />);
-      const container = screen.getByText(/Recurring Weakness Library/i).closest('.max-w-\\[1536px\\]');
+      const container = screen.getByText(/Exact-Position Analysis/i).closest('.max-w-\\[1536px\\]');
       expect(container).toBeInTheDocument();
     });
   });
@@ -1112,7 +1112,10 @@ describe('Weaknesses Tab MVP', () => {
         ],
       });
 
-      render(<WeaknessesList accountId="test-account" username="hikaru" onSelectPractice={vi.fn()} />);
+      render(<WeaknessesList mode="library" accountId="test-account" username="hikaru" onSelectPractice={vi.fn()} />);
+
+      const structuralBtn = screen.getByRole('button', { name: /Structural Weakness Clusters/i });
+      fireEvent.click(structuralBtn);
 
       const inspectBtn = await screen.findByRole('button', { name: /Inspect Evidence/i });
       expect(inspectBtn).toBeInTheDocument();
@@ -1134,6 +1137,111 @@ describe('Weaknesses Tab MVP', () => {
       await waitFor(() => {
         expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
       });
+    });
+  });
+
+  describe('Weakness Library On-Demand Dual Clustering & Exact-Position Analysis (#808)', () => {
+    const mockStructuralCluster: api.RecurringWeaknessResponse = {
+      clusterId: 'struct-1',
+      clusterType: 'STRUCTURAL',
+      recommendationPriority: 0.5,
+      representativeFen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2',
+      memberPositionCount: 3,
+      totalOccurrences: 12,
+      distinctGamesCount: 10,
+      mistakeCount: 8,
+      mistakeFrequency: 0.67,
+      blunderRate: 0.25,
+      evaluatedOccurrences: 10,
+      unevaluatedOccurrences: 2,
+      evalLossDistribution: { MINOR: 4, MODERATE: 3, SIGNIFICANT: 2, SEVERE: 1, UNEVALUATED: 2 },
+      evalLossPercentages: { MINOR: 33, MODERATE: 25, SIGNIFICANT: 17, SEVERE: 8, UNEVALUATED: 17 },
+      timingProfile: { FAST: 1, NORMAL: 5, SLOW: 6 },
+      formatBreakdown: { RAPID: 8, BLITZ: 4 },
+    };
+
+    const mockDynamicCluster: api.RecurringWeaknessResponse = {
+      clusterId: 'dyn-1',
+      clusterType: 'DYNAMIC',
+      recommendationPriority: 0.8,
+      representativeFen: 'r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3',
+      memberPositionCount: 2,
+      totalOccurrences: 8,
+      distinctGamesCount: 6,
+      mistakeCount: 5,
+      mistakeFrequency: 0.5,
+      blunderRate: 0.2,
+      evaluatedOccurrences: 8,
+      unevaluatedOccurrences: 0,
+      evalLossDistribution: { MINOR: 3, MODERATE: 2, SIGNIFICANT: 2, SEVERE: 1, UNEVALUATED: 0 },
+      evalLossPercentages: { MINOR: 38, MODERATE: 25, SIGNIFICANT: 25, SEVERE: 12, UNEVALUATED: 0 },
+      timingProfile: { FAST: 2, NORMAL: 4, SLOW: 2 },
+      formatBreakdown: { RAPID: 4, BLITZ: 4 },
+    };
+
+    it('in mode="library", does not auto-fetch clusters on mount and displays explicit Structural and Dynamic buttons', async () => {
+      vi.mocked(api.fetchRecurringWeaknesses).mockResolvedValue([]);
+
+      render(<WeaknessesList mode="library" accountId="test-account" onSelectPractice={vi.fn()} />);
+
+      // fetchRecurringWeaknesses must NOT be called on mount
+      expect(api.fetchRecurringWeaknesses).not.toHaveBeenCalled();
+
+      // Explicit entry actions present
+      const structuralBtn = screen.getByRole('button', { name: /Structural Weakness Clusters/i });
+      const dynamicBtn = screen.getByRole('button', { name: /Dynamic Weakness Clusters/i });
+      expect(structuralBtn).toBeInTheDocument();
+      expect(dynamicBtn).toBeInTheDocument();
+
+      // Prohibited: No obsolete switcher or filter bar in Weakness Library
+      expect(screen.queryByText(/^Thematic Clusters$/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/^All Positions$/i)).not.toBeInTheDocument();
+      expect(screen.queryByRole('combobox', { name: /Filter by Phase/i })).not.toBeInTheDocument();
+    });
+
+    it('in mode="library", clicking Structural Weakness Clusters fetches structural clusters and displays them', async () => {
+      vi.mocked(api.fetchRecurringWeaknesses).mockResolvedValueOnce([mockStructuralCluster]);
+
+      render(<WeaknessesList mode="library" accountId="test-account" onSelectPractice={vi.fn()} />);
+
+      const structuralBtn = screen.getByRole('button', { name: /Structural Weakness Clusters/i });
+      fireEvent.click(structuralBtn);
+
+      await waitFor(() => {
+        expect(api.fetchRecurringWeaknesses).toHaveBeenCalledWith('test-account', undefined, 'STRUCTURAL');
+        expect(screen.getByText(/3 variations/i)).toBeInTheDocument();
+      });
+    });
+
+    it('in mode="library", clicking Dynamic Weakness Clusters fetches dynamic clusters independently', async () => {
+      vi.mocked(api.fetchRecurringWeaknesses).mockResolvedValueOnce([mockDynamicCluster]);
+
+      render(<WeaknessesList mode="library" accountId="test-account" onSelectPractice={vi.fn()} />);
+
+      const dynamicBtn = screen.getByRole('button', { name: /Dynamic Weakness Clusters/i });
+      fireEvent.click(dynamicBtn);
+
+      await waitFor(() => {
+        expect(api.fetchRecurringWeaknesses).toHaveBeenCalledWith('test-account', undefined, 'DYNAMIC');
+        expect(screen.getByText(/2 variations/i)).toBeInTheDocument();
+      });
+    });
+
+    it('in mode="analysis", renders FiltersBar and fetches position weaknesses, without cluster discovery buttons', async () => {
+      vi.mocked(api.fetchWeaknesses).mockResolvedValue([mockWeaknessItem]);
+
+      render(<WeaknessesList mode="analysis" accountId="test-account" onSelectPractice={vi.fn()} />);
+
+      // FiltersBar is present
+      expect(await screen.findByRole('combobox', { name: /Filter by Phase/i })).toBeInTheDocument();
+      expect(screen.getByRole('combobox', { name: /Filter by Speed/i })).toBeInTheDocument();
+
+      // Weakness positions are fetched
+      expect(api.fetchWeaknesses).toHaveBeenCalled();
+
+      // Cluster buttons are NOT present in analysis mode
+      expect(screen.queryByRole('button', { name: /Structural Weakness Clusters/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Dynamic Weakness Clusters/i })).not.toBeInTheDocument();
     });
   });
 });

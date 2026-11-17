@@ -108,8 +108,8 @@ function expectWideTopHeader() {
     'top-0',
     'z-50',
   ]);
-  const navButtons = Array.from(nav.querySelectorAll('button'));
-  expect(navButtons).toHaveLength(4);
+  const navButtons = Array.from(nav.querySelectorAll(':scope > button, :scope > div > button'));
+  expect(navButtons).toHaveLength(5);
 }
 
 describe('Puzzles Tab Features and Fixes', () => {
@@ -615,9 +615,18 @@ describe('Puzzles Tab Features and Fixes', () => {
         expect(screen.getByText("King's Pawn Opening")).toBeInTheDocument();
       });
 
-      // Navigate to Weaknesses Library tab
-      const weaknessesTabBtn = screen.getByRole('button', { name: /^(Recurring Weaknesses|Weaknesses Library)$/i });
-      fireEvent.click(weaknessesTabBtn);
+      // Navigate to Exact-Position Analysis via Explore / Tools
+      const toolsBtn = screen.queryByRole('button', { name: /^Explore \/ Tools$/i });
+      if (toolsBtn) {
+        fireEvent.click(toolsBtn);
+        const analysisItem = screen.queryByRole('menuitem', { name: /Exact-Position Analysis/i });
+        if (analysisItem) {
+          fireEvent.click(analysisItem);
+        }
+      } else {
+        const weaknessesTabBtn = screen.getByRole('button', { name: /^(Recurring Weaknesses|Weaknesses Library|Weakness)$/i });
+        fireEvent.click(weaknessesTabBtn);
+      }
 
       // Verify Practice Position button is rendered for the weakness
       await waitFor(() => {
@@ -675,7 +684,7 @@ describe('Puzzles Tab Features and Fixes', () => {
       expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('ChessProbe');
 
       const navButtons = Array.from(nav.querySelectorAll('button'));
-      expect(navButtons).toHaveLength(4);
+      expect(navButtons).toHaveLength(5);
 
       const settingsButton = screen.getByRole('button', { name: /Puzzle Settings/i });
       expect(settingsButton).toBeInTheDocument();
@@ -721,7 +730,7 @@ describe('Puzzles Tab Features and Fixes', () => {
 
       expectWideTopHeader();
 
-      fireEvent.click(screen.getByRole('button', { name: /^(Recurring Weaknesses|Weaknesses Library)$/i }));
+      fireEvent.click(screen.getByRole('button', { name: /^(Recurring Weaknesses|Weaknesses Library|Weakness)$/i }));
       await waitFor(() => {
         expect(screen.getByRole('heading', { name: /Recurring Weakness Library/i })).toBeInTheDocument();
         expect(window.location.hash).toBe('#weaknesses');
@@ -765,7 +774,7 @@ describe('Puzzles Tab Features and Fixes', () => {
         'bg-surface-container-lowest',
       ]);
       const navButtons = Array.from(nav.querySelectorAll('button'));
-      expect(navButtons).toHaveLength(4);
+      expect(navButtons).toHaveLength(5);
       expect(screen.getByRole('button', { name: /^Sign out$/i })).toBeInTheDocument();
 
       resolvePuzzles!(mockPuzzles);
@@ -786,7 +795,7 @@ describe('Puzzles Tab Features and Fixes', () => {
         'bg-surface-container-lowest',
       ]);
       const navButtons = Array.from(nav.querySelectorAll('button'));
-      expect(navButtons).toHaveLength(4);
+      expect(navButtons).toHaveLength(5);
     });
   });
 

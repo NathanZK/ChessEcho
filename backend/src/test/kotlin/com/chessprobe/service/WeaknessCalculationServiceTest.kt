@@ -276,6 +276,34 @@ class WeaknessCalculationServiceTest {
     }
 
     @Test
+    fun `test gameUrls format with exact ply for chess com occurrences`() {
+        val account = ChessAccount(platform = "CHESS_COM", username = "nathan")
+        val position = Position(hash = "hash_exact", fen = "fen_exact")
+        `when`(chessAccountRepository.findByPlatformAndUsernameIgnoreCase("CHESS_COM", "nathan")).thenReturn(account)
+
+        val occ = occurrence(mockGame("123456789", timeControl = "RAPID"), position, account, plyNumber = 15, movePlayed = "m1")
+        `when`(positionOccurrenceRepository.findByChessAccountIdAndPlayerColorOrBothAndPositionIdIn(eq(account.id), eq("WHITE"), any()))
+            .thenReturn(listOf(occ))
+        `when`(engineAnalysisRepository.findByPositionIdInWithMoveEvaluations(any()))
+            .thenReturn(listOf(createAnalysisWithLoss(position, "m1", 1.0)))
+
+        val agg = createAgg(position.id, position.fen, reached = 5, mistakes = 1, avgLoss = 1.0, totalLoss = 1.0)
+        `when`(positionOccurrenceRepository.findWeaknessAggregations(account.id, "WHITE", 0.8, 5, 1)).thenReturn(listOf(agg))
+
+        val weaknesses =
+            weaknessCalculationService.getWeaknesses(
+                platform = Platform.CHESS_COM,
+                username = "nathan",
+                playerColor = PlayerColor.WHITE,
+                minEvalLoss = 0.8,
+                minMistakeCount = 1,
+            )
+
+        assertEquals(1, weaknesses.size)
+        assertEquals(listOf("https://www.chess.com/game/live/123456789?move=15"), weaknesses[0].gameUrls)
+    }
+
+    @Test
     fun `test lastSeenAt falls back to createdAt when playedAt is null`() {
         val account = ChessAccount(platform = "CHESS_COM", username = "nathan")
         val position = Position(hash = "hash2", fen = "fen2")

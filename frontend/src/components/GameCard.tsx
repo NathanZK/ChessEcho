@@ -5,6 +5,7 @@ import { Chess } from 'chess.js';
 import { Swords } from 'lucide-react';
 import { ChessBoardView } from './ChessBoardView';
 import { ExternalGameLink } from './ExternalGameLink';
+import { buildExactPlyChessComUrl } from '../utils/urlUtils';
 import {
   resolveGameTimeControl,
   buildExternalGameUrl,
@@ -67,7 +68,10 @@ function getTimeControlBadgeStyle(category: Exclude<GameTimeControlCategory, 'AL
 export const GameCard: React.FC<GameCardProps> = ({ game, onSelectGame }) => {
   const previewFen = useMemo(() => computePreviewFen(game.pgn), [game.pgn]);
   const timeCategory = useMemo(() => resolveGameTimeControl(game.timeControl), [game.timeControl]);
-  const externalUrl = useMemo(() => buildExternalGameUrl(game.platformGameId), [game.platformGameId]);
+  const externalUrl = useMemo(
+    () => buildExactPlyChessComUrl(game.platformGameId, 0, game.timeControl) ?? buildExternalGameUrl(game.platformGameId),
+    [game.platformGameId, game.timeControl]
+  );
   const resultBadge = useMemo(() => getResultBadge(game.result), [game.result]);
 
   const playedDate = game.playedAt

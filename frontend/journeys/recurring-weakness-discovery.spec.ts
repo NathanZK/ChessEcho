@@ -30,8 +30,8 @@ test.describe('Journey: Recurring Weakness Discovery Lifecycle & Thematic Cluste
     const startButton = page.getByRole('button', { name: /Start Discovery/i });
     await startButton.click();
 
-    // 6. Verify modal closes and thematic clusters are visible
-    await expect(page.getByText(/Thematic Clusters/i)).toBeVisible();
+    // 6. Verify modal closes and recurring clusters are visible
+    await expect(page.getByRole('button', { name: /Structural Weakness Clusters/i })).toBeVisible();
     await expect(page.getByText(/Mistake Freq: 55%/i)).toBeVisible();
 
     // 7. Click "Practice This Weakness" on the thematic cluster card
@@ -49,9 +49,9 @@ test.describe('Journey: Recurring Weakness Discovery Lifecycle & Thematic Cluste
     await expect(exitButton).toBeVisible();
     await exitButton.click();
 
-    // 10. Verify return to Weaknesses tab with thematic clusters still rendered
+    // 10. Verify return to Weaknesses tab with clusters still rendered
     await expect(page).toHaveURL(/#weaknesses/);
-    await expect(page.getByText(/Thematic Clusters/i)).toBeVisible();
+    await expect(page.getByRole('button', { name: /Structural Weakness Clusters/i })).toBeVisible();
   });
 
   test('user triggers discovery, handles job failure, and sees visible error banner with retry action', async ({ page }) => {

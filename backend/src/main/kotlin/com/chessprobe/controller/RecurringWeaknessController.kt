@@ -2,6 +2,7 @@ package com.chessprobe.controller
 
 import com.chessprobe.domain.ChessAccount
 import com.chessprobe.domain.Platform
+import com.chessprobe.domain.clustering.ClusterType
 import com.chessprobe.dto.ClusterMemberPositionsResponse
 import com.chessprobe.dto.RecurringDiscoveryJobResponse
 import com.chessprobe.dto.RecurringDiscoveryRequest
@@ -78,12 +79,13 @@ class RecurringWeaknessController(
     fun getRecurringWeaknesses(
         @RequestParam(required = false) accountId: UUID?,
         @RequestParam(required = false) username: String?,
+        @RequestParam(required = false) clusterType: ClusterType?,
         @OptionalAuthenticatedPrincipal
         @RequestAttribute(name = SessionAuthenticationFilter.PRINCIPAL_ATTRIBUTE, required = false)
         principal: AuthenticatedPrincipal?,
     ): ResponseEntity<List<RecurringWeaknessResponse>> {
         val account = resolveAccount(accountId, username, principal)
-        val weaknesses = discoveryService.getLatestRecurringWeaknesses(account)
+        val weaknesses = discoveryService.getLatestRecurringWeaknesses(account, clusterType)
         return ResponseEntity.ok(weaknesses)
     }
 

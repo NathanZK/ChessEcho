@@ -7,6 +7,7 @@ import { BoardControls } from '../components/BoardControls';
 import { PuzzleFeedbackPanel } from '../components/PuzzleFeedbackPanel';
 import * as api from '../services/api';
 import { Puzzle } from '@/types/puzzle';
+import { activeTabStore } from '../utils/browserStores';
 
 /** Minimal required settings props for direct PuzzleFeedbackPanel renders in tests. */
 const defaultSettingsProps = {
@@ -43,6 +44,7 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
   beforeEach(() => {
     localStorage.clear();
     vi.restoreAllMocks();
+    activeTabStore.set('puzzles');
   });
 
   it('ISSUE 1 — Weakness Library navigation traverses all 7 weaknesses in active result set', async () => {
@@ -50,7 +52,8 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
     vi.spyOn(api, 'fetchPuzzles').mockResolvedValue([]);
 
     localStorage.setItem('chessecho_username', 'testuser');
-    window.location.hash = '#weaknesses';
+    window.location.hash = '#weakness-analysis';
+    activeTabStore.set('weakness-analysis');
 
     await act(async () => {
       render(<Home />);
@@ -58,7 +61,7 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
 
     // Wait for weaknesses to render
     await waitFor(() => {
-      expect(screen.getByText('Recurring Weakness Library')).toBeInTheDocument();
+      expect(screen.getByText(/Exact-Position Analysis|Recurring Weakness Library/)).toBeInTheDocument();
     });
 
     // Click Practice Position on the first weakness card
@@ -132,12 +135,13 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
     // 1. Initial visit with no stored value -> UI defaults to 0.8
     localStorage.removeItem('chessecho_min_eval_loss');
     localStorage.setItem('chessecho_username', 'testuser');
-    window.location.hash = '#weaknesses';
+    window.location.hash = '#weakness-analysis';
+    activeTabStore.set('weakness-analysis');
 
     const { unmount: unmount1 } = render(<Home />);
 
     await waitFor(() => {
-      expect(screen.getByText('Recurring Weakness Library')).toBeInTheDocument();
+      expect(screen.getByText(/Exact-Position Analysis|Recurring Weakness Library/)).toBeInTheDocument();
     });
 
     const selectEl1 = screen.getByLabelText('Filter by Threshold') as HTMLSelectElement;
@@ -155,6 +159,8 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
 
     // 3. Fresh remount / simulated page reload -> UI initializes to 0.5 and fetches API with 0.5
     fetchWeaknessesSpy.mockClear();
+    window.location.hash = '#weakness-analysis';
+    activeTabStore.set('weakness-analysis');
     const { unmount: unmount2 } = render(<Home />);
 
     await waitFor(() => {
@@ -177,6 +183,8 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
     // 4. Malformed localStorage value -> safely falls back to 0.8
     localStorage.setItem('chessecho_min_eval_loss', 'invalid_val');
     fetchWeaknessesSpy.mockClear();
+    window.location.hash = '#weakness-analysis';
+    activeTabStore.set('weakness-analysis');
 
     render(<Home />);
 
@@ -200,7 +208,7 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
       render(<Home />);
     });
 
-    const weaknessesTabBtn = screen.getByRole('button', { name: /^(Recurring Weaknesses|Position Weaknesses|Weaknesses Library)$/i });
+    const weaknessesTabBtn = screen.getByRole('button', { name: /^(Recurring Weaknesses|Position Weaknesses|Weaknesses Library|Weakness)$/i });
 
     await act(async () => {
       fireEvent.click(weaknessesTabBtn);
@@ -219,12 +227,13 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
     // Navigate to Weaknesses
     await act(async () => {
       localStorage.setItem('chessecho_username', 'testuser');
-      window.location.hash = '#weaknesses';
+      window.location.hash = '#weakness-analysis';
+      activeTabStore.set('weakness-analysis');
       window.dispatchEvent(new HashChangeEvent('hashchange'));
     });
 
     await waitFor(() => {
-      expect(screen.getByText('Recurring Weakness Library')).toBeInTheDocument();
+      expect(screen.getByText(/Exact-Position Analysis|Recurring Weakness Library/)).toBeInTheDocument();
     });
 
     // Click BLACK filter
@@ -241,10 +250,10 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
       fireEvent.click(puzzlesTabBtn);
     });
 
-    const weaknessesTabBtn = screen.getByRole('button', { name: /^(Recurring Weaknesses|Position Weaknesses|Weaknesses Library)$/i });
-    await act(async () => {
-      fireEvent.click(weaknessesTabBtn);
-    });
+    const toolsBtn = screen.getByRole('button', { name: /^Explore \/ Tools$/i });
+    fireEvent.click(toolsBtn);
+    const analysisItem = await screen.findByRole('menuitem', { name: /Exact-Position Analysis/i });
+    fireEvent.click(analysisItem);
 
     expect(screen.getByRole('button', { name: 'Black' })).toHaveClass('text-primary');
   });
@@ -284,6 +293,9 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
 
     vi.spyOn(api, 'fetchPuzzles').mockResolvedValue([blackPuzzle1, blackPuzzle2]);
 
+    localStorage.setItem('chessecho_username', 'testuser');
+    window.location.hash = '#weakness-analysis';
+    activeTabStore.set('weakness-analysis');
     await act(async () => {
       render(<Home />);
     });
@@ -389,12 +401,13 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
     vi.spyOn(api, 'fetchPuzzles').mockResolvedValue([]);
 
     localStorage.setItem('chessecho_username', 'testuser');
-    window.location.hash = '#weaknesses';
+    window.location.hash = '#weakness-analysis';
+    activeTabStore.set('weakness-analysis');
 
     const { unmount } = render(<Home />);
 
     await waitFor(() => {
-      expect(screen.getByText('Recurring Weakness Library')).toBeInTheDocument();
+      expect(screen.getByText(/Exact-Position Analysis|Recurring Weakness Library/)).toBeInTheDocument();
     });
 
     // 1. Change threshold from 0.8 to 0.5 in Weaknesses tab
@@ -411,10 +424,10 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
       fireEvent.click(puzzlesTabBtn);
     });
 
-    const weaknessesTabBtn = screen.getByRole('button', { name: /^(Recurring Weaknesses|Position Weaknesses|Weaknesses Library)$/i });
-    await act(async () => {
-      fireEvent.click(weaknessesTabBtn);
-    });
+    const toolsBtn = screen.getByRole('button', { name: /^Explore \/ Tools$/i });
+    fireEvent.click(toolsBtn);
+    const analysisItem = await screen.findByRole('menuitem', { name: /Exact-Position Analysis/i });
+    fireEvent.click(analysisItem);
 
     // Verify threshold is STILL 0.5 after tab navigation
     const selectElAfterNav = screen.getByLabelText('Filter by Threshold') as HTMLSelectElement;
@@ -423,9 +436,11 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
     unmount();
 
     // 3. Flow B: Refresh simulation (remount) -> threshold is STILL 0.5
+    window.location.hash = '#weakness-analysis';
+    activeTabStore.set('weakness-analysis');
     render(<Home />);
     await waitFor(() => {
-      expect(screen.getByText('Recurring Weakness Library')).toBeInTheDocument();
+      expect(screen.getByText(/Exact-Position Analysis|Recurring Weakness Library/)).toBeInTheDocument();
     });
 
     const selectElAfterRefresh = screen.getByLabelText('Filter by Threshold') as HTMLSelectElement;
@@ -491,12 +506,13 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
     const fetchPuzzlesSpy = vi.spyOn(api, 'fetchPuzzles').mockResolvedValue([]);
 
     localStorage.setItem('chessecho_username', 'testuser');
-    window.location.hash = '#weaknesses';
+    window.location.hash = '#weakness-analysis';
+    activeTabStore.set('weakness-analysis');
 
     const { unmount: unmount1 } = render(<Home />);
 
     await waitFor(() => {
-      expect(screen.getByText('Recurring Weakness Library')).toBeInTheDocument();
+      expect(screen.getByText(/Exact-Position Analysis|Recurring Weakness Library/)).toBeInTheDocument();
     });
 
     // 1. Change Min Eval Loss to 0.5 and Min Mistakes to 5 in Weaknesses tab
@@ -517,10 +533,10 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
       fireEvent.click(puzzlesTabBtn);
     });
 
-    const weaknessesTabBtn = screen.getByRole('button', { name: /^(Recurring Weaknesses|Position Weaknesses|Weaknesses Library)$/i });
-    await act(async () => {
-      fireEvent.click(weaknessesTabBtn);
-    });
+    const toolsBtn = screen.getByRole('button', { name: /^Explore \/ Tools$/i });
+    fireEvent.click(toolsBtn);
+    const analysisItem = await screen.findByRole('menuitem', { name: /Exact-Position Analysis/i });
+    fireEvent.click(analysisItem);
 
     const evalLossSelectAfterNav = screen.getByLabelText('Filter by Threshold') as HTMLSelectElement;
     const minMistakesSelectAfterNav = screen.getByLabelText('Filter by Min Mistakes') as HTMLSelectElement;
@@ -532,6 +548,8 @@ describe('Issues 1 to 8 Frontend Regression Tests', () => {
     // 3. Fresh Page Mount Simulation: Verify FIRST API call uses persisted 0.5 and 5
     fetchWeaknessesSpy.mockClear();
     fetchPuzzlesSpy.mockClear();
+    window.location.hash = '#weakness-analysis';
+    activeTabStore.set('weakness-analysis');
 
     const { unmount: unmount2 } = render(<Home />);
 
