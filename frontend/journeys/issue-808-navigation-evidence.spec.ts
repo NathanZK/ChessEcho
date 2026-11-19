@@ -9,10 +9,13 @@ import {
   DEFAULT_MOCK_GAME,
 } from './fixtures/mockApi';
 
-const EVIDENCE_DIR = path.resolve(
-  __dirname,
-  '../../docs/engineering/evidence/issue-808'
-);
+// Evidence captures are test outputs, not source. Default to the gitignored
+// Playwright output directory so running the journey suite never rewrites
+// tracked files; EVIDENCE_DIR can point at a documentation directory when a
+// reviewer asks for committed evidence.
+const EVIDENCE_DIR = process.env.EVIDENCE_DIR
+  ? path.resolve(process.env.EVIDENCE_DIR)
+  : path.resolve(__dirname, '../test-results/evidence/issue-808');
 
 test.describe('Issue #808 Multimodal Desktop Runtime Visual Evidence Capture', () => {
   test.use({

@@ -1,5 +1,10 @@
 # Practice State Model & Bounded BFS Exploration
 
+> **Status: retired (2026-11-19, #831).** Model-based BFS, constrained monkey, and campaign
+> testing infrastructure were removed from the frontend. This document is retained as a
+> historical design and rationale record; the scripts, specs, and modules it describes no
+> longer exist. Deterministic regressions under `frontend/journeys/` are the current coverage.
+
 This document formalizes the test-side abstract state model, bounded BFS exploration, and state invariant oracles introduced in Phase 2 (#713) for ChessProbe's Core Practice Puzzle Lifecycle.
 
 ---

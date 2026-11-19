@@ -1,5 +1,10 @@
 # Combined Model-Based BFS Exploration with Constrained Monkey Testing
 
+> **Status: retired (2026-11-19, #831).** Model-based BFS, constrained monkey, and campaign
+> testing infrastructure were removed from the frontend. This document is retained as a
+> historical design and rationale record; the scripts, specs, and modules it describes no
+> longer exist. Deterministic regressions under `frontend/journeys/` are the current coverage.
+
 **Phase**: Phase 5 (Issue #716)  
 **Parent Roadmap**: Phased Testing Architecture Roadmap (#710)  
 **Status**: Adopted  

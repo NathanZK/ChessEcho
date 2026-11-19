@@ -1,5 +1,10 @@
 # Monkey Testing Architecture Evaluation: Gremlins.js vs. State-Constrained Playwright Runner
 
+> **Status: retired (2026-11-19, #831).** Model-based BFS, constrained monkey, and campaign
+> testing infrastructure were removed from the frontend. This document is retained as a
+> historical design and rationale record; the scripts, specs, and modules it describes no
+> longer exist. Deterministic regressions under `frontend/journeys/` are the current coverage.
+
 **Phase**: Phase 4 (Issue #715)  
 **Parent Roadmap**: Phased Testing Architecture Roadmap (#710)  
 **Status**: Adopted (Custom State-Constrained Playwright Runner); Rejected (Gremlins.js as Primary Dependency)

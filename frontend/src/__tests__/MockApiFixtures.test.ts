@@ -11,7 +11,7 @@ import {
   type JourneyRoutablePage,
   type JourneyRouteLike,
 } from '../../journeys/fixtures/mockApi';
-import { deriveMoveSquares } from '../../journeys/model/practiceModel';
+import { deriveMoveSquares } from '../../journeys/support/practiceDom';
 
 describe('Task 1: Curated Multi-Position Puzzle Fixtures', () => {
   it('exports MOCK_PUZZLES containing all 6 distinct puzzle geometries including weakness-backed', () => {

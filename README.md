@@ -59,7 +59,7 @@ The goal is to change habits, not to memorize engine lines.
 | **Board UI** | react-chessboard, chess.js |
 | **Styling** | Tailwind CSS 4 |
 | **Backend testing** | JUnit 5, Mockito, Testcontainers (PostgreSQL 16), PIT (mutation testing) |
-| **Frontend testing** | Vitest, Testing Library, Playwright (user journeys & sustained monkey campaigns) |
+| **Frontend testing** | Vitest, Testing Library, Playwright (deterministic user journeys) |
 | **CI** | GitHub Actions |
 
 ---
@@ -464,9 +464,8 @@ Backend tests use H2 in-memory and require neither PostgreSQL nor Stockfish. The
 
 ```bash
 cd frontend
-npm run test           # vitest run (unit and model BFS suites)
-npm run test:journeys  # deterministic Playwright user journeys and model-based specs
-npm run test:monkey    # exploratory constrained monkey testing (local only, not in CI)
+npm run test           # vitest run (unit and component suites)
+npm run test:journeys  # deterministic Playwright user journeys
 npx tsc --noEmit       # type-check
 npm run lint           # eslint
 npm run build          # production build
