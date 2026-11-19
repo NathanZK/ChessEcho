@@ -116,3 +116,13 @@ During the implementation and testing of Issue #789, defects and failures were c
 5. **Detection Gaps Carried into Milestone 3 (#790)**:
    * Concrete implementation of `BrowserSutAdapter` driving a real Playwright `Page`.
    * Execution of the BFS explorer against the running Next.js application to expose and remediate UOBS-13, ADD-01, UOBS-17, and #782 in the live frontend codebase.
+
+---
+
+## Supersession note (2026-11-19)
+
+The BFS, monkey, and campaign infrastructure described above was retired in #831 as part of
+an evidence-based ROI decision. This record is preserved unmodified for historical
+traceability; the harness and specs it references no longer exist in the repository. The
+defects it discusses remain covered by deterministic Playwright regressions
+(`frontend/journeys/regression/`), including the #779 exploration-exit sequence.

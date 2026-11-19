@@ -157,6 +157,7 @@ export function PracticePuzzlesView({
   const [boardHistorySnapshot, setBoardHistorySnapshot] = useState<ChessBoardHistorySnapshot | null>(null);
   const boardHistorySnapshotRef = React.useRef<ChessBoardHistorySnapshot | null>(null);
   const [boardResetTrigger, setBoardResetTrigger] = useState<number>(0);
+  const [boardInstanceKey, setBoardInstanceKey] = useState<number>(0);
   const longDecisionReturnSnapshotRef = React.useRef<LongDecisionReturnSnapshot | null>(null);
   const [activeOriginatingTab, setActiveOriginatingTab] = useState<TabType | null>(null);
   const suppliedPositionCounterRef = React.useRef(0);
@@ -618,6 +619,12 @@ export function PracticePuzzlesView({
         setCurrentBoardFen(activePuzzle.fen);
         setInitialMoveHistorySan([]);
         setInitialMoveHistoryStartFen(undefined);
+        // Remount the board at the entry position. Without this, the board keeps
+        // the solved move in its history and the next attempt is treated as a line
+        // continuation, so it is never evaluated (issue #779).
+        boardHistorySnapshotRef.current = null;
+        setBoardHistorySnapshot(null);
+        setBoardInstanceKey((prev) => prev + 1);
         if (decisionMove) {
           setFeedback({ status: 'IDLE' });
         } else {
@@ -651,6 +658,9 @@ export function PracticePuzzlesView({
         setCurrentBoardFen(activePuzzle.fen);
         setInitialMoveHistorySan([]);
         setInitialMoveHistoryStartFen(undefined);
+        boardHistorySnapshotRef.current = null;
+        setBoardHistorySnapshot(null);
+        setBoardInstanceKey((prev) => prev + 1);
         if (decisionMove) {
           setFeedback({ status: 'IDLE' });
         } else {
@@ -1900,7 +1910,7 @@ export function PracticePuzzlesView({
                     className="w-full max-w-[680px] shrink-0 flex flex-col space-y-2.5"
                   >
                     <ChessBoardArea
-                      key={!isWeaknessPlaylist ? activePuzzle.puzzleId : 'puzzle-board'}
+                      key={`${!isWeaknessPlaylist ? activePuzzle.puzzleId : 'puzzle-board'}-${boardInstanceKey}`}
                       puzzleId={`${activePuzzle.puzzleId}-${currentPuzzleIndex}`}
                       initialFen={activePuzzle.fen}
                       initialBoardHistory={

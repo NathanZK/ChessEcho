@@ -13,7 +13,6 @@ Next.js 16.4.1 single-page application and interactive chessboard interface for 
 - **Testing**:
   - Unit & Component: Vitest 4, `@testing-library/react`
   - End-to-End User Journeys: Playwright
-  - Exploratory Monkey Testing: Custom multi-seed transition campaign runner
   - Mutation Testing: Stryker Mutator
 
 ---
@@ -70,12 +69,6 @@ npm run knip
 
 # End-to-End user journeys (Playwright)
 npm run test:journeys
-
-# Exploratory monkey testing
-npm run test:monkey
-
-# Multi-seed sustained exploration campaign runner
-npm run test:monkey:campaign -- --seeds=3 --budget=25
 
 # Frontend mutation testing (Stryker)
 npm run test:mutation

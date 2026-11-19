@@ -137,3 +137,13 @@ Observed FEN: r1bqkbnr/pppp1ppp/2n5/4p3/3PP3/5N2/PPP2PPP/RNBQKB1R b KQkq - 0 3
 
 This result is strictly classified as:
 > **Controlled seeded-fault detection evidence** — demonstrating that the general BFS explorer, live browser SUT adapter, DOM observation pipeline, and invariant evaluator can detect, isolate, and minimize an un-tailored application-level state fault in a running production build. This does **not** constitute historical defect discovery.
+
+---
+
+## Supersession note (2026-11-19)
+
+The BFS, monkey, and campaign infrastructure described above was retired in #831 as part of
+an evidence-based ROI decision. This record is preserved unmodified for historical
+traceability; the harness and specs it references no longer exist in the repository. The
+defects it discusses remain covered by deterministic Playwright regressions
+(`frontend/journeys/regression/`), including the #779 exploration-exit sequence.

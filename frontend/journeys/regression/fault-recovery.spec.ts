@@ -4,14 +4,9 @@ import {
   DEFAULT_MOCK_ACCOUNT,
   DYNAMIC_EVAL_MOCK_PUZZLE,
 } from '../fixtures/mockApi';
-import {
-  STATE_ORACLES,
-  ensureDiscoveryState,
-  createInitialContext,
-  executeConcreteAction,
-  DEFAULT_PRACTICE_FEN,
-  type PracticeModelContext,
-} from '../model/practiceModel';
+import { playSanMove } from '../support/practiceDom';
+
+const POST_MOVE_FEN = 'r1bqkbnr/pppp1ppp/2n5/4p3/3PP3/5N2/PPP2PPP/RNBQKB1R b KQkq - 0 3';
 
 /**
  * Fault Recovery Regression Test (Issue #779 / Milestone #771 Reconciliation)
@@ -48,45 +43,21 @@ test.describe('Deterministic Fault Injection & Retry Recovery (Issue #779)', () 
       },
     });
 
-    // 3. Load application on Practice tab
+    // 3. Load application and enter practice from the discovery catalog
     await page.goto('/#puzzles');
-    let context: PracticeModelContext = {
-      ...createInitialContext(),
-      faultInjectionEnabled: true,
-    };
-
-    // Transition DISCOVERY -> PRACTICE_IDLE
-    await ensureDiscoveryState(page);
-    await STATE_ORACLES.DISCOVERY.assert(page, context, expect);
-    await executeConcreteAction(page, 'SELECT_PUZZLE', context);
-    context = {
-      ...context,
-      puzzleLoaded: true,
-      startingFen: DEFAULT_PRACTICE_FEN,
-      expectedFen: DEFAULT_PRACTICE_FEN,
-      expectedSideToMove: 'white',
-      expectedFailedCount: 0,
-      expectedSolvedCount: 0,
-    };
-    await STATE_ORACLES.PRACTICE_IDLE.assert(page, context, expect);
+    const boardArea = page.locator('[data-testid="practice-board-area"]');
+    await expect(boardArea).toBeVisible();
+    await expect(boardArea).toHaveAttribute('data-board-fen', DYNAMIC_EVAL_MOCK_PUZZLE.fen);
 
     // Initial counter verification: 0 failed, 0 solved
     await expect(page.getByText(/Failed:\s*0\b/i)).toBeVisible();
     await expect(page.getByText(/Solved:\s*0\b/i)).toBeVisible();
 
-    // 4. Execute SUBMIT_FAULT with target move d4. First request returns HTTP 500.
-    await executeConcreteAction(page, 'SUBMIT_FAULT', context);
+    // 4. Execute the target move d4. First request returns HTTP 500.
+    await playSanMove(page, DYNAMIC_EVAL_MOCK_PUZZLE.fen, 'd4');
 
     // Verify UI displays "Move Evaluation Failed" banner and <button>Retry evaluation</button>
-    context = {
-      ...context,
-      pendingEvaluationMove: 'd4',
-      pendingEvaluationPayload: {
-        fen: DEFAULT_PRACTICE_FEN,
-        move: 'd4',
-      },
-    };
-    await STATE_ORACLES.EVALUATION_ERROR.assert(page, context, expect);
+    await expect(page.getByText('Move Evaluation Failed')).toBeVisible();
     const retryButton = page.getByRole('button', { name: /Retry evaluation/i });
     await expect(retryButton).toBeVisible();
 
@@ -94,21 +65,12 @@ test.describe('Deterministic Fault Injection & Retry Recovery (Issue #779)', () 
     await retryButton.click();
     await page.waitForTimeout(100);
 
-    // 6. Second request returns HTTP 200. Error banner clears, board advances to post-move position, and state transitions deterministically to CORRECT
-    context = {
-      ...context,
-      attemptCount: 1,
-      expectedSolvedCount: 1,
-      expectedFailedCount: 0,
-      solved: true,
-      lastMoveSan: 'd4',
-      expectedFen: 'r1bqkbnr/pppp1ppp/2n5/4p3/3PP3/5N2/PPP2PPP/RNBQKB1R b KQkq - 0 3',
-      expectedHistory: ['d4'],
-      expectedSideToMove: 'black',
-      pendingEvaluationMove: null,
-      pendingEvaluationPayload: null,
-    };
-    await STATE_ORACLES.CORRECT.assert(page, context, expect);
+    // 6. Second request returns HTTP 200. Error banner clears, board advances to the
+    //    post-move position, and the decision resolves to CORRECT.
+    await expect(page.getByText('Move Evaluation Failed')).not.toBeVisible();
+    await expect(boardArea).toHaveAttribute('data-board-fen', POST_MOVE_FEN);
+    await expect(boardArea).toHaveAttribute('data-feedback-status', 'CORRECT');
+    await expect(page.getByRole('button', { name: /Continue Exploration →/i })).toBeVisible();
 
     // 7. Assert exact request identity between initial (500) and retry (200) requests
     expect(evaluationRequests.length).toBeGreaterThanOrEqual(2);

@@ -152,3 +152,12 @@ npm run test:monkey:campaign -- --seeds=4 --budget=100 --workers=1 --trace=failu
 - `--trace=<mode>`: Playwright trace recording mode (`failures-only` [default], `on`, `off`).
 - `--startingState=<state>`: Starting state machine state (`DISCOVERY` [default] or `PRACTICE_IDLE`).
 
+---
+
+## Supersession note (2026-11-19)
+
+The BFS, monkey, and campaign infrastructure described above was retired in #831 as part of
+an evidence-based ROI decision. This record is preserved unmodified for historical
+traceability; the harness and specs it references no longer exist in the repository. The
+defects it discusses remain covered by deterministic Playwright regressions
+(`frontend/journeys/regression/`), including the #779 exploration-exit sequence.

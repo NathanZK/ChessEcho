@@ -11,8 +11,6 @@
     "test": "vitest run",
     "test:journeys": "playwright test",
     "test:e2e:docker": "PLAYWRIGHT_RUN_E2E=1 playwright test journeys/e2e-remediation-journeys.spec.ts",
-    "test:monkey": "PLAYWRIGHT_INCLUDE_MONKEY=1 playwright test journeys/*-monkey.spec.ts",
-    "test:monkey:campaign": "node scripts/run-campaign.mjs",
     "test:mutation": "stryker run"
   },
   "dependencies": {
