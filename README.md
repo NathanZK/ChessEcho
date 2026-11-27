@@ -139,18 +139,24 @@ SPRING_DATASOURCE_PASSWORD=chessprobe_pass \
 
 **Option B — Docker (container workflow)**
 
-Builds and runs the backend inside Docker from local source without requiring a local Java 21 JDK or Stockfish installation on the host, useful for verifying container parity. `make app-build` compiles the backend in a multi-stage container build and tags the image as `chess-probe`, which Docker Compose (`make app-up` or `make up`) reuses directly.
+Runs the backend inside Docker without requiring a local Java 21 JDK or Stockfish installation on the host.
+
+`make up` starts PostgreSQL and the backend using the latest image published by `main` (`nathanzk/chessprobe-backend:latest`). It always pulls that image and never builds locally, so it does not reflect local working-tree changes:
 
 ```bash
-make app-build   # builds the Docker image (chess-probe) from local source
-make app-up      # starts the application container on port 8080 reusing the built image
+make up          # pulls the latest published image and starts database + application
+make app-up      # pulls the latest published image and starts only the application
 ```
 
-Or start both database and application together:
+To run your local source instead (useful for verifying container parity), build and run the local image, tagged `chess-probe`:
 
 ```bash
-make up
+make up-local       # builds the image from local source, then starts database + application
+make app-build      # only builds the local image (chess-probe)
+make app-up-local   # starts the application from the already-built local image
 ```
+
+> **Note:** The published image is built for **`linux/arm64` (Apple Silicon)** only. On other architectures, use `make up-local`.
 
 To inspect container logs:
 
@@ -168,9 +174,9 @@ make app-down
 
 **Option C — Run pre-built Docker image from Docker Hub (no local build)**
 
-Runs the published backend container alongside PostgreSQL without needing to clone the source repository or build the image locally. This workflow pulls the pre-built `nathanzk/chessecho-backend:latest` image via standalone `docker run` commands; it does not compile or reflect local working-tree code changes.
+Runs the published backend container alongside PostgreSQL without needing to clone the source repository or build the image locally. This workflow pulls the pre-built `nathanzk/chessprobe-backend:latest` image via standalone `docker run` commands; it does not compile or reflect local working-tree code changes.
 
-> **Note:** The pre-built Docker image (`nathanzk/chessecho-backend:latest`) is published natively for **`linux/arm64` (Apple Silicon)**. If you are on a different architecture, use Option A (local Gradle) or Option B (local Docker build).
+> **Note:** The pre-built Docker image (`nathanzk/chessprobe-backend:latest`) is published natively for **`linux/arm64` (Apple Silicon)**. If you are on a different architecture, use Option A (local Gradle) or Option B (local Docker build).
 
 1. **Create a shared network:**
    Containers must share a user-defined network so the backend can resolve the database hostname (`chessprobe-postgres`) via Docker DNS:
@@ -203,7 +209,7 @@ Runs the published backend container alongside PostgreSQL without needing to clo
      -e STOCKFISH_PATH=stockfish \
      -e CHESS_PUBAPI_USERNAME=your_chesscom_username \
      -e CHESS_PUBAPI_CONTACT=your_email@example.com \
-     nathanzk/chessecho-backend:latest
+     nathanzk/chessprobe-backend:latest
    ```
 
 4. **Inspect logs:**
@@ -213,7 +219,7 @@ Runs the published backend container alongside PostgreSQL without needing to clo
 
 5. **Update to the latest published image:**
    ```bash
-   docker pull nathanzk/chessecho-backend:latest
+   docker pull nathanzk/chessprobe-backend:latest
    docker stop chessprobe-app && docker rm chessprobe-app
    # Re-run step 3
    ```
