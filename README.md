@@ -158,6 +158,8 @@ make app-up-local   # starts the application from the already-built local image
 
 > **Note:** The published image is built for **`linux/arm64` (Apple Silicon)** only. On other architectures, use `make up-local`.
 
+The containerized backend calls the real Chess.com PubAPI and uses the Stockfish binary bundled in the image. Set `CHESS_PUBAPI_USERNAME` and `CHESS_PUBAPI_CONTACT` (see the PubAPI note above) in a `.env` file at the repository root; Docker Compose reads it automatically. The Chess.com test double and mock Stockfish in `scripts/test-double/` are used only by the full-stack E2E job, through `docker-compose.e2e.yml`.
+
 To inspect container logs:
 
 ```bash

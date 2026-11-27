@@ -38,6 +38,7 @@ jobs:
               - 'frontend/**'
               - 'scripts/test-double/**'
               - 'docker-compose.yml'
+              - 'docker-compose.e2e.yml'
               - '.github/workflows/journey-tests.yml'
 
   journeys:
@@ -126,7 +127,7 @@ jobs:
 
       - name: Start Isolated Docker Backend & PostgreSQL
         run: |
-          docker compose -p chessecho-e2e up -d --build postgres app
+          docker compose -p chessecho-e2e -f docker-compose.yml -f docker-compose.e2e.yml up -d --build postgres app
           timeout 60s bash -c 'until curl -s http://localhost:8080/api/me > /dev/null; do sleep 1; done'
 
       - name: Build Frontend Application

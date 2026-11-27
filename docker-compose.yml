@@ -25,8 +25,9 @@ services:
     container_name: chessprobe-app
     ports:
       - "8080:8080"
-    volumes:
-      - ./scripts/test-double:/app/scripts/test-double:ro
+    # Local development uses the real Chess.com PubAPI and the Stockfish binary
+    # shipped in the image. The full-stack E2E job layers docker-compose.e2e.yml
+    # on top to switch to the Chess.com test double and mock Stockfish.
     environment:
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-local}
       CHESSPROBE_AUTH_COOKIE_SECURE: ${CHESSPROBE_AUTH_COOKIE_SECURE:-${CHESSECHO_AUTH_COOKIE_SECURE:-false}}
@@ -34,11 +35,11 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/chessprobe
       SPRING_DATASOURCE_USERNAME: chessprobe
       SPRING_DATASOURCE_PASSWORD: chessprobe_pass
-      STOCKFISH_PATH: ${STOCKFISH_PATH:-/app/scripts/test-double/mock-stockfish.sh}
-      STOCKFISH_REQUIRE_MOCK: ${STOCKFISH_REQUIRE_MOCK:-true}
-      CHESS_PUBAPI_BASE_URL: ${CHESS_PUBAPI_BASE_URL:-http://host.docker.internal:8085}
-      CHESS_PUBAPI_USERNAME: ${CHESS_PUBAPI_USERNAME:-e2e_agent}
-      CHESS_PUBAPI_CONTACT: ${CHESS_PUBAPI_CONTACT:-e2e@chessecho.local}
+      STOCKFISH_PATH: ${STOCKFISH_PATH:-stockfish}
+      STOCKFISH_REQUIRE_MOCK: ${STOCKFISH_REQUIRE_MOCK:-false}
+      CHESS_PUBAPI_BASE_URL: ${CHESS_PUBAPI_BASE_URL:-https://api.chess.com}
+      CHESS_PUBAPI_USERNAME: ${CHESS_PUBAPI_USERNAME:-}
+      CHESS_PUBAPI_CONTACT: ${CHESS_PUBAPI_CONTACT:-}
       CHESS_WEAKNESS_PRACTICAL_RANKING_ENABLED: ${CHESS_WEAKNESS_PRACTICAL_RANKING_ENABLED:-true}
       CHESS_WEAKNESS_PRACTICAL_SAMPLE_FLOOR: ${CHESS_WEAKNESS_PRACTICAL_SAMPLE_FLOOR:-5}
       CHESS_WEAKNESS_PRACTICAL_COMPARATOR_METHOD: ${CHESS_WEAKNESS_PRACTICAL_COMPARATOR_METHOD:-FIXED_SCORE_RATE}
