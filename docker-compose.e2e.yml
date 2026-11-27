@@ -1,0 +1,19 @@
+# Full-stack E2E override. Layer it on top of docker-compose.yml:
+#
+#   node scripts/test-double/server.js &
+#   docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d --build postgres app
+#
+# Routes Chess.com calls to the local test double (scripts/test-double/server.js,
+# which must already be listening on host port 8085) and replaces Stockfish with
+# the deterministic mock. Values are fixed rather than read from the environment
+# so a developer's local .env cannot leak into E2E runs.
+services:
+  app:
+    volumes:
+      - ./scripts/test-double:/app/scripts/test-double:ro
+    environment:
+      STOCKFISH_PATH: /app/scripts/test-double/mock-stockfish.sh
+      STOCKFISH_REQUIRE_MOCK: "true"
+      CHESS_PUBAPI_BASE_URL: http://host.docker.internal:8085
+      CHESS_PUBAPI_USERNAME: e2e_agent
+      CHESS_PUBAPI_CONTACT: e2e@chessecho.local
