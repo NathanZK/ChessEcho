@@ -18,8 +18,10 @@ services:
       start_period: 2s
 
   app:
+    # Defaults to the image CI publishes from main. Local builds use
+    # `make up-local`, which sets CHESSPROBE_IMAGE to the local tag.
+    image: ${CHESSPROBE_IMAGE:-nathanzk/chessprobe-backend:latest}
     build: ./backend
-    image: chess-probe
     container_name: chessprobe-app
     ports:
       - "8080:8080"
